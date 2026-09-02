@@ -443,12 +443,21 @@ func (t ShellTool) Run(ctx context.Context, inv Invocation) (*Result, error) {
 	}
 
 	var stdout, stderr strings.Builder
-	cmd.Stdout = &limitedWriter{w: &stdout, limit: 64 << 10}
-	cmd.Stderr = &limitedWriter{w: &stderr, limit: 32 << 10}
+	outLimit := &limitedWriter{w: &stdout, limit: 64 << 10}
+	errLimit := &limitedWriter{w: &stderr, limit: 32 << 10}
+	cmd.Stdout = outLimit
+	cmd.Stderr = errLimit
 
 	start := time.Now()
 	runErr := cmd.Run()
 	elapsed := time.Since(start)
+
+	// Append the truncation notices after the command exits, so they do not
+	// depend on the shape of the output. Silently clipped output is
+	// indistinguishable from complete output, which is the worst way for a tool
+	// result to be wrong.
+	stdout.WriteString(outLimit.note())
+	stderr.WriteString(errLimit.note())
 
 	exitCode := 0
 	timedOut := ctx.Err() != nil
@@ -484,28 +493,73 @@ func (t ShellTool) Run(ctx context.Context, inv Invocation) (*Result, error) {
 }
 
 // limitedWriter caps how much a command can write into memory.
+//
+// # Why truncation is recorded rather than announced inline
+//
+// An earlier version appended "output truncated" from inside Write, on the first
+// call that found the budget already spent. That silently depends on there being
+// a LATER write: a command whose output arrives in one burst and then ends is
+// truncated with no marker at all, and the caller cannot tell a complete result
+// from a clipped one. It passed locally, where `yes | head -c` produces many
+// small writes, and failed on CI, where the buffering differed.
+//
+// The flag is now set at the moment of truncation and the notice is appended
+// once by the caller after the command exits, which does not depend on the
+// shape of the output at all.
 type limitedWriter struct {
-	w       *strings.Builder
-	limit   int
-	written int
-	noted   bool
+	w         *strings.Builder
+	limit     int
+	written   int
+	dropped   int
+	truncated bool
 }
 
+// Write implements io.Writer.
+//
+// It always reports having consumed the WHOLE slice, even when it keeps only
+// part of it. That is not sloppiness — io.Writer's contract says a write
+// returning n < len(p) must return an error, and os/exec's copier turns that
+// into io.ErrShortWrite and KILLS the command. A limiter that reports a short
+// write therefore does not truncate output, it truncates the process.
+//
+// An earlier version reassigned `p = p[:remaining]` and then returned `len(p)`,
+// which reported the clipped length. Any command whose output arrived in a
+// single chunk larger than the remaining budget was killed partway through, and
+// because it died before writing more, the truncation notice was never reached
+// either — so the result looked like a short, complete output. That is almost
+// certainly what CI was seeing, and it was invisible on a machine where pipe
+// chunks happened to be smaller than the budget.
 func (l *limitedWriter) Write(p []byte) (int, error) {
+	// Captured before any reslicing: this is what the caller must be told was
+	// consumed.
+	consumed := len(p)
+
 	remaining := l.limit - l.written
 	if remaining <= 0 {
-		if !l.noted {
-			l.w.WriteString("\n… output truncated at " + fmt.Sprint(l.limit) + " bytes\n")
-			l.noted = true
-		}
-		return len(p), nil // absorb the rest so the command is not killed by EPIPE
+		l.truncated = true
+		l.dropped += consumed
+		return consumed, nil // absorb silently rather than kill the command
 	}
-	if len(p) > remaining {
+	if consumed > remaining {
+		l.truncated = true
+		l.dropped += consumed - remaining
 		p = p[:remaining]
 	}
 	n, err := l.w.Write(p)
 	l.written += n
-	return len(p), err
+	if err != nil {
+		return n, err
+	}
+	return consumed, nil
+}
+
+// note returns the truncation notice, or "" when nothing was dropped.
+func (l *limitedWriter) note() string {
+	if !l.truncated {
+		return ""
+	}
+	return fmt.Sprintf("\n… output truncated: kept %d bytes, dropped at least %d more\n",
+		l.written, l.dropped)
 }
 
 func slicesContains(hay []string, needle string) bool {
