@@ -1,0 +1,33 @@
+FORGE
+Copyright 2026 Damon Lee
+
+This product includes software developed by Damon Lee.
+
+Licensed under the Apache License, Version 2.0 (the "License"); you may not use
+this file except in compliance with the License. You may obtain a copy of the
+License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software distributed
+under the License is distributed on an "AS IS" BASIS, WITHOUT WARRANTIES OR
+CONDITIONS OF ANY KIND, either express or implied. See the License for the
+specific language governing permissions and limitations under the License.
+
+---
+
+Third-party dependencies
+
+  github.com/jackc/pgx/v5          MIT
+  golang.org/x/crypto              BSD-3-Clause
+  golang.org/x/image               BSD-3-Clause
+  golang.org/x/text, x/sync, x/sys BSD-3-Clause
+
+All are permissively licensed and compatible with Apache-2.0. Their own licence
+texts travel with their modules; run `go mod download` and see the module cache,
+or `go list -m -json all` for the current set.
+
+Character artwork
+  The character portraits under internal/httpapi/assets/portrait/ were supplied
+  by the project owner. They are not covered by the Apache-2.0 grant above
+  unless the owner says otherwise.

@@ -108,8 +108,15 @@ func cmdGoalNew(ctx context.Context, cfg *config.Config, log *logx.Logger, args 
 	client := llm.NewOpenAICompatible(cfg.LLM, log, clock.System{})
 	planner := agent.NewPlanner(client, persona.DefaultCharacter())
 
+	// Planning can take minutes on a large model, especially when the goal is
+	// ambiguous enough that the planner works at it. Silence for that long reads
+	// as a hang, and PRD NFR-02 asks for meaningful progress at least every 10s.
+	// A ticker is the least this can be and still be honest: it reports elapsed
+	// time, which is all that is actually known.
 	fmt.Printf("planning with %s …\n", client.ModelFor(llm.RolePlanner))
+	stopTicker := startElapsedTicker("  still planning")
 	plan, err := planner.Plan(ctx, goal, nil, "")
+	stopTicker()
 	if err != nil {
 		return err
 	}
@@ -371,6 +378,35 @@ func cmdApprove(ctx context.Context, cfg *config.Config, log *logx.Logger, args 
 		fmt.Println("the task has been returned to the queue")
 	}
 	return nil
+}
+
+// startElapsedTicker prints elapsed time until the returned function is called.
+//
+// It reports only what is known — how long this has been running. A fake
+// progress bar would be worse than silence: it would imply the command can see
+// how far along the model is, which it cannot.
+func startElapsedTicker(label string) func() {
+	done := make(chan struct{})
+	finished := make(chan struct{})
+	start := time.Now()
+
+	go func() {
+		defer close(finished)
+		ticker := time.NewTicker(10 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+				fmt.Printf("%s … %s elapsed\n", label, time.Since(start).Round(time.Second))
+			}
+		}
+	}()
+	return func() {
+		close(done)
+		<-finished
+	}
 }
 
 func loadGoalCLI(ctx context.Context, pool *db.Pool, goalID string) (*engine.Goal, error) {

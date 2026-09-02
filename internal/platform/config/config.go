@@ -154,7 +154,14 @@ type LLMConfig struct {
 	// model family from Executor; StartupWarnings reports it when it is not.
 	Verifier string
 	// Summarizer compresses history. Cheapest role.
-	Summarizer     string
+	Summarizer string
+	// Converse holds the workbench conversation. Chosen for LATENCY, not depth:
+	// a person is waiting mid-sentence, and PRD AUD-02 asks for first audio
+	// inside 700ms. Measured on this provider, the deep-reasoning model took 19s
+	// to return a structured reply and the fast conversational one took 6.8s.
+	// Neither meets the target — but routing conversation through the reasoning
+	// model guarantees it never will.
+	Converse       string
 	RequestTimeout time.Duration
 	MaxRetries     int
 }
@@ -424,6 +431,7 @@ func Load(required ...Section) (*Config, []string, error) {
 		Executor:       l.str("FORGE_LLM_EXECUTOR_MODEL", "qwen3.8-max"),
 		Verifier:       l.str("FORGE_LLM_VERIFIER_MODEL", "deepseek-v4-pro"),
 		Summarizer:     l.str("FORGE_LLM_SUMMARIZER_MODEL", "qwen3.8-flash"),
+		Converse:       l.str("FORGE_LLM_CONVERSE_MODEL", "qwen-plus"),
 		RequestTimeout: l.dur("FORGE_LLM_REQUEST_TIMEOUT", 3*time.Minute),
 		MaxRetries:     l.intVal("FORGE_LLM_MAX_RETRIES", 3),
 	}

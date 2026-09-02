@@ -156,3 +156,17 @@ const (
 )
 
 func init() { allEvents = append(allEvents, EventGoalSettled, EventGoalSettleFailed) }
+
+// Workbench events.
+const (
+	EventConverseTurn Event = "forge.converse.turn"
+)
+
+func init() { allEvents = append(allEvents, EventConverseTurn) }
+
+// Streaming events.
+const (
+	EventLLMStreamFrame Event = "forge.llm.stream_frame_skipped"
+)
+
+func init() { allEvents = append(allEvents, EventLLMStreamFrame) }

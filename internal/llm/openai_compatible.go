@@ -57,6 +57,7 @@ func NewOpenAICompatible(cfg config.LLMConfig, log *logx.Logger, clk clock.Clock
 			RoleExecutor:   cfg.Executor,
 			RoleVerifier:   cfg.Verifier,
 			RoleSummarizer: cfg.Summarizer,
+			RoleConverse:   cfg.Converse,
 		},
 		client:     &http.Client{Timeout: cfg.RequestTimeout},
 		log:        log,

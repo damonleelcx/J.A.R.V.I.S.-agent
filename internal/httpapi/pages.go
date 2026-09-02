@@ -4,6 +4,7 @@ import (
 	"embed"
 	"html/template"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,7 +22,8 @@ import (
 // reset form fell back to a native GET that dropped the token. Serving the
 // script satisfies the policy without weakening it.
 //
-//go:embed assets/shell.css assets/avatar.css assets/pages.js
+//go:embed assets/shell.css assets/avatar.css assets/console.css assets/workbench.css
+//go:embed assets/pages.js assets/console.js assets/workbench.js assets/forge3d.js assets/voice.js
 //go:embed assets/portrait/*.png
 var assetFS embed.FS
 
@@ -109,6 +111,71 @@ func (p *PageHandlers) ResetPasswordPage(w http.ResponseWriter, r *http.Request)
 	p.render(w, r, "reset", pageData{Page: "reset", Token: token, Title: "Set a new password · FORGE"})
 }
 
+// Console handles GET /console.
+//
+// The page is a shell; everything in it is fetched from the API. That keeps ONE
+// implementation of every rule — which avatar state a goal is in, whether a task
+// counts as verified — on the server, where the engine already decides it. A
+// console that recomputes those rules is a second authority that will eventually
+// disagree with the first.
+func (p *PageHandlers) Console(w http.ResponseWriter, r *http.Request) {
+	p.render(w, r, "console", pageData{Page: "console", Title: "FORGE"})
+}
+
+// Workbench handles GET /workbench — the product's primary surface.
+//
+// Voice and the 3D studio, per PRD §1.2. The operations console at /console is
+// the surface beside it, not the main one.
+func (p *PageHandlers) Workbench(w http.ResponseWriter, r *http.Request) {
+	p.render(w, r, "workbench", pageData{Page: "workbench", Title: "FORGE workbench"})
+}
+
+// Sigil handles GET /v1/meta/sigil.
+//
+// Served rather than drawn in the browser so there is one implementation of
+// FORGE's mark and one place its state rules live.
+func (p *PageHandlers) Sigil(w http.ResponseWriter, r *http.Request) {
+	state := persona.AvatarState(r.URL.Query().Get("state"))
+	if !state.Valid() {
+		state = persona.StateIdle
+	}
+	size := 26
+	if v := r.URL.Query().Get("size"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 512 {
+			size = n
+		}
+	}
+	w.Header().Set("Content-Type", "image/svg+xml; charset=utf-8")
+	w.Header().Set("Cache-Control", "public, max-age=300")
+	_, _ = w.Write([]byte(persona.AvatarSVG(state, size)))
+}
+
+// Portrait handles GET /v1/meta/portrait — the expression for a given state.
+//
+// Mapping state to expression on the server keeps that decision in one place
+// too: several states share one expression, and which ones is a product
+// judgement rather than a lookup a client should re-derive.
+func (p *PageHandlers) Portrait(w http.ResponseWriter, r *http.Request) {
+	state := persona.AvatarState(r.URL.Query().Get("state"))
+	if !state.Valid() {
+		state = persona.StateIdle
+	}
+	expr := persona.ExpressionFor(state)
+	body, err := assetFS.ReadFile("assets/portrait/" + string(expr) + ".png")
+	if err != nil {
+		// A missing portrait falls back to the sigil rather than a broken image:
+		// a decorative asset must never be able to take out a status indicator.
+		p.d.Log.WarnWith(r.Context(), logx.EventHTTPRejected, err,
+			"expression", string(expr), "detail", "portrait asset missing; serving the sigil instead")
+		w.Header().Set("Content-Type", "image/svg+xml; charset=utf-8")
+		_, _ = w.Write([]byte(persona.AvatarSVG(state, 128)))
+		return
+	}
+	w.Header().Set("Content-Type", "image/png")
+	w.Header().Set("Cache-Control", "public, max-age=300")
+	_, _ = w.Write(body)
+}
+
 // Index handles GET /.
 func (p *PageHandlers) Index(w http.ResponseWriter, r *http.Request) {
 	if r.URL.Path != "/" {
@@ -125,9 +192,10 @@ func (p *PageHandlers) Index(w http.ResponseWriter, r *http.Request) {
 func (p *PageHandlers) Assets(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimPrefix(r.URL.Path, "/assets/")
 	switch {
-	case name == "shell.css", name == "avatar.css":
+	case name == "shell.css", name == "avatar.css", name == "console.css", name == "workbench.css":
 		w.Header().Set("Content-Type", "text/css; charset=utf-8")
-	case name == "pages.js":
+	case name == "pages.js", name == "console.js", name == "workbench.js",
+		name == "forge3d.js", name == "voice.js":
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 	case isPortraitAsset(name):
 		w.Header().Set("Content-Type", "image/png")
@@ -180,6 +248,138 @@ const pageTemplates = `
 
 {{define "foot"}}</main><script src="/assets/pages.js"></script></body></html>{{end}}
 
+{{define "workbench"}}<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{.Title}}</title>
+<link rel="stylesheet" href="/assets/shell.css">
+<link rel="stylesheet" href="/assets/avatar.css">
+<link rel="stylesheet" href="/assets/console.css">
+<link rel="stylesheet" href="/assets/workbench.css">
+</head><body class="wb">
+
+<div class="wb-top">
+  {{.Sigil}}
+  <div class="wordmark">FORGE</div>
+  <span id="status" class="pill off">Ready</span>
+  <span id="meta" style="font-size:11.5px;color:var(--ink-dim)"></span>
+  <div class="spacer"></div>
+  <span id="models" style="font-size:11px;color:var(--ink-dim)"></span>
+  <span class="who" id="who"></span>
+  <a href="/console" style="font-size:12px">Operations</a>
+</div>
+
+<div class="wb-body">
+
+  <!-- Conversation. The control plane (PRD §2.3). -->
+  <div class="wb-left">
+    <div class="transcript" id="transcript"></div>
+    <div class="voicebar">
+      <div id="voice-note" class="note bad hidden" style="margin-bottom:9px;font-size:12px"></div>
+      <form class="voicerow" id="sayform">
+        <button type="button" class="mic" id="mic" aria-pressed="false"
+                title="Hold to talk (or hold the space bar)" aria-label="Hold to talk">&#127908;</button>
+        <input type="text" id="say" placeholder="Describe what you are building…" autocomplete="off">
+      </form>
+      <div class="voicemeta">
+        <label><input type="checkbox" id="handsfree"> hands-free</label>
+        <label><input type="checkbox" id="speakback" checked> speak replies</label>
+        <button class="btn-sm" id="stopspeak" title="Escape also stops speech">Stop speaking</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- The stage. -->
+  <div class="stage">
+    <canvas id="canvas"></canvas>
+    <div class="stage-empty" id="stage-empty">
+      Nothing modelled yet.<br>
+      Describe something physical and FORGE will propose a shape here.
+    </div>
+    <div class="viewctl">
+      <button data-view="iso" aria-pressed="true">Iso</button>
+      <button data-view="front" aria-pressed="false">Front</button>
+      <button data-view="top" aria-pressed="false">Top</button>
+      <button data-view="side" aria-pressed="false">Side</button>
+      <button id="reset">Fit</button>
+      <label style="font-size:11.5px;color:var(--ink-dim);display:flex;align-items:center;gap:5px;padding-left:5px">
+        <input type="checkbox" id="grid" checked> grid
+      </label>
+    </div>
+    <div class="sliders">
+      <label for="explode">Exploded view</label>
+      <input type="range" id="explode" min="0" max="1" step="0.01" value="0">
+      <label for="opacity">Transparency</label>
+      <input type="range" id="opacity" min="0.15" max="1" step="0.01" value="1">
+      <label for="section">Section cut</label>
+      <select id="section" style="width:100%;margin-bottom:8px;background:#0f131b;color:var(--ink);border:1px solid var(--edge-solid);border-radius:6px;padding:4px">
+        <option value="none">none</option>
+        <option value="x">along X</option>
+        <option value="y">along Y</option>
+        <option value="z">along Z</option>
+      </select>
+      <input type="range" id="sectionat" min="0" max="1" step="0.01" value="0.5">
+    </div>
+    <!-- Never dismissible: PRD VIS-06. -->
+    <div class="provenance hidden" id="provenance"></div>
+  </div>
+
+  <!-- Artifacts and evidence. -->
+  <div class="wb-right rail">
+    <div class="h">Parts</div>
+    <div id="parts"></div>
+    <div id="proposal" class="hidden" style="margin-top:20px"></div>
+  </div>
+
+</div>
+
+<script src="/assets/forge3d.js"></script>
+<script src="/assets/voice.js"></script>
+<script src="/assets/workbench.js"></script>
+</body></html>{{end}}
+
+{{define "console"}}<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{.Title}}</title>
+<link rel="stylesheet" href="/assets/shell.css">
+<link rel="stylesheet" href="/assets/avatar.css">
+<link rel="stylesheet" href="/assets/console.css">
+</head><body class="console">
+<div class="topbar">
+  {{.Sigil}}
+  <div class="wordmark">FORGE</div>
+  <div class="who"><span id="whoami"></span><a href="/">Home</a></div>
+</div>
+<div id="err" class="note bad hidden" style="margin:16px 22px"></div>
+
+<div id="signin" class="hidden" style="max-width:380px;margin:64px auto;padding:0 22px">
+  <div class="card">
+    <h2 style="margin-bottom:16px">Sign in</h2>
+    <div id="signin-note" class="note hidden" style="margin-bottom:14px"></div>
+    <form id="signin-form" autocomplete="on">
+      <label for="email">Email</label>
+      <input type="email" id="email" autocomplete="username" required>
+      <label for="password">Password</label>
+      <input type="password" id="password" autocomplete="current-password" required>
+      <p></p>
+      <button class="btn" type="submit" id="signin-go">Sign in</button>
+    </form>
+  </div>
+</div>
+
+<div id="main" class="layout">
+  <div>
+    <div class="card"><h2>Waiting for you</h2><div id="approvals"><div class="spin">Loading…</div></div></div>
+    <div class="card"><h2>Goals</h2><div id="goals"><div class="spin">Loading…</div></div></div>
+  </div>
+  <div id="detail" class="hidden"></div>
+</div>
+<script src="/assets/console.js"></script>
+</body></html>{{end}}
+
 {{define "index"}}{{template "head" .}}
 <div class="forge-presence">
   {{.Presence}}
@@ -193,9 +393,9 @@ on every cycle, so it can be interrupted, restarted, and resumed without losing
 what it was doing. It never claims a tool ran, a check passed, or a person
 approved something that did not happen.</p>
 <hr>
-<p class="dim">This is the API host. The console is not part of this build yet —
-identity is, and it is what everything else will authenticate against.</p>
-<p class="dim">Health: <a href="/healthz">/healthz</a> · <a href="/readyz">/readyz</a><br>
+<p><a class="btn" href="/workbench">Open the workbench</a></p>
+<p class="dim" style="margin-top:10px"><a href="/console">Operations console</a> — goals, timeline, approvals.</p>
+<p class="dim" style="margin-top:16px">Health: <a href="/healthz">/healthz</a> · <a href="/readyz">/readyz</a><br>
 Error dictionary: <a href="/v1/meta/error-codes">/v1/meta/error-codes</a></p>
 {{template "foot" .}}{{end}}
 

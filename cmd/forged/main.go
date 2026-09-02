@@ -14,6 +14,7 @@ import (
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/identity"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/httpapi"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/llm"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/mail"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/clock"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/config"
@@ -110,10 +111,22 @@ func run() error {
 	identitySvc := identity.NewService(
 		pool, identity.NewRepository(), mailer, cfg.Auth, cfg.HTTP.PublicURL, clk, log)
 
+	// The workbench conversation needs a model. Nil is legal — the API and the
+	// operations console work without one, and the workbench says so rather than
+	// failing to load.
+	var modelClient llm.Client
+	if cfg.LLM.APIKey != "" {
+		modelClient = llm.NewOpenAICompatible(cfg.LLM, log, clk)
+	} else {
+		log.Warn(ctx, logx.EventConfigDefault,
+			"detail", "no FORGE_LLM_API_KEY: the workbench will load but cannot hold a conversation")
+	}
+
 	handler := httpapi.NewRouter(httpapi.Deps{
 		Config:   cfg,
 		Pool:     pool,
 		Identity: identitySvc,
+		LLM:      modelClient,
 		Clock:    clk,
 		Log:      log,
 		Version:  version,

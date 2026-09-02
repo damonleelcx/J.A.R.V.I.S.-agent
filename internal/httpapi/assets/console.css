@@ -1,0 +1,207 @@
+/* FORGE console.
+ *
+ * One stylesheet, no build step, no external fonts. The console is the surface
+ * an operator reaches for when something is wrong, so it must not depend on a
+ * request that can fail.
+ *
+ * Palette is FORGE's own — see shell.css. Cyan means "active" throughout, so a
+ * reader learns it once. */
+
+.console { display: block; place-items: initial; padding: 0; min-height: 100vh; }
+
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 22px;
+  border-bottom: 1px solid var(--edge-solid);
+  background: color-mix(in srgb, var(--panel) 80%, transparent);
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  backdrop-filter: blur(8px);
+}
+.topbar .who { margin-left: auto; font-size: 13px; color: var(--ink-dim); }
+.topbar .who a { margin-left: 12px; }
+
+.layout {
+  display: grid;
+  grid-template-columns: minmax(280px, 340px) 1fr;
+  gap: 22px;
+  padding: 22px;
+  max-width: 1500px;
+  margin: 0 auto;
+  align-items: start;
+}
+@media (max-width: 900px) {
+  .layout { grid-template-columns: 1fr; }
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--edge-solid);
+  border-radius: var(--radius);
+  padding: 18px;
+}
+.card + .card { margin-top: 16px; }
+.card h2 {
+  margin: 0 0 14px;
+  font-size: 12px;
+  letter-spacing: .13em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  font-weight: 650;
+}
+
+/* Goal rows. The sigil carries state; the text carries identity. */
+.goal {
+  display: flex;
+  gap: 11px;
+  align-items: flex-start;
+  padding: 11px;
+  border-radius: 9px;
+  cursor: pointer;
+  border: 1px solid transparent;
+}
+.goal:hover { background: #1a2233; }
+.goal[aria-current="true"] { background: #17202f; border-color: var(--core-dim); }
+.goal .t { font-weight: 600; font-size: 14px; line-height: 1.35; }
+.goal .m { font-size: 12px; color: var(--ink-dim); margin-top: 3px; }
+.goal .sig { flex: none; margin-top: 1px; }
+
+.empty { color: var(--ink-dim); font-size: 13px; padding: 8px 2px; }
+
+/* Approvals are the loudest thing on the page. They are the one state that
+   stays true until a person acts, and an unnoticed one stalls a goal silently. */
+.approval {
+  border: 1px solid var(--warn);
+  background: color-mix(in srgb, var(--warn) 8%, transparent);
+  border-radius: 9px;
+  padding: 14px;
+}
+.approval + .approval { margin-top: 12px; }
+.approval .tier {
+  display: inline-block;
+  font-size: 11px;
+  letter-spacing: .1em;
+  text-transform: uppercase;
+  color: var(--warn);
+  font-weight: 700;
+}
+.approval pre {
+  margin: 10px 0 0;
+  padding: 10px;
+  background: #0d1420;
+  border-radius: 7px;
+  font-size: 12px;
+  overflow-x: auto;
+  color: #b9c4d6;
+  max-height: 220px;
+}
+.approval .acts { display: flex; gap: 9px; margin-top: 12px; }
+
+.btn-sm {
+  padding: 8px 15px;
+  border: 1px solid var(--edge-solid);
+  border-radius: 7px;
+  background: #1b2434;
+  color: var(--ink);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+}
+.btn-sm:hover { border-color: var(--core-dim); }
+.btn-sm.go { background: var(--core); color: #08202a; border-color: transparent; }
+.btn-sm.no { border-color: #6a3238; color: #f0bcc0; }
+.btn-sm:disabled { opacity: .5; cursor: default; }
+
+/* Tasks */
+/* The status column is sized for the LONGEST status, not the average one.
+ * "awaiting_approval" is 17 characters and it overflowed a 92px column into the
+ * task title — and it is the status a reader most needs to read cleanly, since
+ * it is the one that needs them to act. */
+.task {
+  display: grid;
+  grid-template-columns: 130px 1fr auto;
+  gap: 12px;
+  padding: 11px;
+  border-radius: 8px;
+  align-items: baseline;
+  font-size: 13px;
+}
+@media (max-width: 700px) {
+  .task { grid-template-columns: 1fr auto; }
+}
+.task:nth-child(even) { background: #131a27; }
+.task .st {
+  font-size: 10.5px;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  font-weight: 700;
+  /* Wrap rather than overflow: a status that spills into the title makes both
+   * unreadable, and truncating it would hide which status it is. */
+  overflow-wrap: anywhere;
+  line-height: 1.3;
+}
+.st-succeeded { color: var(--ok); }
+.st-failed, .st-cancelled { color: var(--bad); }
+.st-running, .st-claimed, .st-verifying { color: var(--core); }
+.st-awaiting_approval { color: var(--warn); }
+.st-pending, .st-ready, .st-skipped { color: var(--ink-dim); }
+.task .err { color: #f0bcc0; font-size: 12px; margin-top: 4px; }
+
+/* "Verified" is shown separately from status, always. Completion and
+   verification are different facts (PRD AGT-08), and collapsing them in the UI
+   would undo the distinction the engine works to keep. */
+.tag {
+  font-size: 10px;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--edge-solid);
+  color: var(--ink-dim);
+  white-space: nowrap;
+}
+.tag.ok { border-color: #2c5a44; color: #9fe0c0; }
+.tag.warn { border-color: #6a5626; color: #e6cd8f; }
+
+/* Timeline */
+.event {
+  display: grid;
+  grid-template-columns: 74px 1fr;
+  gap: 12px;
+  padding: 9px 11px;
+  font-size: 13px;
+  border-left: 2px solid var(--edge-solid);
+}
+.event .who {
+  font-size: 10px;
+  letter-spacing: .08em;
+  text-transform: uppercase;
+  font-weight: 700;
+  padding-top: 2px;
+}
+/* Actors are colour-coded because the single most important thing a reader
+   takes from this list is WHO did each thing. */
+.who-human { color: var(--warn); }
+.who-planner { color: #9d8cf0; }
+.who-executor { color: var(--core); }
+.who-verifier { color: var(--ok); }
+.who-system, .who-scheduler { color: var(--ink-dim); }
+.event .k { color: var(--ink-dim); font-size: 11px; }
+.event .s { margin-top: 2px; line-height: 1.45; }
+
+.meta { display: flex; flex-wrap: wrap; gap: 18px; font-size: 13px; color: var(--ink-dim); }
+.meta b { color: var(--ink); font-weight: 600; }
+
+.stmt {
+  color: var(--ink-dim);
+  font-size: 13px;
+  line-height: 1.6;
+  margin: 0 0 14px;
+  white-space: pre-wrap;
+}
+.hidden { display: none; }
+.spin { color: var(--ink-dim); font-size: 13px; }

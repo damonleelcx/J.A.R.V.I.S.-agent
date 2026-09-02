@@ -37,15 +37,27 @@ const (
 	RoleVerifier Role = "verifier"
 	// RoleSummarizer compresses history. The cheapest role.
 	RoleSummarizer Role = "summarizer"
+	// RoleConverse holds the workbench conversation.
+	//
+	// Separate from RoleExecutor because the two want opposite things. An
+	// executor should think hard and may take a minute; a conversation is
+	// someone waiting mid-sentence, and PRD AUD-02 asks for first audio inside
+	// 700ms. Measured on this deployment's provider, the deep-reasoning model
+	// took 19s to produce a structured reply and the fast conversational one
+	// took 6.8s — neither meets the target, but routing conversation through the
+	// reasoning model guarantees it never will.
+	RoleConverse Role = "converse"
 )
 
 // AllRoles returns every role, for configuration and the coherence fence.
-func AllRoles() []Role { return []Role{RolePlanner, RoleExecutor, RoleVerifier, RoleSummarizer} }
+func AllRoles() []Role {
+	return []Role{RolePlanner, RoleExecutor, RoleVerifier, RoleSummarizer, RoleConverse}
+}
 
 // Valid reports whether r is a recognised role.
 func (r Role) Valid() bool {
 	switch r {
-	case RolePlanner, RoleExecutor, RoleVerifier, RoleSummarizer:
+	case RolePlanner, RoleExecutor, RoleVerifier, RoleSummarizer, RoleConverse:
 		return true
 	}
 	return false

@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/identity"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/llm"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/clock"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/config"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/db"
@@ -17,8 +18,12 @@ type Deps struct {
 	Config   *config.Config
 	Pool     *db.Pool
 	Identity *identity.Service
-	Clock    clock.Clock
-	Log      *logx.Logger
+	// LLM backs the workbench conversation. Nil is legal: the API and the
+	// operations console work without a model, and the workbench says so rather
+	// than failing to load.
+	LLM   llm.Client
+	Clock clock.Clock
+	Log   *logx.Logger
 	// Version and Commit are reported by the health endpoint so an operator can
 	// confirm which build is actually answering.
 	Version string
@@ -88,6 +93,19 @@ func NewRouter(d Deps) http.Handler {
 	mux.Handle("POST /v1/auth/sign-out-all", authed(authHandlers.SignOutAll))
 	mux.Handle("POST /v1/auth/change-password", authed(authHandlers.ChangePassword))
 
+	// --- goals and approvals (authenticated) ---
+	goals := NewGoalHandlers(d)
+	mux.Handle("GET /v1/goals", authed(goals.ListGoals))
+	mux.Handle("GET /v1/goals/{id}", authed(goals.GetGoal))
+	mux.Handle("GET /v1/goals/{id}/timeline", authed(goals.Timeline))
+	mux.Handle("GET /v1/approvals", authed(goals.ListApprovals))
+	mux.Handle("POST /v1/approvals/{id}", authed(goals.Decide))
+
+	// --- workbench conversation ---
+	converse := NewConverseHandlers(d)
+	mux.Handle("POST /v1/converse", authed(converse.Converse))
+	mux.HandleFunc("GET /v1/meta/models", converse.Models)
+
 	// --- browser landing pages for emailed links ---
 	// A verification link in an email is a GET navigation, but redemption is a
 	// state change and must not happen on GET: mail scanners and link previewers
@@ -95,6 +113,15 @@ func NewRouter(d Deps) http.Handler {
 	// recipient ever clicked. These pages render and let the page POST.
 	pages := NewPageHandlers(d)
 	mux.HandleFunc("GET /assets/", pages.Assets)
+	mux.HandleFunc("GET /v1/meta/sigil", pages.Sigil)
+	mux.HandleFunc("GET /v1/meta/portrait", pages.Portrait)
+	// The console page itself is unauthenticated; every byte of DATA in it is
+	// not. An unauthenticated shell that then shows "sign in" is a better
+	// experience than a redirect that loses the URL someone was sent.
+	mux.HandleFunc("GET /console", pages.Console)
+	// The workbench is the product's primary surface (PRD §1.2): voice and the
+	// 3D studio. /console is the operations view beside it.
+	mux.HandleFunc("GET /workbench", pages.Workbench)
 	mux.HandleFunc("GET /auth/verify-email", pages.VerifyEmailPage)
 	mux.HandleFunc("GET /auth/reset-password", pages.ResetPasswordPage)
 	mux.HandleFunc("GET /", pages.Index)

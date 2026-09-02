@@ -34,8 +34,9 @@ FORGE 分阶段交付，每个阶段独立测试、独立推送。
 | 2 | 持久化引擎：目标、任务 DAG、任务队列、租约、检查点、时间线 | ✅ 完成 |
 | 3 | Agent 主循环：Planner/Executor/Verifier、上下文装配、预算、审批闸门、人格 | ✅ 完成 |
 | 4 | 工具：能力注册表、沙箱、诚实声明的不可用连接器 | ✅ 完成 |
-| 5 | 控制台：目标管理、执行时间线、审批界面 | ⏳ 进行中 |
-| 6 | 可观测性、评测套件、恢复演练、发布 | ⏳ 计划中 |
+| 5 | 控制台：目标管理、执行时间线、审批界面 | ✅ 完成 |
+| 6 | 工作台：语音对话、3D 工作室、来源标注 | ✅ 完成 |
+| 7 | 评测套件、恢复演练、发布 | ⏳ 进行中 |
 
 ---
 
@@ -137,4 +138,6 @@ directory ... is contained in a module that is not one of the workspace modules
 
 ## 许可证
 
-见 [LICENSE](LICENSE)。
+Apache License 2.0 —— 见 [LICENSE](LICENSE) 与 [NOTICE](NOTICE)。
+
+`internal/httpapi/assets/portrait/` 下的角色美术资源由项目所有者提供，**不**包含在该授权范围内。

@@ -41,8 +41,9 @@ green in CI against a live Postgres.**
 | 2 | Durable engine: goals, task DAG, job queue, leases, checkpoints, timeline | ✅ Done |
 | 3 | Agent loop: planner/executor/verifier, context assembly, budgets, approval gates, persona | ✅ Done |
 | 4 | Tools: capability registry, sandbox, honest unavailable connectors | ✅ Done |
-| 5 | Console: goal management, execution timeline, approvals UI | ⏳ Next |
-| 6 | Observability, evaluation suites, recovery drills, release | ⏳ Planned |
+| 5 | Console: goal management, execution timeline, approvals UI | ✅ Done |
+| 6 | Workbench: voice conversation, 3D studio, provenance | ✅ Done |
+| 7 | Evaluation suites, recovery drills, release | ⏳ Next |
 
 ---
 
@@ -158,6 +159,34 @@ reason now lives in `error_code`, and both the promotion and propagation queries
 branch on it. Each half is fenced by its own test, and each test was drilled
 against the other half's implementation.
 
+### The workbench streams speech before it finishes thinking
+
+A conversational turn that produces geometry takes ~13 seconds end to end on this
+provider. PRD **AUD-02** asks for first audio inside 700ms. Waiting for the
+closing brace of a JSON reply makes that impossible by construction.
+
+So `/v1/converse` is Server-Sent Events: the `speech` field is emitted the moment
+it closes — measured at **266–595ms** in the browser — and the geometry follows
+seconds later. The structured tail is still applied only when the *complete*
+document parses, so streaming buys the latency without letting a half-finished
+parts array reach the viewport.
+
+The workbench displays the measured figures, never the target. A target asserted
+without measurement is a marketing claim.
+
+### A render says what it does not establish
+
+The provenance banner is not dismissible. PRD **VIS-06**: photorealism must never
+imply manufacturability, structural adequacy, or compliance — and a render is
+persuasive in inverse proportion to how much has actually been checked.
+
+Three things feed it: what the model says it did not verify, what it assumed
+rather than was told, and **what the renderer could not draw faithfully**. That
+last one exists because an early version silently substituted a box for an
+unsupported shape, producing a parts list that said `triangle-prism` beside a
+render showing a rectangular block. Nobody was told. That is the same class of
+failure as reporting an unverified task as verified.
+
 ### Seven limits, not one
 
 An agent can run away along seven independent axes — iterations, tool calls,
@@ -203,4 +232,7 @@ commands, prefix them: `GOWORK=off go test ./...`
 
 ## Licence
 
-See [LICENSE](LICENSE).
+Apache License 2.0 — see [LICENSE](LICENSE) and [NOTICE](NOTICE).
+
+The character artwork under `internal/httpapi/assets/portrait/` was supplied by
+the project owner and is **not** covered by that grant.

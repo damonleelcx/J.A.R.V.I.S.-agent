@@ -271,11 +271,13 @@ func findCycle(tasks []PlannedTask) []string {
 	return nil
 }
 
-// extractJSON pulls a JSON object out of a response that may be wrapped.
+// extractJSON pulls a JSON object out of a response that may be wrapped, and
+// repairs the one malformation models reliably produce.
 //
 // JSON mode is not universally honoured, and even when it is, some models fence
-// the output in markdown. Recovering the object is worth doing because the
-// alternative is discarding a correct plan over formatting.
+// the output in markdown or emit a literal newline inside a string. Recovering
+// the object is worth doing because the alternative is discarding a correct plan
+// over formatting. See repairJSON for the measurement behind that.
 func extractJSON(s string) string {
 	s = strings.TrimSpace(s)
 	if fence := strings.Index(s, "```"); fence >= 0 {
@@ -290,9 +292,9 @@ func extractJSON(s string) string {
 	start := strings.IndexByte(s, '{')
 	end := strings.LastIndexByte(s, '}')
 	if start >= 0 && end > start {
-		return s[start : end+1]
+		return repairJSON(s[start : end+1])
 	}
-	return s
+	return repairJSON(s)
 }
 
 func truncate(s string, n int) string {

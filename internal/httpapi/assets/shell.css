@@ -92,6 +92,7 @@ p  { margin: 0 0 14px; }
 
 label { display: block; font-size: 13px; color: var(--ink-dim); margin: 14px 0 6px; }
 
+input[type="email"],
 input[type="password"] {
   width: 100%;
   padding: 11px 13px;
@@ -101,6 +102,7 @@ input[type="password"] {
   color: var(--ink);
   font: inherit;
 }
+input[type="email"]:focus,
 input[type="password"]:focus { outline: 2px solid var(--core-dim); outline-offset: 1px; border-color: var(--core-dim); }
 
 .note {
