@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/auth"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/persona"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/logx"
 )
 
@@ -20,7 +21,7 @@ import (
 // reset form fell back to a native GET that dropped the token. Serving the
 // script satisfies the policy without weakening it.
 //
-//go:embed assets/shell.css assets/pages.js
+//go:embed assets/shell.css assets/avatar.css assets/pages.js
 var assetFS embed.FS
 
 // PageHandlers render the small set of browser pages reached from email.
@@ -41,6 +42,9 @@ func NewPageHandlers(d Deps) *PageHandlers {
 }
 
 type pageData struct {
+	// Sigil is FORGE's mark, rendered inline so the identity appears with the
+	// page rather than after a second request that may not arrive.
+	Sigil template.HTML
 	// Page names which behaviour the shared script should attach. Rendered into
 	// a data- attribute so one served script serves every page.
 	Page string
@@ -55,6 +59,9 @@ type pageData struct {
 
 func (p *PageHandlers) render(w http.ResponseWriter, r *http.Request, name string, data pageData) {
 	data.MinChars = p.d.Config.Auth.MinPasswordLength
+	if data.Sigil == "" {
+		data.Sigil = template.HTML(persona.AvatarSVG(persona.StateIdle, 26))
+	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	// These pages carry a live credential in their URL. Caching one — in the
@@ -111,7 +118,7 @@ func (p *PageHandlers) Index(w http.ResponseWriter, r *http.Request) {
 func (p *PageHandlers) Assets(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimPrefix(r.URL.Path, "/assets/")
 	switch name {
-	case "shell.css":
+	case "shell.css", "avatar.css":
 		w.Header().Set("Content-Type", "text/css; charset=utf-8")
 	case "pages.js":
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
@@ -143,8 +150,9 @@ const pageTemplates = `
 <meta name="referrer" content="no-referrer">
 <title>{{.Title}} · FORGE</title>
 <link rel="stylesheet" href="/assets/shell.css">
+<link rel="stylesheet" href="/assets/avatar.css">
 </head><body><main class="panel" data-page="{{.Page}}" data-token="{{.Token}}">
-<div class="mark"><div class="core" aria-hidden="true"></div><div class="wordmark">FORGE</div></div>
+<div class="mark">{{.Sigil}}<div class="wordmark">FORGE</div></div>
 {{end}}
 
 {{define "foot"}}</main><script src="/assets/pages.js"></script></body></html>{{end}}

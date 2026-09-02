@@ -207,19 +207,19 @@ func wrapHTML(title, body string) string {
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>%s</title>
 <style>
-  body { margin:0; padding:24px; background:#0f1115; color:#e6e8ec;
+  body { margin:0; padding:24px; background:#0b0f18; color:#eef1f6;
          font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
          font-size:15px; line-height:1.6; }
-  .card { max-width:520px; margin:0 auto; background:#171a21; border:1px solid #262b36;
-          border-radius:10px; padding:28px; }
-  .mark { font-weight:700; letter-spacing:.18em; font-size:12px; color:#e8993a; margin:0 0 20px; }
+  .card { max-width:520px; margin:0 auto; background:#141a26; border:1px solid #263041;
+          border-radius:12px; padding:28px; }
+  .mark { font-weight:700; letter-spacing:.22em; font-size:12px; color:#4fd8e8; margin:0 0 20px; }
   p { margin:0 0 14px; }
-  .muted { color:#9aa3b2; font-size:13px; }
-  .url { color:#7fb2ff; word-break:break-all; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; }
-  .btn { display:inline-block; background:#e8993a; color:#151821 !important; text-decoration:none;
-         font-weight:600; padding:11px 20px; border-radius:6px; }
-  hr { border:0; border-top:1px solid #262b36; margin:20px 0; }
-  a { color:#7fb2ff; }
+  .muted { color:#98a3b8; font-size:13px; }
+  .url { color:#4fd8e8; word-break:break-all; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; }
+  .btn { display:inline-block; background:#4fd8e8; color:#08202a !important; text-decoration:none;
+         font-weight:650; padding:11px 20px; border-radius:7px; }
+  hr { border:0; border-top:1px solid #263041; margin:20px 0; }
+  a { color:#4fd8e8; }
 </style></head>
 <body><div class="card">
 <p class="mark">FORGE</p>

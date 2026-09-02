@@ -1,0 +1,124 @@
+/* FORGE sigil — three swept blades around a glowing core, taken from the
+ * character's hair ornament.
+ *
+ * The blades are the boundary; the core is the work. The blades and the ring are
+ * present in every state, including failure and completion, because the boundary
+ * does not disappear when the work does.
+ *
+ * Every state is distinguishable WITHOUT colour: motion, dash pattern, and a
+ * glyph carry the meaning. Colour alone fails for a colour-blind reader and on a
+ * monochrome screen — and the state this matters most for, "waiting for you", is
+ * the one nobody should miss.
+ *
+ * Palette matches the character: white shell, gold trim, cyan core. Cyan means
+ * "active" consistently across the whole interface, so a reader learns it once.
+ */
+
+.forge-avatar { display: block; overflow: visible; }
+
+/* Blades: white shell with gold shadow, as on the uniform trim. */
+.fa-wing-lit   { stop-color: #f7f8fa; }
+.fa-wing-shade { stop-color: #d9b25c; }
+
+/* Core: cyan, the colour of the ornament, the collar gem, and the wrist display. */
+.fa-core-hot  { stop-color: #d6fbff; }
+.fa-core-mid  { stop-color: #4fd8e8; }
+.fa-core-edge { stop-color: #1c7f8e; }
+
+.fa-ring  { stroke: #d9b25c; opacity: .55; }
+.fa-core  { transform-origin: 50% 60%; }
+.fa-wings { transform-origin: 50% 34%; }
+.fa-mark  { stroke: #0d1420; fill: none; }
+
+/* Idle — the core breathes slowly. Alive, not demanding attention. */
+.forge-avatar--idle .fa-core {
+  animation: fa-breathe 4.5s ease-in-out infinite;
+  opacity: .88;
+}
+
+/* Thinking — a faster pulse, and the blades lift very slightly. A model call is
+ * in flight: the work is internal, so the motion is at the core. */
+.forge-avatar--thinking .fa-core { animation: fa-breathe 1.3s ease-in-out infinite; }
+.forge-avatar--thinking .fa-wings { animation: fa-lift 1.3s ease-in-out infinite; }
+.forge-avatar--thinking .fa-ring { opacity: .85; }
+
+/* Working — the core steadies and an arc travels the ring while the wings turn.
+ * The motion is on the BOUNDARY because a tool call happens outside this
+ * process. */
+.forge-avatar--working .fa-arc {
+  stroke: #4fd8e8;
+  transform-origin: 50% 60%;
+  animation: fa-orbit 1.6s linear infinite;
+}
+/* The wings do NOT spin. An earlier version rotated the whole assembly and it
+ * read as "broken and tumbling" rather than "working" — a hair ornament that
+ * revolves is a malfunction, not activity. The arc on the boundary carries the
+ * motion instead, which is also the more accurate signal: a tool call is
+ * something happening outside this process. */
+.forge-avatar--working .fa-wings { animation: fa-lift 2.4s ease-in-out infinite; }
+
+/* Blocked — the ring becomes a dashed gate and the core dims. The work is
+ * stopped AT the boundary. Deliberately the most distinct state: it stays true
+ * until a human acts, and an agent waiting unnoticed looks like one that died. */
+.forge-avatar--blocked .fa-ring { stroke: transparent; }
+.forge-avatar--blocked .fa-gate {
+  stroke: #e0b64c;
+  transform-origin: 50% 60%;
+  animation: fa-orbit 9s linear infinite;
+}
+.forge-avatar--blocked .fa-core { opacity: .38; animation: fa-breathe 3s ease-in-out infinite; }
+
+/* Failed — still, dark, crossed. No animation: nothing is happening, and
+ * animating anyway is the visual form of overstating state. */
+.forge-avatar--failed .fa-core  { opacity: .3; filter: grayscale(.85); }
+.forge-avatar--failed .fa-wings { opacity: .45; filter: grayscale(.7); }
+.forge-avatar--failed .fa-ring  { stroke: #d9636b; opacity: .8; }
+
+/* Done — settled. Also motionless: the work is finished. */
+.forge-avatar--done .fa-ring { stroke: #4ea87a; opacity: .95; }
+.forge-avatar--done .fa-core { opacity: 1; }
+
+@keyframes fa-breathe {
+  0%, 100% { transform: scale(1);    }
+  50%      { transform: scale(1.09); }
+}
+@keyframes fa-lift {
+  0%, 100% { transform: translateY(0)    scale(1);     }
+  50%      { transform: translateY(-2px) scale(1.035); }
+}
+@keyframes fa-orbit {
+  from { transform: rotate(-90deg); }
+  to   { transform: rotate(270deg); }
+}
+
+/* ---------------------------------------------------------------------------
+ * Character portrait
+ * ------------------------------------------------------------------------- */
+
+/* The portrait is presence, not status — it appears where there is room for it.
+ * The sigil is overlaid at the corner so the STATE is still readable at a glance
+ * without having to interpret an expression. */
+.forge-presence { display: flex; align-items: center; gap: 14px; }
+
+.forge-portrait {
+  position: relative;
+  width: 72px; height: 72px;
+  flex: none;
+  border-radius: 50%;
+  overflow: hidden;
+  background: linear-gradient(160deg, #f7f8fa 0%, #e6e9ee 55%, #d9b25c 160%);
+  border: 1.5px solid rgba(217, 178, 92, .55);
+}
+.forge-portrait img { width: 100%; height: 100%; object-fit: cover; display: block; }
+
+.forge-portrait__badge {
+  position: absolute; right: -2px; bottom: -2px;
+  width: 26px; height: 26px;
+  border-radius: 50%;
+  background: var(--panel, #151922);
+  display: grid; place-items: center;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .forge-avatar * { animation: none !important; }
+}
