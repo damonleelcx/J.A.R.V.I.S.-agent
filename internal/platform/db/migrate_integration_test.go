@@ -299,3 +299,130 @@ func TestEmptyMigrationDirIsRefused(t *testing.T) {
 		t.Fatal("a migration directory with no .sql files must be refused")
 	}
 }
+
+// TestMigrationsRunInTwoIsolatedSchemas is the regression fence for the failure
+// CI caught and a developer machine structurally cannot.
+//
+// The bug: 0001 ran `create extension if not exists citext` and 0002 declared
+// email columns as citext. CREATE EXTENSION IF NOT EXISTS is evaluated
+// DATABASE-wide but installs the type into ONE schema. With the suite creating
+// several schemas concurrently, the first run created citext inside its own
+// schema; every later run saw "already exists", did nothing, and then failed
+// with `type "citext" does not exist`.
+//
+// Locally it never appeared, because an earlier `make migrate` had put citext
+// in `public`, and `public` is on the test search path. CI's database was fresh.
+//
+// # Why this test migrates TWICE, into two different schemas
+//
+// A single isolated schema does not reproduce it: with the extension absent
+// everywhere, that schema simply creates its own and succeeds. The defect only
+// exists in the gap between the two — a database-scoped object created by the
+// first run, needed but not re-creatable by the second.
+//
+// Running the chain into schema A and then into schema B, both with search_path
+// excluding public, reproduces exactly that. It generalises beyond citext to any
+// dependency on a database-wide object that one schema creates and another
+// assumes.
+//
+// Verified: with citext restored, the second migration fails here.
+func TestMigrationsRunInTwoIsolatedSchemas(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+
+	url := os.Getenv("FORGE_TEST_DATABASE_URL")
+	sep := "?"
+	if strings.Contains(url, "?") {
+		sep = "&"
+	}
+
+	migrations, err := db.LoadMigrations(db.Files, db.MigrationsDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(migrations) == 0 {
+		t.Fatal("no migrations loaded; this fence would pass vacuously")
+	}
+
+	// Deliberately not derived from t.Name(): an earlier version of this test
+	// used the test name as the schema name, and its own guard then matched the
+	// word "public" inside it.
+	for i, suffix := range []string{"iso_a", "iso_b"} {
+		schema := "forge_test_" + suffix
+		if _, err := pool.Exec(ctx, "drop schema if exists "+schema+" cascade"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, "create schema "+schema); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			_, _ = pool.Exec(context.Background(), "drop schema if exists "+schema+" cascade")
+		})
+
+		// No ",public": anything the chain needs, the chain must create.
+		scoped, err := db.Connect(ctx, config.DBConfig{
+			URL: url + sep + "search_path=" + schema, MaxConns: 4, MinConns: 1,
+			MaxConnLifetime: time.Hour, MaxConnIdleTime: time.Minute, ConnectTimeout: 10 * time.Second,
+		}, logx.Discard())
+		if err != nil {
+			t.Fatalf("schema %s: connecting: %v", schema, err)
+		}
+
+		// Prove the isolation before trusting the result. Compare entries, not
+		// substrings — a schema name can contain the word "public".
+		var searchPath string
+		if err := scoped.QueryRow(ctx, "show search_path").Scan(&searchPath); err != nil {
+			t.Fatal(err)
+		}
+		for _, entry := range strings.Split(searchPath, ",") {
+			if strings.Trim(strings.TrimSpace(entry), `"`) == "public" {
+				t.Fatalf("search_path is %q and still includes public; this test cannot detect the bug it exists for", searchPath)
+			}
+		}
+
+		if _, err := db.Migrate(ctx, scoped, migrations, logx.Discard()); err != nil {
+			scoped.Close()
+			t.Fatalf("migration run %d of 2 (schema %s) failed: %v\n\n"+
+				"The chain depends on something outside its own schema. If run 1 succeeded and "+
+				"run 2 failed, the dependency is a DATABASE-scoped object that the first run "+
+				"created and the second could not re-create — a CREATE EXTENSION IF NOT EXISTS "+
+				"behaves exactly this way. A developer database hides it because earlier runs "+
+				"leave the object in public.", i+1, schema, err)
+		}
+		// Re-runnable under isolation too.
+		if _, err := db.Migrate(ctx, scoped, migrations, logx.Discard()); err != nil {
+			scoped.Close()
+			t.Fatalf("schema %s: second pass failed: %v", schema, err)
+		}
+		scoped.Close()
+	}
+}
+
+// TestNoExtensionsAreRequired states the resulting rule as a check rather than
+// a comment. An extension is a database-wide object with a per-schema install
+// location, which makes it the specific hazard this chain now avoids.
+func TestNoExtensionsAreRequired(t *testing.T) {
+	migrations, err := db.LoadMigrations(db.Files, db.MigrationsDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(migrations) == 0 {
+		t.Fatal("no migrations loaded; this fence would pass vacuously")
+	}
+	for _, m := range migrations {
+		for _, line := range strings.Split(m.SQL, "\n") {
+			trimmed := strings.TrimSpace(strings.ToLower(line))
+			if strings.HasPrefix(trimmed, "--") {
+				continue
+			}
+			if strings.Contains(trimmed, "create extension") {
+				t.Errorf("%04d_%s creates an extension:\n  %s\n\n"+
+					"CREATE EXTENSION IF NOT EXISTS is evaluated database-wide but installs into "+
+					"ONE schema, so it silently does nothing when the extension already exists "+
+					"elsewhere — leaving its types unresolvable. If an extension is genuinely "+
+					"required, install it as a deployment step and schema-qualify every use.",
+					m.Version, m.Name, strings.TrimSpace(line))
+			}
+		}
+	}
+}

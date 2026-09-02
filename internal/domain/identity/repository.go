@@ -69,7 +69,7 @@ func (r *Repository) CreateUser(ctx context.Context, q db.Querier, u *User) erro
 		u.ID, u.Email, u.DisplayName, string(u.Status), u.PasswordHash, u.PasswordAlgo,
 		u.PasswordChangedAt, u.CreatedAt)
 	if err != nil {
-		if isUniqueViolation(err, "forge_users_email_key") {
+		if isUniqueViolation(err, "forge_users_email_lower_key") {
 			return errs.Wrap(op, errs.CodeEmailAlreadyRegistered, err)
 		}
 		return errs.Wrap(op, errs.CodeDatabaseUnavail, err)
@@ -82,7 +82,7 @@ func (r *Repository) FindUserByEmail(ctx context.Context, q db.Querier, email st
 	const op = "identity.Repository.FindUserByEmail"
 
 	u, err := scanUser(q.QueryRow(ctx,
-		`select `+userColumns+` from forge_users where email = $1`, NormalizeEmail(email)))
+		`select `+userColumns+` from forge_users where lower(email) = $1`, NormalizeEmail(email)))
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return nil, errs.Wrap(op, errs.CodeNotFound, err)
@@ -476,11 +476,11 @@ func (r *Repository) CountRecentFailures(ctx context.Context, q db.Querier, emai
 	var n int
 	err := q.QueryRow(ctx, `
 		select count(*) from forge_signin_attempts
-		 where email = $1
+		 where lower(email) = $1
 		   and succeeded = false
 		   and created_at > greatest($2, coalesce(
 		         (select max(created_at) from forge_signin_attempts
-		           where email = $1 and succeeded = true), $2))`,
+		           where lower(email) = $1 and succeeded = true), $2))`,
 		NormalizeEmail(email), since).Scan(&n)
 	if err != nil {
 		return 0, errs.Wrap(op, errs.CodeDatabaseUnavail, err)

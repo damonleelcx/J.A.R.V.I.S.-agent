@@ -14,7 +14,16 @@
 -- a bigger version of this one.
 create table if not exists forge_users (
     id                  text        primary key,
-    email               citext      not null unique,
+    -- Plain text rather than the citext extension: see 0001_bootstrap for why
+    -- that extension was removed. Case-insensitive uniqueness is enforced by
+    -- the functional index forge_users_email_lower_key below, which needs no
+    -- extension and cannot be defeated by search_path.
+    --
+    -- Application code normalises to lower case before every read and write
+    -- (identity.NormalizeEmail). The index is the backstop for the code path
+    -- that forgets: without it, "Ada@x.com" and "ada@x.com" would become two
+    -- accounts that render identically in every interface.
+    email               text        not null,
     -- Null until the address is proven. Kept as a timestamp rather than a
     -- boolean so "when did this become trusted?" is answerable during an audit.
     email_verified_at   timestamptz,
@@ -40,6 +49,10 @@ create table if not exists forge_users (
     constraint forge_users_password_hash_nonempty
         check (length(password_hash) > 0)
 );
+
+-- Case-insensitive uniqueness without an extension.
+create unique index if not exists forge_users_email_lower_key
+    on forge_users (lower(email));
 
 do $$ begin
     if not exists (select 1 from pg_trigger where tgname = 'forge_users_updated_at') then
@@ -116,15 +129,16 @@ create index if not exists forge_auth_tokens_live_idx
 -- no user row to point at.
 create table if not exists forge_signin_attempts (
     id         text        primary key,
-    email      citext      not null,
+    email      text        not null,
     succeeded  boolean     not null,
     ip         inet,
     user_agent text        not null default '',
     created_at timestamptz not null default now()
 );
 
+-- Callers normalise before querying, so the index is on the normalised form.
 create index if not exists forge_signin_attempts_email_idx
-    on forge_signin_attempts (email, created_at desc);
+    on forge_signin_attempts (lower(email), created_at desc);
 create index if not exists forge_signin_attempts_created_idx
     on forge_signin_attempts (created_at);
 

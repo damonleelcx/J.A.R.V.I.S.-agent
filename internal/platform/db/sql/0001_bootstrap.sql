@@ -5,8 +5,20 @@
 -- TestMigrationsAreIdempotent, which runs the full chain twice against a live
 -- database and fails if the second run errors or changes the schema.
 
-create extension if not exists citext;
-
+-- No extensions.
+--
+-- An earlier version of this file created `citext` for case-insensitive email.
+-- It was removed after CI failed with `type "citext" does not exist` on a fresh
+-- database: CREATE EXTENSION IF NOT EXISTS is evaluated DATABASE-wide but
+-- installs the type into ONE schema. With tests running concurrently in
+-- separate schemas, the first creates it in its own schema and every later one
+-- sees "already exists", skips, and then cannot resolve the type. A developer
+-- machine hides this completely, because an earlier migration has usually put
+-- citext in `public`, which is on the search path.
+--
+-- Case-insensitive uniqueness is now a functional unique index on lower(email)
+-- (see 0002_identity). That needs no extension, is portable, and cannot be
+-- defeated by search_path.
 -- set_updated_at keeps updated_at honest without every writer remembering to.
 -- Why a trigger rather than application code: updated_at is read by the
 -- reconciliation paths that decide whether a record is stale. A writer that
