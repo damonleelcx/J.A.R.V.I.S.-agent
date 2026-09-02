@@ -1,8 +1,9 @@
 /* FORGE workbench — the conversational, 3D-first surface.
  *
- * Wires three things together: the voice layer, the 3D studio, and the
- * conversation endpoint. Everything structural lives in those; this file is the
- * choreography between them (PRD §5.3).
+ * Wires four things together: the voice layer, the orb that gives voice a
+ * visible state, the 3D studio, and the conversation endpoint. Everything
+ * structural lives in those; this file is the choreography between them
+ * (PRD §5.3).
  *
  * The choreography rules, which are product decisions rather than plumbing:
  *   - Speech is short and the screen carries detail. Reading a parts table aloud
@@ -11,6 +12,10 @@
  *     shown rather than the target claimed.
  *   - Geometry always arrives with what it does NOT establish, and that banner
  *     is not dismissible.
+ *   - The voice surface owns the middle of the screen until there is something
+ *     to look at, then it moves to the corner. Nothing is removed by the move.
+ *   - A conversation proposes work. A PERSON starts it, in two deliberate steps,
+ *     and sees the plan in between.
  */
 (function () {
   'use strict';
@@ -19,6 +24,7 @@
 
   var studio = null;
   var voice = null;
+  var orb = null;
   var state = {
     history: [],
     prototype: null,
@@ -28,7 +34,15 @@
     firstToken: null,
     lastBargeIn: null,
     model: null,
-    busy: false
+    busy: false,
+    /* The proposal's lifecycle, which is also the AGT-08 state machine this
+     * card is allowed to display: nothing → proposed → planned → active.
+     * Held in one field so the card cannot render two states at once. */
+    recalled: [],         // standards figures FORGE quoted from memory this turn
+    proposal: null,       // the ProposedGoal from the conversation
+    goal: null,           // the created goal, once it exists
+    planTasks: null,      // its tasks, once planning has run
+    goalPhase: 'none'     // none | proposed | planning | planned | starting | active | failed
   };
 
   function esc(s) {
@@ -60,9 +74,98 @@
     }
     partialEl.querySelector('.body').textContent = text;
     $('transcript').scrollTop = $('transcript').scrollHeight;
+    setCaption(text, true);
   }
   function clearPartial() {
     if (partialEl) { partialEl.remove(); partialEl = null; }
+  }
+
+  /* ---- the voice surface ------------------------------------------------- */
+
+  /* The caption under the orb is the last thing SAID, not a status line. Keeping
+   * those two separate is what lets the state word below it be read as state
+   * rather than as more transcript. */
+  function setCaption(text, partial) {
+    var el = $('caption');
+    el.textContent = text || '';
+    el.classList.toggle('partial', !!partial);
+  }
+
+  var STATES = {
+    idle:      'Ready',
+    listening: 'Listening…',
+    thinking:  'Thinking…',
+    speaking:  'Speaking…'
+  };
+
+  function setStatus(s) {
+    var el = $('statusword');
+    el.textContent = STATES[s] || STATES.idle;
+    el.className = 'voice-state ' + s;
+    if (orb) orb.setState(s === 'idle' ? 'idle' : s);
+    setPresence();
+  }
+
+  /* ---- presence ---------------------------------------------------------- */
+
+  /* The header presence carries FORGE's own state, in FORGE's own vocabulary —
+   * the six the sigil defines (persona/avatar.go), not the four the voice
+   * surface uses.
+   *
+   * Only three of the six can honestly occur here, and the mapping is exact
+   * rather than decorative:
+   *
+   *   thinking  a model call is in flight. Literally what StateThinking means.
+   *   blocked   "waiting for you": a proposal is on screen and nothing moves
+   *             until the person decides. This is the state the sigil is most
+   *             deliberately distinct for, because an agent waiting unnoticed
+   *             looks exactly like one that died.
+   *   idle      neither of those.
+   *
+   * `working` is NOT used. It means a tool is running outside this process, and
+   * nothing on this page does that — a worker does. `done` and `failed` belong
+   * to a goal's outcome, which this page does not observe. Borrowing either
+   * would be the interface asserting something the system did not do.
+   *
+   * Both images come from the server, so the state-to-expression rule stays in
+   * persona.ExpressionFor rather than being re-derived here. */
+  var presenceState = null;
+
+  function forgeState() {
+    if (state.busy || state.goalPhase === 'planning' || state.goalPhase === 'starting') {
+      return 'thinking';
+    }
+    if (state.goalPhase === 'proposed' || state.goalPhase === 'planned') return 'blocked';
+    return 'idle';
+  }
+
+  function setPresence() {
+    var want = forgeState();
+    if (want === presenceState) return;
+    presenceState = want;
+
+    /* Both assets are re-requested from the server rather than swapped between
+     * variants held here, so persona.ExpressionFor stays the only place that
+     * decides which face belongs to which state. They are small, cached for
+     * five minutes, and there are three of them. */
+    var portrait = $('orb-portrait');
+    if (portrait) portrait.src = '/v1/meta/portrait?state=' + encodeURIComponent(want);
+
+    ['orb-badge', 'top-sigil'].forEach(function (id) {
+      var badge = $(id);
+      if (!badge) return;
+      badge.innerHTML = '<img src="/v1/meta/sigil?state=' + encodeURIComponent(want) +
+        '&size=64" alt="FORGE: ' + want + '">';
+    });
+  }
+
+  /* The dock. Triggered by geometry existing, which is the moment the middle of
+   * the screen acquires a subject that is not the conversation. One condition,
+   * one place — a second trigger elsewhere would eventually disagree with this
+   * one about which state the interface is in. */
+  function setPlace(building) {
+    $('voice').setAttribute('data-place', building ? 'dock' : 'hero');
+    $('stage').classList.toggle('building', building);
   }
 
   /* ---- the stage -------------------------------------------------------- */
@@ -77,8 +180,8 @@
   function loadPrototype(proto) {
     state.prototype = proto;
     state.selectedPart = null;
-    $('stage-empty').classList.add('hidden');
     studio.load(proto);
+    setPlace(true);
     renderParts();
     renderProvenance();
   }
@@ -151,6 +254,31 @@
       html += '<div style="margin-top:7px"><b>Drawn approximately:</b><ul>' +
         approx.map(function (a) { return '<li>' + esc(a) + '</li>'; }).join('') + '</ul></div>';
     }
+    /* Sits with everything else this picture does not establish. A dimension
+     * recalled from a standard is not a dimension that was looked up, and the
+     * banner is where that distinction belongs. */
+    if (state.recalled && state.recalled.length) {
+      /* The banner is a SUMMARY — which standards this reply leaned on, and
+       * every figure it quoted for each. The sentences live in the transcript
+       * block, where there is room for them. Nine bullets repeating "M3" is how
+       * a warning gets scrolled past. */
+      var byStandard = {};
+      state.recalled.forEach(function (c) {
+        standardsOf(c).forEach(function (name) {
+          var k = name.toUpperCase().replace(/\s+/g, '');
+          if (!byStandard[k]) byStandard[k] = { name: name, figures: [] };
+          figuresOf(c).forEach(function (f) {
+            if (byStandard[k].figures.indexOf(f) < 0) byStandard[k].figures.push(f);
+          });
+        });
+      });
+      html += '<div style="margin-top:7px"><b>Quoted from memory, not checked:</b><ul>' +
+        Object.keys(byStandard).map(function (k) {
+          var e = byStandard[k];
+          return '<li>' + esc(e.name) +
+            (e.figures.length ? ' — ' + esc(e.figures.join(', ')) : ' — named, no figure quoted') + '</li>';
+        }).join('') + '</ul></div>';
+    }
     html += '<div style="margin-top:7px;opacity:.85">Proposed by ' + esc(p.model_note || 'FORGE') +
             '. No CAD kernel, solver, or interference check exists in this deployment.</div>';
     el.innerHTML = html;
@@ -174,12 +302,13 @@
     state.busy = true;
     clearPartial();
     addTurn('you', text);
+    setCaption(text, false);
     state.history.push({ role: 'user', content: text });
 
     var bubble = addTurn('forge', '…');
+    state.recalled = [];
     var t0 = performance.now();
     setStatus('thinking');
-    var spoke = false;
 
     streamTurn(text, function (ev) {
       switch (ev.kind) {
@@ -190,7 +319,9 @@
           updateMeta();
           // Speaking starts HERE, not at 'done'. This is the whole reason the
           // endpoint streams.
-          if (state.speak && ev.text) { spoke = true; voice.speak(ev.text); }
+          if (state.speak && ev.text) {
+            voice.speak(ev.text, function () { if (!state.busy) setStatus('idle'); });
+          }
           break;
 
         case 'detail':
@@ -206,7 +337,17 @@
           break;
 
         case 'goal':
-          renderProposal(ev.goal);
+          proposeGoal(ev.goal);
+          break;
+
+        case 'recalled':
+          // Attached to the turn that made the claim AND folded into the
+          // provenance banner if geometry is on screen. A figure quoted in
+          // prose is exactly as unverifiable as one quoted in an assumption,
+          // so it must not depend on there being a model to hang it on.
+          state.recalled = ev.recalled || [];
+          bubble.appendChild(recalledBlock(state.recalled));
+          renderProvenance();
           break;
 
         case 'error':
@@ -228,7 +369,17 @@
       bubble.querySelector('.body').style.color = 'var(--bad)';
     }).then(function () {
       state.busy = false;
-      if (!spoke) setStatus('idle');
+      /* Resolved from what the voice layer is ACTUALLY doing, not from whether
+       * speak() was called.
+       *
+       * The earlier version only reset the state word when nothing had been
+       * spoken, on the assumption that speech would always reach its own end
+       * event and reset it there. speechSynthesis does not guarantee that: an
+       * utterance that never starts — no audio device, a policy block, one of
+       * Chrome's long-standing silent drops — fires neither onstart nor onend,
+       * and the workbench sat on "Thinking…" forever with the turn finished and
+       * the model paid for. Observed in a browser with no audio output. */
+      setStatus(voice.speaking ? 'speaking' : 'idle');
     });
   }
 
@@ -286,36 +437,236 @@
     });
   }
 
-  /* A proposed goal is shown as a proposal and nothing more. Starting work is a
-   * separate, deliberate act — PRD AGT-04: autonomy is never raised silently,
-   * and a conversation must not be able to start execution. */
-  function renderProposal(goal) {
-    var el = $('proposal');
+  /* Recalled figures.
+   *
+   * FORGE quoted a published standard. There is no reference source in this
+   * deployment, so the figure came out of the model's memory and nothing here
+   * checked it — which is worth saying loudly, because a wrong number attached
+   * to a real standard is specific enough to be acted on. Observed: a NEMA 17
+   * bolt pattern given as "±20.5 mm on both axes", which is a 41mm pattern
+   * against a real 31mm one.
+   *
+   * The wording names what is unknown rather than implying the figure is wrong:
+   * most of the time it is right, and crying wolf on every citation would train
+   * people to skip the one that matters. */
+  function recalledBlock(claims) {
+    var el = document.createElement('div');
+    el.className = 'recalled';
     el.innerHTML =
-      '<div class="approval"><div class="tier">' + esc(goal.risk_tier || 'r1') + ' · proposed work</div>' +
-      '<div style="margin-top:6px;font-weight:650;font-size:13px">' + esc(goal.title) + '</div>' +
-      '<div style="margin-top:6px;font-size:12.5px;line-height:1.55;color:var(--ink-dim)">' +
-      esc(goal.statement) + '</div>' +
-      '<div style="margin-top:10px;font-size:11.5px;color:var(--ink-dim)">' +
-      'Nothing runs from here. To start it:<br><code style="font-size:11px">forgectl goal new --owner &lt;you&gt; ' +
-      '--title "' + esc(goal.title) + '" --statement "…" --start</code></div></div>';
+      '<div class="rc-h">Quoted from memory · not checked</div>' +
+      claims.map(function (c) {
+        var figs = figuresOf(c);
+        return '<div class="rc-i"><b>' + esc(standardsOf(c).join(' · ')) + '</b>' +
+          (figs.length ? ' — ' + esc(figs.join(', ')) : ' — conformance claimed, no figure given') +
+          // The sentence, verbatim. The figures are listed against the SENTENCE
+          // and never paired with an individual standard, so the reader does the
+          // pairing by reading it — see the note on StandardsClaim.
+          '<div class="rc-q">“' + esc(c.Text || c.text) + '”</div>' +
+          '<div class="rc-w">in the ' + esc(c.Where || c.where) + '</div></div>';
+      }).join('') +
+      '<div class="rc-f">There is no standards reference in this deployment. ' +
+      'Check these against the published standard before anything is cut.</div>';
+    return el;
+  }
+
+  function figuresOf(c) { return c.Figures || c.figures || []; }
+  function standardsOf(c) { return c.Standards || c.standards || []; }
+
+  /* ---- proposed work ----------------------------------------------------- */
+
+  /* # Why starting work takes two presses
+   *
+   * PRD AGT-02 requires a scoped plan and preview before material action, and
+   * AGT-04 forbids autonomy being raised without the person seeing it. So:
+   *
+   *   "Start this"  creates a DRAFT goal and plans it. Nothing is claimable,
+   *                 no worker can touch it, and the plan comes back and is shown.
+   *   "Start it"    activates. This is the material act, and by then the person
+   *                 has read the list of tasks they are authorising.
+   *
+   * The conversation itself never reaches either endpoint. It emits a proposal;
+   * a human presses a button. Two things on one screen are still two acts.
+   */
+
+  function proposeGoal(goal) {
+    state.proposal = goal;
+    state.goal = null;
+    state.planTasks = null;
+    state.goalPhase = 'proposed';
+    renderProposal();
+  }
+
+  function api(path, body) {
+    return fetch(path, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {})
+    }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (b) {
+        if (!r.ok) {
+          var e = (b && b.error) || {};
+          throw new Error((e.message || ('Request failed (' + r.status + ')')) +
+                          (e.remedy ? ' — ' + e.remedy : ''));
+        }
+        return b;
+      });
+    });
+  }
+
+  function startThis() {
+    if (state.goalPhase !== 'proposed' && state.goalPhase !== 'failed') return;
+    state.goalPhase = 'planning';
+    state.error = null;
+    renderProposal();
+
+    // Planning is a model call and takes tens of seconds. The elapsed counter
+    // reports only what is actually known — how long this has been running —
+    // for the same reason the CLI's ticker does: a progress bar here would be
+    // claiming to see inside the model.
+    var t0 = Date.now();
+    var tick = setInterval(function () {
+      var el = document.getElementById('plan-elapsed');
+      if (el) el.textContent = Math.round((Date.now() - t0) / 1000) + 's';
+    }, 1000);
+
+    api('/v1/goals', {
+      title: state.proposal.title,
+      statement: state.proposal.statement,
+      risk_tier: state.proposal.risk_tier || 'r1'
+    }).then(function (b) {
+      state.goal = b.goal;
+      state.planTasks = b.tasks || [];
+      state.clarification = b.clarification_needed || null;
+      state.rationale = b.rationale || '';
+      state.goalPhase = state.clarification ? 'proposed' : 'planned';
+      if (state.clarification) {
+        addTurn('forge', 'Before I can plan that, I need an answer: ' + state.clarification);
+        setCaption(state.clarification, false);
+      }
+    }).catch(function (err) {
+      state.goalPhase = 'failed';
+      state.error = err.message;
+    }).then(function () {
+      clearInterval(tick);
+      renderProposal();
+    });
+  }
+
+  function startIt() {
+    if (state.goalPhase !== 'planned' || !state.goal) return;
+    // Cleared before the attempt, so a previous failure is not still on screen
+    // beside a success.
+    state.error = null;
+    state.goalPhase = 'starting';
+    renderProposal();
+
+    api('/v1/goals/' + encodeURIComponent(state.goal.id) + '/start', {})
+      .then(function (b) {
+        state.goal = b.goal;
+        state.startMessage = b.message;
+        state.goalPhase = 'active';
+        addTurn('forge', b.message);
+      })
+      .catch(function (err) {
+        state.goalPhase = 'planned';
+        state.error = err.message;
+      })
+      .then(renderProposal);
+  }
+
+  function renderProposal() {
+    var el = $('proposal');
+    var head = $('proposal-head');
+    if (state.goalPhase === 'none' || !state.proposal) {
+      el.classList.add('hidden');
+      head.style.display = 'none';
+      return;
+    }
+    head.style.display = '';
     el.classList.remove('hidden');
+
+    var g = state.proposal;
+    var phase = state.goalPhase;
+    var cls = 'proposal' + (phase === 'active' ? ' live' : phase === 'planned' ? ' armed' : '');
+
+    var label = {
+      proposed: (g.risk_tier || 'r1') + ' · proposed',
+      planning: 'planning…',
+      planned:  (g.risk_tier || 'r1') + ' · planned, not running',
+      starting: 'starting…',
+      active:   'active',
+      failed:   (g.risk_tier || 'r1') + ' · proposed'
+    }[phase];
+
+    var html = '<div class="' + cls + '">' +
+      '<div class="tier">' + esc(label) + '</div>' +
+      '<div class="ttl">' + esc(g.title) + '</div>' +
+      '<div class="say">' + esc(g.statement) + '</div>';
+
+    if (state.goal) {
+      html += '<div class="foot"><code>' + esc(state.goal.id) + '</code></div>';
+    }
+
+    if (phase === 'planning') {
+      html += '<div class="foot">Planning with the planner model. ' +
+              'Nothing is running. <span id="plan-elapsed">0s</span> elapsed.</div>';
+    }
+
+    if ((phase === 'planned' || phase === 'starting' || phase === 'active') && state.planTasks) {
+      html += '<ul class="steps">' + state.planTasks.map(function (t) {
+        return '<li><span class="rt">' + esc(t.risk_tier) + '</span>' +
+               '<span>' + esc(t.title) + '</span>' +
+               (t.requires_approval ? '<span class="gate">gate</span>' : '') + '</li>';
+      }).join('') + '</ul>';
+      if (state.rationale) {
+        html += '<div class="foot">' + esc(state.rationale) + '</div>';
+      }
+    }
+
+    html += '<div class="acts">';
+    if (phase === 'proposed' || phase === 'failed') {
+      html += '<button class="btn-sm go" id="do-plan">Start this</button>';
+    } else if (phase === 'planning') {
+      html += '<button class="btn-sm" disabled>Planning…</button>';
+    } else if (phase === 'planned') {
+      html += '<button class="btn-sm go" id="do-start">Start it — run ' +
+              state.planTasks.length + ' task' + (state.planTasks.length === 1 ? '' : 's') + '</button>';
+    } else if (phase === 'starting') {
+      html += '<button class="btn-sm" disabled>Starting…</button>';
+    }
+    if (state.goal) {
+      html += '<a class="btn-sm" href="/console#goal=' + encodeURIComponent(state.goal.id) +
+              '" target="_blank" rel="noopener">Open in operations</a>';
+    }
+    html += '</div>';
+
+    /* What each state does NOT mean, said out loud. PRD AGT-08 makes proposed,
+     * planned and running distinct, and the difference between them is invisible
+     * unless the interface states it. */
+    if (phase === 'proposed' || phase === 'failed') {
+      html += '<div class="foot">Nothing has been created. Starting this writes a draft ' +
+              'goal and plans it — it does not run it.</div>';
+    } else if (phase === 'planned') {
+      html += '<div class="foot">The goal is a <b>draft</b>. These tasks exist and no worker ' +
+              'can claim them until you start it.</div>';
+    } else if (phase === 'active') {
+      html += '<div class="foot">' + esc(state.startMessage || 'Started.') + '</div>';
+    }
+
+    if (state.error) {
+      html += '<div class="note bad">' + esc(state.error) + '</div>';
+    }
+    html += '</div>';
+
+    el.innerHTML = html;
+    setPresence();
+    var plan = document.getElementById('do-plan');
+    if (plan) plan.addEventListener('click', startThis);
+    var start = document.getElementById('do-start');
+    if (start) start.addEventListener('click', startIt);
   }
 
   /* ---- voice glue -------------------------------------------------------- */
-
-  function setStatus(s) {
-    var el = $('status');
-    var map = {
-      idle: ['off', 'Ready'],
-      listening: ['live', 'Listening'],
-      thinking: ['live', 'Thinking'],
-      speaking: ['live', 'Speaking']
-    };
-    var v = map[s] || map.idle;
-    el.className = 'pill ' + v[0];
-    el.textContent = v[1];
-  }
 
   /* Measured figures, never the PRD's targets. AUD-02 names ≤700ms to first
    * audio and ≤250ms to stop on barge-in; showing what actually happened is the
@@ -329,9 +680,33 @@
   }
 
   function initVoice() {
+    /* The text path is wired FIRST, before anything that can fail.
+     *
+     * This form's input carries no `name`, so if its submit handler is ever
+     * missing the browser performs a native GET submit: the page navigates and
+     * the whole conversation is destroyed by someone pressing send. That exact
+     * failure has happened in this codebase before — see
+     * docs/bugfix/2026-09-02-csp-blocked-inline-page-script.md, where a
+     * password-reset form ate its own token the same way.
+     *
+     * It lives with the microphone rather than with the viewport sliders,
+     * because they are one feature: the audio path and the non-audio path PRD
+     * AUD-06 requires for every critical interaction. A missing slider in the
+     * 3D viewport must not be able to take typing down with it, and neither
+     * must a browser with no speech recognition. */
+    $('sayform').addEventListener('submit', function (e) {
+      e.preventDefault();
+      var input = $('say');
+      var text = input.value.trim();
+      if (text) { input.value = ''; send(text); }
+    });
+
     voice = new ForgeVoice.Voice({
       onPartial: function (text) { showPartial(text); },
       onTranscript: function (text) { clearPartial(); send(text); },
+      // A real measurement, and only while listening. See orb.js for why the
+      // orb refuses to draw this shape at any other time.
+      onLevel: function (v) { if (orb) orb.setLevel(v); },
       onBargeIn: function (ms) {
         // The measured figure, not the target. PRD AUD-02 asks for ≤250ms; this
         // shows what actually happened so the claim can be checked rather than
@@ -344,7 +719,8 @@
         $('mic').classList.toggle('listening', s.listening);
         if (s.speaking) setStatus('speaking');
         else if (s.listening) setStatus('listening');
-        else if (!state.busy) setStatus('idle');
+        else if (state.busy) setStatus('thinking');
+        else setStatus('idle');
       },
       onError: function (msg) {
         $('voice-note').textContent = msg;
@@ -426,27 +802,63 @@
     $('sectionat').addEventListener('input', function (e) {
       studio.setSection($('section').value, parseFloat(e.target.value));
     });
+  }
 
-    $('sayform').addEventListener('submit', function (e) {
-      e.preventDefault();
-      var input = $('say');
-      var text = input.value.trim();
-      if (text) { input.value = ''; send(text); }
-    });
+  /* ---- the soul ---------------------------------------------------------- */
+
+  /* Rendered by the server into the page; this only opens and closes it.
+   * Escape closes it — and does NOT fall through to stopping speech, because a
+   * person pressing Escape with a dialog open means "close this". */
+  function initSoul() {
+    var panel = $('soul');
+    var button = $('whois');
+    if (!panel || !button) return;
+
+    function open(yes) {
+      panel.classList.toggle('hidden', !yes);
+      button.setAttribute('aria-expanded', String(yes));
+      if (yes) $('soul-close').focus();
+    }
+    button.addEventListener('click', function () { open(panel.classList.contains('hidden')); });
+    $('soul-close').addEventListener('click', function () { open(false); button.focus(); });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && !panel.classList.contains('hidden')) {
+        e.stopPropagation();
+        open(false);
+        button.focus();
+      }
+    }, true);
   }
 
   /* ---- boot -------------------------------------------------------------- */
 
+  /* Each stage of boot is isolated. The conversation must survive a failure in
+   * the viewport, and the viewport must survive a failure in the voice layer —
+   * one throw taking down the rest is how an interface loses the one control
+   * the user actually needed. The failure is reported rather than swallowed. */
+  function safely(name, fn) {
+    try {
+      fn();
+    } catch (e) {
+      if (window.console) window.console.warn('forge.workbench.' + name + '_failed', e);
+    }
+  }
+
   function boot() {
+    safely('orb', function () { orb = new ForgeOrb.Orb($('orb')); });
     studio = new Forge3D.Studio($('canvas'), {
       onError: function (msg) {
-        $('stage-empty').innerHTML = '<div>' + esc(msg) + '</div>';
+        // A renderer that cannot start is stated as a failure, in its own words,
+        // rather than left to read as "nothing modelled yet".
+        $('stage-empty').textContent = msg;
         $('stage-empty').classList.remove('hidden');
       }
     });
-    initVoice();
-    initControls();
+    safely('voice', initVoice);
+    safely('controls', initControls);
+    safely('soul', initSoul);
     setStatus('idle');
+    setPlace(false);
     renderParts();
 
     fetch('/v1/meta/models').then(function (r) { return r.json(); }).then(function (m) {
@@ -468,6 +880,7 @@
         'Hold the microphone or the space bar to talk; press Escape to stop me mid-sentence.');
     }).catch(function () {
       $('who').innerHTML = '<a href="/console">Sign in</a>';
+      setCaption('Sign in from the console to start.', false);
       addTurn('forge', 'You are not signed in. Sign in from the console, then come back — ' +
         'I cannot hold a conversation without knowing whose workspace this is.');
       $('say').disabled = true;

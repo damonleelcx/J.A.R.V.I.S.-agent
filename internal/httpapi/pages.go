@@ -23,7 +23,8 @@ import (
 // script satisfies the policy without weakening it.
 //
 //go:embed assets/shell.css assets/avatar.css assets/console.css assets/workbench.css
-//go:embed assets/pages.js assets/console.js assets/workbench.js assets/forge3d.js assets/voice.js
+//go:embed assets/pages.js assets/console.js assets/workbench.js assets/forge3d.js
+//go:embed assets/voice.js assets/orb.js
 //go:embed assets/portrait/*.png
 var assetFS embed.FS
 
@@ -61,6 +62,23 @@ type pageData struct {
 	Token    string
 	MinChars int
 	Title    string
+
+	// Tagline, PersonaVersion and Soul carry FORGE's identity onto the page.
+	//
+	// # Why the soul is server-rendered rather than fetched
+	//
+	// persona.Soul exists so that "a user can read exactly what FORGE was told
+	// to be, at the version that was in force when it acted" (see the package
+	// doc). A commitment set that is only readable by someone with repository
+	// access is not that; it is a comment. Rendering it into the page the person
+	// actually talks to FORGE on is what makes the claim true.
+	//
+	// Rendered rather than served from a new endpoint because it is static text
+	// that changes with a version bump: an endpoint would add a public contract
+	// to maintain for something the page already has at render time.
+	Tagline        string
+	PersonaVersion int
+	Soul           []persona.Commitment
 }
 
 func (p *PageHandlers) render(w http.ResponseWriter, r *http.Request, name string, data pageData) {
@@ -71,6 +89,9 @@ func (p *PageHandlers) render(w http.ResponseWriter, r *http.Request, name strin
 	if data.Presence == "" {
 		data.Presence = persona.PresenceHTML(persona.StateIdle, 88)
 	}
+	data.Tagline = persona.Tagline
+	data.PersonaVersion = persona.Version
+	data.Soul = persona.Soul
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	// These pages carry a live credential in their URL. Caching one — in the
@@ -127,7 +148,15 @@ func (p *PageHandlers) Console(w http.ResponseWriter, r *http.Request) {
 // Voice and the 3D studio, per PRD §1.2. The operations console at /console is
 // the surface beside it, not the main one.
 func (p *PageHandlers) Workbench(w http.ResponseWriter, r *http.Request) {
-	p.render(w, r, "workbench", pageData{Page: "workbench", Title: "FORGE workbench"})
+	// The presence is rendered at the size the workbench header uses. The state
+	// it starts in is idle, and the page updates it from the server's own
+	// endpoints as the conversation moves — the state-to-expression rule stays
+	// on the server, where the console already gets it from.
+	p.render(w, r, "workbench", pageData{
+		Page:     "workbench",
+		Title:    "FORGE workbench",
+		Presence: persona.PresenceHTML(persona.StateIdle, 36),
+	})
 }
 
 // Sigil handles GET /v1/meta/sigil.
@@ -195,7 +224,7 @@ func (p *PageHandlers) Assets(w http.ResponseWriter, r *http.Request) {
 	case name == "shell.css", name == "avatar.css", name == "console.css", name == "workbench.css":
 		w.Header().Set("Content-Type", "text/css; charset=utf-8")
 	case name == "pages.js", name == "console.js", name == "workbench.js",
-		name == "forge3d.js", name == "voice.js":
+		name == "forge3d.js", name == "voice.js", name == "orb.js":
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 	case isPortraitAsset(name):
 		w.Header().Set("Content-Type", "image/png")
@@ -260,9 +289,16 @@ const pageTemplates = `
 </head><body class="wb">
 
 <div class="wb-top">
-  {{.Sigil}}
-  <div class="wordmark">FORGE</div>
-  <span id="status" class="pill off">Ready</span>
+  <!-- The sigil only. FORGE's portrait is on the stage, at the centre of the
+       workbench, and two of her on one screen is one too many. -->
+  <button type="button" class="whois" id="whois" aria-expanded="false" aria-controls="soul"
+          title="Who FORGE is, and what it will not do">
+    <span id="top-sigil" class="top-sigil">{{.Sigil}}</span>
+    <span class="whois-txt">
+      <span class="wordmark">FORGE</span>
+      <span class="tag">{{.Tagline}}</span>
+    </span>
+  </button>
   <span id="meta" style="font-size:11.5px;color:var(--ink-dim)"></span>
   <div class="spacer"></div>
   <span id="models" style="font-size:11px;color:var(--ink-dim)"></span>
@@ -270,33 +306,45 @@ const pageTemplates = `
   <a href="/console" style="font-size:12px">Operations</a>
 </div>
 
+<!-- The soul. Not decoration and not marketing: this is the exact commitment
+     set FORGE is given, at the version that was in force, with the reason each
+     one exists. PRD RSN-04 makes the immutable ones un-relaxable by any
+     configuration, and a commitment nobody can read is one nobody can hold it
+     to. -->
+<div class="soul hidden" id="soul" role="dialog" aria-label="What FORGE will and will not do">
+  <div class="soul-head">
+    <div>
+      <b>What I will and will not do</b>
+      <div class="soul-sub">persona v{{.PersonaVersion}} · the same text FORGE is given before every call</div>
+    </div>
+    <button type="button" class="ghost" id="soul-close" aria-label="Close">Close</button>
+  </div>
+  <div class="soul-body">
+    {{range .Soul}}
+    <div class="vow{{if .Immutable}} fixed{{end}}">
+      <div class="vow-id">{{.ID}}{{if .Immutable}} · cannot be relaxed{{end}}</div>
+      <div class="vow-text">{{.Text}}</div>
+      <div class="vow-why">{{.Why}}</div>
+    </div>
+    {{end}}
+  </div>
+</div>
+
 <div class="wb-body">
 
   <!-- Conversation. The control plane (PRD §2.3). -->
   <div class="wb-left">
+    <div class="railhead">Conversation</div>
     <div class="transcript" id="transcript"></div>
-    <div class="voicebar">
-      <div id="voice-note" class="note bad hidden" style="margin-bottom:9px;font-size:12px"></div>
-      <form class="voicerow" id="sayform">
-        <button type="button" class="mic" id="mic" aria-pressed="false"
-                title="Hold to talk (or hold the space bar)" aria-label="Hold to talk">&#127908;</button>
-        <input type="text" id="say" placeholder="Describe what you are building…" autocomplete="off">
-      </form>
-      <div class="voicemeta">
-        <label><input type="checkbox" id="handsfree"> hands-free</label>
-        <label><input type="checkbox" id="speakback" checked> speak replies</label>
-        <button class="btn-sm" id="stopspeak" title="Escape also stops speech">Stop speaking</button>
-      </div>
-    </div>
   </div>
 
-  <!-- The stage. -->
-  <div class="stage">
+  <!-- The stage. Holds the model AND the voice surface: the voice surface is
+       centred here until there is something to look at, then docks to the
+       bottom-left corner. One element, two placements — see workbench.css. -->
+  <div class="stage" id="stage">
     <canvas id="canvas"></canvas>
-    <div class="stage-empty" id="stage-empty">
-      Nothing modelled yet.<br>
-      Describe something physical and FORGE will propose a shape here.
-    </div>
+    <div class="stage-empty hidden" id="stage-empty"></div>
+
     <div class="viewctl">
       <button data-view="iso" aria-pressed="true">Iso</button>
       <button data-view="front" aria-pressed="false">Front</button>
@@ -307,6 +355,7 @@ const pageTemplates = `
         <input type="checkbox" id="grid" checked> grid
       </label>
     </div>
+
     <div class="sliders">
       <label for="explode">Exploded view</label>
       <input type="range" id="explode" min="0" max="1" step="0.01" value="0">
@@ -321,21 +370,85 @@ const pageTemplates = `
       </select>
       <input type="range" id="sectionat" min="0" max="1" step="0.01" value="0.5">
     </div>
+
     <!-- Never dismissible: PRD VIS-06. -->
     <div class="provenance hidden" id="provenance"></div>
+
+    <div class="voice" id="voice" data-place="hero">
+      <!-- FORGE. The character portrait and the state sigil, both served by the
+           application (/v1/meta/portrait and /v1/meta/sigil) so the rule mapping
+           a state onto an expression stays in persona.ExpressionFor and is not
+           re-decided here. The canvas behind them is the aura only — it draws no
+           part of her. Reuses .forge-portrait from avatar.css, which already
+           carries the circular crop and the gold trim. -->
+      <div class="orb">
+        <canvas id="orb"></canvas>
+        <div class="orb-face forge-portrait" id="orb-face">
+          <img id="orb-portrait" src="/v1/meta/portrait?state=idle" alt="" aria-hidden="true"
+               width="512" height="512" decoding="async">
+          <span class="forge-portrait__badge" id="orb-badge">{{.Sigil}}</span>
+        </div>
+      </div>
+      <div class="voice-said" id="caption">Describe something you are building.</div>
+      <div class="voice-state" id="statusword">Ready</div>
+      <div class="voice-ctl">
+        <button type="button" class="node mic" id="mic" aria-pressed="false"
+                title="Hold to talk (or hold the space bar)" aria-label="Hold to talk">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <rect x="9" y="2" width="6" height="11" rx="3"></rect>
+            <path d="M5 11a7 7 0 0 0 14 0"></path>
+            <path d="M12 18v3"></path>
+          </svg>
+        </button>
+        <form id="sayform">
+          <input type="text" id="say" placeholder="…or type it" autocomplete="off">
+          <!-- An explicit submit control. Implicit submission (Enter in a
+               single-field form) is not relied on: it is easy to lose to a
+               stray handler, and losing it silently would leave the ONLY
+               non-audio path with no way to send. PRD AUD-06. -->
+          <button type="submit" class="node send" id="send" title="Send" aria-label="Send">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <path d="M5 12h13"></path><path d="M12 5l7 7-7 7"></path>
+            </svg>
+          </button>
+        </form>
+        <span class="ctl-div" aria-hidden="true"></span>
+        <!-- Stop speaking. Icon-only inside the console bar, but always present
+             and always clickable (PRD AUD-07), with the accessible name on the
+             button rather than in a label that only exists when it is relevant.
+             It brightens while FORGE is actually speaking, so the affordance is
+             loudest at the moment it means something. -->
+        <button type="button" class="node stop" id="stopspeak"
+                title="Stop speaking (Escape)" aria-label="Stop speaking">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linejoin="round" aria-hidden="true">
+            <rect x="7" y="7" width="10" height="10" rx="2"></rect>
+          </svg>
+        </button>
+      </div>
+      <div class="voice-opts">
+        <label class="sw"><input type="checkbox" id="handsfree"><span>hands-free</span></label>
+        <label class="sw"><input type="checkbox" id="speakback" checked><span>speak replies</span></label>
+        <span id="voice-note" class="bad hidden"></span>
+      </div>
+    </div>
   </div>
 
-  <!-- Artifacts and evidence. -->
+  <!-- Artifacts, evidence, and the one place work can be started. -->
   <div class="wb-right rail">
     <div class="h">Parts</div>
     <div id="parts"></div>
-    <div id="proposal" class="hidden" style="margin-top:20px"></div>
+    <div class="h" id="proposal-head" style="display:none">Proposed work</div>
+    <div id="proposal" class="hidden"></div>
   </div>
 
 </div>
 
 <script src="/assets/forge3d.js"></script>
 <script src="/assets/voice.js"></script>
+<script src="/assets/orb.js"></script>
 <script src="/assets/workbench.js"></script>
 </body></html>{{end}}
 
