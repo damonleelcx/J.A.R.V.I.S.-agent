@@ -281,6 +281,10 @@ const (
 	EventVerificationFail  = "verification.failed"
 	EventBudgetExceeded    = "budget.exceeded"
 	EventReplanTriggered   = "replan.triggered"
+	// EventArtifactChanged is the timeline's record of a change to an artifact
+	// (PRD WRK-04). The artifact version points back at the event, which is what
+	// puts every change inside the tamper-evident chain rather than beside it.
+	EventArtifactChanged = "artifact.changed"
 )
 
 // ToolCall is one invocation in the idempotency ledger.

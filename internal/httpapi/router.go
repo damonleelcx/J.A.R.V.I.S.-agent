@@ -128,6 +128,27 @@ func NewRouter(d Deps) http.Handler {
 	mux.Handle("POST /v1/decisions", authed(mem.RecordDecision))
 	mux.Handle("GET /v1/decisions/{id}", authed(mem.GetDecision))
 
+	// --- the workspace model (PRD RSN-01, WRK-03, WRK-04) ---
+	// RSN-01 asks for an EDITABLE structure separate from the transcript, so it
+	// is an API rather than only a forgectl command. Note what is NOT here: no
+	// way to change a node's kind. An assumption that turns out to be true does
+	// not become a requirement — it is promoted, and both stay readable.
+	ws := NewWorkspaceHandlers(d)
+	mux.HandleFunc("GET /v1/workspace/kinds", ws.Kinds)
+	mux.Handle("GET /v1/workspace/graph", authed(ws.Graph))
+	mux.Handle("GET /v1/workspace/review", authed(ws.Review))
+	mux.Handle("POST /v1/workspace/nodes", authed(ws.AddNode))
+	mux.Handle("PATCH /v1/workspace/nodes/{id}", authed(ws.EditNode))
+	mux.Handle("POST /v1/workspace/nodes/{id}/promote", authed(ws.Promote))
+	mux.Handle("POST /v1/workspace/edges", authed(ws.Relate))
+	mux.Handle("DELETE /v1/workspace/edges/{id}", authed(ws.Unrelate))
+	mux.Handle("GET /v1/workspace/artifacts/{id}", authed(ws.ArtifactHistory))
+	// Recording a change is the AGENT's path, not a person's: WRK-04's seven
+	// facts include the tool call that made it, and a change arriving over HTTP
+	// with a tool call named by the client would be a fabricated ledger entry.
+	// Only the disposition — what a person decided — is exposed here.
+	mux.Handle("POST /v1/workspace/versions/{id}/disposition", authed(ws.Dispose))
+
 	// --- workbench conversation ---
 	converse := NewConverseHandlers(d)
 	mux.Handle("POST /v1/converse", authed(converse.Converse))

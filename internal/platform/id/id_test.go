@@ -125,6 +125,7 @@ func TestAllPrefixesDistinct(t *testing.T) {
 		PrefixUser, PrefixSession, PrefixToken, PrefixProject, PrefixGoal,
 		PrefixPlan, PrefixTask, PrefixRun, PrefixCheckpoint, PrefixJob,
 		PrefixApproval, PrefixArtifact, PrefixEvidence, PrefixEvent,
+		PrefixNode, PrefixEdge, PrefixVersion,
 		PrefixMemory, PrefixDecision, PrefixToolCall, PrefixRequest,
 		PrefixTrace, PrefixSpan,
 	}

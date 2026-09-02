@@ -67,6 +67,16 @@ Decisions:
   decisions list --project <id> [--current]   The decision log, marking what was superseded
   decisions show <decision-id>                One decision with its whole supersession chain
 
+Workspace model:
+  graph kinds                          The node and edge vocabularies, and what may connect to what
+  graph show --project <id> [--kind ...]
+                                       A project's requirements, risks, components and how they relate
+  graph review --project <id> [--quiet] [--gaps=false]
+                                       What the graph CONTRADICTS (exit 1) and what it LACKS (exit 0).
+                                       Gaps never affect the exit status: every project in progress has them.
+  artifacts show <artifact-id>         One artifact's lifecycle: WRK-04's seven facts per version
+  artifacts show <path> --project <id>
+
 Audit:
   audit verify <goal-id>   Check a goal's timeline against its hash chain
   audit verify --all       Check every goal
@@ -204,6 +214,37 @@ func run(ctx context.Context, cmd string, args []string) error {
 				WithDetail("unknown decisions subcommand %q; expected list or show", args[0])
 		}
 
+	case "graph":
+		if len(args) == 0 {
+			fmt.Fprint(os.Stderr, usage)
+			return errs.New("forgectl.run", errs.CodeValidationFailed).
+				WithDetail("graph needs a subcommand: kinds, show or review")
+		}
+		switch args[0] {
+		case "kinds":
+			return cmdGraphKinds()
+		case "show":
+			return cmdGraphShow(ctx, cfg, log, args[1:])
+		case "review":
+			return cmdGraphReview(ctx, cfg, log, args[1:])
+		default:
+			return errs.New("forgectl.run", errs.CodeValidationFailed).
+				WithDetail("unknown graph subcommand %q; expected kinds, show or review", args[0])
+		}
+
+	case "artifacts":
+		if len(args) == 0 {
+			return errs.New("forgectl.run", errs.CodeValidationFailed).
+				WithDetail("artifacts needs a subcommand: show")
+		}
+		switch args[0] {
+		case "show":
+			return cmdArtifactHistory(ctx, cfg, log, args[1:])
+		default:
+			return errs.New("forgectl.run", errs.CodeValidationFailed).
+				WithDetail("unknown artifacts subcommand %q; expected show", args[0])
+		}
+
 	case "audit":
 		if len(args) == 0 {
 			return errs.New("forgectl.run", errs.CodeValidationFailed).
@@ -281,6 +322,11 @@ func run(ctx context.Context, cmd string, args []string) error {
 func sectionsFor(cmd string) []config.Section {
 	switch cmd {
 	case "migrate", "health":
+		return []config.Section{config.SectionDB}
+	case "graph", "artifacts":
+		// The workspace model is read straight from the database. Requiring an
+		// LLM key to look at a project's requirements would turn an inspection
+		// into a credential request.
 		return []config.Section{config.SectionDB}
 	case "memory", "decisions":
 		// Memory and the decision log are read and written straight from the

@@ -14,12 +14,13 @@ Requirement IDs are from `docs/prd.md`.
 ## Where the line is today
 
 Built and fenced: the durable engine, the agent loop, tools, identity, the
-console, the workbench, the audit chain, and layered memory with the decision
-log. Roughly the whole vertical from "someone speaks" to "a worker executes a
-verified task", plus the record of it and what it remembers afterwards.
+console, the workbench, the audit chain, layered memory with the decision log,
+and the workspace model — the project graph and the artifact lifecycle. Roughly
+the whole vertical from "someone speaks" to "a worker executes a verified task",
+plus the record of it, what it remembers afterwards, and what it thinks is true.
 
-Missing: almost everything else that makes it a *platform* — collaboration, the
-project graph, enterprise security, and the release apparatus.
+Missing: containment, collaboration, enterprise security, and the release
+apparatus.
 
 The split matters when planning: the core loop is done, so every wave below adds
 surface to a working system rather than filling a hole in one.
@@ -42,7 +43,7 @@ surface to a working system rather than filling a hole in one.
              ┌──────────────┴───────────────┐
              ▼                              ▼
   ┌──────────────────────┐      ┌───────────────────────────┐
-  │ WAVE 3  memory  DONE │      │ WAVE 4  workspace model   │
+  │ WAVE 3  memory  DONE │      │ WAVE 4  workspace   DONE  │
   │   MEM-01 layers      │      │   RSN-01 goals/constraints│
   │   MEM-02 user control│      │   WRK-03 project graph    │
   │   MEM-03 decision log│      │   WRK-04 artifact lifecycle│
@@ -211,18 +212,154 @@ next attempt to write the same key was refused by name.
 able to point at a component or a requirement rather than hold a key that happens
 to name one.
 
-## Wave 4 — workspace model
+## Wave 4 — workspace model · **DONE**
 
-- **RSN-01** goals, requirements, constraints, assumptions, decisions, risks and
-  success criteria as an editable structure **separate from the transcript**.
-  Today they exist only as prose inside replies.
-- **WRK-03** project graph across requirements, components, interfaces, files,
-  tests, hazards, decisions, owners, evidence.
-- **WRK-04** artifact lifecycle: every change identifies initiator, agent, tool,
-  inputs, diff, verification state, human disposition.
+Migration `0007_workspace_model`, plus `0008_schema_scoped_triggers` to repair a
+defect this wave uncovered (below).
 
-The largest wave. WRK-04 is where the audit chain pays off — the events exist,
-they just have nothing to point at yet.
+### The decision that made this tractable
+
+The plan called this the largest wave. It was, until the two requirements were
+read side by side:
+
+- **RSN-01** names goals, requirements, constraints, assumptions, decisions,
+  risks, success criteria.
+- **WRK-03** names requirements, components, interfaces, files, tests, hazards,
+  decisions, owners, evidence.
+
+Both lists contain **requirements** and **decisions**. Two systems would hold two
+copies of each from the first day and they would disagree as soon as anybody
+edited one — and each system would be blamed for it separately. So it is **one
+graph**: a node table with a closed kind vocabulary, a typed edge table, and a
+table saying which edge kinds may connect which node kinds. RSN-01 is the
+reasoning half of the vocabulary, WRK-03 the structural half plus the edges.
+
+WRK-04 joins the same graph rather than sitting beside it, because WRK-03's
+"files" and WRK-04's "artifacts" are the same thing seen from two angles.
+
+### Anchors, and why the graph has real foreign keys
+
+Goals, decisions, owners and artifacts already have tables. A node is therefore
+one of two things: **owned** (the graph holds the content) or an **anchor** (the
+content lives elsewhere and the row is an identity peg with a real FK and a real
+cascade).
+
+The alternative was polymorphic `(kind, id)` endpoints, which no database can
+enforce: every edge to a deleted goal would survive as a pointer to nothing and
+the graph would fill with them. Anchoring costs one find-or-create on a necessary
+path and buys referential integrity for the whole graph. Fenced: deleting a goal
+takes its anchor and every edge touching it.
+
+### RSN-01 — a structure separate from the transcript
+
+Ten owned kinds and four anchors. Risks and hazards are kept apart because the
+PRD names both and they are different things — a hazard is the sharp edge, a risk
+is the chance somebody touches it.
+
+**A node's kind never changes.** An assumption that turns out to be true does not
+become a requirement; a requirement is created that `derives_from` it, and both
+stay readable. The entire value of having labelled something an assumption is
+that somebody can later ask what was built on top of a guess, and mutating the
+kind erases the question. There is no `kind` field on the edit endpoint and no
+`UpdateKind` in the repository.
+
+Each kind declares which epistemic labels it may carry (PRD RSN-05). An
+assumption may only be `assumed`; evidence may not be `assumed` at all. That is
+the claim vocabulary from wave 2 earning its keep a third time.
+
+### WRK-03 — typed edges
+
+Eight relations, each with a rule about which kinds it may connect. The point is
+that "test verifies requirement" and "requirement verifies test" are not both
+sentences: a graph that accepts either has an arbitrary direction on every edge,
+and every query over it is wrong half the time.
+
+`satisfies` and `verifies` are separate relations, for the same reason AGT-08
+keeps completion and verification apart on tasks: building a thing is not
+checking it.
+
+### The review — where a graph stops being decorative
+
+`forgectl graph review` reports what a project's graph **contradicts** and what
+it **lacks**, and the two are separate lists:
+
+- **Defects** are contradictions. A `depends_on` cycle; something *accepted*
+  whose every input is an assumption — a commitment that reads as settled and
+  rests on nobody having said otherwise.
+- **Gaps** are absences: nothing verifies this requirement, nothing mitigates
+  this risk, nobody owns this component.
+
+Only defects affect the exit status. Every real project has gaps, and a check
+that is always red is a check somebody turns off in a week — the same reasoning
+that keeps pre-chain events out of `audit verify`'s findings.
+
+### WRK-04 — the artifact lifecycle, and the audit chain's payoff
+
+"Every change identifies initiator, agent, tool, inputs, diff, verification
+state, human disposition." Read literally: a version missing any of the seven is
+refused rather than stored with a blank.
+
+**Verification state and human disposition are different columns, forever.** One
+is what a machine found; the other is what a person decided. A single column
+would eventually be set to "accepted" by a passing test suite, and the row would
+then assert that somebody signed off on something nobody looked at (PRD SAF-05).
+`Usable()` requires both and says which is missing.
+
+Versions append; the current one is derived from the version numbers rather than
+stored in a flag, so there is no second source of truth to disagree. A pending
+version becomes `superseded` when a newer one lands; one a person already ruled
+on is left alone, because tidying a queue must not erase a human decision.
+
+The plan said this is where the audit chain pays off, and it is: a change writes
+its timeline event and its version **in one transaction**, and the version points
+at the event. Fenced both ways — the chain still verifies over an artifact
+change, and a refused change writes neither.
+
+### Surfaces
+
+`/v1/workspace/*` for the people doing the work (RSN-01 asks for an *editable*
+structure), `forgectl graph` and `forgectl artifacts` for the operator.
+`graph review` exits 1 on a contradiction, so it belongs in cron beside
+`audit verify`.
+
+Note what has no endpoint: **recording an artifact version**. WRK-04's seven
+include the tool call that made the change, and a client naming one would be
+putting a fabricated row in the idempotency ledger. Only the disposition — what a
+person decided — is exposed.
+
+**48 fences**, 30 against live Postgres, 8 drilled by mutation. Two of those
+drills came back green and both fences were rewritten; see below. Verified live
+end to end on the dev database: a graph built through the service, reviewed
+clean, an artifact change recorded, and `audit verify` still intact over it.
+
+### Three defects found by building it
+
+- **Trigger guards were not schema-scoped**, so every integration test in this
+  repository has been running against a schema with no `updated_at` triggers, and
+  wave 4's artifact foreign key was missing too. Production was never affected —
+  it has one schema. Fixed by 0008 and by dropping the guard pattern entirely.
+  Full write-up: `docs/bugfix/2026-09-02-trigger-guards-were-not-schema-scoped.md`.
+- **Two fences did not fire under mutation.** `TestTwoSchemasGetTheSameObjects`
+  compares two schemas, and the bug broke both identically — so it was replaced
+  by a rule-based check. The edge-pairing fence was held by the FROM list alone,
+  so disabling the TO list left it green; assertions were added for each half
+  separately. Both now go red.
+- **Changing a node's kind reported the wrong reason.** A caller changing a kind
+  usually changes the epistemic label with it, and validation ran first — so they
+  were told "a requirement cannot be assumed", a true statement about the wrong
+  problem, and met the real refusal only on the second attempt. The kind is now
+  checked first, against the stored row. Found by running the thing: the fence
+  changed the label too, so it took the path that already worked.
+
+### Carried forward
+
+- **WRK-05's remainder** — tolerance, calibration and timestamp per value — is
+  still open. Wave 2 shipped units, precision and a named frame; the workspace
+  model gives those values somewhere to live, but nothing populates them yet.
+- **Memory items still hold opaque JSON.** Wave 3 carried this here: a memory
+  item should be able to point at a component or a requirement rather than a key
+  that happens to name one. The anchor mechanism now makes that a small change,
+  and it was not made — no consumer asks for it yet.
 
 ## Wave 5 — containment
 
@@ -276,6 +413,10 @@ already calls this phase 7.
   not. Fixing it properly means either a schema validator in the executor or
   strict decoding as a rule, and it is a decision about every tool rather than
   about memory, so it was left rather than widened into.
+- **`updated_at` is maintained by a trigger nothing asserts.** The trigger is now
+  attached in every schema, and no test checks that a row's `updated_at` actually
+  moves when something updates it without setting it by hand. The one path that
+  relies on this is `identity.MarkEmailVerified`.
 - **Nothing exercises the CLI's argument parsing.** The `memory forget` flag bug
   was found by running the binary; the test suite calls handlers and services and
   never `forgectl` itself. Two commands still have the same shape by convention

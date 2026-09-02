@@ -218,6 +218,40 @@ the model to interpret its own labels. A stronger label has to come from
 something checkable — a tool's actual output, a file actually read — and that
 will be a different tool, not a wider input schema.
 
+### A node's kind never changes
+
+An assumption that turns out to be true does not become a requirement. It would
+be one edit and it would be wrong, because the entire value of having labelled it
+an assumption is that somebody can later ask **what did we build on top of a
+guess?** — and answering that means the assumption has to still be there.
+
+So promotion creates a requirement, draws a `derives_from` edge back to the
+assumption, and leaves the assumption in place, retired rather than deleted: no
+longer in force, still readable. Both things are true at once, which is what
+actually happened.
+
+There is no `kind` field on the edit endpoint and no `UpdateKind` in the
+repository. The refusal names the alternative rather than merely declining.
+
+It is the same rule as decision supersession, and as the audit chain: history is
+added to, never rewritten.
+
+### "The tests passed" and "a person accepted it" are different columns
+
+Every artifact version carries both a verification state, which is what a machine
+found, and a human disposition, which is what a person decided. Nothing derives
+one from the other, and `Usable()` requires both.
+
+One column for both would be simpler right up until the day a passing test suite
+set it to "accepted", at which point the record would assert that somebody signed
+off on something nobody looked at. PRD **SAF-05** says the AI's approval is never
+acceptable authority; this is that requirement in storage.
+
+The same split runs through the graph's review, which reports what a project
+**contradicts** separately from what it **lacks**. Only contradictions fail the
+check. Every real project has requirements nothing verifies yet, and a check that
+is always red is a check somebody turns off in a week.
+
 ### The voice surface moves; it does not shrink
 
 The workbench has one voice component with two placements. Before there is

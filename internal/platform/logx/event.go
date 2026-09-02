@@ -204,3 +204,23 @@ func init() {
 		EventDecisionMade, EventDecisionSuperseded,
 	)
 }
+
+// Workspace-model events (PRD RSN-01, WRK-03, WRK-04).
+//
+// Promotion is logged because it is the one operation that creates a node from
+// another one: "where did this requirement come from?" is answerable from the
+// graph, and from here when somebody is reading logs instead.
+const (
+	EventNodeAdded             Event = "forge.node.added"
+	EventNodePromoted          Event = "forge.node.promoted"
+	EventArtifactVersioned     Event = "forge.artifact.versioned"
+	EventArtifactVerified      Event = "forge.artifact.verified"
+	EventArtifactDispositioned Event = "forge.artifact.dispositioned"
+)
+
+func init() {
+	allEvents = append(allEvents,
+		EventNodeAdded, EventNodePromoted, EventArtifactVersioned,
+		EventArtifactVerified, EventArtifactDispositioned,
+	)
+}
