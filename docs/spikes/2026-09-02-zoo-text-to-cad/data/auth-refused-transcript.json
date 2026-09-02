@@ -1,0 +1,28 @@
+{
+ "url": "wss://api.zoo.dev/ws/ml/copilot",
+ "prompt": "A motor mount bracket for a NEMA 17 stepper: flat base plate, cylindrical boss, two stiffening ribs.",
+ "started": 1788344616257,
+ "ended": 1788344617605,
+ "why": "refused",
+ "transcript": [
+  {
+   "dir": "out",
+   "at": 1788344617604,
+   "msg": {
+    "type": "headers",
+    "headers": {
+     "Authorization": "Bearer <redacted>"
+    }
+   }
+  },
+  {
+   "dir": "in",
+   "at": 1788344617605,
+   "msg": {
+    "error": {
+     "detail": "Please send `{ headers: { Authorization: \"Bearer <token>\" } }` over this websocket."
+    }
+   }
+  }
+ ]
+}

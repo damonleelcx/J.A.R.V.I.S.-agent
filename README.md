@@ -187,6 +187,70 @@ unsupported shape, producing a parts list that said `triangle-prism` beside a
 render showing a rectangular block. Nobody was told. That is the same class of
 failure as reporting an unverified task as verified.
 
+### The voice surface moves; it does not shrink
+
+The workbench has one voice component with two placements. Before there is
+anything to look at it is the centre of the stage at full size — orb, caption,
+state word, microphone and text box — because at that moment the conversation
+*is* the product. The first time geometry arrives it moves to the bottom-left
+corner and the model takes the stage.
+
+Everything reachable in one placement is reachable in the other: the microphone,
+the text box, hands-free, and stop-speaking. PRD **AUD-06** requires a non-audio
+path for every critical interaction and **AUD-07** requires stop to be always
+reachable, so a compact placement must not be a reduced one. It is the same DOM
+element with a different `data-place`, not two components to keep in sync.
+
+At the centre of it is FORGE herself — the character portrait from
+`assets/portrait/`, with the state sigil badged on it, both served by the
+application so `persona.ExpressionFor` stays the only thing that decides which
+face belongs to which state. The canvas behind her draws the **aura only**: glow,
+waveform, and the two rings. An earlier version drew the sigil's three blades as
+vector paths on that canvas; that was a second hand-maintained copy of an
+identity with exactly one source, and it was removed.
+
+The badge and the state word beneath say different things on purpose. The badge
+carries FORGE's own state in the sigil's vocabulary — `thinking` while a model
+call is in flight, `blocked` while a proposal waits on a decision, `idle`
+otherwise. `working` is never used here: it means a tool is running outside this
+process, and nothing on this page does that. The word underneath carries the
+voice surface's state — listening, speaking — which is not the same vocabulary
+and does not borrow from it.
+
+The waveform is driven by a real measurement — an `AnalyserNode` on the
+microphone — but **only while listening**. In every other state there is nothing
+to measure, so the motion is a slow symmetric breath rather than the ragged band
+speech produces: decoration must not be drawn in the shape of a reading. The
+meter's stream is opened and closed with each listen rather than held, so the
+operating system's microphone indicator stays off when nobody is holding the
+button. A visual nicety must not be the reason a privacy property stops being
+true.
+
+### Starting work from the workbench takes two presses
+
+A conversation can propose work. It cannot start it.
+
+"Start this" calls `POST /v1/goals`, which writes a **draft** goal and plans it.
+Nothing is claimable, no worker can touch it, and the plan — every task, its risk
+tier, and which ones need an approval gate — comes back and is shown. Only then
+does a second button call `POST /v1/goals/{id}/start`.
+
+The obvious single endpoint was rejected: PRD **AGT-02** requires a scoped plan
+and preview before material action, and **AGT-04** forbids autonomy being raised
+without the person seeing it. One call would create the plan and start it inside
+one press, and the person who pressed would have authorised a list of tasks they
+never read.
+
+`forgectl goal new` and `forgectl goal start` are the same two steps, and both
+surfaces run the same `agent.Intake` underneath, so the terminal and the browser
+cannot drift apart about what an unspecified goal means. Activation is recorded
+on the timeline as `goal.activated` by `human` with the account id — PRD
+**AGT-07**: a consequential transition carries the named human authority. Before
+this existed, that transition wrote nothing at all.
+
+An active goal still only executes while a worker is running. The interface says
+so rather than letting "active" imply progress.
+
 ### Seven limits, not one
 
 An agent can run away along seven independent axes — iterations, tool calls,

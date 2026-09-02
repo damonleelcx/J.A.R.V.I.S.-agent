@@ -1,0 +1,38 @@
+{
+  "captured_at": "2026-09-02",
+  "captured_from": "http://localhost:8107",
+  "endpoint": "POST /v1/converse",
+  "model": "qwen-plus",
+  "prompt": "A motor mount bracket for a NEMA 17 stepper: flat base plate, cylindrical boss, two stiffening ribs.",
+  "note": "Four runs of the IDENTICAL prompt, empty history, empty on_screen. Nothing else was varied.",
+  "runs": [
+    {"run": 0, "total_ms": 14673, "first_token_ms": 580, "prototype": {"name": "nema17-motor-mount", "units": "mm", "parts": [
+      {"id": "base-plate", "name": "Base Plate", "shape": "box", "size": {"depth": 5, "height": 50, "width": 50}, "position": [0,0,0], "note": "Mounting surface for motor; holes at NEMA 17 pattern"},
+      {"id": "boss", "name": "Shaft Boss", "shape": "cylinder", "size": {"height": 15, "radius": 10}, "position": [0,7.5,7.5], "note": "Clearance for motor shaft; inner bore not modeled"},
+      {"id": "rib-left", "name": "Left Rib", "shape": "cone", "size": {"height": 15, "radius": 5, "radius_top": 1}, "position": [-12,7.5,7.5], "note": "Stiffening rib connecting base to boss"},
+      {"id": "rib-right", "name": "Right Rib", "shape": "cone", "size": {"height": 15, "radius": 5, "radius_top": 1}, "position": [12,7.5,7.5], "note": "Stiffening rib connecting base to boss"}],
+      "assumptions": ["Base plate is 50x50x5 mm with centered NEMA 17 bolt pattern (holes at ±20.5 mm on both axes)", "Boss height is 15 mm and positioned to clear motor face", "Ribs are conical frustums tapering from base to top of boss", "No mounting holes drilled in base (to be added per use case)"],
+      "not_verified": ["No interference check between motor body and boss/ribs", "Not stress-analysed under operational loads", "Material strength and layer adhesion not evaluated", "Thermal effects from motor not considered"]}},
+    {"run": 1, "total_ms": 13098, "first_token_ms": 435, "prototype": {"name": "nema17-motor-mount", "units": "mm", "parts": [
+      {"id": "base-plate", "name": "Base Plate", "shape": "box", "size": {"depth": 5, "height": 50, "width": 50}, "position": [0,0,0], "note": "Mounting surface for motor and bracket"},
+      {"id": "boss", "name": "Shaft Boss", "shape": "cylinder", "size": {"height": 10, "radius": 11.5}, "position": [0,5,0], "note": "Aligns with motor shaft; 23 mm diameter to clear shaft"},
+      {"id": "rib-1", "name": "Rib Front", "shape": "cone", "size": {"height": 20, "radius": 10, "radius_top": 1}, "position": [15,10,-2.5], "note": "Front stiffening rib"},
+      {"id": "rib-2", "name": "Rib Rear", "shape": "cone", "size": {"height": 20, "radius": 10, "radius_top": 1}, "position": [-15,10,-2.5], "note": "Rear stiffening rib"}],
+      "assumptions": ["Base plate is 50x50x5 mm", "Boss height is 10 mm, radius 11.5 mm (23 mm diameter)", "Ribs are conical frustums positioned at ±15 mm along X, rising from base to boss", "Motor mounting holes at 31 mm spacing (standard NEMA 17)"],
+      "not_verified": ["No interference check between ribs and motor body", "Not stress-analysed under operational load", "Material strength and layer adhesion not evaluated", "Boss concentricity with motor shaft not verified in simulation"]}},
+    {"run": 2, "total_ms": 13346, "first_token_ms": 228, "prototype": {"name": "nema17-motor-mount", "units": "mm", "parts": [
+      {"id": "base-plate", "name": "Base Plate", "shape": "box", "size": {"depth": 42, "height": 3, "width": 42}, "position": [0,1.5,0], "note": "Mounting surface for motor flange"},
+      {"id": "boss", "name": "Motor Shaft Boss", "shape": "cylinder", "size": {"height": 10, "radius": 14}, "position": [0,6.5,0], "note": "Clearance for motor shaft and central bolt"},
+      {"id": "rib-fl", "name": "Front-Left Rib", "shape": "cone", "size": {"height": 5, "radius": 14, "radius_top": 0}, "position": [-15,4,-15], "note": "Stiffening rib, front-left quadrant"},
+      {"id": "rib-br", "name": "Back-Right Rib", "shape": "cone", "size": {"height": 5, "radius": 14, "radius_top": 0}, "position": [15,4,15], "note": "Stiffening rib, back-right quadrant"}],
+      "assumptions": ["Base thickness: 3 mm", "Boss height: 10 mm, radius: 14 mm (Ø28 mm)", "Ribs are conical frusta, 5 mm tall, positioned at opposing corners", "Ribs angled to align structurally between boss edge and base corners", "No mounting holes included — assumed to be added later per use case"],
+      "not_verified": ["No interference check between motor housing and boss/ribs", "No structural analysis of rib or base under torque load", "Material strength and layer adhesion not evaluated", "Thermal expansion mismatch not considered"]}},
+    {"run": 3, "total_ms": 14681, "first_token_ms": 508, "prototype": {"name": "nema17-motor-mount", "units": "mm", "parts": [
+      {"id": "base-plate", "name": "Base Plate", "shape": "box", "size": {"depth": 50, "height": 3, "width": 50}, "position": [0,0,0], "note": "Mounting surface for motor; holes at NEMA 17 pattern (31mm spacing)"},
+      {"id": "cylindrical-boss", "name": "Shaft Alignment Boss", "shape": "cylinder", "size": {"height": 10, "radius": 8}, "position": [0,5,0], "note": "Locating feature for motor shaft; clears shaft entry"},
+      {"id": "rib-flank-left", "name": "Stiffening Rib Left", "shape": "cylinder", "size": {"height": 15, "radius": 0, "radius_top": 7.5}, "position": [-12,7.5,12], "note": "Rib supporting boss from base; angled for stiffness"},
+      {"id": "rib-flank-right", "name": "Stiffening Rib Right", "shape": "cylinder", "size": {"height": 15, "radius": 0, "radius_top": 7.5}, "position": [12,7.5,12], "note": "Symmetric rib opposite left"}],
+      "assumptions": ["Base plate is 50x50mm (slightly larger than NEMA 17 face)", "Boss diameter is 16mm (common shaft access requirement)", "Ribs are conical frustums (tapered supports) at ±12mm lateral offset", "No mounting holes modeled; standard 31mm spacing assumed"],
+      "not_verified": ["No interference check between ribs and motor body", "Structural rigidity not analyzed", "Thermal expansion and load deflection not considered", "Boss height may not accommodate all coupler types"]}}
+  ]
+}

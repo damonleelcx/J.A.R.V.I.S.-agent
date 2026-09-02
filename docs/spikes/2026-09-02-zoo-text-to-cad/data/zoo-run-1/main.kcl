@@ -1,0 +1,188 @@
+// NEMA 17 motor mount bracket
+// Flat flange plate with an underside boss, twin ribs, and standard motor clearances.
+@settings(defaultLengthUnit = mm, kclVersion = 2.0)
+
+plateSize = 60mm
+plateThickness = 5mm
+bossOuterDiameter = 32mm
+bossDepth = 6mm
+ribLength = 52mm
+ribWidth = 6mm
+ribDepth = 4mm
+ribEdgeOffset = 4mm
+ribOneYOffset = 17mm
+ribTwoYOffset = 37mm
+motorHolePitch = 31mm
+motorHoleDiameter = 3.5mm
+pilotClearanceDiameter = 23mm
+cutStart = -7mm
+cutLength = 13mm
+featureOverlap = 0.5mm
+
+baseSketch = sketch(on = XY) {
+  bottomEdge = line(start = [var 0mm, var 0mm], end = [var 60mm, var 0mm])
+  rightEdge = line(start = [var 60mm, var 0mm], end = [var 60mm, var 60mm])
+  topEdge = line(start = [var 60mm, var 60mm], end = [var 0mm, var 60mm])
+  leftEdge = line(start = [var 0mm, var 60mm], end = [var 0mm, var 0mm])
+  coincident([bottomEdge.end, rightEdge.start])
+  coincident([rightEdge.end, topEdge.start])
+  coincident([topEdge.end, leftEdge.start])
+  coincident([leftEdge.end, bottomEdge.start])
+  fixed([bottomEdge.start, ORIGIN])
+  horizontal(bottomEdge)
+  vertical(rightEdge)
+  horizontal(topEdge)
+  vertical(leftEdge)
+  horizontalDistance([bottomEdge.start, bottomEdge.end]) == plateSize
+  verticalDistance([rightEdge.start, rightEdge.end]) == plateSize
+}
+baseRegion = region(
+  segments = [
+    baseSketch.bottomEdge,
+    baseSketch.rightEdge
+  ],
+  intersectionIndex = -1,
+  direction = CCW,
+)
+basePlate = extrude(baseRegion, length = plateThickness)
+
+bossPlane = offsetPlane(XY, offset = featureOverlap)
+bossSketch = sketch(on = bossPlane) {
+  bossCircle = circle(start = [var 46mm, var 30mm], center = [var 30mm, var 30mm])
+  horizontalDistance([ORIGIN, bossCircle.center]) == plateSize / 2
+  verticalDistance([ORIGIN, bossCircle.center]) == plateSize / 2
+  radius(bossCircle) == bossOuterDiameter / 2
+  horizontal([bossCircle.center, bossCircle.start])
+}
+bossRegion = region(segments = [bossSketch.bossCircle])
+bossBlank = extrude(bossRegion, length = -(bossDepth + featureOverlap))
+
+ribSketch = sketch(on = bossPlane) {
+  ribOneBottom = line(start = [var 4mm, var 17mm], end = [var 56mm, var 17mm])
+  ribOneRight = line(start = [var 56mm, var 17mm], end = [var 56mm, var 23mm])
+  ribOneTop = line(start = [var 56mm, var 23mm], end = [var 4mm, var 23mm])
+  ribOneLeft = line(start = [var 4mm, var 23mm], end = [var 4mm, var 17mm])
+  coincident([ribOneBottom.end, ribOneRight.start])
+  coincident([ribOneRight.end, ribOneTop.start])
+  coincident([ribOneTop.end, ribOneLeft.start])
+  coincident([ribOneLeft.end, ribOneBottom.start])
+  horizontalDistance([ORIGIN, ribOneBottom.start]) == ribEdgeOffset
+  verticalDistance([ORIGIN, ribOneBottom.start]) == ribOneYOffset
+  horizontal(ribOneBottom)
+  vertical(ribOneRight)
+  horizontal(ribOneTop)
+  vertical(ribOneLeft)
+  horizontalDistance([ribOneBottom.start, ribOneBottom.end]) == ribLength
+  verticalDistance([ribOneRight.start, ribOneRight.end]) == ribWidth
+
+  ribTwoBottom = line(start = [var 4mm, var 37mm], end = [var 56mm, var 37mm])
+  ribTwoRight = line(start = [var 56mm, var 37mm], end = [var 56mm, var 43mm])
+  ribTwoTop = line(start = [var 56mm, var 43mm], end = [var 4mm, var 43mm])
+  ribTwoLeft = line(start = [var 4mm, var 43mm], end = [var 4mm, var 37mm])
+  coincident([ribTwoBottom.end, ribTwoRight.start])
+  coincident([ribTwoRight.end, ribTwoTop.start])
+  coincident([ribTwoTop.end, ribTwoLeft.start])
+  coincident([ribTwoLeft.end, ribTwoBottom.start])
+  horizontalDistance([ORIGIN, ribTwoBottom.start]) == ribEdgeOffset
+  verticalDistance([ORIGIN, ribTwoBottom.start]) == ribTwoYOffset
+  horizontal(ribTwoBottom)
+  vertical(ribTwoRight)
+  horizontal(ribTwoTop)
+  vertical(ribTwoLeft)
+  horizontalDistance([ribTwoBottom.start, ribTwoBottom.end]) == ribLength
+  verticalDistance([ribTwoRight.start, ribTwoRight.end]) == ribWidth
+}
+ribOneRegion = region(
+  segments = [
+    ribSketch.ribOneBottom,
+    ribSketch.ribOneRight
+  ],
+  intersectionIndex = -1,
+  direction = CCW,
+)
+ribTwoRegion = region(
+  segments = [
+    ribSketch.ribTwoBottom,
+    ribSketch.ribTwoRight
+  ],
+  intersectionIndex = -1,
+  direction = CCW,
+)
+ribOne = extrude(ribOneRegion, length = -(ribDepth + featureOverlap))
+ribTwo = extrude(ribTwoRegion, length = -(ribDepth + featureOverlap))
+
+ribbedBlank = union([basePlate, bossBlank, ribOne, ribTwo])
+
+holePlane = offsetPlane(XY, offset = cutStart)
+holeSketch = sketch(on = holePlane) {
+  pilotClearance = circle(start = [var 41.5mm, var 30mm], center = [var 30mm, var 30mm])
+  lowerLeftHole = circle(start = [var 16.25mm, var 14.5mm], center = [var 14.5mm, var 14.5mm])
+  lowerRightHole = circle(start = [var 47.25mm, var 14.5mm], center = [var 45.5mm, var 14.5mm])
+  upperLeftHole = circle(start = [var 16.25mm, var 45.5mm], center = [var 14.5mm, var 45.5mm])
+  upperRightHole = circle(start = [var 47.25mm, var 45.5mm], center = [var 45.5mm, var 45.5mm])
+
+  horizontalDistance([ORIGIN, pilotClearance.center]) == plateSize / 2
+  verticalDistance([ORIGIN, pilotClearance.center]) == plateSize / 2
+  radius(pilotClearance) == pilotClearanceDiameter / 2
+  horizontal([
+    pilotClearance.center,
+    pilotClearance.start
+  ])
+
+  horizontalDistance([ORIGIN, lowerLeftHole.center]) == (plateSize - motorHolePitch) / 2
+  verticalDistance([ORIGIN, lowerLeftHole.center]) == (plateSize - motorHolePitch) / 2
+  radius(lowerLeftHole) == motorHoleDiameter / 2
+  horizontal([
+    lowerLeftHole.center,
+    lowerLeftHole.start
+  ])
+
+  horizontalDistance([ORIGIN, lowerRightHole.center]) == (plateSize + motorHolePitch) / 2
+  verticalDistance([ORIGIN, lowerRightHole.center]) == (plateSize - motorHolePitch) / 2
+  radius(lowerRightHole) == motorHoleDiameter / 2
+  horizontal([
+    lowerRightHole.center,
+    lowerRightHole.start
+  ])
+
+  horizontalDistance([ORIGIN, upperLeftHole.center]) == (plateSize - motorHolePitch) / 2
+  verticalDistance([ORIGIN, upperLeftHole.center]) == (plateSize + motorHolePitch) / 2
+  radius(upperLeftHole) == motorHoleDiameter / 2
+  horizontal([
+    upperLeftHole.center,
+    upperLeftHole.start
+  ])
+
+  horizontalDistance([ORIGIN, upperRightHole.center]) == (plateSize + motorHolePitch) / 2
+  verticalDistance([ORIGIN, upperRightHole.center]) == (plateSize + motorHolePitch) / 2
+  radius(upperRightHole) == motorHoleDiameter / 2
+  horizontal([
+    upperRightHole.center,
+    upperRightHole.start
+  ])
+}
+pilotRegion = region(segments = [holeSketch.pilotClearance])
+lowerLeftRegion = region(segments = [holeSketch.lowerLeftHole])
+lowerRightRegion = region(segments = [holeSketch.lowerRightHole])
+upperLeftRegion = region(segments = [holeSketch.upperLeftHole])
+upperRightRegion = region(segments = [holeSketch.upperRightHole])
+holeCutters = extrude(
+  [
+    pilotRegion,
+    lowerLeftRegion,
+    lowerRightRegion,
+    upperLeftRegion,
+    upperRightRegion
+  ],
+  length = cutLength,
+)
+
+motorMountBracket = subtract([ribbedBlank], tools = holeCutters)
+  |> appearance(color = "#4f5963")
+
+hide([
+  baseSketch,
+  bossSketch,
+  ribSketch,
+  holeSketch
+])

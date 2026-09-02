@@ -1,0 +1,278 @@
+// NEMA 17 Motor Mount Bracket
+// Flat base, circular motor boss, twin gusset ribs, and mounting holes.
+@settings(defaultLengthUnit = mm, kclVersion = 2.0)
+
+baseWidth = 72mm
+baseDepth = 64mm
+baseThickness = 6mm
+bossOuterDiameter = 56mm
+bossThickness = 12mm
+motorCenterHeight = 34mm
+motorBoltSpacing = 31mm
+motorBoltDiameter = 3.6mm
+motorPilotClearance = 23mm
+ribThickness = 6mm
+ribLength = 35mm
+ribHeight = 25mm
+baseHoleDiameter = 5.5mm
+
+baseSketch = sketch(on = XY) {
+  baseFront = line(start = [var 0mm, var 0mm], end = [var 72mm, var 0mm])
+  baseRight = line(start = [var 72mm, var 0mm], end = [var 72mm, var 64mm])
+  baseBack = line(start = [var 72mm, var 64mm], end = [var 0mm, var 64mm])
+  baseLeft = line(start = [var 0mm, var 64mm], end = [var 0mm, var 0mm])
+  fixed([baseFront.start, ORIGIN])
+  horizontal(baseFront)
+  distance([baseFront.start, baseFront.end]) == baseWidth
+  coincident([baseFront.end, baseRight.start])
+  vertical(baseRight)
+  distance([baseRight.start, baseRight.end]) == baseDepth
+  coincident([baseRight.end, baseBack.start])
+  horizontal(baseBack)
+  distance([baseBack.start, baseBack.end]) == baseWidth
+  coincident([baseBack.end, baseLeft.start])
+  coincident([baseLeft.end, baseFront.start])
+}
+baseRegion = region(
+  segments = [baseSketch.baseFront, baseSketch.baseRight],
+  intersectionIndex = -1,
+  direction = CCW,
+)
+basePlate = extrude(baseRegion, length = baseThickness)
+
+bossPlane = {
+  origin = { x = 36, y = 22, z = motorCenterHeight },
+  xAxis = { x = 1, y = 0, z = 0 },
+  yAxis = { x = 0, y = 0, z = 1 },
+  zAxis = { x = 0, y = -1, z = 0 }
+}
+bossSketch = sketch(on = bossPlane) {
+  bossCircle = circle(start = [var 28mm, var 0mm], center = [var 0mm, var 0mm])
+  coincident([bossCircle.center, ORIGIN])
+  horizontal([bossCircle.center, bossCircle.start])
+  diameter(bossCircle) == bossOuterDiameter
+}
+bossRegion = region(segments = [bossSketch.bossCircle])
+bossBody = extrude(bossRegion, length = bossThickness)
+
+leftRibPlane = {
+  origin = { x = 11, y = 20, z = 5 },
+  xAxis = { x = 0, y = 1, z = 0 },
+  yAxis = { x = 0, y = 0, z = 1 },
+  zAxis = { x = 1, y = 0, z = 0 }
+}
+leftRibSketch = sketch(on = leftRibPlane) {
+  ribBase = line(start = [var 0mm, var 0mm], end = [var 35mm, var 0mm])
+  ribSlope = line(start = [var 35mm, var 0mm], end = [var 0mm, var 25mm])
+  ribFront = line(start = [var 0mm, var 25mm], end = [var 0mm, var 0mm])
+  fixed([ribBase.start, ORIGIN])
+  horizontal(ribBase)
+  distance([ribBase.start, ribBase.end]) == ribLength
+  coincident([ribBase.end, ribSlope.start])
+  coincident([ribSlope.end, ribFront.start])
+  vertical(ribFront)
+  distance([ribFront.start, ribFront.end]) == ribHeight
+  coincident([ribFront.end, ribBase.start])
+}
+leftRibRegion = region(
+  segments = [leftRibSketch.ribBase, leftRibSketch.ribSlope],
+  intersectionIndex = -1,
+  direction = CCW,
+)
+leftRib = extrude(leftRibRegion, length = ribThickness)
+
+rightRibPlane = {
+  origin = { x = 55, y = 20, z = 5 },
+  xAxis = { x = 0, y = 1, z = 0 },
+  yAxis = { x = 0, y = 0, z = 1 },
+  zAxis = { x = 1, y = 0, z = 0 }
+}
+rightRibSketch = sketch(on = rightRibPlane) {
+  ribBase = line(start = [var 0mm, var 0mm], end = [var 35mm, var 0mm])
+  ribSlope = line(start = [var 35mm, var 0mm], end = [var 0mm, var 25mm])
+  ribFront = line(start = [var 0mm, var 25mm], end = [var 0mm, var 0mm])
+  fixed([ribBase.start, ORIGIN])
+  horizontal(ribBase)
+  distance([ribBase.start, ribBase.end]) == ribLength
+  coincident([ribBase.end, ribSlope.start])
+  coincident([ribSlope.end, ribFront.start])
+  vertical(ribFront)
+  distance([ribFront.start, ribFront.end]) == ribHeight
+  coincident([ribFront.end, ribBase.start])
+}
+rightRibRegion = region(
+  segments = [rightRibSketch.ribBase, rightRibSketch.ribSlope],
+  intersectionIndex = -1,
+  direction = CCW,
+)
+rightRib = extrude(rightRibRegion, length = ribThickness)
+
+bracketCore = union([basePlate, bossBody, leftRib, rightRib])
+
+motorCutPlane = {
+  origin = { x = 36, y = 23, z = motorCenterHeight },
+  xAxis = { x = 1, y = 0, z = 0 },
+  yAxis = { x = 0, y = 0, z = 1 },
+  zAxis = { x = 0, y = -1, z = 0 }
+}
+motorCutSketch = sketch(on = motorCutPlane) {
+  pilotCircle = circle(start = [var 11.5mm, var 0mm], center = [var 0mm, var 0mm])
+  coincident([pilotCircle.center, ORIGIN])
+  horizontal([pilotCircle.center, pilotCircle.start])
+  diameter(pilotCircle) == motorPilotClearance
+
+  holeAnchor = line(
+    start = [var -15.5mm, var -15.5mm],
+    end = [var 0mm, var 0mm],
+    construction = true,
+  )
+  fixed([holeAnchor.end, ORIGIN])
+  horizontalDistance([holeAnchor.start, holeAnchor.end]) == motorBoltSpacing / 2
+  verticalDistance([holeAnchor.start, holeAnchor.end]) == motorBoltSpacing / 2
+
+  boltBottom = line(
+    start = [var -15.5mm, var -15.5mm],
+    end = [var 15.5mm, var -15.5mm],
+    construction = true,
+  )
+  boltRight = line(
+    start = [var 15.5mm, var -15.5mm],
+    end = [var 15.5mm, var 15.5mm],
+    construction = true,
+  )
+  boltTop = line(
+    start = [var 15.5mm, var 15.5mm],
+    end = [var -15.5mm, var 15.5mm],
+    construction = true,
+  )
+  boltLeft = line(
+    start = [var -15.5mm, var 15.5mm],
+    end = [var -15.5mm, var -15.5mm],
+    construction = true,
+  )
+  coincident([holeAnchor.start, boltBottom.start])
+  horizontal(boltBottom)
+  distance([boltBottom.start, boltBottom.end]) == motorBoltSpacing
+  coincident([boltBottom.end, boltRight.start])
+  vertical(boltRight)
+  distance([boltRight.start, boltRight.end]) == motorBoltSpacing
+  coincident([boltRight.end, boltTop.start])
+  horizontal(boltTop)
+  distance([boltTop.start, boltTop.end]) == motorBoltSpacing
+  coincident([boltTop.end, boltLeft.start])
+  coincident([boltLeft.end, boltBottom.start])
+
+  motorHoleA = circle(start = [var -13.7mm, var -15.5mm], center = [var -15.5mm, var -15.5mm])
+  motorHoleB = circle(start = [var 17.3mm, var -15.5mm], center = [var 15.5mm, var -15.5mm])
+  motorHoleC = circle(start = [var 17.3mm, var 15.5mm], center = [var 15.5mm, var 15.5mm])
+  motorHoleD = circle(start = [var -13.7mm, var 15.5mm], center = [var -15.5mm, var 15.5mm])
+  coincident([motorHoleA.center, boltBottom.start])
+  coincident([motorHoleB.center, boltBottom.end])
+  coincident([motorHoleC.center, boltRight.end])
+  coincident([motorHoleD.center, boltTop.end])
+  horizontal([motorHoleA.center, motorHoleA.start])
+  horizontal([motorHoleB.center, motorHoleB.start])
+  horizontal([motorHoleC.center, motorHoleC.start])
+  horizontal([motorHoleD.center, motorHoleD.start])
+  diameter(motorHoleA) == motorBoltDiameter
+  equalRadius([motorHoleA, motorHoleB, motorHoleC, motorHoleD])
+}
+pilotRegion = region(segments = [motorCutSketch.pilotCircle])
+motorHoleARegion = region(segments = [motorCutSketch.motorHoleA])
+motorHoleBRegion = region(segments = [motorCutSketch.motorHoleB])
+motorHoleCRegion = region(segments = [motorCutSketch.motorHoleC])
+motorHoleDRegion = region(segments = [motorCutSketch.motorHoleD])
+pilotCutter = extrude(pilotRegion, length = 14mm)
+motorHoleACutter = extrude(motorHoleARegion, length = 14mm)
+motorHoleBCutter = extrude(motorHoleBRegion, length = 14mm)
+motorHoleCCutter = extrude(motorHoleCRegion, length = 14mm)
+motorHoleDCutter = extrude(motorHoleDRegion, length = 14mm)
+bracketWithMotorCuts = subtract(
+  bracketCore,
+  tools = [
+    pilotCutter,
+    motorHoleACutter,
+    motorHoleBCutter,
+    motorHoleCCutter,
+    motorHoleDCutter
+  ],
+)
+
+baseCutPlane = offsetPlane(XY, offset = -1mm)
+baseCutSketch = sketch(on = baseCutPlane) {
+  gridAnchor = line(
+    start = [var 0mm, var 0mm],
+    end = [var 8mm, var 8mm],
+    construction = true,
+  )
+  fixed([gridAnchor.start, ORIGIN])
+  horizontalDistance([gridAnchor.start, gridAnchor.end]) == 8mm
+  verticalDistance([gridAnchor.start, gridAnchor.end]) == 8mm
+
+  gridFront = line(
+    start = [var 8mm, var 8mm],
+    end = [var 64mm, var 8mm],
+    construction = true,
+  )
+  gridRight = line(
+    start = [var 64mm, var 8mm],
+    end = [var 64mm, var 56mm],
+    construction = true,
+  )
+  gridBack = line(
+    start = [var 64mm, var 56mm],
+    end = [var 8mm, var 56mm],
+    construction = true,
+  )
+  gridLeft = line(
+    start = [var 8mm, var 56mm],
+    end = [var 8mm, var 8mm],
+    construction = true,
+  )
+  coincident([gridAnchor.end, gridFront.start])
+  horizontal(gridFront)
+  distance([gridFront.start, gridFront.end]) == baseWidth - 16mm
+  coincident([gridFront.end, gridRight.start])
+  vertical(gridRight)
+  distance([gridRight.start, gridRight.end]) == baseDepth - 16mm
+  coincident([gridRight.end, gridBack.start])
+  horizontal(gridBack)
+  distance([gridBack.start, gridBack.end]) == baseWidth - 16mm
+  coincident([gridBack.end, gridLeft.start])
+  coincident([gridLeft.end, gridFront.start])
+
+  baseHoleA = circle(start = [var 10.75mm, var 8mm], center = [var 8mm, var 8mm])
+  baseHoleB = circle(start = [var 66.75mm, var 8mm], center = [var 64mm, var 8mm])
+  baseHoleC = circle(start = [var 66.75mm, var 56mm], center = [var 64mm, var 56mm])
+  baseHoleD = circle(start = [var 10.75mm, var 56mm], center = [var 8mm, var 56mm])
+  coincident([baseHoleA.center, gridFront.start])
+  coincident([baseHoleB.center, gridFront.end])
+  coincident([baseHoleC.center, gridRight.end])
+  coincident([baseHoleD.center, gridBack.end])
+  horizontal([baseHoleA.center, baseHoleA.start])
+  horizontal([baseHoleB.center, baseHoleB.start])
+  horizontal([baseHoleC.center, baseHoleC.start])
+  horizontal([baseHoleD.center, baseHoleD.start])
+  diameter(baseHoleA) == baseHoleDiameter
+  equalRadius([baseHoleA, baseHoleB, baseHoleC, baseHoleD])
+}
+baseHoleARegion = region(segments = [baseCutSketch.baseHoleA])
+baseHoleBRegion = region(segments = [baseCutSketch.baseHoleB])
+baseHoleCRegion = region(segments = [baseCutSketch.baseHoleC])
+baseHoleDRegion = region(segments = [baseCutSketch.baseHoleD])
+baseHoleACutter = extrude(baseHoleARegion, length = 8mm)
+baseHoleBCutter = extrude(baseHoleBRegion, length = 8mm)
+baseHoleCCutter = extrude(baseHoleCRegion, length = 8mm)
+baseHoleDCutter = extrude(baseHoleDRegion, length = 8mm)
+motorMountBracket = subtract(
+  bracketWithMotorCuts,
+  tools = [baseHoleACutter, baseHoleBCutter, baseHoleCCutter, baseHoleDCutter],
+)
+  |> appearance(color = "#596b7a")
+
+hide(baseSketch)
+hide(bossSketch)
+hide(leftRibSketch)
+hide(rightRibSketch)
+hide(motorCutSketch)
+hide(baseCutSketch)
