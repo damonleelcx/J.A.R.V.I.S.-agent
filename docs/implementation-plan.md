@@ -15,11 +15,12 @@ Requirement IDs are from `docs/prd.md`.
 
 Built and fenced: the durable engine, the agent loop, tools, identity, the
 console, the workbench, the audit chain, layered memory with the decision log,
-and the workspace model — the project graph and the artifact lifecycle. Roughly
-the whole vertical from "someone speaks" to "a worker executes a verified task",
-plus the record of it, what it remembers afterwards, and what it thinks is true.
+the workspace model, and containment — secret handles, incident response, and
+recovery drills that inject real faults. Roughly the whole vertical from
+"someone speaks" to "a worker executes a verified task", plus the record of it,
+what it remembers, what it thinks is true, and what happens when it breaks.
 
-Missing: containment, collaboration, enterprise security, and the release
+Missing: collaboration, enterprise security, visual completeness, and the release
 apparatus.
 
 The split matters when planning: the core loop is done, so every wave below adds
@@ -51,7 +52,7 @@ surface to a working system rather than filling a hole in one.
              └──────────────┬─────────────────┘
                             ▼
         ┌─────────────────────────────────────────────┐
-        │ WAVE 5  containment                         │
+        │ WAVE 5  containment                   DONE  │
         │   SEC-03 secret handles                     │
         │   SAF-07 incident response                  │
         │   NFR-07 recovery drills                    │
@@ -361,14 +362,135 @@ clean, an artifact change recorded, and `audit verify` still intact over it.
   that happens to name one. The anchor mechanism now makes that a small change,
   and it was not made — no consumer asks for it yet.
 
-## Wave 5 — containment
+## Wave 5 — containment · **DONE**
 
-- **SEC-03** secret handles: the model receives scoped handles, never raw
-  secrets. Touches `internal/tools` and the executor.
-- **SAF-07** incident response: stop, revoke, quarantine, roll back, preserve
-  evidence, notify, review. `forgectl` verbs over the existing engine.
-- **NFR-07** recovery drills: prove degradation preserves state and never implies
-  completion. This is the drill harness the README's phase 7 calls for.
+Migration `0009_containment`.
+
+### SEC-03 — secret handles
+
+"Model receives scoped handles, not raw secrets." Read literally: the model is
+told `secret://github_token` exists and what it is for, it writes that string
+wherever the value belongs, and the executor substitutes at the tool boundary —
+if and only if that tool is granted that secret.
+
+**The decision worth stating: FORGE brokers secrets, it does not store them.**
+The table holds a declaration — name, project, which tools may receive it, and
+the environment variable the value is read from. No value lands in Postgres.
+
+The alternative, encrypting values at rest, defends exactly one case (a stolen
+backup) and costs three: a key that lives in the same environment an attacker
+with the database usually also has; a rotation and re-encryption path; and, most
+of all, it makes FORGE a place worth attacking for credentials rather than a
+thing that borrows them. Private deployments already run under systemd,
+Kubernetes or a vault agent, all of which put secrets in a process environment.
+`source` is an enum with one value so a deployment that *does* want FORGE to hold
+values has somewhere to add it — with SEC-02's key management in wave 6.
+
+**The half that is easy to forget is the one the mechanism rests on.**
+Substituting on the way in is worthless alone, because the tool's output goes
+back to the model: a shell that echoes its environment, an HTTP client logging
+the request it sent, an error quoting the header it choked on. Each round-trips
+the value into the context window and from there into the ledger. So every
+resolved value is scrubbed from the tool's output, raw output and error text
+before either the model or the database sees it — matching not just the literal
+value but the encodings something in the path actually applies (percent, JSON
+escape, base64, basic-auth base64). A value that survives anyway is caught by a
+second check, and the whole result is discarded rather than handed over: losing a
+tool result is recoverable, the other is not.
+
+What is deliberately NOT claimed: a tool legitimately given a value can still
+send it somewhere. Scoping decides who receives a credential, not what they do
+with it. That is SEC-05, and it is not implemented.
+
+### SAF-07 — incident response
+
+Seven verbs — stop, revoke, quarantine, roll back, preserve evidence, notify,
+review — with **one ordering rule that is enforced**: evidence is preserved
+before anything destructive. A response that stops the goal, revokes the
+credential and rolls the artifact back, then gathers evidence, has gathered the
+evidence of its own response. A dry run is always allowed, because it changes
+nothing and rehearsing before capturing is exactly right.
+
+"Preserve evidence" preserves something: goal status, task counts, open
+approvals, the live handle names, and **the audit chain's verdict at capture
+time** — which matters more than it looks, because once the response has written
+its own events, "was the chain intact when this started?" is no longer answerable
+by running the verifier. The snapshot names handles but never the environment
+variables behind them: an incident record is read by several people, and one that
+named the variables would be a map.
+
+Three states, not two: `contained` is real, because "the bleeding stopped" and
+"we understand what happened" are different days. Containment is refused while
+nothing destructive has actually been done — it is a claim about the world, not
+about the record. Closing requires a review, in the database as well as the
+service.
+
+### NFR-07 — recovery drills
+
+"Preserve state, stop dependents safely, expose partial results, never imply
+completion." Four properties that are true right up until something breaks, which
+is when nobody is watching. A unit test cannot check them after a fault, because
+the fault has to be real.
+
+So `forgectl drill run` injects real faults into real schemas: a worker that dies
+holding a lease, a dependency that fails terminally, a goal that settles with
+work incomplete, a checkpoint that becomes undecodable. Four scenarios, sixteen
+invariants.
+
+**The rule that makes a drill worth running:** a scenario must PROVE its fault
+landed before it may assert anything. The failure mode of every drill harness is
+an injection that silently did nothing, after which every invariant passes and
+the report is a page of green ticks about a system nobody disturbed. So
+`FaultInjected` is not a boolean the scenario sets — it carries the evidence, and
+a scenario without it is reported VACUOUS and **fails the run**. An empty
+selection fails too.
+
+Exit 0 only when every drill injected its fault and every invariant held, so it
+belongs in the release checklist beside `audit verify` and `graph review`.
+
+### Surfaces
+
+`forgectl secrets`, `forgectl incidents` and `forgectl drill`. All three are
+operator acts: declaring a handle is paired with exporting a variable where the
+service starts, responding to an incident is done by whoever holds the pager, and
+a drill builds its own schemas. **No HTTP surface was added** — see Carried
+forward.
+
+**33 fences** plus 4 drill scenarios carrying 16 invariants; 8 drilled by
+mutation, all 8 red. Verified live end to end: a handle declared and granted, a
+stop refused before evidence and accepted after, and a closure refused without a
+review.
+
+### Two things the drills found about themselves
+
+- **The first drill run failed on the drill, not the system.** The
+  worker-death scenario gave its task one attempt, so a dead worker meant
+  terminal failure — correct behaviour, and not recovery. And its "completion is
+  not implied" check tested `ended_at == nil`, which conflates *not complete*
+  with *not ended*; a failed task has legitimately ended. Both were the
+  scenario's fault. Fixed, and the drill now covers both paths — and asserts the
+  thing the engine does well: a crashed worker is recorded as
+  `LEASE_EXPIRED_ATTEMPTS_EXHAUSTED` rather than as the work being wrong, so
+  nobody debugs the instruction when the infrastructure died.
+- **A mutation drill reported NOT A FENCE twice, and both were the checker.**
+  Once because a drill that ERRORs is red and the grep only looked for FAILED;
+  once because `go test -run TestExecutorSecrets` matched no tests and exited 0 —
+  the executor's redaction path had no fence at all. That gap was real and is now
+  closed by `internal/agent/secrets_test.go`.
+
+### Carried forward
+
+- **No HTTP surface for incidents.** Response is an operator act and the CLI is
+  the honest surface for it, but "report an incident" is plausibly a user act and
+  there is no way to do it from the API today.
+- **SEC-04 and SEC-05 are untouched.** Prompt-injection defence (tool output and
+  imported results as untrusted input) and exfiltration controls are named in the
+  PRD and were not in this wave's scope. SEC-05 in particular is the missing half
+  of SEC-03's honesty: scoping says who gets a credential, and nothing yet says
+  where it may go.
+- **A revoked secret does not stop a task already holding its value.** Revocation
+  takes effect at the next resolution. Stopping work mid-flight is the `stop`
+  verb's job, and the two are not wired together.
 
 ## Wave 6 — enterprise and collaboration
 
@@ -413,6 +535,9 @@ already calls this phase 7.
   not. Fixing it properly means either a schema validator in the executor or
   strict decoding as a rule, and it is a decision about every tool rather than
   about memory, so it was left rather than widened into.
+- **Prompt-injection defence (SEC-04) does not exist.** Tool output, imported
+  results, documents and code comments reach the model as ordinary text. The
+  PRD names them as untrusted input; nothing treats them that way.
 - **`updated_at` is maintained by a trigger nothing asserts.** The trigger is now
   attached in every schema, and no test checks that a row's `updated_at` actually
   moves when something updates it without setting it by hand. The one path that

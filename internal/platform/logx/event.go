@@ -224,3 +224,31 @@ func init() {
 		EventArtifactVerified, EventArtifactDispositioned,
 	)
 }
+
+// Containment events (PRD SEC-03, SAF-07).
+//
+// Revocation and unredactable values are warnings rather than info: the first is
+// somebody withdrawing a credential, usually during an incident, and the second
+// means a value will reach the model. Both should be visible without going
+// looking for them.
+const (
+	EventSecretDeclared     Event = "forge.secret.declared"
+	EventSecretGranted      Event = "forge.secret.granted"
+	EventSecretRevoked      Event = "forge.secret.revoked"
+	EventSecretResolved     Event = "forge.secret.resolved"
+	EventSecretRefused      Event = "forge.secret.refused"
+	EventSecretUnredactable Event = "forge.secret.unredactable"
+	EventSecretLeakBlocked  Event = "forge.secret.leak_blocked"
+	EventIncidentOpened     Event = "forge.incident.opened"
+	EventIncidentAction     Event = "forge.incident.action"
+	EventIncidentClosed     Event = "forge.incident.closed"
+)
+
+func init() {
+	allEvents = append(allEvents,
+		EventSecretDeclared, EventSecretGranted, EventSecretRevoked,
+		EventSecretResolved, EventSecretRefused, EventSecretUnredactable,
+		EventSecretLeakBlocked,
+		EventIncidentOpened, EventIncidentAction, EventIncidentClosed,
+	)
+}

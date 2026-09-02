@@ -12,6 +12,7 @@ package tools
 import (
 	"context"
 	"encoding/json"
+	"strings"
 	"time"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/engine"
@@ -220,6 +221,31 @@ type Invocation struct {
 	// Workspace is the directory the tool may touch. Empty means the tool does
 	// not touch the filesystem.
 	Workspace string
+	// Secrets carries values the executor resolved from handles the model wrote
+	// into Input (PRD SEC-03), keyed by handle name.
+	//
+	// It is a separate field rather than being substituted into Input because a
+	// tool that logs its own arguments — several do — would put the value
+	// straight back into the record. Input keeps the handles; a tool that needs
+	// the value asks for it by name.
+	//
+	// Tools that take a credential inside a larger string (a header, a URL) get
+	// the substitution applied to Input as well; those declare it by calling
+	// Invocation.Reveal, which exists so that the decision is visible at the
+	// call site rather than being a property of the whole system.
+	Secrets map[string]string
+}
+
+// Reveal substitutes resolved secret values into a string.
+//
+// Named rather than automatic, so that every place a credential enters a
+// tool's working data is one grep away. A tool that never calls this never
+// handles a value, whatever the model wrote in its arguments.
+func (inv Invocation) Reveal(s string) string {
+	for name, value := range inv.Secrets {
+		s = strings.ReplaceAll(s, "secret://"+name, value)
+	}
+	return s
 }
 
 // Result is what a tool returns.

@@ -20,6 +20,7 @@ import (
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/agent"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/engine"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/memory"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/secrets"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/llm"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/persona"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/clock"
@@ -115,7 +116,13 @@ func run() error {
 	}
 
 	assembler := agent.NewAssembler(repo, queue)
-	executor := agent.NewExecutor(client, registry, repo, budget, character, clk, log, pool)
+	// The secret broker reads values from this process's environment at the
+	// moment a granted tool needs one (PRD SEC-03). FORGE stores no values, so
+	// whatever puts secrets in the environment — systemd, Kubernetes, a vault
+	// agent — stays the custodian.
+	broker := secrets.NewBroker(pool, secrets.EnvLookup{}, clk, log)
+	executor := agent.NewExecutor(client, registry, repo, budget, character, clk, log, pool).
+		WithSecrets(broker)
 	verifier := agent.NewVerifier(client, character)
 
 	log.Info(ctx, logx.EventWorkerReady,

@@ -252,6 +252,60 @@ The same split runs through the graph's review, which reports what a project
 check. Every real project has requirements nothing verifies yet, and a check that
 is always red is a check somebody turns off in a week.
 
+### The model never holds a credential, and never reads one back
+
+FORGE brokers secrets rather than storing them. The database holds a declaration
+— a handle name, which tools may receive it, and the environment variable the
+value is read from — and the value itself never lands in Postgres. Whatever
+already puts secrets in a process environment stays the custodian.
+
+The model is told `secret://github_token` exists and what it is for. It writes
+that string where the value belongs, and the executor substitutes at the tool
+boundary, only for a tool that has been granted it. A handle that cannot be
+resolved is **refused**, never passed through: a request that goes out with
+`Authorization: Bearer secret://github_token` fails for a reason that has nothing
+to do with credentials, and the model then debugs the wrong thing for the rest of
+the run.
+
+Substitution on the way in is the obvious half and is worth nothing alone,
+because the tool's output goes back to the model — a shell echoing its
+environment, an HTTP client logging the request it sent, an error quoting the
+header it choked on. So every resolved value is scrubbed out of the output, the
+raw output and the error text before either the model or the ledger sees them,
+including the encodings something in the path actually applies. A value that
+survives anyway is caught by a second check and the whole result is discarded:
+losing a tool result is recoverable, and the other is not.
+
+What this does **not** do is stop a tool that was legitimately given a value from
+sending it somewhere. Scoping decides who receives a credential, not what they do
+with it.
+
+### Evidence is preserved before anything is stopped
+
+An incident response that halts the goal, revokes the credential and rolls the
+artifact back, and then gathers evidence, has gathered the evidence of its own
+response. So stop, revoke, quarantine and roll back are **refused** on an
+incident that has preserved nothing — a refusal rather than a warning, because
+the moment it fires is the moment nobody is reading warnings. A dry run is always
+allowed: it changes nothing, and rehearsing before capturing is exactly right.
+
+What gets captured includes the audit chain's verdict at that instant. Once the
+response has written its own events, "was the chain intact when this started?" is
+no longer a question the verifier can answer.
+
+### A drill has to prove its fault landed
+
+`forgectl drill run` injects real faults — a worker that dies holding a lease, a
+dependency that fails terminally, a checkpoint that becomes undecodable — and
+then asks NFR-07's questions of what is left.
+
+The failure mode of every drill harness is an injection that silently did
+nothing, after which every invariant passes and the report is a page of green
+ticks about a system nobody disturbed. So a scenario does not get to say it
+injected a fault; it carries the evidence that proved it, and one without that
+evidence is reported VACUOUS and fails the run. So does a selection that matched
+no scenarios.
+
 ### The voice surface moves; it does not shrink
 
 The workbench has one voice component with two placements. Before there is

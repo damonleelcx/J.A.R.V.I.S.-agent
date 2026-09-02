@@ -77,6 +77,28 @@ Workspace model:
   artifacts show <artifact-id>         One artifact's lifecycle: WRK-04's seven facts per version
   artifacts show <path> --project <id>
 
+Containment:
+  secrets list --project <id> [--revoked]      Declared handles and which tools may use them
+  secrets declare --project <id> --name <n> --env-var <VAR> [--description ...] --as <user-id>
+  secrets grant <secret-id> --tool <name> --as <user-id>
+  secrets revoke <secret-id> --as <user-id> [--reason ...]
+      FORGE brokers secrets; it never stores a value. The declaration names the
+      environment variable the value is read from at the moment a granted tool needs it.
+
+  incidents list --project <id> [--open]       Incident records (PRD SAF-07)
+  incidents show <incident-id>                 One incident with every action taken
+  incidents open --project <id> --title ... --statement ... --as <user-id> [--goal <id>] [--severity ...]
+  incidents preserve <incident-id> --as <user-id>
+      Capture the state BEFORE anything destructive. Stop, revoke, quarantine and
+      roll back are refused until this has happened.
+  incidents act <incident-id> --kind <verb> --target <what> --as <user-id> [--outcome done|partial|failed|dry_run]
+  incidents close <incident-id> --as <user-id> --review "..."
+
+Drills:
+  drill list                                   What each recovery drill proves (PRD NFR-07)
+  drill run [--only a,b] [--verbose] [--keep]  Inject real faults; exit 1 if any invariant broke
+                                               OR if a drill disturbed nothing.
+
 Audit:
   audit verify <goal-id>   Check a goal's timeline against its hash chain
   audit verify --all       Check every goal
@@ -245,6 +267,65 @@ func run(ctx context.Context, cmd string, args []string) error {
 				WithDetail("unknown artifacts subcommand %q; expected show", args[0])
 		}
 
+	case "secrets":
+		if len(args) == 0 {
+			fmt.Fprint(os.Stderr, usage)
+			return errs.New("forgectl.run", errs.CodeValidationFailed).
+				WithDetail("secrets needs a subcommand: list, declare, grant or revoke")
+		}
+		switch args[0] {
+		case "list":
+			return cmdSecretsList(ctx, cfg, log, args[1:])
+		case "declare":
+			return cmdSecretsDeclare(ctx, cfg, log, args[1:])
+		case "grant":
+			return cmdSecretsGrant(ctx, cfg, log, args[1:])
+		case "revoke":
+			return cmdSecretsRevoke(ctx, cfg, log, args[1:])
+		default:
+			return errs.New("forgectl.run", errs.CodeValidationFailed).
+				WithDetail("unknown secrets subcommand %q; expected list, declare, grant or revoke", args[0])
+		}
+
+	case "incidents":
+		if len(args) == 0 {
+			fmt.Fprint(os.Stderr, usage)
+			return errs.New("forgectl.run", errs.CodeValidationFailed).
+				WithDetail("incidents needs a subcommand: list, show, open, preserve, act or close")
+		}
+		switch args[0] {
+		case "list":
+			return cmdIncidentsList(ctx, cfg, log, args[1:])
+		case "show":
+			return cmdIncidentShow(ctx, cfg, log, args[1:])
+		case "open":
+			return cmdIncidentOpen(ctx, cfg, log, args[1:])
+		case "preserve":
+			return cmdIncidentPreserve(ctx, cfg, log, args[1:])
+		case "act":
+			return cmdIncidentAct(ctx, cfg, log, args[1:])
+		case "close":
+			return cmdIncidentClose(ctx, cfg, log, args[1:])
+		default:
+			return errs.New("forgectl.run", errs.CodeValidationFailed).
+				WithDetail("unknown incidents subcommand %q; expected list, show, open, preserve, act or close", args[0])
+		}
+
+	case "drill":
+		if len(args) == 0 {
+			return errs.New("forgectl.run", errs.CodeValidationFailed).
+				WithDetail("drill needs a subcommand: list or run")
+		}
+		switch args[0] {
+		case "list":
+			return cmdDrillList()
+		case "run":
+			return cmdDrillRun(ctx, cfg, log, args[1:])
+		default:
+			return errs.New("forgectl.run", errs.CodeValidationFailed).
+				WithDetail("unknown drill subcommand %q; expected list or run", args[0])
+		}
+
 	case "audit":
 		if len(args) == 0 {
 			return errs.New("forgectl.run", errs.CodeValidationFailed).
@@ -322,6 +403,16 @@ func run(ctx context.Context, cmd string, args []string) error {
 func sectionsFor(cmd string) []config.Section {
 	switch cmd {
 	case "migrate", "health":
+		return []config.Section{config.SectionDB}
+	case "secrets", "incidents":
+		// Containment is read and written straight from the database. Requiring
+		// an LLM key to revoke a credential during an incident would be the
+		// worst possible moment to ask for one.
+		return []config.Section{config.SectionDB}
+	case "drill":
+		// Drills build their own schemas from the migration chain and need no
+		// model. Requiring an LLM key to prove the system degrades safely would
+		// make the check harder to run than the thing it checks.
 		return []config.Section{config.SectionDB}
 	case "graph", "artifacts":
 		// The workspace model is read straight from the database. Requiring an

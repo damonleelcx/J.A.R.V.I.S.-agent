@@ -10,6 +10,7 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/engine"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/secrets"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/llm"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/persona"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/clock"
@@ -56,6 +57,10 @@ type Executor struct {
 	clock    clock.Clock
 	log      *logx.Logger
 	pool     *db.Pool
+	// secrets resolves the handles a model writes into tool arguments (PRD
+	// SEC-03). Nil is a legal deployment — one that declares no secrets — and a
+	// call referencing a handle is then refused rather than passed through.
+	secrets *secrets.Broker
 }
 
 // NewExecutor wires an executor.
@@ -66,6 +71,13 @@ func NewExecutor(client llm.Client, registry *tools.Registry, repo *engine.Repos
 		char: char, clock: clk, log: log, pool: pool,
 	}
 }
+
+// WithSecrets attaches a secret broker.
+//
+// Separate from NewExecutor so that adding it does not change the signature
+// every caller and test uses, and so that a deployment without one is an
+// explicit shape rather than a nil someone forgot to pass.
+func (e *Executor) WithSecrets(b *secrets.Broker) *Executor { e.secrets = b; return e }
 
 // Outcome is what an execution cycle produced.
 type Outcome struct {
@@ -93,7 +105,18 @@ func (e *Executor) Execute(ctx context.Context, tc *TaskContext, workspace strin
 	const op = "agent.Executor.Execute"
 
 	definitions := e.registry.Definitions(tc.Grant)
-	messages := tc.Messages(persona.SystemPrompt(e.char, executorFraming))
+	framing := executorFraming
+	// Tell the model which handles exist, by name and purpose only (PRD SEC-03).
+	//
+	// Without this the mechanism is unusable: a model that does not know
+	// `secret://github_token` exists will either invent a credential, ask a
+	// person for one, or give up. Only granted, unrevoked handles are listed —
+	// a handle the model cannot use produces a refusal it could not have
+	// predicted, which teaches it nothing.
+	if note := e.secretsNote(ctx, tc); note != "" {
+		framing += note
+	}
+	messages := tc.Messages(persona.SystemPrompt(e.char, framing))
 
 	// Resume the conversation from a checkpoint when one exists, so an
 	// interrupted task does not start its reasoning over.
@@ -228,6 +251,26 @@ func (e *Executor) runTool(ctx context.Context, tc *TaskContext, call llm.ToolCa
 		return string(prior)
 	}
 
+	// Secret handles (PRD SEC-03).
+	//
+	// The model wrote `secret://name` somewhere in its arguments. Resolution
+	// happens here, AFTER the idempotency key is computed from the raw
+	// arguments — so the key is stable across a credential rotation, which is
+	// what it should be: rotating a secret does not make a call a different
+	// call.
+	resolution, secErr := e.resolveSecrets(ctx, tc, name, call.Function.Arguments)
+	if secErr != nil {
+		// A refusal, not a silent pass-through. Leaving the literal handle in
+		// place is how a request goes out with `Authorization: Bearer
+		// secret://github_token` and fails for a reason that has nothing to do
+		// with credentials.
+		e.recordToolCall(ctx, tc, call, engine.ToolRefused, "",
+			string(errs.CodeOf(secErr)), secErr.Error(), 0)
+		e.log.Warn(ctx, logx.EventSecretRefused,
+			"task_id", tc.Task.ID, "tool", name, "code", string(errs.CodeOf(secErr)))
+		return toolError(string(errs.CodeOf(secErr)), secErr.Error())
+	}
+
 	inv := tools.Invocation{
 		Tool:           name,
 		Input:          json.RawMessage(call.Function.Arguments),
@@ -235,6 +278,7 @@ func (e *Executor) runTool(ctx context.Context, tc *TaskContext, call llm.ToolCa
 		TaskID:         tc.Task.ID,
 		GoalID:         tc.Goal.ID,
 		Workspace:      workspace,
+		Secrets:        resolution.Values,
 	}
 
 	callCtx, cancel := context.WithTimeout(ctx, contract.Timeout)
@@ -245,18 +289,110 @@ func (e *Executor) runTool(ctx context.Context, tc *TaskContext, call llm.ToolCa
 	elapsed := e.clock.Now().Sub(start)
 
 	if runErr != nil {
+		// The error text is redacted too. A failing HTTP client quoting the
+		// header it choked on is one of the likeliest ways a value comes back.
+		detail := resolution.Redactor.Redact(runErr.Error())
 		e.recordToolCall(ctx, tc, call, engine.ToolFailed, "",
-			string(errs.CodeOf(runErr)), runErr.Error(), elapsed)
+			string(errs.CodeOf(runErr)), detail, elapsed)
 		e.log.Info(ctx, logx.EventToolFailed,
 			"task_id", tc.Task.ID, "tool", name, "code", string(errs.CodeOf(runErr)))
-		return toolError(string(errs.CodeOf(runErr)), runErr.Error())
+		return toolError(string(errs.CodeOf(runErr)), detail)
 	}
 
-	e.recordToolCall(ctx, tc, call, engine.ToolSucceeded, res.Raw, "", "", elapsed)
+	// Redaction, before the result reaches EITHER the model or the ledger.
+	//
+	// This is the half of SEC-03 that the handle mechanism is worthless without:
+	// the tool has the value now, and its output is about to become context.
+	output := resolution.Redactor.RedactJSON(res.Output)
+	raw := resolution.Redactor.Redact(res.Raw)
+
+	// Defence in depth. If a value survives redaction, an encoding was missed —
+	// and the right response is to lose the tool result rather than hand the
+	// model a credential. Losing a result is recoverable; the other is not.
+	if leaked := resolution.Redactor.Leaks(string(output)+raw, resolution.Values); len(leaked) > 0 {
+		e.log.Warn(ctx, logx.EventSecretLeakBlocked,
+			"task_id", tc.Task.ID, "tool", name, "handles", strings.Join(leaked, ","))
+		blocked := fmt.Sprintf("This tool returned output containing the value of %s, and the "+
+			"redactor could not remove it, so the whole result was discarded. The tool ran and "+
+			"its effects stand; only the output was withheld. Do not retry expecting to see it.",
+			handleList(leaked))
+		e.recordToolCall(ctx, tc, call, engine.ToolSucceeded, blocked, "", "", elapsed)
+		return toolError(string(errs.CodeSecretUnavailable), blocked)
+	}
+
+	e.recordToolCall(ctx, tc, call, engine.ToolSucceeded, raw, "", "", elapsed)
 	e.log.Debug(ctx, logx.EventToolSucceeded,
 		"task_id", tc.Task.ID, "tool", name, "duration_ms", elapsed.Milliseconds())
 
-	return string(res.Output)
+	return string(output)
+}
+
+// secretsNote describes the available handles for the system prompt.
+//
+// Names and purposes, never values — this string goes straight into the context
+// window. The struct it is built from has no field that could hold a value,
+// which is how that stays true when somebody edits this later.
+func (e *Executor) secretsNote(ctx context.Context, tc *TaskContext) string {
+	if e.secrets == nil {
+		return ""
+	}
+	available, err := e.secrets.Describe(ctx, tc.Goal.ProjectID)
+	if err != nil {
+		// Not fatal. A task that cannot list handles can still do work that
+		// needs none, and failing the whole cycle over it would make an
+		// unrelated database hiccup look like a task failure.
+		e.log.WarnWith(ctx, logx.EventSecretRefused, err, "goal_id", tc.Goal.ID,
+			"detail", "the available secret handles could not be listed; this task runs without them")
+		return ""
+	}
+	if len(available) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\n\nCREDENTIALS\n" +
+		"You never see a credential's value. Write the handle where the value belongs and it is " +
+		"substituted at the tool boundary, only for the tools listed beside it. A handle used " +
+		"anywhere else is refused, and tool output containing a resolved value is redacted before " +
+		"you see it — so do not try to read one back.\n")
+	for _, a := range available {
+		fmt.Fprintf(&b, "  %s — %s (usable by: %s)\n",
+			a.Handle, orNoPurpose(a.Description), strings.Join(a.Tools, ", "))
+	}
+	return b.String()
+}
+
+func orNoPurpose(s string) string {
+	if strings.TrimSpace(s) == "" {
+		return "no purpose recorded"
+	}
+	return s
+}
+
+// resolveSecrets finds the handles a tool call references and resolves them.
+//
+// A deployment with no broker configured resolves nothing, and a call that
+// references a handle in that deployment is refused rather than passed through:
+// "there is no secret broker here" is a better message than a request that goes
+// out with a handle where a token should be.
+func (e *Executor) resolveSecrets(ctx context.Context, tc *TaskContext, toolName, args string) (*secrets.Resolution, error) {
+	handles := secrets.FindHandles(args)
+	if len(handles) == 0 {
+		return &secrets.Resolution{Values: map[string]string{}, Redactor: secrets.NewRedactor(nil)}, nil
+	}
+	if e.secrets == nil {
+		return nil, errs.New("agent.Executor.resolveSecrets", errs.CodeSecretUnavailable).
+			WithDetail("this call references %s and no secret broker is configured in this deployment",
+				handleList(handles))
+	}
+	return e.secrets.Resolve(ctx, tc.Goal.ProjectID, toolName, handles)
+}
+
+func handleList(names []string) string {
+	out := make([]string, 0, len(names))
+	for _, n := range names {
+		out = append(out, secrets.HandlePrefix+n)
+	}
+	return strings.Join(out, ", ")
 }
 
 // findCompletedCall looks for a prior successful call under this key.
