@@ -38,7 +38,7 @@ green in CI against a live Postgres.**
 |-------|-------|-------|
 | 0 | Foundation: config, database, migrations, error registry, event registry, structured logging, identifiers, CI | ✅ Done |
 | 1 | Identity: sign up, sign in, verify email, reset password, sessions, HTTP surface | ✅ Done |
-| 2 | Durable engine: goals, task DAG, job queue, leases, checkpoints, budgets | ⏳ Next |
+| 2 | Durable engine: goals, task DAG, job queue, leases, checkpoints, timeline | 🔨 In progress |
 | 3 | Agent loop: planner/executor split, context assembly, verification, replanning, approval gates | ⏳ Planned |
 | 4 | Tools and domain packs: capability registry, risk tiers, safety plane | ⏳ Planned |
 | 5 | Persona and console: avatar, character, soul, execution timeline | ⏳ Planned |
@@ -140,6 +140,23 @@ in an incoming message. If `GET /auth/verify-email` redeemed the token, users
 would routinely arrive at "already used" — used by a robot seconds after
 delivery. The GET renders a page; redemption happens on the POST the reader
 triggers.
+
+### `skipped` needed two meanings, so the reason is recorded
+
+A task can end `skipped` for two opposite reasons, and everything downstream
+depends on which:
+
+- **Removed by a replan** — the work is no longer needed, so tasks waiting on it
+  should proceed. Otherwise deleting one task deadlocks everything after it.
+- **Unreachable because a dependency failed** — tasks waiting on it must also be
+  skipped. Otherwise the failure stops propagating one level down and leaves a
+  tail of permanently pending tasks, which looks exactly like a goal still working.
+
+The first version of the engine had only the status, so it could satisfy one
+rule or the other but never both — propagation stopped after a single level. The
+reason now lives in `error_code`, and both the promotion and propagation queries
+branch on it. Each half is fenced by its own test, and each test was drilled
+against the other half's implementation.
 
 ### Seven limits, not one
 
