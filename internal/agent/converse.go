@@ -262,6 +262,24 @@ func (r *Reply) validate() error {
 			r.Prototype = nil
 			return nil
 		}
+		/* PRD WRK-05: a dimension without its unit will eventually be read in
+		 * the wrong one.
+		 *
+		 * The units field is free text from a model, so it can be missing,
+		 * misspelled, or something we cannot convert. An unrecognised unit is NOT
+		 * quietly treated as millimetres — a wrong guess about scale is the
+		 * difference between a bracket and a building. It is recorded as
+		 * unspecified, every dimension then renders as "60 (unit not stated)",
+		 * and the reader is told in the one place they are already looking. */
+		if _, known := ParseUnit(r.Prototype.Units); !known && len(r.Prototype.Parts) > 0 {
+			declared := strings.TrimSpace(r.Prototype.Units)
+			note := "No unit was stated for these dimensions, so every number here is unitless."
+			if declared != "" {
+				note = fmt.Sprintf("The unit %q is not one FORGE can convert, so every number here is unitless.", declared)
+			}
+			r.Prototype.Units = ""
+			r.Prototype.NotVerified = append(r.Prototype.NotVerified, note)
+		}
 		// PRD VIS-06 as an invariant rather than an instruction: geometry
 		// without a statement of what it does not establish is exactly the
 		// render that gets mistaken for an analysis.

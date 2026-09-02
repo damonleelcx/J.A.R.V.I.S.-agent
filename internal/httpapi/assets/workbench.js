@@ -174,7 +174,7 @@
     if (!state.prototype) return '';
     var names = state.prototype.parts.map(function (p) { return p.name || p.id; });
     return state.prototype.name + ' — ' + state.prototype.parts.length + ' part(s): ' + names.join(', ') +
-           ' (units: ' + (state.prototype.units || 'unspecified') + ')';
+           ' (units: ' + (state.prototype.units || 'NOT STATED — every dimension here is unitless') + ')';
   }
 
   function loadPrototype(proto) {
@@ -193,28 +193,10 @@
       return;
     }
     el.innerHTML = state.prototype.parts.map(function (p) {
-      var s = p.size || {};
-      var u = state.prototype.units || '';
-      /* Rendered per shape rather than by listing every field: a cylinder shown
-       * as "0×20×0 r12.5" is noise, and noise in a dimension is worse than none
-       * because it reads as a measurement. */
-      var dims = [];
-      if (p.shape === 'cylinder' || p.shape === 'cone' || p.shape === 'tube') {
-        if (s.radius != null) dims.push('⌀' + (s.radius * 2));
-        if (s.radius_top != null && s.radius_top !== s.radius) dims.push('top ⌀' + (s.radius_top * 2));
-        if (s.height != null) dims.push('h' + s.height);
-      } else if (p.shape === 'sphere') {
-        if (s.radius != null) dims.push('⌀' + (s.radius * 2));
-      } else {
-        var w = s.width, h = s.height, d = s.depth;
-        if (w != null || h != null || d != null) {
-          dims.push([w, h, d].map(function (v) { return v == null ? '?' : v; }).join('×'));
-        }
-      }
       return '<div class="part" data-id="' + esc(p.id) + '" aria-current="' + (state.selectedPart === p.id) + '">' +
         '<span class="sw" style="background:' + esc(p.color || '#b8bcc4') + '"></span>' +
         '<span class="nm">' + esc(p.name || p.id) +
-        '<div class="dim">' + esc(p.shape) + (dims.length ? ' · ' + esc(dims.join(' ')) + ' ' + esc(u) : '') + '</div>' +
+        '<div class="dim">' + esc(p.shape) + dimensionsOf(p) + '</div>' +
         (p.note ? '<div class="dim">' + esc(p.note) + '</div>' : '') +
         '</span></div>';
     }).join('');
@@ -226,6 +208,38 @@
         renderParts();
       });
     });
+  }
+
+  /* Dimensions, with every number carrying its unit (PRD WRK-05).
+   *
+   * The previous version joined bare numbers and appended the assembly's unit
+   * string once at the end — correct while the unit was declared, and silently
+   * wrong when it was not: "50×5×50 " reads as millimetres to anyone who has
+   * seen millimetres before. Now each number is formatted with its unit, and a
+   * prototype with no usable unit says so on every value rather than nowhere.
+   *
+   * Rendered per shape rather than by listing every field: a cylinder shown as
+   * "0×20×0 r12.5" is noise, and noise in a dimension is worse than none,
+   * because it reads as a measurement. */
+  function qty(v) {
+    if (v == null) return '?';
+    var u = state.prototype && state.prototype.units;
+    return u ? (v + ' ' + u) : (v + ' (unit not stated)');
+  }
+
+  function dimensionsOf(p) {
+    var s = p.size || {};
+    var dims = [];
+    if (p.shape === 'cylinder' || p.shape === 'cone' || p.shape === 'tube') {
+      if (s.radius != null) dims.push('⌀' + qty(s.radius * 2));
+      if (s.radius_top != null && s.radius_top !== s.radius) dims.push('top ⌀' + qty(s.radius_top * 2));
+      if (s.height != null) dims.push('h ' + qty(s.height));
+    } else if (p.shape === 'sphere') {
+      if (s.radius != null) dims.push('⌀' + qty(s.radius * 2));
+    } else if (s.width != null || s.height != null || s.depth != null) {
+      dims.push([s.width, s.height, s.depth].map(qty).join(' × '));
+    }
+    return dims.length ? ' · ' + esc(dims.join(' · ')) : '';
   }
 
   /* The provenance banner. Always present when geometry is; never dismissible.

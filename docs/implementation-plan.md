@@ -33,7 +33,7 @@ surface to a working system rather than filling a hole in one.
         └───────────────────┬─────────────────────────┘
                             │  everything below is auditable because of it
         ┌───────────────────▼─────────────────────────┐
-        │ WAVE 2  claims and units                    │
+        │ WAVE 2  claims and units              DONE  │
         │   RSN-05 epistemic labelling                │
         │   WRK-05 unit integrity, per value          │
         └───────────────────┬─────────────────────────┘
@@ -93,7 +93,7 @@ it. Adding the vocabulary afterwards means rewriting every row.
 Fifteen fences, seven against live Postgres performing real UPDATEs and DELETEs.
 Tamper-evident, not tamper-proof, and it says so.
 
-## Wave 2 — claims and units
+## Wave 2 — claims and units · **DONE**
 
 **RSN-05 epistemic labelling.** The PRD names seven ways a thing can be known:
 `observed / retrieved / calculated / simulated / inferred / assumed / proposed`.
@@ -101,8 +101,9 @@ Today exactly one edge of that exists — the standards detector separating
 *recalled* from *chosen* (`internal/agent/standards.go`). The work is to make the
 vocabulary explicit, attach it to every claim FORGE emits, and render it.
 
-*Closes when:* a reply's claims each carry a label, the label is shown, and a
-fence proves an unlabelled claim cannot reach the UI.
+**Done.** `internal/agent/epistemic.go`. Closed vocabulary, derived ledger,
+rendered per turn. Twelve fences. Verified live: a real turn produced retrieved,
+assumed and proposed claims, and no observed, calculated or simulated ones.
 
 **WRK-05 unit integrity.** Units are declared once per assembly
 (`"units": "mm"`) rather than per value. The Zoo spike showed the alternative —
@@ -110,8 +111,14 @@ every number carrying its unit (`60mm`, not `60`) — and why it matters: a
 dimension that travels without its unit is a dimension that will eventually be
 read in the wrong one. Also needs coordinate frame, precision, and tolerance.
 
-*Closes when:* a prototype part's dimensions are unit-typed end to end, and a
-fence rejects a bare number.
+**Done.** `internal/agent/units.go`. `Quantity` cannot be rendered without its
+unit; an unrecognised unit is recorded as unspecified rather than guessed at, and
+every dimension then says so. Seven fences. Verified live: parts render as
+`60 mm × 60 mm × 3 mm`, not `60×60×3 mm`.
+
+Not done in this wave, and carried to Wave 4 with the workspace model: tolerance,
+calibration and timestamp per value. `Frame` exists with one value, named rather
+than implied.
 
 ## Wave 3 — memory
 
