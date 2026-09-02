@@ -80,6 +80,19 @@ const (
 )
 
 // ---------------------------------------------------------------------------
+// Memory and decisions (business)
+// ---------------------------------------------------------------------------
+
+const (
+	// CodeMemoryForgotten is the refusal that makes deletion mean something.
+	// FORGE writes memory on its own initiative, so without it the agent would
+	// re-learn what a user deleted and the deletion would quietly undo itself.
+	CodeMemoryForgotten Code = "MEMORY_FORGOTTEN"
+	// CodeDecisionSuperseded keeps "what do we currently believe?" to one answer.
+	CodeDecisionSuperseded Code = "DECISION_SUPERSEDED"
+)
+
+// ---------------------------------------------------------------------------
 // System & storage
 // ---------------------------------------------------------------------------
 
@@ -174,6 +187,13 @@ var registry = map[Code]Definition{
 	CodeUnsupportedMedia: {CodeUnsupportedMedia, CategoryBusiness, 415,
 		"The request Content-Type is not supported by this endpoint.",
 		"Send application/json unless the endpoint documents another type.", false},
+
+	CodeMemoryForgotten: {CodeMemoryForgotten, CategoryBusiness, 409,
+		"A user asked FORGE to forget this key, and it is refusing to learn it again.",
+		"If this should be remembered once more, purge the forgotten entry first — that is a deliberate act, and it is recorded. Otherwise write it under a different key.", false},
+	CodeDecisionSuperseded: {CodeDecisionSuperseded, CategoryBusiness, 409,
+		"This decision has already been superseded, so it is no longer the current answer.",
+		"Supersede the decision that replaced it instead. Follow the supersession chain to its end to find which one that is.", false},
 
 	CodeInternal: {CodeInternal, CategorySystem, 500,
 		"An unhandled internal failure occurred.",

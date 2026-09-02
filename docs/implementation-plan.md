@@ -14,11 +14,12 @@ Requirement IDs are from `docs/prd.md`.
 ## Where the line is today
 
 Built and fenced: the durable engine, the agent loop, tools, identity, the
-console, the workbench, and the audit chain. Roughly the whole vertical from
-"someone speaks" to "a worker executes a verified task", plus the record of it.
+console, the workbench, the audit chain, and layered memory with the decision
+log. Roughly the whole vertical from "someone speaks" to "a worker executes a
+verified task", plus the record of it and what it remembers afterwards.
 
-Missing: almost everything that makes it a *platform* — memory, collaboration,
-the project graph, enterprise security, and the release apparatus.
+Missing: almost everything else that makes it a *platform* — collaboration, the
+project graph, enterprise security, and the release apparatus.
 
 The split matters when planning: the core loop is done, so every wave below adds
 surface to a working system rather than filling a hole in one.
@@ -41,7 +42,7 @@ surface to a working system rather than filling a hole in one.
              ┌──────────────┴───────────────┐
              ▼                              ▼
   ┌──────────────────────┐      ┌───────────────────────────┐
-  │ WAVE 3  memory       │      │ WAVE 4  workspace model   │
+  │ WAVE 3  memory  DONE │      │ WAVE 4  workspace model   │
   │   MEM-01 layers      │      │   RSN-01 goals/constraints│
   │   MEM-02 user control│      │   WRK-03 project graph    │
   │   MEM-03 decision log│      │   WRK-04 artifact lifecycle│
@@ -120,20 +121,95 @@ Not done in this wave, and carried to Wave 4 with the workspace model: tolerance
 calibration and timestamp per value. `Frame` exists with one value, named rather
 than implied.
 
-## Wave 3 — memory
+## Wave 3 — memory · **DONE**
 
-`forge_memory` **already exists in schema** (0004) with zero Go code, so MEM-01
-is a service over an existing table rather than a new design.
+`forge_memory` had existed in schema since 0004 with zero Go code, so MEM-01 was
+a service over an existing table rather than a new design. Migration `0006_memory`
+widened it and added the decision log.
 
-- **MEM-01** layered: turn / session / project / org / personal, with distinct
-  retention and sharing. Scope column is already there.
-- **MEM-02** user-editable: inspect, correct, pin, expire, export, delete, and
-  **show why an item was retrieved** — the `source` column exists for this.
-- **MEM-03** decision log: date, author, alternatives, rationale, evidence,
-  affected artifacts, supersession. Needs a table.
+**MEM-01 layered memory.** `internal/domain/memory/model.go`. Five layers, as a
+table rather than a switch: turn (15 m), session (7 d), project, personal and org
+(durable), each with its owner and its audience. 0004 shipped three of the five;
+the two that were missing were the SHORT-lived ones, which is the half that
+matters most — without them every passing detail either goes into project
+knowledge, where it outlives its relevance and then misleads, or is not written
+at all.
 
-*Closes when:* retrieval shows its reason, a user can delete an item and it stays
-deleted, and a decision can supersede another with both readable.
+Retention is enforced by the READ, not by the sweep. A deployment whose sweep has
+not run for a week still must not serve week-old turn context as current, and
+`liveClause` in the repository is why it does not. The sweep reclaims space; a
+deployment that never runs it is slower, not wrong.
+
+**MEM-02 user control.** Inspect, correct, pin, expire, export, delete — and show
+why an item was retrieved. The reason is DERIVED from the predicate that matched
+(exact key, prefix, pinned, layer) rather than written by the caller, for the same
+reason the claim ledger is derived: a reason composed by the code that wanted the
+item is a story, not an answer.
+
+The load-bearing one is deletion. FORGE writes memory on its own initiative, so a
+plain DELETE would be undone the next turn it observed the same thing, and nothing
+would report it. A forgotten item therefore keeps its row and its key and loses
+its value: the key goes on occupying the layer's unique index, and a later write
+is refused with `MEMORY_FORGOTTEN`. Purging re-opens the key, is a separate act,
+and is logged at WARN.
+
+**MEM-03 decision log.** New table `forge_decisions`: date, author, alternatives
+with why each was rejected, rationale, evidence as `[]claim.Claim`, affected
+artifacts, supersession. Superseded, never edited — "we changed our minds" is
+itself a decision with a date, and editing the old row would erase the fact that
+the old answer was ever believed. A decision may be superseded at most once, so
+"what do we currently believe?" has exactly one answer; that is enforced twice,
+by the service and by a unique index, so a race loses rather than splitting the
+chain.
+
+**The enabler.** The epistemic vocabulary moved from `internal/agent` to
+`internal/domain/claim`. Memory and the decision log both store claims and both
+sit underneath `internal/agent` in the import graph, so it could not stay where it
+was. The alternative was a second copy of the seven categories, which is how a
+closed vocabulary stops being closed. All twelve wave-2 fences ran unchanged
+against the moved code, which is what makes it a move rather than a rewrite.
+
+**Mounted, not merely built.** `memory_recall` and `memory_remember` are
+registered tools in `cmd/forge-worker`, so recall and write-back go through the
+same registry, ledger and timeline as every other capability. Two rules are
+enforced there:
+
+- FORGE is not asked how it knows something. There is no `how` input; a fact the
+  model chose to write down is recorded as `inferred`, because that is what it
+  is. The wave-2 lesson applied at the one place it would be easiest to break.
+- FORGE may write turn, session and project memory only. Personal preference is
+  the user's to state, and one goal's conclusion must not become a fact for every
+  project in the deployment.
+
+**Surfaces.** `/v1/memory*` and `/v1/decisions*` for the user (MEM-02 is a user
+requirement, not an operator one), and `forgectl memory` / `forgectl decisions`
+for the operator.
+
+**54 fences**, 39 against live Postgres. Nine were drilled by mutation and all
+nine went red. Verified live end to end on the dev database: a project memory was
+written by the tool path, forgotten by a user through `forgectl`, and the agent's
+next attempt to write the same key was refused by name.
+
+### Two defects found by building it
+
+- **`Contract.InputSchema` is not validated anywhere.** `tool.go` says inputs are
+  "already validated against InputSchema"; in this build `registry.go` only hands
+  the schema to the model provider. So `"additionalProperties": false` bought
+  nothing, and a model sending `how` at `memory_remember` had it discarded in
+  silence — the safe label was stored and the model went on believing it had
+  recorded a measurement. The memory tools now decode strictly and refuse. **The
+  general defect is untouched and affects every tool** — see Carried defects.
+- **`forgectl memory forget <id> --as <user>` ignored its flags.** Go's `flag`
+  stops at the first positional, so `--as` was never parsed and the command
+  failed with a usage error naming the flag that had been supplied. Fixed to the
+  shape `forgectl approve` already used. Found by running the command, not by a
+  test — nothing in the suite invokes the CLI's argument parsing.
+
+### Carried to wave 4
+
+`Item.Value` is opaque JSON. Once WRK-03's project graph exists, memory should be
+able to point at a component or a requirement rather than hold a key that happens
+to name one.
 
 ## Wave 4 — workspace model
 
@@ -191,3 +267,20 @@ already calls this phase 7.
   the draft resumable — currently there is no replan command.
 - **Pre-migration events are unattestable.** 11 events on the dev database
   predate the audit chain and always will. Expected, reported, never backfilled.
+- **Tool inputs are not validated against their declared schema.** `Contract`
+  documents `InputSchema` as checked before a tool runs and `Invocation.Input` as
+  "already validated"; nothing in this build does it. The schema reaches the model
+  provider (`registry.go`) and no further, so an unexpected field arrives at
+  `Run` and `encoding/json` discards it silently. Every tool is affected. The two
+  memory tools defend themselves with a strict decoder; `workspace` and `shell` do
+  not. Fixing it properly means either a schema validator in the executor or
+  strict decoding as a rule, and it is a decision about every tool rather than
+  about memory, so it was left rather than widened into.
+- **Nothing exercises the CLI's argument parsing.** The `memory forget` flag bug
+  was found by running the binary; the test suite calls handlers and services and
+  never `forgectl` itself. Two commands still have the same shape by convention
+  rather than by a fence.
+- **Organisation memory has no audience to enforce.** `Visibility` declares it and
+  says so; there is no membership model until SEC-02/COL-01. Personal and project
+  scoping ARE enforced, and `/v1/memory/layers` reports which is which rather than
+  letting a client assume.

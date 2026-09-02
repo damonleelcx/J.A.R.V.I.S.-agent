@@ -187,6 +187,37 @@ unsupported shape, producing a parts list that said `triangle-prism` beside a
 render showing a rectangular block. Nobody was told. That is the same class of
 failure as reporting an unverified task as verified.
 
+### Forgetting has to hold against an agent that keeps learning
+
+FORGE writes its own memory. So a user deleting an item cannot be a `DELETE`: the
+next cycle that observed the same thing would write it straight back, and nothing
+would report that the deletion had been undone.
+
+A forgotten item therefore keeps its row and its key and loses its value. The key
+goes on occupying its layer's unique index, and a later write to it is refused
+with `MEMORY_FORGOTTEN` — by the agent's own tool as much as by the API. What is
+kept is only that somebody asked, when, and why; the content itself is cleared,
+because that is what was asked for.
+
+Re-opening the key is a separate command (`forgectl memory purge`), logged at
+WARN, and it refuses to act on an item whose deletion was never recorded —
+otherwise it would just be an unrecorded delete with a different name.
+
+### FORGE is not asked how it knows something
+
+The `memory_remember` tool has no input for the epistemic label, and this is the
+whole design rather than an omission. A tool that accepted `"how": "observed"`
+would get it, and the label would be exactly as reliable as the fabricated NEMA
+17 bolt pattern that caused the vocabulary to exist — a component cannot be its
+own guard.
+
+So the label is derived from the only thing structurally true at that moment: a
+fact the model chose to write down is a conclusion it drew from context, which is
+`inferred`. Recall then hands back `may_be_acted_on` per item rather than leaving
+the model to interpret its own labels. A stronger label has to come from
+something checkable — a tool's actual output, a file actually read — and that
+will be a different tool, not a wider input schema.
+
 ### The voice surface moves; it does not shrink
 
 The workbench has one voice component with two placements. Before there is

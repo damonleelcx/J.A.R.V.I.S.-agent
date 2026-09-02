@@ -181,3 +181,26 @@ const (
 )
 
 func init() { allEvents = append(allEvents, EventLLMStreamFrame) }
+
+// Memory and decision-log events (PRD MEM-01..03).
+//
+// Forgetting and purging are logged because they are the two acts that REMOVE
+// something at a person's request: "why does FORGE no longer know that?" has to
+// be answerable, and the row itself is gone or blank by the time anyone asks.
+// Purge is a warning rather than info — it is the one operation that undoes a
+// user's deletion record, and it should be visible without going looking.
+const (
+	EventMemoryWritten      Event = "forge.memory.written"
+	EventMemoryForgotten    Event = "forge.memory.forgotten"
+	EventMemoryPurged       Event = "forge.memory.purged"
+	EventMemorySwept        Event = "forge.memory.swept"
+	EventDecisionMade       Event = "forge.decision.made"
+	EventDecisionSuperseded Event = "forge.decision.superseded"
+)
+
+func init() {
+	allEvents = append(allEvents,
+		EventMemoryWritten, EventMemoryForgotten, EventMemoryPurged, EventMemorySwept,
+		EventDecisionMade, EventDecisionSuperseded,
+	)
+}

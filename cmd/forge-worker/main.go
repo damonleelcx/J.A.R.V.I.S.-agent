@@ -19,6 +19,7 @@ import (
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/agent"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/engine"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/memory"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/llm"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/persona"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/clock"
@@ -90,6 +91,13 @@ func run() error {
 	registry.MustRegister(tools.ReadTool{})
 	registry.MustRegister(tools.WriteTool{})
 	registry.MustRegister(tools.ShellTool{})
+	// Memory as tools rather than as a silent context injection (PRD MEM-01).
+	// Going through the registry means every recall and every write lands in the
+	// tool-call ledger and the timeline, so "why did FORGE think that?" is
+	// answerable from rows rather than from a prompt nobody kept.
+	memorySvc := memory.NewService(pool, clk, log)
+	registry.MustRegister(tools.NewMemoryRecallTool(memorySvc, pool))
+	registry.MustRegister(tools.NewMemoryRememberTool(memorySvc, pool))
 	// Declared-but-unavailable connectors are registered on purpose. See
 	// tools/unavailable.go: omitting them is what invites the model to invent
 	// the result they would have returned.

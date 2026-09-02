@@ -49,6 +49,24 @@ Approvals:
   approve <approval-id> --as you@example.com [--reason ...]
   reject  <approval-id> --as you@example.com [--reason ...]
 
+Memory:
+  memory layers                        What each layer is for, how long it lives, who sees it
+  memory list --scope <layer> [--owner <id>]
+                                       Everything held in a layer, forgotten rows included
+  memory recall [--goal|--project|--user <id>] [--key|--prefix ...]
+                                       Run the agent's own recall and show WHY each item came back
+  memory forget <item-id> --as <user-id> [--reason ...]
+                                       Delete an item on a user's behalf. The key stays claimed,
+                                       so FORGE will not learn it again.
+  memory purge <item-id> [--dry-run]   Remove a forgotten item and re-open its key. Deliberate.
+  memory export --scope <layer> [--owner <id>]
+                                       The layer as JSON, forgotten items included and marked
+  memory sweep [--dry-run]             Reclaim expired rows. Reads already exclude them.
+
+Decisions:
+  decisions list --project <id> [--current]   The decision log, marking what was superseded
+  decisions show <decision-id>                One decision with its whole supersession chain
+
 Audit:
   audit verify <goal-id>   Check a goal's timeline against its hash chain
   audit verify --all       Check every goal
@@ -145,6 +163,47 @@ func run(ctx context.Context, cmd string, args []string) error {
 				WithDetail("unknown goal subcommand %q; expected new, start or show", args[0])
 		}
 
+	case "memory":
+		if len(args) == 0 {
+			fmt.Fprint(os.Stderr, usage)
+			return errs.New("forgectl.run", errs.CodeValidationFailed).
+				WithDetail("memory needs a subcommand: layers, list, recall, forget, purge, export or sweep")
+		}
+		switch args[0] {
+		case "layers":
+			return cmdMemoryLayers()
+		case "list":
+			return cmdMemoryList(ctx, cfg, log, args[1:])
+		case "recall":
+			return cmdMemoryRecall(ctx, cfg, log, args[1:])
+		case "forget":
+			return cmdMemoryForget(ctx, cfg, log, args[1:])
+		case "purge":
+			return cmdMemoryPurge(ctx, cfg, log, args[1:])
+		case "export":
+			return cmdMemoryExport(ctx, cfg, log, args[1:])
+		case "sweep":
+			return cmdMemorySweep(ctx, cfg, log, args[1:])
+		default:
+			return errs.New("forgectl.run", errs.CodeValidationFailed).
+				WithDetail("unknown memory subcommand %q; expected layers, list, recall, forget, purge, export or sweep", args[0])
+		}
+
+	case "decisions":
+		if len(args) == 0 {
+			return errs.New("forgectl.run", errs.CodeValidationFailed).
+				WithDetail("decisions needs a subcommand: list or show")
+		}
+		switch args[0] {
+		case "list":
+			return cmdDecisions(ctx, cfg, log, args[1:])
+		case "show":
+			return cmdDecisionShow(ctx, cfg, log, args[1:])
+		default:
+			return errs.New("forgectl.run", errs.CodeValidationFailed).
+				WithDetail("unknown decisions subcommand %q; expected list or show", args[0])
+		}
+
 	case "audit":
 		if len(args) == 0 {
 			return errs.New("forgectl.run", errs.CodeValidationFailed).
@@ -222,6 +281,11 @@ func run(ctx context.Context, cmd string, args []string) error {
 func sectionsFor(cmd string) []config.Section {
 	switch cmd {
 	case "migrate", "health":
+		return []config.Section{config.SectionDB}
+	case "memory", "decisions":
+		// Memory and the decision log are read and written straight from the
+		// database. Requiring an LLM key to look at what FORGE remembers would
+		// turn an inspection into a credential request.
 		return []config.Section{config.SectionDB}
 	case "goal":
 		// Planning calls a model; showing and starting do not. Requiring the LLM

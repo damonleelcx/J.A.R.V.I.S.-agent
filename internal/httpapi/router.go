@@ -106,6 +106,28 @@ func NewRouter(d Deps) http.Handler {
 	mux.Handle("GET /v1/approvals", authed(goals.ListApprovals))
 	mux.Handle("POST /v1/approvals/{id}", authed(goals.Decide))
 
+	// --- memory and the decision log (authenticated) ---
+	// PRD MEM-02 is a USER requirement, so it is an API rather than only a
+	// forgectl command: the person whose memory it is has to be able to inspect,
+	// correct, pin, expire, export and delete it, and to see why an item came
+	// back. The layer table itself is unauthenticated — it describes the build,
+	// not anybody's memory.
+	mem := NewMemoryHandlers(d)
+	mux.HandleFunc("GET /v1/memory/layers", mem.Layers)
+	mux.Handle("GET /v1/memory", authed(mem.List))
+	mux.Handle("GET /v1/memory/recall", authed(mem.Recall))
+	mux.Handle("GET /v1/memory/export", authed(mem.Export))
+	mux.Handle("PATCH /v1/memory/{id}", authed(mem.UpdateItem))
+	// DELETE forgets rather than erases: the key stays claimed so the agent
+	// cannot re-learn what a user deleted. Purging is deliberately NOT here —
+	// it is the act that undoes a user's deletion record, and it belongs to an
+	// operator with a shell, not to a stray DELETE with a query parameter.
+	mux.Handle("DELETE /v1/memory/{id}", authed(mem.ForgetItem))
+
+	mux.Handle("GET /v1/decisions", authed(mem.ListDecisions))
+	mux.Handle("POST /v1/decisions", authed(mem.RecordDecision))
+	mux.Handle("GET /v1/decisions/{id}", authed(mem.GetDecision))
+
 	// --- workbench conversation ---
 	converse := NewConverseHandlers(d)
 	mux.Handle("POST /v1/converse", authed(converse.Converse))
@@ -135,6 +157,8 @@ func NewRouter(d Deps) http.Handler {
 	// different failure formats.
 	mux.HandleFunc("GET /v1/", notFound(d.Log))
 	mux.HandleFunc("POST /v1/", notFound(d.Log))
+	mux.HandleFunc("PATCH /v1/", notFound(d.Log))
+	mux.HandleFunc("DELETE /v1/", notFound(d.Log))
 
 	return Chain(mux,
 		RequestID(),
