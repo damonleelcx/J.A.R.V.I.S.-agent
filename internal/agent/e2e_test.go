@@ -82,7 +82,7 @@ func TestLiveAgentLoop(t *testing.T) {
 	}
 	t.Logf("applied plan v%d: %d task(s) written", dbPlan.Version, len(created))
 
-	if err := h.applier.Activate(ctx, h.pool, goal); err != nil {
+	if err := h.applier.Activate(ctx, h.pool, goal, engine.ActorHuman, nil); err != nil {
 		t.Fatalf("activating the goal failed: %v", err)
 	}
 
@@ -445,7 +445,7 @@ func TestApprovalGateBlocksConsequentialWork(t *testing.T) {
 	} else if len(created) != 1 {
 		t.Fatalf("created %d tasks, want 1", len(created))
 	}
-	if err := h.applier.Activate(ctx, h.pool, goal); err != nil {
+	if err := h.applier.Activate(ctx, h.pool, goal, engine.ActorHuman, nil); err != nil {
 		t.Fatal(err)
 	}
 
@@ -647,7 +647,7 @@ func (h *liveHarness) seedTwoTasks(t *testing.T, goal *engine.Goal) (*engine.Tas
 	} else if len(created) != 2 {
 		t.Fatalf("created %d tasks, want 2", len(created))
 	}
-	if err := h.applier.Activate(context.Background(), h.pool, goal); err != nil {
+	if err := h.applier.Activate(context.Background(), h.pool, goal, engine.ActorHuman, nil); err != nil {
 		t.Fatal(err)
 	}
 	tasks, err := h.repo.ListTasks(context.Background(), h.pool, goal.ID)

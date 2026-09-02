@@ -164,6 +164,17 @@ const (
 
 func init() { allEvents = append(allEvents, EventConverseTurn) }
 
+// Goal intake events. These are the web surface's half of what `forgectl goal
+// new` prints to a terminal: an operator asking "did anyone start a goal from
+// the workbench, and did planning ever succeed?" greps these.
+const (
+	EventGoalDrafted    Event = "forge.goal.drafted"
+	EventGoalPlanFailed Event = "forge.goal.plan_failed"
+	EventGoalStarted    Event = "forge.goal.started"
+)
+
+func init() { allEvents = append(allEvents, EventGoalDrafted, EventGoalPlanFailed, EventGoalStarted) }
+
 // Streaming events.
 const (
 	EventLLMStreamFrame Event = "forge.llm.stream_frame_skipped"

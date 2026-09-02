@@ -194,7 +194,21 @@ func (a *PlanApplier) Apply(ctx context.Context, pool *db.Pool, goal *engine.Goa
 }
 
 // Activate moves a goal from draft to active so its tasks become claimable.
-func (a *PlanApplier) Activate(ctx context.Context, pool *db.Pool, goal *engine.Goal) error {
+//
+// # Why the actor is a parameter
+//
+// Activation is the moment work becomes real: before it, the goal is a plan
+// nobody has authorised; after it, workers may claim tasks and spend money. PRD
+// AGT-07 requires consequential transitions to carry the named human authority,
+// and AGT-08 requires proposed and running to be distinguishable states with a
+// record of what moved between them.
+//
+// Until the workbench gained a "Start this" button this transition wrote nothing
+// to the timeline at all, so a goal simply appeared to be running and no reader
+// could tell who had decided that. byID is the account id where one is known
+// (the web surface always knows it) and nil where it is genuinely not — a
+// terminal operator holding the database credentials has no session to name.
+func (a *PlanApplier) Activate(ctx context.Context, pool *db.Pool, goal *engine.Goal, by engine.Actor, byID *string) error {
 	const op = "agent.PlanApplier.Activate"
 
 	if err := engine.ValidateGoalTransition(goal.Status, engine.GoalActive); err != nil {
@@ -213,6 +227,19 @@ func (a *PlanApplier) Activate(ctx context.Context, pool *db.Pool, goal *engine.
 			WithDetail("goal %s was no longer %q when activation was written", goal.ID, goal.Status)
 	}
 	goal.Status = engine.GoalActive
+
+	// Appended after the status write rather than inside it. The transition is
+	// the fact that matters and it is already durable; a timeline that failed to
+	// record it must not roll back a goal the operator has started. The failure
+	// is logged by the caller's error path rather than swallowed silently.
+	payload, _ := json.Marshal(map[string]any{"from": string(engine.GoalDraft), "to": string(engine.GoalActive)})
+	if err := a.repo.AppendEvent(ctx, pool, &engine.Event{
+		GoalID: goal.ID, Kind: engine.EventGoalActivated, Actor: by, ActorID: byID,
+		Summary: "Goal activated. Its tasks are claimable by any running worker.",
+		Payload: payload,
+	}, now); err != nil {
+		return err
+	}
 	return nil
 }
 

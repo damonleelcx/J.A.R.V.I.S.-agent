@@ -96,6 +96,11 @@ func NewRouter(d Deps) http.Handler {
 	// --- goals and approvals (authenticated) ---
 	goals := NewGoalHandlers(d)
 	mux.Handle("GET /v1/goals", authed(goals.ListGoals))
+	// Creating a goal PLANS it and starts nothing; starting it is the separate
+	// act on the line below. PRD AGT-02 wants the plan visible before the work,
+	// and one endpoint that did both would hide it. See goals_start.go.
+	mux.Handle("POST /v1/goals", authed(goals.CreateGoal))
+	mux.Handle("POST /v1/goals/{id}/start", authed(goals.StartGoal))
 	mux.Handle("GET /v1/goals/{id}", authed(goals.GetGoal))
 	mux.Handle("GET /v1/goals/{id}/timeline", authed(goals.Timeline))
 	mux.Handle("GET /v1/approvals", authed(goals.ListApprovals))

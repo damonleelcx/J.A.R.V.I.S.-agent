@@ -19,11 +19,19 @@ type GoalHandlers struct {
 	deps  Deps
 	repo  *engine.Repository
 	queue *engine.Queue
+	// intake plans new goals. Nil when no model is configured, which is a legal
+	// deployment: reading and starting goals needs no model, and only creation
+	// says so rather than the whole surface failing to mount.
+	intake *agent.Intake
 }
 
 // NewGoalHandlers wires the goal endpoints.
 func NewGoalHandlers(d Deps) *GoalHandlers {
-	return &GoalHandlers{deps: d, repo: engine.NewRepository(), queue: engine.NewQueue()}
+	h := &GoalHandlers{deps: d, repo: engine.NewRepository(), queue: engine.NewQueue()}
+	if d.LLM != nil {
+		h.intake = agent.NewIntake(d.LLM, persona.DefaultCharacter(), d.Config.Engine, d.Clock)
+	}
+	return h
 }
 
 // GoalDTO is a goal as the console sees it.

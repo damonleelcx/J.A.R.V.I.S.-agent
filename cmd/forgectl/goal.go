@@ -17,7 +17,6 @@ import (
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/config"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/db"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/errs"
-	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/id"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/logx"
 )
 
@@ -52,14 +51,6 @@ func cmdGoalNew(ctx context.Context, cfg *config.Config, log *logx.Logger, args 
 		return errs.New(op, errs.CodeValidationFailed).
 			WithDetail("--title, --statement and --owner are required")
 	}
-	if !engine.Autonomy(*autonomy).Valid() {
-		return errs.New(op, errs.CodeValidationFailed).
-			WithDetail("--autonomy %q is not recognised", *autonomy)
-	}
-	if !engine.RiskTier(*risk).Valid() {
-		return errs.New(op, errs.CodeValidationFailed).
-			WithDetail("--risk %q is not recognised", *risk)
-	}
 
 	pool, err := db.Connect(ctx, cfg.DB, log)
 	if err != nil {
@@ -76,70 +67,53 @@ func cmdGoalNew(ctx context.Context, cfg *config.Config, log *logx.Logger, args 
 				"      -d '{\"email\":\"%s\",\"password\":\"<at least 12 characters>\"}'", *email, *email)
 	}
 
-	now := clock.System{}.Now()
-	projectID := *project
-	if projectID == "" {
-		projectID = id.New(id.PrefixProject)
-		if _, err := pool.Exec(ctx,
-			`insert into forge_projects (id, owner_id, name, pack, created_at, updated_at)
-			 values ($1,$2,$3,'software',$4,$4)`,
-			projectID, ownerID, *title, now); err != nil {
-			return errs.Wrap(op, errs.CodeDatabaseUnavail, err)
-		}
-		fmt.Printf("created project %s\n", projectID)
-	}
+	// The same intake the workbench's "Start this" button uses. One
+	// implementation of "draft, plan, activate" rather than two that drift —
+	// see agent.Intake.
+	client := llm.NewOpenAICompatible(cfg.LLM, log, clock.System{})
+	intake := agent.NewIntake(client, persona.DefaultCharacter(), cfg.Engine, clock.System{})
 
-	goal := &engine.Goal{
-		ID: id.New(id.PrefixGoal), ProjectID: projectID, CreatedBy: ownerID,
-		Title: *title, Statement: *statement, Status: engine.GoalDraft,
-		Autonomy: engine.Autonomy(*autonomy), RiskTier: engine.RiskTier(*risk),
-		CreatedAt: now, UpdatedAt: now,
+	goal, err := intake.Draft(ctx, pool, agent.DraftRequest{
+		OwnerID:   ownerID,
+		ProjectID: *project,
+		Title:     *title,
+		Statement: *statement,
+		Autonomy:  engine.Autonomy(*autonomy),
+		RiskTier:  engine.RiskTier(*risk),
+	})
+	if err != nil {
+		return err
 	}
-	if _, err := pool.Exec(ctx, `
-		insert into forge_goals (id, project_id, created_by, title, statement, status,
-			autonomy, risk_tier, completion_criteria, created_at, updated_at)
-		values ($1,$2,$3,$4,$5,'draft',$6,$7,'[]'::jsonb,$8,$8)`,
-		goal.ID, goal.ProjectID, goal.CreatedBy, goal.Title, goal.Statement,
-		string(goal.Autonomy), string(goal.RiskTier), now); err != nil {
-		return errs.Wrap(op, errs.CodeDatabaseUnavail, err)
+	if *project == "" {
+		fmt.Printf("created project %s\n", goal.ProjectID)
 	}
 	fmt.Printf("created goal %s\n\n", goal.ID)
-
-	client := llm.NewOpenAICompatible(cfg.LLM, log, clock.System{})
-	planner := agent.NewPlanner(client, persona.DefaultCharacter())
 
 	// Planning can take minutes on a large model, especially when the goal is
 	// ambiguous enough that the planner works at it. Silence for that long reads
 	// as a hang, and PRD NFR-02 asks for meaningful progress at least every 10s.
 	// A ticker is the least this can be and still be honest: it reports elapsed
 	// time, which is all that is actually known.
-	fmt.Printf("planning with %s …\n", client.ModelFor(llm.RolePlanner))
+	fmt.Printf("planning with %s …\n", intake.PlannerModel())
 	stopTicker := startElapsedTicker("  still planning")
-	plan, err := planner.Plan(ctx, goal, nil, "")
+	outcome, err := intake.Plan(ctx, pool, goal)
 	stopTicker()
 	if err != nil {
 		return err
 	}
-	if plan.ClarificationNeeded != "" {
+	if outcome.ClarificationNeeded != "" {
 		// A question is a legitimate outcome. A plan built on a wrong assumption
 		// costs far more than an answered question, so this is not an error.
-		fmt.Printf("\nFORGE needs an answer before it can plan this:\n\n  %s\n\n", plan.ClarificationNeeded)
+		fmt.Printf("\nFORGE needs an answer before it can plan this:\n\n  %s\n\n", outcome.ClarificationNeeded)
 		fmt.Printf("Goal %s is saved as a draft. Re-run with a statement that answers this.\n", goal.ID)
 		return nil
 	}
 
-	fmt.Printf("\n%s\n\n", plan.Rationale)
-
-	applier := agent.NewPlanApplier(engine.NewRepository(), engine.NewQueue(),
-		engine.NewBudgetGuard(cfg.Engine), clock.System{})
-	dbPlan, tasks, err := applier.Apply(ctx, pool, goal, plan, "planner")
-	if err != nil {
-		return err
-	}
+	fmt.Printf("\n%s\n\n", outcome.Rationale)
 
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "TASK\tRISK\tGATE\tDEPENDS ON")
-	for _, pt := range plan.Tasks {
+	for _, pt := range outcome.Result.Tasks {
 		gate := "-"
 		if engine.RiskTier(pt.RiskTier).RequiresApproval() {
 			gate = "approval"
@@ -151,10 +125,10 @@ func cmdGoalNew(ctx context.Context, cfg *config.Config, log *logx.Logger, args 
 		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", truncateCLI(pt.Title, 46), pt.RiskTier, gate, deps)
 	}
 	w.Flush()
-	fmt.Printf("\nplan v%d · %d task(s) written\n", dbPlan.Version, len(tasks))
+	fmt.Printf("\nplan v%d · %d task(s) written\n", outcome.Plan.Version, len(outcome.Tasks))
 
 	if *start {
-		if err := applier.Activate(ctx, pool, goal); err != nil {
+		if err := intake.Start(ctx, pool, goal, nil); err != nil {
 			return err
 		}
 		fmt.Printf("\ngoal is ACTIVE. Run `make work` (or ./bin/forge-worker) to execute it.\n")
@@ -183,7 +157,7 @@ func cmdGoalStart(ctx context.Context, cfg *config.Config, log *logx.Logger, arg
 	}
 	applier := agent.NewPlanApplier(engine.NewRepository(), engine.NewQueue(),
 		engine.NewBudgetGuard(cfg.Engine), clock.System{})
-	if err := applier.Activate(ctx, pool, goal); err != nil {
+	if err := applier.Activate(ctx, pool, goal, engine.ActorHuman, nil); err != nil {
 		return err
 	}
 	fmt.Printf("goal %s is now active\n", goal.ID)
