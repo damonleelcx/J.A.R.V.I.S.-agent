@@ -88,3 +88,21 @@ var allEvents = []Event{
 
 // AllEvents returns every registered event name.
 func AllEvents() []Event { return append([]Event(nil), allEvents...) }
+
+// Model portfolio events. Appended after the initial registry; AllEvents below
+// is extended to match (the fence parses this file and would catch an omission).
+const (
+	EventLLMCompleted     Event = "forge.llm.completed"
+	EventLLMRetrying      Event = "forge.llm.retrying"
+	EventLLMTruncated     Event = "forge.llm.truncated"
+	EventLLMEmptyResponse Event = "forge.llm.empty_response"
+	EventLLMUsageMissing  Event = "forge.llm.usage_missing"
+	EventLLMRefused       Event = "forge.llm.refused"
+)
+
+func init() {
+	allEvents = append(allEvents,
+		EventLLMCompleted, EventLLMRetrying, EventLLMTruncated,
+		EventLLMEmptyResponse, EventLLMUsageMissing, EventLLMRefused,
+	)
+}

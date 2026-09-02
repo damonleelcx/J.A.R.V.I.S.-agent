@@ -97,6 +97,15 @@ const (
 // ---------------------------------------------------------------------------
 
 const (
+	CodeExternalUnavailable Code = "EXTERNAL_UNAVAILABLE"
+	CodeExternalProtocol    Code = "EXTERNAL_PROTOCOL_ERROR"
+)
+
+// ---------------------------------------------------------------------------
+// Data integrity
+// ---------------------------------------------------------------------------
+
+const (
 	CodeStateCorrupt        Code = "STATE_CORRUPT"
 	CodeInvariantViolated   Code = "INVARIANT_VIOLATED"
 	CodeCheckpointUnreadabl Code = "CHECKPOINT_UNREADABLE"
@@ -182,6 +191,13 @@ var registry = map[Code]Definition{
 	CodeSerializationFail: {CodeSerializationFail, CategorySystem, 500,
 		"A value could not be encoded to or decoded from its stored representation.",
 		"This indicates a schema/code mismatch. Check that the binary matches the migrated schema version.", false},
+
+	CodeExternalUnavailable: {CodeExternalUnavailable, CategoryExternal, 503,
+		"An external service could not be reached or returned a server error.",
+		"Retry; the fault is upstream and usually transient. If it persists, check the provider's status page and FORGE_LLM_BASE_URL.", true},
+	CodeExternalProtocol: {CodeExternalProtocol, CategoryExternal, 502,
+		"An external service replied in a shape this build cannot use.",
+		"Do not retry: the request or the response contract is wrong. Check the model id and the endpoint, and compare against the provider's current API documentation.", false},
 
 	CodeStateCorrupt: {CodeStateCorrupt, CategoryData, 500,
 		"A persisted record failed its structural invariants when read back.",
