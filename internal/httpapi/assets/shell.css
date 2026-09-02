@@ -1,0 +1,123 @@
+/* FORGE — shared shell for the pre-console pages.
+   Deliberately one small stylesheet with no build step and no external fonts:
+   these pages are reached from an email client, often on a phone, sometimes on
+   a corporate network that blocks third-party origins. Nothing here may depend
+   on a request that could fail. */
+
+:root {
+  --bg: #0d0f14;
+  --panel: #151922;
+  --edge: #232937;
+  --ink: #e7eaf0;
+  --ink-dim: #97a1b3;
+  --ember: #e8993a;
+  --ember-dim: #8a5c22;
+  --ok: #4ea87a;
+  --bad: #d9636b;
+  --radius: 10px;
+}
+
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background:
+    radial-gradient(1100px 620px at 50% -10%, #1a2030 0%, transparent 60%),
+    var(--bg);
+  color: var(--ink);
+  font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+
+.panel {
+  width: 100%;
+  max-width: 460px;
+  background: var(--panel);
+  border: 1px solid var(--edge);
+  border-radius: var(--radius);
+  padding: 32px;
+}
+
+/* The mark. A slow, quiet pulse — present without demanding attention.
+   Respects prefers-reduced-motion below. */
+.mark {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 28px;
+}
+
+.core {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 45%, #ffd9a0 0%, var(--ember) 42%, var(--ember-dim) 70%, transparent 72%);
+  box-shadow: 0 0 18px rgba(232, 153, 58, 0.45);
+  animation: breathe 4.5s ease-in-out infinite;
+}
+
+@keyframes breathe {
+  0%, 100% { transform: scale(1);    opacity: 0.9; }
+  50%      { transform: scale(1.07); opacity: 1;   }
+}
+
+.wordmark {
+  font-weight: 700;
+  letter-spacing: 0.22em;
+  font-size: 13px;
+}
+
+h1 { font-size: 20px; margin: 0 0 10px; font-weight: 650; }
+p  { margin: 0 0 14px; }
+.dim { color: var(--ink-dim); font-size: 13px; }
+
+.btn {
+  display: inline-block;
+  width: 100%;
+  padding: 12px 18px;
+  border: 0;
+  border-radius: 7px;
+  background: var(--ember);
+  color: #151821;
+  font: inherit;
+  font-weight: 650;
+  text-align: center;
+  text-decoration: none;
+  cursor: pointer;
+}
+.btn:hover { filter: brightness(1.07); }
+.btn:disabled { opacity: 0.55; cursor: default; }
+
+label { display: block; font-size: 13px; color: var(--ink-dim); margin: 14px 0 6px; }
+
+input[type="password"] {
+  width: 100%;
+  padding: 11px 13px;
+  border: 1px solid var(--edge);
+  border-radius: 7px;
+  background: #0f131b;
+  color: var(--ink);
+  font: inherit;
+}
+input[type="password"]:focus { outline: 2px solid var(--ember-dim); outline-offset: 1px; }
+
+.note {
+  margin-top: 18px;
+  padding: 12px 14px;
+  border-radius: 7px;
+  border: 1px solid var(--edge);
+  font-size: 13px;
+}
+.note.ok  { border-color: #2c5a44; color: #b7e6cd; }
+.note.bad { border-color: #6a2f34; color: #f0bcc0; }
+.hidden { display: none; }
+
+hr { border: 0; border-top: 1px solid var(--edge); margin: 22px 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  .core { animation: none; }
+}

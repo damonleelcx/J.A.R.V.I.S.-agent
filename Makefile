@@ -52,6 +52,7 @@ build: ## Build all binaries into ./bin
 	@mkdir -p $(BINDIR)
 	@# Binaries are added as their phase lands, so `make build` never claims to
 	@# produce something that does not exist yet.
+	go build -ldflags "$(LDFLAGS)" -o $(BINDIR)/forged   ./cmd/forged
 	go build -ldflags "$(LDFLAGS)" -o $(BINDIR)/forgectl ./cmd/forgectl
 	@echo "built $(VERSION) ($(COMMIT)) into $(BINDIR)/"
 
@@ -164,6 +165,14 @@ migrate-dry-run: ## List migrations without applying them
 .PHONY: health
 health: ## Check database connectivity
 	FORGE_DATABASE_URL="$(DB_URL)" go run ./cmd/forgectl health
+
+.PHONY: run
+run: db-wait ## Run the API server against the local database
+	go run ./cmd/forged
+
+.PHONY: outbox
+outbox: ## List messages the development mail transport has written
+	@ls -lt .forge/outbox 2>/dev/null | head -20 || echo "no outbox yet — sign up first"
 
 .PHONY: config-print
 config-print: ## Print effective configuration with secrets redacted

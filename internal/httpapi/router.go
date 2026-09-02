@@ -1,0 +1,121 @@
+package httpapi
+
+import (
+	"net/http"
+	"time"
+
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/identity"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/clock"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/config"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/db"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/errs"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/logx"
+)
+
+// Deps is everything the HTTP surface needs.
+type Deps struct {
+	Config   *config.Config
+	Pool     *db.Pool
+	Identity *identity.Service
+	Clock    clock.Clock
+	Log      *logx.Logger
+	// Version and Commit are reported by the health endpoint so an operator can
+	// confirm which build is actually answering.
+	Version string
+	Commit  string
+}
+
+// authRateLimits are the per-address ceilings on the unauthenticated endpoints.
+//
+// These are a blunt second line, not the primary control — account lockout in
+// the database is the real defence against credential guessing, and it is the
+// one every instance sees. The values are deliberately loose enough that a
+// person retrying a forgotten password never meets them.
+var authRateLimits = struct {
+	SignIn, SignUp, Reset, Verify int
+	Window                        time.Duration
+}{
+	SignIn: 20,
+	SignUp: 10,
+	Reset:  8,
+	Verify: 30,
+	Window: time.Minute,
+}
+
+// NewRouter builds the HTTP handler.
+func NewRouter(d Deps) http.Handler {
+	mux := http.NewServeMux()
+
+	authHandlers := NewAuthHandlers(d.Identity, d.Config.Auth, d.Log)
+	health := NewHealthHandlers(d)
+
+	// Per-endpoint limiters rather than one shared bucket: a burst of sign-ups
+	// must not consume the allowance that a legitimate user's sign-in needs.
+	limitSignIn := NewRateLimiter(authRateLimits.SignIn, authRateLimits.Window, d.Clock)
+	limitSignUp := NewRateLimiter(authRateLimits.SignUp, authRateLimits.Window, d.Clock)
+	limitReset := NewRateLimiter(authRateLimits.Reset, authRateLimits.Window, d.Clock)
+	limitVerify := NewRateLimiter(authRateLimits.Verify, authRateLimits.Window, d.Clock)
+
+	limited := func(rl *RateLimiter, h http.HandlerFunc) http.Handler {
+		return LimitByIP(rl, d.Log)(h)
+	}
+	authed := func(h http.HandlerFunc) http.Handler {
+		return authHandlers.RequireAuth(h)
+	}
+
+	// --- health and metadata (unauthenticated) ---
+	mux.HandleFunc("GET /healthz", health.Live)
+	mux.HandleFunc("GET /readyz", health.Ready)
+	mux.HandleFunc("GET /v1/meta/error-codes", health.ErrorCodes)
+
+	// --- identity (unauthenticated, rate limited) ---
+	mux.Handle("POST /v1/auth/sign-up", limited(limitSignUp, authHandlers.SignUp))
+	mux.Handle("POST /v1/auth/sign-in", limited(limitSignIn, authHandlers.SignIn))
+	mux.Handle("POST /v1/auth/verify-email", limited(limitVerify, authHandlers.VerifyEmail))
+	mux.Handle("POST /v1/auth/resend-verification", limited(limitReset, authHandlers.ResendVerification))
+	mux.Handle("POST /v1/auth/forgot-password", limited(limitReset, authHandlers.RequestPasswordReset))
+	mux.Handle("POST /v1/auth/reset-password", limited(limitReset, authHandlers.ResetPassword))
+
+	// Sign-out tolerates an absent or dead session: the caller's goal is "end my
+	// session", and a request that arrives with nothing to end has already
+	// achieved it. Requiring auth here would answer 401 to someone asking to be
+	// signed out, which is absurd.
+	mux.Handle("POST /v1/auth/sign-out", authHandlers.OptionalAuth(http.HandlerFunc(authHandlers.SignOut)))
+
+	// --- identity (authenticated) ---
+	mux.Handle("GET /v1/auth/me", authed(authHandlers.Me))
+	mux.Handle("GET /v1/auth/sessions", authed(authHandlers.ListSessions))
+	mux.Handle("POST /v1/auth/sign-out-all", authed(authHandlers.SignOutAll))
+	mux.Handle("POST /v1/auth/change-password", authed(authHandlers.ChangePassword))
+
+	// --- browser landing pages for emailed links ---
+	// A verification link in an email is a GET navigation, but redemption is a
+	// state change and must not happen on GET: mail scanners and link previewers
+	// follow every URL they see, and would silently burn the token before the
+	// recipient ever clicked. These pages render and let the page POST.
+	pages := NewPageHandlers(d)
+	mux.HandleFunc("GET /assets/", pages.Assets)
+	mux.HandleFunc("GET /auth/verify-email", pages.VerifyEmailPage)
+	mux.HandleFunc("GET /auth/reset-password", pages.ResetPasswordPage)
+	mux.HandleFunc("GET /", pages.Index)
+
+	// 404 in the API's own error shape, so a client never has to parse two
+	// different failure formats.
+	mux.HandleFunc("GET /v1/", notFound(d.Log))
+	mux.HandleFunc("POST /v1/", notFound(d.Log))
+
+	return Chain(mux,
+		RequestID(),
+		Recover(d.Log),
+		SecurityHeaders(d.Config.Env == config.EnvProduction),
+		AccessLog(d.Log, d.Clock),
+		BodyLimit(d.Config.HTTP.MaxBodyBytes),
+	)
+}
+
+func notFound(log *logx.Logger) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		WriteError(w, r, log, errs.New("httpapi.notFound", errs.CodeNotFound).
+			WithDetail("no endpoint at %s %s", r.Method, r.URL.Path))
+	}
+}

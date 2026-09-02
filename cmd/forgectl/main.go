@@ -75,7 +75,17 @@ func run(ctx context.Context, cmd string, args []string) error {
 		return nil
 	}
 
-	cfg, warnings, err := config.Load()
+	// Load .env if present, without overriding anything already exported.
+	// Missing file is normal: production sets real environment variables.
+	if err := config.LoadDotEnv(".env"); err != nil {
+		return errs.Wrap("forgectl.run", errs.CodeConfigInvalid, err).
+			WithDetail(".env exists but could not be read")
+	}
+
+	// Each command declares only the configuration it actually needs. Running a
+	// migration must not require an LLM API key — demanding one would turn a
+	// routine database task into a credential request.
+	cfg, warnings, err := config.Load(sectionsFor(cmd)...)
 	if err != nil {
 		return err
 	}
@@ -142,6 +152,21 @@ func run(ctx context.Context, cmd string, args []string) error {
 		fmt.Fprint(os.Stderr, usage)
 		return errs.New("forgectl.run", errs.CodeValidationFailed).
 			WithDetail("unknown command %q", cmd)
+	}
+}
+
+// sectionsFor maps a subcommand to the configuration it requires.
+func sectionsFor(cmd string) []config.Section {
+	switch cmd {
+	case "migrate", "health":
+		return []config.Section{config.SectionDB}
+	case "config":
+		// `forgectl config` is a diagnostic: it must be able to print a partial
+		// or broken configuration, which is exactly when someone runs it. So it
+		// requires nothing and reports whatever is there.
+		return []config.Section{config.SectionNone}
+	default:
+		return config.AllSections()
 	}
 }
 

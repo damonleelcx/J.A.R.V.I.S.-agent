@@ -37,8 +37,8 @@ green in CI against a live Postgres.**
 | Phase | Scope | State |
 |-------|-------|-------|
 | 0 | Foundation: config, database, migrations, error registry, event registry, structured logging, identifiers, CI | ✅ Done |
-| 1 | Identity: sign up, sign in, verify email, reset password, sessions | ⏳ Next |
-| 2 | Durable engine: goals, task DAG, job queue, leases, checkpoints, budgets | ⏳ Planned |
+| 1 | Identity: sign up, sign in, verify email, reset password, sessions, HTTP surface | ✅ Done |
+| 2 | Durable engine: goals, task DAG, job queue, leases, checkpoints, budgets | ⏳ Next |
 | 3 | Agent loop: planner/executor split, context assembly, verification, replanning, approval gates | ⏳ Planned |
 | 4 | Tools and domain packs: capability registry, risk tiers, safety plane | ⏳ Planned |
 | 5 | Persona and console: avatar, character, soul, execution timeline | ⏳ Planned |
@@ -106,6 +106,40 @@ end, and dead ends are how a long-running agent strands a human at 3am.
 Both registries are fenced by tests that *parse this repository's source* rather
 than enumerating what they check. A fence that lists its own subjects is
 vacuous: deleting an entry would just make the loop shorter.
+
+### Sign-up reveals; password reset does not
+
+Sign-up returns `EMAIL_ALREADY_REGISTERED` for a taken address. Password reset
+returns the same 202 whether or not the address exists, and sign-in returns the
+same `INVALID_CREDENTIALS` whether the account is unknown or the password wrong.
+
+The asymmetry is deliberate. Hiding it at sign-up costs a user who forgot they
+had an account a confusing dead end — success, no usable link, no hint to sign in
+instead — and discloses little for a product where accounts use work addresses.
+Hiding it at reset is not optional: that endpoint is unauthenticated, and *"which
+of these leaked addresses has an account?"* is exactly the question asked before a
+credential-stuffing run. Sign-in even performs a dummy hash when no account
+matches, so "unknown address" is not measurably faster than "wrong password".
+
+### One clock owns every compared timestamp
+
+Session `created_at` originally defaulted to the *database's* `now()` while
+`password_changed_at` was written from the *application's* clock — and
+`Session.Live` compares them. Any skew between the two machines was a live bug:
+an app clock a second ahead made every fresh session look like it predated the
+last password change, signing users out the instant they signed in.
+
+Every timestamp compared against another is now supplied by the application
+clock, and the repository refuses a zero value rather than silently falling back
+to the database default.
+
+### Email links are not consumed by a GET
+
+Mail scanners, link previewers, and corporate security gateways follow every URL
+in an incoming message. If `GET /auth/verify-email` redeemed the token, users
+would routinely arrive at "already used" — used by a robot seconds after
+delivery. The GET renders a page; redemption happens on the POST the reader
+triggers.
 
 ### Seven limits, not one
 

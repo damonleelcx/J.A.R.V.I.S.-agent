@@ -209,6 +209,10 @@ type EngineConfig struct {
 type loader struct {
 	problems []string
 	warnings []string
+	// required names the sections whose mandatory fields are enforced on this
+	// load. A field in an unrequested section is still parsed and still
+	// reported if malformed — it is simply not required to be present.
+	required sectionSet
 }
 
 func (l *loader) fail(key, detail string) {
@@ -222,9 +226,11 @@ func (l *loader) str(key, def string) string {
 	return def
 }
 
-func (l *loader) required(key string) string {
+// requiredIn reads a mandatory value, but only enforces its presence when sec
+// is one of the sections this load was asked for.
+func (l *loader) requiredIn(sec Section, key string) string {
 	v := strings.TrimSpace(os.Getenv(key))
-	if v == "" {
+	if v == "" && l.required.has(sec) {
 		l.fail(key, "is required but was empty or unset")
 	}
 	return v
@@ -284,10 +290,23 @@ func (l *loader) boolVal(key string, def bool) bool {
 
 // Load reads configuration from the process environment and validates it.
 //
-// It returns an *errs.Error with CodeConfigInvalid listing every problem found,
-// so a deployment is not fixed one variable per restart.
-func Load() (*Config, []string, error) {
-	l := &loader{}
+// The variadic argument names which sections must be complete. Passing none
+// means "all", which is what a full server wants. Passing SectionNone means
+// "validate shapes but require nothing", which is what a diagnostic command
+// wants — `forgectl config` has to be able to print a broken configuration,
+// because that is exactly when somebody runs it.
+//
+// Problems are accumulated rather than returned at the first one, so a
+// misconfigured deployment is not fixed one variable per restart.
+func Load(required ...Section) (*Config, []string, error) {
+	if len(required) == 0 {
+		required = AllSections()
+	}
+	set := sectionSet{}
+	for _, sec := range required {
+		set[sec] = true
+	}
+	l := &loader{required: set}
 
 	env := Env(strings.ToLower(l.str("FORGE_ENV", string(EnvDevelopment))))
 	switch env {
@@ -311,12 +330,12 @@ func Load() (*Config, []string, error) {
 	if !strings.HasPrefix(cfg.HTTP.PublicURL, "http://") && !strings.HasPrefix(cfg.HTTP.PublicURL, "https://") {
 		l.fail("FORGE_PUBLIC_URL", "must start with http:// or https:// because verification links are built from it")
 	}
-	if prod && strings.HasPrefix(cfg.HTTP.PublicURL, "http://") {
+	if prod && set.has(SectionHTTP) && strings.HasPrefix(cfg.HTTP.PublicURL, "http://") {
 		l.fail("FORGE_PUBLIC_URL", "must use https:// in production; verification and reset links carry live credentials")
 	}
 
 	cfg.DB = DBConfig{
-		URL:             l.required("FORGE_DATABASE_URL"),
+		URL:             l.requiredIn(SectionDB, "FORGE_DATABASE_URL"),
 		MaxConns:        int32(l.intVal("FORGE_DB_MAX_CONNS", 16)),
 		MinConns:        int32(l.intVal("FORGE_DB_MIN_CONNS", 2)),
 		MaxConnLifetime: l.dur("FORGE_DB_CONN_LIFETIME", time.Hour),
@@ -354,25 +373,27 @@ func Load() (*Config, []string, error) {
 		SMTPPass:    os.Getenv("FORGE_SMTP_PASSWORD"),
 		SendTimeout: l.dur("FORGE_MAIL_SEND_TIMEOUT", 20*time.Second),
 	}
-	switch cfg.Mail.Transport {
-	case MailTransportFile:
-		if prod {
-			l.fail("FORGE_MAIL_TRANSPORT", "the file transport writes mail to disk instead of delivering it and is refused in production; set resend or smtp")
+	if set.has(SectionMail) {
+		switch cfg.Mail.Transport {
+		case MailTransportFile:
+			if prod {
+				l.fail("FORGE_MAIL_TRANSPORT", "the file transport writes mail to disk instead of delivering it and is refused in production; set resend or smtp")
+			}
+		case MailTransportResend:
+			if cfg.Mail.ResendKey == "" {
+				l.fail("RESEND_API_KEY", "is required when FORGE_MAIL_TRANSPORT=resend")
+			}
+		case MailTransportSMTP:
+			if cfg.Mail.SMTPHost == "" {
+				l.fail("FORGE_SMTP_HOST", "is required when FORGE_MAIL_TRANSPORT=smtp")
+			}
+		default:
+			l.fail("FORGE_MAIL_TRANSPORT", fmt.Sprintf("must be file, resend or smtp; got %q", cfg.Mail.Transport))
 		}
-	case MailTransportResend:
-		if cfg.Mail.ResendKey == "" {
-			l.fail("RESEND_API_KEY", "is required when FORGE_MAIL_TRANSPORT=resend")
-		}
-	case MailTransportSMTP:
-		if cfg.Mail.SMTPHost == "" {
-			l.fail("FORGE_SMTP_HOST", "is required when FORGE_MAIL_TRANSPORT=smtp")
-		}
-	default:
-		l.fail("FORGE_MAIL_TRANSPORT", fmt.Sprintf("must be file, resend or smtp; got %q", cfg.Mail.Transport))
 	}
 
 	cfg.Auth = AuthConfig{
-		SessionSecret:     l.required("FORGE_SESSION_SECRET"),
+		SessionSecret:     l.requiredIn(SectionAuth, "FORGE_SESSION_SECRET"),
 		SessionTTL:        l.dur("FORGE_SESSION_TTL", 30*24*time.Hour),
 		SessionIdleTTL:    l.dur("FORGE_SESSION_IDLE_TTL", 14*24*time.Hour),
 		EmailVerifyTTL:    l.dur("FORGE_EMAIL_VERIFY_TTL", 24*time.Hour),
@@ -389,7 +410,7 @@ func Load() (*Config, []string, error) {
 	if cfg.Auth.MinPasswordLength < 8 {
 		l.fail("FORGE_MIN_PASSWORD_LENGTH", "must be at least 8")
 	}
-	if prod && !cfg.Auth.CookieSecure {
+	if prod && set.has(SectionAuth) && !cfg.Auth.CookieSecure {
 		l.fail("FORGE_COOKIE_SECURE", "cannot be false in production; session cookies would be sent over plaintext")
 	}
 	if cfg.Auth.SessionIdleTTL > cfg.Auth.SessionTTL {
@@ -398,7 +419,7 @@ func Load() (*Config, []string, error) {
 
 	cfg.LLM = LLMConfig{
 		BaseURL:        strings.TrimRight(l.str("FORGE_LLM_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"), "/"),
-		APIKey:         l.required("FORGE_LLM_API_KEY"),
+		APIKey:         l.requiredIn(SectionLLM, "FORGE_LLM_API_KEY"),
 		Planner:        l.str("FORGE_LLM_PLANNER_MODEL", "qwen3.8-max"),
 		Executor:       l.str("FORGE_LLM_EXECUTOR_MODEL", "qwen3.8-max"),
 		Verifier:       l.str("FORGE_LLM_VERIFIER_MODEL", "deepseek-v4-pro"),
@@ -406,7 +427,7 @@ func Load() (*Config, []string, error) {
 		RequestTimeout: l.dur("FORGE_LLM_REQUEST_TIMEOUT", 3*time.Minute),
 		MaxRetries:     l.intVal("FORGE_LLM_MAX_RETRIES", 3),
 	}
-	if modelFamily(cfg.LLM.Verifier) == modelFamily(cfg.LLM.Executor) {
+	if set.has(SectionLLM) && modelFamily(cfg.LLM.Verifier) == modelFamily(cfg.LLM.Executor) {
 		l.warnings = append(l.warnings, fmt.Sprintf(
 			"verifier model %q shares a family with executor model %q: independent verification (PRD SAF-03) is weakened when one model grades its own output",
 			cfg.LLM.Verifier, cfg.LLM.Executor))
