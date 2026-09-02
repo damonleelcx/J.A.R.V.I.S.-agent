@@ -106,3 +106,45 @@ func init() {
 		EventLLMEmptyResponse, EventLLMUsageMissing, EventLLMRefused,
 	)
 }
+
+// Agent runtime events.
+const (
+	EventTaskResumeDegraded Event = "forge.task.resume_degraded"
+	EventCheckpointFailed   Event = "forge.checkpoint.write_failed"
+	EventToolLedgerFailed   Event = "forge.tool.ledger_write_failed"
+	EventBudgetRecordFailed Event = "forge.budget.record_failed"
+	EventToolSucceeded      Event = "forge.tool.succeeded"
+	EventToolFailed         Event = "forge.tool.failed"
+	EventToolDeduplicated   Event = "forge.tool.deduplicated"
+	EventPlanCreated        Event = "forge.plan.created"
+	EventTaskCycleStarted   Event = "forge.task.cycle_started"
+	EventTaskCycleEnded     Event = "forge.task.cycle_ended"
+	EventVerificationRan    Event = "forge.verification.ran"
+	EventApprovalOpened     Event = "forge.approval.opened"
+	EventWorkerIdle         Event = "forge.worker.idle"
+	EventWorkerReaped       Event = "forge.worker.reaped"
+)
+
+func init() {
+	allEvents = append(allEvents,
+		EventTaskResumeDegraded, EventCheckpointFailed, EventToolLedgerFailed,
+		EventBudgetRecordFailed, EventToolSucceeded, EventToolFailed,
+		EventToolDeduplicated, EventPlanCreated, EventTaskCycleStarted,
+		EventTaskCycleEnded, EventVerificationRan, EventApprovalOpened,
+		EventWorkerIdle, EventWorkerReaped,
+	)
+}
+
+// Worker outcome events.
+const (
+	EventBudgetExceededLog Event = "forge.budget.exceeded"
+	EventTaskRetryingLog   Event = "forge.task.retrying"
+	EventTaskSkippedLog    Event = "forge.task.skipped"
+	EventTaskLeaseExpired  Event = "forge.task.lease_expired"
+)
+
+func init() {
+	allEvents = append(allEvents,
+		EventBudgetExceededLog, EventTaskRetryingLog, EventTaskSkippedLog, EventTaskLeaseExpired,
+	)
+}

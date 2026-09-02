@@ -38,10 +38,10 @@ green in CI against a live Postgres.**
 |-------|-------|-------|
 | 0 | Foundation: config, database, migrations, error registry, event registry, structured logging, identifiers, CI | ✅ Done |
 | 1 | Identity: sign up, sign in, verify email, reset password, sessions, HTTP surface | ✅ Done |
-| 2 | Durable engine: goals, task DAG, job queue, leases, checkpoints, timeline | 🔨 In progress |
-| 3 | Agent loop: planner/executor split, context assembly, verification, replanning, approval gates | ⏳ Planned |
-| 4 | Tools and domain packs: capability registry, risk tiers, safety plane | ⏳ Planned |
-| 5 | Persona and console: avatar, character, soul, execution timeline | ⏳ Planned |
+| 2 | Durable engine: goals, task DAG, job queue, leases, checkpoints, timeline | ✅ Done |
+| 3 | Agent loop: planner/executor/verifier, context assembly, budgets, approval gates, persona | ✅ Done |
+| 4 | Tools: capability registry, sandbox, honest unavailable connectors | ✅ Done |
+| 5 | Console: goal management, execution timeline, approvals UI | ⏳ Next |
 | 6 | Observability, evaluation suites, recovery drills, release | ⏳ Planned |
 
 ---
