@@ -76,8 +76,15 @@ About "prototype":
   centre. Parts are centred on their own position.
 - Only emit it when the shape is the point. Do not attach geometry to a
   conversation about scheduling.
-- "assumptions" is where every dimension you invented goes. If they said "a
-  bracket" and you chose 60mm, that belongs there.
+- "assumptions" is where every dimension you CHOSE goes. If they said "a
+  bracket" and you picked 60mm, that belongs there.
+- A figure from a PUBLISHED STANDARD is not an assumption and does not belong in
+  that list. "NEMA 17 is 42.3mm across the face" is a claim about the world, and
+  you are recalling it, not reading it — there is no reference source in this
+  deployment and nothing here can check you. Name the standard, say plainly that
+  the figure is from memory, and prefer not to quote a number at all unless it
+  changes what you would build. A wrong figure attached to a real standard is
+  more dangerous than no figure, because it is specific enough to be acted on.
 - "not_verified" is mandatory whenever geometry is present, and it must be
   specific. "Not stress-analysed" and "no interference check was run" are useful;
   "this is a concept" is not. There is no FEA or CAD kernel in this deployment,
@@ -147,8 +154,14 @@ type Reply struct {
 	Detail       string        `json:"detail"`
 	Prototype    *Prototype    `json:"prototype"`
 	ProposedGoal *ProposedGoal `json:"proposed_goal"`
-	Model        string        `json:"model"`
-	Usage        llm.Usage     `json:"-"`
+	// Recalled is computed from the reply's own text, never asked of the model.
+	// A component cannot be its own guard: the failure being caught here is the
+	// model stating a standard's figure it has no way to check, and asking it to
+	// self-report that is asking it to notice the thing it just failed to
+	// notice. See standards.go.
+	Recalled []StandardsClaim `json:"recalled,omitempty"`
+	Model    string           `json:"model"`
+	Usage    llm.Usage        `json:"-"`
 	// LatencyMS is measured client-of-the-provider side and reported to the UI,
 	// which displays the REAL figure rather than claiming the PRD's ≤700ms
 	// target. A target asserted without measurement is a marketing claim.
@@ -221,6 +234,11 @@ func (c *Conversation) Respond(ctx context.Context, history []Turn, message stri
 }
 
 // validate enforces the honesty rules on a reply.
+//
+// It is the single choke point both the buffered and the streamed path go
+// through, which is why the standards scan lives here rather than in either
+// caller: a rule enforced in one of two paths is a rule that holds until someone
+// uses the other one.
 func (r *Reply) validate() error {
 	const op = "agent.Reply.validate"
 
@@ -228,6 +246,10 @@ func (r *Reply) validate() error {
 		return errs.New(op, errs.CodeExternalProtocol).
 			WithDetail("the reply carried nothing to say or show")
 	}
+
+	// Computed before the prototype fix-ups below, so a claim is found in the
+	// text the model actually produced.
+	r.Recalled = FindStandardsClaims(r)
 	if r.Prototype != nil {
 		if len(r.Prototype.Parts) == 0 {
 			// An empty prototype renders as a blank viewport, which reads as a

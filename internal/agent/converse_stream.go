@@ -12,13 +12,18 @@ import (
 
 // StreamEvent is one thing the workbench should act on.
 type StreamEvent struct {
-	// Kind is "speech", "detail", "prototype", "goal", "done" or "error".
+	// Kind is "speech", "detail", "prototype", "goal", "recalled", "done" or
+	// "error".
 	Kind string `json:"kind"`
 	// Text carries speech or detail.
 	Text string `json:"text,omitempty"`
 	// Prototype and Goal carry the structured tail.
 	Prototype *Prototype    `json:"prototype,omitempty"`
 	Goal      *ProposedGoal `json:"goal,omitempty"`
+	// Recalled lists figures the reply attributed to a published standard.
+	// Emitted whether or not there is geometry: a standard quoted in prose is
+	// exactly as unverifiable as one quoted in an assumption.
+	Recalled []StandardsClaim `json:"recalled,omitempty"`
 	// FirstTokenMS and TotalMS are measured, not targeted. PRD AUD-02 names
 	// ≤700ms; this reports what actually happened so the claim is checkable.
 	FirstTokenMS int64  `json:"first_token_ms,omitempty"`
@@ -77,6 +82,11 @@ func (c *Conversation) RespondStream(
 		}
 		if reply.ProposedGoal != nil {
 			if err := emit(StreamEvent{Kind: "goal", Goal: reply.ProposedGoal}); err != nil {
+				return err
+			}
+		}
+		if len(reply.Recalled) > 0 {
+			if err := emit(StreamEvent{Kind: "recalled", Recalled: reply.Recalled}); err != nil {
 				return err
 			}
 		}
@@ -168,6 +178,13 @@ func (c *Conversation) RespondStream(
 		}
 		if reply.ProposedGoal != nil {
 			if err := emit(StreamEvent{Kind: "goal", Goal: reply.ProposedGoal}); err != nil {
+				return err
+			}
+		}
+		// Last of the content events, so it is never dropped by an early return
+		// above and the browser has the whole reply to attach it to.
+		if len(reply.Recalled) > 0 {
+			if err := emit(StreamEvent{Kind: "recalled", Recalled: reply.Recalled}); err != nil {
 				return err
 			}
 		}
