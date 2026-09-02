@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/agent"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/access"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/engine"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/persona"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/db"
@@ -65,15 +66,20 @@ type GoalDTO struct {
 func (h *GoalHandlers) ListGoals(w http.ResponseWriter, r *http.Request) {
 	user, _ := UserFrom(r.Context())
 
+	// Every project the caller is a member of, not every project they created.
+	visible, err := h.deps.visibleProjects(r, user.ID)
+	if err != nil {
+		WriteError(w, r, h.deps.Log, err)
+		return
+	}
 	rows, err := h.deps.Pool.Query(r.Context(), `
 		select g.id, g.title, g.statement, g.status, g.autonomy, g.risk_tier,
 		       g.tokens_spent, g.created_at, g.started_at, g.ended_at,
 		       coalesce(g.outcome_summary, '')
 		  from forge_goals g
-		  join forge_projects p on p.id = g.project_id
-		 where p.owner_id = $1
+		 where g.project_id = any($1)
 		 order by g.created_at desc
-		 limit 100`, user.ID)
+		 limit 100`, visible)
 	if err != nil {
 		WriteError(w, r, h.deps.Log, errs.Wrap("httpapi.ListGoals", errs.CodeDatabaseUnavail, err))
 		return
@@ -231,13 +237,19 @@ type ApprovalDTO struct {
 func (h *GoalHandlers) ListApprovals(w http.ResponseWriter, r *http.Request) {
 	user, _ := UserFrom(r.Context())
 
+	visible, err := h.deps.visibleProjects(r, user.ID)
+	if err != nil {
+		WriteError(w, r, h.deps.Log, err)
+		return
+	}
+
 	rows, err := h.deps.Pool.Query(r.Context(), `
 		select a.id, a.goal_id, g.title, a.task_id, a.risk_tier, a.summary, a.preview, a.requested_at
 		  from forge_approvals a
 		  join forge_goals g on g.id = a.goal_id
 		  join forge_projects p on p.id = g.project_id
-		 where p.owner_id = $1 and a.decision = 'pending'
-		 order by a.requested_at asc`, user.ID)
+		 where p.id = any($1) and a.decision = 'pending'
+		 order by a.requested_at asc`, visible)
 	if err != nil {
 		WriteError(w, r, h.deps.Log, errs.Wrap("httpapi.ListApprovals", errs.CodeDatabaseUnavail, err))
 		return
@@ -290,23 +302,39 @@ func (h *GoalHandlers) Decide(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Deciding a gate needs approval.decide, not merely read access. PRD SAF-05
+	// names the accountable human, and this is where the system decides who is
+	// allowed to be that human — a contributor may create the work and may not
+	// sign it off.
+	var goalOfApproval string
+	if err := h.deps.Pool.QueryRow(r.Context(),
+		`select goal_id from forge_approvals where id = $1`, approvalID).Scan(&goalOfApproval); err != nil {
+		WriteError(w, r, h.deps.Log, errs.New("httpapi.Decide", errs.CodeNotFound).
+			WithDetail("no approval %s", approvalID))
+		return
+	}
+	if _, err := h.deps.requireGoalPermission(r, goalOfApproval, user.ID, access.PermApprovalDecide); err != nil {
+		WriteError(w, r, h.deps.Log, err)
+		return
+	}
+
 	now := h.deps.Clock.Now()
 	var taskID, goalID string
-	// Ownership is enforced in the UPDATE itself rather than by a prior read:
-	// a check-then-act here would let a request that arrives between the two
-	// decide someone else's gate.
+	// The permission is checked above; `decision = 'pending'` in the UPDATE is
+	// what makes the decision itself atomic. That guard is the one that matters
+	// for concurrency: two people answering the same gate at once, where the
+	// loser must be told rather than silently overwriting the winner. Moving the
+	// permission out of the statement does not weaken it — a role revoked in the
+	// microseconds between is not a threat anybody has.
 	err := h.deps.Pool.QueryRow(r.Context(), `
-		update forge_approvals a
+		update forge_approvals
 		   set decision = $2, decided_by = $3, decided_at = $4, decision_reason = $5
-		  from forge_goals g
-		  join forge_projects p on p.id = g.project_id
-		 where a.id = $1 and a.decision = 'pending'
-		   and g.id = a.goal_id and p.owner_id = $3
-		returning a.task_id, a.goal_id`,
+		 where id = $1 and decision = 'pending'
+		returning task_id, goal_id`,
 		approvalID, string(decision), user.ID, now, req.Reason).Scan(&taskID, &goalID)
 	if err != nil {
-		WriteError(w, r, h.deps.Log, errs.Wrap("httpapi.Decide", errs.CodeNotFound, err).
-			WithDetail("no pending approval %s is visible to you, or it has already been decided", approvalID))
+		WriteError(w, r, h.deps.Log, errs.Wrap("httpapi.Decide", errs.CodeConflict, err).
+			WithDetail("approval %s has already been decided", approvalID))
 		return
 	}
 
@@ -358,19 +386,24 @@ func (h *GoalHandlers) Decide(w http.ResponseWriter, r *http.Request) {
 // helpers
 // ---------------------------------------------------------------------------
 
-func (h *GoalHandlers) loadGoal(r *http.Request, goalID, ownerID string) (*GoalDTO, error) {
+// loadGoal reads a goal the caller is permitted to see.
+//
+// Authorisation goes through the access service rather than into the query's
+// WHERE clause. The difference matters: the permission is named at the call
+// site, so a reader can tell that this is a READ and not a write, and a goal the
+// caller cannot see is still reported exactly as one that does not exist.
+func (h *GoalHandlers) loadGoal(r *http.Request, goalID, userID string) (*GoalDTO, error) {
+	if _, err := h.deps.requireGoalPermission(r, goalID, userID, access.PermProjectRead); err != nil {
+		return nil, err
+	}
 	row := h.deps.Pool.QueryRow(r.Context(), `
 		select g.id, g.title, g.statement, g.status, g.autonomy, g.risk_tier,
 		       g.tokens_spent, g.created_at, g.started_at, g.ended_at,
 		       coalesce(g.outcome_summary, '')
-		  from forge_goals g
-		  join forge_projects p on p.id = g.project_id
-		 where g.id = $1 and p.owner_id = $2`, goalID, ownerID)
+		  from forge_goals g where g.id = $1`, goalID)
 
 	dto, err := h.scanGoalRow(row)
 	if err != nil {
-		// A goal the caller cannot see is reported exactly as one that does not
-		// exist, so the endpoint is not a membership oracle.
 		return nil, errs.New("httpapi.loadGoal", errs.CodeNotFound).
 			WithDetail("no goal %s", goalID)
 	}

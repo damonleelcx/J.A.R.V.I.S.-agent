@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/access"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/claim"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/memory"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/errs"
@@ -113,7 +114,8 @@ func (h *MemoryHandlers) RecordDecision(w http.ResponseWriter, r *http.Request) 
 		WriteError(w, r, h.deps.Log, err)
 		return
 	}
-	if err := h.authoriseProject(r, req.ProjectID, user.ID); err != nil {
+	// Recording a decision changes what the project says it believes.
+	if err := h.deps.requirePermission(r, req.ProjectID, user.ID, access.PermContentWrite); err != nil {
 		WriteError(w, r, h.deps.Log, err)
 		return
 	}

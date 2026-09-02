@@ -15,12 +15,13 @@ Requirement IDs are from `docs/prd.md`.
 
 Built and fenced: the durable engine, the agent loop, tools, identity, the
 console, the workbench, the audit chain, layered memory with the decision log,
-the workspace model, and containment — secret handles, incident response, and
-recovery drills that inject real faults. Roughly the whole vertical from
+the workspace model, containment — secret handles, incident response, and
+recovery drills that inject real faults — and role-based access with second
+factors, the shared-session record and the handoff. Roughly the whole vertical from
 "someone speaks" to "a worker executes a verified task", plus the record of it,
 what it remembers, what it thinks is true, and what happens when it breaks.
 
-Missing: collaboration, enterprise security, visual completeness, and the release
+Missing: SSO, realtime audio transport, visual completeness, and the release
 apparatus.
 
 The split matters when planning: the core loop is done, so every wave below adds
@@ -59,10 +60,10 @@ surface to a working system rather than filling a hole in one.
         └───────────────────┬─────────────────────────┘
                             ▼
         ┌─────────────────────────────────────────────┐
-        │ WAVE 6  enterprise + collaboration          │
-        │   SEC-02 SSO / MFA / device trust           │
-        │   COL-01 multi-user room                    │
-        │   COL-02 handoff                            │
+        │ WAVE 6  enterprise + collab   PARTLY DONE   │
+        │   SEC-02 RBAC/MFA/devices ✓  SSO deferred   │
+        │   COL-01 the record ✓  transport deferred   │
+        │   COL-02 handoff ✓                          │
         └───────────────────┬─────────────────────────┘
                             ▼
         ┌─────────────────────────────────────────────┐
@@ -492,16 +493,126 @@ review.
   takes effect at the next resolution. Stopping work mid-flight is the `stop`
   verb's job, and the two are not wired together.
 
-## Wave 6 — enterprise and collaboration
+## Wave 6 — enterprise and collaboration · **PARTLY DONE**
 
-- **SEC-02** SSO, MFA, device trust, RBAC. Largest external surface.
-- **COL-01** multi-user voice room with identified speakers and a record of who
-  approved what.
-- **COL-02** handoff: state, actions, versions, approvals, evidence, open risks,
-  recommended next work.
+Migration `0010_rbac_and_collaboration`. Two of this wave's parts were
+deliberately not built; they are named below with what it would take.
 
-COL-01 needs realtime multi-party transport, which nothing in the current
-architecture has. Budget for that specifically.
+### RBAC — the change that unblocked earlier waves
+
+Until now, every authorisation check in the codebase was the same line:
+`where p.owner_id = $caller`. One owner, no members, no roles. That is why
+memory's organisation layer shipped documented as "declared, not enforced" —
+there was no membership model to enforce it with.
+
+**The decision: membership is the single source of truth for access.**
+`forge_projects.owner_id` still records who CREATED a project and is no longer
+consulted. Keeping it as a second authorisation path would mean two answers to
+"may this person read this", and the day they disagree is the day somebody sees
+something they should not. Migration 0010 backfills an owner membership for every
+existing project, so nothing loses access when the wave lands — fenced against a
+project inserted the old way.
+
+Four roles against nine permissions, as a table, printed verbatim by
+`forgectl access matrix`. The grid is the artefact people audit, so it is
+oriented by permission: "who can decide approvals" is one line to scan.
+
+Three separations are asserted by name, because each is a product decision a
+future edit could quietly undo:
+
+- a **contributor** creates work and signs nothing off (SAF-05);
+- **planning and starting** are different permissions (AGT-02);
+- a **maintainer** runs the work and cannot change who has access.
+
+A project's last owner cannot be removed or demoted. A project with no owner
+cannot be administered at all — not even to undo the change that emptied it — so
+it is refused inside the same transaction as the write.
+
+`TestNoHandlerAuthorisesByOwnerID` parses the HTTP package's string literals and
+fails on any query that authorises by `owner_id`. It parses rather than greps
+because the first version flagged the comments explaining the rule, which is the
+kind of false positive that gets a fence deleted.
+
+### MFA, and the two hazards it is shaped around
+
+**Lockout.** The obvious design enables a factor the moment somebody enrols,
+which locks out every user whose authenticator did not end up with the same
+secret — and they cannot sign in to fix it, because fixing it needs a code. So a
+factor is `pending` until one correct code proves the enrolment, and only an
+`active` factor is ever demanded.
+
+**Device trust as a bypass.** "Remember this device" is a way to opt out of MFA
+unless granting it *requires* the second factor at that moment. So trust is
+granted by the same call that verifies a code and by nothing else; it expires
+after thirty days; and disabling the factor untrusts every device, because a
+device trusted under a factor that no longer exists is trusted on the strength of
+nothing.
+
+TOTP is thirty lines against RFC 6238's published vectors rather than a
+dependency on the authentication path. Codes are single-use inside their own
+window — the accepted step is recorded, so a code somebody saw over a shoulder
+does not work for the next ninety seconds.
+
+The shared secret is stored, unlike wave 5's brokered credentials, because it
+belongs to the user and there is no environment variable an operator could put it
+in. It is encrypted with AES-256-GCM (`internal/platform/secretbox`). The honest
+claim: this defends a stolen database. An attacker with the database AND the
+process environment has both halves.
+
+### COL-01 — the record, not the transport
+
+What is built is who was present, who said what, and which approvals were made
+while they were. **Every turn names its speaker**; there is no anonymous option
+and no default, enforced in Go and again by a check constraint. FORGE's own turns
+are a distinct speaker kind rather than a null one, because "nobody said this"
+and "FORGE said this" must not look the same (AUD-05).
+
+Speaker names are recorded AS THEY WERE. A transcript that rendered them by
+joining to the accounts table would show a renamed or deleted account's current
+state, which is not what was said in the room.
+
+**What is not built: realtime multi-party audio transport.** The plan flagged it
+as needing its own budget and it does. The record is transport-agnostic — a turn
+arrives with a speaker and text, and where it came from is a field — so a WebRTC
+bridge, a phone gateway and somebody typing all write the same row. A transcript
+is useful long before its audio is, and it is the part an auditor asks for.
+
+### COL-02 — the handoff
+
+"State, actions, versions, approvals, evidence, open risks, recommended next
+work." Every one of those already existed: waves 1–5 built the goal state
+machine, the timeline, the artifact lifecycle, the approval gates, and the
+graph's risks and evidence. So a handoff is **derived, never stored** — storing
+one would create a second truth that goes stale the moment anything moves, which
+is the worst possible property for a document whose whole purpose is to be
+believed by somebody who was not there.
+
+It inherits NFR-07's rule: a handoff must never imply completion. It leads with
+what is unresolved, counts it, and `Complete()` is false while anything is
+outstanding — including a goal that has not ended. Recommendations are derived
+from state rather than asked of a model, and the document says so.
+
+**48 fences**, 24 against live Postgres, 11 drilled by mutation. Verified live:
+the permission matrix through the real binary.
+
+### Two parts NOT built, and why
+
+- **SSO.** OIDC/SAML against an external identity provider. I have no IdP to
+  verify against, and this codebase's own history is that a fake matching the
+  provider hides real defects. Shipping an unverified authentication path would
+  be worse than not shipping one. What it needs: a real IdP tenant to test
+  against, and it is then a self-contained piece of work.
+- **Realtime multi-party audio transport** (COL-01's other half), as above.
+
+Both are named here rather than quietly folded into "done".
+
+### One thing the drills found
+
+Two mutation drills on the turn-attribution rule came back green, which looked
+like a missing fence and was not: the property is enforced in Go AND by a check
+constraint, so removing either leaves the other. Removing both goes red. The
+fence itself was still improved — the original test's cases were all caught by
+the label half, so a case that only the id half can refuse was added.
 
 ## Wave 7 — visual completeness
 
@@ -535,6 +646,10 @@ already calls this phase 7.
   not. Fixing it properly means either a schema validator in the executor or
   strict decoding as a rule, and it is a decision about every tool rather than
   about memory, so it was left rather than widened into.
+- **SSO is not implemented.** RBAC, MFA and device trust are; the identity
+  provider integration is not, because there is no IdP here to verify it against.
+- **There is no realtime audio transport.** COL-01's record is built and nothing
+  carries voice into it.
 - **Prompt-injection defence (SEC-04) does not exist.** Tool output, imported
   results, documents and code comments reach the model as ordinary text. The
   PRD names them as untrusted input; nothing treats them that way.

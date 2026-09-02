@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/access"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/identity"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/llm"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/clock"
@@ -15,6 +16,10 @@ import (
 
 // Deps is everything the HTTP surface needs.
 type Deps struct {
+	// Access decides who may do what (PRD SEC-02). Every handler asks this and
+	// none of them queries forge_projects.owner_id: membership is the single
+	// authorisation truth, and owner_id records only who created the project.
+	Access   *access.Service
 	Config   *config.Config
 	Pool     *db.Pool
 	Identity *identity.Service
@@ -50,6 +55,13 @@ var authRateLimits = struct {
 // NewRouter builds the HTTP handler.
 func NewRouter(d Deps) http.Handler {
 	mux := http.NewServeMux()
+
+	// Access control is wired here rather than by every caller, so a deployment
+	// cannot start with it nil by omission. requirePermission refuses outright
+	// when it is, but a server that refuses everything is a bad way to find out.
+	if d.Access == nil && d.Pool != nil {
+		d.Access = access.NewService(d.Pool, d.Clock, d.Log)
+	}
 
 	authHandlers := NewAuthHandlers(d.Identity, d.Config.Auth, d.Log)
 	health := NewHealthHandlers(d)

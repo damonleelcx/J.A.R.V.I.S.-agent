@@ -107,6 +107,12 @@ const (
 	CodeIncidentOpen Code = "INCIDENT_NOT_REVIEWED"
 	// CodeEvidenceNotPreserved is SAF-07's one ordering rule, enforced.
 	CodeEvidenceNotPreserved Code = "EVIDENCE_NOT_PRESERVED"
+	// CodeLastOwner refuses the change that makes a project unadministrable.
+	CodeLastOwner Code = "LAST_OWNER"
+	// CodeMFARequired means the credential was right and a second factor is owed.
+	CodeMFARequired Code = "MFA_REQUIRED"
+	// CodeMFAInvalid means the second factor was wrong, replayed, or expired.
+	CodeMFAInvalid Code = "MFA_INVALID"
 )
 
 // ---------------------------------------------------------------------------
@@ -221,6 +227,16 @@ var registry = map[Code]Definition{
 	CodeEvidenceNotPreserved: {CodeEvidenceNotPreserved, CategoryBusiness, 409,
 		"A destructive incident action was attempted before any evidence was preserved.",
 		"Record a preserve_evidence action first, or run this one as a dry run. Stopping, revoking and rolling back all destroy state an investigation needs, and evidence gathered afterwards is evidence of the response rather than of the incident.", false},
+
+	CodeLastOwner: {CodeLastOwner, CategoryBusiness, 409,
+		"This change would leave the project with no owner.",
+		"Make somebody else an owner first. A project with no owner cannot be administered at all — not even to undo the change that emptied it.", false},
+	CodeMFARequired: {CodeMFARequired, CategoryBusiness, 401,
+		"The password was correct and this account requires a second factor.",
+		"Submit the six-digit code from your authenticator, or a recovery code, against the challenge id in this response.", false},
+	CodeMFAInvalid: {CodeMFAInvalid, CategoryBusiness, 401,
+		"The second factor was not accepted: wrong code, an already-used one, or a challenge that has expired.",
+		"Check your device's clock and try the current code. Each code works once; if the authenticator is gone, use a recovery code.", false},
 
 	CodeDecisionSuperseded: {CodeDecisionSuperseded, CategoryBusiness, 409,
 		"This decision has already been superseded, so it is no longer the current answer.",

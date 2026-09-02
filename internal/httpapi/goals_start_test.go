@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/access"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/engine"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/identity"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/clock"
@@ -75,6 +76,7 @@ func startHarness(t *testing.T) (*GoalHandlers, *db.Pool, *identity.User) {
 	d := testDeps()
 	d.Pool = pool
 	d.Clock = clock.System{}
+	d.Access = access.NewService(pool, d.Clock, logx.Discard())
 	d.Config.Engine = config.EngineConfig{
 		MaxTasksPerGoal: 50, MaxTaskDepth: 3,
 		MaxTokensPerGoal: 100000, MaxCostCentsPerGoal: 500,
@@ -111,6 +113,14 @@ func seedGoal(t *testing.T, pool *db.Pool, ownerID string, status engine.GoalSta
 	if _, err := pool.Exec(ctx, `
 		insert into forge_projects (id, owner_id, name, pack, created_at, updated_at)
 		values ($1,$2,'Test project','software',$3,$3)`, projectID, ownerID, now); err != nil {
+		t.Fatal(err)
+	}
+	// Membership, not owner_id, is what authorisation reads (PRD SEC-02). A
+	// fixture that inserted the project and stopped would leave its own owner
+	// unable to see it — which is production behaviour, and the reason this
+	// line is here rather than the check being relaxed.
+	if err := access.NewService(pool, clock.System{}, logx.Discard()).
+		EnsureOwner(ctx, pool, projectID, ownerID); err != nil {
 		t.Fatal(err)
 	}
 	goalID := id.New(id.PrefixGoal)

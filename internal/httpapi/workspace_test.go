@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/access"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/claim"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/identity"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/workspace"
@@ -29,6 +30,7 @@ import (
 
 type wsHarness struct {
 	h       *WorkspaceHandlers
+	access  *access.Service
 	pool    *db.Pool
 	svc     *workspace.Service
 	owner   *identity.User
@@ -80,6 +82,9 @@ func workspaceHarness(t *testing.T) *wsHarness {
 	d := testDeps()
 	d.Pool = pool
 	d.Clock = clock.System{}
+	// The real router wires this; a harness that calls handlers directly must
+	// too, or every check refuses and the tests pass for the wrong reason.
+	d.Access = access.NewService(pool, d.Clock, logx.Discard())
 
 	now := time.Now().UTC()
 	mk := func(email string) *identity.User {
@@ -92,17 +97,12 @@ func workspaceHarness(t *testing.T) *wsHarness {
 		}
 		return u
 	}
-	w := &wsHarness{h: NewWorkspaceHandlers(d), pool: pool,
+	w := &wsHarness{h: NewWorkspaceHandlers(d), pool: pool, access: d.Access,
 		svc: workspace.NewService(pool, d.Clock, logx.Discard())}
 	w.owner = mk("owner@example.com")
 	w.other = mk("intruder@example.com")
 
-	w.project = id.New(id.PrefixProject)
-	if _, err := pool.Exec(ctx,
-		`insert into forge_projects (id, owner_id, name, created_at, updated_at) values ($1,$2,'P',$3,$3)`,
-		w.project, w.owner.ID, now); err != nil {
-		t.Fatal(err)
-	}
+	w.project = newProject(t, pool, d.Access, w.owner.ID, "P", now)
 	w.goalID = id.New(id.PrefixGoal)
 	if _, err := pool.Exec(ctx,
 		`insert into forge_goals (id, project_id, created_by, title, statement, status, started_at, created_at, updated_at)
@@ -325,12 +325,7 @@ func TestAPI_AnEdgeIsAuthorisedAtBothEnds(t *testing.T) {
 	mine := w.node(t, workspace.KindTest, "my test", "")
 
 	// A second project the intruder does own, with a node in it.
-	theirs := id.New(id.PrefixProject)
-	if _, err := w.pool.Exec(ctx,
-		`insert into forge_projects (id, owner_id, name, created_at, updated_at) values ($1,$2,'Q',$3,$3)`,
-		theirs, w.other.ID, time.Now().UTC()); err != nil {
-		t.Fatal(err)
-	}
+	theirs := newProject(t, w.pool, w.access, w.other.ID, "Q", time.Now().UTC())
 	theirNode, err := w.svc.Add(ctx, workspace.NewNode{
 		ProjectID: theirs, Kind: workspace.KindRequirement, Title: "their requirement",
 		How: claim.Retrieved, CreatedBy: w.other.ID})

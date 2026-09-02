@@ -306,6 +306,48 @@ injected a fault; it carries the evidence that proved it, and one without that
 evidence is reported VACUOUS and fails the run. So does a selection that matched
 no scenarios.
 
+### `owner_id` is not who may see it
+
+Authorisation reads project membership. `forge_projects.owner_id` records who
+*created* a project and is deliberately never consulted.
+
+Two authorisation paths means two answers to "may this person read this", and the
+day they disagree is the day somebody sees something they should not. So there is
+one path, one function, and a test that parses the HTTP package's SQL and fails on
+any query that authorises by that column — because the likely mistake is not
+malice, it is somebody adding an endpoint and copying the shape of its neighbour.
+
+A project's last owner cannot be removed or demoted. A project with no owner
+cannot be administered at all, including to undo the change that emptied it.
+
+### A second factor that cannot lock you out, and device trust that is not a bypass
+
+Enrolling a second factor does not enable it. It stays pending until one correct
+code proves the authenticator actually holds the same secret — because the user
+whose app silently failed to save it cannot sign in to fix that, and the fix
+requires a code.
+
+"Remember this device" is granted by the same call that verifies a code, and by
+nothing else. Any other route would make it a way to opt out of MFA permanently
+after one password. Trust expires after thirty days, and disabling the factor
+untrusts every device: a device trusted under a factor that no longer exists is
+trusted on the strength of nothing.
+
+### Every turn in a room names who said it
+
+There is no anonymous speaker and no default — enforced in the domain and again by
+a database constraint. Six months later, "somebody said the tolerance was fine" is
+worth nothing, and "Priya said it at 14:02, and Tom approved the change at 14:05"
+is the entire point of keeping the record.
+
+FORGE's own turns are a distinct kind rather than a turn with no user, so a
+transcript can never suggest a person said what the system said. Speaker names are
+stored as they were at the time: rendering them later from the accounts table
+would show who somebody is now, not who spoke.
+
+What is NOT built is realtime multi-party audio. The record is
+transport-agnostic and a transcript is useful long before its audio is.
+
 ### The voice surface moves; it does not shrink
 
 The workbench has one voice component with two placements. Before there is

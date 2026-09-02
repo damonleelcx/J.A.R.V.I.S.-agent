@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/agent"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/access"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/engine"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/errs"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/logx"
@@ -179,7 +180,10 @@ func (h *GoalHandlers) StartGoal(w http.ResponseWriter, r *http.Request) {
 	goalID := r.PathValue("id")
 	user, _ := UserFrom(r.Context())
 
-	goal, err := h.loadOwnedGoal(r.Context(), goalID, user.ID)
+	// Starting is a separate permission from creating: PRD AGT-02 makes planning
+	// and running two deliberate acts, and a contributor who may draft a plan is
+	// not necessarily the person who may set workers loose on it.
+	goal, err := h.loadGoalFor(r, goalID, user.ID, access.PermGoalStart)
 	if err != nil {
 		WriteError(w, r, h.deps.Log, err)
 		return
@@ -263,26 +267,29 @@ func (h *GoalHandlers) intakeStart(r *http.Request, goal *engine.Goal, userID st
 	return applier.Activate(r.Context(), h.deps.Pool, goal, engine.ActorHuman, &userID)
 }
 
-// loadOwnedGoal reads the engine's own view of a goal, scoped to its owner.
+// loadGoalFor reads the engine's own view of a goal, checking a permission.
 //
 // Separate from loadGoal, which returns the console's DTO: activation needs the
 // domain object, because the transition is validated against the status that was
 // actually read rather than against a string that travelled through JSON.
-func (h *GoalHandlers) loadOwnedGoal(ctx context.Context, goalID, ownerID string) (*engine.Goal, error) {
+//
+// The permission is a parameter rather than fixed, because reading a goal and
+// starting one are different acts (PRD AGT-02) and this is used for both. It was
+// previously scoped by `p.owner_id = $caller`; membership decides now.
+func (h *GoalHandlers) loadGoalFor(r *http.Request, goalID, userID string, p access.Permission) (*engine.Goal, error) {
+	if _, err := h.deps.requireGoalPermission(r, goalID, userID, p); err != nil {
+		return nil, err
+	}
 	var g engine.Goal
 	var status, autonomy, risk string
-	err := h.deps.Pool.QueryRow(ctx, `
+	err := h.deps.Pool.QueryRow(r.Context(), `
 		select g.id, g.project_id, g.created_by, g.title, g.statement, g.status,
 		       g.autonomy, g.risk_tier, g.created_at
-		  from forge_goals g
-		  join forge_projects p on p.id = g.project_id
-		 where g.id = $1 and p.owner_id = $2`, goalID, ownerID).
+		  from forge_goals g where g.id = $1`, goalID).
 		Scan(&g.ID, &g.ProjectID, &g.CreatedBy, &g.Title, &g.Statement, &status,
 			&autonomy, &risk, &g.CreatedAt)
 	if err != nil {
-		// A goal the caller cannot see is reported exactly as one that does not
-		// exist, so the endpoint is not a membership oracle.
-		return nil, errs.New("httpapi.loadOwnedGoal", errs.CodeNotFound).
+		return nil, errs.New("httpapi.loadGoalFor", errs.CodeNotFound).
 			WithDetail("no goal %s", goalID)
 	}
 	g.Status = engine.GoalStatus(status)

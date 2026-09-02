@@ -252,3 +252,35 @@ func init() {
 		EventIncidentOpened, EventIncidentAction, EventIncidentClosed,
 	)
 }
+
+// Access, second factors and rooms (PRD SEC-02, COL-01).
+//
+// Grants and revocations are logged because they change who can do what, and
+// "when did they get access" is the first question after anything goes wrong.
+const (
+	EventAccessGranted   Event = "forge.access.granted"
+	EventAccessRevoked   Event = "forge.access.revoked"
+	EventAccessRefused   Event = "forge.access.refused"
+	EventMFAEnrolled     Event = "forge.mfa.enrolled"
+	EventMFAActivated    Event = "forge.mfa.activated"
+	EventMFAChallenged   Event = "forge.mfa.challenged"
+	EventMFAAccepted     Event = "forge.mfa.accepted"
+	EventMFARejected     Event = "forge.mfa.rejected"
+	EventMFARecoveryUsed Event = "forge.mfa.recovery_used"
+	EventDeviceTrusted   Event = "forge.device.trusted"
+	EventDeviceRevoked   Event = "forge.device.revoked"
+	EventRoomOpened      Event = "forge.room.opened"
+	EventRoomTurn        Event = "forge.room.turn"
+	EventRoomClosed      Event = "forge.room.closed"
+	EventHandoffTaken    Event = "forge.handoff.taken"
+)
+
+func init() {
+	allEvents = append(allEvents,
+		EventAccessGranted, EventAccessRevoked, EventAccessRefused,
+		EventMFAEnrolled, EventMFAActivated, EventMFAChallenged,
+		EventMFAAccepted, EventMFARejected, EventMFARecoveryUsed,
+		EventDeviceTrusted, EventDeviceRevoked,
+		EventRoomOpened, EventRoomTurn, EventRoomClosed, EventHandoffTaken,
+	)
+}

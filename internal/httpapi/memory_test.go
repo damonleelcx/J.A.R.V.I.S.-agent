@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/access"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/claim"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/identity"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/memory"
@@ -80,6 +81,7 @@ func memoryHarness(t *testing.T) *memHarness {
 	d := testDeps()
 	d.Pool = pool
 	d.Clock = clock.System{}
+	d.Access = access.NewService(pool, d.Clock, logx.Discard())
 
 	now := time.Now().UTC()
 	mk := func(email string) *identity.User {
@@ -96,12 +98,7 @@ func memoryHarness(t *testing.T) *memHarness {
 	m.owner = mk("owner@example.com")
 	m.other = mk("intruder@example.com")
 
-	m.project = id.New(id.PrefixProject)
-	if _, err := pool.Exec(ctx, `
-		insert into forge_projects (id, owner_id, name, created_at, updated_at) values ($1,$2,'P',$3,$3)`,
-		m.project, m.owner.ID, now); err != nil {
-		t.Fatal(err)
-	}
+	m.project = newProject(t, pool, d.Access, m.owner.ID, "P", now)
 	m.goalID = id.New(id.PrefixGoal)
 	if _, err := pool.Exec(ctx, `
 		insert into forge_goals (id, project_id, created_by, title, statement, status, started_at, created_at, updated_at)

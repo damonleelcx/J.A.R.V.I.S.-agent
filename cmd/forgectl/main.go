@@ -77,6 +77,19 @@ Workspace model:
   artifacts show <artifact-id>         One artifact's lifecycle: WRK-04's seven facts per version
   artifacts show <path> --project <id>
 
+Access (RBAC):
+  access matrix                                Who may do what, as a grid
+  access members --project <id>                Who is in a project and how they got there
+  access grant --project <id> --user <id> --role <role> --as <user-id>
+  access revoke --project <id> --user <id> --as <user-id>
+      Membership decides access; forge_projects.owner_id records only who created it.
+      A project's last owner cannot be removed or demoted.
+
+Collaboration:
+  rooms show <room-id>                         A session's transcript, every turn attributed
+  handoff <goal-id>                            State, actions, versions, approvals, evidence,
+                                               open risks and recommended next work
+
 Containment:
   secrets list --project <id> [--revoked]      Declared handles and which tools may use them
   secrets declare --project <id> --name <n> --env-var <VAR> [--description ...] --as <user-id>
@@ -267,6 +280,40 @@ func run(ctx context.Context, cmd string, args []string) error {
 				WithDetail("unknown artifacts subcommand %q; expected show", args[0])
 		}
 
+	case "access":
+		if len(args) == 0 {
+			fmt.Fprint(os.Stderr, usage)
+			return errs.New("forgectl.run", errs.CodeValidationFailed).
+				WithDetail("access needs a subcommand: matrix, members, grant or revoke")
+		}
+		switch args[0] {
+		case "matrix":
+			return cmdAccessMatrix()
+		case "members":
+			return cmdAccessMembers(ctx, cfg, log, args[1:])
+		case "grant":
+			return cmdAccessGrant(ctx, cfg, log, args[1:])
+		case "revoke":
+			return cmdAccessRevoke(ctx, cfg, log, args[1:])
+		default:
+			return errs.New("forgectl.run", errs.CodeValidationFailed).
+				WithDetail("unknown access subcommand %q; expected matrix, members, grant or revoke", args[0])
+		}
+
+	case "rooms":
+		if len(args) == 0 {
+			return errs.New("forgectl.run", errs.CodeValidationFailed).
+				WithDetail("rooms needs a subcommand: show")
+		}
+		if args[0] != "show" {
+			return errs.New("forgectl.run", errs.CodeValidationFailed).
+				WithDetail("unknown rooms subcommand %q; expected show", args[0])
+		}
+		return cmdRoomShow(ctx, cfg, log, args[1:])
+
+	case "handoff":
+		return cmdHandoff(ctx, cfg, log, args)
+
 	case "secrets":
 		if len(args) == 0 {
 			fmt.Fprint(os.Stderr, usage)
@@ -403,6 +450,11 @@ func run(ctx context.Context, cmd string, args []string) error {
 func sectionsFor(cmd string) []config.Section {
 	switch cmd {
 	case "migrate", "health":
+		return []config.Section{config.SectionDB}
+	case "access", "rooms", "handoff":
+		// Access, transcripts and handoffs are read straight from the database.
+		// Requiring an LLM key to see who has access to a project would turn an
+		// audit into a credential request.
 		return []config.Section{config.SectionDB}
 	case "secrets", "incidents":
 		// Containment is read and written straight from the database. Requiring

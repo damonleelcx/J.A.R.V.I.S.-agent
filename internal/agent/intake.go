@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/access"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/engine"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/llm"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/persona"
@@ -112,6 +113,12 @@ func (in *Intake) Draft(ctx context.Context, pool *db.Pool, req DraftRequest) (*
 			 values ($1,$2,$3,'software',$4,$4)`,
 			projectID, req.OwnerID, req.Title, now); err != nil {
 			return nil, errs.Wrap(op, errs.CodeDatabaseUnavail, err)
+		}
+		// The creator becomes the project's owner in the membership table, which
+		// is what authorisation reads (PRD SEC-02). owner_id above records who
+		// made it; without this row they could not see what they just created.
+		if err := access.NewService(pool, in.clock, nil).EnsureOwner(ctx, pool, projectID, req.OwnerID); err != nil {
+			return nil, err
 		}
 	}
 

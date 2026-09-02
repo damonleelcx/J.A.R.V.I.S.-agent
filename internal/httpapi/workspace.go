@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/access"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/claim"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/workspace"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/errs"
@@ -224,7 +225,9 @@ func (h *WorkspaceHandlers) AddNode(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, r, h.deps.Log, err)
 		return
 	}
-	if err := h.authoriseProject(r, req.ProjectID, user.ID); err != nil {
+	// Adding to the graph is changing what the project says, so it needs
+	// content.write rather than read. A viewer sees the graph and cannot edit it.
+	if err := h.deps.requirePermission(r, req.ProjectID, user.ID, access.PermContentWrite); err != nil {
 		WriteError(w, r, h.deps.Log, err)
 		return
 	}
@@ -467,9 +470,16 @@ func (h *WorkspaceHandlers) Dispose(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, r, h.deps.Log, err)
 		return
 	}
-	if err := h.authoriseProject(r, artifact.ProjectID, user.ID); err != nil {
-		WriteError(w, r, h.deps.Log, errs.New("httpapi.Dispose", errs.CodeNotFound).
-			WithDetail("no version %s", r.PathValue("id")))
+	// Accepting or rejecting an artifact version is a human sign-off (PRD WRK-04,
+	// SAF-05), so it needs artifact.dispose. A contributor who produced the work
+	// is not automatically the person who signs it off.
+	if err := h.deps.requirePermission(r, artifact.ProjectID, user.ID, access.PermArtifactDispose); err != nil {
+		if errs.Is(err, errs.CodeNotFound) {
+			WriteError(w, r, h.deps.Log, errs.New("httpapi.Dispose", errs.CodeNotFound).
+				WithDetail("no version %s", r.PathValue("id")))
+			return
+		}
+		WriteError(w, r, h.deps.Log, err)
 		return
 	}
 	if err := h.svc.Dispose(r.Context(), version.ID,
@@ -491,28 +501,33 @@ func (h *WorkspaceHandlers) authoriseProject(r *http.Request, projectID, userID 
 		return errs.New("httpapi.workspace", errs.CodeValidationFailed).
 			WithDetail("project_id is required; the graph is project-scoped")
 	}
-	var found string
-	err := h.deps.Pool.QueryRow(r.Context(),
-		`select id from forge_projects where id = $1 and owner_id = $2`, projectID, userID).Scan(&found)
-	if err != nil {
-		// A project the caller cannot see reads exactly like one that does not
-		// exist, so the endpoint is not a membership oracle.
-		return errs.New("httpapi.workspace", errs.CodeNotFound).WithDetail("no project %s", projectID)
-	}
-	return nil
+	// A project the caller is not a member of reads exactly like one that does
+	// not exist, so the endpoint is not a membership oracle. That rule lives in
+	// the access service now, along with everything else that decides it.
+	return h.deps.requirePermission(r, projectID, userID, access.PermProjectRead)
 }
 
 // authoriseNode resolves a node and checks the caller may act on it, through the
 // project the node actually belongs to rather than one the caller named.
 func (h *WorkspaceHandlers) authoriseNode(r *http.Request, nodeID, userID string) (*workspace.Node, error) {
-	notFound := errs.New("httpapi.authoriseNode", errs.CodeNotFound).WithDetail("no node %s", nodeID)
+	return h.nodeFor(r, nodeID, userID, access.PermContentWrite)
+}
+
+// nodeFor resolves a node and checks a permission in ITS project, taken from the
+// row rather than from the request: a caller must not be able to name a project
+// they can write to and a node they cannot.
+func (h *WorkspaceHandlers) nodeFor(r *http.Request, nodeID, userID string, p access.Permission) (*workspace.Node, error) {
+	notFound := errs.New("httpapi.nodeFor", errs.CodeNotFound).WithDetail("no node %s", nodeID)
 
 	node, err := h.svc.Repo().FindNode(r.Context(), h.deps.Pool, nodeID)
 	if err != nil {
 		return nil, notFound
 	}
-	if h.authoriseProject(r, node.ProjectID, userID) != nil {
-		return nil, notFound
+	if err := h.deps.requirePermission(r, node.ProjectID, userID, p); err != nil {
+		if errs.Is(err, errs.CodeNotFound) {
+			return nil, notFound
+		}
+		return nil, err
 	}
 	return node, nil
 }

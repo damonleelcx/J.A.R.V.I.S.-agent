@@ -6,6 +6,7 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/access"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/claim"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/memory"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/errs"
@@ -336,27 +337,12 @@ func (h *MemoryHandlers) ForgetItem(w http.ResponseWriter, r *http.Request) {
 // rule the goal endpoints follow.
 
 func (h *MemoryHandlers) authoriseProject(r *http.Request, projectID, userID string) error {
-	var found string
-	err := h.deps.Pool.QueryRow(r.Context(),
-		`select id from forge_projects where id = $1 and owner_id = $2`, projectID, userID).Scan(&found)
-	if err != nil {
-		return errs.New("httpapi.authoriseProject", errs.CodeNotFound).
-			WithDetail("no project %s", projectID)
-	}
-	return nil
+	return h.deps.requirePermission(r, projectID, userID, access.PermProjectRead)
 }
 
 func (h *MemoryHandlers) authoriseGoal(r *http.Request, goalID, userID string) error {
-	var found string
-	err := h.deps.Pool.QueryRow(r.Context(), `
-		select g.id from forge_goals g
-		  join forge_projects p on p.id = g.project_id
-		 where g.id = $1 and p.owner_id = $2`, goalID, userID).Scan(&found)
-	if err != nil {
-		return errs.New("httpapi.authoriseGoal", errs.CodeNotFound).
-			WithDetail("no goal %s", goalID)
-	}
-	return nil
+	_, err := h.deps.requireGoalPermission(r, goalID, userID, access.PermProjectRead)
+	return err
 }
 
 // authoriseLayer checks the caller may read a layer for an owner, and returns
@@ -398,15 +384,18 @@ func (h *MemoryHandlers) authoriseItem(r *http.Request, itemID, userID string) (
 
 	switch {
 	case item.UserID != nil:
+		// Personal memory is the owner's own and needs no project permission.
+		// Requiring one to record how you like to work would be absurd.
 		if *item.UserID != userID {
 			return nil, notFound
 		}
 	case item.ProjectID != nil:
-		if h.authoriseProject(r, *item.ProjectID, userID) != nil {
+		// Shared memory is project content, so editing it needs content.write.
+		if err := h.deps.requirePermission(r, *item.ProjectID, userID, access.PermContentWrite); err != nil {
 			return nil, notFound
 		}
 	case item.GoalID != nil:
-		if h.authoriseGoal(r, *item.GoalID, userID) != nil {
+		if _, err := h.deps.requireGoalPermission(r, *item.GoalID, userID, access.PermContentWrite); err != nil {
 			return nil, notFound
 		}
 	default:
