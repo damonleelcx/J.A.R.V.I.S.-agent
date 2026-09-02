@@ -97,8 +97,10 @@ const (
 // ---------------------------------------------------------------------------
 
 const (
-	CodeExternalUnavailable Code = "EXTERNAL_UNAVAILABLE"
-	CodeExternalProtocol    Code = "EXTERNAL_PROTOCOL_ERROR"
+	CodeExternalUnavailable  Code = "EXTERNAL_UNAVAILABLE"
+	CodeExternalProtocol     Code = "EXTERNAL_PROTOCOL_ERROR"
+	CodeConnectorUnavailable Code = "CONNECTOR_UNAVAILABLE"
+	CodeToolRefused          Code = "TOOL_REFUSED"
 )
 
 // ---------------------------------------------------------------------------
@@ -198,6 +200,13 @@ var registry = map[Code]Definition{
 	CodeExternalProtocol: {CodeExternalProtocol, CategoryExternal, 502,
 		"An external service replied in a shape this build cannot use.",
 		"Do not retry: the request or the response contract is wrong. Check the model id and the endpoint, and compare against the provider's current API documentation.", false},
+
+	CodeConnectorUnavailable: {CodeConnectorUnavailable, CategoryExternal, 501,
+		"A capability is declared but has no working backend in this deployment.",
+		"Perform this step with the domain's own tool and record the result. Never accept an estimate in place of a run: a value produced without the solver is not an analysis.", false},
+	CodeToolRefused: {CodeToolRefused, CategoryBusiness, 403,
+		"The policy plane declined to run this tool for this goal.",
+		"Raise the goal's autonomy level or grant the missing capability if that is appropriate. A prohibited (R5) action is refused regardless of permissions.", false},
 
 	CodeStateCorrupt: {CodeStateCorrupt, CategoryData, 500,
 		"A persisted record failed its structural invariants when read back.",
