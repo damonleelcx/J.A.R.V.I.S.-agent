@@ -22,6 +22,7 @@ import (
 // script satisfies the policy without weakening it.
 //
 //go:embed assets/shell.css assets/avatar.css assets/pages.js
+//go:embed assets/portrait/*.png
 var assetFS embed.FS
 
 // PageHandlers render the small set of browser pages reached from email.
@@ -42,6 +43,9 @@ func NewPageHandlers(d Deps) *PageHandlers {
 }
 
 type pageData struct {
+	// Presence is FORGE's portrait with the state sigil badged onto it. Used on
+	// surfaces with room for it; the sigil alone is used where there is not.
+	Presence template.HTML
 	// Sigil is FORGE's mark, rendered inline so the identity appears with the
 	// page rather than after a second request that may not arrive.
 	Sigil template.HTML
@@ -61,6 +65,9 @@ func (p *PageHandlers) render(w http.ResponseWriter, r *http.Request, name strin
 	data.MinChars = p.d.Config.Auth.MinPasswordLength
 	if data.Sigil == "" {
 		data.Sigil = template.HTML(persona.AvatarSVG(persona.StateIdle, 26))
+	}
+	if data.Presence == "" {
+		data.Presence = persona.PresenceHTML(persona.StateIdle, 88)
 	}
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -90,7 +97,7 @@ func (p *PageHandlers) render(w http.ResponseWriter, r *http.Request, name strin
 // common way an email verification flow silently breaks in production.
 func (p *PageHandlers) VerifyEmailPage(w http.ResponseWriter, r *http.Request) {
 	token := strings.TrimSpace(r.URL.Query().Get("token"))
-	p.render(w, r, "verify", pageData{Page: "verify", Token: token, Title: "Confirm your email"})
+	p.render(w, r, "verify", pageData{Page: "verify", Token: token, Title: "Confirm your email · FORGE"})
 }
 
 // ResetPasswordPage handles GET /auth/reset-password.
@@ -99,7 +106,7 @@ func (p *PageHandlers) VerifyEmailPage(w http.ResponseWriter, r *http.Request) {
 // reset token would leave the user unable to reset their password at all.
 func (p *PageHandlers) ResetPasswordPage(w http.ResponseWriter, r *http.Request) {
 	token := strings.TrimSpace(r.URL.Query().Get("token"))
-	p.render(w, r, "reset", pageData{Page: "reset", Token: token, Title: "Set a new password"})
+	p.render(w, r, "reset", pageData{Page: "reset", Token: token, Title: "Set a new password · FORGE"})
 }
 
 // Index handles GET /.
@@ -117,11 +124,13 @@ func (p *PageHandlers) Index(w http.ResponseWriter, r *http.Request) {
 // the embedded FS, so there is no filesystem path to traverse out of.
 func (p *PageHandlers) Assets(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimPrefix(r.URL.Path, "/assets/")
-	switch name {
-	case "shell.css", "avatar.css":
+	switch {
+	case name == "shell.css", name == "avatar.css":
 		w.Header().Set("Content-Type", "text/css; charset=utf-8")
-	case "pages.js":
+	case name == "pages.js":
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+	case isPortraitAsset(name):
+		w.Header().Set("Content-Type", "image/png")
 	default:
 		notFound(p.d.Log)(w, r)
 		return
@@ -138,6 +147,20 @@ func (p *PageHandlers) Assets(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, name, time.Time{}, strings.NewReader(string(body)))
 }
 
+// isPortraitAsset reports whether name is one of the character portraits.
+//
+// Matched against the manifest rather than by extension, so the handler can only
+// ever serve the four files the persona package declares — there is no path to
+// traverse and no directory to enumerate.
+func isPortraitAsset(name string) bool {
+	for _, a := range persona.PortraitManifest() {
+		if a.File == name {
+			return true
+		}
+	}
+	return false
+}
+
 // tokenLooksUsable is exported through the templates only as a rendering hint,
 // never as authorisation. The server decides.
 var _ = auth.LooksLikeToken
@@ -148,7 +171,7 @@ const pageTemplates = `
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="referrer" content="no-referrer">
-<title>{{.Title}} · FORGE</title>
+<title>{{.Title}}</title>
 <link rel="stylesheet" href="/assets/shell.css">
 <link rel="stylesheet" href="/assets/avatar.css">
 </head><body><main class="panel" data-page="{{.Page}}" data-token="{{.Token}}">
@@ -158,10 +181,17 @@ const pageTemplates = `
 {{define "foot"}}</main><script src="/assets/pages.js"></script></body></html>{{end}}
 
 {{define "index"}}{{template "head" .}}
-<h1>FORGE</h1>
-<p class="dim">A durable engineering partner. It reconstructs its state from a
-database on every cycle, so it can be interrupted, restarted, and resumed
-without losing what it was doing.</p>
+<div class="forge-presence">
+  {{.Presence}}
+  <div>
+    <h1 style="margin:0 0 4px">FORGE</h1>
+    <p class="dim" style="margin:0">A durable engineering partner.</p>
+  </div>
+</div>
+<p class="dim" style="margin-top:20px">FORGE reconstructs its state from a database
+on every cycle, so it can be interrupted, restarted, and resumed without losing
+what it was doing. It never claims a tool ran, a check passed, or a person
+approved something that did not happen.</p>
 <hr>
 <p class="dim">This is the API host. The console is not part of this build yet —
 identity is, and it is what everything else will authenticate against.</p>

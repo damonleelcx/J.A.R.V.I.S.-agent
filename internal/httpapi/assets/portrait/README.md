@@ -10,11 +10,24 @@ row, which a detailed illustration cannot.
 **The portrait** is *presence*. It goes where there is room for her: the console
 header, a goal page, the sign-in screen.
 
-## Expected files
+## The files
 
-Drop these in beside this README. Every one is **optional at runtime** — a
-missing portrait falls back to the sigil, because a decorative asset must never
-be able to take out a status indicator.
+These are generated from the character sheet, not hand-cut:
+
+```bash
+go run ./tools/portraitcrop -sheet ~/Downloads/golden-hair-ai-agent-character-sheet.png
+```
+
+The crop regions live in `tools/portraitcrop/main.go` as fractions of the sheet,
+so a re-render at a different resolution still lands correctly. Run with
+`-contact` to write only a contact sheet to `$TMPDIR` and check the crops before
+overwriting the assets — coordinates picked by eye off a scaled preview are wrong
+about as often as they are right, and a portrait cropped through the forehead is
+exactly the kind of thing that ships because nobody looked.
+
+Every file is **optional at runtime** — a missing portrait falls back to the
+sigil, because a decorative asset must never be able to take out a status
+indicator.
 
 | File | Expression | What the crop should show | Shown when |
 |---|---|---|---|

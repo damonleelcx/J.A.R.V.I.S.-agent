@@ -117,3 +117,19 @@ input[type="password"]:focus { outline: 2px solid var(--core-dim); outline-offse
 hr { border: 0; border-top: 1px solid var(--edge); margin: 22px 0; }
 
 /* Motion belongs to the sigil, which carries its own reduced-motion rule. */
+
+/* Links.
+ *
+ * Stated in full, including :visited. Without a :visited rule the browser's
+ * default purple wins, which on this dark panel is close to unreadable — these
+ * pages went out that way until somebody looked at them in a browser rather than
+ * at the markup. */
+a,
+a:link,
+a:visited { color: var(--core); text-decoration-color: color-mix(in srgb, var(--core) 45%, transparent); }
+a:hover { color: #7ce8f5; }
+a:focus-visible {
+  outline: 2px solid var(--core-dim);
+  outline-offset: 2px;
+  border-radius: 3px;
+}

@@ -100,22 +100,31 @@
  * without having to interpret an expression. */
 .forge-presence { display: flex; align-items: center; gap: 14px; }
 
+/* The frame clips the portrait to a circle but must NOT clip the badge, which
+ * sits deliberately on the edge. So the rounding lives on the img and the frame
+ * itself stays unclipped — an earlier version put overflow:hidden here and cut
+ * the state indicator in half, which is the one element that must stay whole. */
 .forge-portrait {
   position: relative;
-  width: 72px; height: 72px;
+  display: inline-block;
   flex: none;
-  border-radius: 50%;
-  overflow: hidden;
-  background: linear-gradient(160deg, #f7f8fa 0%, #e6e9ee 55%, #d9b25c 160%);
-  border: 1.5px solid rgba(217, 178, 92, .55);
+  line-height: 0;
 }
-.forge-portrait img { width: 100%; height: 100%; object-fit: cover; display: block; }
+.forge-portrait img {
+  width: 100%; height: 100%;
+  object-fit: cover;
+  display: block;
+  border-radius: 50%;
+  background: linear-gradient(160deg, #f7f8fa 0%, #e6e9ee 55%, #d9b25c 170%);
+  border: 1.5px solid rgba(217, 178, 92, .5);
+}
 
 .forge-portrait__badge {
-  position: absolute; right: -2px; bottom: -2px;
-  width: 26px; height: 26px;
+  position: absolute;
+  right: -4px; bottom: -4px;
   border-radius: 50%;
-  background: var(--panel, #151922);
+  background: var(--panel, #141a26);
+  box-shadow: 0 0 0 2px var(--panel, #141a26);
   display: grid; place-items: center;
 }
 
