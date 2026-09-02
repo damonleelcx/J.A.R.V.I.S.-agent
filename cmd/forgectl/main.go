@@ -9,6 +9,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"log/slog"
 	"os"
@@ -27,12 +28,30 @@ const usage = `forgectl — FORGE operator CLI
 Usage:
   forgectl <command> [flags]
 
-Commands:
-  migrate           Apply the schema migration chain (idempotent; safe to re-run)
-  migrate --dry-run List the migrations that would run, without touching the database
-  health            Check database connectivity and report latency
-  config            Print the effective configuration with secrets redacted
-  version           Print build information
+Operations:
+  migrate             Apply the schema migration chain (idempotent; safe to re-run)
+  migrate --dry-run   List the migrations that would run, without touching the database
+  health              Check database connectivity and report latency
+  config              Print the effective configuration with secrets redacted
+  version             Print build information
+
+Goals:
+  goal new            Plan a goal. Writes a draft plan; does not start it.
+      --title, --statement, --owner   (required)
+      --autonomy discuss|draft|sandbox_execute|approval_gated   (default sandbox_execute)
+      --risk r0|r1|r2|r3|r4                                     (default r1)
+      --project <id>      reuse an existing project
+      --start             activate immediately instead of leaving it a draft
+  goal start <id>     Activate a drafted goal so workers can claim its tasks
+  goal show <id>      Current state, tasks, pending approvals, and the timeline
+
+Approvals:
+  approve <approval-id> --as you@example.com [--reason ...]
+  reject  <approval-id> --as you@example.com [--reason ...]
+
+Planning and starting are separate steps on purpose: the plan is worth reading
+before any work happens, and a command that plans-and-runs gives nobody the
+chance. Use --start when you have already decided.
 
 Configuration is read from the environment. See .env.example for every variable,
 its default, and what breaks when it is wrong.
@@ -99,6 +118,29 @@ func run(ctx context.Context, cmd string, args []string) error {
 	}
 
 	switch cmd {
+	case "goal":
+		if len(args) == 0 {
+			fmt.Fprint(os.Stderr, usage)
+			return errs.New("forgectl.run", errs.CodeValidationFailed).
+				WithDetail("goal needs a subcommand: new, start or show")
+		}
+		switch args[0] {
+		case "new":
+			return cmdGoalNew(ctx, cfg, log, args[1:])
+		case "start":
+			return cmdGoalStart(ctx, cfg, log, args[1:])
+		case "show":
+			return cmdGoalShow(ctx, cfg, log, args[1:])
+		default:
+			return errs.New("forgectl.run", errs.CodeValidationFailed).
+				WithDetail("unknown goal subcommand %q; expected new, start or show", args[0])
+		}
+
+	case "approve":
+		return cmdApprove(ctx, cfg, log, args, true)
+	case "reject":
+		return cmdApprove(ctx, cfg, log, args, false)
+
 	case "config":
 		enc := json.NewEncoder(os.Stdout)
 		enc.SetIndent("", "  ")
@@ -160,6 +202,13 @@ func sectionsFor(cmd string) []config.Section {
 	switch cmd {
 	case "migrate", "health":
 		return []config.Section{config.SectionDB}
+	case "goal":
+		// Planning calls a model; showing and starting do not. Requiring the LLM
+		// section for all three keeps one rule rather than three, and an
+		// operator running `goal show` already has the key in their .env.
+		return []config.Section{config.SectionDB, config.SectionLLM, config.SectionEngine}
+	case "approve", "reject":
+		return []config.Section{config.SectionDB, config.SectionEngine}
 	case "config":
 		// `forgectl config` is a diagnostic: it must be able to print a partial
 		// or broken configuration, which is exactly when someone runs it. So it
@@ -168,6 +217,15 @@ func sectionsFor(cmd string) []config.Section {
 	default:
 		return config.AllSections()
 	}
+}
+
+// newFlagSet returns a flag set that reports errors through the command rather
+// than calling os.Exit, so a usage mistake produces the same shaped output as
+// every other failure.
+func newFlagSet(name string) *flag.FlagSet {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	fs.SetOutput(os.Stderr)
+	return fs
 }
 
 func hasFlag(args []string, flag string) bool {

@@ -148,3 +148,11 @@ func init() {
 		EventBudgetExceededLog, EventTaskRetryingLog, EventTaskSkippedLog, EventTaskLeaseExpired,
 	)
 }
+
+// Goal settlement events.
+const (
+	EventGoalSettled      Event = "forge.goal.settled"
+	EventGoalSettleFailed Event = "forge.goal.settle_failed"
+)
+
+func init() { allEvents = append(allEvents, EventGoalSettled, EventGoalSettleFailed) }

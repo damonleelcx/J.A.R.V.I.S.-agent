@@ -120,6 +120,11 @@ func (w *Worker) Run(ctx context.Context) error {
 			continue
 		}
 		if task == nil {
+			// Reconcile on the idle path. Settling only when a task finishes
+			// makes goal state depend on event timing; this is the read that
+			// converges it regardless of what was missed. See settleFinishedGoals.
+			w.settleFinishedGoals(ctx)
+
 			// An idle queue is the normal state of a long-running agent, not a
 			// problem. Logged at debug so it does not drown the real events.
 			w.log.Debug(ctx, logx.EventWorkerIdle, "worker_id", w.ID)
@@ -129,7 +134,12 @@ func (w *Worker) Run(ctx context.Context) error {
 			continue
 		}
 
+		goalID := task.GoalID
 		w.runTask(ctx, task)
+		// A task settling is the only moment a goal can become terminal, and the
+		// worker is already here holding that fact. A separate sweeper would be a
+		// second authority for goal status.
+		w.settleGoal(ctx, goalID)
 	}
 }
 

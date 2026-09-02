@@ -542,3 +542,246 @@ func newGateHarness(t *testing.T) *liveHarness {
 	h := newLiveHarness(t)
 	return h
 }
+
+// TestGoalSettlesWhenItsWorkFinishes covers a gap found by running the system
+// rather than by testing it: every task succeeded and the goal stayed "active"
+// forever.
+//
+// A goal that cannot report finishing is barely better than one that never
+// finishes. It looks identical to one still working, it keeps burning its
+// wall-clock budget until that trips, and nobody learns the answer is ready.
+func TestGoalSettlesWhenItsWorkFinishes(t *testing.T) {
+	if os.Getenv("FORGE_TEST_DATABASE_URL") == "" {
+		t.Skip("FORGE_TEST_DATABASE_URL is unset")
+	}
+	h := newGateHarness(t)
+	ctx := context.Background()
+
+	t.Run("all succeeded", func(t *testing.T) {
+		goal := h.createGoal(t, "Settles green", "two tasks that both work",
+			engine.AutonomySandboxExecute, engine.RiskR1)
+		a, b := h.seedTwoTasks(t, goal)
+
+		h.markTerminal(t, a, engine.StatusSucceeded)
+		h.markTerminal(t, b, engine.StatusSucceeded)
+		h.settle(t, goal)
+
+		status, summary, ended := h.goalOutcome(t, goal.ID)
+		if status != string(engine.GoalSucceeded) {
+			t.Fatalf("goal is %q after every task succeeded, want succeeded", status)
+		}
+		if ended == nil {
+			t.Error("a terminal goal must record when it ended")
+		}
+		if !strings.Contains(summary, "2 succeeded") {
+			t.Errorf("the outcome summary does not say what happened: %q", summary)
+		}
+	})
+
+	t.Run("one failure fails the goal", func(t *testing.T) {
+		// A partially completed goal reported as success is the same class of
+		// lie as an unverified task reported as verified.
+		goal := h.createGoal(t, "Settles red", "one works, one does not",
+			engine.AutonomySandboxExecute, engine.RiskR1)
+		a, b := h.seedTwoTasks(t, goal)
+
+		h.markTerminal(t, a, engine.StatusSucceeded)
+		h.markTerminal(t, b, engine.StatusFailed)
+		h.settle(t, goal)
+
+		status, summary, _ := h.goalOutcome(t, goal.ID)
+		if status != string(engine.GoalFailed) {
+			t.Fatalf("goal is %q with a failed task, want failed", status)
+		}
+		if !strings.Contains(summary, "failed") {
+			t.Errorf("summary = %q", summary)
+		}
+	})
+
+	t.Run("does not settle while work remains", func(t *testing.T) {
+		goal := h.createGoal(t, "Still working", "one done, one running",
+			engine.AutonomySandboxExecute, engine.RiskR1)
+		a, _ := h.seedTwoTasks(t, goal)
+
+		h.markTerminal(t, a, engine.StatusSucceeded)
+		h.settle(t, goal)
+
+		if status, _, _ := h.goalOutcome(t, goal.ID); status != string(engine.GoalActive) {
+			t.Fatalf("goal settled to %q while a task was still outstanding", status)
+		}
+	})
+
+	t.Run("does not resurrect a paused goal", func(t *testing.T) {
+		// A human pausing a goal mid-flight must not have it dragged into a
+		// terminal state by a worker finishing the last in-flight task.
+		goal := h.createGoal(t, "Paused", "paused by a human",
+			engine.AutonomySandboxExecute, engine.RiskR1)
+		a, b := h.seedTwoTasks(t, goal)
+		h.markTerminal(t, a, engine.StatusSucceeded)
+		h.markTerminal(t, b, engine.StatusSucceeded)
+
+		if _, err := h.pool.Exec(ctx,
+			`update forge_goals set status='paused' where id=$1`, goal.ID); err != nil {
+			t.Fatal(err)
+		}
+		h.settle(t, goal)
+
+		if status, _, _ := h.goalOutcome(t, goal.ID); status != string(engine.GoalPaused) {
+			t.Fatalf("a paused goal was settled to %q", status)
+		}
+	})
+}
+
+// seedTwoTasks inserts two independent ready tasks.
+func (h *liveHarness) seedTwoTasks(t *testing.T, goal *engine.Goal) (*engine.Task, *engine.Task) {
+	t.Helper()
+	plan := &agent.PlanResult{
+		Rationale: "two independent tasks",
+		Tasks: []agent.PlannedTask{
+			{Key: "task-a", Title: "A", Instruction: "do a", RiskTier: "r1"},
+			{Key: "task-b", Title: "B", Instruction: "do b", RiskTier: "r1"},
+		},
+	}
+	if _, created, err := h.applier.Apply(context.Background(), h.pool, goal, plan, "planner"); err != nil {
+		t.Fatal(err)
+	} else if len(created) != 2 {
+		t.Fatalf("created %d tasks, want 2", len(created))
+	}
+	if err := h.applier.Activate(context.Background(), h.pool, goal); err != nil {
+		t.Fatal(err)
+	}
+	tasks, err := h.repo.ListTasks(context.Background(), h.pool, goal.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return tasks[0], tasks[1]
+}
+
+// markTerminal drives a task to a terminal state through the real transitions.
+func (h *liveHarness) markTerminal(t *testing.T, task *engine.Task, final engine.TaskStatus) {
+	t.Helper()
+	ctx := context.Background()
+	cur, err := h.repo.GetTask(ctx, h.pool, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, next := range []engine.TaskStatus{engine.StatusReady, engine.StatusClaimed, engine.StatusRunning, final} {
+		if cur.Status == next || !engine.CanTransition(cur.Status, next) {
+			continue
+		}
+		mut := engine.TaskMutation{}
+		if next == engine.StatusFailed {
+			mut.ErrorCode = "TEST"
+			mut.ErrorDetail = "deliberate"
+		}
+		if err := h.repo.TransitionTask(ctx, h.pool, cur, next, time.Now().UTC(), mut); err != nil {
+			t.Fatalf("%s → %s: %v", cur.Status, next, err)
+		}
+	}
+}
+
+// settle runs the worker's settlement pass via a real worker instance.
+func (h *liveHarness) settle(t *testing.T, goal *engine.Goal) {
+	t.Helper()
+	w := agent.NewWorker(agent.WorkerDeps{
+		Pool: h.pool, Repo: h.repo, Queue: h.queue, Budget: h.budget,
+		Assembler: h.assembler, Executor: h.executor, Verifier: h.verifier,
+		Config: h.cfg, WorkspaceRoot: h.workspaceRoot, Clock: clock.System{}, Log: h.log,
+	})
+	w.SettleGoalForTest(context.Background(), goal.ID)
+}
+
+func (h *liveHarness) goalOutcome(t *testing.T, goalID string) (status, summary string, ended *time.Time) {
+	t.Helper()
+	var s string
+	var sum *string
+	if err := h.pool.QueryRow(context.Background(),
+		`select status, outcome_summary, ended_at from forge_goals where id = $1`, goalID).
+		Scan(&s, &sum, &ended); err != nil {
+		t.Fatal(err)
+	}
+	if sum != nil {
+		summary = *sum
+	}
+	return s, summary, ended
+}
+
+// TestReconciliationSweepSettlesWhatTheEventMissed is the fence behind the
+// second half of the settlement fix.
+//
+// The per-task settlement call is the fast path; it is not a guarantee. A worker
+// that dies between a task's last write and its settlement call, or that loses
+// the settlement race, leaves a finished goal marked active forever — and that
+// is indistinguishable from a goal still working. This is how the gap was found:
+// tasks all succeeded under a build with no settlement at all, and nothing ever
+// corrected it.
+//
+// So the sweep runs on the idle poll and must converge regardless of what the
+// event path missed. The test creates exactly that state — finished tasks, an
+// active goal, no settlement call — and asserts the sweep fixes it.
+func TestReconciliationSweepSettlesWhatTheEventMissed(t *testing.T) {
+	if os.Getenv("FORGE_TEST_DATABASE_URL") == "" {
+		t.Skip("FORGE_TEST_DATABASE_URL is unset")
+	}
+	h := newGateHarness(t)
+	ctx := context.Background()
+
+	goal := h.createGoal(t, "Missed by the event path", "finished but never settled",
+		engine.AutonomySandboxExecute, engine.RiskR1)
+	a, b := h.seedTwoTasks(t, goal)
+	h.markTerminal(t, a, engine.StatusSucceeded)
+	h.markTerminal(t, b, engine.StatusSucceeded)
+
+	// Precondition: the goal is stranded — all work done, still active.
+	if status, _, _ := h.goalOutcome(t, goal.ID); status != string(engine.GoalActive) {
+		t.Fatalf("precondition: goal should still be active, got %q", status)
+	}
+
+	// Run a worker with an EMPTY queue. It claims nothing, so the per-task
+	// settlement path is never reached; only the idle sweep can fix this.
+	worker := agent.NewWorker(agent.WorkerDeps{
+		Pool: h.pool, Repo: h.repo, Queue: h.queue, Budget: h.budget,
+		Assembler: h.assembler, Executor: h.executor, Verifier: h.verifier,
+		Config: h.cfg, WorkspaceRoot: h.workspaceRoot, Clock: clock.System{}, Log: h.log,
+	})
+	runCtx, stop := context.WithTimeout(ctx, 5*time.Second)
+	done := make(chan struct{})
+	go func() { defer close(done); _ = worker.Run(runCtx) }()
+	<-done
+	stop()
+
+	status, summary, ended := h.goalOutcome(t, goal.ID)
+	if status != string(engine.GoalSucceeded) {
+		t.Fatalf("the idle sweep did not settle a finished goal: status is %q. "+
+			"Without it, a goal whose settlement event was missed stays active forever and "+
+			"looks identical to one still working.", status)
+	}
+	if ended == nil {
+		t.Error("the settled goal has no ended_at")
+	}
+	if !strings.Contains(summary, "succeeded") {
+		t.Errorf("summary = %q", summary)
+	}
+
+	// And the sweep is idempotent: a second pass must not append a second
+	// goal.ended event or rewrite the outcome.
+	runCtx2, stop2 := context.WithTimeout(ctx, 4*time.Second)
+	done2 := make(chan struct{})
+	go func() { defer close(done2); _ = worker.Run(runCtx2) }()
+	<-done2
+	stop2()
+
+	timeline, err := h.repo.Timeline(ctx, h.pool, goal.ID, 50, 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ends := 0
+	for _, e := range timeline {
+		if e.Kind == engine.EventGoalEnded {
+			ends++
+		}
+	}
+	if ends != 1 {
+		t.Errorf("the goal ended %d times; the sweep is not idempotent", ends)
+	}
+}
