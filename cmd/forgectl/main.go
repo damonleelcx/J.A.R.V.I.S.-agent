@@ -49,6 +49,15 @@ Approvals:
   approve <approval-id> --as you@example.com [--reason ...]
   reject  <approval-id> --as you@example.com [--reason ...]
 
+Audit:
+  audit verify <goal-id>   Check a goal's timeline against its hash chain
+  audit verify --all       Check every goal
+      --quiet              Print nothing on success; the exit status is the answer
+
+  Exit status is 0 when every chain holds and 1 when one does not, so this
+  belongs in cron and in the release checklist. It is tamper-EVIDENT, not
+  tamper-proof: it catches silent edits, not an attacker who owns the database.
+
 Planning and starting are separate steps on purpose: the plan is worth reading
 before any work happens, and a command that plans-and-runs gives nobody the
 chance. Use --start when you have already decided.
@@ -136,6 +145,18 @@ func run(ctx context.Context, cmd string, args []string) error {
 				WithDetail("unknown goal subcommand %q; expected new, start or show", args[0])
 		}
 
+	case "audit":
+		if len(args) == 0 {
+			return errs.New("forgectl.run", errs.CodeValidationFailed).
+				WithDetail("audit needs a subcommand: verify")
+		}
+		switch args[0] {
+		case "verify":
+			return cmdAuditVerify(ctx, cfg, log, args[1:])
+		default:
+			return errs.New("forgectl.run", errs.CodeValidationFailed).
+				WithDetail("unknown audit subcommand %q; expected verify", args[0])
+		}
 	case "approve":
 		return cmdApprove(ctx, cfg, log, args, true)
 	case "reject":
