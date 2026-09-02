@@ -340,6 +340,13 @@
           proposeGoal(ev.goal);
           break;
 
+        case 'claims':
+          // The epistemic ledger (PRD RSN-05). Every statement in the turn with
+          // how FORGE came to hold it — derived server-side from the reply, not
+          // asked of the model, because a component cannot be its own guard.
+          bubble.appendChild(claimsBlock(ev.claims || []));
+          break;
+
         case 'recalled':
           // Attached to the turn that made the claim AND folded into the
           // provenance banner if geometry is on screen. A figure quoted in
@@ -436,6 +443,46 @@
       return pump();
     });
   }
+
+  /* How each statement is known.
+   *
+   * Ordered weakest-last so the eye lands on what was actually checked first,
+   * and the categories nothing in this deployment can honestly produce
+   * (observed, calculated from measurements, simulated) simply never appear —
+   * their absence is the honest signal. */
+  var HOW = {
+    observed:   ['ok',   'seen directly'],
+    calculated: ['ok',   'derived from known values'],
+    retrieved:  ['warn', 'from a source outside FORGE'],
+    simulated:  ['warn', 'produced by a model'],
+    inferred:   ['dim',  'concluded from context'],
+    assumed:    ['dim',  'chosen because nobody said'],
+    proposed:   ['dim',  'offered for a decision']
+  };
+
+  function claimsBlock(claims) {
+    var el = document.createElement('div');
+    el.className = 'claims';
+    var order = ['observed', 'calculated', 'retrieved', 'simulated', 'inferred', 'assumed', 'proposed'];
+    claims = claims.slice().sort(function (a, b) {
+      return order.indexOf(howOf(a)) - order.indexOf(howOf(b));
+    });
+    el.innerHTML =
+      '<div class="cl-h">How this is known</div>' +
+      claims.map(function (c) {
+        var how = howOf(c);
+        var meta = HOW[how] || ['dim', how];
+        return '<div class="cl-i cl-' + esc(meta[0]) + '">' +
+          '<span class="cl-t">' + esc(how) + '</span>' +
+          '<span class="cl-s">' + esc(c.statement || c.Statement || '') + '</span>' +
+          (sourceOf(c) ? '<span class="cl-src">' + esc(sourceOf(c)) + '</span>' : '') +
+          '</div>';
+      }).join('');
+    return el;
+  }
+
+  function howOf(c) { return String(c.how || c.How || '').toLowerCase(); }
+  function sourceOf(c) { return c.source || c.Source || ''; }
 
   /* Recalled figures.
    *

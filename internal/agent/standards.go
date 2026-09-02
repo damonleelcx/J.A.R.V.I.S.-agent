@@ -158,9 +158,17 @@ func FindStandardsClaims(r *Reply) []StandardsClaim {
 		for _, a := range r.Prototype.Assumptions {
 			out = append(out, claimsIn(a, "assumption")...)
 		}
-		for _, n := range r.Prototype.NotVerified {
-			out = append(out, claimsIn(n, "not-verified note")...)
-		}
+		/* NotVerified is deliberately NOT scanned.
+		 *
+		 * Those sentences say what was not established — "no interference check
+		 * against the NEMA 17 housing was run". Naming a standard in order to
+		 * disclaim it is the opposite of asserting a figure from it, and
+		 * flagging it as a recalled claim produced exactly that: a warning that
+		 * FORGE had "quoted from memory" a sentence whose whole content was
+		 * that it had checked nothing. Observed live 2026-09-02.
+		 *
+		 * Noise here is not neutral: this panel exists to make one real finding
+		 * visible, and burying it under disclaimers is how it stops being read. */
 		for _, p := range r.Prototype.Parts {
 			for _, frag := range splitSentences(p.Note) {
 				out = append(out, claimsIn(frag, "part note")...)

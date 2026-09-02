@@ -221,3 +221,24 @@ func containsFigure(figures []string, want string) bool {
 	}
 	return false
 }
+
+// A sentence saying what was NOT checked is not a claim that something is true.
+//
+// Regression: "No interference check with actual NEMA 17 motor housing" was
+// flagged as a figure quoted from memory, which is the opposite of what that
+// sentence does. Observed live 2026-09-02.
+func TestStandardsClaim_IgnoresNotVerifiedDisclaimers(t *testing.T) {
+	r := &Reply{
+		Speech: "Here it is.",
+		Prototype: &Prototype{
+			Parts: []PrototypePart{{ID: "p", Shape: "box"}},
+			NotVerified: []string{
+				"No interference check with actual NEMA 17 motor housing",
+				"Not stress-analysed against the M3 fastener torque",
+			},
+		},
+	}
+	if claims := FindStandardsClaims(r); len(claims) != 0 {
+		t.Fatalf("disclaimers were flagged as recalled claims: %+v", claims)
+	}
+}

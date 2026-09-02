@@ -154,6 +154,10 @@ type Reply struct {
 	Detail       string        `json:"detail"`
 	Prototype    *Prototype    `json:"prototype"`
 	ProposedGoal *ProposedGoal `json:"proposed_goal"`
+	// Claims is the epistemic ledger (PRD RSN-05): every statement in this reply
+	// together with how FORGE came to hold it. Derived from the reply, never
+	// asked of the model — see ClaimLedger.
+	Claims []Claim `json:"claims,omitempty"`
 	// Recalled is computed from the reply's own text, never asked of the model.
 	// A component cannot be its own guard: the failure being caught here is the
 	// model stating a standard's figure it has no way to check, and asking it to
@@ -250,6 +254,7 @@ func (r *Reply) validate() error {
 	// Computed before the prototype fix-ups below, so a claim is found in the
 	// text the model actually produced.
 	r.Recalled = FindStandardsClaims(r)
+	r.Claims = r.ClaimLedger()
 	if r.Prototype != nil {
 		if len(r.Prototype.Parts) == 0 {
 			// An empty prototype renders as a blank viewport, which reads as a
