@@ -1,0 +1,24 @@
+# Secrets — never commit. FORGE reads all credentials from the environment.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+.secrets*
+
+# Runtime state
+/.forge/
+/bin/
+/dist/
+*.eml
+
+# Go
+*.test
+*.out
+coverage.*
+
+# OS / editor
+.DS_Store
+.idea/
+.vscode/
+*.swp

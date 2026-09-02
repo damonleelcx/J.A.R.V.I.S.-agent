@@ -1,0 +1,54 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_USER: forge
+          POSTGRES_PASSWORD: forge_dev_pw
+          POSTGRES_DB: forge
+        ports:
+          - 55840:5432
+        options: >-
+          --health-cmd "pg_isready -U forge"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Formatting
+        run: make fmt-check
+
+      - name: Vet
+        run: make vet
+
+      # Integration tests run against the live Postgres service above. A schema
+      # test against a hand-written CREATE TABLE proves nothing about the schema
+      # that actually ships, so these are not optional in CI.
+      - name: Tests (with live Postgres)
+        run: go test -count=1 -race ./...
+        env:
+          FORGE_TEST_DATABASE_URL: postgres://forge:forge_dev_pw@localhost:55840/forge?sslmode=disable
+
+      - name: Build
+        run: make build
