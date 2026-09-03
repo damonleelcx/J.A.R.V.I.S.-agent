@@ -369,6 +369,11 @@ const (
 	// under (PRD SAF-01). The effect has already happened; what is wrong is the
 	// classification that admitted it.
 	EventToolExceededTier Event = "forge.tool.exceeded_tier"
+
+	// Hazards were loaded into a plan because the goal is r3 or above
+	// (PRD SAF-02). Logged at INFO including when the count is zero: "this
+	// project has no recorded hazards" and "nobody looked" are different facts.
+	EventPlanHazardsLoaded Event = "forge.plan.hazards_loaded"
 )
 
 func init() {
@@ -386,6 +391,6 @@ func init() {
 		EventMediaForwardFailed, EventMediaRefused, EventMediaStateChanged,
 		EventASRTranscribed, EventASRFailed, EventASREmptyResponse, EventASRDropped,
 		EventTTSSpoke, EventTTSInterrupted, EventTTSFailed, EventTTSEmpty,
-		EventCharacterFallback, EventToolExceededTier,
+		EventCharacterFallback, EventToolExceededTier, EventPlanHazardsLoaded,
 	)
 }

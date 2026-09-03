@@ -10,6 +10,7 @@ import (
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/llm"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/persona"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/errs"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/logx"
 )
 
 // plannerFraming is the role instruction appended to FORGE's identity.
@@ -55,7 +56,8 @@ Reply with JSON only, matching this shape exactly:
       "inputs": {},
       "expected_output": {"description": "what a finished result looks like"},
       "depends_on": ["key-of-another-task"],
-      "risk_tier": "r1"
+      "risk_tier": "r1",
+      "addresses": ["hazard node ids this task accounts for, when any were listed above"]
     }
   ]
 }`
@@ -68,6 +70,11 @@ type Planner struct {
 	// same shape as Executor.secrets: nil means every project is planned with the
 	// character this planner was constructed with.
 	characters *CharacterStore
+	// hazards loads the project graph for r3+ goals (PRD SAF-02). Optional in
+	// the same shape as the rest: nil means hazard-aware planning is not wired,
+	// which is a deployment without a workspace service rather than a bug.
+	hazards hazardSource
+	log     *logx.Logger
 }
 
 // NewPlanner returns a planner.
@@ -78,6 +85,14 @@ func NewPlanner(client llm.Client, char persona.Character) *Planner {
 // WithCharacters makes planning honour the project's critique intensity.
 func (p *Planner) WithCharacters(s *CharacterStore) *Planner { p.characters = s; return p }
 
+// WithHazards makes planning account for the project's recorded hazards at r3
+// and above (PRD SAF-02).
+func (p *Planner) WithHazards(src hazardSource, log *logx.Logger) *Planner {
+	p.hazards = src
+	p.log = log
+	return p
+}
+
 // PlannedTask is one node the planner proposes.
 type PlannedTask struct {
 	Key            string          `json:"key"`
@@ -87,6 +102,13 @@ type PlannedTask struct {
 	ExpectedOutput json.RawMessage `json:"expected_output"`
 	DependsOn      []string        `json:"depends_on"`
 	RiskTier       string          `json:"risk_tier"`
+	// Addresses lists the ids of hazards this task accounts for (PRD SAF-02).
+	//
+	// Ids rather than free text, because the coverage check has to be exact: a
+	// safety gate decided by matching prose against hazard titles is one that
+	// fails in the direction of passing. Empty on goals below r3, where no
+	// hazards are shown and none are required.
+	Addresses []string `json:"addresses,omitempty"`
 }
 
 // PlanResult is a whole proposed plan.
@@ -115,6 +137,14 @@ func (p *Planner) Plan(ctx context.Context, goal *engine.Goal, priorPlan *PlanRe
 		}
 	}
 	fmt.Fprintf(&user, "\nAutonomy ceiling: %s\nRisk ceiling: %s\n", goal.Autonomy, goal.RiskTier)
+
+	// PRD SAF-02. Loaded before the model call so a failure to read stops the
+	// plan rather than producing one that silently assumes no hazards exist.
+	hs, err := p.hazardsFor(ctx, goal)
+	if err != nil {
+		return nil, err
+	}
+	user.WriteString(hazardBrief(hs))
 
 	if replanReason != "" {
 		fmt.Fprintf(&user, "\n## This is a REPLAN\n\nWhy: %s\n", replanReason)
@@ -160,6 +190,11 @@ func (p *Planner) Plan(ctx context.Context, goal *engine.Goal, priorPlan *PlanRe
 	out.Model = resp.Model
 
 	if err := out.Validate(); err != nil {
+		return nil, err
+	}
+	// The prompt asked; this is what makes it a rule. An r3 plan that ignores a
+	// recorded hazard is refused with the hazards named (PRD SAF-02).
+	if err := checkHazardCoverage(out.Tasks, hs); err != nil {
 		return nil, err
 	}
 	return &out, nil

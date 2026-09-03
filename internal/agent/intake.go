@@ -12,6 +12,7 @@ import (
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/db"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/errs"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/id"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/logx"
 )
 
 // Intake turns described work into a planned goal.
@@ -43,6 +44,10 @@ type Intake struct {
 	planner *Planner
 	applier *PlanApplier
 	clock   clock.Clock
+	// log is optional. Nil is a legal caller — forgectl's tests build an intake
+	// without one — and the hazard load then happens silently rather than not at
+	// all.
+	log *logx.Logger
 }
 
 // NewIntake wires the planner and the applier the same way for every caller.
@@ -54,6 +59,10 @@ func NewIntake(client llm.Client, char persona.Character, engineCfg config.Engin
 		clock: clk,
 	}
 }
+
+// WithLog gives the intake somewhere to record what planning did, notably the
+// hazard load that PRD SAF-02 requires at r3 and above.
+func (i *Intake) WithLog(log *logx.Logger) *Intake { i.log = log; return i }
 
 // WithCharacters makes planning honour the project's critique intensity
 // (PRD RSN-04). Forwarded to the planner: Intake owns one, and a caller that had
@@ -145,6 +154,12 @@ func (in *Intake) Draft(ctx context.Context, pool *db.Pool, req DraftRequest) (*
 //
 // The goal remains a draft afterwards. Planning is not starting.
 func (in *Intake) Plan(ctx context.Context, pool *db.Pool, goal *engine.Goal) (*PlanOutcome, error) {
+	// PRD SAF-02. The hazard source is attached here rather than in NewIntake
+	// because the pool arrives with the call — the same reason the project is
+	// created against this pool a few lines up rather than one held on the
+	// struct. Below r3 the planner never asks it anything.
+	in.planner = in.planner.WithHazards(workspace.NewService(pool, in.clock, in.log), in.log)
+
 	result, err := in.planner.Plan(ctx, goal, nil, "")
 	if err != nil {
 		return nil, err
