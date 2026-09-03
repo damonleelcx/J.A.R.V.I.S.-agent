@@ -11,6 +11,7 @@ import (
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/agent"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/engine"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/workspace"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/llm"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/persona"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/clock"
@@ -217,7 +218,8 @@ func cmdGoalStart(ctx context.Context, cfg *config.Config, log *logx.Logger, arg
 		return err
 	}
 	applier := agent.NewPlanApplier(engine.NewRepository(), engine.NewQueue(),
-		engine.NewBudgetGuard(cfg.Engine), clock.System{})
+		engine.NewBudgetGuard(cfg.Engine), clock.System{}).
+		WithWorkspace(workspace.NewService(pool, clock.System{}, log), log)
 	if err := applier.Activate(ctx, pool, goal, engine.ActorHuman, nil); err != nil {
 		return err
 	}
@@ -503,5 +505,29 @@ func cmdGoalRecover(ctx context.Context, cfg *config.Config, log *logx.Logger, a
 		return err
 	}
 	fmt.Print(plan.Render())
+	return nil
+}
+
+// cmdGoalAnswer answers the question a goal is held on (PRD RSN-02).
+func cmdGoalAnswer(ctx context.Context, cfg *config.Config, log *logx.Logger, args []string) error {
+	const op = "forgectl.cmdGoalAnswer"
+
+	if len(args) < 2 || strings.TrimSpace(args[0]) == "" || strings.TrimSpace(args[1]) == "" {
+		return errs.New(op, errs.CodeValidationFailed).
+			WithDetail("usage: forgectl goal answer <goal-id> \"the answer\"\n" +
+				"The question is shown by `forgectl goal show <goal-id>` and by the planner " +
+				"when it refuses to guess.")
+	}
+	pool, err := db.Connect(ctx, cfg.DB, log)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+
+	if err := agent.AnswerClarification(ctx, pool, args[0], args[1]); err != nil {
+		return err
+	}
+	fmt.Printf("answered. %s is no longer held, and the answer is on the goal.\n"+
+		"Replan it so the plan is built on the answer: forgectl goal replan %s\n", args[0], args[0])
 	return nil
 }

@@ -8,10 +8,12 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/engine"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/workspace"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/clock"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/db"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/errs"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/id"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/logx"
 )
 
 // PlanApplier writes a validated plan into the task DAG.
@@ -20,11 +22,44 @@ type PlanApplier struct {
 	queue  *engine.Queue
 	budget *engine.BudgetGuard
 	clock  clock.Clock
+	// workspace files the labelled assumption when low-risk work starts with an
+	// unanswered question (PRD RSN-02). Optional: without it the work still
+	// proceeds and the note is simply not filed, which is the right failure for
+	// bookkeeping attached to exploration.
+	workspace *workspace.Service
+	log       *logx.Logger
 }
 
 // NewPlanApplier returns an applier.
 func NewPlanApplier(repo *engine.Repository, queue *engine.Queue, budget *engine.BudgetGuard, clk clock.Clock) *PlanApplier {
 	return &PlanApplier{repo: repo, queue: queue, budget: budget, clock: clk}
+}
+
+// WithWorkspace lets the applier label an assumption when a low-risk goal starts
+// with a question outstanding (PRD RSN-02).
+func (a *PlanApplier) WithWorkspace(ws *workspace.Service, log *logx.Logger) *PlanApplier {
+	a.workspace = ws
+	a.log = log
+	return a
+}
+
+// actorID renders the optional actor for a node's created_by.
+func actorID(byID *string) string {
+	if byID == nil {
+		return ""
+	}
+	return *byID
+}
+
+// logAssumptionFailure says the note was not filed, loudly, without stopping the
+// work it describes.
+func (a *PlanApplier) logAssumptionFailure(ctx context.Context, goal *engine.Goal, err error) {
+	if a.log == nil {
+		return
+	}
+	a.log.WarnWith(ctx, logx.EventAssumptionUnfiled, err, "goal_id", goal.ID,
+		"detail", "this goal started with an unanswered question and the assumption could not "+
+			"be written to the project graph; the work is proceeding on something nobody recorded")
 }
 
 // Apply writes a plan and its tasks, superseding any live plan for the goal.
@@ -235,6 +270,27 @@ func (a *PlanApplier) Activate(ctx context.Context, pool *db.Pool, goal *engine.
 				"nothing to run. Its plan never landed — planning is a model call and can time out. "+
 				"Plan it again with `forgectl goal replan %s`.", goal.ID, goal.ID)
 	}
+	// PRD RSN-02: clarification before consequential work.
+	//
+	// Checked here rather than in either caller, because forgectl and the HTTP
+	// API both pass through this function and a gate implemented twice is a gate
+	// with one version of it out of date.
+	hold, err := clarificationFor(ctx, pool, goal.ID)
+	if err != nil {
+		return err
+	}
+	assumption, err := gateOnClarification(hold, goal)
+	if err != nil {
+		return err
+	}
+	if assumption != "" {
+		// Low-risk exploration proceeds, and what it rests on is written down.
+		// A failure to file the note does not stop the work — see labelAssumption.
+		if err := labelAssumption(ctx, pool, a.workspace, goal, assumption, actorID(byID)); err != nil {
+			a.logAssumptionFailure(ctx, goal, err)
+		}
+	}
+
 	now := a.clock.Now()
 	tag, err := pool.Exec(ctx, `
 		update forge_goals

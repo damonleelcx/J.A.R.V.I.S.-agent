@@ -374,6 +374,12 @@ const (
 	// (PRD SAF-02). Logged at INFO including when the count is zero: "this
 	// project has no recorded hazards" and "nobody looked" are different facts.
 	EventPlanHazardsLoaded Event = "forge.plan.hazards_loaded"
+
+	// A goal started with an unanswered question and the labelled assumption
+	// could not be filed (PRD RSN-02). The work proceeds; what it rests on was
+	// not written down, which is exactly the state this requirement exists to
+	// prevent, so it is said loudly.
+	EventAssumptionUnfiled Event = "forge.goal.assumption_unfiled"
 )
 
 func init() {
@@ -392,5 +398,6 @@ func init() {
 		EventASRTranscribed, EventASRFailed, EventASREmptyResponse, EventASRDropped,
 		EventTTSSpoke, EventTTSInterrupted, EventTTSFailed, EventTTSEmpty,
 		EventCharacterFallback, EventToolExceededTier, EventPlanHazardsLoaded,
+		EventAssumptionUnfiled,
 	)
 }

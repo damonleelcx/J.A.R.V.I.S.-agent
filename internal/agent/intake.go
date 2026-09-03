@@ -164,6 +164,13 @@ func (in *Intake) Plan(ctx context.Context, pool *db.Pool, goal *engine.Goal) (*
 	if err != nil {
 		return nil, err
 	}
+	// PRD RSN-02. Recorded before it is returned, because a question that is only
+	// printed holds nothing: `goal replan` would ask the model again, and a
+	// second roll that happened not to ask would produce a plan built on the
+	// ambiguity nobody resolved.
+	if err := recordQuestion(ctx, pool, goal.ID, result.ClarificationNeeded); err != nil {
+		return nil, err
+	}
 	if result.ClarificationNeeded != "" {
 		// Returned rather than raised. A question is the planner working
 		// correctly, and an error would push the caller into treating it as a

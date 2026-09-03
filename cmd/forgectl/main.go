@@ -47,6 +47,9 @@ Goals:
                       be started because it would run with nothing to run.
   goal start <id>     Activate a drafted goal so workers can claim its tasks
   goal show <id>      Current state, tasks, pending approvals, and the timeline
+  goal answer <id> "..."  Answer the question FORGE refused to guess past. Consequential
+                      work stays held until this is given; below r2 the question is
+                      recorded as a labelled assumption and the work proceeds.
   goal recover <id>   What a stopped goal left behind: effects that stand, what can be
                       undone, and which calls ran and then failed. Read from the record,
                       not written by a model.
@@ -236,7 +239,7 @@ func run(ctx context.Context, cmd string, args []string) error {
 		if len(args) == 0 {
 			fmt.Fprint(os.Stderr, usage)
 			return errs.New("forgectl.run", errs.CodeValidationFailed).
-				WithDetail("goal needs a subcommand: new, replan, start, show or recover")
+				WithDetail("goal needs a subcommand: new, replan, start, show, recover or answer")
 		}
 		switch args[0] {
 		case "new":
@@ -249,9 +252,11 @@ func run(ctx context.Context, cmd string, args []string) error {
 			return cmdGoalShow(ctx, cfg, log, args[1:])
 		case "recover":
 			return cmdGoalRecover(ctx, cfg, log, args[1:])
+		case "answer":
+			return cmdGoalAnswer(ctx, cfg, log, args[1:])
 		default:
 			return errs.New("forgectl.run", errs.CodeValidationFailed).
-				WithDetail("unknown goal subcommand %q; expected new, replan, start, show or recover", args[0])
+				WithDetail("unknown goal subcommand %q; expected new, replan, start, show, recover or answer", args[0])
 		}
 
 	case "memory":

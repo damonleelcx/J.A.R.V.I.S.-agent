@@ -64,6 +64,29 @@ func newRecoveryFixture(t *testing.T) *recoveryFixture {
 	return &recoveryFixture{pool: pool, goalID: goalID, planID: planID}
 }
 
+// goalLike adds another goal to the same schema, for tests that need two.
+//
+// Building a second fixture would not work: the harness drops and recreates a
+// schema of a fixed name, so the second one deletes the first one's rows.
+func (f *recoveryFixture) goalLike(t *testing.T, title string) string {
+	t.Helper()
+	goalID := id.New(id.PrefixGoal)
+	var project, owner string
+	if err := f.pool.QueryRow(context.Background(),
+		`select project_id, created_by from forge_goals where id = $1`, f.goalID).
+		Scan(&project, &owner); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.pool.Exec(context.Background(), `
+		insert into forge_goals (id, project_id, created_by, title, statement, status, autonomy,
+			risk_tier, created_at, updated_at)
+		values ($1,$2,$3,$4,'x','draft','approval_gated','r3',now(),now())`,
+		goalID, project, owner, title); err != nil {
+		t.Fatal(err)
+	}
+	return goalID
+}
+
 func (f *recoveryFixture) task(t *testing.T, title string, status engine.TaskStatus) string {
 	t.Helper()
 	taskID := id.New(id.PrefixTask)

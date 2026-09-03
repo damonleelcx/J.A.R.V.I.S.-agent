@@ -9,6 +9,7 @@ import (
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/agent"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/access"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/engine"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/workspace"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/errs"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/logx"
 )
@@ -337,7 +338,8 @@ func (h *GoalHandlers) StartGoal(w http.ResponseWriter, r *http.Request) {
 // directly here rather than requiring the Intake keeps that true.
 func (h *GoalHandlers) intakeStart(r *http.Request, goal *engine.Goal, userID string) error {
 	applier := agent.NewPlanApplier(h.repo, h.queue,
-		engine.NewBudgetGuard(h.deps.Config.Engine), h.deps.Clock)
+		engine.NewBudgetGuard(h.deps.Config.Engine), h.deps.Clock).
+		WithWorkspace(workspace.NewService(h.deps.Pool, h.deps.Clock, h.deps.Log), h.deps.Log)
 	return applier.Activate(r.Context(), h.deps.Pool, goal, engine.ActorHuman, &userID)
 }
 
