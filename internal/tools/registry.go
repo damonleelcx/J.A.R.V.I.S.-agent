@@ -3,6 +3,7 @@ package tools
 import (
 	"encoding/json"
 	"sort"
+	"strings"
 	"sync"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/engine"
@@ -134,6 +135,34 @@ type Grant struct {
 	// Autonomy is the goal's current level. Below sandbox_execute, no mutating
 	// tool is offered regardless of capabilities.
 	Autonomy engine.Autonomy
+	// Production is the deployment context this goal runs in (PRD SAF-01).
+	//
+	// Held on the grant rather than read from configuration here, because a
+	// grant is meant to be a complete statement of what a goal may do: a
+	// permission check that reached for ambient state would classify differently
+	// depending on where it was called from, which is the property a permission
+	// check must not have.
+	Production bool
+}
+
+// Classify returns the tier a call on this contract actually sits at, given the
+// context this grant carries (PRD SAF-01).
+//
+// The contract's tier is the floor. Everything that can move it upward — the
+// irreversibility of the effect, the permissions it exercises, whether this is
+// production — is decided by engine.Classify so that the offer list and the
+// executor cannot drift into two different opinions about the same call.
+func (g Grant) Classify(c Contract) (engine.RiskTier, []string) {
+	return engine.Classify(engine.Classification{
+		Declared:     c.RiskTier,
+		Irreversible: c.Reversibility == Irreversible,
+		ManualUndo:   c.Reversibility == ReversibleManual,
+		Mutating:     c.Mutating(),
+		Deploys:      c.HasCapability(CapDeploy),
+		Transacts:    c.HasCapability(CapTransact),
+		Actuates:     c.HasCapability(CapControl),
+		Production:   g.Production,
+	})
 }
 
 // Permits reports whether the grant allows this contract, and why not when it
@@ -153,12 +182,29 @@ func (g Grant) Permits(c Contract) (bool, string) {
 	if !g.MaxRiskTier.Valid() {
 		return false, "this goal has no valid risk ceiling"
 	}
-	if c.RiskTier.AtLeast(engine.RiskR5) {
-		return false, "this tool is classified R5 (prohibited); no approval authorises it"
+	// The tier this call sits at HERE, which is at least the declared one and may
+	// be higher (PRD SAF-01). Classified before the ceiling is checked, so a tool
+	// that is only consequential in production is refused there and offered
+	// elsewhere rather than being judged by its declaration in both.
+	tier, why := g.Classify(c)
+	if tier.AtLeast(engine.RiskR5) {
+		reason := "this tool is classified R5 (prohibited); no approval authorises it"
+		if len(why) > 0 {
+			reason += " — " + strings.Join(why, "; ")
+		}
+		return false, reason
 	}
-	if !g.MaxRiskTier.AtLeast(c.RiskTier) {
-		return false, "this tool is tier " + string(c.RiskTier) +
+	if !g.MaxRiskTier.AtLeast(tier) {
+		reason := "this tool is tier " + string(tier) +
 			", above this goal's ceiling of " + string(g.MaxRiskTier)
+		if tier != c.RiskTier {
+			// Said explicitly, because "this tool is R3" is confusing to somebody
+			// reading a contract that says R2. The tier moved, and why it moved is
+			// the part that lets the model choose a different approach.
+			reason += ". It is declared " + string(c.RiskTier) +
+				" and classified higher here because " + strings.Join(why, ", and ")
+		}
+		return false, reason
 	}
 	granted := map[Capability]bool{}
 	for _, cap := range g.Capabilities {

@@ -351,11 +351,22 @@ func (t WriteTool) Run(ctx context.Context, inv Invocation) (*Result, error) {
 	if replaced {
 		verb = fmt.Sprintf("replaced (was %d bytes)", previousBytes)
 	}
-	return &Result{
+	res := &Result{
 		Output:   out,
 		Raw:      fmt.Sprintf("%s %s: %d bytes", verb, in.Path, len(in.Content)),
 		Evidence: fmt.Sprintf("%s exists in the workspace and is %d bytes", in.Path, len(in.Content)),
-	}, nil
+	}
+	if replaced {
+		// PRD SAF-01: the same tool, a different tier, decided by what the call
+		// actually did. Creating a file is a draft; replacing one destroys the
+		// content that was there, and the contract's R1 describes the first case
+		// only. Raised here rather than declared on the contract, because
+		// declaring R2 would gate every write including the harmless ones.
+		//
+		// This is the producer for Result.RiskTierUsed, which had none.
+		res.RiskTierUsed = engine.RiskR2
+	}
+	return res, nil
 }
 
 // ---------------------------------------------------------------------------

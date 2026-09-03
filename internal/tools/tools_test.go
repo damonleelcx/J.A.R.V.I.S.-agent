@@ -621,3 +621,45 @@ func (r *Result) String() string {
 	}
 	return r.Raw
 }
+
+// Replacing a file is not the same call as creating one (PRD SAF-01).
+//
+// # Why this is the fence for Result.RiskTierUsed
+//
+// The field has carried the promise "a tool may raise its tier per call" since
+// the type was written, and until now nothing set it and nothing read it — a
+// hook with neither end connected. This is the producing end.
+//
+// The distinction is real rather than decorative: creating a file adds
+// something, and replacing one destroys the content that was there. The
+// contract's R1 describes the first case, and declaring R2 on the contract to
+// cover the second would gate every harmless write in the product.
+func TestWritingOverAFileRaisesTheCallsTier(t *testing.T) {
+	ws := t.TempDir()
+
+	created, err := WriteTool{}.Run(context.Background(),
+		inv(ws, "workspace_write", map[string]string{"path": "notes.md", "content": "first"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if created.RiskTierUsed != "" {
+		t.Errorf("creating a file raised the tier to %q; only replacement is destructive",
+			created.RiskTierUsed)
+	}
+
+	replaced, err := WriteTool{}.Run(context.Background(),
+		inv(ws, "workspace_write", map[string]string{"path": "notes.md", "content": "second"}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replaced.RiskTierUsed != engine.RiskR2 {
+		t.Errorf("replacing a file reported tier %q, want r2.\nThe content that was there is "+
+			"gone, and the ledger will record this call at the tool's declared r1 as though "+
+			"it had merely added a draft.", replaced.RiskTierUsed)
+	}
+	// The declared tier is unchanged: this is a property of the call, not a
+	// redefinition of the tool.
+	if (WriteTool{}).Contract().RiskTier != engine.RiskR1 {
+		t.Error("the contract's declared tier moved; the raise must be per call")
+	}
+}

@@ -141,6 +141,9 @@ func run() error {
 			Pool: pool, Repo: repo, Queue: queue, Budget: budget,
 			Assembler: assembler, Executor: executor, Verifier: verifier,
 			Config: cfg.Engine, WorkspaceRoot: workspaceRoot, Clock: clk, Log: log,
+			// PRD SAF-01: the same action is a different event here than on a
+			// laptop, and the classifier is told which one this is.
+			Production: cfg.Env == config.EnvProduction,
 		})
 		wg.Add(1)
 		go func(w *agent.Worker) {

@@ -364,6 +364,11 @@ const (
 	// where every call quietly reverts to the default looks exactly like one
 	// where nobody has changed the setting.
 	EventCharacterFallback Event = "forge.character.fallback"
+
+	// A tool raised its own tier for a call, above the ceiling it was offered
+	// under (PRD SAF-01). The effect has already happened; what is wrong is the
+	// classification that admitted it.
+	EventToolExceededTier Event = "forge.tool.exceeded_tier"
 )
 
 func init() {
@@ -381,6 +386,6 @@ func init() {
 		EventMediaForwardFailed, EventMediaRefused, EventMediaStateChanged,
 		EventASRTranscribed, EventASRFailed, EventASREmptyResponse, EventASRDropped,
 		EventTTSSpoke, EventTTSInterrupted, EventTTSFailed, EventTTSEmpty,
-		EventCharacterFallback,
+		EventCharacterFallback, EventToolExceededTier,
 	)
 }

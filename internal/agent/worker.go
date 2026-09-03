@@ -42,10 +42,11 @@ type Worker struct {
 	executor  *Executor
 	verifier  *Verifier
 
-	cfg       config.EngineConfig
-	workspace string
-	clock     clock.Clock
-	log       *logx.Logger
+	cfg        config.EngineConfig
+	production bool
+	workspace  string
+	clock      clock.Clock
+	log        *logx.Logger
 }
 
 // WorkerDeps is what a worker needs.
@@ -58,6 +59,11 @@ type WorkerDeps struct {
 	Executor  *Executor
 	Verifier  *Verifier
 	Config    config.EngineConfig
+	// Production is the deployment context, passed to every grant (PRD SAF-01).
+	// False is the safe default to get wrong in only one direction: a
+	// development deployment mislabelled as production refuses work, where the
+	// reverse would run production changes at a development tier.
+	Production bool
 	// WorkspaceRoot holds one directory per goal. Goals never share one: a tool
 	// scoped to "the workspace" would otherwise reach another goal's files, and
 	// the sandbox would be per-process rather than per-goal.
@@ -77,18 +83,19 @@ func NewWorker(d WorkerDeps) *Worker {
 		host = "unknown-host"
 	}
 	return &Worker{
-		ID:        fmt.Sprintf("%s/%d/%s", host, os.Getpid(), id.New(id.PrefixRun)[4:12]),
-		pool:      d.Pool,
-		repo:      d.Repo,
-		queue:     d.Queue,
-		budget:    d.Budget,
-		assembler: d.Assembler,
-		executor:  d.Executor,
-		verifier:  d.Verifier,
-		cfg:       d.Config,
-		workspace: d.WorkspaceRoot,
-		clock:     d.Clock,
-		log:       d.Log,
+		ID:         fmt.Sprintf("%s/%d/%s", host, os.Getpid(), id.New(id.PrefixRun)[4:12]),
+		pool:       d.Pool,
+		repo:       d.Repo,
+		queue:      d.Queue,
+		budget:     d.Budget,
+		assembler:  d.Assembler,
+		executor:   d.Executor,
+		verifier:   d.Verifier,
+		cfg:        d.Config,
+		production: d.Production,
+		workspace:  d.WorkspaceRoot,
+		clock:      d.Clock,
+		log:        d.Log,
 	}
 }
 
@@ -238,7 +245,7 @@ func (w *Worker) runTask(ctx context.Context, task *engine.Task) {
 		return
 	}
 
-	grant := grantFor(goal)
+	grant := grantFor(goal, w.production)
 	tc, err := w.assembler.Assemble(ctx, w.pool, task, goal, grant, w.budgetNote(goal))
 	if err != nil {
 		w.failTask(ctx, task, errs.CodeOf(err), err.Error())
@@ -622,7 +629,7 @@ func (w *Worker) budgetNote(goal *engine.Goal) string {
 // that can disagree. Deploy, transact and control are never granted by this
 // build — they are the capabilities whose tools do not exist here, and granting
 // a capability with no tool behind it only creates a false sense of scope.
-func grantFor(goal *engine.Goal) tools.Grant {
+func grantFor(goal *engine.Goal, production bool) tools.Grant {
 	caps := []tools.Capability{tools.CapRead}
 	if goal.Autonomy.AtLeast(engine.AutonomyDraft) {
 		caps = append(caps, tools.CapWrite)
@@ -634,5 +641,6 @@ func grantFor(goal *engine.Goal) tools.Grant {
 		Capabilities: caps,
 		MaxRiskTier:  goal.RiskTier,
 		Autonomy:     goal.Autonomy,
+		Production:   production,
 	}
 }
