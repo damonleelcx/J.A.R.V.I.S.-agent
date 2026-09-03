@@ -93,8 +93,89 @@ test-cover: db-wait ## Run tests with coverage and print a summary
 	FORGE_TEST_DATABASE_URL="$(DB_URL)" go test -count=1 -coverprofile=coverage.out ./...
 	go tool cover -func=coverage.out | tail -20
 
+.PHONY: drill
+drill: db-wait ## Run the recovery drills against live Postgres (PRD NFR-07)
+	FORGE_DATABASE_URL="$(DB_URL)" go run ./cmd/forgectl drill run
+
 .PHONY: check
-check: fmt-check vet test-integration ## Everything CI runs
+check: fmt-check vet test-integration drill ## Everything CI runs on every commit
+
+# ---------------------------------------------------------------------------
+# Release
+# ---------------------------------------------------------------------------
+
+# One command, run identically by a person and by the release workflow.
+#
+# The drills are in here and not only in `check` because they are the part most
+# likely to be skipped by hand: they need a database, they take longer than the
+# unit tests, and everything still compiles without them. A release that has not
+# injected a real fault has not established that the system degrades safely —
+# PRD NFR-07 is a claim about what happens when things break, and nothing else in
+# the suite breaks anything.
+#
+# The evaluation suite is deliberately NOT here. It calls a real model, costs
+# money, takes minutes, and is non-deterministic; wiring it into a gate would
+# either make releases flaky or get the floors quietly lowered until they stopped
+# failing. It runs on its own cadence — `make eval`, and the scheduled workflow.
+.PHONY: release-check
+release-check: fmt-check vet test-integration drill build ## Everything a release must pass
+	@echo
+	@echo "release-check passed: formatting, vet, tests against live Postgres,"
+	@echo "recovery drills with real injected faults, and a clean build of all three binaries."
+	@echo
+	@echo "NOT covered by this gate, on purpose:"
+	@echo "  · the evaluation suite (real model, costs money, non-deterministic) — make eval"
+	@echo "  · every item under 'Carried defects' in docs/implementation-plan.md"
+
+.PHONY: eval
+eval: ## Run the evaluation suite against a real model (costs money, takes minutes)
+	go run ./cmd/forgectl eval run --repeats 3
+
+.PHONY: eval-list
+eval-list: ## What the evaluation suite measures, and why each case exists
+	go run ./cmd/forgectl eval list
+
+# Cross-compiled release binaries. Pure Go, so CGO is off and every target
+# builds from any host — a release that can only be cut on one person's laptop
+# is a release nobody else can cut.
+RELEASE_DIR   := dist
+RELEASE_OSARCH := darwin/arm64 darwin/amd64 linux/amd64 linux/arm64
+
+.PHONY: dist
+dist: ## Build cross-platform release binaries into ./dist with checksums
+	@rm -rf $(RELEASE_DIR) && mkdir -p $(RELEASE_DIR)
+	@for target in $(RELEASE_OSARCH); do \
+	  os=$${target%/*}; arch=$${target#*/}; \
+	  for cmd in forged forge-worker forgectl; do \
+	    out=$(RELEASE_DIR)/$$cmd-$$os-$$arch; \
+	    echo "  $$out"; \
+	    CGO_ENABLED=0 GOOS=$$os GOARCH=$$arch \
+	      go build -trimpath -ldflags "$(LDFLAGS)" -o $$out ./cmd/$$cmd || exit 1; \
+	  done; \
+	done
+	@cd $(RELEASE_DIR) && shasum -a 256 * > SHA256SUMS
+	@echo
+	@echo "$(VERSION) ($(COMMIT)) built into $(RELEASE_DIR)/ with SHA256SUMS"
+
+# The artefact, not the recipe. A binary built without ldflags reports "dev" and
+# is indistinguishable from a release once it has left this machine, so the check
+# is on what the binary SAYS rather than on how it was compiled.
+.PHONY: dist-verify
+dist-verify: ## Check that the built binaries report the version they were stamped with
+	@test -d $(RELEASE_DIR) || { echo "no $(RELEASE_DIR)/ — run make dist first"; exit 1; }
+	@host=$$(go env GOOS)/$$(go env GOARCH); \
+	 bin=$(RELEASE_DIR)/forgectl-$${host%/*}-$${host#*/}; \
+	 test -x $$bin || { echo "no binary for this host ($$host); cannot verify"; exit 1; }; \
+	 reported=$$($$bin version); \
+	 echo "$$reported"; \
+	 case "$$reported" in \
+	   *"$(VERSION)"*) ;; \
+	   *) echo "the binary reports a different version from $(VERSION) — ldflags did not reach the build"; exit 1;; \
+	 esac; \
+	 case "$$reported" in \
+	   *" dev "*|*"forgectl dev"*) echo "the binary reports 'dev': it was built without version stamping"; exit 1;; \
+	 esac
+	@cd $(RELEASE_DIR) && shasum -a 256 -c SHA256SUMS >/dev/null && echo "checksums verified"
 
 # ---------------------------------------------------------------------------
 # Local database
@@ -112,28 +193,34 @@ db-up: ## Start the local Postgres container
 
 .PHONY: db-wait
 db-wait: ## Block until the database accepts connections
-	@if ! docker info >/dev/null 2>&1; then \
-	  echo "Docker is not reachable."; \
-	  echo "  cause : the Docker daemon is not running, or DOCKER_HOST points at a profile that is down."; \
-	  echo "  fix   : start Docker (or 'colima start'), then re-run. Current DOCKER_HOST=$${DOCKER_HOST:-<unset, using default socket>}"; \
-	  exit 1; \
-	fi
-	@if ! docker ps -a --format '{{.Names}}' | grep -qx '$(DB_CONTAINER)'; then \
-	  echo "No container named '$(DB_CONTAINER)' exists."; \
-	  echo "  fix   : run 'make db-up' to create it."; \
-	  exit 1; \
-	fi
-	@if ! docker ps --format '{{.Names}}' | grep -qx '$(DB_CONTAINER)'; then \
-	  echo "Container '$(DB_CONTAINER)' exists but is not running."; \
-	  echo "  fix   : run 'make db-up' to start it."; \
-	  exit 1; \
-	fi
+	@# Ask the DATABASE, not Docker.
+	@#
+	@# This used to check the Docker daemon and the local container by name,
+	@# which is the right diagnosis on a laptop and the wrong question
+	@# everywhere else: CI runs Postgres as a service with no container of that
+	@# name, so every target depending on this was unusable there — and
+	@# `release-check` is supposed to be one command that a person and the
+	@# release workflow both run. So the probe is now "can something connect",
+	@# and the Docker checks below run only when the answer is no, where they
+	@# are still the most likely explanation.
 	@for i in $$(seq 1 30); do \
-	  if docker exec $(DB_CONTAINER) pg_isready -U $(DB_USER) >/dev/null 2>&1; then exit 0; fi; \
+	  if FORGE_DATABASE_URL="$(DB_URL)" go run ./cmd/forgectl health >/dev/null 2>&1; then exit 0; fi; \
 	  sleep 1; \
 	done; \
-	echo "Container '$(DB_CONTAINER)' is running but Postgres did not accept connections within 30s."; \
-	echo "  fix   : inspect startup errors with 'docker logs $(DB_CONTAINER)'"; \
+	echo "Nothing is answering at $(DB_URL) after 30s."; \
+	if ! docker info >/dev/null 2>&1; then \
+	  echo "  cause : the Docker daemon is not reachable, so the local database is not running."; \
+	  echo "  fix   : start Docker (or 'colima start'), then 'make db-up'. Current DOCKER_HOST=$${DOCKER_HOST:-<unset, using default socket>}"; \
+	elif ! docker ps -a --format '{{.Names}}' | grep -qx '$(DB_CONTAINER)'; then \
+	  echo "  cause : no container named '$(DB_CONTAINER)' exists."; \
+	  echo "  fix   : run 'make db-up' to create it."; \
+	elif ! docker ps --format '{{.Names}}' | grep -qx '$(DB_CONTAINER)'; then \
+	  echo "  cause : container '$(DB_CONTAINER)' exists but is not running."; \
+	  echo "  fix   : run 'make db-up' to start it."; \
+	else \
+	  echo "  cause : container '$(DB_CONTAINER)' is running but Postgres is not accepting connections."; \
+	  echo "  fix   : inspect startup errors with 'docker logs $(DB_CONTAINER)'"; \
+	fi; \
 	exit 1
 
 .PHONY: db-down

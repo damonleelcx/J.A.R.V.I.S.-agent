@@ -144,6 +144,8 @@ summarised away, because they are what an auditor reconstructs the run from.
 | `tools/*` | Capability registry and typed tool contracts |
 | `persona/*` | Avatar, character, and the durable value set |
 | `httpapi/*` | Public API and console surface |
+| `drill/*` | Recovery drills: real injected faults against a real schema (NFR-07) |
+| `eval/*` | How the MODEL behaves inside the harness — deterministic scorers, real provider, rates rather than passes |
 
 ## Testing posture
 
@@ -157,3 +159,10 @@ Three rules, learned the hard way:
    because `gofmt` had realigned the line the mutation targeted.)
 3. **Schema tests run against the real migrated schema**, never an inline
    `CREATE TABLE`. A fixture that approximates production tests the fixture.
+4. **What the tests cannot cover is measured, not assumed.** The suite proves the
+   harness; `internal/eval` measures the model inside it, against a real
+   provider, and reports rates rather than passes — because the same prompt has
+   produced a correct standards figure and a fabricated one four runs apart. Its
+   scorers are held to the same rules as the fences: one of them fabricated two
+   findings on its first live run, and the fix was to make it refuse to score a
+   figure it could not identify.

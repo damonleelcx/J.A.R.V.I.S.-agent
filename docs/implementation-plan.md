@@ -23,7 +23,8 @@ conversion cost. Roughly the whole vertical from
 "someone speaks" to "a worker executes a verified task", plus the record of it,
 what it remembers, what it thinks is true, and what happens when it breaks.
 
-Missing: SSO, realtime audio transport, and the release apparatus.
+Missing: SSO and realtime audio transport. Everything else named in the PRD is
+built, fenced, and released by one command.
 
 The split matters when planning: the core loop is done, so every wave below adds
 surface to a working system rather than filling a hole in one.
@@ -74,8 +75,9 @@ surface to a working system rather than filling a hole in one.
         └───────────────────┬─────────────────────────┘
                             ▼
         ┌─────────────────────────────────────────────┐
-        │ WAVE 8  release (README phase 7)            │
-        │   evaluation suites · release pipeline      │
+        │ WAVE 8  release (README phase 7)      DONE  │
+        │   evaluation suites ✓  drills in CI ✓       │
+        │   release pipeline ✓                        │
         └─────────────────────────────────────────────┘
 ```
 
@@ -737,10 +739,114 @@ row says what `superseded` means and what to do instead — but the underlying
 question is a decision, not an implementation detail. Options are in the carried
 defects below.
 
-## Wave 8 — release
+## Wave 8 — release · **DONE**
 
-Evaluation suites, recovery drills wired to CI, release pipeline. The README
-already calls this phase 7.
+### Evaluation suites — measuring the MODEL, not the harness
+
+Everything else in this repository proves the harness is correct. Nothing proved
+the model behaves acceptably inside it, and that is where the real damage has
+come from: a fabricated NEMA 17 bolt pattern, dimensions travelling without their
+unit, geometry offered with nothing said about what it does not establish, part
+ids renamed between turns.
+
+`internal/eval` runs fixed conversations against a real model and scores them
+with deterministic Go. Four rules hold the whole package up:
+
+- **Nothing grades its own homework.** Every scorer is Go over the reply. There
+  is no model judging a model and no place to put one. Where a scorer needs a
+  fact about the world — the published dimensions of a NEMA 17 face — that fact
+  is written down in the suite with its source named, exactly as the Zoo spike
+  wrote its reference figures into `analyse.py`.
+- **No fakes.** `NewRunner(nil, …)` is refused. A stub returning canned replies
+  would measure the stub, and this codebase has already been caught by exactly
+  that.
+- **The output is a RATE, never a pass.** The same prompt produced a correct
+  standards figure and a fabricated one four runs apart. Each case runs N times
+  and the report is k/n, with every reply kept so the scoring can be re-judged.
+- **Floors are observations, not targets**, and each carries the measurement it
+  came from. A floor with no measurement behind it gets lowered the first time it
+  fails, because nobody can say why it was there.
+
+Measured against qwen-plus, 4 repeats, 2026-09-03: standards labelled 4/4,
+quoted NEMA 17 figures correct 4/4, convertible units 4/4, model-written
+`not_verified` 4/4, no geometry on a scheduling question 4/4, speech short 4/4.
+
+**And one finding.** Part-id stability is **1 of 4**. Wave 7 added a clause to
+`converse.go` asking the model to keep ids stable across turns; it does not
+reliably work — the model keeps the base plate's id and renames most of the rest.
+So the comparison view's name fallback is **load-bearing, not a safety net**, and
+now there is a number saying so.
+
+That case is marked `Tracked` rather than floored, which is a distinction the
+package makes explicitly: some properties are requirements and some are things
+this build measures but does not require. A tracked scorer reports its rate and
+never fails the run. Without the distinction it would sit permanently red until
+somebody lowered a number to make the red go away, which is how every floor in a
+suite eventually stops meaning anything. A fence refuses a scorer that is neither
+floored nor explicitly tracked, so a zero floor cannot be acquired by accident.
+
+### Recovery drills in CI · done
+
+`forgectl drill run` existed since wave 5 and CI never ran it. It does now, on
+every commit and inside the release gate. NFR-07 is a claim about what happens
+when things BREAK, and nothing else in the suite breaks anything.
+
+### The release pipeline · done
+
+`make release-check` — formatting, vet, the whole suite against live Postgres,
+the recovery drills, and a clean build. One command, run identically by a person
+and by `.github/workflows/release.yml`; the workflow does not re-implement the
+steps in YAML, because a workflow that lists its own checks drifts from the
+Makefile and then a release passes a gate nobody can run locally.
+
+`make dist` cross-compiles all three binaries for darwin and linux on amd64 and
+arm64 — pure Go, CGO off, so a release is not something only one laptop can cut —
+and writes `SHA256SUMS`.
+
+`make dist-verify` checks **the artefact, not the recipe**: it runs the built
+binary and reads the version it reports. A binary compiled without `-ldflags`
+says `dev` and is indistinguishable from a release once it has left the machine.
+Drilled by building `forgectl` without ldflags into `dist/` — the check goes red
+and names the cause.
+
+Every release's notes carry what the build cannot do, and point at the carried
+defects below. A download page that reads as a finished product is its own kind
+of false claim.
+
+**`make db-wait` now asks the database, not Docker.** It checked the daemon and a
+container by name, which is the right diagnosis on a laptop and the wrong
+question in CI, where Postgres is a service with no such container — so every
+target depending on it was unusable there, and `release-check` could not have
+been one command. It probes the connection and falls back to the Docker
+diagnostics only when the probe fails.
+
+### Fences
+
+22 over the new code, **11 mutation-drilled**. One drill came back green and the
+fence was real: two phrases in the table both match the sentence, so removing
+either leaves the other. Removing both goes red. Worth recording, because a
+single-point mutation over defence in depth reports a working fence as vacuous —
+the same shape as the wave 6 turn-attribution drill.
+
+### The suite's own first defect
+
+It fabricated two findings on its first live run, scoring correct model prose as
+a fabricated standards figure — `"…42.3 mm square face with 31 mm spaced mounting
+holes…"` had 31 mm matched to *faceplate width*, because the word `face` appeared
+earlier in the sentence than `holes`.
+`docs/bugfix/2026-09-03-the-evaluation-suite-fabricated-its-first-findings.md`.
+
+The suite was written to hold the model to a standard of evidence and had to be
+held to the same one first. A checker reaching for the nearest available word is
+doing what a model does when it reaches for the nearest plausible figure.
+
+### What evaluation does NOT cover
+
+The **planner**. Whether it refuses to guess when a goal is underspecified, and
+whether the tasks it emits are genuinely independent, needs a project, a goal row
+and a database — a different harness rather than a longer list. Every observed
+defect this suite was built from happened on the conversation surface. Named here
+rather than papered over with a case that would not run.
 
 ---
 
@@ -772,6 +878,14 @@ already calls this phase 7.
   attached in every schema, and no test checks that a row's `updated_at` actually
   moves when something updates it without setting it by hand. The one path that
   relies on this is `identity.MarkEmailVerified`.
+- **Part ids do not survive a revision, and the comparison depends on the
+  fallback.** Measured at 1 of 4 by the evaluation suite against qwen-plus. The
+  `converse.go` clause asking for stable ids does not reliably work, so the
+  comparison view's match-by-name fallback is load-bearing rather than a safety
+  net. Not a bug — the fallback exists for exactly this, and it says so on every
+  row it produces — but it is a dependency on a model behaviour that is measured
+  and known to be unreliable. Watch the tracked rate: if it ever reaches 1
+  reliably, the fallback can be reconsidered.
 - **Two CLI commands still have their argument shape by convention.** `memory
   forget` and `memory purge` take a positional id and then flags, which Go's flag
   package will silently ignore unless the id is removed before parsing. Both do

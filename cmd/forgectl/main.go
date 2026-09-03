@@ -121,6 +121,16 @@ Containment:
   incidents act <incident-id> --kind <verb> --target <what> --as <user-id> [--outcome done|partial|failed|dry_run]
   incidents close <incident-id> --as <user-id> --review "..."
 
+Evaluation (PRD §7 — how the MODEL behaves inside the harness):
+  eval list                                    Every case, what it exists because of, and its floors
+  eval run [--only a,b] [--repeats n] [--verbose] [--json report.json]
+                                               Run the suite against a real model. Exit 1 if any
+                                               scorer falls below its floor.
+      Calls a real model: it costs money and takes minutes, and it is deliberately not part of
+      "make test". Every scorer is deterministic Go — nothing here asks a model to grade a model.
+      Rates are measurements, not guarantees: the same prompt has produced a correct standards
+      figure and a fabricated one four runs apart.
+
 Drills:
   drill list                                   What each recovery drill proves (PRD NFR-07)
   drill run [--only a,b] [--verbose] [--keep]  Inject real faults; exit 1 if any invariant broke
@@ -394,6 +404,22 @@ func run(ctx context.Context, cmd string, args []string) error {
 				WithDetail("unknown incidents subcommand %q; expected list, show, open, preserve, act or close", args[0])
 		}
 
+	case "eval":
+		if len(args) == 0 {
+			fmt.Fprint(os.Stderr, usage)
+			return errs.New("forgectl.run", errs.CodeValidationFailed).
+				WithDetail("eval needs a subcommand: list or run")
+		}
+		switch args[0] {
+		case "list":
+			return cmdEvalList()
+		case "run":
+			return cmdEvalRun(ctx, cfg, log, args[1:])
+		default:
+			return errs.New("forgectl.run", errs.CodeValidationFailed).
+				WithDetail("unknown eval subcommand %q; expected list or run", args[0])
+		}
+
 	case "drill":
 		if len(args) == 0 {
 			return errs.New("forgectl.run", errs.CodeValidationFailed).
@@ -497,6 +523,12 @@ func sectionsFor(cmd string) []config.Section {
 		// an LLM key to revoke a credential during an incident would be the
 		// worst possible moment to ask for one.
 		return []config.Section{config.SectionDB}
+	case "eval":
+		// Evaluation calls a real model and touches no database. Requiring a
+		// database URL to measure how the model behaves would make the suite
+		// unrunnable in exactly the place it is most useful — a laptop, against
+		// a candidate model, before anything is deployed.
+		return []config.Section{config.SectionLLM}
 	case "drill":
 		// Drills build their own schemas from the migration chain and need no
 		// model. Requiring an LLM key to prove the system degrades safely would

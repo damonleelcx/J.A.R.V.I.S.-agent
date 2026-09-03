@@ -43,7 +43,7 @@ green in CI against a live Postgres.**
 | 4 | Tools: capability registry, sandbox, honest unavailable connectors | ✅ Done |
 | 5 | Console: goal management, execution timeline, approvals UI | ✅ Done |
 | 6 | Workbench: voice conversation, 3D studio, provenance | ✅ Done |
-| 7 | Evaluation suites, recovery drills, release | ⏳ Next |
+| 7 | Evaluation suites, recovery drills in CI, release pipeline | ✅ Done |
 
 ---
 
@@ -461,6 +461,58 @@ tokens, cost, wall-clock, task depth, and total task count. A bound on one of
 them is not a bound. All seven are in `EngineConfig` and validated at startup.
 
 ---
+
+## Measuring the model, not the harness
+
+Everything above proves the *harness* is correct. `forgectl eval run` measures
+whether the **model** behaves acceptably inside it — which is where the real
+damage has come from: a fabricated NEMA 17 bolt pattern, dimensions travelling
+without their unit, part ids renamed between turns.
+
+Four rules hold it up. **Nothing grades its own homework** — every scorer is
+deterministic Go over the reply, and where one needs a fact about the world it is
+written down in the suite with its source named. **No fakes**: a nil client is
+refused, because a stub would measure the stub. **The output is a rate, never a
+pass** — the same prompt has produced a correct standards figure and a fabricated
+one four runs apart, so each case runs N times and every reply is kept for
+re-judging. And **floors are observations**, each carrying the measurement it came
+from; a floor with no measurement behind it gets lowered the first time it fails.
+
+Some properties are *tracked* rather than required. Part-id stability is measured
+at 1 of 4: the clause asking the model to keep ids stable across turns does not
+reliably work, so the variant comparison's match-by-name fallback is load-bearing
+rather than a safety net — and there is now a number saying so. Requiring it
+would hold the suite permanently red until somebody lowered a number, which is
+how every floor in a suite eventually stops meaning anything.
+
+The suite is deliberately not part of `make test`: it calls a real model, costs
+money, and is non-deterministic. It runs on demand and weekly.
+
+It also produced its own first defect — it fabricated two findings on its first
+live run, scoring correct model prose as a fabricated standards figure. It was
+written to hold the model to a standard of evidence, and had to be held to the
+same one first
+(`docs/bugfix/2026-09-03-the-evaluation-suite-fabricated-its-first-findings.md`).
+
+## Cutting a release
+
+```bash
+make release-check    # formatting, vet, full suite on live Postgres, recovery drills, build
+make dist             # cross-compiled binaries for darwin and linux, amd64 and arm64
+make dist-verify      # run the built binary and read the version IT reports
+```
+
+`.github/workflows/release.yml` runs the same `make release-check` rather than
+re-listing its steps in YAML — a workflow that keeps its own copy of the checks
+drifts from the Makefile, and then a release passes a gate nobody can run
+locally.
+
+`dist-verify` checks the **artefact, not the recipe**. A binary compiled without
+`-ldflags` reports `dev` and is indistinguishable from a release once it has left
+the machine, so the check runs the binary and reads what it says about itself.
+
+Release notes carry what the build cannot do and point at the carried defects. A
+download page that reads as a finished product is its own kind of false claim.
 
 ## Repository layout
 

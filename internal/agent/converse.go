@@ -99,6 +99,18 @@ About "prototype":
 About "proposed_goal": offer one only when they have described work they want
 DONE, not merely discussed. It is a proposal — nothing runs until they start it.`
 
+// NotVerifiedFallback is what VIS-06's banner says when the model supplied
+// nothing of its own.
+//
+// A named constant rather than a literal at its one call site, because a second
+// reader needs it: the evaluation suite measures whether the MODEL wrote
+// something specific, and it can only do that by telling the model's own words
+// apart from this backstop (internal/eval/scorers.go). Two copies of this
+// sentence would drift, and the drift would silently credit the backstop to the
+// model — the property would stop being measured with nothing reporting it.
+const NotVerifiedFallback = "Nothing here has been analysed or checked. There is no CAD kernel, " +
+	"solver, or interference check in this deployment — this is a shape, not a result."
+
 // Conversation is the workbench dialogue.
 //
 // It is deliberately separate from the planner and the executor. This surface
@@ -276,10 +288,7 @@ func (r *Reply) validate() error {
 		// without a statement of what it does not establish is exactly the
 		// render that gets mistaken for an analysis.
 		if len(r.Prototype.NotVerified) == 0 {
-			r.Prototype.NotVerified = []string{
-				"Nothing here has been analysed or checked. There is no CAD kernel, " +
-					"solver, or interference check in this deployment — this is a shape, not a result.",
-			}
+			r.Prototype.NotVerified = []string{NotVerifiedFallback}
 		}
 		for i := range r.Prototype.Parts {
 			p := &r.Prototype.Parts[i]

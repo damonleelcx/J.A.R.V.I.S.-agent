@@ -1,0 +1,67 @@
+name: Evaluation suite
+
+# How the MODEL behaves inside the harness (README phase 7).
+#
+# Deliberately NOT part of CI. It calls a real model, so it costs money and
+# takes minutes, and its output is non-deterministic — the same prompt has
+# produced a correct standards figure and a fabricated one four runs apart. A
+# suite like that on every pull request would either be flaky or be quietly
+# weakened until it stopped failing, and both are worse than not running it.
+on:
+  schedule:
+    # Weekly. Often enough to notice a provider swapping a model underneath us,
+    # rare enough that the bill is predictable.
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      repeats:
+        description: "Runs per case (a single run measures nothing)"
+        default: "3"
+
+jobs:
+  eval:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      # A scheduled job that fails every week because a secret was never set is
+      # noise, and noise is how a real failure gets scrolled past. It says what
+      # it skipped and why, and succeeds — an unrun suite is not a red suite.
+      - name: Check the key is present
+        id: key
+        run: |
+          if [ -z "${{ secrets.FORGE_LLM_API_KEY }}" ]; then
+            echo "FORGE_LLM_API_KEY is not set in this repository's secrets, so the"
+            echo "evaluation suite cannot run. It measures how the MODEL behaves inside"
+            echo "the harness, and there is no stub that would measure anything real."
+            echo "present=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "present=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Run the suite
+        if: steps.key.outputs.present == 'true'
+        run: |
+          go run ./cmd/forgectl eval run \
+            --repeats "${{ github.event.inputs.repeats || '3' }}" \
+            --verbose \
+            --json eval-report.json
+        env:
+          FORGE_LLM_API_KEY: ${{ secrets.FORGE_LLM_API_KEY }}
+          FORGE_LLM_BASE_URL: ${{ vars.FORGE_LLM_BASE_URL }}
+
+      # Kept whether the suite passed or not: the rates and the raw replies are
+      # the point, and the run that fell below a floor is the one somebody needs
+      # to read.
+      - name: Keep the report
+        if: always() && steps.key.outputs.present == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: eval-report
+          path: eval-report.json
+          if-no-files-found: warn

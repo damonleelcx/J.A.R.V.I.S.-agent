@@ -50,5 +50,18 @@ jobs:
         env:
           FORGE_TEST_DATABASE_URL: postgres://forge:forge_dev_pw@localhost:55840/forge?sslmode=disable
 
+      # NFR-07 is a claim about what happens when things BREAK, and nothing else
+      # in the suite breaks anything: the unit tests exercise the happy path and
+      # the integration tests exercise a working database. These kill a worker
+      # holding a lease, fail a dependency terminally, settle a goal with work
+      # outstanding, and corrupt a checkpoint — then check what survived.
+      #
+      # A drill that cannot prove its fault landed is reported VACUOUS and fails
+      # the run, so a green line here means something was actually disturbed.
+      - name: Recovery drills (real injected faults)
+        run: go run ./cmd/forgectl drill run
+        env:
+          FORGE_DATABASE_URL: postgres://forge:forge_dev_pw@localhost:55840/forge?sslmode=disable
+
       - name: Build
         run: make build
