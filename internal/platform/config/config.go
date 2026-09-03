@@ -43,6 +43,7 @@ type Config struct {
 	Auth   AuthConfig
 	LLM    LLMConfig
 	Engine EngineConfig
+	Media  MediaConfig
 }
 
 // HTTPConfig covers the public API and console surface.
@@ -161,9 +162,80 @@ type LLMConfig struct {
 	// to return a structured reply and the fast conversational one took 6.8s.
 	// Neither meets the target — but routing conversation through the reasoning
 	// model guarantees it never will.
-	Converse       string
+	Converse string
+	// Transcriber turns room audio into transcript text (PRD AUD-03).
+	//
+	// A speech model, not a chat model. It is reached through the ordinary chat
+	// endpoint because this provider's OpenAI-compatible surface has no
+	// /audio/transcriptions route — see internal/llm/transcribe.go.
+	Transcriber string
+	// Speaker turns FORGE's words into audio for a room (PRD AUD-05).
+	//
+	// Reached through the chat endpoint with streaming, because this provider has
+	// no /audio/speech route and returns no audio at all without `stream: true`.
+	Speaker string
+	// Voice is which synthesised voice FORGE speaks in. One per deployment, so
+	// the character sounds the same in every room.
+	Voice          string
 	RequestTimeout time.Duration
 	MaxRetries     int
+}
+
+// MediaConfig is the realtime audio plane (PRD COL-01, AUD-03, NFR-04).
+//
+// # Why this is off by default
+//
+// Turning it on binds a UDP port range and starts accepting media. An upgrade
+// that silently began doing that would be a network change nobody asked for, on
+// every existing deployment at once. Rooms, presence and the live transcript all
+// work without it — audio is an addition to the main path, not part of it — so
+// the safe default is the one that changes nothing.
+//
+// A request for audio while it is off is refused with MEDIA_DISABLED, which
+// names the variable to set. "Audio unavailable" with no reason is the kind of
+// thing people file bugs about.
+type MediaConfig struct {
+	// Enabled turns the SFU on.
+	Enabled bool
+	// ICEServers are STUN/TURN URLs. Empty is correct for a server reachable at
+	// a routable address: it then offers host candidates, which connect fastest.
+	ICEServers []string
+	// UDPPortMin and UDPPortMax bound the range the media plane binds.
+	//
+	// A bounded range rather than an ephemeral port, because the ports have to be
+	// opened in a firewall by a person, and "whatever the kernel picks" cannot be.
+	UDPPortMin int
+	UDPPortMax int
+	// PublicIP is advertised in host candidates when the server is behind a NAT
+	// that it cannot discover through. Empty means advertise what is observed.
+	PublicIP string
+	// MaxParticipants is NFR-04's ceiling, enforced rather than assumed.
+	MaxParticipants int
+
+	// Transcribe turns spoken audio into turns in the room's record (AUD-03).
+	//
+	// On by default WHEN MEDIA IS ON, because a room that carries audio and
+	// records nothing fails the requirement the room exists for: COL-01 asks for
+	// a record of who said what, and an untranscribed meeting has none. It is
+	// separable because it calls a paid provider on every utterance, and an
+	// operator who wants audio without that bill must be able to say so.
+	Transcribe bool
+	// SilenceGap is how long a participant's packets must stop before their
+	// segment is treated as a finished utterance.
+	//
+	// This is not voice activity detection — see internal/media/transcribe.go.
+	// Too short and sentences are cut into fragments the model transcribes
+	// separately and worse; too long and the transcript lags the conversation.
+	SilenceGap time.Duration
+	// MaxSegment caps one utterance, so a client that never stops sending still
+	// produces transcript rather than one unbounded segment.
+	MaxSegment time.Duration
+	// TranscribeWorkers is how many segments may be in flight at the provider.
+	//
+	// Sized against the room, not the machine: twenty people all talking produce
+	// segments faster than one request at a time can absorb, and the queue
+	// behind this drops rather than blocks — dropping is lost transcript.
+	TranscribeWorkers int
 }
 
 // EngineConfig bounds the durable execution engine.
@@ -282,6 +354,25 @@ func (l *loader) dur(key string, def time.Duration) time.Duration {
 	return d
 }
 
+// list reads a comma-separated variable, dropping blanks.
+//
+// Returns nil rather than a one-element slice of "" when unset, because an ICE
+// server list containing an empty URL is rejected by the media stack at start-up
+// with an error that points nowhere near the configuration.
+func (l *loader) list(key string) []string {
+	raw := strings.TrimSpace(os.Getenv(key))
+	if raw == "" {
+		return nil
+	}
+	var out []string
+	for _, part := range strings.Split(raw, ",") {
+		if p := strings.TrimSpace(part); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 func (l *loader) boolVal(key string, def bool) bool {
 	raw := strings.TrimSpace(os.Getenv(key))
 	if raw == "" {
@@ -339,6 +430,47 @@ func Load(required ...Section) (*Config, []string, error) {
 	}
 	if prod && set.has(SectionHTTP) && strings.HasPrefix(cfg.HTTP.PublicURL, "http://") {
 		l.fail("FORGE_PUBLIC_URL", "must use https:// in production; verification and reset links carry live credentials")
+	}
+
+	cfg.Media = MediaConfig{
+		Enabled:         l.boolVal("FORGE_MEDIA_ENABLED", false),
+		ICEServers:      l.list("FORGE_MEDIA_ICE_SERVERS"),
+		UDPPortMin:      l.intVal("FORGE_MEDIA_UDP_PORT_MIN", 50000),
+		UDPPortMax:      l.intVal("FORGE_MEDIA_UDP_PORT_MAX", 50200),
+		PublicIP:        l.str("FORGE_MEDIA_PUBLIC_IP", ""),
+		MaxParticipants: l.intVal("FORGE_MEDIA_MAX_PARTICIPANTS", 20),
+
+		Transcribe:        l.boolVal("FORGE_MEDIA_TRANSCRIBE", true),
+		SilenceGap:        l.dur("FORGE_MEDIA_SILENCE_GAP", 800*time.Millisecond),
+		MaxSegment:        l.dur("FORGE_MEDIA_MAX_SEGMENT", 15*time.Second),
+		TranscribeWorkers: l.intVal("FORGE_MEDIA_TRANSCRIBE_WORKERS", 4),
+	}
+	if cfg.Media.Enabled {
+		if cfg.Media.UDPPortMin < 1 || cfg.Media.UDPPortMax > 65535 || cfg.Media.UDPPortMin > cfg.Media.UDPPortMax {
+			l.fail("FORGE_MEDIA_UDP_PORT_MIN", fmt.Sprintf(
+				"the media port range %d-%d is not a usable range within 1-65535",
+				cfg.Media.UDPPortMin, cfg.Media.UDPPortMax))
+		} else if got := cfg.Media.UDPPortMax - cfg.Media.UDPPortMin + 1; got < cfg.Media.MaxParticipants {
+			// Each participant needs at least one port. A range narrower than the
+			// room ceiling fails at the worst moment — when the room fills — and
+			// looks like a media bug rather than a configuration one.
+			l.fail("FORGE_MEDIA_UDP_PORT_MAX", fmt.Sprintf(
+				"the media port range holds %d port(s) but a room admits %d participant(s); widen the range or lower FORGE_MEDIA_MAX_PARTICIPANTS",
+				got, cfg.Media.MaxParticipants))
+		}
+		if cfg.Media.MaxParticipants < 1 {
+			l.fail("FORGE_MEDIA_MAX_PARTICIPANTS", "must be at least 1; a room nobody may join is not a room")
+		}
+		if cfg.Media.Transcribe {
+			if cfg.Media.SilenceGap <= 0 || cfg.Media.MaxSegment <= cfg.Media.SilenceGap {
+				l.fail("FORGE_MEDIA_MAX_SEGMENT", fmt.Sprintf(
+					"the maximum segment (%s) must be longer than the silence gap (%s), or every utterance is cut off before it can end",
+					cfg.Media.MaxSegment, cfg.Media.SilenceGap))
+			}
+			if cfg.Media.TranscribeWorkers < 1 {
+				l.fail("FORGE_MEDIA_TRANSCRIBE_WORKERS", "must be at least 1; zero workers means audio is segmented and never transcribed")
+			}
+		}
 	}
 
 	cfg.DB = DBConfig{
@@ -432,6 +564,9 @@ func Load(required ...Section) (*Config, []string, error) {
 		Verifier:       l.str("FORGE_LLM_VERIFIER_MODEL", "deepseek-v4-pro"),
 		Summarizer:     l.str("FORGE_LLM_SUMMARIZER_MODEL", "qwen3.8-flash"),
 		Converse:       l.str("FORGE_LLM_CONVERSE_MODEL", "qwen-plus"),
+		Transcriber:    l.str("FORGE_LLM_TRANSCRIBER_MODEL", "qwen3-asr-flash-2026-02-10"),
+		Speaker:        l.str("FORGE_LLM_SPEAKER_MODEL", "qwen3-omni-flash"),
+		Voice:          l.str("FORGE_LLM_VOICE", "Cherry"),
 		RequestTimeout: l.dur("FORGE_LLM_REQUEST_TIMEOUT", 3*time.Minute),
 		MaxRetries:     l.intVal("FORGE_LLM_MAX_RETRIES", 3),
 	}
@@ -517,6 +652,12 @@ func (c *Config) Redacted() map[string]any {
 		"llm_executor":       c.LLM.Executor,
 		"llm_verifier":       c.LLM.Verifier,
 		"llm_summarizer":     c.LLM.Summarizer,
+		"media_enabled":      c.Media.Enabled,
+		"media_udp_ports":    fmt.Sprintf("%d-%d", c.Media.UDPPortMin, c.Media.UDPPortMax),
+		"media_max_parts":    c.Media.MaxParticipants,
+		"media_transcribe":   c.Media.Transcribe,
+		"media_silence_gap":  c.Media.SilenceGap.String(),
+		"media_ice_servers":  len(c.Media.ICEServers),
 		"worker_concurrency": c.Engine.WorkerConcurrency,
 		"lease_duration":     c.Engine.LeaseDuration.String(),
 		"max_attempts_task":  c.Engine.MaxAttemptsPerTask,

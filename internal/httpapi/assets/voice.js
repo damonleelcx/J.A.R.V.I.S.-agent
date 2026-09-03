@@ -274,16 +274,69 @@
     return this.synthAvailable ? global.speechSynthesis.getVoices() : [];
   };
 
+  /* One axis value: a signed number and, optionally, the unit written after it.
+   * Composed into COORD three times rather than typed out three times, because
+   * the three have to stay identical. Mirrors coordinateSegment and
+   * coordinateExpr in internal/media/readback.go. */
+  var COORD_SEGMENT = '(-?\\d+(?:\\.\\d+)?(?:\\s?[A-Za-z°]+)?)';
+  var COORD = new RegExp(
+    '\\(\\s*' + COORD_SEGMENT +
+    '\\s*,\\s*' + COORD_SEGMENT +
+    '\\s*,\\s*' + COORD_SEGMENT + '\\s*\\)', 'g');
+
+  /* spokenSign makes a leading minus audible. "-" is silent in the voices this
+   * is synthesised through, so "-40 mm" is heard as "40 millimetres": a
+   * coordinate on the wrong side of the datum, the same class of failure as the
+   * silent ± below.
+   *
+   * Scoped to coordinates on purpose. A general rule would also rewrite dates
+   * ("2026-09-03") and ranges ("5-10mm"), where the hyphen is not a sign. */
+  function spokenSign(seg) {
+    return seg.charAt(0) === '-' ? 'minus ' + seg.slice(1) : seg;
+  }
+
   /* readable rewrites text so a listener can transcribe it correctly.
    *
    * PRD AUD-04 requires numbers, units, tolerances and identifiers to be read
    * back unambiguously. These substitutions are the ones that actually change
-   * meaning when a listener writes down what they heard. */
+   * meaning when a listener writes down what they heard.
+   *
+   * THIS FUNCTION HAS A TWIN: internal/media/readback.go. The workbench speaks
+   * through the browser and a room speaks through the server, two runtimes under
+   * one requirement, so the rules are written twice. A rule added here and not
+   * there is read back correctly in the workbench and wrongly in a room — which
+   * is exactly what happened when the room voice shipped. Change both, and add a
+   * case to TestReadbackMakesTextTranscribable.
+   *
+   * TestTheReadbackRulesHaveNotDrifted counts the .replace() calls below and
+   * fails when the two copies stop agreeing, so adding a rule here alone turns
+   * the Go suite red rather than going unnoticed. */
   function readable(text) {
     return text
-      // Version and dotted-number strings, digit by digit.
-      .replace(/\b(\d+)\.(\d+)\.(\d+)\b/g, function (_, a, b, c) {
-        return a + ' point ' + b + ' point ' + c;
+      // Dotted-number strings — versions, IP addresses, build numbers — segment
+      // by segment. Any number of segments: written as exactly three, it read
+      // "1.2.3.4" as "1 point 2 point 3.4", the first three spoken and the
+      // fourth left as a decimal.
+      //
+      // Two dots minimum, so a plain decimal is left alone: "2.5" and "$2.50"
+      // are already read correctly. No \b at the front, deliberately — there is
+      // no word boundary between the "v" and the "0" of "v0.2.0", so a leading
+      // \b skipped the most common way a version is written. It did, on both
+      // copies, until it was noticed. The \b at the end keeps "1.2.3mm" out of
+      // here and leaves it to the unit rules.
+      .replace(/\d+(?:\.\d+){2,}\b/g, function (m) {
+        return m.split('.').join(' point ');
+      })
+      // Coordinates, spoken with their axes and their signs. A position leaves
+      // the geometry model as "(12.5 mm, 0 mm, -40 mm)"; parentheses and commas
+      // are silent, so a listener hears three numbers with nothing to say which
+      // is which axis, and the silent minus puts the part 80mm from where it
+      // is. The frame those axes belong to is deliberately not added here — it
+      // is not in the text, and this layer must not invent a datum (RSN-06).
+      // Three segments only: a pair in prose is more likely to be a list.
+      // Why: docs/bugfix/2026-09-03-coordinates-read-back-without-axes-or-sign.md
+      .replace(COORD, function (_, x, y, z) {
+        return 'X ' + spokenSign(x) + ', Y ' + spokenSign(y) + ', Z ' + spokenSign(z);
       })
       // Units, spelled out. "5mm" heard as "five em em" is not a measurement.
       .replace(/(\d)\s?mm\b/g, '$1 millimetres')

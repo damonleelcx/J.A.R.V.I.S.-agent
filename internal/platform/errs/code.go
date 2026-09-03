@@ -113,6 +113,19 @@ const (
 	CodeMFARequired Code = "MFA_REQUIRED"
 	// CodeMFAInvalid means the second factor was wrong, replayed, or expired.
 	CodeMFAInvalid Code = "MFA_INVALID"
+
+	// CodeRoomAtCapacity is NFR-04's ceiling, refused rather than degraded.
+	//
+	// A room that quietly admitted a twenty-first participant would degrade for
+	// everyone already in it, and the person who caused it would be the only one
+	// who could not tell. A refusal names the limit; silent overload does not.
+	CodeRoomAtCapacity Code = "ROOM_AT_CAPACITY"
+	// CodeMediaDisabled means this deployment has no media plane configured.
+	//
+	// Distinct from a failure: nothing is broken, the operator has not turned it
+	// on. The remedy names the variable, because "audio unavailable" with no
+	// reason is the kind of thing people file bugs about.
+	CodeMediaDisabled Code = "MEDIA_DISABLED"
 )
 
 // ---------------------------------------------------------------------------
@@ -227,6 +240,14 @@ var registry = map[Code]Definition{
 	CodeEvidenceNotPreserved: {CodeEvidenceNotPreserved, CategoryBusiness, 409,
 		"A destructive incident action was attempted before any evidence was preserved.",
 		"Record a preserve_evidence action first, or run this one as a dry run. Stopping, revoking and rolling back all destroy state an investigation needs, and evidence gathered afterwards is evidence of the response rather than of the incident.", false},
+
+	CodeRoomAtCapacity: {CodeRoomAtCapacity, CategoryBusiness, 409,
+		"This room already holds as many participants as it supports.",
+		"Wait for somebody to leave, or raise FORGE_MEDIA_MAX_PARTICIPANTS. PRD NFR-04 sizes a room at 1-20 identified participants; admitting more would degrade the audio for everybody already in it.", false},
+
+	CodeMediaDisabled: {CodeMediaDisabled, CategoryBusiness, 409,
+		"This deployment has no audio media plane configured.",
+		"Set FORGE_MEDIA_ENABLED=true and restart. Rooms, presence and the live transcript work without it; only shared audio needs it.", false},
 
 	CodeLastOwner: {CodeLastOwner, CategoryBusiness, 409,
 		"This change would leave the project with no owner.",

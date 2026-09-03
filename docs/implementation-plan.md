@@ -23,7 +23,11 @@ conversion cost. Roughly the whole vertical from
 "someone speaks" to "a worker executes a verified task", plus the record of it,
 what it remembers, what it thinks is true, and what happens when it breaks.
 
-Missing: SSO and realtime audio transport. Everything else named in the PRD is
+Missing: SSO. Rooms are live and usable in a browser, participants hear each
+other, what they say is transcribed into the record, the privacy controls over
+that are enforced server-side, and FORGE speaks in the room and stops when
+somebody interrupts it (waves 9 to 9.6).
+Everything else named in the PRD is
 built, fenced, and released by one command.
 
 The split matters when planning: the core loop is done, so every wave below adds
@@ -606,6 +610,7 @@ the permission matrix through the real binary.
   be worse than not shipping one. What it needs: a real IdP tenant to test
   against, and it is then a self-contained piece of work.
 - **Realtime multi-party audio transport** (COL-01's other half), as above.
+  Wave 9 has since built the live session spine; the media plane is still open.
 
 Both are named here rather than quietly folded into "done".
 
@@ -850,6 +855,588 @@ rather than papered over with a case that would not run.
 
 ---
 
+## Wave 9 — the live session spine · **DONE**
+
+COL-01 was built as a record and reachable only from `forgectl`: an operator
+could read a transcript, and the people in the meeting had no way to be in one.
+This wave makes a room something two browsers can share.
+
+### What had to be settled first: what "audio transport" carries
+
+Three shapes were possible — signalling only, signalling plus a server-side
+recognition fallback, or a full WebRTC/SFU media plane. **Full media transport
+was chosen.** It is the most expensive option and the one that makes AUD-03's
+speaker separation structural rather than inferred, because each participant
+arrives on their own RTP stream.
+
+Both of its premises were proven before anything was built on them —
+`docs/spikes/2026-09-03-webrtc-sfu/`:
+
+- **pion/webrtc negotiates and forwards RTP**, pure Go, `CGO_ENABLED=0`. The
+  cost is 20 newly linked modules in a repository that has three direct
+  dependencies, recorded so it is a decision rather than a surprise.
+- **Server-side ASR exists but not where expected.** The OpenAI-style
+  `/audio/transcriptions` route returns 404 on the configured provider;
+  transcription runs through `/chat/completions` with `input_audio`.
+
+The spike also found a defect that changes wave 9.4's design: **the ASR drops
+decimal points in realistic engineering sentences** — "two point five" comes back
+as "two five", reproducibly, 5 of 5. Domain vocabulary alone does not fix it. It
+transcribes a bare "zero point five" correctly and corrupts the same value inside
+a sentence, so a naive smoke test passes. The system context is therefore a
+correctness requirement, not a tuning parameter.
+
+### What is built
+
+Rooms over HTTP — open, list, read, join, leave, speak, close — and
+`GET /v1/rooms/{id}/events`, a Server-Sent Events stream carrying turns and
+presence to everybody in the room. SSE rather than a WebSocket, matching
+`converse.go`: the traffic is one-directional and low-rate, and it needs no
+second connection primitive.
+
+**The hub is derived state and never authoritative.** Every write reaches
+Postgres first and is published second. The inverse ordering — publish first so
+the room feels faster — produces a room where somebody saw a turn that is not in
+the transcript, which is the exact failure COL-01 exists to prevent. The hub
+lives on the *service* rather than the handler, so a turn written by `forgectl`,
+or later by the SFU, reaches subscribers too; publishing from the handler would
+have given two answers to "was that delivered".
+
+A subscriber that stops reading is **disconnected with a reason** rather than
+waited for or silently skipped. A stalled browser must not slow down the person
+talking, and a client told it fell behind re-reads the record — which is the
+truth anyway. One that is silently skipped renders a transcript with a hole in it
+and cannot find out.
+
+Permissions reuse `PermProjectRead`; no new constant was introduced. A room is a
+meeting, not project content. What that does not relax is consequence: approvals
+made in a room remain gated by `PermApprovalDecide`. Being in the room is not
+authority.
+
+### One bug this wave found in itself
+
+The first hub notified a lagging subscriber by sending a final event to its
+channel after releasing the lock. A client closing itself in that window closed
+the channel first, and the next send would panic with "send on closed channel" —
+taking the server down, from nothing worse than a browser tab shutting at an
+unlucky moment. The reason is now recorded in a flag and nothing is written to a
+subscription outside the lock.
+
+Its first fence was **vacuous** and said so only under mutation: a subscriber
+reaches the lagging path only when its buffer is already full, and the drill
+closed subscriptions long before 32 events accumulated, so the broken line never
+ran. The fence now fills the buffer to exactly capacity first, and the mutation
+panics as it should.
+
+### Fences
+
+**24 cases** across 12 test functions — 6 on the hub, 18 on the HTTP surface,
+counting subtests, 9 of them against live Postgres.
+
+3 were drilled by mutation and all 3 went red: the send-outside-the-lock panic,
+the authorisation boundary (4 of 4 subtests), and route mounting — which catches
+a handler that exists but was never wired, the one failure every handler test
+would pass straight through.
+
+---
+
+## Wave 9.2 — the SFU media plane · **DONE**
+
+Two people in a room now hear each other. `internal/media` forwards RTP between
+participants; `POST /v1/rooms/{id}/media/offer` and `.../answer` carry the
+signalling, and server-initiated offers ride the SSE stream wave 9 built.
+
+### The exchange, and why it needs two directions
+
+A participant offers once and the server answers. That establishes their
+**uplink** and nothing more, because an answer can only describe media sections
+the offer already contained. Their **downlinks** — one per other participant —
+arrive by renegotiation, which the server initiates whenever the set of tracks a
+peer should receive changes. That is every join and every departure.
+
+```
+client  POST /v1/rooms/{id}/media/offer   ──▶  uplink established
+server  SSE  event: media-offer           ──▶  downlinks added
+client  POST /v1/rooms/{id}/media/answer  ──▶  exchange closed
+```
+
+Server-initiated offers were the reason wave 9 needed an SSE stream before this
+wave could exist. They also forced two pieces of care:
+
+- **Downlinks are attached when the peer reports connected**, not before the
+  answer is returned. Offering earlier races the answer over a different
+  connection, and the client rejects a renegotiation for a session it has not
+  finished establishing.
+- **One exchange at a time.** WebRTC permits a single offer/answer in flight; a
+  second is refused, and the track that prompted it would then never arrive —
+  somebody in the room silently inaudible. An offer raised mid-exchange is
+  deferred and sent when the peer is stable again.
+
+### Identity is carried by the transport
+
+Each forwarded track names its source: the track id is the connection, the
+stream id is the person. A receiving client labels the speaker from the
+transport rather than inferring it from audio. This is what makes AUD-03's
+speaker separation structural — and it is the reason an SFU was chosen over a
+mixer, which would have summed the streams and made attribution unrecoverable.
+
+Unchanged and still true: separation is per CONNECTION. Four people around one
+microphone are one speaker here. Diarization is not built and the docs do not
+claim it.
+
+### Signalling is addressed to a connection, never to a person
+
+One person with two tabs is two peers with two different sets of tracks. Streams
+therefore carry an id of their own (`stm_`, distinct from the `ses_` of an
+authenticated session — a different thing with a different lifetime), minted by
+the SSE stream and handed to the client in a new `hello` frame.
+
+A caller may only drive a stream that is **theirs and in this room**. Both halves
+are enforced: naming another member's stream would let you rearrange what they
+hear or hang up their microphone, and a stream id learned in one room grants
+nothing in another.
+
+### Off by default
+
+`FORGE_MEDIA_ENABLED` defaults to false. Turning it on binds a UDP port range and
+begins accepting media; an upgrade that silently started doing that would be a
+network change nobody asked for, on every deployment at once. Asking for audio
+while it is off returns `MEDIA_DISABLED` and names the variable — kept distinct
+from a media plane that is *on and broken*, because those need opposite
+responses. A broken one is logged at ERROR and the server still serves rooms:
+audio is an addition to the main path, and losing it must not take text with it.
+
+Startup refuses a port range narrower than the room ceiling. That would otherwise
+fail exactly when the room fills, and present as a media bug rather than the
+configuration mistake it is.
+
+### Fences
+
+**9 cases.** 4 in `internal/media` against real peer connections — real DTLS,
+real SRTP, real Opus payloads, nothing stubbed but the channel the renegotiation
+offer travels on — and 5 on the HTTP surface.
+
+3 drilled by mutation, all 3 red: NFR-04's ceiling (removing it admits the
+twenty-first participant), stream ownership (weakening it to mere existence lets
+one member drive another's audio), and room scoping (removing it lets a stream id
+from one room be used in another).
+
+`CGO_ENABLED=0` cross-compiles verified for linux/amd64, linux/arm64,
+darwin/arm64 and windows/amd64, so `make dist` is unaffected by the new
+dependency.
+
+---
+
+## Wave 9.3 — spoken turns in the record · **DONE**
+
+What is said aloud in a room now lands in its transcript, attributed, through the
+same `collab.Service.Say` a typed turn goes through. A spoken turn differs only
+in its channel, so there are not two ways to write one down.
+
+### Nothing is decoded, and that is a hard constraint rather than an optimisation
+
+Transcription repackages the forwarded RTP into an **Ogg Opus** container and
+sends that. The obvious alternative — decode to PCM — needs libopus through cgo,
+which would break the `CGO_ENABLED=0` cross-compile `make dist` depends on
+across four platforms. Verified against the real provider first: it accepts Ogg
+Opus and returns the same text it returns for WAV.
+
+### Segmentation, and what it is NOT
+
+A segment closes when packets stop for `SilenceGap` (800 ms) or after
+`MaxSegment` (15 s), whichever comes first.
+
+This is **not** voice activity detection, and the docs say so rather than
+implying an accuracy it does not have. Without decoding it can only watch packet
+arrival. It works because WebRTC clients stop sending during silence, and the
+maximum-duration rule is what keeps it from depending on that — a client that
+streams comfort noise continuously still produces transcript, in fixed-length
+pieces. **A sentence longer than `MaxSegment` is split across two turns.** That
+was observed, not theorised: at a 5 s cap the acceptance test's own ~5 s utterance
+came back as "…plus or minus." with the value missing.
+
+### Failure here must never silence anybody
+
+Transcription hangs off the media path, not in it. A provider that is down, a
+queue that is full, a segment that will not package — none of them stop people
+hearing each other. What is lost is transcript content, and every loss is logged
+at WARN rather than absorbed: a transcript with a hole nobody was told about is
+worse than no transcript.
+
+The queue is bounded and **drops** rather than blocks, because blocking would
+back pressure into the media path and cut somebody off mid-sentence. Dropping is
+the lesser harm and the louder one.
+
+### Fences, and the two-fixture finding
+
+The decimal defect from the wave 9 spike is now fenced against **real speech and
+the real provider** — `make test-asr`. It cannot be faked: the defect is a
+property of the model, and a stub returning "two point five" would pass forever
+while production wrote "two five" into engineering transcripts.
+
+Two audio fixtures are committed, and **neither alone is sufficient** — this was
+established by mutation, not guessed:
+
+| fixture | empty context | vocabulary only | full context |
+|---|---|---|---|
+| long, "two point five"  | passes | **FAILS** | passes |
+| short, "one point five" | **FAILS** | passes | passes |
+
+A fence built on the long fixture alone stays green when somebody deletes the
+ASR system context outright — the likeliest mutation of all. One built on the
+short fixture alone stays green when the decimal rule is dropped and the
+vocabulary kept. The first version of this fence used only the long fixture and
+**passed against a deleted context**; the pair was the fix.
+
+The end-to-end fence transcribes the container **this pipeline produced from live
+RTP**, not a re-encode: a fake transcriber would pass happily on a malformed Ogg,
+which is the one thing that could be wrong. It asserts head and tail, because a
+container that loses its last pages transcribes the opening perfectly and stops,
+which reads like a quiet speaker rather than dropped audio.
+
+**7 cases** across 5 test functions — 5 in `internal/llm` against the provider,
+2 in `internal/media` through the whole pipeline. Drilled by mutation: attribution dropped (turn arrives unattributed
+→ red), transcription unwired from the media path (no turn ever recorded → red),
+and both ASR context mutations above. One attempted drill — leaving the container
+unfinalised — did *not* go red, and on inspection is not a defect: `oggwriter`
+writes pages as it goes and loses at most the final one.
+
+### AUD-01's other half is NOT built, and needs a decision
+
+Speech activity is published (`speaking` events), which is the signal an
+interruption would be detected from and what a "who is talking" indicator reads.
+
+But **FORGE has no voice in a room.** It speaks in the workbench, through the
+browser's own synthesiser, where barge-in is already handled locally. Nothing in
+a room can be interrupted because nothing in a room is speaking. Cross-participant
+barge-in is therefore signal-complete and act-incomplete, and finishing it means
+deciding something first: whether FORGE joins rooms as a media participant with
+server-side speech. That is its own slice, not a loose end of this one.
+
+---
+
+## Wave 9.4 — controls and privacy · **DONE**
+
+### The fact that reshaped SEC-06
+
+**No audio is stored anywhere.** The media plane forwards RTP; the transcriber
+buffers a few seconds in memory, sends it to the provider, and drops it. Nothing
+in wave 9.x ever added a place to keep audio.
+
+That makes SEC-06's three requirements land differently from how they read, and
+implementing them literally would have produced controls that lie:
+
+| the requirement | what it can honestly mean here |
+|---|---|
+| retention-free mode | audio retention is already zero. What a room can choose is whether it is **transcribed**, since the transcript is the only thing that persists |
+| independent audio deletion | there is no audio to delete separately. What deletes independently is the **voice-derived half of the transcript**, leaving typed turns and the room intact |
+| visible recording state | the honest sentence is not "recording" at all: audio is forwarded live, is sent to a speech provider while transcribing is on, and is never stored |
+
+A "delete my audio" button over a system that stores no audio would be theatre.
+What is built deletes the thing that actually persists.
+
+### Deletion is redaction, and the fact survives
+
+SEC-06 says a person may erase what they said. COL-01 says the room record is an
+auditable account of who said what while approvals were being made. Those pull
+against each other and this is where they are reconciled rather than averaged:
+**the content goes, the fact does not.**
+
+A redacted turn keeps its sequence, speaker and timestamp and loses its text, so
+the transcript can say "Priya spoke at 14:02, and that turn was deleted by Priya
+at 15:10". Deleting the row would leave a gap an auditor reads as silence, which
+is a different and worse untruth.
+
+`scope=me` is the case the requirement is really about. `scope=room` erases
+everybody's speech and needs authority over the project, not merely a seat in the
+room — deleting what other people said is not a participant's decision.
+
+### The controls are enforced, not displayed
+
+Mute and pause drop the packets **at the server**, in `forward`, at the one place
+every packet passes. A mute that only stops the browser sending is a picture of a
+mute: undone by a bug, a stale tab, or anybody who edits the page. The person
+relying on it should not have to trust software running on everybody else's
+machine.
+
+Both halves of "off" are the same decision. Dropping after transcription would
+still write down what was said; dropping before forwarding would still be
+audible. One check, one meaning.
+
+Room transcription **fails closed**: a room the media plane has not been told
+about is not transcribed. Forgetting the flag loses transcript, which is visible
+in the room immediately; the opposite default would write down a conversation
+somebody chose to keep off the record, and they would never find out.
+
+Turning transcription off **flushes** what was already captured rather than
+dropping it. Stopping is not retroactive, and silently losing a sentence somebody
+expected to be in the record would be its own dishonesty.
+
+### Two of AUD-07's five are not what they sound like
+
+- **end-recording** is implemented as *stop transcribing*. The noun differs on
+  purpose: nothing is recorded, and calling it recording would promise a deletion
+  of audio that was never kept. Written as **end-recording(stop transcribing)**
+  wherever both names are needed.
+- **stop-speaking** has nothing to act on in a room. FORGE speaks in the
+  workbench, through the browser's own synthesiser, where barge-in is already
+  handled locally in `voice.js`. It has no voice in a room — the gap wave 9.3
+  named — so there is nothing there to stop.
+- **delete-session** is `POST /close` (end the session) plus
+  `DELETE /voice` (erase what was said), which are separate because ending a
+  meeting and erasing it are different decisions and one should not imply the other.
+
+### Fences
+
+**12 cases** — 4 in `internal/media`, 5 on the HTTP surface, 3 route mountings.
+
+4 drilled by mutation, all red: mute not enforced in the forwarding path (a muted
+participant is still heard), the off-the-record guard removed (audio reaches the
+provider from a room that opted out), deletion removing the row instead of
+redacting it (the turn vanishes from the transcript), and the room-wide erasure
+permission removed (a viewer erases everybody's speech).
+
+The migration is re-executable — verified by running the SQL itself twice, not
+just by the tracker skipping it the second time.
+
+---
+
+## Wave 9.5 — the browser client · **DONE**
+
+`GET /rooms/{id}` is a working shared session: transcript, roster, microphone
+selection, the AUD-07 controls, and SEC-06's state in a sentence at the top.
+
+### A separate surface, not the workbench
+
+The plan said "workbench.js". It is a separate page instead, and the reason is
+failure isolation: the workbench is one person building with FORGE and it works
+today, while a room carries a live media connection, a microphone and a privacy
+state. Folding one into the other would put every room defect inside the
+product's primary surface.
+
+The client is a module (`assets/room.js`) with no dependency on the page that
+hosts it, so the workbench can mount it later without either being rewritten.
+Evolutionary order: make it work where it cannot break anything, then place it.
+
+### AUD-03's capture half
+
+`assets/audio-input.js` is the one place a microphone is opened. Today's other
+call site asked for `{audio: true}` and accepted whatever the browser felt like.
+It now asks explicitly for echo cancellation, noise suppression and gain control,
+and **reports what the device actually granted** rather than what was requested.
+
+Echo cancellation is not an audio-quality setting here. Every participant plays
+everybody else's audio through speakers their own microphone can hear, and the
+server transcribes each stream separately — so without it the transcript fills
+with each person repeating what the others just said, attributed to the wrong
+speaker. It is what keeps attribution true.
+
+### Six defects, and five of them were invisible to the Go tests
+
+This is the wave that justified four phases of "no browser has connected to
+this". Every one of these was found by looking at the running page:
+
+1. **The page rendered in a column the width of its longest word.** `shell.css`
+   centres every body with `place-items: center`; that survives a change of
+   `display`. Fixed the way `workbench.css` already did.
+2. **`room.css` was embedded but not in the handler's allowlist** — served 404,
+   page unstyled, every fence green. The asset fence named two files it knew were
+   fine; it now walks the embedded filesystem, and going back to the allowlist
+   makes it red.
+3. **An unauthenticated visitor retried forever in silence.** EventSource reports
+   no status code, so a 401 is indistinguishable from a dropped network and the
+   browser reconnects indefinitely. The client now reads the room first, which
+   turns it into a sentence.
+4. **A deletion reached only the person who made it.** `RedactVoice` wrote the
+   redaction and published nothing, so every other open transcript went on
+   showing the deleted words indefinitely — and the person who asked for them to
+   be gone could not tell. **This was a live SEC-06 failure**, seen in one browser
+   while another had already deleted. Now published; fenced both ways.
+5. **Content was clipped, not wrapped, at narrow widths** — grid and flex children
+   will not shrink below their content unless told to, and `overflow: hidden`
+   then cut text off with no scrollbar.
+6. **The controls were raw browser defaults.** They were written with `.node`,
+   the workbench's circular icon-button class, which lives in a stylesheet this
+   page does not load. Reported by the user from a screenshot.
+
+Number 6 produced the fence worth keeping: no page may use a class that is
+styled **only** in a stylesheet it does not load. It immediately found a second
+instance nobody had noticed (`.top-sigil`, same cause).
+
+### The header now carries the avatar
+
+The standalone sigil is gone from every page header — room, workbench, console
+and the emailed pages — replaced by FORGE's portrait (`persona.AvatarHTML`). The
+sigil remains where it means something: badged onto the portrait on the workbench
+stage, where it is a state indicator. In a header beside a wordmark it was an
+abstract mark saying nothing the wordmark did not, and it is not what people
+recognise FORGE as.
+
+### Verified in a real browser
+
+Two clients in one room: turns delivered live with speaker labels and
+spoke/typed marks; roster updating on presence; the privacy sentence changing on
+both clients the moment either changed it; a deletion propagating to an open
+transcript with no reload; the typed path (AUD-06) sending and rendering with no
+microphone at all. Desktop and 375px.
+
+**Not verified: audio actually flowing through a browser.** The Browser pane
+blocks device capture, so `getUserMedia` never resolves there. The signalling,
+the peer connection and the SFU are exercised by the Go tests against real peer
+connections; what remains unproven is a real microphone in a real browser, and a
+media path across a real NAT.
+
+### Fences
+
+**6 new cases**: the class-reachability fence above, both halves of the redaction
+propagation (it publishes when something was deleted, and stays quiet when
+nothing was), the strengthened embedded-asset walk, and the caching contract.
+5 drilled by mutation, all red.
+
+### Still open
+
+- **A real microphone, and a real NAT.** Both need a person at a machine.
+### Asset caching · fixed
+
+Found during this wave and fixed in it. Assets were served
+`public, max-age=300` from a URL with nothing version-like in it and no ETag, so
+for five minutes after every deploy browsers ran the **previous** build's CSS and
+JavaScript against the new HTML — silently, with nothing to indicate it. The
+comment in `Assets` claimed they were "versioned by the build". They were not,
+and that claim is what kept anybody from noticing; it cost real time here, where
+a stylesheet change appeared simply not to work.
+
+Asset URLs now carry a **content hash** — `/assets/room.css?v=d0558f0a0e00` —
+rendered by an `asset` template function. A content hash rather than the build
+version, because a build version expires every asset on every release including
+the ones that did not change, while a content hash changes exactly when the bytes
+do.
+
+Three cases, and the middle one is the bug:
+
+| request | policy |
+|---|---|
+| version matches the current build | `max-age=31536000, immutable` — the URL names these bytes, so it can never be stale |
+| **hard cache on an unversioned URL** | **the original defect. Impossible now** |
+| unversioned, or a version this build does not have | `no-cache` + ETag — revalidates into a 304 |
+
+The portraits take the third route: `persona.PortraitURL` builds a bare path and
+knows nothing about hashing, so they revalidate rather than being cached hard.
+That is one round trip, not a defect, and they carry an ETag so it is a 304
+rather than a PNG.
+
+Fenced with the properties that make a hard cache safe, each asserted rather than
+assumed: the version is a real content hash (two assets cannot share one, and it
+must equal the hash of the bytes served), every asset a page references is either
+versioned-and-immutable or unversioned-and-revalidating, and a matching
+`If-None-Match` really returns 304. Drilled both ways — restoring the hard cache
+on unversioned URLs goes red, and so does making the version stop depending on
+contents.
+
+---
+
+## Wave 9.6 — FORGE's voice in a room · **DONE**
+
+FORGE speaks in a room, is interrupted when somebody else does, and can be
+stopped. AUD-01's barge-in and AUD-07's stop-speaking had nothing to act on
+before this; they do now.
+
+### The decision, and what forced it
+
+The provider streams speech in about **0.6 s**, faster than real time thereafter
+— but as **raw 16-bit PCM at 24 kHz**. The SFU forwards Opus and never encodes,
+which is what has kept the media plane pure Go across four platforms. And **there
+is no usable pure-Go Opus encoder**: `pion/opus` ships a decoder only, and every
+working encoder is cgo bindings to libopus.
+
+So server-side speech was either lower-fidelity or cgo. Three shapes, put to the
+user with measurements rather than opinion (`docs/spikes/2026-09-03-forge-voice-in-a-room/`):
+
+| | quality | pure Go | one voice, one instant |
+|---|---|---|---|
+| **G.711 track in the SFU** ← chosen | 8 kHz | **yes** | **yes** |
+| Opus track via cgo | 48 kHz | no | yes |
+| each browser speaks the text | browser's own | yes | **no** |
+
+Client-side synthesis was the tempting one — no server audio, no bill, no code.
+It fails the requirement in a way that is easy to miss: everybody would hear a
+different voice, starting at different moments, and an interruption would stop
+one person's playback while the others talked on. That is not a participant
+speaking; it is several recordings of the same sentence.
+
+The cost of G.711 was measured, not asserted. The same utterance through the
+exact transform this code applies transcribes identically to the 24 kHz original:
+**telephone quality loses timbre, not numbers.** And numbers are the thing this
+product cannot afford to lose — wave 9.3 exists because of a dropped decimal.
+
+### Barge-in reads the browser, not the packet flow
+
+"A packet arrived" is true continuously: WebRTC clients transmit through silence,
+so treating arrival as speech would interrupt FORGE the instant it opened its
+mouth and it could never finish a sentence. The RFC 6464 audio-level extension
+carries the browser's **own** voice-activity flag per packet, and the browser has
+already done the detection properly.
+
+Absent the extension the answer is no: FORGE finishing its sentence is a smaller
+harm than FORGE never being able to speak, and the explicit stop control works
+either way.
+
+### One bug the reference check found
+
+The µ-law encoder was the textbook truncating algorithm, and cross-checking it
+against ffmpeg disagreed on 496 samples in 24000. Decoding both candidates
+settled it: for an input of 124, truncation lands on 132 and the nearest code on
+120 — errors of 8 and 4. Truncation is systematically worse on the quiet samples
+where µ-law's resolution is finest and speech spends most of its time. It now
+builds a nearest-code table by inverting the decoder.
+
+Chasing byte-for-byte agreement afterwards was a **mistake worth recording**:
+ffmpeg quantises to 14 bits before its lookup, because G.711 is specified on
+14-bit values, so exactness would have meant adopting its bit depth to satisfy a
+test rather than because it is better. The fence asserts the property that
+matters instead — every sample encodes **at least as accurately** as the
+reference — which no sign inversion or exponent error survives.
+
+### A producer, not just a mechanism
+
+`POST /v1/rooms/{id}/ask` is how FORGE is made to speak. Something had to be, or
+the voice underneath would be machinery nothing ever calls — this repository's
+recurring failure mode. Deciding when FORGE should *interject* between several
+people is a real product question and is deliberately not answered by guessing;
+somebody asks, FORGE answers.
+
+The question is recorded, the answer is recorded, and then it is spoken — the
+record before the audio, so nobody can hear something that is not in the
+transcript. FORGE's turn names FORGE and carries no user, which the record has
+supported since wave 6 for exactly this moment (AUD-05).
+
+Redacted turns are dropped from the history sent to the model. That is the one
+path where SEC-06's deletion could have leaked: content somebody deleted, sent to
+a provider in the next prompt, while the room showed "deleted" the whole time.
+
+### Fences
+
+**21 cases** — 18 in `internal/media`, 1 on the HTTP surface, 2 route mountings,
+counting subtests. Drilled by mutation, all red: barge-in in **both** directions (always
+firing means FORGE can never speak; never firing means it talks over everybody —
+a one-directional test passes on the opposite bug), an interruption that does not
+cancel the provider stream, and deleted speech reaching the model.
+
+The end-to-end fence runs the whole path against the real provider — speech
+model, resampling, G.711 — then asks the transcriber what it heard. Asked to say
+"Set the wall thickness to two point five millimetres", the room produced exactly
+that. It is also the standing check on the G.711 decision.
+
+`CGO_ENABLED=0` cross-compiles re-verified for all four platforms, which was the
+whole point of the choice.
+
+### Still open
+
+Nothing in AUD-01, AUD-05 or AUD-07 that a room needs. What remains is a product
+question rather than a gap: **when FORGE should speak without being asked.**
+
+---
+
 ## Carried defects
 
 Eight of the eleven carried here are closed. The three that remain are not
@@ -925,13 +1512,17 @@ oversights and are stated with what each would actually take.
   this codebase's own history is that a stub matching the provider hid five
   shipped defects, and an unverified authentication path is worse than none.
   **What it needs:** an IdP tenant. It is then a self-contained piece of work.
-- **There is no realtime audio transport.** COL-01's record is built, every turn
-  attributed, and transport-agnostic by design — a WebRTC bridge, a phone
-  gateway and somebody typing all write the same row. What is missing is the
-  transport itself, which is a subsystem with its own budget rather than a
-  defect: signalling, media servers, per-speaker streams, and a privacy surface
-  (SEC-06 wants a visible recording state and retention-free mode). **What it
-  needs:** its own wave.
+- **FORGE now has a voice in a room** (wave 9.6), so this entry is closed. What
+  remains is a product question, not a gap: when FORGE should speak without being
+  asked. The original
+  entry follows for context: wave 9 built the live session spine —
+  rooms over HTTP, presence, and an SSE stream that delivers a turn to everybody
+  in the room — so COL-01 is no longer record-only. What is still missing is
+  audio itself: the SFU, per-speaker streams, transcription into the record, and
+  the privacy surface SEC-06 asks for (visible recording state, retention-free
+  mode, independent audio deletion). The premises are proven rather than
+  assumed — see `docs/spikes/2026-09-03-webrtc-sfu/`. **What it needs:** waves
+  9.2 to 9.5, in that order.
 - **Pre-migration events are unattestable.** 11 events on the dev database
   predate the audit chain. This is permanent BY DESIGN and must not be "fixed":
   backfilling would mean minting attestations for events nothing attested, which

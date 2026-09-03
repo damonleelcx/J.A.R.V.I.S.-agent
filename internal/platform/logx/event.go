@@ -310,6 +310,54 @@ const (
 	EventRoomTurn        Event = "forge.room.turn"
 	EventRoomClosed      Event = "forge.room.closed"
 	EventHandoffTaken    Event = "forge.handoff.taken"
+
+	// Presence. Separate from opened/closed because "who was in the room when
+	// that was approved" is answered by arrivals and departures, not by the
+	// session's own lifetime.
+	EventRoomJoined Event = "forge.room.joined"
+	EventRoomLeft   Event = "forge.room.left"
+
+	// The live stream (collab/hub.go). Opening one is routine; falling behind
+	// on one is a real degradation of somebody's session and is logged at WARN,
+	// because a subscriber that silently misses events renders an incomplete
+	// transcript and cannot tell.
+	// Privacy controls (PRD SEC-06, AUD-07). Both are consequential and both are
+	// logged: one changes whether a conversation is written down, the other
+	// erases part of one that was.
+	EventRoomTranscribing  Event = "forge.room.transcribing"
+	EventRoomVoiceRedacted Event = "forge.room.voice_redacted"
+
+	EventRoomStreamOpened Event = "forge.room.stream_opened"
+	EventRoomStreamLagged Event = "forge.room.stream_lagged"
+
+	// The media plane (internal/media). Peers arriving and leaving are ordinary;
+	// a forward or a renegotiation that fails is not, and both silence somebody
+	// for everybody else — which is invisible from inside the room, so it is
+	// logged rather than left to be noticed.
+	EventMediaPeerJoined        Event = "forge.media.peer_joined"
+	EventMediaPeerLeft          Event = "forge.media.peer_left"
+	EventMediaRenegotiated      Event = "forge.media.renegotiated"
+	EventMediaRenegotiateFailed Event = "forge.media.renegotiate_failed"
+	EventMediaForwardFailed     Event = "forge.media.forward_failed"
+	EventMediaRefused           Event = "forge.media.refused"
+	// EventMediaStateChanged is somebody muting, pausing or resuming (AUD-07).
+	EventMediaStateChanged Event = "forge.media.state_changed"
+
+	// Transcription (PRD AUD-03). A segment that produced no text is ordinary —
+	// silence and coughs are — but a response that could not be read at all is
+	// not, and the two must never look the same in the transcript.
+	EventASRTranscribed   Event = "forge.asr.transcribed"
+	EventASRFailed        Event = "forge.asr.failed"
+	EventASREmptyResponse Event = "forge.asr.empty_response"
+	EventASRDropped       Event = "forge.asr.dropped"
+
+	// FORGE's own voice in a room (PRD AUD-01, AUD-05, AUD-07). An interruption
+	// is ordinary and is logged at INFO because "did it stop when I spoke" is the
+	// first thing anybody asks of a barge-in that felt wrong.
+	EventTTSSpoke       Event = "forge.tts.spoke"
+	EventTTSInterrupted Event = "forge.tts.interrupted"
+	EventTTSFailed      Event = "forge.tts.failed"
+	EventTTSEmpty       Event = "forge.tts.empty_response"
 )
 
 func init() {
@@ -319,5 +367,13 @@ func init() {
 		EventMFAAccepted, EventMFARejected, EventMFARecoveryUsed,
 		EventDeviceTrusted, EventDeviceRevoked,
 		EventRoomOpened, EventRoomTurn, EventRoomClosed, EventHandoffTaken,
+		EventRoomJoined, EventRoomLeft,
+		EventRoomStreamOpened, EventRoomStreamLagged,
+		EventRoomTranscribing, EventRoomVoiceRedacted,
+		EventMediaPeerJoined, EventMediaPeerLeft,
+		EventMediaRenegotiated, EventMediaRenegotiateFailed,
+		EventMediaForwardFailed, EventMediaRefused, EventMediaStateChanged,
+		EventASRTranscribed, EventASRFailed, EventASREmptyResponse, EventASRDropped,
+		EventTTSSpoke, EventTTSInterrupted, EventTTSFailed, EventTTSEmpty,
 	)
 }

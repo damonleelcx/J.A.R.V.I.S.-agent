@@ -29,6 +29,31 @@ func PortraitURL(e Expression) string { return "/assets/portrait/" + string(e) +
 // The portrait is decoration in the strict sense: if the image fails to load,
 // the sigil is still there and the state is still legible. A missing asset must
 // never be able to take out a status indicator.
+// AvatarHTML renders FORGE's portrait alone, at a small size, for a header.
+//
+// # Why the portrait rather than the sigil
+//
+// The sigil is a state indicator: it changes with what FORGE is doing, and it
+// earns its place beside a portrait that carries mood. On its own, in a header,
+// it is a small abstract mark that says nothing a wordmark next to it does not
+// already say — and it is not what people recognise FORGE as. The portrait is.
+//
+// No badge here. A header is not a status surface: the room's own status word
+// and the workbench's state word already say what is happening, and a second
+// indicator repeating it in a form nobody can read is noise.
+//
+// The accessible name lives on this element, because unlike PresenceHTML there
+// is no sigil beside it to carry one.
+func AvatarHTML(size int) template.HTML {
+	if size <= 0 {
+		size = 32
+	}
+	return template.HTML(fmt.Sprintf(
+		`<span class="forge-avatar" style="width:%dpx;height:%dpx">`+
+			`<img src="%s" alt="FORGE" width="%d" height="%d" decoding="async"></span>`,
+		size, size, PortraitURL(ExpressionFor(StateIdle)), size, size))
+}
+
 func PresenceHTML(state AvatarState, size int) template.HTML {
 	if !state.Valid() {
 		state = StateIdle
