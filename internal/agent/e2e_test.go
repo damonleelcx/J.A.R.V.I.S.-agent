@@ -785,3 +785,77 @@ func TestReconciliationSweepSettlesWhatTheEventMissed(t *testing.T) {
 		t.Errorf("the goal ended %d times; the sweep is not idempotent", ends)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Recovering a plan that never landed (the planner-latency carried defect)
+// ---------------------------------------------------------------------------
+
+// The guard belongs in the DOMAIN, not in one surface.
+//
+// Refusing a task-less start lived only in the HTTP handler, so
+// `forgectl goal start` went straight past it and produced exactly the state the
+// handler existed to prevent: a goal that is "running" with nothing to run,
+// indistinguishable from every surface from one whose work has not begun.
+//
+// That state is what a tripped planner leaves behind — Draft commits the goal
+// and Apply writes nothing — and until `goal replan` existed, the refusal was a
+// dead end. So the refusal must also name the way out.
+func TestActivate_RefusesAGoalWithNoTasksAndNamesTheRecovery(t *testing.T) {
+	if os.Getenv("FORGE_TEST_DATABASE_URL") == "" {
+		t.Skip("FORGE_TEST_DATABASE_URL is unset")
+	}
+	h := newGateHarness(t)
+	ctx := context.Background()
+
+	goal := h.createGoal(t, "a goal whose plan never landed",
+		"planning timed out before any task was written", engine.AutonomySandboxExecute, engine.RiskR1)
+
+	err := h.applier.Activate(ctx, h.pool, goal, engine.ActorHuman, nil)
+	if err == nil {
+		t.Fatal("a goal with no tasks was activated; it would be 'running' with nothing to run")
+	}
+	if !strings.Contains(err.Error(), "replan") {
+		t.Errorf("the refusal does not name the recovery, which makes it a dead end: %v", err)
+	}
+
+	var status string
+	if err := h.pool.QueryRow(ctx, `select status from forge_goals where id = $1`, goal.ID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != string(engine.GoalDraft) {
+		t.Fatalf("the goal moved to %q despite the refusal", status)
+	}
+}
+
+// A goal that HAS tasks still starts. A guard that refuses everything is an
+// outage, not a control.
+func TestActivate_AGoalWithTasksStillStarts(t *testing.T) {
+	if os.Getenv("FORGE_TEST_DATABASE_URL") == "" {
+		t.Skip("FORGE_TEST_DATABASE_URL is unset")
+	}
+	h := newGateHarness(t)
+	ctx := context.Background()
+
+	goal := h.createGoal(t, "a planned goal", "this one has work in it",
+		engine.AutonomySandboxExecute, engine.RiskR1)
+	// Applied but NOT activated — seedTwoTasks activates as part of its own
+	// setup, and this test is about the activation itself.
+	plan := &agent.PlanResult{
+		Rationale: "one task",
+		Tasks:     []agent.PlannedTask{{Key: "task-a", Title: "A", Instruction: "do a", RiskTier: "r1"}},
+	}
+	if _, _, err := h.applier.Apply(ctx, h.pool, goal, plan, "planner"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := h.applier.Activate(ctx, h.pool, goal, engine.ActorHuman, nil); err != nil {
+		t.Fatalf("a planned goal could not be started: %v", err)
+	}
+	var status string
+	if err := h.pool.QueryRow(ctx, `select status from forge_goals where id = $1`, goal.ID).Scan(&status); err != nil {
+		t.Fatal(err)
+	}
+	if status != string(engine.GoalActive) {
+		t.Fatalf("the goal is %q after a successful activation", status)
+	}
+}

@@ -63,25 +63,51 @@ const (
 
 // Visibility is who may read a layer.
 //
-// # What is and is not enforced today
+// # What is enforced, and how each one is enforced
+//
+// Every value here maps to something the code actually checks. That mapping is
+// the point: a visibility nobody enforces is a label that reads like a control,
+// and TestVisibility_EveryDeclaredAudienceIsEnforced holds the two in step.
+//
+//	goal participants   the goal id must be supplied, and only that goal's
+//	                    items are returned
+//	project members     the project id must be supplied, and access is checked
+//	                    against forge_project_members (SEC-02)
+//	the owning user     the user id must be supplied, and only that user's items
+//	                    are returned
+//	this deployment     the caller must be scoped to SOMETHING in it — a goal, a
+//	                    project or a user. An unscoped read is refused
 //
 // Enforced: an item in ScopeUser is returned only to the user it belongs to,
 // and an item in ScopeProject only within that project. Those are the two that
 // carry the real risk — personal preference leaking into shared context is the
 // failure people actually mind.
 //
-// NOT enforced: VisibilityOrganisation is currently everybody with an account,
-// because there is no organisation membership model yet (it arrives with
-// COL-01/SEC-02 in wave 6). It is declared here so that when membership lands
-// there is one place to enforce it, and so nobody reads "organisation" today
-// and assumes a boundary that does not exist.
+// Org-wide knowledge is readable by anyone scoped to this deployment, which is
+// what its audience now says rather than a narrower one nobody could check.
 type Visibility string
 
 const (
-	VisibilityGoal         Visibility = "goal participants"
-	VisibilityProject      Visibility = "project members"
-	VisibilityOwnerOnly    Visibility = "the owning user only"
-	VisibilityOrganisation Visibility = "everyone in the organisation"
+	VisibilityGoal      Visibility = "goal participants"
+	VisibilityProject   Visibility = "project members"
+	VisibilityOwnerOnly Visibility = "the owning user only"
+	// VisibilityDeployment is org-wide knowledge, and its audience is stated as
+	// what it actually is.
+	//
+	// It used to read "everyone in the organisation" and was documented as
+	// declared-but-unenforced, waiting on a membership model. SEC-02 arrived and
+	// brought PROJECT membership; it did not bring an organisation entity, and
+	// there is still no table this could be checked against. Naming an audience
+	// the system cannot identify is the claim, not the gap.
+	//
+	// So the audience is the truthful one: everybody with an account in this
+	// deployment. That is correct here — FORGE deploys privately, one
+	// organisation per installation — and it is enforceable, because "has an
+	// account" is a thing the system knows. What does NOT exist is a boundary
+	// between two organisations sharing one deployment; a multi-tenant
+	// installation would need an organisation model and this layer would need
+	// to hang off it.
+	VisibilityDeployment Visibility = "everyone with an account in this deployment"
 )
 
 // Layer is one row of MEM-01: a scope together with what it obliges.
@@ -122,8 +148,36 @@ var layers = []Layer{
 		"what is true of this project until somebody changes it"},
 	{ScopeUser, "personal preferences", OwnerUser, 0, VisibilityOwnerOnly,
 		"how this person likes to work; never shared"},
-	{ScopeOrganisation, "org knowledge", OwnerNone, 0, VisibilityOrganisation,
+	{ScopeOrganisation, "org knowledge", OwnerNone, 0, VisibilityDeployment,
 		"what holds across every project here"},
+}
+
+// audienceEnforcement names, for every declared visibility, the check that
+// actually enforces it.
+//
+// A table rather than prose, so the fence can hold the two in step: a visibility
+// with no entry here is one nobody enforces, and a label that reads like a
+// control and is not one is exactly what this map exists to prevent.
+var audienceEnforcement = map[Visibility]string{
+	VisibilityGoal: "the goal id must be supplied; only that goal's items are returned",
+	VisibilityProject: "the project id must be supplied; access to it is checked against " +
+		"forge_project_members (PRD SEC-02)",
+	VisibilityOwnerOnly: "the user id must be supplied; only that user's items are returned",
+	VisibilityDeployment: "the caller must be scoped to something in this deployment — a goal, " +
+		"a project or a user. An unscoped read is refused",
+}
+
+// AudienceEnforced reports whether a visibility is backed by a real check.
+//
+// Exposed because /v1/memory/layers reports it: a client deciding what to put in
+// a layer needs to know whether its audience is a rule or a wish.
+func AudienceEnforced(v Visibility) bool { _, ok := audienceEnforcement[v]; return ok }
+
+// AudienceEnforcement returns how a visibility is enforced, for the fence and
+// for anybody reading the layer table.
+func AudienceEnforcement(v Visibility) (string, bool) {
+	how, ok := audienceEnforcement[v]
+	return how, ok
 }
 
 // Layers returns the five, shortest-lived first.

@@ -169,6 +169,17 @@ func (s *Service) Recall(ctx context.Context, rc Recall) ([]Recalled, error) {
 					WithDetail("recalling %s memory needs a %s id; without one this would read somebody else's",
 						sc, layer.Owner)
 			}
+			continue
+		}
+		// Org-wide knowledge has no owner to check, and that is not the same as
+		// having no audience. It is readable by anyone with an account here, so
+		// the caller must be scoped to something in this deployment; an
+		// unscoped read is nobody asking on nobody's behalf.
+		if len(owners) == 0 {
+			return nil, errs.New(op, errs.CodeValidationFailed).
+				WithDetail("recalling %s memory needs a goal, project or user id. It is readable by "+
+					"anyone with an account in this deployment, which means the caller has to be one — "+
+					"an unscoped read is nobody asking on nobody's behalf.", sc)
 		}
 	}
 
@@ -227,14 +238,22 @@ func (s *Service) Recall(ctx context.Context, rc Recall) ([]Recalled, error) {
 }
 
 // readableScopes returns the layers a caller with these owners may read,
-// narrowest first. Organisation memory is always included: it has no owner to
-// check, which is exactly the property Visibility documents as unenforced until
-// membership exists.
+// narrowest first.
+//
+// Org-wide knowledge is included only for a caller scoped to SOMETHING — a goal,
+// a project or a user. It used to be included unconditionally, on the reasoning
+// that it has no owner to check against, which left an unscoped Recall reading
+// org knowledge with no identity at all. There is no organisation entity to
+// check membership against and there does not need to be: the audience is
+// everybody with an account in this deployment, and being scoped to anything in
+// it is what "having an account" looks like from here.
 func readableScopes(owners map[Owner]string) []Scope {
 	var out []Scope
 	for _, l := range layers {
 		if l.Owner == OwnerNone {
-			out = append(out, l.Scope)
+			if len(owners) > 0 {
+				out = append(out, l.Scope)
+			}
 			continue
 		}
 		if _, ok := owners[l.Owner]; ok {

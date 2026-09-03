@@ -107,10 +107,13 @@ func (h *MemoryHandlers) Layers(w http.ResponseWriter, r *http.Request) {
 		out = append(out, layerDTO{
 			Scope: string(l.Scope), Name: l.PRDName, OwnedBy: string(l.Owner),
 			Lifetime: lifetime, VisibleTo: string(l.Visibility),
-			// Said plainly rather than implied. Organisation visibility is
-			// declared and not yet enforced — there is no membership model — and
-			// a client that assumed otherwise would be building on nothing.
-			Enforced:  l.Visibility != memory.VisibilityOrganisation,
+			// Every layer's audience is now enforced, and this field stays
+			// because a client should not have to assume it. It used to be false
+			// for org-wide knowledge, which declared an audience — "everyone in
+			// the organisation" — that no table could identify. The audience is
+			// now stated as what it is (everyone with an account in this
+			// deployment) and refused to an unscoped caller.
+			Enforced:  memory.AudienceEnforced(l.Visibility),
 			Describes: l.Gloss,
 		})
 	}

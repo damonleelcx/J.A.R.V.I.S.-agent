@@ -35,9 +35,28 @@ func proto(units string, notVerified []string, parts ...geometry.Part) *agent.Pr
 	}
 }
 
+// part gives the id and the name values with NO substring in common.
+//
+// They were the same string, which made
+// TestOnScreen_NamesThePartIDsTheModelIsAskedToReuse vacuous: a note listing
+// only names contained the ids anyway. Making the name "the <id> (human name)"
+// did not fix it — the id was still inside the name — and the fence stayed green
+// with the ids removed. A fixture whose two fields overlap cannot prove which
+// one the code used.
 func part(id string) geometry.Part {
-	return geometry.Part{ID: id, Name: id, Shape: "box",
+	return geometry.Part{ID: id, Name: humanNameFor(id), Shape: "box",
 		Size: map[string]float64{"width": 60}, Position: []float64{0, 0, 0}, Rotation: []float64{0, 0, 0}}
+}
+
+// humanNameFor returns a display name sharing no substring with the id.
+func humanNameFor(id string) string {
+	switch id {
+	case "base-plate":
+		return "Foundation"
+	case "pilot-boss":
+		return "Register"
+	}
+	return "Component"
 }
 
 // The defect this whole suite was built around: a figure attributed to a
@@ -412,5 +431,48 @@ func TestNewRunner_RefusesWithoutAModel(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "measure the stub") {
 		t.Errorf("the refusal does not say why: %v", err)
+	}
+}
+
+// The eval must hand the model the same context the workbench does.
+//
+// An eval that gives the model LESS than the product does is measuring a
+// different system, and the property under test here is precisely one the
+// context decides: the model can only reuse part ids it has been shown.
+// internal/httpapi/assets/workbench.js builds the same note from the same
+// fields.
+func TestOnScreen_NamesThePartIDsTheModelIsAskedToReuse(t *testing.T) {
+	prev := reply("here", proto("mm", []string{"x"}, part("base-plate"), part("pilot-boss")))
+	note := onScreen(prev)
+
+	// The name must be there too — this is the note the model reads to know what
+	// it is looking at, and ids alone would make it worse, not better.
+	for _, name := range []string{"Foundation", "Register"} {
+		if !strings.Contains(note, name) {
+			t.Errorf("the on-screen note dropped the part name %q: %q", name, note)
+		}
+	}
+	for _, id := range []string{"base-plate", "pilot-boss"} {
+		if !strings.Contains(note, id) {
+			t.Errorf("the on-screen note does not name the part id %q, so the model is asked to "+
+				"keep ids it was never shown: %q", id, note)
+		}
+	}
+	if !strings.Contains(note, "mm") {
+		t.Errorf("the note does not carry the units: %q", note)
+	}
+	if !strings.Contains(note, "Keep these part ids") {
+		t.Errorf("the note does not ask for the ids to be kept: %q", note)
+	}
+}
+
+// A turn with no geometry has nothing on screen, and inventing a description
+// would put words in the model's context about a viewport that is empty.
+func TestOnScreen_IsEmptyWhenNothingIsDrawn(t *testing.T) {
+	if note := onScreen(reply("just talking", nil)); note != "" {
+		t.Fatalf("a reply with no geometry produced %q", note)
+	}
+	if note := onScreen(nil); note != "" {
+		t.Fatalf("no reply at all produced %q", note)
 	}
 }

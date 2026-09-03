@@ -116,6 +116,17 @@ const (
 	EventToolSucceeded      Event = "forge.tool.succeeded"
 	EventToolFailed         Event = "forge.tool.failed"
 	EventToolDeduplicated   Event = "forge.tool.deduplicated"
+	// EventToolRefusedSchema is a call whose arguments did not match the tool's
+	// declared schema. Logged separately from a policy refusal: one is the
+	// model getting the shape wrong and the other is the system saying no, and
+	// an operator asking "is the model struggling with this tool's contract?"
+	// needs to count the first without the second.
+	EventToolRefusedSchema Event = "forge.tool.refused_schema"
+	// EventInjectionSuspected is untrusted content matching a known
+	// prompt-injection shape (PRD SEC-04). A WARN because somebody tried, not
+	// because anything failed: the content was framed and passed through
+	// unaltered, and the record is the artefact.
+	EventInjectionSuspected Event = "forge.security.injection_suspected"
 	EventPlanCreated        Event = "forge.plan.created"
 	EventTaskCycleStarted   Event = "forge.task.cycle_started"
 	EventTaskCycleEnded     Event = "forge.task.cycle_ended"
@@ -129,7 +140,8 @@ func init() {
 	allEvents = append(allEvents,
 		EventTaskResumeDegraded, EventCheckpointFailed, EventToolLedgerFailed,
 		EventBudgetRecordFailed, EventToolSucceeded, EventToolFailed,
-		EventToolDeduplicated, EventPlanCreated, EventTaskCycleStarted,
+		EventToolDeduplicated, EventToolRefusedSchema, EventInjectionSuspected,
+		EventPlanCreated, EventTaskCycleStarted,
 		EventTaskCycleEnded, EventVerificationRan, EventApprovalOpened,
 		EventWorkerIdle, EventWorkerReaped,
 	)
@@ -187,11 +199,16 @@ const (
 	EventGeometryExported Event = "forge.geometry.exported"
 	EventGeometryRefused  Event = "forge.geometry.export_refused"
 	EventGeometryCompared Event = "forge.geometry.compared"
+	// EventGeometryAdopted is an earlier variant brought forward so a person can
+	// rule on it. Logged because "we went back to v1" is a decision, and a
+	// decision that leaves no trace is one nobody can ask about later.
+	EventGeometryAdopted Event = "forge.geometry.adopted"
 )
 
 func init() {
 	allEvents = append(allEvents,
 		EventGeometrySaved, EventGeometryExported, EventGeometryRefused, EventGeometryCompared,
+		EventGeometryAdopted,
 	)
 }
 

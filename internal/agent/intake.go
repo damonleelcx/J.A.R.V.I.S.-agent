@@ -156,6 +156,52 @@ func (in *Intake) Plan(ctx context.Context, pool *db.Pool, goal *engine.Goal) (*
 	}, nil
 }
 
+// Replan plans a draft goal that has none, so a planning failure is recoverable.
+//
+// # The failure this exists for
+//
+// Planning is a model call taking one to three minutes against a handler budget
+// a little longer than that. When it trips — a slow provider, a retry storm, a
+// tab closed mid-plan — Draft has already committed the goal and Plan has
+// written nothing, so what survives is a draft with no tasks. Before this there
+// was no way forward from there: activating it would start a goal with nothing
+// to do, and the only recovery was to write the goal again under a new id and
+// abandon the first.
+//
+// # What it refuses, and why
+//
+// Only a DRAFT with no tasks. Planning a goal that already has them is a
+// different operation with different hazards — the existing tasks may have
+// dependencies, may have been claimed, may have produced artifacts — and
+// replacing a live plan needs a way to retire what is already there. This build
+// has no such thing, and a command that silently added a second plan beside the
+// first would leave two sets of tasks racing for the same goal.
+//
+// So the boundary is the recoverable state and nothing wider, and the refusal
+// says which of the two conditions failed rather than a single unhelpful "no".
+func (in *Intake) Replan(ctx context.Context, pool *db.Pool, goal *engine.Goal) (*PlanOutcome, error) {
+	const op = "agent.Intake.Replan"
+
+	if goal.Status != engine.GoalDraft {
+		return nil, errs.New(op, errs.CodeConflict).
+			WithDetail("goal %s is %s, not a draft. Replanning exists to recover a plan that never "+
+				"landed; changing the plan of a goal that is already running would leave two sets of "+
+				"tasks racing for it, and this build has no way to retire the first.", goal.ID, goal.Status)
+	}
+	var tasks int
+	if err := pool.QueryRow(ctx,
+		`select count(*) from forge_tasks where goal_id = $1`, goal.ID).Scan(&tasks); err != nil {
+		return nil, errs.Wrap(op, errs.CodeDatabaseUnavail, err)
+	}
+	if tasks > 0 {
+		return nil, errs.New(op, errs.CodeConflict).
+			WithDetail("goal %s already has %d task(s), so its plan did land. Replanning would add a "+
+				"second plan beside the first rather than replacing it. Start the goal, or create a "+
+				"new one if the plan is wrong.", goal.ID, tasks)
+	}
+	return in.Plan(ctx, pool, goal)
+}
+
 // Start activates a planned goal so its tasks become claimable.
 //
 // byID names the account that decided this, where the surface knows it. The web

@@ -42,6 +42,9 @@ Goals:
       --risk r0|r1|r2|r3|r4                                     (default r1)
       --project <id>      reuse an existing project
       --start             activate immediately instead of leaving it a draft
+  goal replan <id>    Plan a draft goal whose plan never landed. Planning is a model call
+                      and can time out; what survives is a draft with no tasks, which cannot
+                      be started because it would run with nothing to run.
   goal start <id>     Activate a drafted goal so workers can claim its tasks
   goal show <id>      Current state, tasks, pending approvals, and the timeline
 
@@ -84,6 +87,12 @@ Geometry (variants and export):
   geometry compare <version-id> <version-id>...
                                                Side by side, with what differs — and what could not
                                                be compared, which is a separate answer
+  geometry adopt <version-id> --as <user-id> [--reason ...]
+                                               Bring an earlier variant forward as the current
+                                               version so a person can rule on it. Appending a
+                                               version supersedes the previous one, and a superseded
+                                               version can no longer be accepted — this is how you
+                                               choose the earlier of two designs.
   geometry export <version-id> [--format obj|stl] [--out file] [--dry-run]
                                                Write a mesh. Prints what the conversion loses BEFORE
                                                it prints the path. Parametric formats (STEP, KCL,
@@ -218,18 +227,20 @@ func run(ctx context.Context, cmd string, args []string) error {
 		if len(args) == 0 {
 			fmt.Fprint(os.Stderr, usage)
 			return errs.New("forgectl.run", errs.CodeValidationFailed).
-				WithDetail("goal needs a subcommand: new, start or show")
+				WithDetail("goal needs a subcommand: new, replan, start or show")
 		}
 		switch args[0] {
 		case "new":
 			return cmdGoalNew(ctx, cfg, log, args[1:])
 		case "start":
 			return cmdGoalStart(ctx, cfg, log, args[1:])
+		case "replan":
+			return cmdGoalReplan(ctx, cfg, log, args[1:])
 		case "show":
 			return cmdGoalShow(ctx, cfg, log, args[1:])
 		default:
 			return errs.New("forgectl.run", errs.CodeValidationFailed).
-				WithDetail("unknown goal subcommand %q; expected new, start or show", args[0])
+				WithDetail("unknown goal subcommand %q; expected new, replan, start or show", args[0])
 		}
 
 	case "memory":
@@ -321,9 +332,11 @@ func run(ctx context.Context, cmd string, args []string) error {
 			return cmdGeometryCompare(ctx, cfg, log, args[1:])
 		case "export":
 			return cmdGeometryExport(ctx, cfg, log, args[1:])
+		case "adopt":
+			return cmdGeometryAdopt(ctx, cfg, log, args[1:])
 		default:
 			return errs.New("forgectl.run", errs.CodeValidationFailed).
-				WithDetail("unknown geometry subcommand %q; expected formats, list, show, compare or export", args[0])
+				WithDetail("unknown geometry subcommand %q; expected formats, list, show, compare, export or adopt", args[0])
 		}
 
 	case "access":

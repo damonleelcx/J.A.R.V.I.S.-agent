@@ -166,11 +166,14 @@ func provenanceRows(vs []Variant) []FieldRow {
 				// Said out loud because the word is easy to misread as a
 				// judgement. It is not one: proposing a new version of the same
 				// assembly marks the earlier one superseded automatically, and a
-				// superseded version can no longer be accepted or rejected — the
-				// decision has to be taken on a version that is still current.
+				// superseded version can no longer be accepted or rejected. That
+				// is correct for a file and wrong for alternatives, which is what
+				// Adopt exists for: it brings the chosen geometry forward as a
+				// new version, which CAN be ruled on.
 				"'superseded' is not a verdict: a later proposal of the same assembly replaced it before " +
-				"anybody ruled on it, and it can no longer be accepted or rejected. To choose an earlier " +
-				"shape, propose it again and rule on that."},
+				"anybody ruled on it, and it can no longer be accepted or rejected. To choose it, ADOPT " +
+				"it — that brings this exact geometry forward as the current version, which you can then " +
+				"accept."},
 	}
 	for i := range rows {
 		rows[i].Differs = !allEqual(rows[i].Values)

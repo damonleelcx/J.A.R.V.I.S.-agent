@@ -664,3 +664,105 @@ func TestEveryUpdatedAtColumnHasItsTrigger(t *testing.T) {
 			len(missing), checked, missing)
 	}
 }
+
+// Every table that carries the updated_at trigger must actually have it FIRE.
+//
+// # The gap this closes
+//
+// The trigger was attached in every schema and nothing checked that a row's
+// updated_at moved when something updated it without setting the column by hand.
+// A trigger that is present and inert looks exactly like one that works: the
+// column has a value, it is never null, and it is simply the value it was
+// created with. The one path that relies on it is identity.MarkEmailVerified,
+// which updates a user and never touches updated_at.
+//
+// # Why it enumerates from the SCHEMA rather than from a list
+//
+// The tables are read out of pg_trigger, so a table that attaches the trigger is
+// covered the day it is added. A hand-written list would go stale in the safe
+// direction — the one where nothing fails.
+func TestUpdatedAtTriggersActuallyFire(t *testing.T) {
+	admin := testPool(t)
+	schema := freshSchema(t, admin)
+	pool := scopedPool(t, schema)
+	ctx := context.Background()
+
+	if _, err := db.MigrateFS(ctx, pool, db.Files, db.MigrationsDir, logx.Discard()); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := pool.Query(ctx, `
+		select c.relname
+		  from pg_trigger t
+		  join pg_class c on c.oid = t.tgrelid
+		  join pg_namespace n on n.oid = c.relnamespace
+		 where n.nspname = $1
+		   and not t.tgisinternal
+		   and t.tgname like '%_updated_at'
+		 order by c.relname`, schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tables []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatal(err)
+		}
+		tables = append(tables, name)
+	}
+	rows.Close()
+
+	if len(tables) < 10 {
+		t.Fatalf("only %d tables carry an updated_at trigger (%v); the migration chain attaches many "+
+			"more than that, so either the triggers are missing or this query has stopped finding them",
+			len(tables), tables)
+	}
+
+	// Every such table must also HAVE the column. A trigger writing to a column
+	// that is not there fails at runtime, on the first update, in production.
+	for _, table := range tables {
+		var hasColumn bool
+		if err := pool.QueryRow(ctx, `
+			select exists (
+				select 1 from information_schema.columns
+				 where table_schema = $1 and table_name = $2 and column_name = 'updated_at')`,
+			schema, table).Scan(&hasColumn); err != nil {
+			t.Fatal(err)
+		}
+		if !hasColumn {
+			t.Errorf("%s has an updated_at trigger and no updated_at column", table)
+		}
+	}
+
+	// And the trigger must FIRE. Exercised on forge_users, because that is the
+	// table whose real code path depends on it.
+	if _, err := pool.Exec(ctx, `
+		insert into forge_users (id, email, status, password_hash, password_algo,
+			password_changed_at, created_at, updated_at)
+		values ('usr_trigger_fixture', 'trigger@example.com', 'active', 'x', 'argon2id',
+			now() - interval '1 hour', now() - interval '1 hour', now() - interval '1 hour')`); err != nil {
+		t.Fatal(err)
+	}
+
+	var before, after time.Time
+	if err := pool.QueryRow(ctx,
+		`select updated_at from forge_users where id = 'usr_trigger_fixture'`).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	// An update that does NOT mention updated_at — the whole point. Setting it
+	// by hand would test the UPDATE rather than the trigger.
+	if _, err := pool.Exec(ctx,
+		`update forge_users set display_name = 'changed' where id = 'usr_trigger_fixture'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx,
+		`select updated_at from forge_users where id = 'usr_trigger_fixture'`).Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if !after.After(before) {
+		t.Fatalf("updated_at did not move on an update that left it alone: %s → %s. "+
+			"The trigger is attached and inert, which looks identical to one that works — the column "+
+			"has a value, it is simply the one it was created with.", before, after)
+	}
+}

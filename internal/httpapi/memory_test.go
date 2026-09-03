@@ -428,12 +428,39 @@ func TestAPI_LayersSayWhichVisibilityIsEnforced(t *testing.T) {
 	if len(body.Layers) != 5 {
 		t.Fatalf("%d layers reported", len(body.Layers))
 	}
+	// Every layer's audience is enforced now. This assertion used to be the
+	// other way round for org-wide knowledge, which declared an audience —
+	// "everyone in the organisation" — that no table could identify. The
+	// audience is stated as what it actually is and refused to an unscoped
+	// caller, so a layer reporting `false` here is a label that reads like a
+	// control and is not one.
 	for _, l := range body.Layers {
-		if l.Scope == string(memory.ScopeOrganisation) && l.Enforced {
-			t.Fatal("organisation visibility is reported as enforced; there is no membership model to enforce it with")
+		if !l.Enforced {
+			t.Errorf("%s reports its visibility as unenforced. Either enforce it, or say so in "+
+				"memory.audienceEnforcement — a declared audience nothing checks is worse than "+
+				"an undeclared one, because people design against it.", l.Scope)
 		}
-		if l.Scope == string(memory.ScopeUser) && !l.Enforced {
-			t.Fatal("personal visibility is reported as unenforced; it is the one that is")
+	}
+}
+
+// The enforcement table and the visibility vocabulary must not drift.
+//
+// A visibility with no entry in audienceEnforcement is one nobody enforces, and
+// an entry for a visibility no layer uses is a rule protecting nothing. Derived
+// from the layers rather than listed, so a new layer is covered the day it is
+// added.
+func TestAPI_EveryDeclaredAudienceNamesItsEnforcement(t *testing.T) {
+	used := map[memory.Visibility]bool{}
+	for _, l := range memory.Layers() {
+		used[l.Visibility] = true
+		how, ok := memory.AudienceEnforcement(l.Visibility)
+		if !ok {
+			t.Errorf("%s declares the audience %q and nothing says how it is enforced",
+				l.Scope, l.Visibility)
+			continue
+		}
+		if len(strings.Fields(how)) < 6 {
+			t.Errorf("%s: the enforcement is too thin to check against the code: %q", l.Scope, how)
 		}
 	}
 }

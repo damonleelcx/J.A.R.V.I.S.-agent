@@ -112,6 +112,10 @@ func NewRouter(d Deps) http.Handler {
 	// act on the line below. PRD AGT-02 wants the plan visible before the work,
 	// and one endpoint that did both would hide it. See goals_start.go.
 	mux.Handle("POST /v1/goals", authed(goals.CreateGoal))
+	// Replanning DRAFTS work and authorises none, so it needs goal.create rather
+	// than goal.start. It exists because planning is a model call that can time
+	// out, and what survives is a draft with no tasks that cannot be started.
+	mux.Handle("POST /v1/goals/{id}/plan", authed(goals.Replan))
 	mux.Handle("POST /v1/goals/{id}/start", authed(goals.StartGoal))
 	mux.Handle("GET /v1/goals/{id}", authed(goals.GetGoal))
 	mux.Handle("GET /v1/goals/{id}/timeline", authed(goals.Timeline))
@@ -176,6 +180,10 @@ func NewRouter(d Deps) http.Handler {
 	// segment, so "compare" cannot be swallowed as a variant id.
 	mux.Handle("GET /v1/geometry/compare", authed(geo.Compare))
 	mux.Handle("GET /v1/geometry/{id}", authed(geo.Get))
+	// Adopting an earlier variant PROPOSES it again as the current version; it
+	// signs nothing off. The sign-off is the separate act on the version this
+	// creates, through the disposition endpoint above.
+	mux.Handle("POST /v1/geometry/{id}/adopt", authed(geo.Adopt))
 	mux.Handle("GET /v1/geometry/{id}/export", authed(geo.Export))
 	mux.Handle("GET /v1/geometry/{id}/export/label", authed(geo.ExportLabel))
 

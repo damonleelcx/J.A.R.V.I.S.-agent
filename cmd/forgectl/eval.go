@@ -38,7 +38,14 @@ func cmdEvalList() error {
 		fmt.Printf("    %s\n", wrap(c.Why, 74, "    "))
 		fmt.Printf("    turns: %d\n", len(c.Turns))
 		for _, s := range c.Scorers {
-			fmt.Printf("      · %s  (floor %.0f%%)\n", s.Name, s.Floor*100)
+			// A tracked scorer printed as "floor 0%" reads as a requirement
+			// somebody broke, and the next person deletes it. Same rule as the
+			// report's rendering.
+			bound := fmt.Sprintf("floor %.0f%%", s.Floor*100)
+			if s.Tracked {
+				bound = "tracked, not required"
+			}
+			fmt.Printf("      · %s  (%s)\n", s.Name, bound)
 			fmt.Printf("        %s\n", wrap(s.Asserts, 70, "        "))
 		}
 		fmt.Println()

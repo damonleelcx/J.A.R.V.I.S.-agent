@@ -418,3 +418,146 @@ func TestList_NewestFirst(t *testing.T) {
 		t.Errorf("order is v%d, v%d, v%d", list[0].Version, list[1].Version, list[2].Version)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Adopting an earlier variant (the carried defect wave 7 surfaced)
+// ---------------------------------------------------------------------------
+
+// Appending a version supersedes the previous one, and a superseded version can
+// no longer be accepted or rejected. Correct for a file; wrong for variants,
+// which are alternatives you choose between. This is the fence over the state
+// that made the choosing impossible.
+func TestAdopt_ASupersededVariantCannotBeRuledOnDirectly(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	first, err := h.svc.Save(ctx, h.proposal("bracket", plate("p", 60)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.svc.Save(ctx, h.proposal("bracket", plate("p", 72))); err != nil {
+		t.Fatal(err)
+	}
+	err = h.ws.Dispose(ctx, first.VersionID, workspace.Accepted, h.userID, "I preferred this one")
+	if err == nil {
+		t.Fatal("a superseded version was accepted directly; if this now works, Adopt exists for a " +
+			"problem that has gone away and should be reconsidered rather than kept")
+	}
+}
+
+// Adopting brings the chosen geometry forward as a NEW version, which a person
+// can then rule on. The history stays append-only and "we went back to v1" is a
+// fact the ledger records rather than one it hides.
+func TestAdopt_BringsAnEarlierVariantForwardSoItCanBeAccepted(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	first, err := h.svc.Save(ctx, h.proposal("bracket", plate("p", 60)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.svc.Save(ctx, h.proposal("bracket", plate("p", 72))); err != nil {
+		t.Fatal(err)
+	}
+
+	adopted, err := h.svc.Adopt(ctx, first.VersionID, h.userID, "60 mm is the right plate")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if adopted.Version != 3 {
+		t.Errorf("the adopted copy is v%d; adopting appends rather than reopening", adopted.Version)
+	}
+	if adopted.ArtifactID != first.ArtifactID {
+		t.Error("the adopted copy landed on a different artifact, so it is not part of the same history")
+	}
+
+	// The geometry is the one that was chosen, byte for byte.
+	want, _ := json.Marshal(first.Document)
+	got, _ := json.Marshal(adopted.Document)
+	if string(want) != string(got) {
+		t.Fatalf("the adopted geometry differs from what was chosen.\n want: %s\n  got: %s", want, got)
+	}
+
+	// A human chose it; the generator still says what DREW it. Two facts, kept
+	// apart.
+	if adopted.Agent != workspace.AgentHuman {
+		t.Errorf("adopting was recorded as %q; a person made this choice", adopted.Agent)
+	}
+	if adopted.Generator != first.Generator {
+		t.Errorf("the generator changed to %q; adopting does not redraw anything", adopted.Generator)
+	}
+
+	// Bringing a variant forward is not a check. Inheriting a verdict would
+	// assert that something had looked at the new row.
+	if adopted.Verification != workspace.Unverified || adopted.Disposition != workspace.Pending {
+		t.Errorf("the adopted copy starts %s/%s; it should be unverified and undecided",
+			adopted.Verification, adopted.Disposition)
+	}
+
+	// And it names what it came from, or nobody can ask why v3 looks like v1.
+	var inputs map[string]any
+	if err := json.Unmarshal(adopted.Inputs, &inputs); err != nil {
+		t.Fatal(err)
+	}
+	if inputs["adopted_from"] != first.VersionID {
+		t.Errorf("the adopted copy does not name its source: %v", inputs)
+	}
+	if inputs["reason"] != "60 mm is the right plate" {
+		t.Errorf("the reason was not recorded: %v", inputs)
+	}
+
+	// The whole point: it can now be accepted.
+	if err := h.ws.Dispose(ctx, adopted.VersionID, workspace.Accepted, h.userID, "chosen after comparing"); err != nil {
+		t.Fatalf("the adopted version could not be accepted, so adopting solved nothing: %v", err)
+	}
+}
+
+// Adopting the version that is already current would append an identical row and
+// supersede the thing it copied — a no-op dressed as a change.
+func TestAdopt_RefusesTheVersionThatIsAlreadyCurrent(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	only, err := h.svc.Save(ctx, h.proposal("bracket", plate("p", 60)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = h.svc.Adopt(ctx, only.VersionID, h.userID, "")
+	if errs.CodeOf(err) != errs.CodeConflict {
+		t.Fatalf("adopting the current version returned %v", err)
+	}
+	if !strings.Contains(err.Error(), "disposition") {
+		t.Errorf("the refusal does not say what to do instead: %v", err)
+	}
+}
+
+// A design nobody chose has no authority behind it — the same rule as every
+// other human decision in this system (PRD SAF-05).
+func TestAdopt_MustNameWhoChoseIt(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	first, err := h.svc.Save(ctx, h.proposal("bracket", plate("p", 60)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.svc.Save(ctx, h.proposal("bracket", plate("p", 72))); err != nil {
+		t.Fatal(err)
+	}
+	_, err = h.svc.Adopt(ctx, first.VersionID, "", "no one")
+	if err == nil {
+		t.Fatal("an unattributed adoption was accepted")
+	}
+	// The MESSAGE matters, not only the refusal. Three things would reject this
+	// — Adopt's own check, NewVariant.Validate, and the initiator_id foreign key
+	// — and only the first says anything a caller can act on. Asserting the
+	// wording is what makes this a fence over the guard rather than over the
+	// schema that happens to sit behind it.
+	if errs.CodeOf(err) != errs.CodeValidationFailed {
+		t.Errorf("the refusal came back as %s, which means it fell through to the database rather "+
+			"than being caught where the reason can be explained: %v", errs.CodeOf(err), err)
+	}
+	if !strings.Contains(err.Error(), "who chose it") {
+		t.Errorf("the refusal does not say what is missing: %v", err)
+	}
+}

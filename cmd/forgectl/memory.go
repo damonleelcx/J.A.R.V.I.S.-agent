@@ -160,28 +160,11 @@ func cmdMemoryRecall(ctx context.Context, cfg *config.Config, log *logx.Logger, 
 func cmdMemoryForget(ctx context.Context, cfg *config.Config, log *logx.Logger, args []string) error {
 	const op = "forgectl.cmdMemoryForget"
 
-	fs := newFlagSet("memory forget")
-	as := fs.String("as", "", "the user id asking for the deletion (required)")
-	reason := fs.String("reason", "", "why")
-	// The id comes first and the flags after it, so the id is taken before
-	// parsing: Go's flag package stops at the first non-flag argument, and
-	// parsing the whole slice would silently ignore every flag that followed
-	// the id — the command then refused for want of the --as it had been given.
-	// Same shape as `forgectl approve` (cmd/forgectl/goal.go).
-	// See docs/bugfix/2026-09-02-forgectl-memory-forget-ignored-its-flags.md.
-	// No test covers this: nothing in the suite invokes the CLI's parsing.
-	if len(args) < 1 {
-		return errs.New(op, errs.CodeValidationFailed).
-			WithDetail("usage: forgectl memory forget <item-id> --as <user-id> [--reason ...]")
-	}
-	itemID := args[0]
-	if err := fs.Parse(args[1:]); err != nil {
+	opts, err := parseForgetArgs(args)
+	if err != nil {
 		return err
 	}
-	if *as == "" {
-		return errs.New(op, errs.CodeValidationFailed).
-			WithDetail("--as is required: a deletion has to name who asked, or it cannot be accounted for")
-	}
+	itemID, as, reason := opts.ItemID, &opts.As, &opts.Reason
 
 	svc, pool, err := memoryService(ctx, cfg, log)
 	if err != nil {
@@ -202,17 +185,11 @@ func cmdMemoryForget(ctx context.Context, cfg *config.Config, log *logx.Logger, 
 func cmdMemoryPurge(ctx context.Context, cfg *config.Config, log *logx.Logger, args []string) error {
 	const op = "forgectl.cmdMemoryPurge"
 
-	fs := newFlagSet("memory purge")
-	dryRun := fs.Bool("dry-run", false, "show what would be purged and change nothing")
-	// Positional first, then flags — same reason as memory forget above.
-	if len(args) < 1 {
-		return errs.New(op, errs.CodeValidationFailed).
-			WithDetail("usage: forgectl memory purge <item-id> [--dry-run]")
-	}
-	itemID := args[0]
-	if err := fs.Parse(args[1:]); err != nil {
+	opts, err := parsePurgeArgs(args)
+	if err != nil {
 		return err
 	}
+	itemID, dryRun := opts.ItemID, &opts.DryRun
 
 	svc, pool, err := memoryService(ctx, cfg, log)
 	if err != nil {
@@ -424,4 +401,71 @@ func truncate(s string, n int) string {
 		return s
 	}
 	return s[:n-1] + "…"
+}
+
+// ---------------------------------------------------------------------------
+// Argument parsing, separated from the doing
+// ---------------------------------------------------------------------------
+//
+// # Why these are their own functions
+//
+// Both commands take a positional id and then flags, and Go's flag package stops
+// at the first non-flag argument — so parsing the whole slice silently ignores
+// every flag after the id, and the command refuses for want of an option that
+// was on the command line. Both shipped with exactly that
+// (docs/bugfix/2026-09-02-forgectl-memory-forget-ignored-its-flags.md), and it
+// was found by running the binary rather than by a test, because nothing in the
+// suite invoked the CLI's parsing.
+//
+// Split out so it can be. The shape is now held by a fence rather than by
+// convention, in all three commands that have it — these two and
+// `geometry adopt`/`geometry export`.
+
+type forgetArgs struct {
+	ItemID string
+	As     string
+	Reason string
+}
+
+func parseForgetArgs(args []string) (forgetArgs, error) {
+	const op = "forgectl.cmdMemoryForget"
+
+	fs := newFlagSet("memory forget")
+	as := fs.String("as", "", "the user id asking for the deletion (required)")
+	reason := fs.String("reason", "", "why")
+
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		return forgetArgs{}, errs.New(op, errs.CodeValidationFailed).
+			WithDetail("usage: forgectl memory forget <item-id> --as <user-id> [--reason ...]. " +
+				"The item id comes first.")
+	}
+	if err := fs.Parse(args[1:]); err != nil {
+		return forgetArgs{}, err
+	}
+	if strings.TrimSpace(*as) == "" {
+		return forgetArgs{}, errs.New(op, errs.CodeValidationFailed).
+			WithDetail("--as is required: a deletion has to name who asked, or it cannot be accounted for")
+	}
+	return forgetArgs{ItemID: args[0], As: *as, Reason: *reason}, nil
+}
+
+type purgeArgs struct {
+	ItemID string
+	DryRun bool
+}
+
+func parsePurgeArgs(args []string) (purgeArgs, error) {
+	const op = "forgectl.cmdMemoryPurge"
+
+	fs := newFlagSet("memory purge")
+	dryRun := fs.Bool("dry-run", false, "show what would be purged and change nothing")
+
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		return purgeArgs{}, errs.New(op, errs.CodeValidationFailed).
+			WithDetail("usage: forgectl memory purge <item-id> [--dry-run]. The item id comes first.")
+	}
+	if err := fs.Parse(args[1:]); err != nil {
+		return purgeArgs{}, err
+	}
+	return purgeArgs{ItemID: args[0], DryRun: *dryRun}, nil
 }

@@ -78,3 +78,31 @@ func TestParseExportArgs_RefusesASecondID(t *testing.T) {
 		t.Errorf("the error does not point at the command they probably wanted: %v", err)
 	}
 }
+
+// `geometry adopt` has the same shape as `export` — a positional id then flags —
+// and the same trap: Go's flag package stops at the first non-flag argument, so
+// parsing the whole slice would silently ignore the --as this command then
+// demands. Two commands in this binary shipped with that bug
+// (docs/bugfix/2026-09-02-forgectl-memory-forget-ignored-its-flags.md).
+func TestParseAdoptArgs_FlagsAfterTheIDAreStillRead(t *testing.T) {
+	got, err := parseAdoptArgs([]string{"ver_abc", "--as", "usr_1", "--reason", "60 mm is right"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.VersionID != "ver_abc" || got.As != "usr_1" || got.Reason != "60 mm is right" {
+		t.Fatalf("parsed as %+v", got)
+	}
+}
+
+// A design nobody chose has no authority behind it, and the refusal must name
+// the flag rather than fail somewhere deeper.
+func TestParseAdoptArgs_RefusesWithoutAChooser(t *testing.T) {
+	if _, err := parseAdoptArgs([]string{"ver_abc"}); err == nil {
+		t.Fatal("an unattributed adoption was accepted")
+	} else if !strings.Contains(err.Error(), "--as") {
+		t.Errorf("the error does not name the missing flag: %v", err)
+	}
+	if _, err := parseAdoptArgs([]string{"--as", "usr_1"}); err == nil {
+		t.Fatal("a missing version id was accepted")
+	}
+}

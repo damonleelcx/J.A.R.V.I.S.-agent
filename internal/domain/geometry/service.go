@@ -138,6 +138,92 @@ func (s *Service) Save(ctx context.Context, n NewVariant) (*Variant, error) {
 	return v, nil
 }
 
+// Adopt brings an earlier variant forward as the current version, so a person
+// can rule on it.
+//
+// # The conflict this resolves
+//
+// Appending a version marks the previous one `superseded`, and SetDisposition
+// only acts on rows that are still `pending`. That is correct for a FILE — a
+// later edit means nobody owes a decision on the earlier one — and wrong for
+// VARIANTS, which are alternatives you choose between. A person who compared v1
+// and v3 and preferred v1 had no way to say so: the comparison showed them the
+// choice and the disposition endpoint refused it. VIS-04's whole purpose is
+// choosing, and the choosing had no verb.
+//
+// # Why a copy forward rather than reopening the old row
+//
+// Three ways out were on the table (docs/implementation-plan.md). Reopening v1's
+// disposition would mean mutating a settled row and would leave the artifact
+// with two versions claiming to be current. Suspending supersession for model
+// artifacts would split the lifecycle's meaning by artifact kind — a special
+// case inside a shared rule, rejected on sight.
+//
+// So adopting APPENDS: the chosen geometry becomes the newest version, whose
+// inputs name the variant it was taken from, and the person rules on that. The
+// history stays append-only, `superseded` keeps meaning exactly what it says,
+// and "we went back to v1" is a fact the timeline records rather than one it
+// hides by rewriting.
+//
+// The adopted copy is a NEW proposal by the same generator: same document, same
+// units, same frame. Its verification state starts unverified like any other
+// version — bringing a variant forward is not a check, and inheriting v1's
+// verdict would assert that something had looked at the new row.
+func (s *Service) Adopt(ctx context.Context, versionID, byUserID, reason string) (*Variant, error) {
+	const op = "geometry.Service.Adopt"
+
+	if strings.TrimSpace(byUserID) == "" {
+		return nil, errs.New(op, errs.CodeValidationFailed).
+			WithDetail("adopting a variant must name who chose it; a design nobody chose has no authority behind it")
+	}
+	source, err := s.repo.Find(ctx, s.pool, versionID)
+	if err != nil {
+		return nil, err
+	}
+	// Adopting the version that is already current is a no-op dressed as a
+	// change: it would append an identical row and supersede the thing it
+	// copied. Refused with the thing to do instead.
+	current, err := s.ws.Repo().CurrentVersion(ctx, s.pool, source.ArtifactID)
+	if err != nil {
+		return nil, err
+	}
+	if current.ID == source.VersionID {
+		return nil, errs.New(op, errs.CodeConflict).
+			WithDetail("%s v%d is already the current version of %s. Rule on it directly with "+
+				"POST /v1/workspace/versions/%s/disposition — adopting it would append an identical "+
+				"copy and supersede the original.", source.Name, source.Version, source.Path, source.VersionID)
+	}
+
+	adopted, err := s.Save(ctx, NewVariant{
+		ProjectID:   source.ProjectID,
+		InitiatorID: byUserID,
+		// A human chose this. The GEOMETRY was drawn by the generator recorded
+		// below, and the two facts stay separate: WRK-04's agent says which part
+		// of FORGE acted, and adopting is an act of a person.
+		Agent:     workspace.AgentHuman,
+		Generator: source.Generator,
+		Document:  source.Document,
+		Inputs: map[string]any{
+			"source":            "adopted",
+			"adopted_from":      source.VersionID,
+			"adopted_version":   source.Version,
+			"adopted_from_path": source.Path,
+			"adopted_by":        byUserID,
+			"reason":            strings.TrimSpace(reason),
+			"note": "This geometry is a copy of an earlier variant, brought forward so it could be " +
+				"ruled on. Appending a version supersedes the previous one, and a superseded version " +
+				"can no longer be accepted or rejected.",
+		},
+	})
+	if err != nil {
+		return nil, err
+	}
+	s.log.Info(ctx, logx.EventGeometryAdopted,
+		"version_id", adopted.VersionID, "adopted_from", source.VersionID,
+		"project_id", adopted.ProjectID, "by", byUserID)
+	return adopted, nil
+}
+
 // Find returns one variant.
 func (s *Service) Find(ctx context.Context, versionID string) (*Variant, error) {
 	return s.repo.Find(ctx, s.pool, versionID)

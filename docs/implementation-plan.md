@@ -852,64 +852,89 @@ rather than papered over with a case that would not run.
 
 ## Carried defects
 
-- **Planner latency.** ~180 s observed against a 3 m 15 s handler budget; one run
-  came within 15 s of the ceiling. If it trips, the caller gets an error and a
-  draft goal with no tasks. Either raise the budget, stream the planner, or make
-  the draft resumable — currently there is no replan command.
+Eight of the eleven carried here are closed. The three that remain are not
+oversights and are stated with what each would actually take.
+
+### Closed
+
+- **Tool inputs are now validated against their declared schema.** They were
+  documented as checked and never were, on every tool — including `shell_run`,
+  which requires a `reason` for the audit trail that nothing enforced. A bounded
+  JSON Schema subset validates at the executor boundary, and a schema using a
+  keyword this build cannot enforce is REFUSED AT REGISTRATION rather than
+  half-checked. `docs/bugfix/2026-09-03-tool-inputs-were-never-validated.md`
+- **Prompt-injection defence (SEC-04) exists**, as mitigation and detection —
+  which is what is honestly available and what `internal/agent/untrusted.go`
+  says. Tool output is framed in an envelope naming its source and stating that
+  nothing inside is an instruction; content cannot forge the fence and escape
+  into the frame; a `secret://` handle inside untrusted content is neutralised
+  (the one transformation with no false-positive reading); and suspected
+  directives are recorded in the log and on the timeline rather than stripped.
+  Nothing is rewritten: the safe rewrite of arbitrary prose is not defined, it
+  would destroy the tool's purpose, and it would leave the caller believing the
+  content was now trustworthy.
+- **A superseded variant can be chosen.** `POST /v1/geometry/{id}/adopt`,
+  `forgectl geometry adopt`, and a button in the comparison view. It APPENDS the
+  chosen geometry as the current version, whose inputs name the variant it came
+  from, and the person rules on that — so the history stays append-only,
+  `superseded` keeps meaning what it says, and "we went back to v1" is a fact
+  the ledger records rather than one it hides. Option 1 of the three; option 3
+  was rejected on sight for splitting the lifecycle's meaning by artifact kind.
+- **Planning failures are recoverable.** `forgectl goal replan` and
+  `POST /v1/goals/{id}/plan` plan a draft that has none — the state a tripped
+  planner leaves, since Draft commits the goal and Apply writes nothing. Only a
+  draft with no tasks: replacing a plan that already has tasks needs a way to
+  retire them and this build has none, so the refusal says that rather than
+  adding a second plan beside the first. The no-tasks guard also moved DOWN into
+  `PlanApplier.Activate`; it lived only in the HTTP handler, so `forgectl goal
+  start` went past it and produced the state the handler existed to prevent.
+- **`updated_at` triggers are asserted.** The tables are enumerated out of
+  `pg_trigger` rather than a list — so a table that attaches the trigger is
+  covered the day it is added — and the fence performs an update that does not
+  mention the column, because setting it by hand would test the UPDATE rather
+  than the trigger.
+- **Organisation memory's audience is enforced**, and the defect's premise was
+  stale: SEC-02 brought PROJECT membership, not an organisation entity, and
+  there is still no table to check one against. Naming an audience the system
+  cannot identify was the claim, not the gap. The audience is now stated as what
+  it is — everybody with an account in this deployment, which is correct for a
+  private single-tenant installation — and refused to an unscoped caller, which
+  previously read org knowledge with no identity at all. A table maps every
+  declared visibility to the check that enforces it, and a fence holds the two in
+  step. **What still does not exist** is a boundary between two organisations
+  sharing one deployment; a multi-tenant installation needs an organisation model
+  and this layer would hang off it.
+- **The two CLI commands are fenced.** `memory forget` and `memory purge` now
+  parse through functions separate from the doing, with six fences over the shape
+  that shipped broken twice. All four commands with a positional-then-flags shape
+  are now held by a fence rather than by convention.
+- **Part ids survive a revision — measured, and the fix was measured too.** The
+  on-screen note listed part NAMES, so the model had never been shown the ids
+  `converse.go` asks it to reuse. Adding them took the evaluation suite's tracked
+  rate from **1 of 4 to 4 of 4**, every id carried over in every run. Still
+  tracked rather than floored: that is one run of one model, and a floor set from
+  a single good measurement is a target dressed as an observation. The
+  comparison's match-by-name fallback stays either way — it reports which basis
+  it used, so it is honest whichever way the number goes.
+
+### Not closed, and what each would take
+
+- **SSO is not implemented.** RBAC, MFA and device trust are. This is blocked on
+  something this repository cannot supply: a real identity provider to verify
+  against. Building it against a fake is the one thing that must not happen —
+  this codebase's own history is that a stub matching the provider hid five
+  shipped defects, and an unverified authentication path is worse than none.
+  **What it needs:** an IdP tenant. It is then a self-contained piece of work.
+- **There is no realtime audio transport.** COL-01's record is built, every turn
+  attributed, and transport-agnostic by design — a WebRTC bridge, a phone
+  gateway and somebody typing all write the same row. What is missing is the
+  transport itself, which is a subsystem with its own budget rather than a
+  defect: signalling, media servers, per-speaker streams, and a privacy surface
+  (SEC-06 wants a visible recording state and retention-free mode). **What it
+  needs:** its own wave.
 - **Pre-migration events are unattestable.** 11 events on the dev database
-  predate the audit chain and always will. Expected, reported, never backfilled.
-- **Tool inputs are not validated against their declared schema.** `Contract`
-  documents `InputSchema` as checked before a tool runs and `Invocation.Input` as
-  "already validated"; nothing in this build does it. The schema reaches the model
-  provider (`registry.go`) and no further, so an unexpected field arrives at
-  `Run` and `encoding/json` discards it silently. Every tool is affected. The two
-  memory tools defend themselves with a strict decoder; `workspace` and `shell` do
-  not. Fixing it properly means either a schema validator in the executor or
-  strict decoding as a rule, and it is a decision about every tool rather than
-  about memory, so it was left rather than widened into.
-- **SSO is not implemented.** RBAC, MFA and device trust are; the identity
-  provider integration is not, because there is no IdP here to verify it against.
-- **There is no realtime audio transport.** COL-01's record is built and nothing
-  carries voice into it.
-- **Prompt-injection defence (SEC-04) does not exist.** Tool output, imported
-  results, documents and code comments reach the model as ordinary text. The
-  PRD names them as untrusted input; nothing treats them that way.
-- **`updated_at` is maintained by a trigger nothing asserts.** The trigger is now
-  attached in every schema, and no test checks that a row's `updated_at` actually
-  moves when something updates it without setting it by hand. The one path that
-  relies on this is `identity.MarkEmailVerified`.
-- **Part ids do not survive a revision, and the comparison depends on the
-  fallback.** Measured at 1 of 4 by the evaluation suite against qwen-plus. The
-  `converse.go` clause asking for stable ids does not reliably work, so the
-  comparison view's match-by-name fallback is load-bearing rather than a safety
-  net. Not a bug — the fallback exists for exactly this, and it says so on every
-  row it produces — but it is a dependency on a model behaviour that is measured
-  and known to be unreliable. Watch the tracked rate: if it ever reaches 1
-  reliably, the fallback can be reconsidered.
-- **Two CLI commands still have their argument shape by convention.** `memory
-  forget` and `memory purge` take a positional id and then flags, which Go's flag
-  package will silently ignore unless the id is removed before parsing. Both do
-  it correctly today and nothing checks that they keep doing it. `geometry export`
-  is now fenced (`cmd/forgectl/geometry_test.go`), and the fix for the other two
-  is to move them onto the same shape — a parse function separate from the doing,
-  with the same four cases over it.
-- **A superseded variant cannot be accepted, and choosing an earlier one is what
-  a comparison is for.** Appending a version marks the previous one `superseded`,
-  and `SetDisposition` only acts on `pending` rows. Correct for a file, wrong for
-  alternatives. Three ways out, in order of how much they cost:
-  1. **Adopt.** `POST /v1/geometry/{id}/adopt` appends a copy of the chosen
-     variant as the current version, whose inputs name the variant it was taken
-     from; the person then rules on that. Keeps the append-only history and the
-     one disposition rule. Costs one endpoint.
-  2. **Let the person re-propose it** — the workbench asks FORGE for the earlier
-     shape again. Free, and unreliable: the model may not reproduce it.
-  3. **Stop superseding on model artifacts.** Rejected on sight: it splits the
-     lifecycle's meaning by artifact kind, which is a special case inside a
-     shared rule.
-  Nothing is blocked on this today — the comparison view says what `superseded`
-  means and what to do instead — but VIS-04's whole purpose is choosing, and
-  right now the choosing has no verb.
-- **Organisation memory has no audience to enforce.** `Visibility` declares it and
-  says so; there is no membership model until SEC-02/COL-01. Personal and project
-  scoping ARE enforced, and `/v1/memory/layers` reports which is which rather than
-  letting a client assume.
+  predate the audit chain. This is permanent BY DESIGN and must not be "fixed":
+  backfilling would mean minting attestations for events nothing attested, which
+  is forging exactly the evidence the chain exists to provide. `audit verify`
+  reports them as unattestable rather than passing over them, which is the
+  correct behaviour and the only one available.

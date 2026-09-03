@@ -314,13 +314,15 @@ func partIDsSurviveARevision() Scorer {
 		Name:    "part ids are the same ids after a revision",
 		Asserts: "the second proposal reuses the first's part ids for parts that still exist",
 		Tracked: true,
-		FloorWhy: "TRACKED, not required, and the distinction is the finding. Measured at 1 of 3 against " +
-			"qwen-plus on 2026-09-03: the model reliably keeps the base plate's id and renames most of the " +
-			"rest, even with converse.go asking for stability — 1 of 4 on a second run the same day. " +
-			"Requiring it would demand something the " +
-			"design already assumes is absent — the comparison's name fallback exists for exactly this, and " +
-			"this number is the evidence that it is load-bearing rather than a safety net. Watch it: if it " +
-			"ever reaches 1 reliably, the fallback can be reconsidered.",
+		FloorWhy: "TRACKED, not required — and the two measurements behind that are the useful part. " +
+			"Against qwen-plus on 2026-09-03 this ran at 1 of 4: the model kept the base plate's id and " +
+			"renamed most of the rest, even with converse.go asking for stability. It had never been " +
+			"SHOWN the ids it was being asked to reuse — the on-screen note listed part NAMES — and once " +
+			"the ids were added to it the same suite ran 4 of 4, every id carried over. " +
+			"Still tracked rather than floored: that is one run of one model, and a floor set from a " +
+			"single good measurement is a target dressed as an observation. Promote it when several " +
+			"runs across more than one model hold. The comparison's match-by-name fallback stays either " +
+			"way — it reports which basis it used, so it is honest whichever way this number goes.",
 		Judge: func(o *Observation) (bool, string) {
 			first, second := o.Reply(0), o.Reply(1)
 			if first == nil || second == nil || first.Prototype == nil || second.Prototype == nil {

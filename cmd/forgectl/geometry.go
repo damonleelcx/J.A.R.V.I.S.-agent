@@ -298,6 +298,65 @@ func parseExportArgs(args []string) (exportArgs, error) {
 	return exportArgs{VersionID: args[0], Format: *format, Out: *out, DryRun: *dryRun}, nil
 }
 
+// cmdGeometryAdopt brings an earlier variant forward so it can be ruled on.
+//
+// The id comes first and the flags after it — Go's flag package stops at the
+// first non-flag argument, so parsing the whole slice would silently ignore the
+// --as this command then demands. Same shape as `approve` and `memory forget`,
+// and fenced by TestParseAdoptArgs_FlagsAfterTheIDAreStillRead.
+func cmdGeometryAdopt(ctx context.Context, cfg *config.Config, log *logx.Logger, args []string) error {
+	opts, err := parseAdoptArgs(args)
+	if err != nil {
+		return err
+	}
+	svc, pool, err := geometryService(ctx, cfg, log)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+
+	adopted, err := svc.Adopt(ctx, opts.VersionID, opts.As, opts.Reason)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("%s v%d now carries the geometry from %s.\n", adopted.Path, adopted.Version, opts.VersionID)
+	fmt.Printf("  version id  %s\n", adopted.VersionID)
+	fmt.Println()
+	fmt.Println("Nothing has been accepted. Adopting PROPOSES the earlier shape again; ruling on it")
+	fmt.Println("is the separate act, and it is what the comparison was for:")
+	fmt.Printf("  POST /v1/workspace/versions/%s/disposition\n", adopted.VersionID)
+	return nil
+}
+
+// adoptArgs is what `geometry adopt` was asked to do.
+type adoptArgs struct {
+	VersionID string
+	As        string
+	Reason    string
+}
+
+func parseAdoptArgs(args []string) (adoptArgs, error) {
+	const op = "forgectl.cmdGeometryAdopt"
+
+	fs := newFlagSet("geometry adopt")
+	as := fs.String("as", "", "the user id choosing this variant (required)")
+	reason := fs.String("reason", "", "why this one")
+
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		return adoptArgs{}, errs.New(op, errs.CodeValidationFailed).
+			WithDetail("usage: forgectl geometry adopt <version-id> --as <user-id> [--reason ...]. " +
+				"The version id comes first.")
+	}
+	if err := fs.Parse(args[1:]); err != nil {
+		return adoptArgs{}, err
+	}
+	if strings.TrimSpace(*as) == "" {
+		return adoptArgs{}, errs.New(op, errs.CodeValidationFailed).
+			WithDetail("--as is required: a design nobody chose has no authority behind it")
+	}
+	return adoptArgs{VersionID: args[0], As: *as, Reason: *reason}, nil
+}
+
 // cmdGeometryExport writes a variant to a file, printing what the conversion
 // lost before it says where the file went.
 //

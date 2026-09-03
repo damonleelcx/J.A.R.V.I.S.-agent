@@ -228,6 +228,65 @@ func (h *GeometryHandlers) Compare(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+type adoptRequest struct {
+	Reason string `json:"reason"`
+}
+
+// Adopt handles POST /v1/geometry/{id}/adopt.
+//
+// # Why this endpoint exists at all
+//
+// Appending a version supersedes the previous one, and a superseded version can
+// no longer be accepted or rejected. Correct for a file; wrong for variants,
+// which are alternatives you choose between — so a person who compared v1 and v3
+// and preferred v1 had the choice shown to them and refused when they made it.
+//
+// It needs content.write rather than artifact.dispose: adopting PROPOSES the
+// earlier shape again, it does not sign anything off. The sign-off is the
+// separate act on the version this creates, through the disposition endpoint
+// that already exists — the same two-step separation PRD AGT-02 draws between
+// planning work and starting it.
+func (h *GeometryHandlers) Adopt(w http.ResponseWriter, r *http.Request) {
+	user, _ := UserFrom(r.Context())
+
+	var req adoptRequest
+	if err := DecodeJSON(w, r, &req); err != nil {
+		WriteError(w, r, h.deps.Log, err)
+		return
+	}
+	v, err := h.svc.Find(r.Context(), r.PathValue("id"))
+	if err != nil {
+		if errs.Is(err, errs.CodeNotFound) {
+			WriteError(w, r, h.deps.Log, errs.New("httpapi.Adopt", errs.CodeNotFound).
+				WithDetail("no geometry variant %s", r.PathValue("id")))
+			return
+		}
+		WriteError(w, r, h.deps.Log, err)
+		return
+	}
+	if err := h.deps.requirePermission(r, v.ProjectID, user.ID, access.PermContentWrite); err != nil {
+		if errs.Is(err, errs.CodeNotFound) {
+			WriteError(w, r, h.deps.Log, errs.New("httpapi.Adopt", errs.CodeNotFound).
+				WithDetail("no geometry variant %s", r.PathValue("id")))
+			return
+		}
+		WriteError(w, r, h.deps.Log, err)
+		return
+	}
+
+	adopted, err := h.svc.Adopt(r.Context(), v.VersionID, user.ID, req.Reason)
+	if err != nil {
+		WriteError(w, r, h.deps.Log, err)
+		return
+	}
+	WriteJSON(w, http.StatusCreated, map[string]any{
+		"variant": toVariantDTO(*adopted),
+		"note": "This is a NEW version carrying the earlier variant's geometry, so a person can rule " +
+			"on it. Nothing has been accepted yet — accept or reject it with " +
+			"POST /v1/workspace/versions/" + adopted.VersionID + "/disposition.",
+	})
+}
+
 // ExportLabel handles GET /v1/geometry/{id}/export/label?format=.
 //
 // Exists so a person is told what a conversion loses BEFORE they download it,

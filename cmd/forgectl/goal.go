@@ -139,6 +139,63 @@ func cmdGoalNew(ctx context.Context, cfg *config.Config, log *logx.Logger, args 
 	return nil
 }
 
+// cmdGoalReplan plans a draft goal whose plan never landed.
+//
+// # Why this command exists
+//
+// Planning is a model call of one to three minutes. When it trips, Draft has
+// already committed the goal and Apply has written nothing, so what survives is
+// a draft with no tasks — and until now there was no way forward from there.
+// Starting it is refused (it would be a goal running with nothing to run), so
+// the only recovery was to write the goal again under a new id.
+func cmdGoalReplan(ctx context.Context, cfg *config.Config, log *logx.Logger, args []string) error {
+	const op = "forgectl.cmdGoalReplan"
+
+	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
+		return errs.New(op, errs.CodeValidationFailed).
+			WithDetail("usage: forgectl goal replan <goal-id>")
+	}
+	goalID := args[0]
+
+	pool, err := db.Connect(ctx, cfg.DB, log)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+
+	goal, err := loadGoalCLI(ctx, pool, goalID)
+	if err != nil {
+		return err
+	}
+	// The same intake every other planning path uses, so a replan produces the
+	// plan the first attempt would have.
+	client := llm.NewOpenAICompatible(cfg.LLM, log, clock.System{})
+	intake := agent.NewIntake(client, persona.DefaultCharacter(), cfg.Engine, clock.System{})
+
+	fmt.Printf("planning %q with %s …\n", goal.Title, intake.PlannerModel())
+	stopTicker := startElapsedTicker("  still planning")
+	outcome, err := intake.Replan(ctx, pool, goal)
+	stopTicker()
+	if err != nil {
+		return err
+	}
+	if outcome.ClarificationNeeded != "" {
+		// A question is the planner working correctly, and the goal stays a
+		// draft. Printed as the outcome rather than an error, for the same
+		// reason Plan returns it rather than raising it.
+		fmt.Printf("\nThe planner needs an answer before it can plan this:\n  %s\n\n",
+			wrap(outcome.ClarificationNeeded, 74, "  "))
+		fmt.Println("The goal is still a draft. Answer the question in its statement and replan.")
+		return nil
+	}
+	fmt.Printf("\nPlanned: %d task(s).\n", len(outcome.Tasks))
+	for _, task := range outcome.Tasks {
+		fmt.Printf("  %-8s %s\n", task.RiskTier, task.Title)
+	}
+	fmt.Printf("\nStart it with:\n  forgectl goal start %s\n", goal.ID)
+	return nil
+}
+
 // cmdGoalStart activates a goal so its tasks become claimable.
 func cmdGoalStart(ctx context.Context, cfg *config.Config, log *logx.Logger, args []string) error {
 	const op = "forgectl.cmdGoalStart"

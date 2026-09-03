@@ -280,3 +280,57 @@ func TestExportItem_SerialisesTheEpistemicGloss(t *testing.T) {
 		t.Fatal("an export omitted what its epistemic labels mean; six months later nobody can read it")
 	}
 }
+
+// An unscoped Recall must not read org-wide knowledge.
+//
+// It used to. `readableScopes` included the organisation layer unconditionally,
+// on the reasoning that it has no owner to check against — which left a caller
+// with no goal, no project and no user reading org knowledge with no identity at
+// all. Having no owner is not the same as having no audience.
+func TestReadableScopes_AnUnscopedCallerReadsNothing(t *testing.T) {
+	if got := readableScopes(map[Owner]string{}); len(got) != 0 {
+		t.Fatalf("a caller with no identity may read %v; org-wide knowledge is readable by anyone "+
+			"with an account in this deployment, which means the caller has to be one", got)
+	}
+}
+
+// And a caller scoped to anything in the deployment does get it — the audience
+// is everybody with an account, not nobody.
+func TestReadableScopes_AnyScopedCallerReadsOrgKnowledge(t *testing.T) {
+	for _, owners := range []map[Owner]string{
+		{OwnerGoal: "gol_1"},
+		{OwnerProject: "prj_1"},
+		{OwnerUser: "usr_1"},
+	} {
+		var found bool
+		for _, sc := range readableScopes(owners) {
+			if sc == ScopeOrganisation {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("a caller scoped by %v cannot read org-wide knowledge", owners)
+		}
+	}
+}
+
+// Every visibility a layer declares must name the check that enforces it. A
+// label that reads like a control and is not one is the defect this replaced.
+func TestVisibility_EveryDeclaredAudienceIsEnforced(t *testing.T) {
+	for _, l := range Layers() {
+		if !AudienceEnforced(l.Visibility) {
+			t.Errorf("%s declares the audience %q and nothing enforces it", l.Scope, l.Visibility)
+		}
+	}
+	// And nothing is enforced that no layer uses: a rule protecting nothing is
+	// how the table starts describing a system that has moved on.
+	used := map[Visibility]bool{}
+	for _, l := range Layers() {
+		used[l.Visibility] = true
+	}
+	for v := range audienceEnforcement {
+		if !used[v] {
+			t.Errorf("audienceEnforcement describes %q and no layer declares it", v)
+		}
+	}
+}

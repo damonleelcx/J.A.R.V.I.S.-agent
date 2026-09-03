@@ -45,7 +45,11 @@ When you are finished, reply with JSON only:
   and saying so is better than producing something plausible.
 - "evidence" is what you OBSERVED — a command's exit code, a file's contents, a
   tool's output. Not what you expect to be true. If a claim has no evidence, put
-  it in "assumptions" instead.`
+  it in "assumptions" instead.
+
+UNTRUSTED CONTENT
+
+` + UntrustedRule + "`"
 
 // Executor runs one task through a bounded tool loop.
 type Executor struct {
@@ -241,6 +245,29 @@ func (e *Executor) runTool(ctx context.Context, tc *TaskContext, call llm.ToolCa
 		return toolError(string(errs.CodeToolRefused), why)
 	}
 
+	// The arguments must match the schema the contract declares (PRD: the
+	// contract documents InputSchema as checked before the tool runs).
+	//
+	// # Where this sits, and why
+	//
+	// After the permission check and BEFORE the idempotency key: a call the
+	// grant forbids is refused whatever its shape, and a malformed call must
+	// not claim a key — a later well-formed call with the same arguments would
+	// then dedupe against a record of something that never ran.
+	//
+	// Refused rather than failed. The tool did not run, so `failed` would put a
+	// row in the ledger asserting an execution that never happened. The model
+	// gets the specific problem — which field, and what was wrong with it — so
+	// its next attempt is a correction rather than a guess.
+	if err := e.registry.ValidateInput(name, json.RawMessage(call.Function.Arguments)); err != nil {
+		detail := err.Error()
+		e.recordToolCall(ctx, tc, call, engine.ToolRefused, "",
+			string(errs.CodeValidationFailed), detail, 0)
+		e.log.Info(ctx, logx.EventToolRefusedSchema,
+			"task_id", tc.Task.ID, "tool", name)
+		return toolError(string(errs.CodeValidationFailed), detail)
+	}
+
 	// Idempotency key: stable across retries of the same logical call, so a
 	// replayed attempt finds the completed record instead of acting again.
 	key := idempotencyKey(tc.Task.ID, name, call.Function.Arguments)
@@ -324,7 +351,50 @@ func (e *Executor) runTool(ctx context.Context, tc *TaskContext, call llm.ToolCa
 	e.log.Debug(ctx, logx.EventToolSucceeded,
 		"task_id", tc.Task.ID, "tool", name, "duration_ms", elapsed.Milliseconds())
 
-	return string(output)
+	// PRD SEC-04. Tool output is untrusted input: a file in the workspace, the
+	// stdout of a command, a page somebody else wrote. Until now it reached the
+	// model as a JSON string indistinguishable from anything the operator said.
+	//
+	// It is FRAMED rather than filtered — see untrusted.go for why nothing is
+	// stripped — and what the scan found is recorded rather than swallowed. The
+	// framing goes on last, after redaction, so the envelope wraps what the
+	// model will actually see.
+	framed, findings := Untrusted(name, string(output))
+	if len(findings) > 0 {
+		e.log.Warn(ctx, logx.EventInjectionSuspected,
+			"task_id", tc.Task.ID, "goal_id", tc.Goal.ID, "tool", name,
+			"patterns", Summarise(findings))
+		// Into the timeline as well as the log. "Did anything try to steer the
+		// agent through its own tool output?" is a question asked after the
+		// fact, by somebody reading the goal rather than grepping a log.
+		e.appendInjectionEvent(ctx, tc, name, findings)
+	}
+	return framed
+}
+
+// appendInjectionEvent records a suspected injection on the goal's timeline.
+//
+// Best-effort, and loudly so: failing the tool call because the record could not
+// be written would turn a detection into an outage. The log line above has
+// already happened, so nothing is lost silently.
+func (e *Executor) appendInjectionEvent(ctx context.Context, tc *TaskContext, tool string, findings []Finding) {
+	payload, _ := json.Marshal(map[string]any{
+		"tool":     tool,
+		"patterns": findings,
+		"note": "Content returned by this tool matched known prompt-injection shapes. It was framed as " +
+			"untrusted data and passed to the model unaltered — nothing was removed, because rewriting " +
+			"untrusted content cannot be done correctly and would leave it looking trustworthy.",
+	})
+	ev := &engine.Event{
+		GoalID: tc.Goal.ID, TaskID: &tc.Task.ID,
+		Kind: engine.EventInjectionSuspected, Actor: engine.ActorSystem,
+		Summary: fmt.Sprintf("%s returned content matching %d prompt-injection pattern(s)", tool, len(findings)),
+		Payload: payload,
+	}
+	if err := e.repo.AppendEvent(ctx, e.pool, ev, e.clock.Now()); err != nil {
+		e.log.WarnWith(ctx, logx.EventInjectionSuspected, err,
+			"task_id", tc.Task.ID, "detail", "the suspected injection was logged but not recorded on the timeline")
+	}
 }
 
 // secretsNote describes the available handles for the system prompt.

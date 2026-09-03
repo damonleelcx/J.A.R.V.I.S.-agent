@@ -141,7 +141,7 @@ summarised away, because they are what an auditor reconstructs the run from.
 | `domain/*` | Aggregates: identity, goal, plan, task, run, approval, memory, policy, pack |
 | `domain/geometry` | Units and frames, the proposed-shape document, variants (an artifact version), derived comparison, and mesh export with its conversion label |
 | `engine/*` | Queue, worker loop, planner, executor, verifier, context assembly, budgets, scheduler |
-| `tools/*` | Capability registry and typed tool contracts |
+| `tools/*` | Capability registry, typed tool contracts, and the bounded schema validator that enforces them — a schema it cannot check is refused at registration |
 | `persona/*` | Avatar, character, and the durable value set |
 | `httpapi/*` | Public API and console surface |
 | `drill/*` | Recovery drills: real injected faults against a real schema (NFR-07) |
@@ -159,7 +159,12 @@ Three rules, learned the hard way:
    because `gofmt` had realigned the line the mutation targeted.)
 3. **Schema tests run against the real migrated schema**, never an inline
    `CREATE TABLE`. A fixture that approximates production tests the fixture.
-4. **What the tests cannot cover is measured, not assumed.** The suite proves the
+4. **Untrusted input is marked and never rewritten.** Tool output reaches the
+   model inside a fenced envelope it cannot forge (SEC-04). Suspected injection
+   is recorded, not stripped: the safe rewrite of arbitrary prose is not defined,
+   and a laundered payload leaves the caller believing it is trustworthy. This is
+   mitigation, not prevention, and the package says so.
+5. **What the tests cannot cover is measured, not assumed.** The suite proves the
    harness; `internal/eval` measures the model inside it, against a real
    provider, and reports rates rather than passes — because the same prompt has
    produced a correct standards figure and a fabricated one four runs apart. Its

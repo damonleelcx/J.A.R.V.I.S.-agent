@@ -324,16 +324,20 @@ func onScreen(prev *agent.Reply) string {
 		return ""
 	}
 	p := prev.Prototype
-	names := make([]string, 0, len(p.Parts))
+	parts := make([]string, 0, len(p.Parts))
 	for _, part := range p.Parts {
-		names = append(names, part.Label())
+		// The IDS, not only the names. converse.go asks the model to keep part
+		// ids stable across turns, and until this was added it had never been
+		// shown the ids it was being asked to reuse — which is what
+		// partIDsSurviveARevision measures.
+		parts = append(parts, fmt.Sprintf("%s [id: %s]", part.Label(), part.ID))
 	}
 	units := p.Units
 	if units == "" {
 		units = "NOT STATED — every dimension here is unitless"
 	}
-	return fmt.Sprintf("%s — %d part(s): %s (units: %s)",
-		p.Name, len(p.Parts), strings.Join(names, ", "), units)
+	return fmt.Sprintf("%s — %d part(s): %s (units: %s). Keep these part ids when you revise it.",
+		p.Name, len(p.Parts), strings.Join(parts, ", "), units)
 }
 
 // score applies every scorer to every completed run.

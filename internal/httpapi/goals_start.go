@@ -173,6 +173,80 @@ func (h *GoalHandlers) CreateGoal(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusCreated, body)
 }
 
+// Replan handles POST /v1/goals/{id}/plan.
+//
+// # Why the workbench needs this and not only the terminal
+//
+// Planning is a model call of one to three minutes, and the workbench is where
+// most goals are drafted. When it trips, what the person is left with is a draft
+// with no tasks and a Start button that now refuses — correctly, because
+// starting it would produce a goal running with nothing to run. Without a way to
+// plan it again, the only recovery from a browser is to describe the whole thing
+// over.
+//
+// It needs goal.create rather than goal.start: replanning DRAFTS work, it does
+// not authorise any. Starting stays the separate act (PRD AGT-02).
+func (h *GoalHandlers) Replan(w http.ResponseWriter, r *http.Request) {
+	const op = "httpapi.Replan"
+
+	if h.intake == nil {
+		WriteError(w, r, h.deps.Log, errs.New(op, errs.CodeConfigInvalid).
+			WithDetail("no model is configured, so FORGE cannot plan. Set FORGE_LLM_API_KEY and restart."))
+		return
+	}
+	user, _ := UserFrom(r.Context())
+	goalID := r.PathValue("id")
+
+	goal, err := h.loadGoalFor(r, goalID, user.ID, access.PermGoalCreate)
+	if err != nil {
+		WriteError(w, r, h.deps.Log, err)
+		return
+	}
+
+	// The same budget hierarchy as CreateGoal: longer than the model client's
+	// own timeout, never shorter, or the handler kills the call mid-retry and
+	// reports a deadline that points at the model rather than at the timeout
+	// that caused it.
+	ctx, cancel := context.WithTimeout(r.Context(), h.deps.Config.LLM.RequestTimeout+15*time.Second)
+	defer cancel()
+
+	outcome, err := h.intake.Replan(ctx, h.deps.Pool, goal)
+	if err != nil {
+		h.deps.Log.WarnWith(r.Context(), logx.EventGoalPlanFailed, err,
+			"goal_id", goalID, "user_id", user.ID)
+		WriteError(w, r, h.deps.Log, err)
+		return
+	}
+	if outcome.ClarificationNeeded != "" {
+		// A question is the planner working correctly (PRD AGT-02), and the goal
+		// stays a draft. 200 with the question rather than an error, for the
+		// same reason CreateGoal does it.
+		WriteJSON(w, http.StatusOK, map[string]any{
+			"goal_id":              goal.ID,
+			"clarification_needed": outcome.ClarificationNeeded,
+			"tasks":                []any{},
+			"note": "The planner needs an answer before it can plan this. The goal is still a draft; " +
+				"answer the question in its statement and plan it again.",
+		})
+		return
+	}
+	h.deps.Log.Info(r.Context(), logx.EventGoalDrafted,
+		"goal_id", goal.ID, "user_id", user.ID, "tasks", len(outcome.Tasks), "replanned", true)
+
+	tasks := []TaskDTO{}
+	for _, t := range outcome.Tasks {
+		deps, _ := h.repo.ListDependencies(r.Context(), h.deps.Pool, t.ID)
+		tasks = append(tasks, toTaskDTO(t, deps))
+	}
+	WriteJSON(w, http.StatusOK, map[string]any{
+		"goal_id":   goal.ID,
+		"tasks":     tasks,
+		"rationale": outcome.Rationale,
+		"note": "Planned. Nothing runs until it is started — that is the separate act, and it is " +
+			"deliberately separate (PRD AGT-02).",
+	})
+}
+
 // StartGoal handles POST /v1/goals/{id}/start — the material act.
 func (h *GoalHandlers) StartGoal(w http.ResponseWriter, r *http.Request) {
 	const op = "httpapi.StartGoal"

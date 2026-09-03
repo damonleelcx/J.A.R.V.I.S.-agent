@@ -214,6 +214,27 @@ func (a *PlanApplier) Activate(ctx context.Context, pool *db.Pool, goal *engine.
 	if err := engine.ValidateGoalTransition(goal.Status, engine.GoalActive); err != nil {
 		return err
 	}
+	// A goal with no tasks cannot be started.
+	//
+	// This is the state a failed plan leaves behind: Draft commits the goal,
+	// planning trips on its way to Apply, and what survives is a draft with
+	// nothing in it. Activating that produced a goal that was "running" with
+	// nothing to run — indistinguishable, from every surface, from one whose
+	// work had not started yet.
+	//
+	// Refused with the thing to do instead. Recovering is a replan, and until
+	// there was one this refusal would have been a dead end.
+	var tasks int
+	if err := pool.QueryRow(ctx,
+		`select count(*) from forge_tasks where goal_id = $1`, goal.ID).Scan(&tasks); err != nil {
+		return errs.Wrap(op, errs.CodeDatabaseUnavail, err)
+	}
+	if tasks == 0 {
+		return errs.New(op, errs.CodeValidationFailed).
+			WithDetail("goal %s has no tasks, so starting it would produce a goal that is running with "+
+				"nothing to run. Its plan never landed — planning is a model call and can time out. "+
+				"Plan it again with `forgectl goal replan %s`.", goal.ID, goal.ID)
+	}
 	now := a.clock.Now()
 	tag, err := pool.Exec(ctx, `
 		update forge_goals

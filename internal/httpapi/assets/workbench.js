@@ -188,6 +188,13 @@
         ' · ' + esc(v.verification) + ', ' +
         (v.disposition === 'pending' ? 'nobody has ruled on it' : esc(v.disposition)) + '</div>' +
         '<div class="acts">' +
+        /* Adopting is offered only where it is the thing to do. A superseded
+         * variant cannot be accepted, and bringing it forward is how you choose
+         * it; on the current version the disposition is already available and
+         * adopting would append an identical copy. */
+        (v.disposition === 'superseded'
+          ? '<button type="button" data-adopt="' + esc(v.version_id) + '">Adopt this one</button>'
+          : '') +
         '<button type="button" data-export="' + esc(v.version_id) + '" data-format="obj">Export OBJ</button>' +
         '<button type="button" data-export="' + esc(v.version_id) + '" data-format="stl">Export STL</button>' +
         '</div>' +
@@ -206,6 +213,9 @@
         renderVariants();
       });
     });
+    Array.prototype.forEach.call(el.querySelectorAll('[data-adopt]'), function (b) {
+      b.addEventListener('click', function () { adoptVariant(b.getAttribute('data-adopt'), b); });
+    });
     Array.prototype.forEach.call(el.querySelectorAll('[data-export]'), function (b) {
       b.addEventListener('click', function () {
         showExportLabel(b.getAttribute('data-export'), b.getAttribute('data-format'));
@@ -213,6 +223,45 @@
     });
     var open = $('cmp-open');
     if (open) open.addEventListener('click', openCompare);
+  }
+
+  /* Adopting brings an earlier variant forward as the current version.
+   *
+   * Appending a version supersedes the previous one, and a superseded version
+   * can no longer be accepted or rejected — correct for a file, wrong for
+   * alternatives you are choosing between. Without this the comparison showed
+   * somebody the choice and nothing let them make it.
+   *
+   * It proposes; it does not sign anything off. The row that appears is
+   * unverified and undecided like any other. */
+  function adoptVariant(versionID, button) {
+    button.disabled = true;
+    button.textContent = 'Adopting…';
+    fetch('/v1/geometry/' + encodeURIComponent(versionID) + '/adopt', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reason: 'chosen after comparing variants at the workbench' })
+    }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (b) {
+        if (!r.ok) {
+          var e = (b && b.error) || {};
+          throw new Error((e.message || ('Could not adopt (' + r.status + ')')) +
+                          (e.remedy ? ' — ' + e.remedy : ''));
+        }
+        return b;
+      });
+    }).then(function (b) {
+      /* Re-read rather than patch the list in place. Adopting supersedes the
+       * previously-current variant, so more than one row changed and the server
+       * is the only thing that knows which. */
+      restoreVariants();
+      addTurn('forge', 'Brought ' + esc(b.variant.name) + ' forward as v' + b.variant.version +
+        '. Nothing is accepted yet — it is a proposal like any other.');
+    }).catch(function (err) {
+      button.disabled = false;
+      button.textContent = 'Adopt this one';
+      addTurn('forge', err.message);
+    });
   }
 
   /* The conversion label is fetched and SHOWN before the download link appears.
@@ -526,11 +575,27 @@
 
   /* ---- the stage -------------------------------------------------------- */
 
+  /* What the person is looking at, so "make that taller" resolves against the
+   * thing on screen rather than against the transcript (PRD WRK-02).
+   *
+   * Part IDS are included, not only names. converse.go asks the model to keep
+   * ids stable across turns so a revision reads as a revision rather than as two
+   * unrelated designs — and until now it had never been SHOWN the ids it was
+   * being asked to reuse. The evaluation suite measured that clause working 1
+   * time in 4 (internal/eval); this is the cheapest thing that could move it.
+   *
+   * internal/eval/eval.go builds the same note from the same fields, because an
+   * eval that gives the model less context than the product does is measuring a
+   * different system. The two are kept in step by
+   * TestOnScreen_NamesThePartIDsTheModelIsAskedToReuse. */
   function describeOnScreen() {
     if (!state.prototype) return '';
-    var names = state.prototype.parts.map(function (p) { return p.name || p.id; });
-    return state.prototype.name + ' — ' + state.prototype.parts.length + ' part(s): ' + names.join(', ') +
-           ' (units: ' + (state.prototype.units || 'NOT STATED — every dimension here is unitless') + ')';
+    var parts = state.prototype.parts.map(function (p) {
+      return (p.name || p.id) + ' [id: ' + p.id + ']';
+    });
+    return state.prototype.name + ' — ' + state.prototype.parts.length + ' part(s): ' + parts.join(', ') +
+           ' (units: ' + (state.prototype.units || 'NOT STATED — every dimension here is unitless') + ')' +
+           '. Keep these part ids when you revise it.';
   }
 
   function loadPrototype(proto) {

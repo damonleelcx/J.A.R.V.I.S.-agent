@@ -255,6 +255,12 @@ func AllActors() []Actor {
 
 // Event kinds, enumerated for the same reason as log event names.
 const (
+	// EventInjectionSuspected records that untrusted content matched a known
+	// prompt-injection shape (PRD SEC-04). On the timeline rather than only in
+	// the log because "did anything try to steer this agent through its own
+	// tool output?" is asked after the fact, by somebody reading the goal.
+	EventInjectionSuspected = "security.injection_suspected"
+
 	EventGoalCreated       = "goal.created"
 	EventGoalActivated     = "goal.activated"
 	EventGoalPaused        = "goal.paused"

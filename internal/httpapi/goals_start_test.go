@@ -347,3 +347,35 @@ func TestDefaultsMatchTheCLI(t *testing.T) {
 		t.Fatalf("unrecognised values were accepted: %q %q", a, r)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Recovering a plan that never landed (the planner-latency carried defect)
+// ---------------------------------------------------------------------------
+
+// The refusal must say how to recover, or it is a dead end.
+//
+// Planning is a model call of one to three minutes; when it trips, Draft has
+// committed the goal and Apply has written nothing, so what survives is a draft
+// with no tasks. This endpoint already refused to start it — correctly — and
+// until `goal replan` existed there was nothing the reader could do about it
+// except write the goal again under a new id.
+//
+// The guard also moved DOWN, into PlanApplier.Activate. It lived only here, so
+// `forgectl goal start` went straight past it and produced exactly the state
+// this endpoint was refusing.
+func TestStartGoal_TheNoTasksRefusalNamesTheRecovery(t *testing.T) {
+	h, pool, user := startHarness(t)
+	goalID := seedGoal(t, pool, user.ID, engine.GoalDraft, 0)
+
+	rec := httptest.NewRecorder()
+	r := as(user, "POST", "/v1/goals/"+goalID+"/start")
+	r.SetPathValue("id", goalID)
+	h.StartGoal(rec, r)
+
+	if rec.Code == http.StatusOK {
+		t.Fatal("a goal with no tasks was started")
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "lan it") {
+		t.Errorf("the refusal does not tell the reader they can plan it again: %s", body)
+	}
+}

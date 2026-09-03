@@ -100,9 +100,11 @@ type Contract struct {
 	// highest-leverage string in the contract — a vague one produces a tool
 	// called at the wrong times and then blamed for the outcome.
 	Description string
-	// InputSchema is JSON Schema. Validated before the tool runs, so a
-	// malformed call fails at the boundary with a message the model can act on
-	// rather than inside the tool with a nil dereference.
+	// InputSchema is JSON Schema, in the bounded subset tools/schema.go
+	// enforces. Compiled at registration — a schema using a keyword this build
+	// cannot check is refused rather than registered — and validated before the
+	// tool runs, so a malformed call fails at the boundary with a message the
+	// model can act on rather than inside the tool with a nil dereference.
 	InputSchema json.RawMessage
 	// Capabilities is the set this tool exercises.
 	Capabilities []Capability
@@ -140,9 +142,12 @@ func (c Contract) Validate() error {
 		return errs.New(op, errs.CodeInvariantViolated).
 			WithDetail("tool %q has no description; the model has nothing to decide from", c.Name)
 	}
-	if len(c.InputSchema) == 0 {
-		return errs.New(op, errs.CodeInvariantViolated).
-			WithDetail("tool %q declares no input schema; arguments could not be validated", c.Name)
+	// The schema is COMPILED, not merely present. A contract that declares a
+	// schema this build cannot enforce is refused here rather than registered
+	// and half-checked — see tools/schema.go for why partial enforcement is
+	// worse than none.
+	if _, err := CompileSchema(c.Name, c.InputSchema); err != nil {
+		return err
 	}
 	if len(c.Capabilities) == 0 {
 		return errs.New(op, errs.CodeInvariantViolated).
@@ -211,7 +216,11 @@ func (c Contract) Mutating() bool {
 type Invocation struct {
 	// Tool is the contract name.
 	Tool string
-	// Input is the raw arguments, already validated against InputSchema.
+	// Input is the raw arguments, validated against InputSchema before Run is
+	// called. A tool may decode it without re-checking the shape its contract
+	// declares — though a strict decoder costs nothing and is still the right
+	// habit, since the schema constrains what the CONTRACT promised and not
+	// everything a tool cares about.
 	Input json.RawMessage
 	// IdempotencyKey deduplicates this call across retries.
 	IdempotencyKey string
