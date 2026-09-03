@@ -127,6 +127,40 @@ body.room {
 .turn-text.gone { color: var(--ink-dim); font-style: italic; }
 .turn.redacted { opacity: .75; }
 
+/* ---- transcript search (PRD AUD-06) --------------------------------------
+ *
+ * Sits above the transcript rather than in the control row at the bottom. The
+ * control row is AUD-07's — mute, stop, delete — and those are reached in a
+ * hurry; search is not one of them and must not push them around.
+ */
+.room-find { display: flex; gap: 8px; margin: 0 0 8px; }
+.room-find__in {
+  flex: 1 1 auto;
+  min-width: 0;
+  background: var(--bg);
+  color: var(--ink);
+  border: 1px solid var(--edge-solid);
+  border-radius: 8px;
+  padding: 7px 10px;
+  font: inherit;
+}
+/* Reserves its line whether or not there is a count, so typing does not shift
+   the transcript down under the reader's eye. */
+.room-find__count {
+  min-height: 18px;
+  margin: 0 0 8px;
+  font-size: 12px;
+  color: var(--ink-dim);
+}
+/* Scoped to the turn text: `.mark` in shell.css is FORGE's sigil, a different
+   thing that happens to share the word. */
+.turn-text mark {
+  background: color-mix(in srgb, var(--core) 26%, transparent);
+  color: var(--ink);
+  border-radius: 3px;
+  padding: 0 1px;
+}
+
 /* ---- roster ------------------------------------------------------------- */
 
 .roster { list-style: none; margin: 0 0 12px; padding: 0; }

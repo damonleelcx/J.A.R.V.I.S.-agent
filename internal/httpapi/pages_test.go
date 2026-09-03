@@ -263,6 +263,60 @@ func TestAssetsServeOnlyWhatIsEmbedded(t *testing.T) {
 // not defects. What is always a defect is a class that some stylesheet in this
 // repository styles, used on a page that loads a different set of stylesheets —
 // that is somebody reaching for a component the page cannot see.
+// The transcript can be searched, and the search is usable without a mouse or
+// eyes (PRD AUD-06).
+//
+// # Why this is a markup fence and not a behaviour test
+//
+// The search itself is in assets/room-page.js: the whole transcript is already
+// in the page, so it filters what is there rather than asking the server again.
+// There is no JavaScript test harness in this repository, so what CAN be fenced
+// here is the part the script depends on and a person depends on — that the
+// controls exist, are labelled, and announce their result. If the markup below
+// is removed, the script silently does nothing, and AUD-06 regresses with no
+// other signal.
+//
+// The behaviour was verified in a browser against the real page when it landed;
+// see docs/bugfix/2026-09-03-the-transcript-could-not-be-searched.md.
+func TestTheTranscriptCanBeSearched(t *testing.T) {
+	pages := NewPageHandlers(testDeps())
+	rr := httptest.NewRecorder()
+	r := httptest.NewRequest(http.MethodGet, "/rooms/rom_1", nil)
+	r.SetPathValue("id", "rom_1")
+	pages.RoomPage(rr, r)
+	body := rr.Body.String()
+
+	for _, want := range []struct{ frag, why string }{
+		{`id="find"`,
+			"the search input itself; room-page.js binds its input and keydown to it"},
+		{`type="search"`,
+			"so the browser offers its own clear affordance and assistive technology " +
+				"calls it a search rather than a text field"},
+		{`<label class="vis" for="find">`,
+			"a label a screen reader can read. The placeholder is not one: it disappears " +
+				"as soon as anybody types, which is exactly when the field needs naming"},
+		{`id="find-clear"`,
+			"clearing without a keyboard. Escape is the keyboard path and this is the other one"},
+		{`id="find-count"`,
+			"where the result count is written"},
+		{`role="status"`,
+			"so the count is ANNOUNCED. Filtering a list silently tells a screen-reader " +
+				"user nothing happened; the count is the only feedback they get"},
+	} {
+		if !strings.Contains(body, want.frag) {
+			t.Errorf("the room page has no %s.\nAUD-06 needs it: %s.", want.frag, want.why)
+		}
+	}
+
+	// The transcript stays a live region for turns ARRIVING. room-page.js sets
+	// aria-busy around a filter rebuild precisely because this is here; if the
+	// attribute were dropped, the rebuild would stop being the thing that needs
+	// suppressing and the busy dance would become dead code.
+	if !strings.Contains(body, `id="turns" class="turns" aria-live="polite"`) {
+		t.Error("the transcript is no longer an aria-live region; new turns would arrive silently")
+	}
+}
+
 func TestNoPageUsesAClassStyledOnlyInAStylesheetItDoesNotLoad(t *testing.T) {
 	pages := NewPageHandlers(testDeps())
 
