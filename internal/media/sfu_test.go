@@ -77,6 +77,21 @@ type client struct {
 	mu       sync.Mutex
 	received map[string]int // source stream id -> RTP packets seen
 	labels   map[string]string
+
+	// signalling serialises this client's offer/answer exchanges.
+	//
+	// A browser runs one signalling state machine per peer connection and cannot
+	// be part-way through two exchanges at once. This harness could: the server
+	// renegotiates the moment a peer connects — to attach the other participants
+	// and FORGE's track — which can land while the client is still applying the
+	// answer to its own initial offer. Two goroutines then call
+	// SetRemoteDescription on the same connection, which the race detector
+	// rightly reports.
+	//
+	// Found by the detector under load rather than by a failing assertion, and it
+	// was the harness that was wrong, not the SFU: production serialises the
+	// server side already (peer.negMu).
+	signalling sync.Mutex
 }
 
 func newClient(t *testing.T, streamID, userID string) *client {
@@ -144,6 +159,8 @@ func (c *client) speak() {
 // offer performs the initial exchange: the client offers, the SFU answers.
 func (c *client) offer(sfu *forgemedia.SFU, roomID string) error {
 	c.t.Helper()
+	c.signalling.Lock()
+	defer c.signalling.Unlock()
 	offer, err := c.pc.CreateOffer(nil)
 	if err != nil {
 		return err
@@ -171,6 +188,8 @@ func (c *client) offer(sfu *forgemedia.SFU, roomID string) error {
 // answerRenegotiation replies to a server-initiated offer, which is how a client
 // receives everybody else's audio.
 func (c *client) answerRenegotiation(sfu *forgemedia.SFU, roomID, offerSDP string) {
+	c.signalling.Lock()
+	defer c.signalling.Unlock()
 	if err := c.pc.SetRemoteDescription(webrtc.SessionDescription{
 		Type: webrtc.SDPTypeOffer, SDP: offerSDP,
 	}); err != nil {

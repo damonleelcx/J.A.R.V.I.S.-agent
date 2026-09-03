@@ -206,6 +206,8 @@ func NewRouter(d Deps) http.Handler {
 	mux.Handle("POST /v1/rooms/{id}/media/state", authed(rooms.SetMediaState))
 	mux.Handle("POST /v1/rooms/{id}/transcribing", authed(rooms.SetTranscribing))
 	mux.Handle("DELETE /v1/rooms/{id}/voice", authed(rooms.DeleteVoice))
+	mux.Handle("POST /v1/rooms/{id}/ask", authed(rooms.Ask))
+	mux.Handle("POST /v1/rooms/{id}/stop-speaking", authed(rooms.StopSpeaking))
 
 	// --- workbench conversation ---
 	converse := NewConverseHandlers(d)

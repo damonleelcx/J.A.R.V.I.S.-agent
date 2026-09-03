@@ -95,7 +95,7 @@ test-cover: db-wait ## Run tests with coverage and print a summary
 	go tool cover -func=coverage.out | tail -20
 
 .PHONY: drill
-test-asr: ## Transcription fences against the REAL speech provider (costs a fraction of a cent)
+test-asr: ## Speech fences against the REAL provider, both directions (costs a fraction of a cent)
 	@# These cannot be faked. The defect they guard — a model dropping decimal
 	@# points out of engineering speech — is a property of the provider, not of
 	@# this code, and a stub returning the right answer would pass forever while
@@ -103,7 +103,7 @@ test-asr: ## Transcription fences against the REAL speech provider (costs a frac
 	FORGE_LLM_API_KEY="$$FORGE_LLM_API_KEY" go test -count=1 -v \
 	  -run 'TestTranscription|TestTranscribingNothing|TestAnAbsurdly' ./internal/llm/
 	FORGE_LLM_API_KEY="$$FORGE_LLM_API_KEY" go test -count=1 -v \
-	  -run 'TestSpokenAudioBecomesAnAttributedTurn|TestThePipelinesOwnContainer' ./internal/media/
+	  -run 'TestSpokenAudioBecomesAnAttributedTurn|TestThePipelinesOwnContainer|TestForgesVoiceIsIntelligible' ./internal/media/
 
 drill: db-wait ## Run the recovery drills against live Postgres (PRD NFR-07)
 	FORGE_DATABASE_URL="$(DB_URL)" go run ./cmd/forgectl drill run

@@ -40,6 +40,8 @@ import (
 	"sync/atomic"
 
 	"github.com/pion/interceptor"
+	"github.com/pion/rtp"
+	"github.com/pion/sdp/v3"
 	"github.com/pion/webrtc/v4"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/clock"
@@ -159,6 +161,10 @@ type Options struct {
 	Transcriber Transcriber
 	Turns       TurnSink
 	Activity    ActivitySink
+	// Speaker gives FORGE a voice in the room. Nil means it has none, and the
+	// room carries human audio only — a supported deployment, and the one every
+	// build before wave 9.6 had.
+	Speaker Speaker
 }
 
 // SFU forwards audio between the participants of rooms.
@@ -171,6 +177,11 @@ type SFU struct {
 	// text is the transcription pipeline, or nil when nothing is being written
 	// down. Every call on it is nil-safe, so the forwarding path has no branch.
 	text *transcription
+	// speaker synthesises FORGE's voice, or nil when this deployment has none.
+	speaker Speaker
+	// voices is FORGE's track per room, created with the room's first
+	// participant so an utterance needs no renegotiation before it can be heard.
+	voices map[string]*voice
 
 	mu    sync.Mutex
 	rooms map[string]map[string]*peer // roomID -> streamID -> peer
@@ -200,6 +211,30 @@ func New(o Options) (*SFU, error) {
 		return nil, errs.Wrap(op, errs.CodeConfigInvalid, err)
 	}
 
+	// G.711 alongside Opus, for FORGE's own voice. Humans send Opus; FORGE sends
+	// PCMU because no pure-Go Opus encoder exists — see speech.go.
+	if err := m.RegisterCodec(webrtc.RTPCodecParameters{
+		RTPCodecCapability: webrtc.RTPCodecCapability{
+			MimeType: webrtc.MimeTypePCMU, ClockRate: 8000, Channels: 1,
+		},
+		PayloadType: 0,
+	}, webrtc.RTPCodecTypeAudio); err != nil {
+		return nil, errs.Wrap(op, errs.CodeConfigInvalid, err)
+	}
+
+	// The browser's own voice-activity flag, per packet (RFC 6464).
+	//
+	// This is what makes barge-in real. The alternative — treating any arriving
+	// packet as speech — does not work: WebRTC clients send continuously through
+	// silence, so FORGE would be interrupted the moment it opened its mouth and
+	// could never finish a sentence. The browser has already done the detection;
+	// this reads its answer.
+	if err := m.RegisterHeaderExtension(
+		webrtc.RTPHeaderExtensionCapability{URI: sdp.AudioLevelURI},
+		webrtc.RTPCodecTypeAudio); err != nil {
+		return nil, errs.Wrap(op, errs.CodeConfigInvalid, err)
+	}
+
 	ir := &interceptor.Registry{}
 	if err := webrtc.RegisterDefaultInterceptors(m, ir); err != nil {
 		return nil, errs.Wrap(op, errs.CodeConfigInvalid, err)
@@ -225,10 +260,12 @@ func New(o Options) (*SFU, error) {
 	s := &SFU{
 		api: webrtc.NewAPI(webrtc.WithMediaEngine(m),
 			webrtc.WithInterceptorRegistry(ir), webrtc.WithSettingEngine(se)),
-		cfg:   webrtc.Configuration{ICEServers: ice},
-		log:   log,
-		max:   c.MaxParticipants,
-		rooms: make(map[string]map[string]*peer),
+		cfg:     webrtc.Configuration{ICEServers: ice},
+		log:     log,
+		max:     c.MaxParticipants,
+		rooms:   make(map[string]map[string]*peer),
+		voices:  make(map[string]*voice),
+		speaker: o.Speaker,
 	}
 	if c.Transcribe {
 		s.text = newTranscription(transcriptionDeps{
@@ -392,6 +429,63 @@ func (s *SFU) Join(ctx context.Context, req JoinRequest) (string, error) {
 	return pc.LocalDescription().SDP, nil
 }
 
+// voiceFor returns FORGE's track for a room, creating it on first use.
+//
+// Created when the room's first participant arrives rather than when FORGE first
+// speaks, so an utterance costs only the provider's ~0.6 s and not a
+// renegotiation round trip on top of it. The track exists and is silent until
+// there is something to say.
+func (s *SFU) voiceFor(roomID string) *voice {
+	s.mu.Lock()
+	if v := s.voices[roomID]; v != nil {
+		s.mu.Unlock()
+		return v
+	}
+	if len(s.rooms[roomID]) == 0 {
+		s.mu.Unlock()
+		return nil // nobody to hear it
+	}
+	s.mu.Unlock()
+
+	track, err := webrtc.NewTrackLocalStaticSample(
+		webrtc.RTPCodecCapability{MimeType: webrtc.MimeTypePCMU, ClockRate: 8000, Channels: 1},
+		forgeStreamID, forgeUserID)
+	if err != nil {
+		s.log.ErrorWith(context.Background(), logx.EventTTSFailed, err, "room_id", roomID)
+		return nil
+	}
+	v := &voice{track: track}
+
+	s.mu.Lock()
+	if existing := s.voices[roomID]; existing != nil {
+		s.mu.Unlock()
+		return existing // another caller won the race
+	}
+	s.voices[roomID] = v
+	peers := make([]*peer, 0, len(s.rooms[roomID]))
+	for _, p := range s.rooms[roomID] {
+		peers = append(peers, p)
+	}
+	s.mu.Unlock()
+
+	for _, p := range peers {
+		s.addTrack(context.Background(), p, forgeStreamID, nil, track)
+	}
+	return v
+}
+
+// forgeStreamID and forgeUserID name FORGE's track.
+//
+// A reserved, non-user identity: the room record already keeps FORGE as a
+// distinct speaker kind rather than a null one, because "nobody said this" and
+// "FORGE said this" must never look the same (AUD-05). The same rule holds on
+// the wire, so a client labelling speakers from the transport cannot mistake it
+// for a person.
+const (
+	forgeStreamID = "stm_forge"
+	forgeUserID   = "forge"
+)
+
 // onTrack republishes a participant's microphone to everybody else.
 func (s *SFU) onTrack(ctx context.Context, p *peer, remote *webrtc.TrackRemote) {
 	// The track carries WHO as well as what: its id names the connection and its
@@ -417,7 +511,7 @@ func (s *SFU) onTrack(ctx context.Context, p *peer, remote *webrtc.TrackRemote) 
 	s.mu.Unlock()
 
 	for _, other := range others {
-		s.addTrack(ctx, other, p.streamID, local)
+		s.addTrack(ctx, other, p.streamID, local, nil)
 	}
 
 	go s.forward(ctx, p, remote, local)
@@ -445,6 +539,18 @@ func (s *SFU) forward(ctx context.Context, p *peer, remote *webrtc.TrackRemote, 
 			}
 			return
 		}
+		// Barge-in (AUD-01). The browser's own voice-activity flag, read from the
+		// RTP header — not "a packet arrived", which is true continuously and
+		// would stop FORGE the instant it started.
+		//
+		// Deliberately BEFORE the mute check: somebody muted is not interrupting
+		// anybody, and the check below returns early.
+		if s.speakingNow(pkt) && !p.currentState().Silent() && s.Speaking(p.roomID) {
+			s.log.Info(ctx, logx.EventTTSInterrupted,
+				"room_id", p.roomID, "by", p.who.UserID, "reason", "a participant spoke")
+			s.Silence(ctx, p.roomID)
+		}
+
 		// Mute and pause are enforced HERE, at the one place every packet passes.
 		// Dropping after this point would still transcribe; dropping before it
 		// would still be audible. Both halves of "off" have to be the same
@@ -471,6 +577,27 @@ func (s *SFU) forward(ctx context.Context, p *peer, remote *webrtc.TrackRemote, 
 	}
 }
 
+// speakingNow reports whether a packet carries actual speech.
+//
+// Read from the RFC 6464 audio-level extension the browser already sends. Absent
+// — a client that negotiated no extension — the answer is false: FORGE finishing
+// its sentence is a smaller harm than FORGE never being able to speak, and the
+// explicit stop control (AUD-07) still works either way.
+func (s *SFU) speakingNow(pkt *rtp.Packet) bool {
+	for _, id := range pkt.Header.GetExtensionIDs() {
+		raw := pkt.Header.GetExtension(id)
+		if len(raw) != 1 {
+			continue
+		}
+		var level rtp.AudioLevelExtension
+		if err := level.Unmarshal(raw); err != nil {
+			continue
+		}
+		return level.Voice
+	}
+	return false
+}
+
 // attachExisting gives a newly connected peer everybody else's audio.
 func (s *SFU) attachExisting(ctx context.Context, p *peer) {
 	s.mu.Lock()
@@ -488,7 +615,7 @@ func (s *SFU) attachExisting(ctx context.Context, p *peer) {
 
 	var added bool
 	for _, sc := range sources {
-		if s.addTrackLocked(ctx, p, sc.streamID, sc.track) {
+		if s.addTrackLocked(ctx, p, sc.streamID, sc.track, nil) {
 			added = true
 		}
 	}
@@ -498,8 +625,9 @@ func (s *SFU) attachExisting(ctx context.Context, p *peer) {
 }
 
 // addTrack attaches one source to a peer and renegotiates if anything changed.
-func (s *SFU) addTrack(ctx context.Context, p *peer, sourceStreamID string, track *webrtc.TrackLocalStaticRTP) {
-	if s.addTrackLocked(ctx, p, sourceStreamID, track) {
+func (s *SFU) addTrack(ctx context.Context, p *peer, sourceStreamID string,
+	track *webrtc.TrackLocalStaticRTP, sample *webrtc.TrackLocalStaticSample) {
+	if s.addTrackLocked(ctx, p, sourceStreamID, track, sample) {
 		s.renegotiate(ctx, p)
 	}
 }
@@ -508,7 +636,8 @@ func (s *SFU) addTrack(ctx context.Context, p *peer, sourceStreamID string, trac
 //
 // Idempotent by source: a track added twice would be heard twice, and the second
 // copy would never be removed when its owner left.
-func (s *SFU) addTrackLocked(ctx context.Context, p *peer, sourceStreamID string, track *webrtc.TrackLocalStaticRTP) bool {
+func (s *SFU) addTrackLocked(ctx context.Context, p *peer, sourceStreamID string,
+	track *webrtc.TrackLocalStaticRTP, sample *webrtc.TrackLocalStaticSample) bool {
 	s.mu.Lock()
 	if _, already := p.sending[sourceStreamID]; already {
 		s.mu.Unlock()
@@ -516,7 +645,14 @@ func (s *SFU) addTrackLocked(ctx context.Context, p *peer, sourceStreamID string
 	}
 	s.mu.Unlock()
 
-	sender, err := p.pc.AddTrack(track)
+	// Exactly one of the two is set: humans arrive as forwarded RTP, FORGE as
+	// synthesised samples. A single method taking both keeps one path for adding
+	// a source, removing it, and renegotiating afterwards.
+	var added webrtc.TrackLocal = track
+	if sample != nil {
+		added = sample
+	}
+	sender, err := p.pc.AddTrack(added)
 	if err != nil {
 		s.log.WarnWith(ctx, logx.EventMediaForwardFailed, err,
 			"room_id", p.roomID, "stream_id", p.streamID, "source", sourceStreamID)
@@ -676,6 +812,10 @@ func (s *SFU) Leave(ctx context.Context, roomID, streamID string) {
 	s.mu.Unlock()
 
 	if empty {
+		s.Silence(ctx, roomID)
+		s.mu.Lock()
+		delete(s.voices, roomID)
+		s.mu.Unlock()
 		// The room's privacy setting goes with it. Left behind, a later room
 		// reusing the id would inherit a decision nobody made for it — and the
 		// fail-closed default is the safe end to land on.

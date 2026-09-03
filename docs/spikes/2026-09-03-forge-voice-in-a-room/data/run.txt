@@ -1,0 +1,18 @@
+== Result 1a: the OpenAI-style speech route does not exist here ==
+   POST https://dashscope.aliyuncs.com/compatible-mode/v1/audio/speech -> HTTP 404   (expected 404)
+== Result 1b: audio needs STREAMING; the non-streaming call bills for it and returns none ==
+   message keys: ['content', 'reasoning_content', 'role']
+   audio tokens billed: 48
+   audio returned: False
+== Result 1c + 2: latency, and the format that comes back ==
+   trial 1: first audio 0.69s, 3.76s of speech, complete at 1.48s
+   trial 2: first audio 0.59s, 3.84s of speech, complete at 1.38s
+   trial 3: first audio 0.68s, 2.96s of speech, complete at 1.26s
+   first 8 bytes: b'\xfe\xff\xfd\xff\xfd\xff\xfe\xff'  (raw 16-bit PCM, no container)
+== Result 3: G.711 preserves the decimal ==
+   [full]
+      Setting the wall thickness to two point five millimeters.
+   [ulaw]
+      Setting the wall thickness to two point five millimeters.
+
+Artifacts in /Users/damon/Downloads/repos/jarvis-agent/docs/spikes/2026-09-03-forge-voice-in-a-room/data

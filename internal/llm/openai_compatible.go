@@ -41,6 +41,10 @@ type OpenAICompatible struct {
 	clock   clock.Clock
 
 	maxRetries int
+	// voice is which synthesised voice FORGE speaks in (PRD AUD-05: "voice
+	// identity and tone"). One value for the deployment, so the character sounds
+	// the same in every room.
+	voice string
 
 	// warnedPricing remembers which models we have already complained about, so
 	// an unknown price is reported once rather than on every call.
@@ -59,11 +63,13 @@ func NewOpenAICompatible(cfg config.LLMConfig, log *logx.Logger, clk clock.Clock
 			RoleSummarizer:  cfg.Summarizer,
 			RoleConverse:    cfg.Converse,
 			RoleTranscriber: cfg.Transcriber,
+			RoleSpeaker:     cfg.Speaker,
 		},
 		client:     &http.Client{Timeout: cfg.RequestTimeout},
 		log:        log,
 		clock:      clk,
 		maxRetries: cfg.MaxRetries,
+		voice:      cfg.Voice,
 	}
 }
 

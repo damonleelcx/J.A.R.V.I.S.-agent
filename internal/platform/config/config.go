@@ -168,7 +168,15 @@ type LLMConfig struct {
 	// A speech model, not a chat model. It is reached through the ordinary chat
 	// endpoint because this provider's OpenAI-compatible surface has no
 	// /audio/transcriptions route — see internal/llm/transcribe.go.
-	Transcriber    string
+	Transcriber string
+	// Speaker turns FORGE's words into audio for a room (PRD AUD-05).
+	//
+	// Reached through the chat endpoint with streaming, because this provider has
+	// no /audio/speech route and returns no audio at all without `stream: true`.
+	Speaker string
+	// Voice is which synthesised voice FORGE speaks in. One per deployment, so
+	// the character sounds the same in every room.
+	Voice          string
 	RequestTimeout time.Duration
 	MaxRetries     int
 }
@@ -557,6 +565,8 @@ func Load(required ...Section) (*Config, []string, error) {
 		Summarizer:     l.str("FORGE_LLM_SUMMARIZER_MODEL", "qwen3.8-flash"),
 		Converse:       l.str("FORGE_LLM_CONVERSE_MODEL", "qwen-plus"),
 		Transcriber:    l.str("FORGE_LLM_TRANSCRIBER_MODEL", "qwen3-asr-flash-2026-02-10"),
+		Speaker:        l.str("FORGE_LLM_SPEAKER_MODEL", "qwen3-omni-flash"),
+		Voice:          l.str("FORGE_LLM_VOICE", "Cherry"),
 		RequestTimeout: l.dur("FORGE_LLM_REQUEST_TIMEOUT", 3*time.Minute),
 		MaxRetries:     l.intVal("FORGE_LLM_MAX_RETRIES", 3),
 	}

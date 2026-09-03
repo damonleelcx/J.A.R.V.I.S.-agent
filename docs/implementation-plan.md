@@ -23,10 +23,10 @@ conversion cost. Roughly the whole vertical from
 "someone speaks" to "a worker executes a verified task", plus the record of it,
 what it remembers, what it thinks is true, and what happens when it breaks.
 
-Missing: SSO, and FORGE's own voice in a room. Rooms are live and usable in a
-browser, participants hear each other, what they say is transcribed into the
-record, and the privacy controls over that are enforced server-side
-(waves 9 to 9.5).
+Missing: SSO. Rooms are live and usable in a browser, participants hear each
+other, what they say is transcribed into the record, the privacy controls over
+that are enforced server-side, and FORGE speaks in the room and stops when
+somebody interrupts it (waves 9 to 9.6).
 Everything else named in the PRD is
 built, fenced, and released by one command.
 
@@ -1295,8 +1295,6 @@ nothing was), the strengthened embedded-asset walk, and the caching contract.
 
 ### Still open
 
-- **FORGE's voice in a room** — the decision wave 9.3 named, and with it AUD-01's
-  barge-in and AUD-07's stop-speaking.
 - **A real microphone, and a real NAT.** Both need a person at a machine.
 ### Asset caching · fixed
 
@@ -1334,6 +1332,108 @@ versioned-and-immutable or unversioned-and-revalidating, and a matching
 `If-None-Match` really returns 304. Drilled both ways — restoring the hard cache
 on unversioned URLs goes red, and so does making the version stop depending on
 contents.
+
+---
+
+## Wave 9.6 — FORGE's voice in a room · **DONE**
+
+FORGE speaks in a room, is interrupted when somebody else does, and can be
+stopped. AUD-01's barge-in and AUD-07's stop-speaking had nothing to act on
+before this; they do now.
+
+### The decision, and what forced it
+
+The provider streams speech in about **0.6 s**, faster than real time thereafter
+— but as **raw 16-bit PCM at 24 kHz**. The SFU forwards Opus and never encodes,
+which is what has kept the media plane pure Go across four platforms. And **there
+is no usable pure-Go Opus encoder**: `pion/opus` ships a decoder only, and every
+working encoder is cgo bindings to libopus.
+
+So server-side speech was either lower-fidelity or cgo. Three shapes, put to the
+user with measurements rather than opinion (`docs/spikes/2026-09-03-forge-voice-in-a-room/`):
+
+| | quality | pure Go | one voice, one instant |
+|---|---|---|---|
+| **G.711 track in the SFU** ← chosen | 8 kHz | **yes** | **yes** |
+| Opus track via cgo | 48 kHz | no | yes |
+| each browser speaks the text | browser's own | yes | **no** |
+
+Client-side synthesis was the tempting one — no server audio, no bill, no code.
+It fails the requirement in a way that is easy to miss: everybody would hear a
+different voice, starting at different moments, and an interruption would stop
+one person's playback while the others talked on. That is not a participant
+speaking; it is several recordings of the same sentence.
+
+The cost of G.711 was measured, not asserted. The same utterance through the
+exact transform this code applies transcribes identically to the 24 kHz original:
+**telephone quality loses timbre, not numbers.** And numbers are the thing this
+product cannot afford to lose — wave 9.3 exists because of a dropped decimal.
+
+### Barge-in reads the browser, not the packet flow
+
+"A packet arrived" is true continuously: WebRTC clients transmit through silence,
+so treating arrival as speech would interrupt FORGE the instant it opened its
+mouth and it could never finish a sentence. The RFC 6464 audio-level extension
+carries the browser's **own** voice-activity flag per packet, and the browser has
+already done the detection properly.
+
+Absent the extension the answer is no: FORGE finishing its sentence is a smaller
+harm than FORGE never being able to speak, and the explicit stop control works
+either way.
+
+### One bug the reference check found
+
+The µ-law encoder was the textbook truncating algorithm, and cross-checking it
+against ffmpeg disagreed on 496 samples in 24000. Decoding both candidates
+settled it: for an input of 124, truncation lands on 132 and the nearest code on
+120 — errors of 8 and 4. Truncation is systematically worse on the quiet samples
+where µ-law's resolution is finest and speech spends most of its time. It now
+builds a nearest-code table by inverting the decoder.
+
+Chasing byte-for-byte agreement afterwards was a **mistake worth recording**:
+ffmpeg quantises to 14 bits before its lookup, because G.711 is specified on
+14-bit values, so exactness would have meant adopting its bit depth to satisfy a
+test rather than because it is better. The fence asserts the property that
+matters instead — every sample encodes **at least as accurately** as the
+reference — which no sign inversion or exponent error survives.
+
+### A producer, not just a mechanism
+
+`POST /v1/rooms/{id}/ask` is how FORGE is made to speak. Something had to be, or
+the voice underneath would be machinery nothing ever calls — this repository's
+recurring failure mode. Deciding when FORGE should *interject* between several
+people is a real product question and is deliberately not answered by guessing;
+somebody asks, FORGE answers.
+
+The question is recorded, the answer is recorded, and then it is spoken — the
+record before the audio, so nobody can hear something that is not in the
+transcript. FORGE's turn names FORGE and carries no user, which the record has
+supported since wave 6 for exactly this moment (AUD-05).
+
+Redacted turns are dropped from the history sent to the model. That is the one
+path where SEC-06's deletion could have leaked: content somebody deleted, sent to
+a provider in the next prompt, while the room showed "deleted" the whole time.
+
+### Fences
+
+**21 cases** — 18 in `internal/media`, 1 on the HTTP surface, 2 route mountings,
+counting subtests. Drilled by mutation, all red: barge-in in **both** directions (always
+firing means FORGE can never speak; never firing means it talks over everybody —
+a one-directional test passes on the opposite bug), an interruption that does not
+cancel the provider stream, and deleted speech reaching the model.
+
+The end-to-end fence runs the whole path against the real provider — speech
+model, resampling, G.711 — then asks the transcriber what it heard. Asked to say
+"Set the wall thickness to two point five millimetres", the room produced exactly
+that. It is also the standing check on the G.711 decision.
+
+`CGO_ENABLED=0` cross-compiles re-verified for all four platforms, which was the
+whole point of the choice.
+
+### Still open
+
+Nothing in AUD-01, AUD-05 or AUD-07 that a room needs. What remains is a product
+question rather than a gap: **when FORGE should speak without being asked.**
 
 ---
 
@@ -1412,10 +1512,9 @@ oversights and are stated with what each would actually take.
   this codebase's own history is that a stub matching the provider hid five
   shipped defects, and an unverified authentication path is worse than none.
   **What it needs:** an IdP tenant. It is then a self-contained piece of work.
-- **FORGE has no voice in a room.** Waves 9 to 9.5 built the session spine, the
-  SFU, transcription, the privacy controls and the browser client. What remains
-  is FORGE joining a room as a media participant — which is what AUD-01's
-  barge-in and AUD-07's stop-speaking are waiting on. The original
+- **FORGE now has a voice in a room** (wave 9.6), so this entry is closed. What
+  remains is a product question, not a gap: when FORGE should speak without being
+  asked. The original
   entry follows for context: wave 9 built the live session spine —
   rooms over HTTP, presence, and an SSE stream that delivers a turn to everybody
   in the room — so COL-01 is no longer record-only. What is still missing is

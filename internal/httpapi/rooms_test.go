@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/access"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/collab"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/identity"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/clock"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/config"
@@ -405,6 +406,8 @@ func TestAPI_EveryRoomRouteIsMountedAndRequiresASession(t *testing.T) {
 		{"POST", "/v1/rooms/room_1/media/state"},
 		{"POST", "/v1/rooms/room_1/transcribing"},
 		{"DELETE", "/v1/rooms/room_1/voice"},
+		{"POST", "/v1/rooms/room_1/ask"},
+		{"POST", "/v1/rooms/room_1/stop-speaking"},
 	} {
 		t.Run(tc.method+" "+tc.target, func(t *testing.T) {
 			rec := httptest.NewRecorder()
@@ -921,5 +924,50 @@ func TestAPI_ADeletionThatRemovesNothingTellsNobody(t *testing.T) {
 	case ev := <-sub.Events:
 		t.Fatalf("a deletion that removed nothing published %s", ev.Kind)
 	case <-time.After(200 * time.Millisecond):
+	}
+}
+
+// Deleted speech does not reach the model.
+//
+// # Why this is its own fence
+//
+// SEC-06's deletion removes a turn's content from the record, and every path
+// that reads the record has to honour that. Conversation history is the one that
+// would not announce itself: a redacted turn passed through here would be sent
+// to a provider as part of the next prompt — content somebody asked to have
+// deleted, leaving the system by a route nobody was looking at, with the room
+// showing "deleted" the whole time.
+//
+// Dropped rather than passed as empty, because an empty turn in a history is
+// still a turn: it tells the model somebody spoke and said nothing, which is not
+// what happened.
+func TestDeletedSpeechIsNotSentToTheModel(t *testing.T) {
+	at := time.Now().UTC()
+	who := "usr_1"
+	room := &collab.Room{
+		Turns: []collab.Turn{
+			{Speaker: collab.SpeakerHuman, SpeakerID: &who, SpeakerLabel: "Priya",
+				Text: "the bore is eight millimetres", Channel: collab.ChannelVoice},
+			{Speaker: collab.SpeakerForge, SpeakerLabel: "FORGE",
+				Text: "Noted.", Channel: collab.ChannelVoice},
+			{Speaker: collab.SpeakerHuman, SpeakerID: &who, SpeakerLabel: "Priya",
+				Text: "", Channel: collab.ChannelVoice, RedactedAt: &at, RedactedBy: &who},
+		},
+	}
+
+	history := roomHistory(room)
+	if len(history) != 2 {
+		t.Fatalf("history has %d turn(s), want 2 — the redacted one must not be there: %+v",
+			len(history), history)
+	}
+	for _, turn := range history {
+		if turn.Content == "" {
+			t.Error("an empty turn reached the history; it tells the model somebody spoke and said nothing")
+		}
+	}
+	// FORGE's own turns come back as FORGE, not as another participant. A model
+	// told its own words were somebody else's will answer them.
+	if history[0].Role != "user" || history[1].Role != "forge" {
+		t.Errorf("roles are %q and %q, want user and forge", history[0].Role, history[1].Role)
 	}
 }

@@ -8,10 +8,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/agent"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/access"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/collab"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/llm"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/media"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/persona"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/errs"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/logx"
 )
@@ -51,6 +53,10 @@ type RoomHandlers struct {
 	// sfu is the audio plane. Nil when this deployment has media turned off,
 	// which is the default and not an error.
 	sfu *media.SFU
+	// conv answers when somebody asks FORGE something in a room. Nil when this
+	// deployment has no model, which the room survives: everything except FORGE
+	// replying works without one.
+	conv *agent.Conversation
 	// sfuErr records a media plane that was ASKED for and could not be built.
 	//
 	// Kept apart from a nil sfu so the two are never reported as the same thing:
@@ -71,6 +77,9 @@ func NewRoomHandlers(d Deps) *RoomHandlers {
 		deps: d,
 		svc:  collab.NewService(d.Pool, d.Clock, d.Log).WithHub(hub),
 		hub:  hub,
+	}
+	if d.LLM != nil {
+		h.conv = agent.NewConversation(d.LLM, persona.DefaultCharacter())
 	}
 	if d.Config != nil && d.Config.Media.Enabled {
 		// The transcriber is optional and separately so: a deployment with audio

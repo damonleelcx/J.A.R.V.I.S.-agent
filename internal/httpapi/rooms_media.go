@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/agent"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/access"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/collab"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/media"
@@ -373,4 +374,144 @@ func (h *RoomHandlers) DeleteVoice(w http.ResponseWriter, r *http.Request) {
 			"and when it was deleted, so the transcript does not read as though those " +
 			"seconds were silent.",
 	})
+}
+
+// --- FORGE's voice in the room (PRD AUD-01, AUD-05, AUD-07) ---------------
+
+// Ask handles POST /v1/rooms/{id}/ask — a participant puts something to FORGE.
+//
+// # Why this exists rather than FORGE deciding when to speak
+//
+// Something has to make FORGE talk, or the voice built underneath this is a
+// mechanism with no producer — machinery that works and that nothing ever calls.
+// Deciding when FORGE should interject in a conversation between several people
+// is a genuine product question and not one to answer by guessing, so this is
+// the smaller, explicit path: somebody asks, FORGE answers.
+//
+// # What happens, in order
+//
+// The question is recorded, FORGE's reply is recorded, and then it is spoken.
+// The record is written before the audio for the same reason every write in this
+// wave is: a room where somebody heard something that is not in the transcript
+// is the failure COL-01 exists to prevent.
+func (h *RoomHandlers) Ask(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Text string `json:"text"`
+	}
+	if err := DecodeJSON(w, r, &req); err != nil {
+		WriteError(w, r, h.deps.Log, err)
+		return
+	}
+	if h.conv == nil {
+		WriteError(w, r, h.deps.Log, errs.New("httpapi.Ask", errs.CodeConfigInvalid).
+			WithDetail("no model is configured in this deployment, so FORGE cannot answer. "+
+				"Set FORGE_LLM_API_KEY. Everything else in the room works without it."))
+		return
+	}
+	user, _ := UserFrom(r.Context())
+	roomID := r.PathValue("id")
+	room, err := h.roomFor(r, roomID, user.ID)
+	if err != nil {
+		WriteError(w, r, h.deps.Log, err)
+		return
+	}
+
+	// The question, in the record, attributed. Before the answer, so a reply that
+	// fails still leaves the room showing what was asked.
+	userID := user.ID
+	if _, err := h.svc.Say(r.Context(), roomID, &collab.Turn{
+		Speaker: collab.SpeakerHuman, SpeakerID: &userID,
+		SpeakerLabel: speakerLabel(user.DisplayName, user.Email),
+		Text:         req.Text, Channel: collab.ChannelText,
+	}); err != nil {
+		WriteError(w, r, h.deps.Log, err)
+		return
+	}
+
+	reply, err := h.conv.Respond(r.Context(), roomHistory(room), req.Text, "")
+	if err != nil {
+		WriteError(w, r, h.deps.Log, err)
+		return
+	}
+
+	// FORGE's turn names FORGE, and carries no user. AUD-05: a transcript where
+	// its turns were indistinguishable from a person's would fail the requirement
+	// that it always identifies itself as AI — the record has kept them a
+	// separate speaker kind since wave 6 precisely for this moment.
+	spoken := h.sfu != nil
+	channel := collab.ChannelText
+	if spoken {
+		channel = collab.ChannelVoice
+	}
+	if _, err := h.svc.Say(r.Context(), roomID, &collab.Turn{
+		Speaker: collab.SpeakerForge, SpeakerLabel: "FORGE",
+		Text: reply.Speech, Channel: channel,
+	}); err != nil {
+		WriteError(w, r, h.deps.Log, err)
+		return
+	}
+
+	if spoken {
+		// Detached, and deliberately: an utterance runs for seconds and the
+		// request must not. Its context is separated from the request's for the
+		// same reason — the answer should not stop mid-word because the browser
+		// that asked navigated away.
+		go func(text string) {
+			ctx := context.WithoutCancel(r.Context())
+			if err := h.sfu.Say(ctx, roomID, text); err != nil {
+				// The turn is already in the record; what failed is the delivery.
+				// Said loudly rather than swallowed, because the room looks
+				// entirely normal while FORGE is inexplicably silent.
+				h.deps.Log.WarnWith(ctx, logx.EventTTSFailed, err, "room_id", roomID)
+			}
+		}(reply.Speech)
+	}
+
+	WriteJSON(w, http.StatusOK, map[string]any{
+		"speech": reply.Speech,
+		"detail": reply.Detail,
+		"spoken": spoken,
+	})
+}
+
+// StopSpeaking handles POST /v1/rooms/{id}/stop-speaking — AUD-07's control.
+//
+// Anybody in the room may use it. Stopping a machine talking is not a privilege:
+// the requirement puts it on screen at all times, and a control that asked
+// whether you were senior enough to interrupt would not be one.
+func (h *RoomHandlers) StopSpeaking(w http.ResponseWriter, r *http.Request) {
+	user, _ := UserFrom(r.Context())
+	roomID := r.PathValue("id")
+	if _, err := h.roomFor(r, roomID, user.ID); err != nil {
+		WriteError(w, r, h.deps.Log, err)
+		return
+	}
+	was := h.sfu != nil && h.sfu.Speaking(roomID)
+	if h.sfu != nil {
+		h.sfu.Silence(r.Context(), roomID)
+	}
+	// Reports whether there was anything to stop, so a client can tell "stopped"
+	// from "there was nothing being said" rather than showing the same thing for
+	// both.
+	WriteJSON(w, http.StatusOK, map[string]any{"was_speaking": was})
+}
+
+// roomHistory turns the room's transcript into conversation history.
+//
+// Redacted turns are dropped rather than passed as empty: their content was
+// deleted under SEC-06, and feeding it to a model would be the one place that
+// deletion did not reach.
+func roomHistory(room *collab.Room) []agent.Turn {
+	out := make([]agent.Turn, 0, len(room.Turns))
+	for _, t := range room.Turns {
+		if t.Redacted() {
+			continue
+		}
+		role := "user"
+		if t.Speaker == collab.SpeakerForge {
+			role = "forge"
+		}
+		out = append(out, agent.Turn{Role: role, Content: t.Text})
+	}
+	return out
 }

@@ -350,6 +350,14 @@ const (
 	EventASRFailed        Event = "forge.asr.failed"
 	EventASREmptyResponse Event = "forge.asr.empty_response"
 	EventASRDropped       Event = "forge.asr.dropped"
+
+	// FORGE's own voice in a room (PRD AUD-01, AUD-05, AUD-07). An interruption
+	// is ordinary and is logged at INFO because "did it stop when I spoke" is the
+	// first thing anybody asks of a barge-in that felt wrong.
+	EventTTSSpoke       Event = "forge.tts.spoke"
+	EventTTSInterrupted Event = "forge.tts.interrupted"
+	EventTTSFailed      Event = "forge.tts.failed"
+	EventTTSEmpty       Event = "forge.tts.empty_response"
 )
 
 func init() {
@@ -366,5 +374,6 @@ func init() {
 		EventMediaRenegotiated, EventMediaRenegotiateFailed,
 		EventMediaForwardFailed, EventMediaRefused, EventMediaStateChanged,
 		EventASRTranscribed, EventASRFailed, EventASREmptyResponse, EventASRDropped,
+		EventTTSSpoke, EventTTSInterrupted, EventTTSFailed, EventTTSEmpty,
 	)
 }
