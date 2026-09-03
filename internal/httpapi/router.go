@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/access"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/identity"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/llm"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/clock"
@@ -15,6 +16,10 @@ import (
 
 // Deps is everything the HTTP surface needs.
 type Deps struct {
+	// Access decides who may do what (PRD SEC-02). Every handler asks this and
+	// none of them queries forge_projects.owner_id: membership is the single
+	// authorisation truth, and owner_id records only who created the project.
+	Access   *access.Service
 	Config   *config.Config
 	Pool     *db.Pool
 	Identity *identity.Service
@@ -50,6 +55,13 @@ var authRateLimits = struct {
 // NewRouter builds the HTTP handler.
 func NewRouter(d Deps) http.Handler {
 	mux := http.NewServeMux()
+
+	// Access control is wired here rather than by every caller, so a deployment
+	// cannot start with it nil by omission. requirePermission refuses outright
+	// when it is, but a server that refuses everything is a bad way to find out.
+	if d.Access == nil && d.Pool != nil {
+		d.Access = access.NewService(d.Pool, d.Clock, d.Log)
+	}
 
 	authHandlers := NewAuthHandlers(d.Identity, d.Config.Auth, d.Log)
 	health := NewHealthHandlers(d)
@@ -96,10 +108,84 @@ func NewRouter(d Deps) http.Handler {
 	// --- goals and approvals (authenticated) ---
 	goals := NewGoalHandlers(d)
 	mux.Handle("GET /v1/goals", authed(goals.ListGoals))
+	// Creating a goal PLANS it and starts nothing; starting it is the separate
+	// act on the line below. PRD AGT-02 wants the plan visible before the work,
+	// and one endpoint that did both would hide it. See goals_start.go.
+	mux.Handle("POST /v1/goals", authed(goals.CreateGoal))
+	// Replanning DRAFTS work and authorises none, so it needs goal.create rather
+	// than goal.start. It exists because planning is a model call that can time
+	// out, and what survives is a draft with no tasks that cannot be started.
+	mux.Handle("POST /v1/goals/{id}/plan", authed(goals.Replan))
+	mux.Handle("POST /v1/goals/{id}/start", authed(goals.StartGoal))
 	mux.Handle("GET /v1/goals/{id}", authed(goals.GetGoal))
 	mux.Handle("GET /v1/goals/{id}/timeline", authed(goals.Timeline))
 	mux.Handle("GET /v1/approvals", authed(goals.ListApprovals))
 	mux.Handle("POST /v1/approvals/{id}", authed(goals.Decide))
+
+	// --- memory and the decision log (authenticated) ---
+	// PRD MEM-02 is a USER requirement, so it is an API rather than only a
+	// forgectl command: the person whose memory it is has to be able to inspect,
+	// correct, pin, expire, export and delete it, and to see why an item came
+	// back. The layer table itself is unauthenticated — it describes the build,
+	// not anybody's memory.
+	mem := NewMemoryHandlers(d)
+	mux.HandleFunc("GET /v1/memory/layers", mem.Layers)
+	mux.Handle("GET /v1/memory", authed(mem.List))
+	mux.Handle("GET /v1/memory/recall", authed(mem.Recall))
+	mux.Handle("GET /v1/memory/export", authed(mem.Export))
+	mux.Handle("PATCH /v1/memory/{id}", authed(mem.UpdateItem))
+	// DELETE forgets rather than erases: the key stays claimed so the agent
+	// cannot re-learn what a user deleted. Purging is deliberately NOT here —
+	// it is the act that undoes a user's deletion record, and it belongs to an
+	// operator with a shell, not to a stray DELETE with a query parameter.
+	mux.Handle("DELETE /v1/memory/{id}", authed(mem.ForgetItem))
+
+	mux.Handle("GET /v1/decisions", authed(mem.ListDecisions))
+	mux.Handle("POST /v1/decisions", authed(mem.RecordDecision))
+	mux.Handle("GET /v1/decisions/{id}", authed(mem.GetDecision))
+
+	// --- the workspace model (PRD RSN-01, WRK-03, WRK-04) ---
+	// RSN-01 asks for an EDITABLE structure separate from the transcript, so it
+	// is an API rather than only a forgectl command. Note what is NOT here: no
+	// way to change a node's kind. An assumption that turns out to be true does
+	// not become a requirement — it is promoted, and both stay readable.
+	ws := NewWorkspaceHandlers(d)
+	mux.HandleFunc("GET /v1/workspace/kinds", ws.Kinds)
+	mux.Handle("GET /v1/workspace/graph", authed(ws.Graph))
+	mux.Handle("GET /v1/workspace/review", authed(ws.Review))
+	mux.Handle("POST /v1/workspace/nodes", authed(ws.AddNode))
+	mux.Handle("PATCH /v1/workspace/nodes/{id}", authed(ws.EditNode))
+	mux.Handle("POST /v1/workspace/nodes/{id}/promote", authed(ws.Promote))
+	mux.Handle("POST /v1/workspace/edges", authed(ws.Relate))
+	mux.Handle("DELETE /v1/workspace/edges/{id}", authed(ws.Unrelate))
+	mux.Handle("GET /v1/workspace/artifacts/{id}", authed(ws.ArtifactHistory))
+	// Recording a change is the AGENT's path, not a person's: WRK-04's seven
+	// facts include the tool call that made it, and a change arriving over HTTP
+	// with a tool call named by the client would be a fabricated ledger entry.
+	// Only the disposition — what a person decided — is exposed here.
+	mux.Handle("POST /v1/workspace/versions/{id}/disposition", authed(ws.Dispose))
+
+	// --- geometry: variants, comparison, export (PRD VIS-04, VIS-05) ---
+	// A variant is an artifact VERSION, so there is no create endpoint here:
+	// geometry is written by the server at the moment it is produced, in
+	// /v1/converse, because that is the only place that knows the prompt, the
+	// model and the shape together. A client posting geometry would be naming
+	// its own generator, which is a fabricated ledger entry — the same rule that
+	// keeps RecordChange off the HTTP surface.
+	geo := NewGeometryHandlers(d)
+	// Unauthenticated: it describes what this build can write, not anybody's work.
+	mux.HandleFunc("GET /v1/geometry/formats", geo.Formats)
+	mux.Handle("GET /v1/geometry", authed(geo.List))
+	// Registered before the {id} pattern reads: Go's mux prefers the literal
+	// segment, so "compare" cannot be swallowed as a variant id.
+	mux.Handle("GET /v1/geometry/compare", authed(geo.Compare))
+	mux.Handle("GET /v1/geometry/{id}", authed(geo.Get))
+	// Adopting an earlier variant PROPOSES it again as the current version; it
+	// signs nothing off. The sign-off is the separate act on the version this
+	// creates, through the disposition endpoint above.
+	mux.Handle("POST /v1/geometry/{id}/adopt", authed(geo.Adopt))
+	mux.Handle("GET /v1/geometry/{id}/export", authed(geo.Export))
+	mux.Handle("GET /v1/geometry/{id}/export/label", authed(geo.ExportLabel))
 
 	// --- workbench conversation ---
 	converse := NewConverseHandlers(d)
@@ -130,6 +216,8 @@ func NewRouter(d Deps) http.Handler {
 	// different failure formats.
 	mux.HandleFunc("GET /v1/", notFound(d.Log))
 	mux.HandleFunc("POST /v1/", notFound(d.Log))
+	mux.HandleFunc("PATCH /v1/", notFound(d.Log))
+	mux.HandleFunc("DELETE /v1/", notFound(d.Log))
 
 	return Chain(mux,
 		RequestID(),

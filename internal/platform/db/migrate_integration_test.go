@@ -426,3 +426,343 @@ func TestNoExtensionsAreRequired(t *testing.T) {
 		}
 	}
 }
+
+// TestTwoSchemasGetTheSameObjects compares what the chain actually BUILT in two
+// schemas, not merely that it reported success in both.
+//
+// # The bug this exists for
+//
+// TestMigrationsRunInTwoIsolatedSchemas asserts that the chain runs twice
+// without error. It did — and the second schema was still missing every
+// updated_at trigger and one foreign key, because the guards were written as:
+//
+//	if not exists (select 1 from pg_trigger where tgname = 'forge_x_updated_at')
+//
+// pg_trigger is a per-DATABASE catalogue. Once any schema holds a trigger by
+// that name the guard is true everywhere, so every schema after the first
+// silently gets none and the migration reports success.
+//
+// Production has one schema and was never affected. What was affected is this
+// test harness, which builds a schema per test in a shared database: every
+// integration test in this repository has been running against a schema whose
+// triggers did not exist. Nothing went falsely green — the application clock
+// sets updated_at explicitly on almost every path — but the fixture was not the
+// production schema, which is the thing the harness claims to be.
+//
+// So the fence compares catalogues rather than exit codes. "It ran" was already
+// checked and was already true.
+//
+// See docs/bugfix/2026-09-02-trigger-guards-were-not-schema-scoped.md.
+func TestTwoSchemasGetTheSameObjects(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+
+	url := os.Getenv("FORGE_TEST_DATABASE_URL")
+	sep := "?"
+	if strings.Contains(url, "?") {
+		sep = "&"
+	}
+	migrations, err := db.LoadMigrations(db.Files, db.MigrationsDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// catalogue reads everything the chain is supposed to have created in one
+	// schema, as comparable strings.
+	catalogue := func(schema string) map[string][]string {
+		out := map[string][]string{}
+		for name, query := range map[string]string{
+			"tables": `select c.relname from pg_class c join pg_namespace n on n.oid = c.relnamespace
+			            where n.nspname = $1 and c.relkind = 'r' order by 1`,
+			"triggers": `select c.relname || '.' || t.tgname from pg_trigger t
+			              join pg_class c on c.oid = t.tgrelid
+			              join pg_namespace n on n.oid = c.relnamespace
+			             where n.nspname = $1 and not t.tgisinternal order by 1`,
+			"constraints": `select c.relname || '.' || con.conname || ':' || con.contype::text from pg_constraint con
+			                 join pg_class c on c.oid = con.conrelid
+			                 join pg_namespace n on n.oid = c.relnamespace
+			                where n.nspname = $1 order by 1`,
+			"indexes": `select c.relname from pg_class c join pg_namespace n on n.oid = c.relnamespace
+			             where n.nspname = $1 and c.relkind = 'i' order by 1`,
+		} {
+			rows, err := pool.Query(ctx, query, schema)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for rows.Next() {
+				var s string
+				if err := rows.Scan(&s); err != nil {
+					rows.Close()
+					t.Fatal(err)
+				}
+				out[name] = append(out[name], s)
+			}
+			rows.Close()
+			if err := rows.Err(); err != nil {
+				t.Fatal(err)
+			}
+		}
+		return out
+	}
+
+	schemas := []string{"forge_test_same_a", "forge_test_same_b"}
+	for _, schema := range schemas {
+		if _, err := pool.Exec(ctx, "drop schema if exists "+schema+" cascade"); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := pool.Exec(ctx, "create schema "+schema); err != nil {
+			t.Fatal(err)
+		}
+		t.Cleanup(func() {
+			_, _ = pool.Exec(context.Background(), "drop schema if exists "+schema+" cascade")
+		})
+		scoped, err := db.Connect(ctx, config.DBConfig{
+			URL: url + sep + "search_path=" + schema, MaxConns: 4, MinConns: 1,
+			MaxConnLifetime: time.Hour, MaxConnIdleTime: time.Minute, ConnectTimeout: 10 * time.Second,
+		}, logx.Discard())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := db.Migrate(ctx, scoped, migrations, logx.Discard()); err != nil {
+			scoped.Close()
+			t.Fatalf("schema %s: %v", schema, err)
+		}
+		scoped.Close()
+	}
+
+	first, second := catalogue(schemas[0]), catalogue(schemas[1])
+	for _, what := range []string{"tables", "triggers", "constraints", "indexes"} {
+		a, b := first[what], second[what]
+		if len(a) == 0 {
+			t.Fatalf("the first schema has no %s at all; this fence would pass vacuously", what)
+		}
+		if strings.Join(a, "\n") == strings.Join(b, "\n") {
+			continue
+		}
+		// Name what is missing rather than dumping both lists: the failure is
+		// always "the second schema is short of something", and the reader needs
+		// to know which object and therefore which guard.
+		have := map[string]bool{}
+		for _, s := range b {
+			have[s] = true
+		}
+		var missing []string
+		for _, s := range a {
+			if !have[s] {
+				missing = append(missing, s)
+			}
+		}
+		t.Fatalf("the same migration chain produced different %s in two schemas.\n"+
+			"Missing from %s: %v\n\n"+
+			"This is what a database-scoped guard looks like: an object created in the first "+
+			"schema makes the guard true for every later one. Attach triggers with "+
+			"`drop trigger if exists ... on <table>` followed by an unconditional create, "+
+			"and constraints with `drop constraint if exists` followed by add.",
+			what, schemas[1], missing)
+	}
+}
+
+// TestEveryUpdatedAtColumnHasItsTrigger checks a freshly migrated schema against
+// a RULE rather than against another schema.
+//
+// # Why this exists beside TestTwoSchemasGetTheSameObjects
+//
+// That test compares two schemas to each other, and a mutation drill showed it
+// cannot catch the bug it was written for: both of its schemas are created after
+// `public` already holds every trigger name, so a database-scoped guard skips
+// the triggers in BOTH and the two compare equal. A fence that is blind in
+// exactly the direction of the defect is not a fence.
+//
+// This one states the invariant instead: an `updated_at` column is a promise
+// that the row records when it last changed, and the trigger is the only thing
+// that keeps that promise. A table with the column and no trigger has a column
+// that lies whenever anything updates the row without setting it by hand.
+//
+// It is checked in a fresh schema, so it fails whether that schema is the first
+// in the database or the fiftieth.
+//
+// See docs/bugfix/2026-09-02-trigger-guards-were-not-schema-scoped.md.
+func TestEveryUpdatedAtColumnHasItsTrigger(t *testing.T) {
+	pool := testPool(t)
+	ctx := context.Background()
+
+	url := os.Getenv("FORGE_TEST_DATABASE_URL")
+	sep := "?"
+	if strings.Contains(url, "?") {
+		sep = "&"
+	}
+	migrations, err := db.LoadMigrations(db.Files, db.MigrationsDir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	schema := "forge_test_updated_at_rule"
+	if _, err := pool.Exec(ctx, "drop schema if exists "+schema+" cascade"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, "create schema "+schema); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _, _ = pool.Exec(context.Background(), "drop schema if exists "+schema+" cascade") })
+
+	scoped, err := db.Connect(ctx, config.DBConfig{
+		URL: url + sep + "search_path=" + schema, MaxConns: 4, MinConns: 1,
+		MaxConnLifetime: time.Hour, MaxConnIdleTime: time.Minute, ConnectTimeout: 10 * time.Second,
+	}, logx.Discard())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer scoped.Close()
+	if _, err := db.Migrate(ctx, scoped, migrations, logx.Discard()); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := pool.Query(ctx, `
+		select c.relname,
+		       (select count(*) from pg_trigger g
+		         where g.tgrelid = c.oid and not g.tgisinternal
+		           and g.tgname = c.relname || '_updated_at')
+		  from pg_class c
+		  join pg_namespace n on n.oid = c.relnamespace
+		  join pg_attribute a on a.attrelid = c.oid and a.attname = 'updated_at' and a.attnum > 0
+		 where n.nspname = $1 and c.relkind = 'r'
+		 order by c.relname`, schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer rows.Close()
+
+	var checked int
+	var missing []string
+	for rows.Next() {
+		var table string
+		var triggers int
+		if err := rows.Scan(&table, &triggers); err != nil {
+			t.Fatal(err)
+		}
+		checked++
+		if triggers == 0 {
+			missing = append(missing, table)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatal(err)
+	}
+
+	// Without this the test passes on an empty result set, which is precisely
+	// how a fence over "every X" goes quietly vacuous.
+	if checked == 0 {
+		t.Fatal("no table in the migrated schema has an updated_at column; this fence would pass vacuously")
+	}
+	if len(missing) > 0 {
+		t.Fatalf("%d of %d tables have an updated_at column and nothing to maintain it: %v\n\n"+
+			"The column is a promise that the row records when it last changed. Attach the trigger with\n"+
+			"  drop trigger if exists <table>_updated_at on <table>;\n"+
+			"  create trigger <table>_updated_at before update on <table> for each row execute function forge_set_updated_at();\n"+
+			"Do NOT guard on `select from pg_trigger where tgname = ...`: that catalogue is per DATABASE, "+
+			"so the guard is true for every schema after the first one.",
+			len(missing), checked, missing)
+	}
+}
+
+// Every table that carries the updated_at trigger must actually have it FIRE.
+//
+// # The gap this closes
+//
+// The trigger was attached in every schema and nothing checked that a row's
+// updated_at moved when something updated it without setting the column by hand.
+// A trigger that is present and inert looks exactly like one that works: the
+// column has a value, it is never null, and it is simply the value it was
+// created with. The one path that relies on it is identity.MarkEmailVerified,
+// which updates a user and never touches updated_at.
+//
+// # Why it enumerates from the SCHEMA rather than from a list
+//
+// The tables are read out of pg_trigger, so a table that attaches the trigger is
+// covered the day it is added. A hand-written list would go stale in the safe
+// direction — the one where nothing fails.
+func TestUpdatedAtTriggersActuallyFire(t *testing.T) {
+	admin := testPool(t)
+	schema := freshSchema(t, admin)
+	pool := scopedPool(t, schema)
+	ctx := context.Background()
+
+	if _, err := db.MigrateFS(ctx, pool, db.Files, db.MigrationsDir, logx.Discard()); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := pool.Query(ctx, `
+		select c.relname
+		  from pg_trigger t
+		  join pg_class c on c.oid = t.tgrelid
+		  join pg_namespace n on n.oid = c.relnamespace
+		 where n.nspname = $1
+		   and not t.tgisinternal
+		   and t.tgname like '%_updated_at'
+		 order by c.relname`, schema)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var tables []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatal(err)
+		}
+		tables = append(tables, name)
+	}
+	rows.Close()
+
+	if len(tables) < 10 {
+		t.Fatalf("only %d tables carry an updated_at trigger (%v); the migration chain attaches many "+
+			"more than that, so either the triggers are missing or this query has stopped finding them",
+			len(tables), tables)
+	}
+
+	// Every such table must also HAVE the column. A trigger writing to a column
+	// that is not there fails at runtime, on the first update, in production.
+	for _, table := range tables {
+		var hasColumn bool
+		if err := pool.QueryRow(ctx, `
+			select exists (
+				select 1 from information_schema.columns
+				 where table_schema = $1 and table_name = $2 and column_name = 'updated_at')`,
+			schema, table).Scan(&hasColumn); err != nil {
+			t.Fatal(err)
+		}
+		if !hasColumn {
+			t.Errorf("%s has an updated_at trigger and no updated_at column", table)
+		}
+	}
+
+	// And the trigger must FIRE. Exercised on forge_users, because that is the
+	// table whose real code path depends on it.
+	if _, err := pool.Exec(ctx, `
+		insert into forge_users (id, email, status, password_hash, password_algo,
+			password_changed_at, created_at, updated_at)
+		values ('usr_trigger_fixture', 'trigger@example.com', 'active', 'x', 'argon2id',
+			now() - interval '1 hour', now() - interval '1 hour', now() - interval '1 hour')`); err != nil {
+		t.Fatal(err)
+	}
+
+	var before, after time.Time
+	if err := pool.QueryRow(ctx,
+		`select updated_at from forge_users where id = 'usr_trigger_fixture'`).Scan(&before); err != nil {
+		t.Fatal(err)
+	}
+	// An update that does NOT mention updated_at — the whole point. Setting it
+	// by hand would test the UPDATE rather than the trigger.
+	if _, err := pool.Exec(ctx,
+		`update forge_users set display_name = 'changed' where id = 'usr_trigger_fixture'`); err != nil {
+		t.Fatal(err)
+	}
+	if err := pool.QueryRow(ctx,
+		`select updated_at from forge_users where id = 'usr_trigger_fixture'`).Scan(&after); err != nil {
+		t.Fatal(err)
+	}
+	if !after.After(before) {
+		t.Fatalf("updated_at did not move on an update that left it alone: %s → %s. "+
+			"The trigger is attached and inert, which looks identical to one that works — the column "+
+			"has a value, it is simply the one it was created with.", before, after)
+	}
+}

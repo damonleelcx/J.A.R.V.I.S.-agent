@@ -1,8 +1,30 @@
 /* FORGE workbench — the product's primary surface.
  *
- * The 3D viewport is the stage. Everything else is a rail around it, because the
- * PRD's model of this product is "talk while looking at the thing", not "read a
- * dashboard". Speech carries the conversation; the screen carries precision.
+ * # The layout decision this file exists to express
+ *
+ * The PRD's model of this product is "talk while looking at the thing"
+ * (§1.2, §5.3). The previous version of this stylesheet did not say that: voice
+ * was a strip at the bottom of a side rail, the same size and weight as a search
+ * box, while an empty grey viewport held the middle of the screen. The interface
+ * put its emphasis on the surface that had nothing in it yet.
+ *
+ * So the voice surface now has two placements and one implementation:
+ *
+ *   hero  — centred in the stage, full size. This is the state before there is
+ *           anything to look at, and it is the whole screen's subject.
+ *   dock  — the bottom-left corner, compact. The moment geometry exists, the
+ *           geometry is the subject and the voice surface steps aside without
+ *           going away.
+ *
+ * They are the SAME element with a different `data-place`, not two components
+ * that must be kept in sync. Everything reachable in one placement is reachable
+ * in the other — the microphone, the text box, hands-free, and stop-speaking —
+ * because PRD AUD-06 requires a non-audio path for every critical interaction
+ * and AUD-07 requires stop to be always reachable. A compact placement is not a
+ * reduced one.
+ *
+ * Palette is FORGE's own (see shell.css). Cyan means active; nothing new is
+ * invented here.
  */
 
 .wb {
@@ -26,9 +48,69 @@
 .wb-top .spacer { margin-left: auto; }
 .wb-top .who { font-size: 12px; color: var(--ink-dim); }
 
+/* Presence in the header. A button rather than a logo, because it opens the one
+ * thing a person talking to an agent has most reason to want: the commitments it
+ * is operating under. */
+.whois {
+  display: flex; align-items: center; gap: 11px;
+  padding: 4px 9px 4px 4px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit; font: inherit;
+  cursor: pointer;
+  text-align: left;
+}
+.whois:hover { border-color: var(--edge-solid); background: #10161f; }
+.whois:focus-visible { outline: 2px solid var(--core-dim); outline-offset: 2px; }
+.top-sigil { display: block; line-height: 0; width: 26px; height: 26px; }
+.top-sigil svg, .top-sigil img { width: 100%; height: 100%; display: block; }
+.whois-txt { display: grid; gap: 1px; }
+.whois-txt .wordmark { margin: 0; }
+.whois-txt .tag { font-size: 10.5px; color: var(--ink-dim); letter-spacing: .01em; }
+@media (max-width: 900px) { .whois-txt .tag { display: none; } }
+
+/* ---- the soul ----------------------------------------------------------- */
+
+.soul {
+  position: fixed;
+  z-index: 40;
+  top: 58px; left: 14px;
+  width: min(560px, calc(100vw - 28px));
+  max-height: calc(100vh - 84px);
+  display: flex; flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--edge-solid);
+  border-radius: 14px;
+  box-shadow: 0 22px 60px rgba(0, 0, 0, .55);
+}
+.soul.hidden { display: none; }
+.soul-head {
+  display: flex; align-items: flex-start; gap: 12px;
+  padding: 15px 16px 12px;
+  border-bottom: 1px solid var(--edge-solid);
+}
+.soul-head b { font-size: 14px; }
+.soul-head .ghost { margin-left: auto; }
+.soul-sub { font-size: 11.5px; color: var(--ink-dim); margin-top: 3px; }
+.soul-body { overflow-y: auto; padding: 6px 16px 16px; }
+
+.vow { padding: 13px 0; border-bottom: 1px solid var(--edge-solid); }
+.vow:last-child { border-bottom: 0; }
+.vow-id {
+  font-size: 10px; letter-spacing: .1em; text-transform: uppercase;
+  font-weight: 700; color: var(--ink-dim);
+}
+/* The immutable ones are marked in gold — the character's trim, and the colour
+ * this interface already uses for a boundary. PRD RSN-04: critique intensity is
+ * tunable, safety-critical dissent is not, and the difference must be visible. */
+.vow.fixed .vow-id { color: var(--gold); }
+.vow-text { margin-top: 5px; font-size: 13px; line-height: 1.55; }
+.vow-why { margin-top: 5px; font-size: 12px; line-height: 1.5; color: var(--ink-dim); }
+
 .wb-body {
   display: grid;
-  grid-template-columns: 360px 1fr 320px;
+  grid-template-columns: 340px 1fr 320px;
   min-height: 0;
 }
 @media (max-width: 1200px) {
@@ -36,15 +118,22 @@
   .wb-right { display: none; }
 }
 @media (max-width: 820px) {
-  .wb-body { grid-template-columns: 1fr; grid-template-rows: 1fr auto; }
+  .wb-body { grid-template-columns: 1fr; }
   .wb-left { display: none; }
 }
 
 /* ---- the stage --------------------------------------------------------- */
 
-.stage { position: relative; min-width: 0; min-height: 0; background: #0b0f18; }
-.stage canvas { width: 100%; height: 100%; display: block; cursor: grab; }
-.stage canvas:active { cursor: grabbing; }
+.stage {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  background:
+    radial-gradient(900px 520px at 50% 42%, #131c30 0%, transparent 70%),
+    #0a0e17;
+}
+.stage canvas#canvas { width: 100%; height: 100%; display: block; cursor: grab; }
+.stage canvas#canvas:active { cursor: grabbing; }
 
 /* .hidden must win here. `.stage-empty { display: grid }` and
  * `.hidden { display: none }` have equal specificity, so load order decides —
@@ -53,30 +142,48 @@
  * which stylesheet happens to come last. */
 .stage-empty.hidden { display: none; }
 
+/* Reserved for a RENDERER FAILURE, not for "nothing yet". The empty case is the
+ * hero orb saying what to do; a viewport that cannot initialise is a different
+ * fact and gets its own words at the top of the stage. */
 .stage-empty {
-  position: absolute; inset: 0;
-  display: grid; place-items: center;
-  text-align: center; padding: 40px;
-  color: var(--ink-dim); font-size: 14px; line-height: 1.7;
+  position: absolute; left: 50%; top: 18px;
+  transform: translateX(-50%);
+  max-width: 70%;
+  display: block;
+  text-align: center;
+  padding: 10px 14px;
+  border: 1px solid #6a3238;
+  border-radius: 9px;
+  background: color-mix(in srgb, #2a1216 88%, transparent);
+  color: #f0bcc0;
+  font-size: 12.5px; line-height: 1.6;
   pointer-events: none;
+  z-index: 4;
 }
 
 /* The provenance banner. This is not chrome — PRD VIS-06 forbids a render from
  * implying manufacturability, structural adequacy, or compliance, and a
  * photorealistic image is persuasive precisely in proportion to how little it
  * has been checked. So the banner is always present when geometry is, it is
- * legible rather than a faint watermark, and it is not dismissible. */
+ * legible rather than a faint watermark, and it is not dismissible.
+ *
+ * It sits bottom-RIGHT because the docked voice surface takes bottom-left, and
+ * the width is bounded so the two can never overlap rather than merely usually
+ * not overlapping. */
 .provenance {
-  position: absolute; left: 12px; right: 12px; bottom: 12px;
-  background: color-mix(in srgb, #1a1206 88%, transparent);
+  position: absolute; right: 12px; bottom: 12px; left: auto;
+  width: clamp(250px, calc(100% - 350px), 470px);
+  background: color-mix(in srgb, #1a1206 90%, transparent);
   border: 1px solid #6a5626;
-  border-radius: 9px;
-  padding: 10px 13px;
+  border-radius: 11px;
+  padding: 11px 14px;
   font-size: 12px;
   line-height: 1.55;
   color: #e6cd8f;
-  max-height: 34%;
+  max-height: 40%;
   overflow-y: auto;
+  backdrop-filter: blur(6px);
+  z-index: 3;
 }
 .provenance b { color: #f2dfae; }
 .provenance ul { margin: 5px 0 0; padding-left: 17px; }
@@ -85,13 +192,14 @@
   position: absolute; top: 12px; left: 12px;
   display: flex; flex-wrap: wrap; gap: 6px;
   max-width: calc(100% - 24px);
+  z-index: 3;
 }
 .viewctl button {
   padding: 5px 11px;
   font-size: 11.5px;
   font-weight: 600;
   border: 1px solid var(--edge-solid);
-  border-radius: 6px;
+  border-radius: 7px;
   background: color-mix(in srgb, var(--panel) 82%, transparent);
   color: var(--ink-dim);
   cursor: pointer;
@@ -101,81 +209,312 @@
 
 .sliders {
   position: absolute; top: 12px; right: 12px;
-  background: color-mix(in srgb, var(--panel) 88%, transparent);
+  background: color-mix(in srgb, var(--panel) 90%, transparent);
   border: 1px solid var(--edge-solid);
-  border-radius: 9px;
+  border-radius: 11px;
   padding: 11px 13px;
   width: 176px;
+  z-index: 3;
+  backdrop-filter: blur(6px);
 }
 .sliders label { display: block; font-size: 11px; color: var(--ink-dim); margin: 0 0 4px; }
 .sliders input[type=range] { width: 100%; margin-bottom: 10px; accent-color: var(--core); }
 
-/* ---- rails ------------------------------------------------------------- */
+/* The viewport's own controls are meaningless with nothing loaded, and an
+ * interface offering to section an empty scene is offering something that does
+ * not work. Hidden until there is geometry, which is the same moment the voice
+ * surface docks. */
+.stage:not(.building) .viewctl,
+.stage:not(.building) .sliders { display: none; }
 
-.rail { overflow-y: auto; min-height: 0; padding: 14px; }
-.wb-left { border-right: 1px solid var(--edge-solid); background: #0e131d; display: grid; grid-template-rows: 1fr auto; padding: 0; }
-.wb-right { border-left: 1px solid var(--edge-solid); background: #0e131d; }
+/* ---- the voice surface ------------------------------------------------- */
 
-.transcript { overflow-y: auto; padding: 14px; min-height: 0; }
-
-.turn { margin-bottom: 15px; font-size: 13.5px; line-height: 1.6; }
-.turn .lbl {
-  font-size: 10px; letter-spacing: .1em; text-transform: uppercase;
-  font-weight: 700; margin-bottom: 4px;
+.voice {
+  position: absolute;
+  left: 50%; top: 50%;
+  transform: translate(-50%, -50%);
+  width: min(640px, 86%);
+  display: grid;
+  justify-items: center;
+  gap: 4px;
+  z-index: 4;
+  transition:
+    left .7s cubic-bezier(.62,.03,.2,1),
+    top .7s cubic-bezier(.62,.03,.2,1),
+    width .7s cubic-bezier(.62,.03,.2,1),
+    transform .7s cubic-bezier(.62,.03,.2,1);
 }
-.turn.you .lbl { color: var(--ink-dim); }
-.turn.forge .lbl { color: var(--core); }
-.turn .body { color: var(--ink); }
-.turn .detail {
-  margin-top: 7px; padding: 9px 11px;
-  background: #131a27; border-radius: 8px;
-  font-size: 12.5px; color: #b9c4d6; white-space: pre-wrap;
-}
-.turn.partial .body { color: var(--ink-dim); font-style: italic; }
 
-/* ---- the voice bar ----------------------------------------------------- */
-
-.voicebar {
-  border-top: 1px solid var(--edge-solid);
-  padding: 12px 14px;
-  background: var(--panel);
-}
-.voicerow { display: flex; gap: 8px; align-items: center; }
-.voicerow input[type=text] {
-  flex: 1; min-width: 0;
-  padding: 10px 12px;
+/* The corner. Anchored to the stage's bottom-left; the translate carries the
+ * inset so both properties animate rather than one snapping. */
+.voice[data-place="dock"] {
+  left: 0; top: 100%;
+  width: 306px;
+  transform: translate(14px, calc(-100% - 14px));
+  justify-items: stretch;
+  background: color-mix(in srgb, var(--panel) 88%, transparent);
   border: 1px solid var(--edge-solid);
-  border-radius: 8px;
-  background: #0f131b; color: var(--ink); font: inherit; font-size: 13px;
+  border-radius: 14px;
+  padding: 10px 12px 11px;
+  backdrop-filter: blur(8px);
 }
-.voicerow input[type=text]:focus { outline: 2px solid var(--core-dim); outline-offset: 1px; }
+
+.orb {
+  position: relative;
+  width: min(420px, 62vh);
+  aspect-ratio: 1;
+  transition: width .7s cubic-bezier(.62,.03,.2,1);
+}
+.orb canvas { width: 100%; height: 100%; display: block; }
+.voice[data-place="dock"] .orb { width: 92px; justify-self: center; }
+
+/* FORGE, inside her own aura.
+ *
+ * 60% of the box, which is exactly where orb.js draws the rim (r = 0.30 of the
+ * box's shorter side), so the bright cyan edge lands on the portrait's own gold
+ * border rather than near it. If one of those numbers changes the other has to.
+ *
+ * .forge-portrait supplies the circular crop and the trim; only the size and
+ * placement are stated here, because the character's presentation belongs to
+ * avatar.css and must not be re-specified per page. */
+.orb-face {
+  position: absolute;
+  left: 50%; top: 50%;
+  width: 60%; height: 60%;
+  transform: translate(-50%, -50%);
+  pointer-events: none;
+}
+.orb-face img { width: 100%; height: 100%; }
+.orb-face .forge-portrait__badge {
+  width: 22%; height: 22%;
+  min-width: 20px; min-height: 20px;
+  right: 2%; bottom: 2%;
+}
+.orb-face .forge-portrait__badge svg,
+.orb-face .forge-portrait__badge img { width: 74%; height: 74%; }
+
+/* Docked, the badge would be a smudge at 20px inside a 92px orb, and the state
+ * word beside it already says the same thing in words. The portrait stays,
+ * because presence is the point of keeping her on screen at all. */
+.voice[data-place="dock"] .orb-face .forge-portrait__badge { display: none; }
+
+/* What was last said. Cyan, quiet, and above the state word — the reference for
+ * "you said this, and this is what I am doing about it". */
+.voice-said {
+  color: var(--core);
+  font-size: 13.5px;
+  text-align: center;
+  min-height: 20px;
+  max-width: 90%;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.voice-said.partial { color: var(--ink-dim); font-style: italic; }
+.voice[data-place="dock"] .voice-said { display: none; }
+
+.voice-state {
+  font-size: 30px;
+  font-weight: 300;
+  letter-spacing: .01em;
+  color: var(--ink);
+  margin: 2px 0 10px;
+  transition: font-size .5s ease, margin .5s ease;
+}
+.voice[data-place="dock"] .voice-state {
+  font-size: 12px;
+  font-weight: 650;
+  letter-spacing: .12em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  margin: 6px 0 7px;
+  text-align: center;
+}
+.voice-state.thinking, .voice-state.listening { color: var(--core); }
+
+/* The console bar.
+ *
+ * Everything you can do with a turn — talk, type, send, stop — is one object
+ * rather than four floating shapes at four different sizes. That is the whole
+ * fix: the previous row read as unrelated widgets that happened to be adjacent,
+ * because it was.
+ *
+ * The bar is a single capsule with the controls as NODES inside it, divided by
+ * hairlines rather than by gaps. Depth comes from a one-pixel top highlight and
+ * a long soft drop shadow — the same two tricks the sliders and provenance
+ * panels use, so the stage's surfaces all read as one material.
+ */
+.voice-ctl {
+  display: flex;
+  align-items: center;
+  gap: 0;
+  width: 100%;
+  max-width: 520px;
+  padding: 5px;
+  border-radius: 999px;
+  border: 1px solid var(--edge-solid);
+  background:
+    linear-gradient(180deg, rgba(255,255,255,.035) 0%, rgba(255,255,255,0) 42%),
+    color-mix(in srgb, var(--panel) 92%, transparent);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.05),
+    0 0 0 1px color-mix(in srgb, var(--core) 7%, transparent),
+    0 20px 44px -26px rgba(0,0,0,.95);
+  backdrop-filter: blur(10px);
+  transition: border-color .2s, box-shadow .2s;
+}
+.voice-ctl:focus-within {
+  border-color: var(--core-dim);
+  box-shadow:
+    inset 0 1px 0 rgba(255,255,255,.05),
+    0 0 0 1px color-mix(in srgb, var(--core) 22%, transparent),
+    0 20px 44px -26px rgba(0,0,0,.95);
+}
+.voice[data-place="dock"] .voice-ctl { max-width: none; padding: 4px; }
+
+/* A hairline, not a gap. */
+.ctl-div {
+  width: 1px;
+  align-self: stretch;
+  margin: 6px 4px;
+  background: var(--edge-solid);
+  flex: none;
+}
+
+/* Every round control in the bar is the same node, so hover, focus and the
+ * active state are defined once and cannot drift between them. */
+.node {
+  width: 38px; height: 38px; flex: none;
+  border-radius: 50%;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--ink-dim);
+  cursor: pointer;
+  display: grid; place-items: center;
+  transition: color .16s, background .16s, border-color .16s, box-shadow .16s;
+}
+.node svg { width: 17px; height: 17px; display: block; }
+.node:hover { color: var(--ink); background: rgba(255,255,255,.05); }
+.node:focus-visible { outline: 2px solid var(--core-dim); outline-offset: 2px; }
+.node:disabled { opacity: .35; cursor: not-allowed; background: transparent; }
+.voice[data-place="dock"] .node { width: 32px; height: 32px; }
+.voice[data-place="dock"] .node svg { width: 15px; height: 15px; }
 
 /* Push-to-talk. Held down, not toggled: a button you hold cannot be left on by
  * accident, which is the failure mode that turns an always-listening product
- * into a privacy incident. */
+ * into a privacy incident. It is the only node that starts lit, because it is
+ * the one this interface is actually for. */
 .mic {
-  width: 46px; height: 46px; flex: none;
-  border-radius: 50%;
-  border: 1px solid var(--edge-solid);
-  background: #1b2434;
-  color: var(--ink);
-  cursor: pointer;
-  display: grid; place-items: center;
-  font-size: 17px;
+  color: var(--core);
+  border-color: color-mix(in srgb, var(--core-dim) 70%, transparent);
+  background: radial-gradient(circle at 50% 30%, rgba(79,216,232,.16), rgba(79,216,232,.04));
 }
-.mic[aria-pressed="true"] { background: var(--core); color: #08202a; border-color: transparent; }
-.mic.listening { box-shadow: 0 0 0 4px color-mix(in srgb, var(--core) 30%, transparent); }
-.mic:disabled { opacity: .4; cursor: not-allowed; }
+.mic:hover { color: #7ce8f5; background: radial-gradient(circle at 50% 30%, rgba(79,216,232,.26), rgba(79,216,232,.07)); }
+.mic[aria-pressed="true"] {
+  background: var(--core);
+  color: #08202a;
+  border-color: transparent;
+}
+.mic.listening { box-shadow: 0 0 0 4px color-mix(in srgb, var(--core) 24%, transparent); }
+.mic:disabled { opacity: .35; cursor: not-allowed; }
 
-.voicemeta {
-  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-  margin-top: 9px; font-size: 11.5px; color: var(--ink-dim);
+/* Send lights up only when there is something to send. `:placeholder-shown` does
+ * the work, so there is no script and no class that can fall out of step with
+ * the field's actual contents.
+ *
+ * Verified by SCREENSHOT, not by getComputedStyle. That distinction cost an hour:
+ * in a headless/hidden document `getComputedStyle` returned the unlit colour for
+ * this element while the rendered pixels were plainly cyan, which reads exactly
+ * like a `:has()` support gap and is not one. Anything asserted about CSS here
+ * has to be asserted against what was drawn. */
+.send { color: var(--ink-dim); }
+.voice-ctl form:has(input:not(:placeholder-shown)) .send {
+  color: var(--core);
+  background: rgba(79,216,232,.10);
 }
-.voicemeta select {
-  background: #0f131b; color: var(--ink);
-  border: 1px solid var(--edge-solid); border-radius: 6px;
-  padding: 3px 6px; font: inherit; font-size: 11.5px;
+
+/* Stop is present at all times (AUD-07) and brightens while FORGE is actually
+ * speaking, which is when it means something. */
+.voice-state.speaking ~ .voice-ctl .stop { color: var(--core); }
+
+.voice-ctl form {
+  flex: 1; min-width: 0;
+  display: flex; align-items: center; gap: 4px;
 }
+.voice-ctl input[type=text] {
+  flex: 1; min-width: 0;
+  padding: 10px 8px 10px 14px;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink); font: inherit; font-size: 13.5px;
+  letter-spacing: .005em;
+}
+.voice-ctl input[type=text]::placeholder { color: color-mix(in srgb, var(--ink-dim) 78%, transparent); }
+/* The ring belongs to the whole bar (:focus-within above), not to the field
+ * inside it — two nested focus rings on one object looks like a mistake. */
+.voice-ctl input[type=text]:focus { outline: none; }
+.voice[data-place="dock"] .voice-ctl input[type=text] { padding: 7px 6px 7px 11px; font-size: 12.5px; }
+
+/* Kept for the soul panel's close button, which is not a console node. */
+.ghost {
+  padding: 7px 13px;
+  border: 1px solid var(--edge-solid);
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-dim);
+  font: inherit; font-size: 12px; font-weight: 600;
+  cursor: pointer;
+}
+.ghost:hover { color: var(--ink); border-color: var(--core-dim); }
+
+.voice-opts {
+  display: flex; align-items: center; justify-content: center;
+  gap: 14px; flex-wrap: wrap;
+  margin-top: 11px;
+  font-size: 11.5px; color: var(--ink-dim);
+}
+.voice-opts label { display: flex; align-items: center; gap: 7px; margin: 0; font-size: 11.5px; }
+
+/* Switches, not the operating system's checkboxes.
+ *
+ * The native control renders in the OS accent colour — a hard blue square on a
+ * navy panel — which is the one element on this screen that was not FORGE's.
+ * The real input is kept and restyled rather than hidden behind a decorative
+ * span, so the label association, the keyboard behaviour and the focus ring are
+ * the browser's own and not a reimplementation. */
+.sw { cursor: pointer; user-select: none; }
+.sw input[type=checkbox] {
+  appearance: none; -webkit-appearance: none;
+  width: 30px; height: 16px; margin: 0; flex: none;
+  border-radius: 999px;
+  border: 1px solid var(--edge-solid);
+  background: #0c121b;
+  position: relative;
+  cursor: pointer;
+  transition: background .18s, border-color .18s;
+}
+.sw input[type=checkbox]::after {
+  content: "";
+  position: absolute; top: 2px; left: 2px;
+  width: 10px; height: 10px;
+  border-radius: 50%;
+  background: var(--ink-dim);
+  transition: transform .18s cubic-bezier(.5,0,.2,1), background .18s, box-shadow .18s;
+}
+.sw input[type=checkbox]:checked {
+  background: color-mix(in srgb, var(--core) 20%, #0c121b);
+  border-color: color-mix(in srgb, var(--core-dim) 85%, transparent);
+}
+.sw input[type=checkbox]:checked::after {
+  transform: translateX(14px);
+  background: var(--core);
+  box-shadow: 0 0 9px color-mix(in srgb, var(--core) 65%, transparent);
+}
+.sw input[type=checkbox]:focus-visible { outline: 2px solid var(--core-dim); outline-offset: 2px; }
+.sw:hover input[type=checkbox] { border-color: var(--core-dim); }
+.sw input[type=checkbox]:checked + span { color: var(--ink); }
+.voice[data-place="dock"] .voice-opts { margin-top: 8px; gap: 10px; font-size: 10.5px; }
+.voice-opts .bad { color: #f0bcc0; }
+
 .pill {
   padding: 2px 8px; border-radius: 999px;
   border: 1px solid var(--edge-solid); font-size: 10.5px;
@@ -184,18 +523,294 @@
 .pill.live { border-color: var(--core-dim); color: var(--core); }
 .pill.off { color: var(--ink-dim); }
 
+/* On a narrow screen the stage is the whole width and a 306px corner widget
+ * would sit on top of the model. The dock becomes a full-width bar; the
+ * provenance banner moves above it, in that order, so neither is covered. */
+@media (max-width: 820px) {
+  .voice[data-place="dock"] {
+    left: 0; width: 100%;
+    transform: translate(0, -100%);
+    border-radius: 14px 14px 0 0;
+    border-left: 0; border-right: 0; border-bottom: 0;
+  }
+  .provenance { left: 12px; right: 12px; width: auto; bottom: 168px; }
+}
+
+/* ---- rails ------------------------------------------------------------- */
+
+.rail { overflow-y: auto; min-height: 0; padding: 14px; }
+.wb-left {
+  border-right: 1px solid var(--edge-solid);
+  background: #0d1119;
+  display: grid; grid-template-rows: auto 1fr;
+  padding: 0; min-height: 0;
+}
+.wb-right { border-left: 1px solid var(--edge-solid); background: #0d1119; }
+
+.railhead {
+  padding: 13px 16px 9px;
+  font-size: 11px; letter-spacing: .13em; text-transform: uppercase;
+  color: var(--ink-dim); font-weight: 650;
+}
+
+.transcript { overflow-y: auto; padding: 0 14px 16px; min-height: 0; }
+
+/* Turns are cards rather than a wall of text: a spoken conversation replayed as
+ * an unbroken column is unreadable at a glance, and glancing is what this rail
+ * is for while someone is looking at the middle of the screen. */
+.turn {
+  margin-bottom: 10px;
+  font-size: 13.5px; line-height: 1.6;
+  padding: 11px 13px;
+  border-radius: 11px;
+  border: 1px solid var(--edge-solid);
+  background: #121826;
+}
+.turn.you { background: #10161f; }
+.turn.forge { border-color: color-mix(in srgb, var(--core-dim) 45%, var(--edge-solid)); }
+.turn .lbl {
+  font-size: 10px; letter-spacing: .1em; text-transform: uppercase;
+  font-weight: 700; margin-bottom: 5px;
+}
+.turn.you .lbl { color: var(--ink-dim); }
+.turn.forge .lbl { color: var(--core); }
+.turn .body { color: var(--ink); }
+.turn .detail {
+  margin-top: 8px; padding: 9px 11px;
+  background: #0d1420; border-radius: 8px;
+  font-size: 12.5px; color: #b9c4d6; white-space: pre-wrap;
+}
+.turn.partial { opacity: .75; }
+.turn.partial .body { color: var(--ink-dim); font-style: italic; }
+
+/* Recalled figures. Gold, because gold is this interface's boundary colour —
+ * the sigil's ring, the immutable commitments in the soul panel, and now the
+ * edge of what FORGE actually knows. Distinct from the red of a failure: a
+ * quoted standard is usually right, and styling it as an error would train
+ * people to dismiss it. */
+.recalled {
+  margin-top: 9px;
+  padding: 9px 11px;
+  border: 1px solid color-mix(in srgb, var(--gold) 45%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--gold) 7%, transparent);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.recalled .rc-h {
+  font-size: 10px; letter-spacing: .09em; text-transform: uppercase;
+  font-weight: 700; color: var(--gold);
+}
+.recalled .rc-i { margin-top: 6px; color: #e6cd8f; }
+.recalled .rc-i b { color: #f2dfae; }
+.recalled .rc-q {
+  margin-top: 3px;
+  font-size: 11.5px; line-height: 1.45;
+  color: var(--ink-dim);
+  font-style: italic;
+}
+.recalled .rc-w { font-size: 11px; color: var(--ink-dim); }
+.recalled .rc-f { margin-top: 7px; font-size: 11.5px; color: var(--ink-dim); }
+
+/* The epistemic ledger. Deliberately quieter than the recalled-figures block:
+ * it is a standing record rather than a warning, and styling every turn's
+ * ledger as an alarm would make the actual alarm invisible. */
+.claims {
+  margin-top: 9px;
+  padding: 9px 11px;
+  border: 1px solid var(--edge-solid);
+  border-radius: 8px;
+  background: #0d1420;
+  font-size: 12px;
+}
+.claims .cl-h {
+  font-size: 10px; letter-spacing: .09em; text-transform: uppercase;
+  font-weight: 700; color: var(--ink-dim); margin-bottom: 6px;
+}
+.claims .cl-i {
+  display: grid;
+  grid-template-columns: 74px 1fr;
+  gap: 4px 9px;
+  padding: 4px 0;
+  border-top: 1px solid var(--edge-solid);
+  line-height: 1.45;
+}
+.claims .cl-i:first-of-type { border-top: 0; }
+.claims .cl-t {
+  font-size: 10px; letter-spacing: .06em; text-transform: uppercase;
+  font-weight: 700; padding-top: 2px;
+}
+.claims .cl-ok  .cl-t { color: var(--ok); }
+.claims .cl-warn .cl-t { color: var(--gold); }
+.claims .cl-dim .cl-t { color: var(--ink-dim); }
+.claims .cl-s { color: var(--ink); }
+.claims .cl-src { grid-column: 2; font-size: 11px; color: var(--ink-dim); }
+
 /* ---- parts list -------------------------------------------------------- */
 
 .part {
   display: flex; gap: 9px; align-items: baseline;
-  padding: 8px 9px; border-radius: 7px; cursor: pointer;
+  padding: 9px 10px; border-radius: 9px; cursor: pointer;
   font-size: 12.5px;
+  border: 1px solid transparent;
 }
-.part:hover { background: #1a2233; }
-.part[aria-current="true"] { background: #17202f; }
+.part:hover { background: #17202f; }
+.part[aria-current="true"] { background: #17202f; border-color: var(--core-dim); }
 .part .sw { width: 11px; height: 11px; border-radius: 3px; flex: none; }
 .part .nm { flex: 1; min-width: 0; }
 .part .dim { color: var(--ink-dim); font-size: 11px; margin-top: 2px; }
 
-.h { font-size: 11px; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-dim); font-weight: 650; margin: 0 0 10px; }
+.h {
+  font-size: 11px; letter-spacing: .12em; text-transform: uppercase;
+  color: var(--core); font-weight: 650; margin: 0 0 10px;
+}
 .h + .h { margin-top: 20px; }
+
+/* ---- proposed work ----------------------------------------------------- */
+
+/* A proposal is a proposal until a person acts on it. The card carries the
+ * plan, the button, and — after it is started — what still has to be true for
+ * anything to actually run. PRD AGT-08: proposed, planned and running are
+ * distinct states and this card never blurs them. */
+.proposal {
+  border: 1px solid var(--edge-solid);
+  border-radius: 11px;
+  padding: 14px;
+  background: #121826;
+}
+.proposal.armed { border-color: var(--warn); background: color-mix(in srgb, var(--warn) 7%, #121826); }
+.proposal.live { border-color: var(--core-dim); background: color-mix(in srgb, var(--core) 6%, #121826); }
+.proposal .tier {
+  display: inline-block;
+  font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase;
+  color: var(--warn); font-weight: 700;
+}
+.proposal.live .tier { color: var(--core); }
+.proposal .ttl { margin-top: 6px; font-weight: 650; font-size: 13.5px; line-height: 1.4; }
+.proposal .say { margin-top: 6px; font-size: 12.5px; line-height: 1.55; color: var(--ink-dim); }
+.proposal .acts { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
+.proposal .foot { margin-top: 10px; font-size: 11.5px; line-height: 1.55; color: var(--ink-dim); }
+.proposal .foot code {
+  font-size: 11px; background: #0d1420; padding: 1px 5px; border-radius: 4px;
+  display: inline-block; margin-top: 3px;
+}
+.proposal .steps { margin: 10px 0 0; padding: 0; list-style: none; }
+.proposal .steps li {
+  display: flex; gap: 8px; align-items: baseline;
+  padding: 6px 0; border-top: 1px solid var(--edge-solid);
+  font-size: 12px; line-height: 1.45;
+}
+.proposal .steps li .rt {
+  flex: none; font-size: 10px; font-weight: 700; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--ink-dim); min-width: 18px;
+}
+.proposal .steps li .gate { flex: none; font-size: 10px; color: var(--warn); font-weight: 700; }
+.proposal .note { margin-top: 10px; }
+
+/* ---- variants and side-by-side (PRD VIS-04) ----------------------------- */
+
+/* A variant row is a PROPOSAL WITH PROVENANCE, not a thumbnail. The things that
+ * decide between two designs — what units it is in, whether anything checked it,
+ * whether a person ruled on it — are on the row, because a list that shows only
+ * names makes the reader open each one to find out they are not comparable. */
+.variant {
+  display: flex; gap: 9px; align-items: flex-start;
+  padding: 9px 10px; border-radius: 9px;
+  font-size: 12.5px;
+  border: 1px solid transparent;
+}
+.variant:hover { background: #17202f; }
+.variant.picked { background: #17202f; border-color: var(--core-dim); }
+.variant .nm { flex: 1; min-width: 0; }
+.variant .meta { color: var(--ink-dim); font-size: 11px; margin-top: 3px; line-height: 1.5; }
+/* An unstated unit is called out rather than left blank: a blank reads as
+ * millimetres to anyone who has been looking at millimetres. */
+.variant .meta .nounit { color: var(--warn); }
+.variant .acts { display: flex; gap: 7px; margin-top: 7px; flex-wrap: wrap; }
+.variant .acts a, .variant .acts button {
+  font-size: 11px; padding: 3px 8px; border-radius: 6px;
+  border: 1px solid var(--edge-solid); background: #0f131b; color: var(--ink-dim);
+  text-decoration: none; cursor: pointer;
+}
+.variant .acts a:hover, .variant .acts button:hover { color: var(--ink); border-color: var(--core-dim); }
+
+.variant-bar { display: flex; gap: 8px; align-items: center; margin: 10px 0 4px; flex-wrap: wrap; }
+.variant-bar .node { flex: none; }
+.variant-bar .hint { font-size: 11px; color: var(--ink-dim); flex: 1 1 100%; }
+
+/* The export label. Shown BEFORE the download link is used, never after: a
+ * label a person reads on their way out of the page is a label they have
+ * already acted without. */
+.exportlabel {
+  margin-top: 8px; padding: 9px 10px; border-radius: 8px;
+  background: #0d1420; border: 1px solid var(--edge-solid);
+  font-size: 11px; line-height: 1.55; color: var(--ink-dim);
+}
+.exportlabel b { color: #f2dfae; }
+.exportlabel ul { margin: 4px 0 8px; padding-left: 16px; }
+.exportlabel .go { display: inline-block; margin-top: 2px; color: var(--core); }
+
+.compare {
+  position: fixed; inset: 0; z-index: 60;
+  background: #080b11;
+  display: flex; flex-direction: column;
+}
+.compare.hidden { display: none; }
+.compare-head {
+  display: flex; align-items: center; gap: 14px;
+  padding: 12px 18px; border-bottom: 1px solid var(--edge-solid);
+}
+.compare-title { font-size: 13px; font-weight: 650; flex: 1; }
+.compare-body { flex: 1; overflow: auto; padding: 16px 18px 28px; }
+
+/* One column per variant, side by side, each with its own viewport and its own
+ * provenance directly beneath it. The provenance is NOT collected into a single
+ * table below the row: a fact about column 2 has to be next to column 2, or the
+ * reader is matching indices instead of comparing designs. */
+.cmp-cols { display: flex; gap: 14px; align-items: stretch; overflow-x: auto; padding-bottom: 6px; }
+.cmp-col { flex: 1 1 0; min-width: 250px; display: flex; flex-direction: column; }
+.cmp-col .cap { font-size: 12px; font-weight: 650; margin-bottom: 6px; }
+.cmp-col .cap .n { color: var(--core); margin-right: 6px; }
+/* The slot is sized, not the canvas: the canvas element is pooled and moved
+ * between openings (see workbench.js), so its dimensions have to come from
+ * wherever it currently lives rather than from itself. */
+.cmp-view { height: 230px; }
+.cmp-view canvas {
+  width: 100%; height: 100%; display: block;
+  border-radius: 10px; border: 1px solid var(--edge-solid); background: #0b0f16;
+}
+.cmp-col .prov { margin-top: 8px; font-size: 11px; line-height: 1.6; color: var(--ink-dim); }
+.cmp-col .prov div { padding: 2px 0; }
+.cmp-col .prov .k { color: var(--ink-dim); }
+.cmp-col .prov .differs { color: #f2dfae; }
+
+.cmp-note { font-size: 11.5px; color: var(--ink-dim); line-height: 1.6; margin: 4px 0 14px; }
+
+.cmp-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 18px; }
+.cmp-table th, .cmp-table td {
+  text-align: left; padding: 7px 10px; border-top: 1px solid var(--edge-solid);
+  vertical-align: top;
+}
+.cmp-table th { color: var(--core); font-weight: 650; font-size: 11px;
+  letter-spacing: .06em; text-transform: uppercase; }
+/* A marker, not a colour alone: this table gets screenshotted into incident
+ * notes and pasted into terminals, and colour survives neither. */
+.cmp-table tr.differs td:first-child::before { content: "≠ "; color: #f2dfae; }
+.cmp-table td.absent { color: var(--warn); }
+.cmp-table .why { display: block; margin-top: 3px; color: var(--ink-dim); font-size: 11px; line-height: 1.5; }
+.cmp-table .diffs { margin: 5px 0 0; padding-left: 16px; color: var(--ink-dim); font-size: 11px; }
+
+/* Kept apart from the differences on purpose. "These differ" and "these could
+ * not be compared" are different answers, and only one of them is a finding. */
+.cmp-uncompared {
+  margin-top: 18px; padding: 11px 13px; border-radius: 9px;
+  border: 1px solid var(--warn); background: color-mix(in srgb, var(--warn) 7%, #121826);
+  font-size: 11.5px; line-height: 1.6;
+}
+.cmp-uncompared b { color: var(--warn); }
+/* A qualified judgement, not a withheld one — dimmer than the box beside it,
+ * because it says the comparison was made and how, rather than that it was not
+ * made at all. */
+.cmp-uncompared.matched { border-color: var(--edge-solid); background: #121826; }
+.cmp-uncompared.matched b { color: #f2dfae; }
+.cmp-uncompared ul { margin: 5px 0 0; padding-left: 17px; }

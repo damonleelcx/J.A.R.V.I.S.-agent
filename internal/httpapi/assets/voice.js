@@ -37,6 +37,14 @@
     this.onState = opts.onState || function () {};
     this.onBargeIn = opts.onBargeIn || function () {};
     this.onError = opts.onError || function () {};
+    /* onLevel receives a REAL microphone level, 0..1, while listening.
+     *
+     * It is strictly optional and strictly additive: it drives the orb's
+     * waveform, and everything about the conversation works without it. If the
+     * browser has no AudioContext, or the user's permission covers only what
+     * SpeechRecognition asked for, the meter never opens and nothing is said
+     * about it — the alternative would be an error message about a decoration. */
+    this.onLevel = opts.onLevel || function () {};
 
     this.mode = 'push';         // 'push' | 'hands-free'
     this.listening = false;
@@ -133,6 +141,7 @@
       this.rec.start();
       this.listening = true;
       this._setState();
+      this._openMeter();
     } catch (e) { /* already running */ }
   };
 
@@ -140,7 +149,74 @@
     if (!this.rec) return;
     this.listening = false;
     try { this.rec.stop(); } catch (e) {}
+    this._closeMeter();
     this._setState();
+  };
+
+  /* The level meter.
+   *
+   * # Why the stream is opened and closed with each listen rather than held
+   *
+   * Holding it would be cheaper and would remove the small delay before the
+   * first sample. It is not done, because a held stream keeps the operating
+   * system's microphone indicator lit for as long as the tab is open — and the
+   * whole point of push-to-talk here is that the microphone is demonstrably not
+   * on when nobody is holding it. A visual nicety must not be the reason a
+   * privacy property stops being true.
+   *
+   * # Why every failure is silent
+   *
+   * This measures something for the sake of a drawing. Nothing in the
+   * conversation depends on it, so a failure produces no message, no state
+   * change, and no interruption to speech recognition — which has already
+   * started by the time this runs.
+   */
+  Voice.prototype._openMeter = function () {
+    var self = this;
+    if (this._meter || !global.AudioContext || !navigator.mediaDevices) return;
+    this._meter = { stopped: false };
+
+    navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
+      if (!self._meter || self._meter.stopped) {
+        stream.getTracks().forEach(function (t) { t.stop(); });
+        return;
+      }
+      var ctx = new global.AudioContext();
+      var src = ctx.createMediaStreamSource(stream);
+      var analyser = ctx.createAnalyser();
+      analyser.fftSize = 512;
+      analyser.smoothingTimeConstant = 0.6;
+      src.connect(analyser);
+
+      var buf = new Uint8Array(analyser.frequencyBinCount);
+      self._meter.stream = stream;
+      self._meter.ctx = ctx;
+
+      // A plain interval rather than rAF: this is a measurement, and it must
+      // keep its own time rather than inherit the rendering clock's stalls.
+      self._meter.timer = global.setInterval(function () {
+        analyser.getByteFrequencyData(buf);
+        var sum = 0;
+        for (var i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
+        var rms = Math.sqrt(sum / buf.length) / 255;
+        // Speech sits low in a linear 0..1 scale; the curve puts an ordinary
+        // speaking voice in the middle of the range instead of at the floor.
+        self.onLevel(Math.min(1, Math.pow(rms * 2.6, 0.75)));
+      }, 50);
+    }).catch(function () {
+      self._meter = null; // no meter, no message: see above
+    });
+  };
+
+  Voice.prototype._closeMeter = function () {
+    var m = this._meter;
+    if (!m) return;
+    m.stopped = true;
+    this._meter = null;
+    if (m.timer) global.clearInterval(m.timer);
+    if (m.stream) m.stream.getTracks().forEach(function (t) { t.stop(); });
+    if (m.ctx && m.ctx.close) { try { m.ctx.close(); } catch (e) {} }
+    this.onLevel(0);
   };
 
   Voice.prototype.toggleMute = function () {

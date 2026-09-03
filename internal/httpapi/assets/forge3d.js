@@ -120,6 +120,18 @@
   /* Each returns { positions, normals, indices } in local space, centred on the
    * origin so a part's transform means what a reader expects. */
 
+  /* Tessellation, declared once (PRD VIS-05).
+   *
+   * These are not free numbers. internal/domain/geometry/mesh.go tessellates
+   * exported meshes with the SAME counts, so the file somebody downloads is the
+   * surface they were looking at — and the export's stated chord deviation is
+   * the deviation of what is on screen. If the two drift, the export quietly
+   * stops being a picture of the render and nothing says so.
+   *
+   * TestTessellation_GoMatchesTheRenderer parses this object out of this file
+   * and fails when Go disagrees with it. Keep the shape literal and greppable. */
+  var TESSELLATION = { radial: 40, sphereRadial: 32 };
+
   function boxGeometry(w, h, d) {
     var x = w/2, y = h/2, z = d/2;
     var p = [], n = [], i = [];
@@ -233,16 +245,16 @@
     var s = part.size || {};
     switch (part.shape) {
       case 'box':      return { geo: boxGeometry(num(s.width,1), num(s.height,1), num(s.depth,1)) };
-      case 'cylinder': return { geo: cylinderGeometry(num(s.radius,0.5), num(s.height,1), 40, num(s.radius_top, num(s.radius,0.5))) };
-      case 'cone':     return { geo: cylinderGeometry(num(s.radius,0.5), num(s.height,1), 40, 0) };
-      case 'sphere':   return { geo: sphereGeometry(num(s.radius,0.5), 32) };
+      case 'cylinder': return { geo: cylinderGeometry(num(s.radius,0.5), num(s.height,1), TESSELLATION.radial, num(s.radius_top, num(s.radius,0.5))) };
+      case 'cone':     return { geo: cylinderGeometry(num(s.radius,0.5), num(s.height,1), TESSELLATION.radial, 0) };
+      case 'sphere':   return { geo: sphereGeometry(num(s.radius,0.5), TESSELLATION.sphereRadial) };
       case 'plane':    return { geo: planeGeometry(num(s.width,1), num(s.depth,1)) };
       case 'tube':
         /* A tube is drawn as its outer wall. The bore is not modelled, and that
          * is reported: an inner diameter that is not there is exactly the kind
          * of thing a render must not imply. */
         return {
-          geo: cylinderGeometry(num(s.radius,0.5), num(s.height,1), 40, num(s.radius,0.5)),
+          geo: cylinderGeometry(num(s.radius,0.5), num(s.height,1), TESSELLATION.radial, num(s.radius,0.5)),
           approximated: 'drawn as a solid cylinder — the bore is not modelled'
         };
       default:

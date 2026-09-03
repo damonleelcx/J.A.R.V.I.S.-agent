@@ -1,0 +1,14 @@
+Zoo API 0.1.0 — derived from https://raw.githubusercontent.com/KittyCAD/kittycad.go/main/spec.json
+
+GET       /ml/conversations
+POST      /ml/convert/proprietary-to-kcl
+POST      /ml/custom/models
+GET,PUT   /ml/custom/models/{id}
+GET       /ml/custom/models/{id}/datasets
+POST      /ml/kcl/completions
+GET       /user/cad-user-info
+GET       /user/text-to-cad
+GET,POST  /user/text-to-cad/{id}
+PUT       /website/forms/cad-user-info
+GET       /ws/ml/copilot
+GET       /ws/ml/reasoning/{id}

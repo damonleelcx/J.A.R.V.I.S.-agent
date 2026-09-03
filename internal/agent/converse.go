@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/geometry"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/llm"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/persona"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/errs"
@@ -74,10 +75,22 @@ About "prototype":
 
 - Positions are in the stated units, Y is up, and the origin is the assembly's
   centre. Parts are centred on their own position.
+- Part ids are STABLE ACROSS TURNS. When you revise an assembly, the part that
+  was "base-plate" stays "base-plate" — that is what lets somebody put the two
+  versions side by side and see what changed rather than two unrelated designs.
+  Reuse the id even when the dimensions change; use a new id only for a part
+  that was not there before.
 - Only emit it when the shape is the point. Do not attach geometry to a
   conversation about scheduling.
-- "assumptions" is where every dimension you invented goes. If they said "a
-  bracket" and you chose 60mm, that belongs there.
+- "assumptions" is where every dimension you CHOSE goes. If they said "a
+  bracket" and you picked 60mm, that belongs there.
+- A figure from a PUBLISHED STANDARD is not an assumption and does not belong in
+  that list. "NEMA 17 is 42.3mm across the face" is a claim about the world, and
+  you are recalling it, not reading it — there is no reference source in this
+  deployment and nothing here can check you. Name the standard, say plainly that
+  the figure is from memory, and prefer not to quote a number at all unless it
+  changes what you would build. A wrong figure attached to a real standard is
+  more dangerous than no figure, because it is specific enough to be acted on.
 - "not_verified" is mandatory whenever geometry is present, and it must be
   specific. "Not stress-analysed" and "no interference check was run" are useful;
   "this is a concept" is not. There is no FEA or CAD kernel in this deployment,
@@ -85,6 +98,18 @@ About "prototype":
 
 About "proposed_goal": offer one only when they have described work they want
 DONE, not merely discussed. It is a proposal — nothing runs until they start it.`
+
+// NotVerifiedFallback is what VIS-06's banner says when the model supplied
+// nothing of its own.
+//
+// A named constant rather than a literal at its one call site, because a second
+// reader needs it: the evaluation suite measures whether the MODEL wrote
+// something specific, and it can only do that by telling the model's own words
+// apart from this backstop (internal/eval/scorers.go). Two copies of this
+// sentence would drift, and the drift would silently credit the backstop to the
+// model — the property would stop being measured with nothing reporting it.
+const NotVerifiedFallback = "Nothing here has been analysed or checked. There is no CAD kernel, " +
+	"solver, or interference check in this deployment — this is a shape, not a result."
 
 // Conversation is the workbench dialogue.
 //
@@ -109,30 +134,16 @@ type Turn struct {
 }
 
 // Prototype is a proposed 3D form.
-type Prototype struct {
-	Name  string          `json:"name"`
-	Units string          `json:"units"`
-	Parts []PrototypePart `json:"parts"`
-	// Assumptions is every dimension FORGE chose rather than was given.
-	Assumptions []string `json:"assumptions"`
-	// NotVerified is what this render does NOT establish. Required whenever
-	// geometry is present — PRD VIS-06: photorealism never implies
-	// manufacturability, structural adequacy, or compliance.
-	NotVerified []string `json:"not_verified"`
-}
+//
+// An ALIAS rather than a struct of its own: the shape the model emits and the
+// shape that gets stored as a variant (PRD VIS-04) must be the same type, or the
+// two definitions drift and a replayed render stops matching what was saved.
+// It lives in internal/domain/geometry because a domain package cannot import
+// the agent to find out what a part is.
+type Prototype = geometry.Document
 
 // PrototypePart is one solid.
-type PrototypePart struct {
-	ID       string             `json:"id"`
-	Name     string             `json:"name"`
-	Shape    string             `json:"shape"`
-	Size     map[string]float64 `json:"size"`
-	Position []float64          `json:"position"`
-	Rotation []float64          `json:"rotation"`
-	Color    string             `json:"color"`
-	Opacity  float64            `json:"opacity"`
-	Note     string             `json:"note"`
-}
+type PrototypePart = geometry.Part
 
 // ProposedGoal is work FORGE offers to do. Nothing runs until a human starts it.
 type ProposedGoal struct {
@@ -147,8 +158,18 @@ type Reply struct {
 	Detail       string        `json:"detail"`
 	Prototype    *Prototype    `json:"prototype"`
 	ProposedGoal *ProposedGoal `json:"proposed_goal"`
-	Model        string        `json:"model"`
-	Usage        llm.Usage     `json:"-"`
+	// Claims is the epistemic ledger (PRD RSN-05): every statement in this reply
+	// together with how FORGE came to hold it. Derived from the reply, never
+	// asked of the model — see ClaimLedger.
+	Claims []Claim `json:"claims,omitempty"`
+	// Recalled is computed from the reply's own text, never asked of the model.
+	// A component cannot be its own guard: the failure being caught here is the
+	// model stating a standard's figure it has no way to check, and asking it to
+	// self-report that is asking it to notice the thing it just failed to
+	// notice. See standards.go.
+	Recalled []StandardsClaim `json:"recalled,omitempty"`
+	Model    string           `json:"model"`
+	Usage    llm.Usage        `json:"-"`
 	// LatencyMS is measured client-of-the-provider side and reported to the UI,
 	// which displays the REAL figure rather than claiming the PRD's ≤700ms
 	// target. A target asserted without measurement is a marketing claim.
@@ -221,6 +242,11 @@ func (c *Conversation) Respond(ctx context.Context, history []Turn, message stri
 }
 
 // validate enforces the honesty rules on a reply.
+//
+// It is the single choke point both the buffered and the streamed path go
+// through, which is why the standards scan lives here rather than in either
+// caller: a rule enforced in one of two paths is a rule that holds until someone
+// uses the other one.
 func (r *Reply) validate() error {
 	const op = "agent.Reply.validate"
 
@@ -228,6 +254,11 @@ func (r *Reply) validate() error {
 		return errs.New(op, errs.CodeExternalProtocol).
 			WithDetail("the reply carried nothing to say or show")
 	}
+
+	// Computed before the prototype fix-ups below, so a claim is found in the
+	// text the model actually produced.
+	r.Recalled = FindStandardsClaims(r)
+	r.Claims = r.ClaimLedger()
 	if r.Prototype != nil {
 		if len(r.Prototype.Parts) == 0 {
 			// An empty prototype renders as a blank viewport, which reads as a
@@ -235,14 +266,29 @@ func (r *Reply) validate() error {
 			r.Prototype = nil
 			return nil
 		}
+		/* PRD WRK-05: a dimension without its unit will eventually be read in
+		 * the wrong one.
+		 *
+		 * The units field is free text from a model, so it can be missing,
+		 * misspelled, or something we cannot convert. An unrecognised unit is NOT
+		 * quietly treated as millimetres — a wrong guess about scale is the
+		 * difference between a bracket and a building. It is recorded as
+		 * unspecified, every dimension then renders as "60 (unit not stated)",
+		 * and the reader is told in the one place they are already looking. */
+		if _, known := geometry.ParseUnit(r.Prototype.Units); !known && len(r.Prototype.Parts) > 0 {
+			declared := strings.TrimSpace(r.Prototype.Units)
+			note := "No unit was stated for these dimensions, so every number here is unitless."
+			if declared != "" {
+				note = fmt.Sprintf("The unit %q is not one FORGE can convert, so every number here is unitless.", declared)
+			}
+			r.Prototype.Units = ""
+			r.Prototype.NotVerified = append(r.Prototype.NotVerified, note)
+		}
 		// PRD VIS-06 as an invariant rather than an instruction: geometry
 		// without a statement of what it does not establish is exactly the
 		// render that gets mistaken for an analysis.
 		if len(r.Prototype.NotVerified) == 0 {
-			r.Prototype.NotVerified = []string{
-				"Nothing here has been analysed or checked. There is no CAD kernel, " +
-					"solver, or interference check in this deployment — this is a shape, not a result.",
-			}
+			r.Prototype.NotVerified = []string{NotVerifiedFallback}
 		}
 		for i := range r.Prototype.Parts {
 			p := &r.Prototype.Parts[i]

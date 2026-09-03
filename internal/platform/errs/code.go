@@ -80,6 +80,42 @@ const (
 )
 
 // ---------------------------------------------------------------------------
+// Memory and decisions (business)
+// ---------------------------------------------------------------------------
+
+const (
+	// CodeMemoryForgotten is the refusal that makes deletion mean something.
+	// FORGE writes memory on its own initiative, so without it the agent would
+	// re-learn what a user deleted and the deletion would quietly undo itself.
+	CodeMemoryForgotten Code = "MEMORY_FORGOTTEN"
+	// CodeDecisionSuperseded keeps "what do we currently believe?" to one answer.
+	CodeDecisionSuperseded Code = "DECISION_SUPERSEDED"
+)
+
+// ---------------------------------------------------------------------------
+// Containment (business)
+// ---------------------------------------------------------------------------
+
+const (
+	// CodeSecretNotGranted separates "this tool may not have that credential"
+	// from "that credential is not available", because the operator's next
+	// action is different: grant the tool, or stop the model reaching for it.
+	CodeSecretNotGranted Code = "SECRET_NOT_GRANTED"
+	// CodeSecretUnavailable covers unknown, revoked, and not-set-in-this-process.
+	CodeSecretUnavailable Code = "SECRET_UNAVAILABLE"
+	// CodeIncidentOpen refuses closing an incident that has no review written.
+	CodeIncidentOpen Code = "INCIDENT_NOT_REVIEWED"
+	// CodeEvidenceNotPreserved is SAF-07's one ordering rule, enforced.
+	CodeEvidenceNotPreserved Code = "EVIDENCE_NOT_PRESERVED"
+	// CodeLastOwner refuses the change that makes a project unadministrable.
+	CodeLastOwner Code = "LAST_OWNER"
+	// CodeMFARequired means the credential was right and a second factor is owed.
+	CodeMFARequired Code = "MFA_REQUIRED"
+	// CodeMFAInvalid means the second factor was wrong, replayed, or expired.
+	CodeMFAInvalid Code = "MFA_INVALID"
+)
+
+// ---------------------------------------------------------------------------
 // System & storage
 // ---------------------------------------------------------------------------
 
@@ -174,6 +210,37 @@ var registry = map[Code]Definition{
 	CodeUnsupportedMedia: {CodeUnsupportedMedia, CategoryBusiness, 415,
 		"The request Content-Type is not supported by this endpoint.",
 		"Send application/json unless the endpoint documents another type.", false},
+
+	CodeMemoryForgotten: {CodeMemoryForgotten, CategoryBusiness, 409,
+		"A user asked FORGE to forget this key, and it is refusing to learn it again.",
+		"If this should be remembered once more, purge the forgotten entry first — that is a deliberate act, and it is recorded. Otherwise write it under a different key.", false},
+	CodeSecretNotGranted: {CodeSecretNotGranted, CategoryBusiness, 403,
+		"A tool asked for a secret it has not been granted.",
+		"Grant the tool that secret if it should have it, or stop the model reaching for it. Grants are per tool on purpose: a permission broad enough to cover a class of tools is broad enough to cover the wrong member of it.", false},
+	CodeSecretUnavailable: {CodeSecretUnavailable, CategoryBusiness, 424,
+		"A referenced secret is unknown, revoked, or its environment variable is not set in this process.",
+		"Check the handle name against `forgectl secrets list`. FORGE brokers secrets rather than storing them, so the value must be exported where the service starts.", false},
+	CodeIncidentOpen: {CodeIncidentOpen, CategoryBusiness, 409,
+		"An incident cannot be closed without a review.",
+		"Write what happened, what was done, and what would prevent it. SAF-07 names review as one of the seven steps, and a closure without one loses the only part anybody reads later.", false},
+
+	CodeEvidenceNotPreserved: {CodeEvidenceNotPreserved, CategoryBusiness, 409,
+		"A destructive incident action was attempted before any evidence was preserved.",
+		"Record a preserve_evidence action first, or run this one as a dry run. Stopping, revoking and rolling back all destroy state an investigation needs, and evidence gathered afterwards is evidence of the response rather than of the incident.", false},
+
+	CodeLastOwner: {CodeLastOwner, CategoryBusiness, 409,
+		"This change would leave the project with no owner.",
+		"Make somebody else an owner first. A project with no owner cannot be administered at all — not even to undo the change that emptied it.", false},
+	CodeMFARequired: {CodeMFARequired, CategoryBusiness, 401,
+		"The password was correct and this account requires a second factor.",
+		"Submit the six-digit code from your authenticator, or a recovery code, against the challenge id in this response.", false},
+	CodeMFAInvalid: {CodeMFAInvalid, CategoryBusiness, 401,
+		"The second factor was not accepted: wrong code, an already-used one, or a challenge that has expired.",
+		"Check your device's clock and try the current code. Each code works once; if the authenticator is gone, use a recovery code.", false},
+
+	CodeDecisionSuperseded: {CodeDecisionSuperseded, CategoryBusiness, 409,
+		"This decision has already been superseded, so it is no longer the current answer.",
+		"Supersede the decision that replaced it instead. Follow the supersession chain to its end to find which one that is.", false},
 
 	CodeInternal: {CodeInternal, CategorySystem, 500,
 		"An unhandled internal failure occurred.",

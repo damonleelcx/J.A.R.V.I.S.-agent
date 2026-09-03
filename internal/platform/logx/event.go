@@ -116,6 +116,17 @@ const (
 	EventToolSucceeded      Event = "forge.tool.succeeded"
 	EventToolFailed         Event = "forge.tool.failed"
 	EventToolDeduplicated   Event = "forge.tool.deduplicated"
+	// EventToolRefusedSchema is a call whose arguments did not match the tool's
+	// declared schema. Logged separately from a policy refusal: one is the
+	// model getting the shape wrong and the other is the system saying no, and
+	// an operator asking "is the model struggling with this tool's contract?"
+	// needs to count the first without the second.
+	EventToolRefusedSchema Event = "forge.tool.refused_schema"
+	// EventInjectionSuspected is untrusted content matching a known
+	// prompt-injection shape (PRD SEC-04). A WARN because somebody tried, not
+	// because anything failed: the content was framed and passed through
+	// unaltered, and the record is the artefact.
+	EventInjectionSuspected Event = "forge.security.injection_suspected"
 	EventPlanCreated        Event = "forge.plan.created"
 	EventTaskCycleStarted   Event = "forge.task.cycle_started"
 	EventTaskCycleEnded     Event = "forge.task.cycle_ended"
@@ -129,7 +140,8 @@ func init() {
 	allEvents = append(allEvents,
 		EventTaskResumeDegraded, EventCheckpointFailed, EventToolLedgerFailed,
 		EventBudgetRecordFailed, EventToolSucceeded, EventToolFailed,
-		EventToolDeduplicated, EventPlanCreated, EventTaskCycleStarted,
+		EventToolDeduplicated, EventToolRefusedSchema, EventInjectionSuspected,
+		EventPlanCreated, EventTaskCycleStarted,
 		EventTaskCycleEnded, EventVerificationRan, EventApprovalOpened,
 		EventWorkerIdle, EventWorkerReaped,
 	)
@@ -164,9 +176,148 @@ const (
 
 func init() { allEvents = append(allEvents, EventConverseTurn) }
 
+// Goal intake events. These are the web surface's half of what `forgectl goal
+// new` prints to a terminal: an operator asking "did anyone start a goal from
+// the workbench, and did planning ever succeed?" greps these.
+const (
+	EventGoalDrafted    Event = "forge.goal.drafted"
+	EventGoalPlanFailed Event = "forge.goal.plan_failed"
+	EventGoalStarted    Event = "forge.goal.started"
+)
+
+func init() { allEvents = append(allEvents, EventGoalDrafted, EventGoalPlanFailed, EventGoalStarted) }
+
+// Geometry events (PRD VIS-04, VIS-05).
+//
+// Saving is logged because a variant is the first thing the workbench writes
+// that OUTLIVES the conversation, and "where did this render come from?" has to
+// be answerable from the log alone. Export is logged because it is the moment
+// geometry LEAVES the system, after which the conversion label travels only if
+// the file carries it.
+const (
+	EventGeometrySaved    Event = "forge.geometry.saved"
+	EventGeometryExported Event = "forge.geometry.exported"
+	EventGeometryRefused  Event = "forge.geometry.export_refused"
+	EventGeometryCompared Event = "forge.geometry.compared"
+	// EventGeometryAdopted is an earlier variant brought forward so a person can
+	// rule on it. Logged because "we went back to v1" is a decision, and a
+	// decision that leaves no trace is one nobody can ask about later.
+	EventGeometryAdopted Event = "forge.geometry.adopted"
+)
+
+func init() {
+	allEvents = append(allEvents,
+		EventGeometrySaved, EventGeometryExported, EventGeometryRefused, EventGeometryCompared,
+		EventGeometryAdopted,
+	)
+}
+
 // Streaming events.
 const (
 	EventLLMStreamFrame Event = "forge.llm.stream_frame_skipped"
 )
 
 func init() { allEvents = append(allEvents, EventLLMStreamFrame) }
+
+// Memory and decision-log events (PRD MEM-01..03).
+//
+// Forgetting and purging are logged because they are the two acts that REMOVE
+// something at a person's request: "why does FORGE no longer know that?" has to
+// be answerable, and the row itself is gone or blank by the time anyone asks.
+// Purge is a warning rather than info — it is the one operation that undoes a
+// user's deletion record, and it should be visible without going looking.
+const (
+	EventMemoryWritten      Event = "forge.memory.written"
+	EventMemoryForgotten    Event = "forge.memory.forgotten"
+	EventMemoryPurged       Event = "forge.memory.purged"
+	EventMemorySwept        Event = "forge.memory.swept"
+	EventDecisionMade       Event = "forge.decision.made"
+	EventDecisionSuperseded Event = "forge.decision.superseded"
+)
+
+func init() {
+	allEvents = append(allEvents,
+		EventMemoryWritten, EventMemoryForgotten, EventMemoryPurged, EventMemorySwept,
+		EventDecisionMade, EventDecisionSuperseded,
+	)
+}
+
+// Workspace-model events (PRD RSN-01, WRK-03, WRK-04).
+//
+// Promotion is logged because it is the one operation that creates a node from
+// another one: "where did this requirement come from?" is answerable from the
+// graph, and from here when somebody is reading logs instead.
+const (
+	EventNodeAdded             Event = "forge.node.added"
+	EventNodePromoted          Event = "forge.node.promoted"
+	EventArtifactVersioned     Event = "forge.artifact.versioned"
+	EventArtifactVerified      Event = "forge.artifact.verified"
+	EventArtifactDispositioned Event = "forge.artifact.dispositioned"
+)
+
+func init() {
+	allEvents = append(allEvents,
+		EventNodeAdded, EventNodePromoted, EventArtifactVersioned,
+		EventArtifactVerified, EventArtifactDispositioned,
+	)
+}
+
+// Containment events (PRD SEC-03, SAF-07).
+//
+// Revocation and unredactable values are warnings rather than info: the first is
+// somebody withdrawing a credential, usually during an incident, and the second
+// means a value will reach the model. Both should be visible without going
+// looking for them.
+const (
+	EventSecretDeclared     Event = "forge.secret.declared"
+	EventSecretGranted      Event = "forge.secret.granted"
+	EventSecretRevoked      Event = "forge.secret.revoked"
+	EventSecretResolved     Event = "forge.secret.resolved"
+	EventSecretRefused      Event = "forge.secret.refused"
+	EventSecretUnredactable Event = "forge.secret.unredactable"
+	EventSecretLeakBlocked  Event = "forge.secret.leak_blocked"
+	EventIncidentOpened     Event = "forge.incident.opened"
+	EventIncidentAction     Event = "forge.incident.action"
+	EventIncidentClosed     Event = "forge.incident.closed"
+)
+
+func init() {
+	allEvents = append(allEvents,
+		EventSecretDeclared, EventSecretGranted, EventSecretRevoked,
+		EventSecretResolved, EventSecretRefused, EventSecretUnredactable,
+		EventSecretLeakBlocked,
+		EventIncidentOpened, EventIncidentAction, EventIncidentClosed,
+	)
+}
+
+// Access, second factors and rooms (PRD SEC-02, COL-01).
+//
+// Grants and revocations are logged because they change who can do what, and
+// "when did they get access" is the first question after anything goes wrong.
+const (
+	EventAccessGranted   Event = "forge.access.granted"
+	EventAccessRevoked   Event = "forge.access.revoked"
+	EventAccessRefused   Event = "forge.access.refused"
+	EventMFAEnrolled     Event = "forge.mfa.enrolled"
+	EventMFAActivated    Event = "forge.mfa.activated"
+	EventMFAChallenged   Event = "forge.mfa.challenged"
+	EventMFAAccepted     Event = "forge.mfa.accepted"
+	EventMFARejected     Event = "forge.mfa.rejected"
+	EventMFARecoveryUsed Event = "forge.mfa.recovery_used"
+	EventDeviceTrusted   Event = "forge.device.trusted"
+	EventDeviceRevoked   Event = "forge.device.revoked"
+	EventRoomOpened      Event = "forge.room.opened"
+	EventRoomTurn        Event = "forge.room.turn"
+	EventRoomClosed      Event = "forge.room.closed"
+	EventHandoffTaken    Event = "forge.handoff.taken"
+)
+
+func init() {
+	allEvents = append(allEvents,
+		EventAccessGranted, EventAccessRevoked, EventAccessRefused,
+		EventMFAEnrolled, EventMFAActivated, EventMFAChallenged,
+		EventMFAAccepted, EventMFARejected, EventMFARecoveryUsed,
+		EventDeviceTrusted, EventDeviceRevoked,
+		EventRoomOpened, EventRoomTurn, EventRoomClosed, EventHandoffTaken,
+	)
+}

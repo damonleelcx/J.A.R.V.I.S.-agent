@@ -12,13 +12,25 @@ import (
 
 // StreamEvent is one thing the workbench should act on.
 type StreamEvent struct {
-	// Kind is "speech", "detail", "prototype", "goal", "done" or "error".
+	// Kind is "speech", "detail", "prototype", "goal", "recalled", "claims",
+	// "done" or "error".
 	Kind string `json:"kind"`
 	// Text carries speech or detail.
 	Text string `json:"text,omitempty"`
 	// Prototype and Goal carry the structured tail.
 	Prototype *Prototype    `json:"prototype,omitempty"`
 	Goal      *ProposedGoal `json:"goal,omitempty"`
+	// Recalled lists figures the reply attributed to a published standard.
+	// Emitted whether or not there is geometry: a standard quoted in prose is
+	// exactly as unverifiable as one quoted in an assumption.
+	Recalled []StandardsClaim `json:"recalled,omitempty"`
+	// Claims is the epistemic ledger for the turn (PRD RSN-05).
+	Claims []Claim `json:"claims,omitempty"`
+	// Variant reports what happened to the geometry after the turn: kept as a
+	// version somebody can come back to and compare (PRD VIS-04), or not kept
+	// and why. Emitted by the HTTP layer rather than by the model loop, because
+	// storing is not part of the conversation — see httpapi/converse.go.
+	Variant *VariantSaved `json:"variant,omitempty"`
 	// FirstTokenMS and TotalMS are measured, not targeted. PRD AUD-02 names
 	// ≤700ms; this reports what actually happened so the claim is checkable.
 	FirstTokenMS int64  `json:"first_token_ms,omitempty"`
@@ -26,6 +38,37 @@ type StreamEvent struct {
 	Model        string `json:"model,omitempty"`
 	Tokens       int64  `json:"tokens,omitempty"`
 	Error        string `json:"error,omitempty"`
+}
+
+// VariantSaved is the fate of a turn's geometry.
+//
+// Both outcomes are reported. A workbench that showed nothing when a save failed
+// would leave somebody believing they could come back to a shape that was never
+// written down, and they would find out at the moment they went looking for it.
+type VariantSaved struct {
+	VersionID string `json:"version_id,omitempty"`
+	ProjectID string `json:"project_id,omitempty"`
+	Path      string `json:"path,omitempty"`
+	Version   int    `json:"version,omitempty"`
+	// Name and Generator are what the STORED row says, not what the client
+	// believes. VIS-04 makes the generator one of six things a render must link
+	// to, and a client assembling it from its own state gets it wrong in exactly
+	// the case that matters: this event is emitted before `done`, so the browser
+	// does not yet know which model answered and would fall back to "FORGE".
+	Name      string `json:"name,omitempty"`
+	Generator string `json:"generator,omitempty"`
+	Units     string `json:"units,omitempty"`
+	// UnitsNote explains an absent or unconvertible unit in one sentence, so the
+	// rail does not compose its own wording for a state the server already has
+	// a sentence for.
+	UnitsNote string `json:"units_note,omitempty"`
+	Parts     int    `json:"parts,omitempty"`
+	// Assumptions is the COUNT. The list itself is already in the provenance
+	// banner beside the render; repeating it in the rail would push the variant
+	// list off the screen on the second proposal.
+	Assumptions int `json:"assumptions"`
+	// NotKept says why this geometry was not stored. Empty when it was.
+	NotKept string `json:"not_kept,omitempty"`
 }
 
 // RespondStream produces one conversational turn, emitting the SPEECH as soon
@@ -77,6 +120,16 @@ func (c *Conversation) RespondStream(
 		}
 		if reply.ProposedGoal != nil {
 			if err := emit(StreamEvent{Kind: "goal", Goal: reply.ProposedGoal}); err != nil {
+				return err
+			}
+		}
+		if len(reply.Recalled) > 0 {
+			if err := emit(StreamEvent{Kind: "recalled", Recalled: reply.Recalled}); err != nil {
+				return err
+			}
+		}
+		if len(reply.Claims) > 0 {
+			if err := emit(StreamEvent{Kind: "claims", Claims: reply.Claims}); err != nil {
 				return err
 			}
 		}
@@ -168,6 +221,18 @@ func (c *Conversation) RespondStream(
 		}
 		if reply.ProposedGoal != nil {
 			if err := emit(StreamEvent{Kind: "goal", Goal: reply.ProposedGoal}); err != nil {
+				return err
+			}
+		}
+		// Last of the content events, so it is never dropped by an early return
+		// above and the browser has the whole reply to attach it to.
+		if len(reply.Recalled) > 0 {
+			if err := emit(StreamEvent{Kind: "recalled", Recalled: reply.Recalled}); err != nil {
+				return err
+			}
+		}
+		if len(reply.Claims) > 0 {
+			if err := emit(StreamEvent{Kind: "claims", Claims: reply.Claims}); err != nil {
 				return err
 			}
 		}

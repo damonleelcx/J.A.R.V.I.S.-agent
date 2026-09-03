@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"encoding/json"
 	"sort"
 	"sync"
 
@@ -13,10 +14,16 @@ import (
 type Registry struct {
 	mu    sync.RWMutex
 	tools map[string]Tool
+	// schemas are compiled once at registration. A tool is called in the hot
+	// path of a worker loop, and re-parsing the same JSON on every call is work
+	// done to reach a conclusion already known.
+	schemas map[string]*Schema
 }
 
 // NewRegistry returns an empty registry.
-func NewRegistry() *Registry { return &Registry{tools: map[string]Tool{}} }
+func NewRegistry() *Registry {
+	return &Registry{tools: map[string]Tool{}, schemas: map[string]*Schema{}}
+}
 
 // Register adds a tool, validating its contract.
 //
@@ -30,6 +37,13 @@ func (r *Registry) Register(t Tool) error {
 	if err := c.Validate(); err != nil {
 		return err
 	}
+	// Compiled here as well as inside Validate, because this is the copy that
+	// gets used. Validate proves the schema is enforceable; this keeps the
+	// enforcement.
+	schema, err := CompileSchema(c.Name, c.InputSchema)
+	if err != nil {
+		return err
+	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	if _, exists := r.tools[c.Name]; exists {
@@ -38,7 +52,34 @@ func (r *Registry) Register(t Tool) error {
 				"idempotency ledger, so two tools sharing one would deduplicate each other's calls", c.Name)
 	}
 	r.tools[c.Name] = t
+	r.schemas[c.Name] = schema
 	return nil
+}
+
+// ValidateInput checks a call's arguments against the tool's declared schema.
+//
+// # Why this lives on the registry
+//
+// Contract.InputSchema was documented as checked before a tool ran and nothing
+// checked it, so an argument the contract forbade reached Run and encoding/json
+// discarded it in silence. Putting the check here means every caller that can
+// reach a tool can also reach its schema, and the executor cannot invoke one
+// without having had the opportunity — the shape the authorisation call already
+// uses (see httpapi/authorise.go).
+//
+// An unregistered tool is a NOT FOUND rather than a pass. A validator that
+// waved through what it could not find would be a hole in the one place that
+// exists to close it.
+func (r *Registry) ValidateInput(name string, input json.RawMessage) error {
+	r.mu.RLock()
+	schema, ok := r.schemas[name]
+	r.mu.RUnlock()
+
+	if !ok {
+		return errs.New("tools.Registry.ValidateInput", errs.CodeNotFound).
+			WithDetail("no tool named %q is registered, so its arguments cannot be validated", name)
+	}
+	return schema.Validate(input)
 }
 
 // MustRegister panics on failure. For wiring at startup, where a bad contract is

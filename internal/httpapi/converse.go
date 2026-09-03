@@ -8,6 +8,9 @@ import (
 	"time"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/agent"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/access"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/geometry"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/workspace"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/llm"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/persona"
@@ -19,6 +22,13 @@ import (
 type ConverseHandlers struct {
 	deps Deps
 	conv *agent.Conversation
+	// geo keeps the geometry a turn proposes. It lives HERE rather than behind a
+	// POST endpoint because this is the only place that knows the prompt, the
+	// model and the shape at the same moment. A client posting geometry would be
+	// naming its own generator and its own inputs, which is a fabricated
+	// provenance record — the same reason RecordChange is not on the HTTP
+	// surface (see router.go).
+	geo *geometry.Service
 }
 
 // NewConverseHandlers wires the conversation endpoint.
@@ -29,12 +39,22 @@ func NewConverseHandlers(d Deps) *ConverseHandlers {
 	return &ConverseHandlers{
 		deps: d,
 		conv: agent.NewConversation(d.LLM, persona.DefaultCharacter()),
+		geo:  geometry.NewService(d.Pool, d.Clock, d.Log),
 	}
 }
 
 type converseRequest struct {
 	Message string       `json:"message"`
 	History []agent.Turn `json:"history"`
+	// ProjectID is where geometry proposed in this turn is kept (PRD VIS-04).
+	// Empty on the first turn of a workbench session: the server makes a project
+	// then and returns its id in the `variant` event, and the client sends it
+	// back on every turn afterwards so a conversation accumulates ONE history of
+	// variants rather than one project per turn.
+	//
+	// The id is checked against the caller's membership on every turn, so a
+	// client naming somebody else's project is refused rather than trusted.
+	ProjectID string `json:"project_id"`
 	// OnScreen describes what the workspace is currently showing, so a phrase
 	// like "make that taller" resolves against what the person is looking at
 	// rather than against the transcript. PRD WRK-02: a spoken reference should
@@ -106,6 +126,23 @@ func (h *ConverseHandlers) Converse(w http.ResponseWriter, r *http.Request) {
 	var firstTokenMS, totalMS, tokens int64
 	var model string
 	var hadPrototype bool
+	var pending *agent.Prototype
+	var savedVariant string
+
+	send := func(ev agent.StreamEvent) error {
+		payload, err := json.Marshal(ev)
+		if err != nil {
+			return err
+		}
+		if _, err := fmt.Fprintf(w, "data: %s\n\n", payload); err != nil {
+			// The reader went away — a closed tab, a navigation. Returning the
+			// error stops the model call rather than letting it run on spending
+			// tokens nobody will read.
+			return err
+		}
+		flusher.Flush()
+		return nil
+	}
 
 	emitErr := h.conv.RespondStream(ctx, req.History, req.Message, req.OnScreen,
 		func(ev agent.StreamEvent) error {
@@ -115,21 +152,25 @@ func (h *ConverseHandlers) Converse(w http.ResponseWriter, r *http.Request) {
 				firstTokenMS = ev.FirstTokenMS
 			case "prototype":
 				hadPrototype = true
+				// Held rather than saved here: the generator is the model that
+				// actually answered, and that is only known once the turn
+				// finishes. Saving now would have to guess it from
+				// configuration, and a variant whose generator is a guess is one
+				// of VIS-04's six facts recorded wrongly.
+				pending = ev.Prototype
 			case "done":
 				totalMS, tokens, model = ev.TotalMS, ev.Tokens, ev.Model
+				if pending != nil {
+					// Before `done`, so `done` stays the last event a client
+					// sees and nothing has to listen past it.
+					saved := h.keepGeometry(r, req, pending, model)
+					savedVariant = saved.VersionID
+					if err := send(agent.StreamEvent{Kind: "variant", Variant: saved}); err != nil {
+						return err
+					}
+				}
 			}
-			payload, err := json.Marshal(ev)
-			if err != nil {
-				return err
-			}
-			if _, err := fmt.Fprintf(w, "data: %s\n\n", payload); err != nil {
-				// The reader went away — a closed tab, a navigation. Returning
-				// the error stops the model call rather than letting it run on
-				// spending tokens nobody will read.
-				return err
-			}
-			flusher.Flush()
-			return nil
+			return send(ev)
 		})
 
 	if emitErr != nil {
@@ -151,7 +192,8 @@ func (h *ConverseHandlers) Converse(w http.ResponseWriter, r *http.Request) {
 		"round_trip_ms", h.deps.Clock.Now().Sub(start).Milliseconds(),
 		"tokens", tokens,
 		"spoke", spoke,
-		"has_prototype", hadPrototype)
+		"has_prototype", hadPrototype,
+		"variant_id", savedVariant)
 }
 
 // userFacing renders an error for a reader mid-conversation: what happened and
@@ -185,4 +227,95 @@ func (h *ConverseHandlers) Models(w http.ResponseWriter, r *http.Request) {
 		},
 		"verifier_independent": h.deps.LLM.ModelFor(llm.RoleVerifier) != h.deps.LLM.ModelFor(llm.RoleExecutor),
 	})
+}
+
+// keepGeometry stores a turn's geometry, and never fails the turn.
+//
+// # Why a failure here is reported and not raised
+//
+// The conversation is the main path and keeping a variant is beside it. A person
+// mid-sentence must not be stopped because a database write failed, a project
+// they named is not theirs, or the assembly could not be attributed — none of
+// those make the shape on their screen less useful. So every outcome comes back
+// as a sentence the workbench shows, and the turn completes either way.
+//
+// What it must NOT do is stay quiet. A workbench that showed nothing after a
+// failed save leaves somebody believing they can come back to a shape that was
+// never written down, and they find out when they go looking for it.
+func (h *ConverseHandlers) keepGeometry(r *http.Request, req converseRequest, proto *agent.Prototype, model string) *agent.VariantSaved {
+	projectID := req.ProjectID
+	if h.geo == nil || h.deps.Pool == nil {
+		return &agent.VariantSaved{NotKept: "This deployment has no database, so geometry is not kept between turns."}
+	}
+	user, _ := UserFrom(r.Context())
+
+	// An existing project is checked against the caller's membership every turn.
+	// content.write rather than read, because keeping a variant changes what the
+	// project holds — a viewer sees variants and does not add to them.
+	if projectID != "" {
+		if err := h.deps.requirePermission(r, projectID, user.ID, access.PermContentWrite); err != nil {
+			return &agent.VariantSaved{NotKept: "This geometry was not kept: " + userFacing(err)}
+		}
+	}
+	if model == "" {
+		// VIS-04 requires a render to name its generator, and the save would be
+		// refused for exactly this. Reported here in the caller's own terms
+		// rather than as a validation error from three layers down.
+		return &agent.VariantSaved{NotKept: "This geometry was not kept: the reply did not report which " +
+			"model produced it, and a variant that cannot name its generator is not worth keeping."}
+	}
+
+	// A short deadline of its own. The request's context is already close to its
+	// budget by the time the turn finishes, and a slow write must not turn a
+	// completed answer into a failed one.
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Second)
+	defer cancel()
+
+	v, err := h.geo.Save(ctx, geometry.NewVariant{
+		ProjectID:   projectID,
+		InitiatorID: user.ID,
+		// The workbench conversation, which is neither a person nor the goal
+		// engine. See migration 0011 for why the vocabulary gained this actor
+		// rather than reusing 'human' or 'system'.
+		Agent:     workspace.AgentConverse,
+		Generator: model,
+		Document:  *proto,
+		// What it was made from: the turn. Recorded server-side from what the
+		// request actually carried, never from anything the client asserts about
+		// its own provenance.
+		Inputs: map[string]any{
+			"source":        "workbench conversation",
+			"message":       forLedger(req.Message),
+			"on_screen":     forLedger(req.OnScreen),
+			"history_turns": len(req.History),
+			"model":         model,
+		},
+	})
+	if err != nil {
+		h.deps.Log.WarnWith(r.Context(), logx.EventGeometrySaved, err, "user_id", user.ID)
+		return &agent.VariantSaved{NotKept: "This geometry was not kept: " + userFacing(err)}
+	}
+	return &agent.VariantSaved{
+		VersionID: v.VersionID, ProjectID: v.ProjectID, Path: v.Path, Version: v.Version,
+		Name: v.Name, Generator: v.Generator,
+		Units: string(v.Units), UnitsNote: v.UnitsNote(),
+		Parts: len(v.Document.Parts), Assumptions: len(v.Assumptions()),
+	}
+}
+
+// ledgerFieldLimit bounds one recorded input.
+//
+// The inputs column answers "what was this made from", and the answer is a
+// sentence somebody said. Two thousand characters is longer than any workbench
+// utterance observed and short enough that a variant row stays a row. Truncation
+// is MARKED rather than silent: a stored prompt that quietly loses its ending
+// would misrepresent what the geometry was actually asked for, which is the one
+// thing this field exists to record.
+const ledgerFieldLimit = 2000
+
+func forLedger(s string) string {
+	if len(s) <= ledgerFieldLimit {
+		return s
+	}
+	return s[:ledgerFieldLimit] + fmt.Sprintf("… [truncated; %d characters in the original]", len(s))
 }

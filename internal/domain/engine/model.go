@@ -232,12 +232,17 @@ const (
 	ActorHuman     Actor = "human"
 	ActorScheduler Actor = "scheduler"
 	ActorSystem    Actor = "system"
+	// ActorConverse is the workbench conversation (PRD VIS-04). It proposes
+	// geometry outside any goal, and it is none of the five above: 'human'
+	// would credit a person with a shape FORGE drew, and 'system' would
+	// attribute a proposal to infrastructure. Added in migration 0011.
+	ActorConverse Actor = "converse"
 )
 
 // Valid reports whether a is a recognised actor.
 func (a Actor) Valid() bool {
 	switch a {
-	case ActorPlanner, ActorExecutor, ActorVerifier, ActorHuman, ActorScheduler, ActorSystem:
+	case ActorPlanner, ActorExecutor, ActorVerifier, ActorHuman, ActorScheduler, ActorSystem, ActorConverse:
 		return true
 	}
 	return false
@@ -245,11 +250,17 @@ func (a Actor) Valid() bool {
 
 // AllActors returns every actor, for the schema-coherence fence.
 func AllActors() []Actor {
-	return []Actor{ActorPlanner, ActorExecutor, ActorVerifier, ActorHuman, ActorScheduler, ActorSystem}
+	return []Actor{ActorPlanner, ActorExecutor, ActorVerifier, ActorHuman, ActorScheduler, ActorSystem, ActorConverse}
 }
 
 // Event kinds, enumerated for the same reason as log event names.
 const (
+	// EventInjectionSuspected records that untrusted content matched a known
+	// prompt-injection shape (PRD SEC-04). On the timeline rather than only in
+	// the log because "did anything try to steer this agent through its own
+	// tool output?" is asked after the fact, by somebody reading the goal.
+	EventInjectionSuspected = "security.injection_suspected"
+
 	EventGoalCreated       = "goal.created"
 	EventGoalActivated     = "goal.activated"
 	EventGoalPaused        = "goal.paused"
@@ -281,6 +292,10 @@ const (
 	EventVerificationFail  = "verification.failed"
 	EventBudgetExceeded    = "budget.exceeded"
 	EventReplanTriggered   = "replan.triggered"
+	// EventArtifactChanged is the timeline's record of a change to an artifact
+	// (PRD WRK-04). The artifact version points back at the event, which is what
+	// puts every change inside the tamper-evident chain rather than beside it.
+	EventArtifactChanged = "artifact.changed"
 )
 
 // ToolCall is one invocation in the idempotency ledger.

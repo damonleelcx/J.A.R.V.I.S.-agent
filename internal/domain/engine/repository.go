@@ -376,15 +376,46 @@ func (r *Repository) AppendEvent(ctx context.Context, ex db.Querier, e *Event, n
 		e.ID = id.New(id.PrefixEvent)
 	}
 
-	err := ex.QueryRow(ctx, `
-		insert into forge_events (id, goal_id, task_id, seq, kind, actor, actor_id, summary, payload, created_at)
-		values ($1, $2, $3,
-		        (select coalesce(max(seq), 0) + 1 from forge_events where goal_id = $2),
-		        $4, $5, $6, $7, $8, $9)
-		returning seq, created_at`,
-		e.ID, e.GoalID, e.TaskID, e.Kind, string(e.Actor), e.ActorID,
-		e.Summary, jsonOrEmpty(e.Payload), now).Scan(&e.Seq, &e.CreatedAt)
+	/* The audit chain (PRD SAF-06).
+	 *
+	 * The previous event's hash is read, this event's hash is computed from it in
+	 * Go, and both are written with the row. Read-then-write is a race — two
+	 * appends to one goal can read the same predecessor — and it is closed the
+	 * same way the sequence number already was: unique (goal_id, seq) rejects the
+	 * loser and the caller retries. No new failure mode, and the alternative
+	 * (hashing inside SQL) would make the chain verifiable only by asking the
+	 * same database to agree with itself.
+	 *
+	 * This is the ONLY place events are written, which is why the chain can be
+	 * claimed to cover all of them. */
+	var prevSeq int64
+	var prevHash *string
+	if err := ex.QueryRow(ctx, `
+		select seq, hash from forge_events
+		 where goal_id = $1 order by seq desc limit 1`, e.GoalID).Scan(&prevSeq, &prevHash); err != nil {
+		if !errors.Is(err, pgx.ErrNoRows) {
+			return errs.Wrap(op, errs.CodeDatabaseUnavail, err)
+		}
+	}
+	link := chainGenesis
+	if prevHash != nil && *prevHash != "" {
+		link = *prevHash
+	}
+
+	digest, err := PayloadDigest(e.Payload)
 	if err != nil {
+		return err
+	}
+	e.Seq = prevSeq + 1
+	e.CreatedAt = now
+	hash := EventHash(link, e, digest)
+
+	if _, err := ex.Exec(ctx, `
+		insert into forge_events (id, goal_id, task_id, seq, kind, actor, actor_id, summary,
+		                          payload, created_at, prev_hash, hash, payload_digest)
+		values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+		e.ID, e.GoalID, e.TaskID, e.Seq, e.Kind, string(e.Actor), e.ActorID,
+		e.Summary, jsonOrEmpty(e.Payload), now, link, hash, digest); err != nil {
 		if isUniqueViolation(err) {
 			return errs.Wrap(op, errs.CodeConflict, err).
 				WithDetail("timeline sequence collision on goal %s; retry the enclosing transaction", e.GoalID)
