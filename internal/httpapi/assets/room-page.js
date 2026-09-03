@@ -90,15 +90,79 @@
     });
   }
 
-  function renderTurns(turns) {
-    var box = $('turns');
-    box.textContent = '';
-    turns.forEach(appendTurn);
-    box.scrollTop = box.scrollHeight;
+  /* ---- the transcript, and searching it (PRD AUD-06) ----------------------
+   *
+   * `turns` is the whole record as the server last gave it. The DOM shows a
+   * SUBSET of it whenever a search is active, so the array — not the DOM — is
+   * what everything else reads. A turn arriving mid-search still joins the
+   * record, and clearing the search brings it back without asking the server
+   * again.
+   *
+   * Why the search is here and not an endpoint, and what was verified in a
+   * browser: docs/bugfix/2026-09-03-the-transcript-could-not-be-searched.md
+   */
+  var turns = [];
+  var query = '';
+
+  function renderTurns(list) {
+    turns = list.slice();
+    rebuild();
   }
 
-  function appendTurn(t) {
+  /* matches is deliberately narrow: the TEXT of what was said, nothing else.
+   *
+   * A redacted turn can never match. Its content is gone, and the word its row
+   * shows instead — "deleted" — belongs to this interface, not to anybody in the
+   * room. Matching on it would be searching our own vocabulary and presenting
+   * the hit as something a person said. */
+  function matches(t) {
+    if (!query) return true;
+    if (t.redacted) return false;
+    return String(t.text || '').toLowerCase().indexOf(query.toLowerCase()) !== -1;
+  }
+
+  function matchCount() {
+    var n = 0;
+    turns.forEach(function (t) { if (matches(t)) n++; });
+    return n;
+  }
+
+  function rebuild() {
     var box = $('turns');
+    // #turns is a live region for turns ARRIVING. A filter rewrites every row at
+    // once, and without this a screen reader reads the whole transcript back on
+    // every keystroke. aria-busy is the attribute for exactly that: hold
+    // announcements until the batch is done.
+    box.setAttribute('aria-busy', 'true');
+    box.textContent = '';
+    turns.forEach(function (t) {
+      if (matches(t)) box.appendChild(turnRow(t));
+    });
+    box.removeAttribute('aria-busy');
+    announce();
+    // Live tail when nothing is filtered; the first match when something is.
+    box.scrollTop = query ? 0 : box.scrollHeight;
+  }
+
+  /* What a screen reader actually needs after typing: how much of the record is
+   * still in front of it. The denominator is there so a search that matches
+   * nothing is distinguishable from a transcript that is empty. */
+  function announce() {
+    var el = $('find-count');
+    if (!query) { el.textContent = ''; return; }
+    var n = matchCount();
+    el.textContent = n === 0
+      ? 'No turns match "' + query + '".'
+      : n + ' of ' + turns.length + ' turns match "' + query + '".';
+  }
+
+  function setQuery(next) {
+    query = String(next || '').trim();
+    $('find-clear').hidden = query === '';
+    rebuild();
+  }
+
+  function turnRow(t) {
     var row = doc.createElement('div');
     row.className = 'turn' + (t.redacted ? ' redacted' : '');
     row.setAttribute('data-seq', String(t.seq));
@@ -109,12 +173,14 @@
     // silently rewrite who said something six months ago.
     who.textContent = t.speaker === 'forge' ? 'FORGE' : (t.speaker_label || 'unknown');
 
-    var mark = doc.createElement('span');
-    mark.className = 'turn-mark';
+    // Named `channel`, not `mark`: this row now also builds <mark> elements for
+    // search hits, and two different marks in one function is a trap.
+    var channel = doc.createElement('span');
+    channel.className = 'turn-mark';
     // Spoken and typed are marked differently, because "was that said aloud in
     // the meeting or typed afterwards" is a question people actually ask of a
     // transcript.
-    mark.textContent = t.channel === 'voice' ? 'spoke' : 'typed';
+    channel.textContent = t.channel === 'voice' ? 'spoke' : 'typed';
 
     var text = doc.createElement('span');
     text.className = 'turn-text';
@@ -125,13 +191,48 @@
       text.textContent = 'deleted' + (t.redacted_by ? ' by ' + t.redacted_by : '');
       text.className += ' gone';
     } else {
-      text.textContent = t.text;
+      fillHighlighted(text, String(t.text || ''));
     }
 
     row.appendChild(who);
-    row.appendChild(mark);
+    row.appendChild(channel);
     row.appendChild(text);
-    box.appendChild(row);
+    return row;
+  }
+
+  /* Writes the text with matched runs wrapped in <mark>, as DOM nodes.
+   *
+   * Built rather than assigned as markup. This page uses no innerHTML anywhere,
+   * and a transcript is the last place to start: every character of it is
+   * something a person typed or said. */
+  function fillHighlighted(el, text) {
+    if (!query) { el.textContent = text; return; }
+    var hay = text.toLowerCase();
+    var needle = query.toLowerCase();
+    var from = 0;
+    var at;
+    el.textContent = '';
+    while ((at = hay.indexOf(needle, from)) !== -1) {
+      if (at > from) el.appendChild(doc.createTextNode(text.slice(from, at)));
+      var hit = doc.createElement('mark');
+      hit.textContent = text.slice(at, at + needle.length);
+      el.appendChild(hit);
+      from = at + needle.length;
+    }
+    if (from < text.length) el.appendChild(doc.createTextNode(text.slice(from)));
+  }
+
+  function appendTurn(t) {
+    turns.push(t);
+    if (!matches(t)) {
+      // It arrived while a search is narrowing the view. It is in the record,
+      // and the count moves, so the room does not look like nothing happened.
+      announce();
+      return;
+    }
+    var box = $('turns');
+    box.appendChild(turnRow(t));
+    announce();
     box.scrollTop = box.scrollHeight;
   }
 
@@ -283,6 +384,27 @@
         note('');
         showError(err.message + ' You can still take part by typing.');
       });
+    });
+
+    // AUD-06's transcript search. Filtering on every keystroke rather than on
+    // submit: the transcript is already in memory, so there is nothing to wait
+    // for, and a search box that needs Enter is one more thing to know.
+    $('find').addEventListener('input', function () { setQuery(this.value); });
+
+    // Escape clears from the keyboard; the button clears without one and returns
+    // focus, so neither path strands anybody.
+    $('find').addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && this.value !== '') {
+        this.value = '';
+        setQuery('');
+      }
+    });
+
+    $('find-clear').addEventListener('click', function () {
+      var box = $('find');
+      box.value = '';
+      setQuery('');
+      box.focus();
     });
 
     $('mute').addEventListener('click', function () {

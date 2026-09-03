@@ -614,6 +614,35 @@ const pageTemplates = `
 <main class="room-main">
   <section class="room-transcript" aria-label="Transcript">
     <div class="room-h">Transcript</div>
+
+    <!-- AUD-06: transcript search.
+         Filters what is already here rather than asking the server again. GET
+         /v1/rooms/{id} returns every turn in the room, so the whole transcript
+         is in the page before anybody types — a search endpoint would be a
+         second way to ask a question this page can already answer, and it would
+         be slower. It also means search works identically on a closed room.
+
+         THE CONDITION THAT WOULD MAKE THIS WRONG: if room transcripts are ever
+         paginated, the page stops holding the whole record and starts holding a
+         window. Searching a window while calling it "search the transcript" is a
+         quiet half-truth. Change this at the same time, not afterwards.
+         Why, and what was verified: docs/bugfix/2026-09-03-the-transcript-could-not-be-searched.md
+
+         type=search so the browser offers its own clear affordance; the Clear
+         button and Escape are the paths that do not depend on the browser
+         providing one. -->
+    <div class="room-find">
+      <label class="vis" for="find">Search the transcript</label>
+      <input type="search" id="find" class="room-find__in" autocomplete="off"
+             placeholder="Search the transcript">
+      <button type="button" class="room-btn" id="find-clear" hidden>Clear</button>
+    </div>
+    <!-- The count is its own status region. #turns below is aria-live for turns
+         ARRIVING; a filter rewrites all of it at once, which is not news and must
+         not be read out. What a screen reader needs after typing is how many
+         turns matched, and that is this line. -->
+    <div id="find-count" class="room-find__count" role="status"></div>
+
     <div id="turns" class="turns" aria-live="polite"></div>
   </section>
 
