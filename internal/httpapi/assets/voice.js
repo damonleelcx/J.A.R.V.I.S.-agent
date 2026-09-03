@@ -274,6 +274,27 @@
     return this.synthAvailable ? global.speechSynthesis.getVoices() : [];
   };
 
+  /* One axis value: a signed number and, optionally, the unit written after it.
+   * Composed into COORD three times rather than typed out three times, because
+   * the three have to stay identical. Mirrors coordinateSegment and
+   * coordinateExpr in internal/media/readback.go. */
+  var COORD_SEGMENT = '(-?\\d+(?:\\.\\d+)?(?:\\s?[A-Za-z°]+)?)';
+  var COORD = new RegExp(
+    '\\(\\s*' + COORD_SEGMENT +
+    '\\s*,\\s*' + COORD_SEGMENT +
+    '\\s*,\\s*' + COORD_SEGMENT + '\\s*\\)', 'g');
+
+  /* spokenSign makes a leading minus audible. "-" is silent in the voices this
+   * is synthesised through, so "-40 mm" is heard as "40 millimetres": a
+   * coordinate on the wrong side of the datum, the same class of failure as the
+   * silent ± below.
+   *
+   * Scoped to coordinates on purpose. A general rule would also rewrite dates
+   * ("2026-09-03") and ranges ("5-10mm"), where the hyphen is not a sign. */
+  function spokenSign(seg) {
+    return seg.charAt(0) === '-' ? 'minus ' + seg.slice(1) : seg;
+  }
+
   /* readable rewrites text so a listener can transcribe it correctly.
    *
    * PRD AUD-04 requires numbers, units, tolerances and identifiers to be read
@@ -305,6 +326,17 @@
       // here and leaves it to the unit rules.
       .replace(/\d+(?:\.\d+){2,}\b/g, function (m) {
         return m.split('.').join(' point ');
+      })
+      // Coordinates, spoken with their axes and their signs. A position leaves
+      // the geometry model as "(12.5 mm, 0 mm, -40 mm)"; parentheses and commas
+      // are silent, so a listener hears three numbers with nothing to say which
+      // is which axis, and the silent minus puts the part 80mm from where it
+      // is. The frame those axes belong to is deliberately not added here — it
+      // is not in the text, and this layer must not invent a datum (RSN-06).
+      // Three segments only: a pair in prose is more likely to be a list.
+      // Why: docs/bugfix/2026-09-03-coordinates-read-back-without-axes-or-sign.md
+      .replace(COORD, function (_, x, y, z) {
+        return 'X ' + spokenSign(x) + ', Y ' + spokenSign(y) + ', Z ' + spokenSign(z);
       })
       // Units, spelled out. "5mm" heard as "five em em" is not a measurement.
       .replace(/(\d)\s?mm\b/g, '$1 millimetres')

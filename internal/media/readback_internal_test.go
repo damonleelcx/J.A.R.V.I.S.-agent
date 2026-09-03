@@ -124,6 +124,49 @@ func TestReadbackMakesTextTranscribable(t *testing.T) {
 			want: "See r e q A 1 B 2 C 3 and so on.",
 		},
 		{
+			name: "a position names its axes",
+			// The case the coordinate rule exists for. position() in
+			// internal/domain/geometry/compare.go emits exactly this shape, and
+			// spoken as written it is three numbers in a row with nothing to say
+			// which is which — a coordinate nobody can write down.
+			in:   "Bracket origin is at (12.5 mm, 0 mm, -40 mm).",
+			want: "Bracket origin is at X 12.5 millimetres, Y 0 millimetres, Z minus 40 millimetres.",
+		},
+		{
+			name: "a coordinate does not lose its minus",
+			// "-" is silent, so this used to be heard as "Y 8" — the part on the
+			// wrong side of the datum, which is the ± failure again in a different
+			// place. Asserted separately from the case above because the sign is
+			// the half that is silently wrong rather than merely ambiguous.
+			in:   "Move it to (0, -8, 0).",
+			want: "Move it to X 0, Y minus 8, Z 0.",
+		},
+		{
+			name: "a coordinate with no units is still read by axis",
+			in:   "Origin (1.75, -0.5, 33) on the fixture.",
+			want: "Origin X 1.75, Y minus 0.5, Z 33 on the fixture.",
+		},
+		{
+			name: "a coordinate and a tolerance survive each other",
+			// The two rules touch the same sentence and run in a fixed order. If
+			// they ever compete, this is where it shows.
+			in:   "Datum at (0 mm, 8 mm, 0 mm) ±0.1",
+			want: "Datum at X 0 millimetres, Y 8 millimetres, Z 0 millimetres plus or minus 0.1",
+		},
+		{
+			name: "a pair in prose is not a position",
+			// Why the rule takes three segments and not two or more. Nothing in
+			// this domain has a two-axis position, and "(1, 2)" in a sentence is a
+			// list. Matching pairs would put axis names into ordinary prose.
+			in:   "Check items (1, 2) before you start.",
+			want: "Check items (1, 2) before you start.",
+		},
+		{
+			name: "a parenthesis around words is left alone",
+			in:   "Torque it (see the datum) first.",
+			want: "Torque it (see the datum) first.",
+		},
+		{
 			name: "markdown is not read as punctuation",
 			in:   "**Important**: check the `bore` diameter.",
 			want: "Important: check the bore diameter.",

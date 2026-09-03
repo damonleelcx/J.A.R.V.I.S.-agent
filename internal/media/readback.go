@@ -26,7 +26,7 @@ import (
 // The rules are therefore duplicated here rather than shared, the same trade
 // speech.go makes for the sample rate, and for the same reason: the alternative
 // is a network round trip per utterance in the browser, or generated JavaScript,
-// and neither is worth it for eleven substitutions. What makes the duplication
+// and neither is worth it for twelve substitutions. What makes the duplication
 // safe is that it is fenced — TestTheReadbackRulesHaveNotDrifted compares this
 // table against the JavaScript one and fails when a rule is added to one side
 // only. If you change either copy, change both.
@@ -79,6 +79,42 @@ var readbackRules = []readbackRule{
 		},
 	},
 
+	// Coordinates, spoken with their axes and their signs.
+	//
+	// A position leaves the geometry model as "(12.5 mm, 0 mm, -40 mm)" — see
+	// position() in internal/domain/geometry/compare.go. Said as written that is
+	// three numbers in a row: parentheses and commas are silent, so a listener
+	// hears "12.5 millimetres, 0 millimetres, 40 millimetres" with nothing to say
+	// which number is which axis. The minus is silent too, which puts the part
+	// 80mm from where it is. Both are the AUD-04 failure exactly: correct on
+	// screen, impossible to write down from the voice.
+	//
+	// Naming the axes is the whole fix. The frame those axes belong to is
+	// deliberately NOT added here. It is not in the text, and this layer rewrites
+	// what it is handed rather than inventing premises (RSN-06); a coordinate
+	// that needs to carry "assembly origin, Y up" has to carry it from the
+	// producer, which is what Frame in internal/domain/geometry/units.go already
+	// says. A readback rule that supplied a frame would be stating a datum nobody
+	// measured.
+	//
+	// Three segments only. A pair in prose ("(1, 2)") is far more likely to be a
+	// list than a position, and no position in this domain has two axes.
+	//
+	// Why this rule exists, and the drill that proves the fence still fires:
+	// docs/bugfix/2026-09-03-coordinates-read-back-without-axes-or-sign.md
+	//
+	// Placed ahead of the unit rules so that a unit is still in its written form
+	// when the triple is split; spelling units stays the unit rules' job, in one
+	// place, rather than being repeated inside this pattern.
+	{
+		re: regexp.MustCompile(coordinateExpr),
+		fn: func(m []string) string {
+			return "X " + spokenSign(m[1]) +
+				", Y " + spokenSign(m[2]) +
+				", Z " + spokenSign(m[3])
+		},
+	},
+
 	// Units, spelled out. "5mm" heard as "five em em" is not a measurement.
 	{re: regexp.MustCompile(`(\d)\s?mm\b`), rep: "${1} millimetres"},
 	{re: regexp.MustCompile(`(\d)\s?cm\b`), rep: "${1} centimetres"},
@@ -123,6 +159,29 @@ func Readable(text string) string {
 		})
 	}
 	return strings.TrimSpace(text)
+}
+
+// coordinateSegment matches one axis value: a signed number and, optionally, the
+// unit written after it. Composed into coordinateExpr three times rather than
+// typed out three times, because the three have to stay identical.
+const coordinateSegment = `(-?\d+(?:\.\d+)?(?:\s?[A-Za-z°]+)?)`
+
+// coordinateExpr matches a parenthesised triple. Mirrors COORD in voice.js.
+var coordinateExpr = `\(\s*` + coordinateSegment +
+	`\s*,\s*` + coordinateSegment +
+	`\s*,\s*` + coordinateSegment + `\s*\)`
+
+// spokenSign makes a leading minus audible. "-" is silent in the voices this is
+// synthesised through, so "-40 mm" is heard as "40 millimetres": a coordinate on
+// the wrong side of the datum, the same class of failure as the silent ± above.
+//
+// Scoped to coordinates on purpose. A general rule would also rewrite dates
+// ("2026-09-03") and ranges ("5-10mm"), where the hyphen is not a sign.
+func spokenSign(seg string) string {
+	if strings.HasPrefix(seg, "-") {
+		return "minus " + strings.TrimPrefix(seg, "-")
+	}
+	return seg
 }
 
 // spellOut separates characters so they are heard individually: "req" becomes
