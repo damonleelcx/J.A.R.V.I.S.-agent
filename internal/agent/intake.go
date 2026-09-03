@@ -3,8 +3,8 @@ package agent
 import (
 	"context"
 
-	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/access"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/engine"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/workspace"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/llm"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/persona"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/clock"
@@ -105,21 +105,15 @@ func (in *Intake) Draft(ctx context.Context, pool *db.Pool, req DraftRequest) (*
 	}
 
 	now := in.clock.Now()
-	projectID := req.ProjectID
-	if projectID == "" {
-		projectID = id.New(id.PrefixProject)
-		if _, err := pool.Exec(ctx,
-			`insert into forge_projects (id, owner_id, name, pack, created_at, updated_at)
-			 values ($1,$2,$3,'software',$4,$4)`,
-			projectID, req.OwnerID, req.Title, now); err != nil {
-			return nil, errs.Wrap(op, errs.CodeDatabaseUnavail, err)
-		}
-		// The creator becomes the project's owner in the membership table, which
-		// is what authorisation reads (PRD SEC-02). owner_id above records who
-		// made it; without this row they could not see what they just created.
-		if err := access.NewService(pool, in.clock, nil).EnsureOwner(ctx, pool, projectID, req.OwnerID); err != nil {
-			return nil, err
-		}
+	// One producer of projects, not two. The workbench also needs "a project to
+	// put this in, making one if there is not one" when it keeps a geometry
+	// variant (PRD VIS-04), and a second INSERT here would eventually drift from
+	// that one on the part that is easiest to forget — the membership row,
+	// without which the person who just created a project cannot see it.
+	projectID, err := workspace.NewService(pool, in.clock, nil).
+		EnsureProject(ctx, pool, req.ProjectID, req.OwnerID, req.Title, "software")
+	if err != nil {
+		return nil, err
 	}
 
 	goal := &engine.Goal{

@@ -175,6 +175,26 @@ const (
 
 func init() { allEvents = append(allEvents, EventGoalDrafted, EventGoalPlanFailed, EventGoalStarted) }
 
+// Geometry events (PRD VIS-04, VIS-05).
+//
+// Saving is logged because a variant is the first thing the workbench writes
+// that OUTLIVES the conversation, and "where did this render come from?" has to
+// be answerable from the log alone. Export is logged because it is the moment
+// geometry LEAVES the system, after which the conversion label travels only if
+// the file carries it.
+const (
+	EventGeometrySaved    Event = "forge.geometry.saved"
+	EventGeometryExported Event = "forge.geometry.exported"
+	EventGeometryRefused  Event = "forge.geometry.export_refused"
+	EventGeometryCompared Event = "forge.geometry.compared"
+)
+
+func init() {
+	allEvents = append(allEvents,
+		EventGeometrySaved, EventGeometryExported, EventGeometryRefused, EventGeometryCompared,
+	)
+}
+
 // Streaming events.
 const (
 	EventLLMStreamFrame Event = "forge.llm.stream_frame_skipped"

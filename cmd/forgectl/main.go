@@ -77,6 +77,20 @@ Workspace model:
   artifacts show <artifact-id>         One artifact's lifecycle: WRK-04's seven facts per version
   artifacts show <path> --project <id>
 
+Geometry (variants and export):
+  geometry formats                             What this build can and cannot write, and why not
+  geometry list --project <id> [--limit n]     Variants a project has accumulated, newest first
+  geometry show <version-id>                   One variant with everything VIS-04 makes it link to
+  geometry compare <version-id> <version-id>...
+                                               Side by side, with what differs — and what could not
+                                               be compared, which is a separate answer
+  geometry export <version-id> [--format obj|stl] [--out file] [--dry-run]
+                                               Write a mesh. Prints what the conversion loses BEFORE
+                                               it prints the path. Parametric formats (STEP, KCL,
+                                               IGES) are declared and refused: there is no CAD kernel
+                                               here, and a STEP file of tessellated facets would be
+                                               treated downstream as an exact solid.
+
 Access (RBAC):
   access matrix                                Who may do what, as a grid
   access members --project <id>                Who is in a project and how they got there
@@ -280,6 +294,28 @@ func run(ctx context.Context, cmd string, args []string) error {
 				WithDetail("unknown artifacts subcommand %q; expected show", args[0])
 		}
 
+	case "geometry":
+		if len(args) == 0 {
+			fmt.Fprint(os.Stderr, usage)
+			return errs.New("forgectl.run", errs.CodeValidationFailed).
+				WithDetail("geometry needs a subcommand: formats, list, show, compare or export")
+		}
+		switch args[0] {
+		case "formats":
+			return cmdGeometryFormats()
+		case "list":
+			return cmdGeometryList(ctx, cfg, log, args[1:])
+		case "show":
+			return cmdGeometryShow(ctx, cfg, log, args[1:])
+		case "compare":
+			return cmdGeometryCompare(ctx, cfg, log, args[1:])
+		case "export":
+			return cmdGeometryExport(ctx, cfg, log, args[1:])
+		default:
+			return errs.New("forgectl.run", errs.CodeValidationFailed).
+				WithDetail("unknown geometry subcommand %q; expected formats, list, show, compare or export", args[0])
+		}
+
 	case "access":
 		if len(args) == 0 {
 			fmt.Fprint(os.Stderr, usage)
@@ -465,6 +501,12 @@ func sectionsFor(cmd string) []config.Section {
 		// Drills build their own schemas from the migration chain and need no
 		// model. Requiring an LLM key to prove the system degrades safely would
 		// make the check harder to run than the thing it checks.
+		return []config.Section{config.SectionDB}
+	case "geometry":
+		// Variants are read straight from the database, and export is pure
+		// computation over what is already stored. Requiring an LLM key to look
+		// at a shape FORGE already proposed would turn an inspection into a
+		// credential request.
 		return []config.Section{config.SectionDB}
 	case "graph", "artifacts":
 		// The workspace model is read straight from the database. Requiring an

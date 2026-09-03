@@ -779,3 +779,73 @@ func TestArtifacts_JoinTheGraphAsAnchors(t *testing.T) {
 		t.Fatal("deleting the artifact left its graph anchor pointing at nothing")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// The actor vocabulary, against the schema that has to accept it
+// ---------------------------------------------------------------------------
+
+// Every agent Go recognises must be one the database will store, and every actor
+// too.
+//
+// # Why this did not exist until now
+//
+// engine.AllActors carried the comment "for the schema-coherence fence" and had
+// no caller — a fence that was declared and never built. It went unnoticed
+// because the vocabulary had not changed since it was written. Migration 0011
+// changed it (adding 'converse' for the workbench conversation), which is
+// exactly the moment a drift between the Go list and the two check constraints
+// would have shipped silently: the Go side would accept the value and the INSERT
+// would fail in production on a path no test happened to take.
+//
+// Both halves are checked here because forge_artifact_versions.agent and
+// forge_events.actor are documented as agreeing about who acted, and a migration
+// that widened one and not the other would make that comment false.
+func TestVocabulary_EveryAgentAndActorIsAcceptedByTheSchema(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	for _, a := range workspace.Agents() {
+		toolCall := &h.toolID
+		if a == workspace.AgentHuman || a == workspace.AgentConverse {
+			// The two that legitimately work without one; naming a tool call
+			// here would be refused by Validate for misattributing the change.
+			toolCall = nil
+		}
+		_, _, err := h.svc.RecordChange(ctx, workspace.Change{
+			ProjectID: h.project, Path: "agents/" + string(a) + ".txt",
+			InitiatorID: h.userID, Agent: a, ToolCallID: toolCall,
+			Inputs: map[string]any{}, Diff: "",
+		})
+		if err != nil {
+			t.Errorf("agent %q is recognised by Go and refused by the database: %v", a, err)
+		}
+	}
+
+	for _, actor := range engine.AllActors() {
+		ev := &engine.Event{
+			GoalID: h.goalID, Kind: engine.EventArtifactChanged, Actor: actor,
+			ActorID: &h.userID, Summary: "vocabulary check", Payload: []byte(`{}`),
+		}
+		if err := engine.NewRepository().AppendEvent(ctx, h.pool, ev, h.clk.Now()); err != nil {
+			t.Errorf("actor %q is recognised by Go and refused by the database: %v", actor, err)
+		}
+	}
+
+	// And the two lists must be the same set, since one is cast to the other in
+	// RecordChange. A value in only one of them is a value that becomes invalid
+	// the moment a geometry variant is saved inside a goal.
+	agents := map[string]bool{}
+	for _, a := range workspace.Agents() {
+		agents[string(a)] = true
+	}
+	for _, actor := range engine.AllActors() {
+		if !agents[string(actor)] {
+			t.Errorf("engine.Actor %q has no matching workspace.Agent; RecordChange casts one to the other", actor)
+		}
+		delete(agents, string(actor))
+	}
+	for a := range agents {
+		t.Errorf("workspace.Agent %q has no matching engine.Actor; a version made by it could not "+
+			"write the timeline event it points at", a)
+	}
+}

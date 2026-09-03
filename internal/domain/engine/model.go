@@ -232,12 +232,17 @@ const (
 	ActorHuman     Actor = "human"
 	ActorScheduler Actor = "scheduler"
 	ActorSystem    Actor = "system"
+	// ActorConverse is the workbench conversation (PRD VIS-04). It proposes
+	// geometry outside any goal, and it is none of the five above: 'human'
+	// would credit a person with a shape FORGE drew, and 'system' would
+	// attribute a proposal to infrastructure. Added in migration 0011.
+	ActorConverse Actor = "converse"
 )
 
 // Valid reports whether a is a recognised actor.
 func (a Actor) Valid() bool {
 	switch a {
-	case ActorPlanner, ActorExecutor, ActorVerifier, ActorHuman, ActorScheduler, ActorSystem:
+	case ActorPlanner, ActorExecutor, ActorVerifier, ActorHuman, ActorScheduler, ActorSystem, ActorConverse:
 		return true
 	}
 	return false
@@ -245,7 +250,7 @@ func (a Actor) Valid() bool {
 
 // AllActors returns every actor, for the schema-coherence fence.
 func AllActors() []Actor {
-	return []Actor{ActorPlanner, ActorExecutor, ActorVerifier, ActorHuman, ActorScheduler, ActorSystem}
+	return []Actor{ActorPlanner, ActorExecutor, ActorVerifier, ActorHuman, ActorScheduler, ActorSystem, ActorConverse}
 }
 
 // Event kinds, enumerated for the same reason as log event names.

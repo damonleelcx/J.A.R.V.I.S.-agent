@@ -440,10 +440,28 @@ const pageTemplates = `
   <div class="wb-right rail">
     <div class="h">Parts</div>
     <div id="parts"></div>
+
+    <!-- Variants (PRD VIS-04). Every shape FORGE proposes in this conversation
+         is kept as a version, so an earlier one is still there to be compared
+         with a later one. Pick two or more and open them side by side. -->
+    <div class="h" id="variants-head" style="display:none">Variants</div>
+    <div id="variants"></div>
+
     <div class="h" id="proposal-head" style="display:none">Proposed work</div>
     <div id="proposal" class="hidden"></div>
   </div>
 
+</div>
+
+<!-- Side by side. A dialog rather than a route: the conversation underneath is
+     the thing being decided about, and navigating away from it to compare two of
+     its outputs would lose the context that made the comparison worth doing. -->
+<div class="compare hidden" id="compare" role="dialog" aria-modal="true" aria-label="Variants side by side">
+  <div class="compare-head">
+    <div class="compare-title" id="compare-title">Side by side</div>
+    <button type="button" class="node" id="compare-close" aria-label="Close">Close</button>
+  </div>
+  <div class="compare-body" id="compare-body"></div>
 </div>
 
 <script src="/assets/forge3d.js"></script>

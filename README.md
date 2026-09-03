@@ -187,6 +187,48 @@ unsupported shape, producing a parts list that said `triangle-prism` beside a
 render showing a rectangular block. Nobody was told. That is the same class of
 failure as reporting an unverified task as verified.
 
+### A variant is a version, and comparison is derived
+
+PRD **VIS-04** asks for variants side by side, each render linking its geometry
+version, inputs, units, assumptions, generator and verification status. Five of
+those six are already columns on an artifact version (**WRK-04**), so a geometry
+proposal is stored *as one* rather than beside one — there is no variants table
+and no second lifecycle to fall out of step with the first.
+
+The comparison itself is computed on every request and never stored. A saved
+comparison goes stale the moment somebody verifies a variant or rules on it, and
+it is precisely the document a person leans on to choose between designs.
+
+Two things it refuses to do. It will not call `60` and `60` the same length when
+one variant is in millimetres and the other has no convertible unit — that pair
+is reported as **not compared**, in its own list, because withholding a judgement
+and making one are different answers. And where the model renamed a part between
+turns, the row says it was matched **by name, not by identity**: nothing in this
+system keeps a part id stable across turns, so that pairing is a guess and is
+labelled as one.
+
+### Mesh export is real; parametric export is refused
+
+**VIS-05** asks for mesh preview and, *where adapters permit*, editable
+parametric export — labelling tessellation, inference and lossy conversion.
+
+No CAD kernel is linked into this build, so STEP, IGES and KCL are **declared and
+refused** with `CONNECTOR_UNAVAILABLE` and a reason, the same shape as the
+unavailable connectors. Leaving them out is what invites somebody to write
+tessellated facets into a `.step` file, which everything downstream would then
+treat as an exact solid.
+
+OBJ and STL are real, and every export states what it cost, with numbers rather
+than adjectives: a ⌀22 mm cylinder at the renderer's 40 segments is *"the
+exported surface lies up to 0.034 mm inside the one described"*. The exporter
+tessellates with the renderer's own counts, so the file is the surface that was
+on screen — a fence parses `forge3d.js` and fails if the two drift.
+
+An assembly with no convertible unit is refused rather than exported. On screen
+an unstated unit is survivable, because the number is printed beside the words
+`(unit not stated)`. In a downloaded file that label cannot travel to the thing
+that matters, and a slicer reading `60` will print 60 mm.
+
 ### Forgetting has to hold against an agent that keeps learning
 
 FORGE writes its own memory. So a user deleting an item cannot be a `DELETE`: the

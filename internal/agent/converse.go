@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/geometry"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/llm"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/persona"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/errs"
@@ -74,6 +75,11 @@ About "prototype":
 
 - Positions are in the stated units, Y is up, and the origin is the assembly's
   centre. Parts are centred on their own position.
+- Part ids are STABLE ACROSS TURNS. When you revise an assembly, the part that
+  was "base-plate" stays "base-plate" — that is what lets somebody put the two
+  versions side by side and see what changed rather than two unrelated designs.
+  Reuse the id even when the dimensions change; use a new id only for a part
+  that was not there before.
 - Only emit it when the shape is the point. Do not attach geometry to a
   conversation about scheduling.
 - "assumptions" is where every dimension you CHOSE goes. If they said "a
@@ -116,30 +122,16 @@ type Turn struct {
 }
 
 // Prototype is a proposed 3D form.
-type Prototype struct {
-	Name  string          `json:"name"`
-	Units string          `json:"units"`
-	Parts []PrototypePart `json:"parts"`
-	// Assumptions is every dimension FORGE chose rather than was given.
-	Assumptions []string `json:"assumptions"`
-	// NotVerified is what this render does NOT establish. Required whenever
-	// geometry is present — PRD VIS-06: photorealism never implies
-	// manufacturability, structural adequacy, or compliance.
-	NotVerified []string `json:"not_verified"`
-}
+//
+// An ALIAS rather than a struct of its own: the shape the model emits and the
+// shape that gets stored as a variant (PRD VIS-04) must be the same type, or the
+// two definitions drift and a replayed render stops matching what was saved.
+// It lives in internal/domain/geometry because a domain package cannot import
+// the agent to find out what a part is.
+type Prototype = geometry.Document
 
 // PrototypePart is one solid.
-type PrototypePart struct {
-	ID       string             `json:"id"`
-	Name     string             `json:"name"`
-	Shape    string             `json:"shape"`
-	Size     map[string]float64 `json:"size"`
-	Position []float64          `json:"position"`
-	Rotation []float64          `json:"rotation"`
-	Color    string             `json:"color"`
-	Opacity  float64            `json:"opacity"`
-	Note     string             `json:"note"`
-}
+type PrototypePart = geometry.Part
 
 // ProposedGoal is work FORGE offers to do. Nothing runs until a human starts it.
 type ProposedGoal struct {
@@ -271,7 +263,7 @@ func (r *Reply) validate() error {
 		 * difference between a bracket and a building. It is recorded as
 		 * unspecified, every dimension then renders as "60 (unit not stated)",
 		 * and the reader is told in the one place they are already looking. */
-		if _, known := ParseUnit(r.Prototype.Units); !known && len(r.Prototype.Parts) > 0 {
+		if _, known := geometry.ParseUnit(r.Prototype.Units); !known && len(r.Prototype.Parts) > 0 {
 			declared := strings.TrimSpace(r.Prototype.Units)
 			note := "No unit was stated for these dimensions, so every number here is unitless."
 			if declared != "" {

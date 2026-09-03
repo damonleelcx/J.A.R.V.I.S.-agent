@@ -139,6 +139,7 @@ summarised away, because they are what an auditor reconstructs the run from.
 | `platform/id` | Prefixed, time-sortable identifiers |
 | `platform/clock` | Injectable time, so lease and expiry logic is testable without sleeping |
 | `domain/*` | Aggregates: identity, goal, plan, task, run, approval, memory, policy, pack |
+| `domain/geometry` | Units and frames, the proposed-shape document, variants (an artifact version), derived comparison, and mesh export with its conversion label |
 | `engine/*` | Queue, worker loop, planner, executor, verifier, context assembly, budgets, scheduler |
 | `tools/*` | Capability registry and typed tool contracts |
 | `persona/*` | Avatar, character, and the durable value set |

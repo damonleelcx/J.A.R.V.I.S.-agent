@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/access"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/claim"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/engine"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/clock"
@@ -540,6 +541,60 @@ func sortFindings(f []Finding) {
 }
 
 // ---------------------------------------------------------------------------
+// Projects
+// ---------------------------------------------------------------------------
+
+// EnsureProject returns projectID, creating a project when it is empty.
+//
+// # Why this exists rather than a second INSERT
+//
+// Two things now need "a project to put this in, making one if there is not
+// one": drafting a goal (internal/agent/intake.go) and keeping a geometry
+// variant from the workbench (PRD VIS-04). Each writing its own INSERT means two
+// producers of the same row, and the two would drift on the parts that are easy
+// to forget — the membership row in particular, without which the person who
+// just created a project cannot see it.
+//
+// The caller supplies the pack, because the pack is not a label: it selects
+// which validators, safety policy and approval rules apply to everything inside
+// the project (PRD §7), and defaulting it here would be this function choosing a
+// rule set on somebody else's behalf.
+func (s *Service) EnsureProject(ctx context.Context, q db.Querier, projectID, ownerID, name, pack string) (string, error) {
+	const op = "workspace.Service.EnsureProject"
+
+	if strings.TrimSpace(projectID) != "" {
+		return projectID, nil
+	}
+	if strings.TrimSpace(ownerID) == "" {
+		return "", errs.New(op, errs.CodeValidationFailed).
+			WithDetail("a project must name its owner")
+	}
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", errs.New(op, errs.CodeValidationFailed).
+			WithDetail("a project must be named; the schema refuses a blank one")
+	}
+	if strings.TrimSpace(pack) == "" {
+		return "", errs.New(op, errs.CodeValidationFailed).
+			WithDetail("a project must declare its domain pack, which selects the rules that apply inside it")
+	}
+	now := s.clock.Now()
+	newID := id.New(id.PrefixProject)
+	if _, err := q.Exec(ctx,
+		`insert into forge_projects (id, owner_id, name, pack, created_at, updated_at)
+		 values ($1,$2,$3,$4,$5,$5)`, newID, ownerID, name, pack, now); err != nil {
+		return "", errs.Wrap(op, errs.CodeDatabaseUnavail, err)
+	}
+	// The creator becomes the project's owner in the MEMBERSHIP table, which is
+	// what authorisation reads (PRD SEC-02). owner_id above records who made it;
+	// without this row they could not see what they had just created.
+	if err := access.NewService(nil, s.clock, s.log).EnsureOwner(ctx, q, newID, ownerID); err != nil {
+		return "", err
+	}
+	return newID, nil
+}
+
+// ---------------------------------------------------------------------------
 // Artifacts (PRD WRK-04)
 // ---------------------------------------------------------------------------
 
@@ -577,6 +632,40 @@ type Change struct {
 func (s *Service) RecordChange(ctx context.Context, c Change) (*Artifact, *Version, error) {
 	const op = "workspace.Service.RecordChange"
 
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return nil, nil, errs.Wrap(op, errs.CodeDatabaseUnavail, err)
+	}
+	defer func() { _ = tx.Rollback(ctx) }()
+
+	artifact, version, err := s.RecordChangeIn(ctx, tx, c)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := tx.Commit(ctx); err != nil {
+		return nil, nil, errs.Wrap(op, errs.CodeDatabaseUnavail, err)
+	}
+	s.LogVersioned(ctx, artifact, version)
+	return artifact, version, nil
+}
+
+// RecordChangeIn appends a version inside a transaction the CALLER owns, and
+// commits nothing.
+//
+// # Why this exists
+//
+// Some artifacts have content that lives in a second table — geometry is the
+// first (PRD VIS-04, migration 0011). Writing the version in one transaction and
+// its content in another would leave, after a crash between them, a version
+// claiming to be a variant with no geometry behind it. Afterwards it looks
+// exactly like a normal row, which is the failure mode this whole path is
+// arranged to avoid.
+//
+// The caller commits, and the caller logs: this function deliberately does not
+// announce a change that may still be rolled back.
+func (s *Service) RecordChangeIn(ctx context.Context, tx db.Querier, c Change) (*Artifact, *Version, error) {
+	const op = "workspace.Service.RecordChangeIn"
+
 	inputs, err := json.Marshal(orEmptyObject(c.Inputs))
 	if err != nil {
 		return nil, nil, errs.Wrap(op, errs.CodeSerializationFail, err).
@@ -587,12 +676,6 @@ func (s *Service) RecordChange(ctx context.Context, c Change) (*Artifact, *Versi
 		kind = ArtifactFile
 	}
 	now := s.clock.Now()
-
-	tx, err := s.pool.Begin(ctx)
-	if err != nil {
-		return nil, nil, errs.Wrap(op, errs.CodeDatabaseUnavail, err)
-	}
-	defer func() { _ = tx.Rollback(ctx) }()
 
 	artifact, err := s.repo.FindOrCreateArtifact(ctx, tx, &Artifact{
 		ID: id.New(id.PrefixArtifact), ProjectID: c.ProjectID, Path: c.Path,
@@ -632,14 +715,17 @@ func (s *Service) RecordChange(ctx context.Context, c Change) (*Artifact, *Versi
 	if err := s.repo.AppendVersion(ctx, tx, version); err != nil {
 		return nil, nil, err
 	}
-	if err := tx.Commit(ctx); err != nil {
-		return nil, nil, errs.Wrap(op, errs.CodeDatabaseUnavail, err)
-	}
+	return artifact, version, nil
+}
 
+// LogVersioned announces a committed version. Exported because RecordChangeIn
+// hands the transaction to its caller, and the caller is therefore the only one
+// that knows the change survived — a rolled-back change must never appear in
+// the log as one that happened.
+func (s *Service) LogVersioned(ctx context.Context, artifact *Artifact, version *Version) {
 	s.log.Info(ctx, logx.EventArtifactVersioned, "artifact_id", artifact.ID,
 		"path", artifact.Path, "version", version.Version, "agent", string(version.Agent),
 		"event_id", derefOr(version.EventID, "none"))
-	return artifact, version, nil
 }
 
 // Verify records what a machine found about a version. It does not touch the

@@ -16,13 +16,14 @@ Requirement IDs are from `docs/prd.md`.
 Built and fenced: the durable engine, the agent loop, tools, identity, the
 console, the workbench, the audit chain, layered memory with the decision log,
 the workspace model, containment — secret handles, incident response, and
-recovery drills that inject real faults — and role-based access with second
-factors, the shared-session record and the handoff. Roughly the whole vertical from
+recovery drills that inject real faults — role-based access with second factors,
+the shared-session record and the handoff, and geometry that survives the turn
+that proposed it: variants side by side, and mesh export that states what the
+conversion cost. Roughly the whole vertical from
 "someone speaks" to "a worker executes a verified task", plus the record of it,
 what it remembers, what it thinks is true, and what happens when it breaks.
 
-Missing: SSO, realtime audio transport, visual completeness, and the release
-apparatus.
+Missing: SSO, realtime audio transport, and the release apparatus.
 
 The split matters when planning: the core loop is done, so every wave below adds
 surface to a working system rather than filling a hole in one.
@@ -67,9 +68,9 @@ surface to a working system rather than filling a hole in one.
         └───────────────────┬─────────────────────────┘
                             ▼
         ┌─────────────────────────────────────────────┐
-        │ WAVE 7  visual completeness                 │
-        │   VIS-04 variants side by side              │
-        │   VIS-05 parametric export                  │
+        │ WAVE 7  visual completeness           DONE  │
+        │   VIS-04 variants side by side ✓            │
+        │   VIS-05 mesh export ✓  parametric refused  │
         └───────────────────┬─────────────────────────┘
                             ▼
         ┌─────────────────────────────────────────────┐
@@ -614,13 +615,127 @@ constraint, so removing either leaves the other. Removing both goes red. The
 fence itself was still improved — the original test's cases were all caught by
 the label half, so a case that only the id half can refuse was added.
 
-## Wave 7 — visual completeness
+## Wave 7 — visual completeness · **DONE**
 
-- **VIS-04** variants side by side, each linking geometry version, inputs, units,
-  assumptions, generator, verification status.
-- **VIS-05** parametric export. The spike settles the shape: no CAD kernel here,
-  so this is a `CONNECTOR_UNAVAILABLE` boundary plus mesh export, unless the Zoo
-  decision is revisited (`docs/spikes/2026-09-02-zoo-text-to-cad/`).
+### What had to exist first: something to compare
+
+Geometry lived only in the browser tab. Ask for a bracket, ask for a taller one,
+and the first was gone — so VIS-04 had no "variant" to put beside another and no
+"geometry version" to link to. The wave therefore starts with persistence, and
+the decision that shapes everything else is what it persists *into*.
+
+**A variant IS an artifact version.** Migration `0011_geometry` adds no variants
+table. Five of the six things VIS-04 requires a render to link to are already
+columns on `forge_artifact_versions` (WRK-04): version, inputs, agent,
+verification state, human disposition. Only the geometry itself had nowhere to
+live, so `forge_geometry` is a 1:0..1 extension keyed on the version id — a row
+exists exactly when a version has geometry, and its absence is a fact rather than
+a gap. A `content` column on the shared table was rejected: a file artifact's
+content lives on disk, so that column would be empty for nearly every row, and an
+empty content column cannot be told apart from "the content is elsewhere".
+
+The consequence worth stating: **comparison is derived, never stored**, the same
+rule COL-02's handoff follows. A saved comparison goes stale the moment a variant
+is verified or ruled on, and it is exactly the document somebody leans on to
+choose between designs.
+
+**Who writes geometry.** The server, inside `/v1/converse`, because that is the
+only place that knows the prompt, the model and the shape at the same moment. A
+client posting geometry would be naming its own generator and its own inputs —
+a fabricated provenance record, the same reason `RecordChange` is not on the HTTP
+surface. There is no `POST /v1/geometry`.
+
+**A new actor.** `planner | executor | verifier | human | scheduler | system` was
+written when every actor was part of the goal engine. The workbench conversation
+is none of them: `human` would credit a person with a shape FORGE drew, and
+`system` would attribute a proposal to infrastructure. `converse` was added to
+both places that spell the vocabulary out, because a version and its event are
+documented as agreeing about who acted.
+
+### VIS-04 — variants side by side · done
+
+`internal/domain/geometry`. Comparison in the API, in `forgectl geometry
+compare`, and in the workbench as N live viewports with each column's provenance
+directly beneath it.
+
+Two refusals carry the requirement's weight:
+
+- **Units are converted before anything is called a difference.** 60 mm and 6 cm
+  are the same length; 60 mm and a bare 60 are *not comparable*, and that pair
+  goes in its own list rather than being reported as agreement. Calling them
+  equal is the wrong answer with the most convincing appearance.
+- **A part matched across variants by NAME says so.** Nothing in this system
+  keeps a part id stable between turns — see the findings below — so that pairing
+  is a guess, in a third list of its own. "These differ" is a finding, "these
+  could not be compared" is a judgement withheld, and "these were matched by
+  name" is a judgement qualified. Three lists, never merged.
+
+### VIS-05 — export · done, and the boundary is the feature
+
+The spike's shape held. STEP, IGES and KCL are **declared and refused** with
+`CONNECTOR_UNAVAILABLE` and a reason — the same shape as the unavailable
+connectors, and for the same reason: leaving them out is what invites tessellated
+facets in a `.step` file, which everything downstream treats as an exact solid.
+
+OBJ and STL are real. Every export states its cost as a number rather than an
+adjective — a ⌀22 mm cylinder at the renderer's 40 segments is *"the exported
+surface lies up to 0.034 mm inside the one described"* — and the exporter
+tessellates with the renderer's own counts, fenced by a test that parses
+`forge3d.js`. Defaulted dimensions, substituted shapes and an unmodelled tube
+bore are all labelled as inference.
+
+An assembly with no convertible unit is **refused**. On screen an unstated unit
+survives because the number is printed beside `(unit not stated)`; in a
+downloaded file the label cannot travel to the machine at the other end.
+
+### Three things the wave found
+
+**The exported mesh was inside out.** The box was wound outward and the cylinder
+and sphere inward, in the same file. It renders correctly everywhere — the
+viewport is handed each normal explicitly and draws with back-face culling off —
+and misbehaves only at the point where somebody tries to make the thing. Found by
+computing the signed volume of an exported OBJ, not by reading the code. Fixed
+structurally rather than per-primitive: every facet is oriented against its own
+analytic normal. `docs/bugfix/2026-09-02-exported-meshes-were-inside-out.md`.
+
+**Matching parts by id does not survive a real conversation.** Propose a bracket,
+say "make the base plate thicker", and the model renames every part id. The first
+comparison rendered each part twice — once as "only in column 1", once as "only
+in column 2" — which reads as two unrelated designs when what happened was a
+revision. Now: ids first, then names among what the ids left over, with the basis
+reported. The model is also asked to keep ids stable, and the matcher does not
+depend on it doing so.
+
+**`forgectl` had the same argument-parsing bug a third time.** Flags after a
+positional id were silently ignored, which shipped twice before
+(`docs/bugfix/2026-09-02-forgectl-memory-forget-ignored-its-flags.md`). The
+carried defect said "nothing exercises the CLI's argument parsing" — that is now
+false for `geometry export`, whose parsing is a separate function with four
+fences over it. The two older commands still have the shape by convention.
+
+### Fences
+
+46 over the new code, 10 of them against live Postgres, **11 mutation-drilled** — every
+one of the eleven went red when the property it claims was broken, and every
+mutated file was restored. Including the two that catch what reading could not:
+the signed-volume fence over exported solids, and the fence that parses the
+renderer's tessellation constants out of the embedded asset.
+
+### One thing this wave surfaced and did not decide
+
+**A superseded variant cannot be accepted.** Proposing a new version of the same
+assembly marks the previous one `superseded` automatically (the artifact
+lifecycle's rule, correct for a file), and `SetDisposition` only touches rows that
+are still `pending`. So a person who compares v1 and v3 and prefers v1 has no way
+to say so: the comparison view will show them the choice and the disposition
+endpoint will refuse it.
+
+That is the artifact lifecycle (a linear history where the newest supersedes) and
+VIS-04 (variants as alternatives you choose between) contradicting each other.
+The comparison view states the situation rather than hiding it — the disposition
+row says what `superseded` means and what to do instead — but the underlying
+question is a decision, not an implementation detail. Options are in the carried
+defects below.
 
 ## Wave 8 — release
 
@@ -657,10 +772,29 @@ already calls this phase 7.
   attached in every schema, and no test checks that a row's `updated_at` actually
   moves when something updates it without setting it by hand. The one path that
   relies on this is `identity.MarkEmailVerified`.
-- **Nothing exercises the CLI's argument parsing.** The `memory forget` flag bug
-  was found by running the binary; the test suite calls handlers and services and
-  never `forgectl` itself. Two commands still have the same shape by convention
-  rather than by a fence.
+- **Two CLI commands still have their argument shape by convention.** `memory
+  forget` and `memory purge` take a positional id and then flags, which Go's flag
+  package will silently ignore unless the id is removed before parsing. Both do
+  it correctly today and nothing checks that they keep doing it. `geometry export`
+  is now fenced (`cmd/forgectl/geometry_test.go`), and the fix for the other two
+  is to move them onto the same shape — a parse function separate from the doing,
+  with the same four cases over it.
+- **A superseded variant cannot be accepted, and choosing an earlier one is what
+  a comparison is for.** Appending a version marks the previous one `superseded`,
+  and `SetDisposition` only acts on `pending` rows. Correct for a file, wrong for
+  alternatives. Three ways out, in order of how much they cost:
+  1. **Adopt.** `POST /v1/geometry/{id}/adopt` appends a copy of the chosen
+     variant as the current version, whose inputs name the variant it was taken
+     from; the person then rules on that. Keeps the append-only history and the
+     one disposition rule. Costs one endpoint.
+  2. **Let the person re-propose it** — the workbench asks FORGE for the earlier
+     shape again. Free, and unreliable: the model may not reproduce it.
+  3. **Stop superseding on model artifacts.** Rejected on sight: it splits the
+     lifecycle's meaning by artifact kind, which is a special case inside a
+     shared rule.
+  Nothing is blocked on this today — the comparison view says what `superseded`
+  means and what to do instead — but VIS-04's whole purpose is choosing, and
+  right now the choosing has no verb.
 - **Organisation memory has no audience to enforce.** `Visibility` declares it and
   says so; there is no membership model until SEC-02/COL-01. Personal and project
   scoping ARE enforced, and `/v1/memory/layers` reports which is which rather than

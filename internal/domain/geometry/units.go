@@ -1,4 +1,4 @@
-package agent
+package geometry
 
 import (
 	"fmt"
@@ -214,7 +214,7 @@ const (
 // This replaces the previous arrangement, where the assembly's unit string was
 // appended to a joined list of bare numbers — correct when the unit was declared
 // and silently wrong when it was not.
-func Dimensions(p PrototypePart, unit Unit) string {
+func Dimensions(p Part, unit Unit) string {
 	q := func(v float64) string { return NewQuantity(v, unit).String() }
 	s := p.Size
 	if s == nil {

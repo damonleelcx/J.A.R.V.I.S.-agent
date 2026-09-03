@@ -38,6 +38,9 @@
     /* The proposal's lifecycle, which is also the AGT-08 state machine this
      * card is allowed to display: nothing → proposed → planned → active.
      * Held in one field so the card cannot render two states at once. */
+    projectID: null,      // where this conversation's variants are kept
+    variants: [],         // what has been proposed so far, newest first
+    picked: [],           // version ids chosen for the side-by-side view
     recalled: [],         // standards figures FORGE quoted from memory this turn
     proposal: null,       // the ProposedGoal from the conversation
     goal: null,           // the created goal, once it exists
@@ -49,6 +52,359 @@
     return String(s == null ? '' : s)
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;');
+  }
+
+  /* ---- variants (PRD VIS-04) --------------------------------------------
+   *
+   * Every shape FORGE proposes is kept as a version of its assembly, so the
+   * third bracket does not erase the first. What this half of the interface
+   * owes the reader is the six things VIS-04 names — geometry version, inputs,
+   * units, assumptions, generator, verification status — beside each render
+   * rather than one click away, because the point of putting two designs next
+   * to each other is deciding between them and none of those facts can be
+   * inferred from the picture.
+   */
+
+  /* A rail row, from either of the two producers.
+   *
+   * Variants reach this list two ways: live, from the `variant` event as a turn
+   * finishes, and on reload, from GET /v1/geometry. The two payloads carry the
+   * same facts in different shapes — the event sends counts because it already
+   * knows them, the endpoint sends the lists because a reader of the API wants
+   * them. Normalised once, here, so the row cannot render differently depending
+   * on how it arrived. */
+  function railRow(v) {
+    var parts = (typeof v.parts === 'number')
+      ? v.parts
+      : ((v.document && v.document.parts) ? v.document.parts.length : 0);
+    var assumptions = (typeof v.assumptions === 'number')
+      ? v.assumptions
+      : ((v.assumptions && v.assumptions.length) || 0);
+    return {
+      version_id: v.version_id, path: v.path, version: v.version,
+      name: v.name, units: v.units, units_note: v.units_note,
+      generator: v.generator, parts: parts, assumptions: assumptions,
+      verification: v.verification || 'unverified',
+      disposition: v.disposition || 'pending'
+    };
+  }
+
+  /* The project a conversation's variants accumulate in, remembered across a
+   * reload.
+   *
+   * # Why this is stored at all
+   *
+   * Without it the rail empties every time the tab reloads, while the variants
+   * themselves sit safely in the database — visible to forgectl and to the API
+   * and to nothing the person is looking at. Comparing what you tried is the
+   * whole point of VIS-04, and "what you tried" does not end at a page load.
+   *
+   * It holds an IDENTIFIER, not data: the variants are re-read from the server
+   * on boot and the server checks membership, so a stale or copied value shows
+   * an empty rail rather than somebody else's work. Every access is guarded —
+   * private browsing, cleared site data and blocked storage all throw, and none
+   * of them is a reason to fail the workbench. */
+  var PROJECT_KEY = 'forge.workbench.project';
+
+  function rememberProject(id) {
+    state.projectID = id || state.projectID;
+    try { window.localStorage.setItem(PROJECT_KEY, state.projectID); } catch (e) { /* not fatal */ }
+  }
+
+  function restoreVariants() {
+    var id = null;
+    try { id = window.localStorage.getItem(PROJECT_KEY); } catch (e) { return; }
+    if (!id) return;
+    state.projectID = id;
+    fetch('/v1/geometry?project_id=' + encodeURIComponent(id))
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (b) {
+        if (!b || !b.variants || !b.variants.length) return;
+        state.variants = b.variants.map(railRow);
+        renderVariants();
+      })
+      .catch(function () {
+        /* Silent. The rail being empty is a correct rendering of "nothing was
+         * restored", and an error banner about a convenience would be louder
+         * than the conversation it sits beside. */
+      });
+  }
+
+  function noteVariant(v, bubble) {
+    if (!v) return;
+    if (v.not_kept) {
+      /* Said in the transcript, quietly. It is not an error in the
+       * conversation — the shape is on screen and still useful — but it changes
+       * what the person can do next, so it cannot be silent. */
+      var n = document.createElement('div');
+      n.className = 'detail';
+      n.style.color = 'var(--warn)';
+      n.textContent = v.not_kept;
+      if (bubble) bubble.appendChild(n);
+      return;
+    }
+    rememberProject(v.project_id);
+    /* Taken from the event, not rebuilt from local state. The row on screen has
+     * to say what the STORED row says: this event arrives before `done`, so the
+     * page does not yet know which model answered, and composing the generator
+     * here produced "FORGE" for every variant — one of VIS-04's six facts,
+     * quietly wrong. */
+    state.variants.unshift(railRow(v));
+    renderVariants();
+  }
+
+  function renderVariants() {
+    var el = $('variants');
+    var head = $('variants-head');
+    if (!state.variants.length) {
+      head.style.display = 'none';
+      el.innerHTML = '';
+      return;
+    }
+    head.style.display = '';
+
+    var canCompare = state.picked.length >= 2;
+    var html = '<div class="variant-bar">' +
+      '<button type="button" class="node" id="cmp-open"' + (canCompare ? '' : ' disabled') + '>' +
+      'Compare ' + (canCompare ? state.picked.length : '') + '</button>' +
+      '<span class="hint">' +
+      (canCompare ? 'Opens them side by side.' : 'Tick two or more to compare.') +
+      '</span></div>';
+
+    html += state.variants.map(function (v) {
+      var picked = state.picked.indexOf(v.version_id) >= 0;
+      /* Units are stated or called out. A blank cell in a column of millimetres
+       * reads as millimetres, which is the one reading that must never be
+       * available by accident (PRD WRK-05). */
+      var units = v.units
+        ? esc(v.units)
+        : '<span class="nounit">' + esc(v.units_note || 'no unit stated') + '</span>';
+      return '<div class="variant' + (picked ? ' picked' : '') + '" data-id="' + esc(v.version_id) + '">' +
+        '<label class="sw"><input type="checkbox" data-pick="' + esc(v.version_id) + '"' +
+        (picked ? ' checked' : '') + '><span></span></label>' +
+        '<span class="nm"><b>' + esc(v.name) + '</b> v' + v.version +
+        '<div class="meta">' + v.parts + ' part(s) · ' + units +
+        ' · ' + v.assumptions + ' assumption(s)<br>proposed by ' + esc(v.generator) +
+        ' · ' + esc(v.verification) + ', ' +
+        (v.disposition === 'pending' ? 'nobody has ruled on it' : esc(v.disposition)) + '</div>' +
+        '<div class="acts">' +
+        '<button type="button" data-export="' + esc(v.version_id) + '" data-format="obj">Export OBJ</button>' +
+        '<button type="button" data-export="' + esc(v.version_id) + '" data-format="stl">Export STL</button>' +
+        '</div>' +
+        '<div class="exportlabel hidden" data-label="' + esc(v.version_id) + '"></div>' +
+        '</span></div>';
+    }).join('');
+
+    el.innerHTML = html;
+
+    Array.prototype.forEach.call(el.querySelectorAll('[data-pick]'), function (box) {
+      box.addEventListener('change', function () {
+        var id = box.getAttribute('data-pick');
+        var at = state.picked.indexOf(id);
+        if (box.checked && at < 0) state.picked.push(id);
+        if (!box.checked && at >= 0) state.picked.splice(at, 1);
+        renderVariants();
+      });
+    });
+    Array.prototype.forEach.call(el.querySelectorAll('[data-export]'), function (b) {
+      b.addEventListener('click', function () {
+        showExportLabel(b.getAttribute('data-export'), b.getAttribute('data-format'));
+      });
+    });
+    var open = $('cmp-open');
+    if (open) open.addEventListener('click', openCompare);
+  }
+
+  /* The conversion label is fetched and SHOWN before the download link appears.
+   *
+   * Not after: a label a person reads on their way out of the page is a label
+   * they have already acted without. This is the only place the tessellation
+   * error, the inferred dimensions and the lossy list reach somebody who is
+   * about to hand this file to a machine. */
+  function showExportLabel(versionID, format) {
+    var box = document.querySelector('[data-label="' + versionID + '"]');
+    if (!box) return;
+    box.classList.remove('hidden');
+    box.textContent = 'Working out what this conversion would lose…';
+
+    fetch('/v1/geometry/' + encodeURIComponent(versionID) +
+          '/export/label?format=' + encodeURIComponent(format))
+      .then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (b) {
+          if (!r.ok) {
+            var e = (b && b.error) || {};
+            throw new Error((e.message || ('Export refused (' + r.status + ')')) +
+                            (e.remedy ? ' — ' + e.remedy : ''));
+          }
+          return b;
+        });
+      })
+      .then(function (b) {
+        var l = b.label || {};
+        var html = '<b>' + esc(l.headline || '') + '</b>';
+        if (l.tessellation && l.tessellation.length) {
+          html += '<div style="margin-top:6px"><b>Tessellation</b><ul>' +
+            l.tessellation.map(function (d) {
+              return '<li>' + esc(d.label) + ' (' + esc(d.shape) + '): ' + d.segments +
+                ' faces; the exported surface lies up to ' + esc(d.max_deviation) +
+                ' inside the one described.</li>';
+            }).join('') + '</ul></div>';
+        }
+        html += section('Inferred, because the description did not say', l.inference);
+        html += section('Lost in this conversion', l.lossy);
+        html += section('Assumed, not specified', l.assumptions);
+        html += section('This file does not establish', l.not_verified);
+        html += '<div>' + b.triangles + ' triangles · ' + esc(l.units) + '</div>' +
+          '<a class="go" href="/v1/geometry/' + encodeURIComponent(versionID) +
+          '/export?format=' + encodeURIComponent(format) + '">Download the ' +
+          esc(String(format).toUpperCase()) + ' →</a>';
+        box.innerHTML = html;
+      })
+      .catch(function (err) {
+        box.innerHTML = '<b>Not exported.</b><div>' + esc(err.message) + '</div>';
+      });
+  }
+
+  function section(title, items) {
+    if (!items || !items.length) return '';
+    return '<div style="margin-top:6px"><b>' + esc(title) + '</b><ul>' +
+      items.map(function (i) { return '<li>' + esc(i) + '</li>'; }).join('') + '</ul></div>';
+  }
+
+  /* ---- side by side ------------------------------------------------------ */
+
+  /* Canvases and their Studios are POOLED and reused across openings.
+   *
+   * Each Studio holds a WebGL context, and browsers cap how many a page may
+   * have — commonly 8 to 16, after which the oldest are dropped. Building fresh
+   * ones every time the panel opens works for the first few openings and then
+   * starts losing contexts, which shows up as viewports that render nothing,
+   * several interactions after the cause.
+   *
+   * So the CANVAS ELEMENTS are pooled too, not just the Studios: a Studio is
+   * bound to the canvas it was constructed with, and replacing the element
+   * (which re-rendering the panel's markup does) would orphan the context
+   * whether or not the Studio object was kept. Each opening moves the same
+   * canvas nodes into the new columns. */
+  var comparePool = [];
+
+  function poolStudio(i) {
+    if (!comparePool[i]) {
+      var canvas = document.createElement('canvas');
+      comparePool[i] = { canvas: canvas, studio: new Forge3D.Studio(canvas, { onError: function () {} }) };
+    }
+    return comparePool[i];
+  }
+
+  function openCompare() {
+    if (state.picked.length < 2) return;
+    var panel = $('compare');
+    var body = $('compare-body');
+    panel.classList.remove('hidden');
+    body.textContent = 'Reading the variants…';
+
+    fetch('/v1/geometry/compare?ids=' + state.picked.map(encodeURIComponent).join(','))
+      .then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (b) {
+          if (!r.ok) {
+            var e = (b && b.error) || {};
+            throw new Error((e.message || ('Could not compare (' + r.status + ')')) +
+                            (e.remedy ? ' — ' + e.remedy : ''));
+          }
+          return b;
+        });
+      })
+      .then(renderCompare)
+      .catch(function (err) {
+        body.innerHTML = '<div class="cmp-note" style="color:var(--bad)">' + esc(err.message) + '</div>';
+      });
+  }
+
+  function closeCompare() { $('compare').classList.add('hidden'); }
+
+  function renderCompare(cmp) {
+    var body = $('compare-body');
+    var variants = cmp.variants || [];
+    $('compare-title').textContent = 'Side by side — ' + variants.length + ' variants';
+
+    var html = '<div class="cmp-note">Every column carries what its render rests on. ' +
+      'Dimensions are compared by converting to millimetres, so 60 mm and 6 cm are the same length — ' +
+      'and a variant with no convertible unit is not compared at all, which is listed separately below ' +
+      'rather than reported as agreement.</div><div class="cmp-cols">';
+
+    html += variants.map(function (v, i) {
+      var units = v.units ? esc(v.units) : '<span style="color:var(--warn)">not stated</span>';
+      return '<div class="cmp-col">' +
+        '<div class="cap"><span class="n">' + (i + 1) + '</span>' + esc(v.name) + ' v' + v.version + '</div>' +
+        '<div class="cmp-view" data-cmp="' + i + '"></div>' +
+        '<div class="prov">' +
+        '<div><span class="k">version</span> ' + esc(v.path) + ' v' + v.version + '</div>' +
+        '<div><span class="k">units</span> ' + units + (v.units_note ? ' — ' + esc(v.units_note) : '') + '</div>' +
+        '<div><span class="k">generator</span> ' + esc(v.generator) + '</div>' +
+        '<div><span class="k">verification</span> ' + esc(v.verification) + ' (machine)</div>' +
+        '<div><span class="k">decided</span> ' + esc(v.disposition) + ' (person)</div>' +
+        '<div><span class="k">assumptions</span> ' + (v.assumptions || []).length + '</div>' +
+        '</div></div>';
+    }).join('') + '</div>';
+
+    /* The provenance table repeats what is under each viewport, in a shape that
+     * answers the other question: not "what is column 2" but "does this fact
+     * differ at all". Both readings are wanted and neither substitutes. */
+    html += '<table class="cmp-table"><tr><th>Fact</th>' +
+      variants.map(function (v, i) { return '<th>' + (i + 1) + '</th>'; }).join('') + '</tr>';
+    (cmp.provenance || []).forEach(function (row) {
+      html += '<tr class="' + (row.differs ? 'differs' : '') + '"><td>' + esc(row.field) +
+        (row.why ? '<span class="why">' + esc(row.why) + '</span>' : '') + '</td>' +
+        row.values.map(function (v) { return '<td>' + esc(v) + '</td>'; }).join('') + '</tr>';
+    });
+    html += '</table>';
+
+    html += '<table class="cmp-table"><tr><th>Part</th>' +
+      variants.map(function (v, i) { return '<th>' + (i + 1) + '</th>'; }).join('') + '</tr>';
+    (cmp.parts || []).forEach(function (p) {
+      /* A name match is a guess and says so on the row. Nothing in this system
+       * keeps a part's id stable between turns, so two rows joined by name may
+       * not be the same part — and a reader not told will read it as identity. */
+      html += '<tr class="' + (p.differs ? 'differs' : '') + '"><td>' + esc(p.label) +
+        (p.matched_by === 'name'
+          ? '<span class="why">matched by name, not by identity — FORGE renamed this part between proposals</span>'
+          : '') +
+        (p.differences && p.differences.length
+          ? '<ul class="diffs">' + p.differences.map(function (d) {
+              return '<li>' + esc(d) + '</li>';
+            }).join('') + '</ul>'
+          : '') +
+        '</td>' +
+        p.cells.map(function (c) {
+          if (!c.present) return '<td class="absent">not in this variant</td>';
+          return '<td>' + esc(c.shape) + '<br>' + esc(c.dimensions) + '</td>';
+        }).join('') + '</tr>';
+    });
+    html += '</table>';
+
+    if (cmp.match_notes && cmp.match_notes.length) {
+      html += '<div class="cmp-uncompared matched"><b>Matched by name, not by identity</b><ul>' +
+        cmp.match_notes.map(function (n) { return '<li>' + esc(n) + '</li>'; }).join('') +
+        '</ul></div>';
+    }
+    if (cmp.not_comparable && cmp.not_comparable.length) {
+      html += '<div class="cmp-uncompared"><b>Not compared</b><ul>' +
+        cmp.not_comparable.map(function (n) { return '<li>' + esc(n) + '</li>'; }).join('') +
+        '</ul></div>';
+    }
+    body.innerHTML = html;
+
+    /* Attach and draw AFTER the markup lands, so each canvas has a size to fit
+     * to. A Studio drawn into a zero-sized canvas renders into nothing and the
+     * viewport comes up empty with no error anywhere. */
+    variants.forEach(function (v, i) {
+      var slot = body.querySelector('[data-cmp="' + i + '"]');
+      if (!slot) return;
+      var pooled = poolStudio(i);
+      slot.appendChild(pooled.canvas);
+      pooled.studio._resize();
+      pooled.studio.load(v.document);
+    });
   }
 
   /* ---- transcript ------------------------------------------------------- */
@@ -350,6 +706,14 @@
           loadPrototype(ev.prototype);
           break;
 
+        case 'variant':
+          /* What happened to this turn's geometry. Both outcomes are shown: a
+           * workbench that said nothing after a failed save would leave somebody
+           * believing they could come back to a shape that was never written
+           * down, and they would find out when they went looking for it. */
+          noteVariant(ev.variant, bubble);
+          break;
+
         case 'goal':
           proposeGoal(ev.goal);
           break;
@@ -417,6 +781,13 @@
       body: JSON.stringify({
         message: text,
         history: state.history.slice(0, -1),
+        /* The project this conversation's variants accumulate in (PRD VIS-04).
+         * Empty on the first turn: the server makes one and returns its id in
+         * the `variant` event, and it is sent back on every turn afterwards so
+         * a conversation builds ONE history of variants rather than a project
+         * per turn. The server checks it against membership every time, so
+         * naming somebody else's project is refused rather than trusted. */
+        project_id: state.projectID || '',
         on_screen: describeOnScreen()
       })
     }).then(function (r) {
@@ -865,6 +1236,22 @@
     });
   }
 
+  /* Close follows the same rule as the soul panel: Escape means "close this"
+   * and must NOT fall through to stopping speech, which is what Escape does
+   * when no dialog is open. */
+  function initCompare() {
+    var panel = $('compare');
+    var close = $('compare-close');
+    if (!panel || !close) return;
+    close.addEventListener('click', function () { closeCompare(); });
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape' && !panel.classList.contains('hidden')) {
+        e.stopPropagation();
+        closeCompare();
+      }
+    }, true);
+  }
+
   /* ---- the soul ---------------------------------------------------------- */
 
   /* Rendered by the server into the page; this only opens and closes it.
@@ -918,6 +1305,8 @@
     safely('voice', initVoice);
     safely('controls', initControls);
     safely('soul', initSoul);
+    safely('compare', initCompare);
+    safely('variants', restoreVariants);
     setStatus('idle');
     setPlace(false);
     renderParts();

@@ -67,9 +67,16 @@ const (
 	AgentHuman     Agent = "human"
 	AgentScheduler Agent = "scheduler"
 	AgentSystem    Agent = "system"
+	// AgentConverse is the workbench conversation, which proposes geometry
+	// (PRD VIS-04). It uses no tool call — see the ToolCallID rule in Validate.
+	AgentConverse Agent = "converse"
 )
 
-var agents = []Agent{AgentPlanner, AgentExecutor, AgentVerifier, AgentHuman, AgentScheduler, AgentSystem}
+var agents = []Agent{AgentPlanner, AgentExecutor, AgentVerifier, AgentHuman, AgentScheduler, AgentSystem, AgentConverse}
+
+// Agents returns every recognised agent, for the fence that checks this
+// vocabulary against the one the schema will accept.
+func Agents() []Agent { return append([]Agent(nil), agents...) }
 
 // Valid reports whether a is a recognised agent.
 func (a Agent) Valid() bool {
@@ -80,6 +87,11 @@ func (a Agent) Valid() bool {
 	}
 	return false
 }
+
+// worksWithoutATool reports whether this agent legitimately records no tool
+// call. Kept as one predicate rather than repeated comparisons so the rule and
+// its exceptions cannot drift apart between the two branches that use it.
+func (a Agent) worksWithoutATool() bool { return a == AgentHuman || a == AgentConverse }
 
 // Verification is what a machine determined about a version.
 type Verification string
@@ -227,14 +239,23 @@ func (v *Version) Validate() error {
 			WithDetail("WRK-04: a change must identify the agent that made it; %q is not one of planner, executor, verifier, human, scheduler, system", v.Agent)
 	}
 	// 3. tool
-	if v.Agent != AgentHuman && (v.ToolCallID == nil || strings.TrimSpace(*v.ToolCallID) == "") {
+	//
+	// Two agents work without one, and for the same reason: their action is not
+	// a tool invocation. A human's action is the edit itself; the workbench
+	// conversation's action is the turn, whose prompt is required in Inputs and
+	// whose model is required alongside the geometry. Inventing a tool call to
+	// satisfy this field would put a fabricated row in the ledger, which is what
+	// the rule exists to prevent.
+	if !v.Agent.worksWithoutATool() && (v.ToolCallID == nil || strings.TrimSpace(*v.ToolCallID) == "") {
 		return errs.New(op, errs.CodeValidationFailed).
 			WithDetail("WRK-04: a change made by the %s must identify the tool call that made it. "+
-				"Only a human works without a tool; anything else with no tool call is a change nobody can trace to an action.", v.Agent)
+				"Only a human and the workbench conversation work without a tool; anything else with no tool call "+
+				"is a change nobody can trace to an action.", v.Agent)
 	}
-	if v.Agent == AgentHuman && v.ToolCallID != nil && strings.TrimSpace(*v.ToolCallID) != "" {
+	if v.Agent.worksWithoutATool() && v.ToolCallID != nil && strings.TrimSpace(*v.ToolCallID) != "" {
 		return errs.New(op, errs.CodeValidationFailed).
-			WithDetail("this version says a human made it and also names a tool call; one of the two is wrong, and guessing which would misattribute the change")
+			WithDetail("this version says the %s made it and also names a tool call; one of the two is wrong, "+
+				"and guessing which would misattribute the change", v.Agent)
 	}
 	// 4. inputs — an explicit empty object is fine; absent is not, because
 	//    "made from nothing" and "nobody recorded what it was made from" are

@@ -706,3 +706,111 @@
 }
 .proposal .steps li .gate { flex: none; font-size: 10px; color: var(--warn); font-weight: 700; }
 .proposal .note { margin-top: 10px; }
+
+/* ---- variants and side-by-side (PRD VIS-04) ----------------------------- */
+
+/* A variant row is a PROPOSAL WITH PROVENANCE, not a thumbnail. The things that
+ * decide between two designs — what units it is in, whether anything checked it,
+ * whether a person ruled on it — are on the row, because a list that shows only
+ * names makes the reader open each one to find out they are not comparable. */
+.variant {
+  display: flex; gap: 9px; align-items: flex-start;
+  padding: 9px 10px; border-radius: 9px;
+  font-size: 12.5px;
+  border: 1px solid transparent;
+}
+.variant:hover { background: #17202f; }
+.variant.picked { background: #17202f; border-color: var(--core-dim); }
+.variant .nm { flex: 1; min-width: 0; }
+.variant .meta { color: var(--ink-dim); font-size: 11px; margin-top: 3px; line-height: 1.5; }
+/* An unstated unit is called out rather than left blank: a blank reads as
+ * millimetres to anyone who has been looking at millimetres. */
+.variant .meta .nounit { color: var(--warn); }
+.variant .acts { display: flex; gap: 7px; margin-top: 7px; flex-wrap: wrap; }
+.variant .acts a, .variant .acts button {
+  font-size: 11px; padding: 3px 8px; border-radius: 6px;
+  border: 1px solid var(--edge-solid); background: #0f131b; color: var(--ink-dim);
+  text-decoration: none; cursor: pointer;
+}
+.variant .acts a:hover, .variant .acts button:hover { color: var(--ink); border-color: var(--core-dim); }
+
+.variant-bar { display: flex; gap: 8px; align-items: center; margin: 10px 0 4px; flex-wrap: wrap; }
+.variant-bar .node { flex: none; }
+.variant-bar .hint { font-size: 11px; color: var(--ink-dim); flex: 1 1 100%; }
+
+/* The export label. Shown BEFORE the download link is used, never after: a
+ * label a person reads on their way out of the page is a label they have
+ * already acted without. */
+.exportlabel {
+  margin-top: 8px; padding: 9px 10px; border-radius: 8px;
+  background: #0d1420; border: 1px solid var(--edge-solid);
+  font-size: 11px; line-height: 1.55; color: var(--ink-dim);
+}
+.exportlabel b { color: #f2dfae; }
+.exportlabel ul { margin: 4px 0 8px; padding-left: 16px; }
+.exportlabel .go { display: inline-block; margin-top: 2px; color: var(--core); }
+
+.compare {
+  position: fixed; inset: 0; z-index: 60;
+  background: #080b11;
+  display: flex; flex-direction: column;
+}
+.compare.hidden { display: none; }
+.compare-head {
+  display: flex; align-items: center; gap: 14px;
+  padding: 12px 18px; border-bottom: 1px solid var(--edge-solid);
+}
+.compare-title { font-size: 13px; font-weight: 650; flex: 1; }
+.compare-body { flex: 1; overflow: auto; padding: 16px 18px 28px; }
+
+/* One column per variant, side by side, each with its own viewport and its own
+ * provenance directly beneath it. The provenance is NOT collected into a single
+ * table below the row: a fact about column 2 has to be next to column 2, or the
+ * reader is matching indices instead of comparing designs. */
+.cmp-cols { display: flex; gap: 14px; align-items: stretch; overflow-x: auto; padding-bottom: 6px; }
+.cmp-col { flex: 1 1 0; min-width: 250px; display: flex; flex-direction: column; }
+.cmp-col .cap { font-size: 12px; font-weight: 650; margin-bottom: 6px; }
+.cmp-col .cap .n { color: var(--core); margin-right: 6px; }
+/* The slot is sized, not the canvas: the canvas element is pooled and moved
+ * between openings (see workbench.js), so its dimensions have to come from
+ * wherever it currently lives rather than from itself. */
+.cmp-view { height: 230px; }
+.cmp-view canvas {
+  width: 100%; height: 100%; display: block;
+  border-radius: 10px; border: 1px solid var(--edge-solid); background: #0b0f16;
+}
+.cmp-col .prov { margin-top: 8px; font-size: 11px; line-height: 1.6; color: var(--ink-dim); }
+.cmp-col .prov div { padding: 2px 0; }
+.cmp-col .prov .k { color: var(--ink-dim); }
+.cmp-col .prov .differs { color: #f2dfae; }
+
+.cmp-note { font-size: 11.5px; color: var(--ink-dim); line-height: 1.6; margin: 4px 0 14px; }
+
+.cmp-table { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 18px; }
+.cmp-table th, .cmp-table td {
+  text-align: left; padding: 7px 10px; border-top: 1px solid var(--edge-solid);
+  vertical-align: top;
+}
+.cmp-table th { color: var(--core); font-weight: 650; font-size: 11px;
+  letter-spacing: .06em; text-transform: uppercase; }
+/* A marker, not a colour alone: this table gets screenshotted into incident
+ * notes and pasted into terminals, and colour survives neither. */
+.cmp-table tr.differs td:first-child::before { content: "≠ "; color: #f2dfae; }
+.cmp-table td.absent { color: var(--warn); }
+.cmp-table .why { display: block; margin-top: 3px; color: var(--ink-dim); font-size: 11px; line-height: 1.5; }
+.cmp-table .diffs { margin: 5px 0 0; padding-left: 16px; color: var(--ink-dim); font-size: 11px; }
+
+/* Kept apart from the differences on purpose. "These differ" and "these could
+ * not be compared" are different answers, and only one of them is a finding. */
+.cmp-uncompared {
+  margin-top: 18px; padding: 11px 13px; border-radius: 9px;
+  border: 1px solid var(--warn); background: color-mix(in srgb, var(--warn) 7%, #121826);
+  font-size: 11.5px; line-height: 1.6;
+}
+.cmp-uncompared b { color: var(--warn); }
+/* A qualified judgement, not a withheld one — dimmer than the box beside it,
+ * because it says the comparison was made and how, rather than that it was not
+ * made at all. */
+.cmp-uncompared.matched { border-color: var(--edge-solid); background: #121826; }
+.cmp-uncompared.matched b { color: #f2dfae; }
+.cmp-uncompared ul { margin: 5px 0 0; padding-left: 17px; }

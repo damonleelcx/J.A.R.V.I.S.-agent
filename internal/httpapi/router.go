@@ -161,6 +161,24 @@ func NewRouter(d Deps) http.Handler {
 	// Only the disposition — what a person decided — is exposed here.
 	mux.Handle("POST /v1/workspace/versions/{id}/disposition", authed(ws.Dispose))
 
+	// --- geometry: variants, comparison, export (PRD VIS-04, VIS-05) ---
+	// A variant is an artifact VERSION, so there is no create endpoint here:
+	// geometry is written by the server at the moment it is produced, in
+	// /v1/converse, because that is the only place that knows the prompt, the
+	// model and the shape together. A client posting geometry would be naming
+	// its own generator, which is a fabricated ledger entry — the same rule that
+	// keeps RecordChange off the HTTP surface.
+	geo := NewGeometryHandlers(d)
+	// Unauthenticated: it describes what this build can write, not anybody's work.
+	mux.HandleFunc("GET /v1/geometry/formats", geo.Formats)
+	mux.Handle("GET /v1/geometry", authed(geo.List))
+	// Registered before the {id} pattern reads: Go's mux prefers the literal
+	// segment, so "compare" cannot be swallowed as a variant id.
+	mux.Handle("GET /v1/geometry/compare", authed(geo.Compare))
+	mux.Handle("GET /v1/geometry/{id}", authed(geo.Get))
+	mux.Handle("GET /v1/geometry/{id}/export", authed(geo.Export))
+	mux.Handle("GET /v1/geometry/{id}/export/label", authed(geo.ExportLabel))
+
 	// --- workbench conversation ---
 	converse := NewConverseHandlers(d)
 	mux.Handle("POST /v1/converse", authed(converse.Converse))
