@@ -278,12 +278,33 @@
    *
    * PRD AUD-04 requires numbers, units, tolerances and identifiers to be read
    * back unambiguously. These substitutions are the ones that actually change
-   * meaning when a listener writes down what they heard. */
+   * meaning when a listener writes down what they heard.
+   *
+   * THIS FUNCTION HAS A TWIN: internal/media/readback.go. The workbench speaks
+   * through the browser and a room speaks through the server, two runtimes under
+   * one requirement, so the rules are written twice. A rule added here and not
+   * there is read back correctly in the workbench and wrongly in a room — which
+   * is exactly what happened when the room voice shipped. Change both, and add a
+   * case to TestReadbackMakesTextTranscribable.
+   *
+   * TestTheReadbackRulesHaveNotDrifted counts the .replace() calls below and
+   * fails when the two copies stop agreeing, so adding a rule here alone turns
+   * the Go suite red rather than going unnoticed. */
   function readable(text) {
     return text
-      // Version and dotted-number strings, digit by digit.
-      .replace(/\b(\d+)\.(\d+)\.(\d+)\b/g, function (_, a, b, c) {
-        return a + ' point ' + b + ' point ' + c;
+      // Dotted-number strings — versions, IP addresses, build numbers — segment
+      // by segment. Any number of segments: written as exactly three, it read
+      // "1.2.3.4" as "1 point 2 point 3.4", the first three spoken and the
+      // fourth left as a decimal.
+      //
+      // Two dots minimum, so a plain decimal is left alone: "2.5" and "$2.50"
+      // are already read correctly. No \b at the front, deliberately — there is
+      // no word boundary between the "v" and the "0" of "v0.2.0", so a leading
+      // \b skipped the most common way a version is written. It did, on both
+      // copies, until it was noticed. The \b at the end keeps "1.2.3mm" out of
+      // here and leaves it to the unit rules.
+      .replace(/\d+(?:\.\d+){2,}\b/g, function (m) {
+        return m.split('.').join(' point ');
       })
       // Units, spelled out. "5mm" heard as "five em em" is not a measurement.
       .replace(/(\d)\s?mm\b/g, '$1 millimetres')

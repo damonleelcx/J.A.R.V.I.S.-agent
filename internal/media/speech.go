@@ -115,6 +115,17 @@ func (s *SFU) Say(ctx context.Context, roomID, text string) error {
 		return nil // nobody is in the room to hear it
 	}
 
+	// PRD AUD-04. The room used to send the reply to the speech model exactly as
+	// written, so a measurement or a version number was read back however the
+	// model felt like reading it — while the workbench, which synthesises in the
+	// browser, had normalised the same text since it shipped. Same requirement,
+	// two speech paths, and only one of them met it.
+	//
+	// Normalised here rather than at the call site so that it holds for every
+	// caller and every Speaker implementation, and after the turn is recorded so
+	// that the transcript keeps what FORGE wrote. See readback.go.
+	spoken := Readable(text)
+
 	// A new utterance replaces the old one. Two overlapping sentences from the
 	// same speaker is not a conversation, and whoever asked for this one wants
 	// it said now.
@@ -136,7 +147,7 @@ func (s *SFU) Say(ctx context.Context, roomID, text string) error {
 
 	started := time.Now()
 	var written int
-	err := s.speaker.Speak(speech, text, func(pcm []byte) error {
+	err := s.speaker.Speak(speech, spoken, func(pcm []byte) error {
 		if speech.Err() != nil {
 			return speech.Err() // interrupted; stops the provider stream too
 		}
@@ -157,7 +168,7 @@ func (s *SFU) Say(ctx context.Context, roomID, text string) error {
 		return nil
 	}
 	s.log.Info(ctx, logx.EventTTSSpoke, "room_id", roomID,
-		"chars", len(text), "spoken_ms", written/(g711Rate/1000),
+		"chars", len(spoken), "spoken_ms", written/(g711Rate/1000),
 		"first_audio_ms", time.Since(started).Milliseconds())
 	return nil
 }

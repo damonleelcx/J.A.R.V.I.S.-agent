@@ -35,13 +35,19 @@ type fakeSpeaker struct {
 	// stopped records that the stream was cancelled rather than running out,
 	// which is what an interruption must look like from the provider's side.
 	stopped bool
+	// text is what the speaker was actually asked to say, which is not the same
+	// as what the caller passed to Say — see TestForgeSpeaksTheReadableForm.
+	text string
 }
 
 func newFakeSpeaker(seconds float64) *fakeSpeaker {
 	return &fakeSpeaker{seconds: seconds, started: make(chan struct{})}
 }
 
-func (f *fakeSpeaker) Speak(ctx context.Context, _ string, onPCM func([]byte) error) error {
+func (f *fakeSpeaker) Speak(ctx context.Context, text string, onPCM func([]byte) error) error {
+	f.mu.Lock()
+	f.text = text
+	f.mu.Unlock()
 	// 20 ms of 24 kHz PCM per chunk, delivered in real time — the shape the real
 	// provider streams in, so an interruption has somewhere to land.
 	const chunkSamples = llm.SpeechSampleRate / 50
@@ -71,6 +77,12 @@ func (f *fakeSpeaker) Speak(ctx context.Context, _ string, onPCM func([]byte) er
 		time.Sleep(20 * time.Millisecond)
 	}
 	return nil
+}
+
+func (f *fakeSpeaker) spoken() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.text
 }
 
 func (f *fakeSpeaker) interrupted() bool {
@@ -122,6 +134,45 @@ func TestForgeSpeaksAndIsHeard(t *testing.T) {
 	}
 	if got := alice.labelOf("stm_forge"); got != "forge" {
 		t.Errorf("FORGE's track is labelled %q; a client could take it for a person", got)
+	}
+}
+
+// What FORGE says in a room is the readable form, not the raw reply (AUD-04).
+//
+// # Why this fence exists
+//
+// The room used to hand the model the reply exactly as written. Nothing looked
+// wrong: the request succeeded, audio came back, the transcript was right, and
+// the only symptom was a measurement read aloud in a form nobody could write
+// down — on the surface where getting a number right matters most, because a
+// room is where the number is being agreed.
+//
+// It went unnoticed because the other place FORGE speaks, the workbench, had
+// normalised its text since it shipped. The requirement was met on the surface
+// that was easy to check and missed on the one that mattered, which is why this
+// asserts what the SPEAKER received rather than what the caller passed.
+func TestForgeSpeaksTheReadableForm(t *testing.T) {
+	speaker := newFakeSpeaker(1)
+	sfu, sig := speakingSFU(t, speaker)
+	const roomID = "rom_readback"
+
+	alice := newClient(t, "stm_alice", "usr_alice")
+	sig.on("stm_alice", func(sdp string) { alice.answerRenegotiation(sfu, roomID, sdp) })
+	alice.speak()
+	if err := alice.offer(sfu, roomID); err != nil {
+		t.Fatal(err)
+	}
+
+	const said = "Wall thickness is 2.5mm ±0.1, cure at 80\u00b0C."
+	const want = "Wall thickness is 2.5 millimetres plus or minus 0.1, cure at 80 degrees Celsius."
+
+	if err := sfu.Say(context.Background(), roomID, said); err != nil {
+		t.Fatal(err)
+	}
+	if got := speaker.spoken(); got != want {
+		t.Errorf("the speech model was asked to say\n got: %q\nwant: %q\n"+
+			"A room must speak the readable form (PRD AUD-04); the raw text is what "+
+			"the transcript keeps.", got, want)
 	}
 }
 
