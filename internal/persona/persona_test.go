@@ -24,6 +24,12 @@ func TestImmutableCommitmentsAreAllPresent(t *testing.T) {
 			"An admitted gap gets filled; a fabrication does not.",
 		"evidence-over-fluency": "Without it, a convincing answer about something unchecked reads " +
 			"identically to a verified one.",
+		"self-identification": "Without it nothing tells FORGE to say it is an AI. The record " +
+			"and the interfaces label it, but a synthesised voice does not, and somebody who " +
+			"joins a room late hears only a voice. This clause is the ONLY thing in the system " +
+			"asking for that, so removing it removes the behaviour entirely rather than " +
+			"downgrading it.",
+
 		"human-authority": "Without it the agent can widen its own permissions, which means it has " +
 			"no permission limit at all.",
 		"safety-dissent": "Without it, 'be brief' or 'stop critiquing' silences a safety objection. " +
