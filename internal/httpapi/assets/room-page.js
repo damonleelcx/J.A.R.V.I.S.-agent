@@ -98,11 +98,36 @@
    * record, and clearing the search brings it back without asking the server
    * again.
    *
-   * Why the search is here and not an endpoint, and what was verified in a
-   * browser: docs/bugfix/2026-09-03-the-transcript-could-not-be-searched.md
+   * # The matching runs on the server, and used to run here
+   *
+   * Filtering in the browser was right while it lasted, and it could not do the
+   * one thing people expect of a search box: match words rather than characters.
+   * indexOf finds "brackets" when you type "bracket" and finds NOTHING when you
+   * type "brackets", because containment only runs one way. Postgres stems both
+   * to the same lexeme, so the two searches agree.
+   *
+   * So matchIDs is the server's answer to "which turns match", and this file
+   * decides only how to draw it. There is one matcher in the product rather than
+   * two — a local one and a remote one are two definitions of "what matches"
+   * that agree right up until they do not, which is the drift that AUD-04's two
+   * copies of the readback rules exist to guard against.
+   *
+   * Why the search moved, and what was verified in a browser:
+   * docs/bugfix/2026-09-03-the-transcript-could-not-be-searched.md
    */
   var turns = [];
   var query = '';
+  // null while no search is active; otherwise an id set from the server. Empty
+  // means "the search ran and nothing matched", which is a different state from
+  // "no search is running" and must never render the same way.
+  var matchIDs = null;
+  // Rejects stale answers. Typing "bra" then "bracket" starts two requests that
+  // can land in either order; without this the slower first one overwrites the
+  // results for a query nobody is looking at any more.
+  var searchSeq = 0;
+  var searchTimer = null;
+  var searching = false;
+  var searchFailed = false;
 
   function renderTurns(list) {
     turns = list.slice();
@@ -117,8 +142,12 @@
    * the hit as something a person said. */
   function matches(t) {
     if (!query) return true;
+    // A failed search claims nothing. Showing the whole transcript under a
+    // filled-in search box would read as "everything matched", which is the one
+    // answer we know to be untrue.
+    if (searchFailed) return false;
     if (t.redacted) return false;
-    return String(t.text || '').toLowerCase().indexOf(query.toLowerCase()) !== -1;
+    return !!(matchIDs && matchIDs[t.id]);
   }
 
   function matchCount() {
@@ -150,16 +179,80 @@
   function announce() {
     var el = $('find-count');
     if (!query) { el.textContent = ''; return; }
+    if (searchFailed) {
+      // Named as a failure rather than reported as an empty result. "No turns
+      // match" would be a claim about the transcript; this is a statement about
+      // the connection, and a person needs to know which one they are reading.
+      el.textContent = 'Search is unavailable right now, so no turns are shown. ' +
+                       'Clear the box to read the whole transcript.';
+      return;
+    }
+    if (searching || matchIDs === null) {
+      el.textContent = 'Searching for "' + query + '"\u2026';
+      return;
+    }
     var n = matchCount();
     el.textContent = n === 0
       ? 'No turns match "' + query + '".'
       : n + ' of ' + turns.length + ' turns match "' + query + '".';
   }
 
+  /* runSearch asks the server which turns match, and ignores its own stale
+   * answers. See searchSeq. */
+  function runSearch() {
+    var mine = ++searchSeq;
+    global.fetch('/v1/rooms/' + encodeURIComponent(roomID) +
+                 '/search?q=' + encodeURIComponent(query))
+      .then(function (res) {
+        if (!res.ok) throw new Error('search returned ' + res.status);
+        return res.json();
+      })
+      .then(function (data) {
+        if (mine !== searchSeq) return;
+        var ids = {};
+        (data.turns || []).forEach(function (t) { ids[t.id] = true; });
+        matchIDs = ids;
+        searching = false;
+        searchFailed = false;
+        rebuild();
+      })
+      .catch(function () {
+        if (mine !== searchSeq) return;
+        searching = false;
+        searchFailed = true;
+        rebuild();
+      });
+  }
+
+  /* schedule debounces the request: one per pause in typing, not one per key. */
+  function schedule() {
+    if (searchTimer) global.clearTimeout(searchTimer);
+    searching = true;
+    searchTimer = global.setTimeout(function () {
+      searchTimer = null;
+      runSearch();
+    }, 180);
+  }
+
   function setQuery(next) {
     query = String(next || '').trim();
     $('find-clear').hidden = query === '';
-    rebuild();
+    if (!query) {
+      // Clearing is instant and needs no server: the whole record is already
+      // here. Bumping searchSeq abandons anything in flight, so a late answer
+      // cannot re-filter a transcript the person has just unfiltered.
+      searchSeq++;
+      if (searchTimer) { global.clearTimeout(searchTimer); searchTimer = null; }
+      matchIDs = null;
+      searching = false;
+      searchFailed = false;
+      rebuild();
+      return;
+    }
+    schedule();
+    // Say something now: the previous count describes a query nobody typed any
+    // more, and leaving it standing is worse than saying "searching".
+    announce();
   }
 
   function turnRow(t) {
@@ -204,7 +297,18 @@
    *
    * Built rather than assigned as markup. This page uses no innerHTML anywhere,
    * and a transcript is the last place to start: every character of it is
-   * something a person typed or said. */
+   * something a person typed or said.
+   *
+   * BEST EFFORT, and knowingly so. The server decides which turns match, by
+   * stemming; this highlights literal substrings. The two agree for the ordinary
+   * case — you type a word and that word is in the text — and disagree exactly
+   * where stemming earns its place: searching "brackets" returns the turn saying
+   * "bracket" with nothing marked in it.
+   *
+   * Left as the lesser wrong. A row shown without a highlight is a match a
+   * person can still read; the alternatives are ts_headline, which means
+   * rendering server markup on a page that uses no innerHTML, or a second
+   * stemmer here, which is the two-matchers problem this change just removed. */
   function fillHighlighted(el, text) {
     if (!query) { el.textContent = text; return; }
     var hay = text.toLowerCase();
@@ -224,9 +328,13 @@
 
   function appendTurn(t) {
     turns.push(t);
-    if (!matches(t)) {
-      // It arrived while a search is narrowing the view. It is in the record,
-      // and the count moves, so the room does not look like nothing happened.
+    if (query) {
+      // It arrived while a search is narrowing the view. Whether it matches is
+      // no longer a question this file can answer — the matcher is on the server
+      // — so the search is re-asked rather than guessed at. Without this, a turn
+      // that does match stays invisible until somebody retypes, and the search
+      // silently goes stale while looking live.
+      schedule();
       announce();
       return;
     }

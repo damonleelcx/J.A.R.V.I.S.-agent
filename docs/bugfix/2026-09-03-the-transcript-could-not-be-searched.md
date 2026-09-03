@@ -120,7 +120,99 @@ The fence cannot check the filtering itself; there is no JavaScript test harness
 in this repository. That is why the browser run above is written out in full
 rather than summarised — it is the only record of what was actually observed.
 
+## Follow-up, same day: the matching moved to the server
+
+The fix above filtered in the browser, and the reasoning for that still reads
+correctly: `GET /v1/rooms/{id}` returns every turn, so the whole transcript was
+already in the page, and filtering it needed no round trip and worked the same on
+a closed room.
+
+**What it could not do is agree with itself.** `indexOf` is asymmetric —
+searching "bracket" finds the turn saying "brackets", and searching "brackets"
+finds nothing at all, because containment runs one way only. In a room where the
+record is what people are agreeing to, a search that quietly returns nothing is a
+worse failure than one that returns too much, and it is not a failure anybody can
+see happening.
+
+Postgres stems both words to the same lexeme, so the two searches agree. The
+matching now runs in `collab.Service.SearchTurns` behind
+`GET /v1/rooms/{id}/search`, indexed by a generated `tsvector` column added in
+`0013_transcript_search.sql`.
+
+### What this cost, stated rather than buried
+
+- **A round trip per pause in typing.** Debounced at 180 ms, so it is one request
+  per pause and not one per keystroke — verified as one request for eight typed
+  characters. Clearing the box still needs no server at all: the record is all
+  here, which is the part of the original design that survives.
+- **Highlighting is now best effort.** The server decides which turns match, by
+  stemming; `fillHighlighted` marks literal substrings. They agree for the
+  ordinary case and disagree exactly where stemming earns its place — searching
+  "brackets" returns the turn saying "bracket" with nothing marked inside it. The
+  alternatives were `ts_headline`, which means rendering server-supplied markup
+  on a page that uses no `innerHTML` anywhere, or a second stemmer in JavaScript,
+  which is the two-matchers problem this change exists to remove.
+- **A failure state that did not exist before.** A local filter cannot fail. A
+  request can, and showing the unfiltered transcript under a filled-in search box
+  would read as "everything matched". The page shows no turns and says why.
+
+### Why full text rather than a trigram index on LIKE
+
+Trigram would have kept substring semantics and indexed them. It needs
+`pg_trgm`, and `TestNoExtensionsAreRequired` refuses extensions in this chain —
+`CREATE EXTENSION IF NOT EXISTS` is evaluated per database and installs into one
+schema, so it silently does nothing in every schema after the first. `tsvector`
+and GIN are core Postgres and need no privileges a customer has to grant.
+
+### Redaction, twice
+
+SEC-06 redaction blanks the text, so the **generated** column recomputes to an
+empty tsvector: a deleted turn's words leave the index without anybody
+remembering to remove them. The query filters `redacted_at` as well.
+
+That second reason is redundant through the ordinary path, which would normally
+make it decoration — a guard no test can fail. It is fenced by
+`TestRoom_SearchRefusesARedactedTurnEvenWithItsTextIntact`, which constructs by
+hand the state a future half-applied deletion would write (redaction stamped, the
+text left behind) and asserts the query still refuses it. Deleting the filter
+turns that test red.
+
+### Verification
+
+`TestRoom_TranscriptIsSearchable` and `TestRoom_RedactionEmptiesTheSearchIndexItself`
+(live Postgres), `TestAPI_TheTranscriptCanBeSearchedOverHTTP`, and search added to
+`TestAPI_ARoomRefusesSomebodyOutsideItsProject` and to the mounted-routes fence.
+
+**Drills, each watched fail:**
+
+| mutation | fence that fired |
+|---|---|
+| substring matching instead of full text | `TestRoom_TranscriptIsSearchable` (plural returns 1, not 2) |
+| the `redacted_at` filter removed | `TestRoom_SearchRefusesARedactedTurnEvenWithItsTextIntact` |
+| room scoping removed | `TestRoom_TranscriptIsSearchable` (another room's turn appears) |
+
+Two earlier drill attempts reported "ok" without having applied their mutation at
+all — the anchor matched twice in the file and the replacement was skipped. They
+are recorded here because a drill that silently does not mutate is a green that
+means nothing, which is the same failure shape as the fences it is checking.
+
+**In a browser**, against the real server and database, four turns in a room:
+
+- typing `brackets` → *"2 of 4 turns match"*, returning both the plural turn and
+  the singular one. Under the previous filter this returned one.
+- exactly **one** network request for eight typed characters.
+- `Clear` → all four turns back, no request.
+- server stopped, then typing → *"Search is unavailable right now, so no turns
+  are shown."* with nothing rendered.
+
+That last check found a real defect: the message first read *"the transcript
+above is unfiltered"* while the page was in fact showing nothing. The behaviour
+was right and the sentence was wrong, and only a live run could have caught it —
+no test asserts the wording. Corrected before commit.
+
 ## Related
 
 - PRD **AUD-06**; `docs/bugfix/2026-09-03-coordinates-read-back-without-axes-or-sign.md`
   is the other half of the audio surface closed the same day.
+- `internal/platform/db/sql/0013_transcript_search.sql` carries the reasoning for
+  the generated column, the regconfig, and what is deliberately not indexed.

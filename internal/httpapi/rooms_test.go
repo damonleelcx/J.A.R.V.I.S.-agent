@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -185,6 +187,10 @@ func TestAPI_ARoomRefusesSomebodyOutsideItsProject(t *testing.T) {
 		verb string
 	}{
 		{"read", rh.h.Get, "GET"},
+		// Search reads the same record through a different door. A boundary that
+		// held for Get and not for this one would let a stranger ask what was
+		// said in a room they cannot open, one query at a time.
+		{"search", rh.h.Search, "GET"},
 		{"join", rh.h.Join, "POST"},
 		{"speak", rh.h.Say, "POST"},
 		{"close", rh.h.Close, "POST"},
@@ -396,6 +402,7 @@ func TestAPI_EveryRoomRouteIsMountedAndRequiresASession(t *testing.T) {
 		{"GET", "/v1/rooms"},
 		{"POST", "/v1/rooms"},
 		{"GET", "/v1/rooms/room_1"},
+		{"GET", "/v1/rooms/room_1/search"},
 		{"POST", "/v1/rooms/room_1/join"},
 		{"POST", "/v1/rooms/room_1/leave"},
 		{"POST", "/v1/rooms/room_1/turns"},
@@ -969,5 +976,76 @@ func TestDeletedSpeechIsNotSentToTheModel(t *testing.T) {
 	// told its own words were somebody else's will answer them.
 	if history[0].Role != "user" || history[1].Role != "forge" {
 		t.Errorf("roles are %q and %q, want user and forge", history[0].Role, history[1].Role)
+	}
+}
+
+// Searching a transcript over HTTP (PRD AUD-06).
+//
+// The domain test in internal/domain/collab covers what matches; this covers
+// what a browser actually receives — that the route is wired to the service, and
+// that a result is shaped like the transcript rather than like a search engine.
+// The room page renders both through the same function, so a divergence here
+// shows up as search results that draw differently from the record they came
+// from.
+func TestAPI_TheTranscriptCanBeSearchedOverHTTP(t *testing.T) {
+	rh := roomsHarness(t)
+	room := rh.open(t, "design review")
+
+	for _, text := range []string{
+		"the bracket is too thin at the root",
+		"we should widen both brackets by 2mm",
+		"the tolerance is fine",
+	} {
+		if rec := rh.say(t, rh.member, room.ID, `{"text":`+strconv.Quote(text)+`}`); rec.Code != http.StatusCreated {
+			t.Fatalf("saying %q returned %d: %s", text, rec.Code, rec.Body.String())
+		}
+	}
+
+	search := func(q string) *httptest.ResponseRecorder {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		r := req(rh.member, "GET", "/v1/rooms/"+room.ID+"/search?q="+url.QueryEscape(q), "")
+		r.SetPathValue("id", room.ID)
+		rh.h.Search(rec, r)
+		return rec
+	}
+
+	// The plural finds the singular. This is the whole reason the search moved
+	// off the page: in the browser's substring filter it returned nothing.
+	rec := search("brackets")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("searching returned %d: %s", rec.Code, rec.Body.String())
+	}
+	var got struct {
+		Turns []TurnDTO `json:"turns"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &got); err != nil {
+		t.Fatalf("decoding the search result: %v\nbody: %s", err, rec.Body.String())
+	}
+	if len(got.Turns) != 2 {
+		t.Fatalf("searching \"brackets\" returned %d turns, want 2: %s", len(got.Turns), rec.Body.String())
+	}
+	// Shaped like the transcript: whoever said it, when, and through which
+	// channel. A search result that carried only text would have to be rendered
+	// by a second code path, which is how two views of one record start
+	// disagreeing about who said what.
+	for _, turn := range got.Turns {
+		if turn.ID == "" || turn.SpeakerLabel == "" || turn.SaidAt == "" || turn.Seq == 0 {
+			t.Errorf("a search result is missing its attribution: %+v", turn)
+		}
+	}
+	if got.Turns[0].Seq > got.Turns[1].Seq {
+		t.Error("search results are not in the order they were said")
+	}
+
+	// An empty query is refused rather than answered with the whole transcript.
+	if rec := search("   "); rec.Code != http.StatusBadRequest {
+		t.Errorf("an empty search returned %d, want 400: %s", rec.Code, rec.Body.String())
+	}
+	// And what people type does not produce a 500. to_tsquery would have.
+	for _, q := range []string{"bracket and", "bracket &", "!!!"} {
+		if rec := search(q); rec.Code != http.StatusOK {
+			t.Errorf("searching %q returned %d, want 200: %s", q, rec.Code, rec.Body.String())
+		}
 	}
 }

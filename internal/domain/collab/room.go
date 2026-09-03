@@ -572,6 +572,67 @@ func (s *Service) Find(ctx context.Context, roomID string) (*Room, error) {
 	return &r, arows.Err()
 }
 
+// SearchTurns returns the turns in a room matching query, in the order they were
+// said (PRD AUD-06).
+//
+// # Why chronological rather than ranked
+//
+// Relevance ranking is right for a list of documents and wrong for a
+// conversation. What somebody wants from a transcript search is the moment the
+// thing was said, with the turns around it still making sense; a list ordered by
+// ts_rank hands back fragments of a discussion in an order nobody spoke them in.
+// The room page shows matches in place in the record for the same reason.
+//
+// # Why websearch_to_tsquery
+//
+// to_tsquery raises a syntax error on ordinary human input — a trailing "and", a
+// stray ampersand, an unbalanced quote — and a search box that returns an error
+// because somebody typed a word that Postgres reads as an operator is not a
+// search box. websearch_to_tsquery parses what people actually type, never
+// errors, and gets quoted phrases and -exclusion for free.
+//
+// # Redaction
+//
+// The filter on redacted_at is the second of two independent reasons a deleted
+// turn cannot be found. The first is in the schema: redaction blanks the text, so
+// the generated search_vector recomputes to empty and matches nothing. Either
+// alone would hold; a deletion is worth both. See 0013_transcript_search.sql.
+func (s *Service) SearchTurns(ctx context.Context, roomID, query string) ([]Turn, error) {
+	const op = "collab.Service.SearchTurns"
+
+	if strings.TrimSpace(query) == "" {
+		return nil, errs.New(op, errs.CodeValidationFailed).
+			WithDetail("a transcript search needs something to search for; " +
+				"pass q=<words>. To read the whole transcript, GET the room instead")
+	}
+
+	rows, err := s.pool.Query(ctx, `
+		select id, room_id, seq, speaker_kind, speaker_id, speaker_label, text, channel, said_at,
+		       redacted_at, redacted_by
+		  from forge_room_turns
+		 where room_id = $1
+		   and redacted_at is null
+		   and search_vector @@ websearch_to_tsquery('english'::regconfig, $2)
+		 order by seq`, roomID, query)
+	if err != nil {
+		return nil, errs.Wrap(op, errs.CodeDatabaseUnavail, err)
+	}
+	defer rows.Close()
+
+	out := []Turn{}
+	for rows.Next() {
+		var t Turn
+		var kind, channel string
+		if err := rows.Scan(&t.ID, &t.RoomID, &t.Seq, &kind, &t.SpeakerID, &t.SpeakerLabel,
+			&t.Text, &channel, &t.SaidAt, &t.RedactedAt, &t.RedactedBy); err != nil {
+			return nil, errs.Wrap(op, errs.CodeDatabaseUnavail, err)
+		}
+		t.Speaker, t.Channel = SpeakerKind(kind), Channel(channel)
+		out = append(out, t)
+	}
+	return out, rows.Err()
+}
+
 // List returns a project's rooms, newest first.
 func (s *Service) List(ctx context.Context, projectID string, openOnly bool) ([]Room, error) {
 	sql := `select id, project_id, goal_id, title, status, transcribing, opened_by, opened_at, closed_at

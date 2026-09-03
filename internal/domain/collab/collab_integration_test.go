@@ -456,3 +456,224 @@ func TestHandoff_IsStampedAndDerivedFresh(t *testing.T) {
 		t.Fatal("a second handoff carries the first one's instant, so it is stored rather than derived")
 	}
 }
+
+// Searching the transcript (PRD AUD-06).
+//
+// # Why this is a database test and not a unit test
+//
+// Everything worth checking here is Postgres behaviour: that "brackets" and
+// "bracket" stem to the same lexeme, that websearch_to_tsquery survives what
+// people type, and that a redacted turn's generated search_vector is empty. A
+// test with a fake store would assert my beliefs about Postgres rather than
+// Postgres.
+func TestRoom_TranscriptIsSearchable(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	room, err := h.svc.OpenRoom(ctx, h.project, h.goalID, "design review", h.alice)
+	if err != nil {
+		t.Fatal(err)
+	}
+	say := func(text string, ch collab.Channel) *collab.Turn {
+		t.Helper()
+		turn, err := h.svc.Say(ctx, room.ID, &collab.Turn{
+			Speaker: collab.SpeakerHuman, SpeakerID: &h.alice, SpeakerLabel: "Alice",
+			Text: text, Channel: ch})
+		if err != nil {
+			t.Fatal(err)
+		}
+		return turn
+	}
+	say("the bracket is too thin at the root", collab.ChannelText)
+	say("we should widen both brackets by 2mm", collab.ChannelText)
+	say("the tolerance is fine", collab.ChannelText)
+	secret := say("the fixture bolt is undersized", collab.ChannelVoice)
+
+	texts := func(turns []collab.Turn) []string {
+		out := []string{}
+		for _, turn := range turns {
+			out = append(out, turn.Text)
+		}
+		return out
+	}
+	search := func(q string) []collab.Turn {
+		t.Helper()
+		got, err := h.svc.SearchTurns(ctx, room.ID, q)
+		if err != nil {
+			t.Fatalf("searching for %q: %v", q, err)
+		}
+		return got
+	}
+
+	// The case the whole change exists for. A substring filter finds "brackets"
+	// when you search "bracket" and finds NOTHING when you search "brackets",
+	// because containment only runs one way. Stemming makes the two agree.
+	for _, q := range []string{"bracket", "brackets"} {
+		got := search(q)
+		if len(got) != 2 {
+			t.Errorf("searching %q returned %d turns (%v); both the singular and the "+
+				"plural turn should match, which is the asymmetry full text is here to remove",
+				q, len(got), texts(got))
+		}
+	}
+
+	// Order is the order things were said. A transcript ranked by relevance
+	// hands back a conversation in an order nobody spoke it in.
+	got := search("bracket")
+	if len(got) == 2 && got[0].Seq > got[1].Seq {
+		t.Errorf("matches came back seq %d then %d; a transcript search must stay chronological",
+			got[0].Seq, got[1].Seq)
+	}
+
+	// Scoped to the room. A second room's turns must not leak into the first's
+	// results, which is the failure that turns a search box into a disclosure.
+	other, err := h.svc.OpenRoom(ctx, h.project, h.goalID, "other room", h.alice)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.svc.Say(ctx, other.ID, &collab.Turn{
+		Speaker: collab.SpeakerHuman, SpeakerID: &h.alice, SpeakerLabel: "Alice",
+		Text: "a bracket in another room", Channel: collab.ChannelText}); err != nil {
+		t.Fatal(err)
+	}
+	if got := search("bracket"); len(got) != 2 {
+		t.Errorf("searching one room returned %d turns (%v); another room's transcript is visible",
+			len(got), texts(got))
+	}
+
+	// What people type. to_tsquery raises a syntax error on every one of these;
+	// a search box that 500s because somebody typed "and" is not a search box.
+	for _, q := range []string{"bracket and", "bracket &", `"too thin"`, "bracket -tolerance", "!!!"} {
+		if _, err := h.svc.SearchTurns(ctx, room.ID, q); err != nil {
+			t.Errorf("searching %q failed: %v\nwebsearch_to_tsquery is used precisely so that "+
+				"ordinary typing cannot produce an error", q, err)
+		}
+	}
+	// A quoted phrase means the phrase, not the words in any order.
+	if got := search(`"too thin"`); len(got) != 1 {
+		t.Errorf(`searching "too thin" as a phrase returned %d turns (%v)`, len(got), texts(got))
+	}
+
+	// An empty search is refused rather than answered with the whole transcript.
+	// Returning everything would be indistinguishable from a search that matched
+	// everything, and the caller could not tell which had happened.
+	if _, err := h.svc.SearchTurns(ctx, room.ID, "   "); err == nil {
+		t.Error("an empty search was answered; a search with no query is a mistake, not a match-all")
+	}
+
+	// SEC-06: a redacted turn cannot be found by searching for what it said.
+	if _, err := h.svc.RedactVoice(ctx, room.ID, &h.alice, h.alice); err != nil {
+		t.Fatal(err)
+	}
+	if got := search("undersized"); len(got) != 0 {
+		t.Errorf("a redacted turn was returned by searching for its content: %v\n"+
+			"SEC-06 deletion means the words are gone, including from the index", texts(got))
+	}
+	// And the row is still there, unfindable rather than absent — the record
+	// still says somebody spoke at that moment.
+	room, err = h.svc.Find(ctx, room.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var found bool
+	for _, turn := range room.Turns {
+		if turn.ID == secret.ID {
+			found = true
+			if turn.RedactedAt == nil {
+				t.Error("the redacted turn is not marked redacted")
+			}
+		}
+	}
+	if !found {
+		t.Error("the redacted turn vanished from the transcript; deletion is redaction, not removal")
+	}
+}
+
+// The generated column is what makes redaction hold, so it is checked directly
+// rather than only through the query that reads it.
+//
+// If search_vector were ever maintained by a trigger or by application code, this
+// is the assertion that would fail first: a copy can be missed by an UPDATE path,
+// and a stale index would still hold the words of a turn somebody deleted.
+func TestRoom_RedactionEmptiesTheSearchIndexItself(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	room, err := h.svc.OpenRoom(ctx, h.project, h.goalID, "design review", h.alice)
+	if err != nil {
+		t.Fatal(err)
+	}
+	turn, err := h.svc.Say(ctx, room.ID, &collab.Turn{
+		Speaker: collab.SpeakerHuman, SpeakerID: &h.alice, SpeakerLabel: "Alice",
+		Text: "the fixture bolt is undersized", Channel: collab.ChannelVoice})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	vector := func() string {
+		t.Helper()
+		var v string
+		if err := h.pool.QueryRow(ctx,
+			`select search_vector::text from forge_room_turns where id = $1`, turn.ID).Scan(&v); err != nil {
+			t.Fatal(err)
+		}
+		return v
+	}
+	if vector() == "" {
+		t.Fatal("a turn was indexed as empty; the generated column is not computing and " +
+			"every assertion about search below it would pass vacuously")
+	}
+	if _, err := h.svc.RedactVoice(ctx, room.ID, &h.alice, h.alice); err != nil {
+		t.Fatal(err)
+	}
+	if v := vector(); v != "" {
+		t.Errorf("after redaction the search index still holds %q; the words of a deleted "+
+			"turn are still in the database and findable", v)
+	}
+}
+
+// The read path refuses a redacted turn even when its text is still there.
+//
+// # Why this case has to be constructed by hand
+//
+// SearchTurns has two independent reasons a deleted turn cannot be found: the
+// generated search_vector empties when redaction blanks the text, and the query
+// filters redacted_at. Through the ordinary path the first one alone is enough,
+// which means deleting the second changes nothing anybody can observe — a guard
+// no test can fail is decoration, and this repository has been bitten by exactly
+// that shape before.
+//
+// So the row is put into the state a future bug would produce: redaction stamped
+// and the text left behind, which is what a new deletion path that forgets to
+// blank would write. The constraints permit it, so the database would too.
+func TestRoom_SearchRefusesARedactedTurnEvenWithItsTextIntact(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	room, err := h.svc.OpenRoom(ctx, h.project, h.goalID, "design review", h.alice)
+	if err != nil {
+		t.Fatal(err)
+	}
+	turn, err := h.svc.Say(ctx, room.ID, &collab.Turn{
+		Speaker: collab.SpeakerHuman, SpeakerID: &h.alice, SpeakerLabel: "Alice",
+		Text: "the fixture bolt is undersized", Channel: collab.ChannelVoice})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Stamped as redacted with the words still in the row.
+	if _, err := h.pool.Exec(ctx,
+		`update forge_room_turns set redacted_at = $2, redacted_by = $3 where id = $1`,
+		turn.ID, h.clk.Now(), h.alice); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := h.svc.SearchTurns(ctx, room.ID, "undersized")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Errorf("a turn marked redacted was returned by searching its text (%d hits); "+
+			"the query's own redacted_at filter is the only thing standing between a "+
+			"half-applied deletion and the words it was meant to remove", len(got))
+	}
+}

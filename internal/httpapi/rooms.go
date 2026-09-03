@@ -300,6 +300,36 @@ func (h *RoomHandlers) Get(w http.ResponseWriter, r *http.Request) {
 }
 
 // Join handles POST /v1/rooms/{id}/join.
+// Search handles GET /v1/rooms/{id}/search?q= — transcript search (PRD AUD-06).
+//
+// Access is the room's own: roomFor checks project read permission, so searching
+// a transcript can never surface a turn from a room the caller could not open
+// and read in full. That is the property to keep if this ever grows a
+// cross-room mode, which would need its own answer to "whose rooms".
+//
+// Matches come back as whole turns rather than as offsets or snippets. The
+// caller renders them the same way it renders the transcript — same speaker
+// label, same redaction handling — which is what stops search results from
+// slowly becoming a second, subtly different way of displaying what was said.
+func (h *RoomHandlers) Search(w http.ResponseWriter, r *http.Request) {
+	user, _ := UserFrom(r.Context())
+	roomID := r.PathValue("id")
+	if _, err := h.roomFor(r, roomID, user.ID); err != nil {
+		WriteError(w, r, h.deps.Log, err)
+		return
+	}
+	turns, err := h.svc.SearchTurns(r.Context(), roomID, r.URL.Query().Get("q"))
+	if err != nil {
+		WriteError(w, r, h.deps.Log, err)
+		return
+	}
+	out := make([]TurnDTO, 0, len(turns))
+	for _, t := range turns {
+		out = append(out, toTurnDTO(t))
+	}
+	WriteJSON(w, http.StatusOK, map[string]any{"turns": out})
+}
+
 func (h *RoomHandlers) Join(w http.ResponseWriter, r *http.Request) {
 	user, _ := UserFrom(r.Context())
 	roomID := r.PathValue("id")

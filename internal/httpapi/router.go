@@ -195,6 +195,7 @@ func NewRouter(d Deps) http.Handler {
 	mux.Handle("GET /v1/rooms", authed(rooms.List))
 	mux.Handle("POST /v1/rooms", authed(rooms.OpenRoom))
 	mux.Handle("GET /v1/rooms/{id}", authed(rooms.Get))
+	mux.Handle("GET /v1/rooms/{id}/search", authed(rooms.Search))
 	mux.Handle("POST /v1/rooms/{id}/join", authed(rooms.Join))
 	mux.Handle("POST /v1/rooms/{id}/leave", authed(rooms.Leave))
 	mux.Handle("POST /v1/rooms/{id}/turns", authed(rooms.Say))

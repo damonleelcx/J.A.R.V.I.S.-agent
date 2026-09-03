@@ -616,17 +616,19 @@ const pageTemplates = `
     <div class="room-h">Transcript</div>
 
     <!-- AUD-06: transcript search.
-         Filters what is already here rather than asking the server again. GET
-         /v1/rooms/{id} returns every turn in the room, so the whole transcript
-         is in the page before anybody types — a search endpoint would be a
-         second way to ask a question this page can already answer, and it would
-         be slower. It also means search works identically on a closed room.
+         Asks GET /v1/rooms/{id}/search, which matches words rather than
+         characters. This filtered in the browser first, and that was right for
+         what it could do: the whole transcript is already in the page, so
+         filtering it was instant and worked the same on a closed room.
 
-         THE CONDITION THAT WOULD MAKE THIS WRONG: if room transcripts are ever
-         paginated, the page stops holding the whole record and starts holding a
-         window. Searching a window while calling it "search the transcript" is a
-         quiet half-truth. Change this at the same time, not afterwards.
-         Why, and what was verified: docs/bugfix/2026-09-03-the-transcript-could-not-be-searched.md
+         What it could not do is agree with itself. A substring filter finds
+         "brackets" when you type "bracket" and finds nothing when you type
+         "brackets", because containment runs one way only. Postgres stems both
+         to the same lexeme. The cost paid for that is a round trip per pause in
+         typing, and one matcher instead of two.
+
+         Clearing the box still needs no server — the record is all here.
+         Why the search moved, and what was verified: docs/bugfix/2026-09-03-the-transcript-could-not-be-searched.md
 
          type=search so the browser offers its own clear affordance; the Clear
          button and Escape are the paths that do not depend on the browser
