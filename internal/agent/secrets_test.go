@@ -76,7 +76,17 @@ func resolutionFor(t *testing.T, values map[string]string) *secrets.Resolution {
 // The property the mechanism rests on. A tool that echoes its input must not put
 // the value back into the model's context.
 func TestSecrets_AToolThatEchoesItsInputDoesNotLeakTheValue(t *testing.T) {
-	const value = "ghp_aVeryRealLookingTokenValue"
+	// Deliberately NOT shaped like a real provider's token.
+	//
+	// It used to read "ghp_…", which is a GitHub personal-access-token prefix,
+	// and secret scanners flagged this file on every push. Nothing in the
+	// redactor cares about the shape — it replaces the literal string it was
+	// given — so the realism bought nothing and cost a permanently red security
+	// check. A scanner that cries wolf on your own fixtures is one nobody
+	// believes the day it is right.
+	//
+	// Still long and distinctive, so a pass cannot happen by coincidence.
+	const value = "FIXTURE-not-a-real-credential-8f21c7d4e9"
 	res := resolutionFor(t, map[string]string{"gh": value})
 
 	tool := echoTool{name: "echo"}
@@ -108,7 +118,7 @@ func TestSecrets_AToolThatEchoesItsInputDoesNotLeakTheValue(t *testing.T) {
 
 // An error message is one of the likeliest ways a value comes back.
 func TestSecrets_AFailingToolsErrorIsRedactedToo(t *testing.T) {
-	const value = "ghp_aVeryRealLookingTokenValue"
+	const value = "FIXTURE-not-a-real-credential-8f21c7d4e9"
 	res := resolutionFor(t, map[string]string{"gh": value})
 
 	_, err := failingTool{}.Run(context.Background(), tools.Invocation{

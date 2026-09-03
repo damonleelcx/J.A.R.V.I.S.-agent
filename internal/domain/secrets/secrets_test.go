@@ -84,7 +84,10 @@ func TestGrantedTo_DeniesByDefaultAndAfterRevocation(t *testing.T) {
 // The failure this exists to prevent: the tool has the value, and its output is
 // about to become the model's context.
 func TestRedactor_RemovesTheValueFromToolOutput(t *testing.T) {
-	const value = "ghp_aVeryRealLookingToken123"
+	// Not a real provider's token prefix — see the note in
+	// internal/agent/secrets_test.go. The redactor replaces the literal it was
+	// given; the shape bought nothing and kept a secret scanner permanently red.
+	const value = "FIXTURE-not-a-real-credential-3b90ae12"
 	r := NewRedactor(map[string]string{"gh": value})
 
 	out := r.Redact(`{"stdout":"Authorization: Bearer ` + value + `\n"}`)
