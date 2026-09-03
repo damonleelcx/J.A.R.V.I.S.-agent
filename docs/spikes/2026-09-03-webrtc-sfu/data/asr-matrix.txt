@@ -1,0 +1,60 @@
+== Result 2: the OpenAI-style transcription route does not exist here ==
+   POST https://dashscope.aliyuncs.com/compatible-mode/v1/audio/transcriptions -> HTTP 404   (expected 404)
+== Result 4: latency on an SFU-sized chunk ==
+   chunk: 2.61s
+   run1  0.92s
+   run2  0.85s
+   run3  0.74s
+== Result 3: the decimal matrix (5 trials per cell) ==
+-- utterance: long --
+   [empty]
+      Set the bracket wall thickness to two five millimeters tolerance plus or minus zero one on part AK seven three.
+      Set the bracket wall thickness to two five millimeters tolerance plus or minus zero one on part AK seven three.
+      Set the bracket wall thickness to two five millimeters tolerance plus or minus zero one on part AK seven three.
+      Set the bracket wall thickness to two five millimeters tolerance plus or minus zero one on part AK seven three.
+      Set the bracket wall thickness to two five millimeters tolerance plus or minus zero one on part AK seven three.
+   [vocabulary]
+      Set the bracket wall thickness to two point five millimetres, tolerance plus or minus zero point one, on part AK73.
+      Set the bracket wall thickness to two point five millimetres, tolerance plus or minus zero point one, on part AK73.
+      Set the bracket wall thickness to two point five millimetres, tolerance plus or minus zero point one, on part AK73.
+      Set the bracket wall thickness to two point five millimetres, tolerance plus or minus zero point one, on part AK73.
+      Set the bracket wall thickness to two point five millimetres, tolerance plus or minus zero point one, on part AK73.
+   [decimal]
+      Set the bracket wall thickness to two point five millimeters, tolerance plus or minus zero point one, on part AK seven three.
+      Set the bracket wall thickness to two point five millimeters, tolerance plus or minus zero point one, on part AK seven three.
+      Set the bracket wall thickness to two point five millimeters, tolerance plus or minus zero point one, on part AK seven three.
+      Set the bracket wall thickness to two point five millimeters, tolerance plus or minus zero point one, on part AK seven three.
+      Set the bracket wall thickness to two point five millimeters, tolerance plus or minus zero point one, on part AK seven three.
+   [vocabulary+decimal]
+      Set the bracket wall thickness to two point five millimetres, tolerance plus or minus zero point one, on part AK73.
+      Set the bracket wall thickness to two point five millimetres, tolerance plus or minus zero point one, on part AK73.
+      Set the bracket wall thickness to two point five millimetres, tolerance plus or minus zero point one, on part AK73.
+      Set the bracket wall thickness to two point five millimetres, tolerance plus or minus zero point one, on part AK73.
+      Set the bracket wall thickness to two point five millimetres, tolerance plus or minus zero point one, on part AK73.
+-- utterance: short --
+   [empty]
+      Increase the fillet to one five millimeters.
+      Increase the fillet to one five millimeters.
+      Increase the fillet to one five millimeters.
+      Increase the fillet to one five millimeters.
+      Increase the fillet to one five millimeters.
+   [vocabulary]
+      Increase the fillet to one five millimetres.
+      Increase the fillet to one five millimetres.
+      Increase the fillet to one five millimetres.
+      Increase the fillet to one five millimetres.
+      Increase the fillet to one five millimetres.
+   [decimal]
+      Increase the fillet to one point five millimeters.
+      Increase the fillet to one point five millimeters.
+      Increase the fillet to one point five millimeters.
+      Increase the fillet to one point five millimeters.
+      Increase the fillet to one point five millimeters.
+   [vocabulary+decimal]
+      Increase the fillet to one point five millimetres.
+      Increase the fillet to one point five millimetres.
+      Increase the fillet to one point five millimetres.
+      Increase the fillet to one point five millimetres.
+      Increase the fillet to one point five millimetres.
+
+Artifacts in /var/folders/xl/4g22zs2s0qldcjw3d70my6080000gn/T/tmp.zazJn16VaE

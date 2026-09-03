@@ -187,6 +187,26 @@ func NewRouter(d Deps) http.Handler {
 	mux.Handle("GET /v1/geometry/{id}/export", authed(geo.Export))
 	mux.Handle("GET /v1/geometry/{id}/export/label", authed(geo.ExportLabel))
 
+	// --- the shared session (PRD COL-01) ---
+	//
+	// One RoomHandlers for the process, not one per request: it owns the live
+	// fan-out hub, and a hub per request would fan out to nobody.
+	rooms := NewRoomHandlers(d)
+	mux.Handle("GET /v1/rooms", authed(rooms.List))
+	mux.Handle("POST /v1/rooms", authed(rooms.OpenRoom))
+	mux.Handle("GET /v1/rooms/{id}", authed(rooms.Get))
+	mux.Handle("POST /v1/rooms/{id}/join", authed(rooms.Join))
+	mux.Handle("POST /v1/rooms/{id}/leave", authed(rooms.Leave))
+	mux.Handle("POST /v1/rooms/{id}/turns", authed(rooms.Say))
+	mux.Handle("POST /v1/rooms/{id}/close", authed(rooms.Close))
+	mux.Handle("GET /v1/rooms/{id}/events", authed(rooms.Events))
+	mux.Handle("POST /v1/rooms/{id}/media/offer", authed(rooms.MediaOffer))
+	mux.Handle("POST /v1/rooms/{id}/media/answer", authed(rooms.MediaAnswer))
+	// AUD-07's controls and SEC-06's deletion.
+	mux.Handle("POST /v1/rooms/{id}/media/state", authed(rooms.SetMediaState))
+	mux.Handle("POST /v1/rooms/{id}/transcribing", authed(rooms.SetTranscribing))
+	mux.Handle("DELETE /v1/rooms/{id}/voice", authed(rooms.DeleteVoice))
+
 	// --- workbench conversation ---
 	converse := NewConverseHandlers(d)
 	mux.Handle("POST /v1/converse", authed(converse.Converse))
@@ -208,6 +228,7 @@ func NewRouter(d Deps) http.Handler {
 	// The workbench is the product's primary surface (PRD §1.2): voice and the
 	// 3D studio. /console is the operations view beside it.
 	mux.HandleFunc("GET /workbench", pages.Workbench)
+	mux.HandleFunc("GET /rooms/{id}", pages.RoomPage)
 	mux.HandleFunc("GET /auth/verify-email", pages.VerifyEmailPage)
 	mux.HandleFunc("GET /auth/reset-password", pages.ResetPasswordPage)
 	mux.HandleFunc("GET /", pages.Index)

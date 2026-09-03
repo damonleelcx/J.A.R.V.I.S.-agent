@@ -1,0 +1,274 @@
+/* FORGE room — the shared session surface.
+ *
+ * Every colour, radius and font here comes from shell.css's tokens. Nothing is
+ * invented locally: a second palette is how two surfaces of one product start
+ * looking like two products.
+ */
+
+body.room {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  margin: 0;
+  overflow: hidden;
+  /* shell.css centres every page body with `place-items: center` and pads it.
+     Both survive a change of `display` and squeeze this layout into a column the
+     width of its longest word. Reset the same way workbench.css does, so the two
+     full-screen surfaces undo the shell identically rather than each inventing
+     a fix. */
+  place-items: initial;
+  padding: 0;
+}
+
+/* ---- header ------------------------------------------------------------- */
+
+.room-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--edge-solid);
+  background: color-mix(in srgb, var(--panel) 80%, transparent);
+  flex: 0 0 auto;
+}
+.room-title { font-weight: 600; margin-left: 8px; }
+.room-status {
+  margin-left: auto;
+  font-size: 13px;
+  color: var(--ink-dim);
+  text-transform: lowercase;
+}
+
+/* ---- the privacy banner (PRD SEC-06) ------------------------------------
+ *
+ * Full width, at the top, and never dismissible — the same treatment the
+ * workbench gives its provenance banner, for the same reason. It is the only
+ * place the room says that transcription sends audio to a speech provider, and
+ * a control somebody has to open a menu to read is one they will not read.
+ */
+.room-policy {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  padding: 10px 16px;
+  font-size: 13px;
+  line-height: 1.45;
+  color: var(--ink-dim);
+  border-bottom: 1px solid var(--edge-solid);
+  background: color-mix(in srgb, var(--panel) 55%, transparent);
+  flex: 0 0 auto;
+}
+.room-policy__dot {
+  width: 9px; height: 9px;
+  border-radius: 50%;
+  margin-top: 5px;
+  flex: 0 0 auto;
+  background: var(--ink-dim);
+}
+/* Colour repeats what the sentence already says; it never carries the meaning
+   alone. Somebody who cannot distinguish these still reads the state. */
+.room-policy__dot.on { background: var(--warn); }
+.room-policy__dot.off { background: var(--ok); }
+.room-policy[data-transcribing="yes"] { color: var(--ink); }
+
+/* ---- body --------------------------------------------------------------- */
+
+.room-main {
+  display: grid;
+  grid-template-columns: 1fr 280px;
+  gap: 16px;
+  padding: 16px;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.room-h {
+  font-size: 12px;
+  letter-spacing: .04em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  margin: 0 0 8px;
+}
+.room-transcript, .room-side { min-height: 0; min-width: 0; display: flex; flex-direction: column; }
+.room-side { gap: 8px; overflow-y: auto; }
+
+.turns {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  background: var(--panel);
+  border: 1px solid var(--edge-solid);
+  border-radius: var(--radius);
+  padding: 12px;
+}
+.turn {
+  display: grid;
+  grid-template-columns: minmax(60px, auto) auto minmax(0, 1fr);
+  gap: 8px;
+  align-items: baseline;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--edge);
+}
+/* A grid or flex child will not shrink below its content unless told to, and the
+   ids and labels here are long. Without this the transcript grows wider than the
+   column, and `overflow: hidden` on the body CLIPS it — text simply disappears
+   off the right edge with no scrollbar to reveal it. Seen at 560px. */
+.turn > * { min-width: 0; }
+.turn:last-child { border-bottom: 0; }
+.turn-who { font-weight: 600; font-size: 13px; }
+.turn-mark {
+  font-size: 11px;
+  color: var(--ink-dim);
+  border: 1px solid var(--edge-solid);
+  border-radius: 6px;
+  padding: 0 5px;
+}
+.turn-text { font-size: 14px; line-height: 1.5; overflow-wrap: anywhere; }
+/* A deleted turn is visibly still there. That is the point: the record must not
+   read as though those seconds were silent. */
+.turn-text.gone { color: var(--ink-dim); font-style: italic; }
+.turn.redacted { opacity: .75; }
+
+/* ---- roster ------------------------------------------------------------- */
+
+.roster { list-style: none; margin: 0 0 12px; padding: 0; }
+.roster-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 0;
+  font-size: 13px;
+  min-width: 0;
+}
+.roster-dot {
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  background: var(--ink-dim);
+  flex: 0 0 auto;
+}
+.roster-row.is-speaking .roster-dot { background: var(--core); }
+.roster-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1 1 auto; }
+.roster-state { margin-left: auto; font-size: 11px; color: var(--core); flex: 0 0 auto; }
+
+.room-mic { display: flex; flex-direction: column; gap: 8px; align-items: stretch; }
+.room-mic select {
+  width: 100%;
+  background: var(--bg);
+  color: var(--ink);
+  border: 1px solid var(--edge-solid);
+  border-radius: 8px;
+  padding: 7px 8px;
+  font: inherit;
+  font-size: 13px;
+}
+.note { font-size: 12px; color: var(--ink-dim); line-height: 1.45; }
+/* A label that exists for screen readers and not for sighted users, where the
+   control beside it already carries a visible name. */
+.vis {
+  position: absolute; width: 1px; height: 1px;
+  padding: 0; margin: -1px; overflow: hidden;
+  clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
+
+/* ---- controls (PRD AUD-07) ----------------------------------------------
+ *
+ * A fixed row at the bottom that never reflows. Controls are DISABLED rather
+ * than removed when they do not apply, so mute is always in the same place —
+ * somebody reaching for it in a hurry should not have to look for it.
+ */
+.room-ctl {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  border-top: 1px solid var(--edge-solid);
+  background: color-mix(in srgb, var(--panel) 80%, transparent);
+  flex: 0 0 auto;
+  flex-wrap: wrap;
+}
+/* Text buttons.
+ *
+ * Their own class rather than the workbench's `.node`, which is a 38px circular
+ * ICON button and lives in a stylesheet this page does not load — the reason
+ * these first rendered as raw browser defaults. Two definitions of one class
+ * across two stylesheets would have been the worse fix.
+ *
+ * Shell tokens only: the same panel, edge and ink the rest of the product uses.
+ */
+.room-btn {
+  appearance: none;
+  font: inherit;
+  font-size: 13px;
+  line-height: 1;
+  padding: 9px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--edge-solid);
+  background: color-mix(in srgb, var(--panel) 90%, transparent);
+  color: var(--ink);
+  cursor: pointer;
+  white-space: nowrap;
+  transition: background .16s, border-color .16s, color .16s;
+}
+.room-btn:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--core) 12%, var(--panel));
+  border-color: var(--core-dim);
+}
+.room-btn:focus-visible { outline: 2px solid var(--core-dim); outline-offset: 2px; }
+
+/* The affirmative action on its surface — joining audio, sending. One per
+   region, so it reads as the thing to do rather than as decoration. */
+.room-btn.primary {
+  background: linear-gradient(180deg, #62e2f0 0%, var(--core) 55%, #35b6c8 100%);
+  border-color: transparent;
+  color: #08202a;
+  font-weight: 650;
+}
+.room-btn.primary:hover:not(:disabled) { filter: brightness(1.07); background: var(--core); }
+
+/* Pressed states are what mute and pause use. Border AND colour, never colour
+   alone, so the state survives a display that renders them alike. */
+.room-btn[aria-pressed="true"] {
+  border-color: var(--core-dim);
+  color: var(--core);
+  background: color-mix(in srgb, var(--core) 14%, var(--panel));
+}
+
+/* Deletion is irreversible, and reads that way — but quietly. A control that
+   shouts is one people learn to ignore. */
+.room-btn.danger { color: var(--bad); border-color: color-mix(in srgb, var(--bad) 45%, transparent); }
+.room-btn.danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--bad) 16%, var(--panel));
+  border-color: var(--bad);
+}
+
+.room-btn:disabled { opacity: .4; cursor: not-allowed; }
+
+.room-say { display: flex; gap: 8px; margin-left: auto; flex: 1 1 260px; }
+.room-say input {
+  flex: 1 1 auto;
+  background: var(--bg);
+  color: var(--ink);
+  border: 1px solid var(--edge-solid);
+  border-radius: 8px;
+  padding: 7px 10px;
+  font: inherit;
+}
+
+.room-err {
+  padding: 10px 16px;
+  font-size: 13px;
+  color: var(--ink);
+  background: color-mix(in srgb, var(--bad) 18%, transparent);
+  border-top: 1px solid var(--bad);
+  flex: 0 0 auto;
+}
+.room-err.hidden { display: none; }
+
+@media (max-width: 720px) {
+  /* One column, and the page scrolls rather than clipping. `overflow: hidden` on
+     the body is right for the desktop layout, where every region manages its own
+     scrolling; at this width the regions stack taller than the viewport and
+     hiding the overflow would put the controls out of reach entirely. */
+  body.room { height: auto; min-height: 100vh; overflow-y: auto; }
+  .room-main { grid-template-columns: minmax(0, 1fr); }
+  .turns { min-height: 240px; }
+  .room-say { margin-left: 0; }
+}

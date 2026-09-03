@@ -1,8 +1,11 @@
 package httpapi
 
 import (
+	"crypto/sha256"
 	"embed"
+	"encoding/hex"
 	"html/template"
+	"io/fs"
 	"net/http"
 	"strconv"
 	"strings"
@@ -25,6 +28,7 @@ import (
 //go:embed assets/shell.css assets/avatar.css assets/console.css assets/workbench.css
 //go:embed assets/pages.js assets/console.js assets/workbench.js assets/forge3d.js
 //go:embed assets/voice.js assets/orb.js
+//go:embed assets/audio-input.js assets/room.js assets/room-page.js assets/room.css
 //go:embed assets/portrait/*.png
 var assetFS embed.FS
 
@@ -42,7 +46,66 @@ type PageHandlers struct {
 
 // NewPageHandlers parses the templates once at startup.
 func NewPageHandlers(d Deps) *PageHandlers {
-	return &PageHandlers{d: d, tmpl: template.Must(template.New("pages").Parse(pageTemplates))}
+	return &PageHandlers{
+		d: d,
+		tmpl: template.Must(template.New("pages").
+			Funcs(template.FuncMap{"asset": assetURL}).
+			Parse(pageTemplates)),
+	}
+}
+
+// Asset URLs carry a content hash, and that is what makes caching them safe.
+//
+// # The defect this replaces
+//
+// Assets were served `public, max-age=300` from a URL with nothing version-like
+// in it and no ETag. So for five minutes after a deploy, browsers served the
+// PREVIOUS build's CSS and JavaScript against the new HTML — silently, and with
+// no way for anybody to tell. The comment here used to claim assets were
+// "versioned by the build"; they were not, and the claim is what kept anybody
+// from noticing. It cost real time during wave 9.5, where a stylesheet change
+// appeared not to work.
+//
+// # Why a content hash rather than the build version
+//
+// A build version changes on every release and would expire every asset each
+// time, including the ones that did not change. A content hash changes exactly
+// when the bytes change, which is the only thing that should invalidate a cache.
+// It also means two builds that produce identical assets keep their caches.
+var assetVersions = buildAssetVersions()
+
+func buildAssetVersions() map[string]string {
+	out := map[string]string{}
+	// Walked rather than globbed, so nested assets — the portraits — are hashed
+	// too. They are referenced by persona.PortraitURL, which builds a bare path
+	// and knows nothing about this file; they therefore arrive unversioned and
+	// take the revalidating branch below. Hashing them anyway gives them an ETag,
+	// so that revalidation is a 304 rather than a full download of a PNG.
+	_ = fs.WalkDir(assetFS, "assets", func(path string, d fs.DirEntry, err error) error {
+		if err != nil || d.IsDir() {
+			return nil
+		}
+		body, readErr := assetFS.ReadFile(path)
+		if readErr != nil {
+			return nil
+		}
+		sum := sha256.Sum256(body)
+		out[strings.TrimPrefix(path, "assets/")] = hex.EncodeToString(sum[:])[:12]
+		return nil
+	})
+	return out
+}
+
+// assetURL renders a cache-safe URL for an embedded asset.
+//
+// A name with no known hash is returned unversioned rather than failing the
+// render: a page that loads without a stylesheet is bad, and a page that does
+// not load at all is worse.
+func assetURL(name string) string {
+	if v, ok := assetVersions[name]; ok {
+		return "/assets/" + name + "?v=" + v
+	}
+	return "/assets/" + name
 }
 
 type pageData struct {
@@ -51,7 +114,14 @@ type pageData struct {
 	Presence template.HTML
 	// Sigil is FORGE's mark, rendered inline so the identity appears with the
 	// page rather than after a second request that may not arrive.
+	//
+	// Used where a STATE indicator is wanted — badged onto the portrait on the
+	// workbench stage. Headers use Avatar instead: see persona.AvatarHTML.
 	Sigil template.HTML
+	// Avatar is FORGE's portrait, for page headers. It is what people recognise
+	// FORGE as; the sigil on its own is an abstract mark beside a wordmark that
+	// already says the same thing.
+	Avatar template.HTML
 	// Page names which behaviour the shared script should attach. Rendered into
 	// a data- attribute so one served script serves every page.
 	Page string
@@ -62,6 +132,10 @@ type pageData struct {
 	Token    string
 	MinChars int
 	Title    string
+	// RoomID is rendered into a data- attribute for the room page, for the same
+	// reason Token is: it stays out of executable text, so no escaping mistake
+	// can turn a path segment into script.
+	RoomID string
 
 	// Tagline, PersonaVersion and Soul carry FORGE's identity onto the page.
 	//
@@ -88,6 +162,9 @@ func (p *PageHandlers) render(w http.ResponseWriter, r *http.Request, name strin
 	}
 	if data.Presence == "" {
 		data.Presence = persona.PresenceHTML(persona.StateIdle, 88)
+	}
+	if data.Avatar == "" {
+		data.Avatar = persona.AvatarHTML(30)
 	}
 	data.Tagline = persona.Tagline
 	data.PersonaVersion = persona.Version
@@ -159,6 +236,29 @@ func (p *PageHandlers) Workbench(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// RoomPage handles GET /rooms/{id} — a shared session in the browser.
+//
+// # Why this is its own surface rather than part of the workbench
+//
+// The workbench is one person building with FORGE. A room is several people
+// talking, and it carries a live media connection, a microphone, and a privacy
+// state that must be visible at all times. Folding that into the workbench would
+// put every room defect inside the product's primary surface — and the workbench
+// works today.
+//
+// The room client is written as a module (assets/room.js) with no dependency on
+// this page, so the workbench can mount it later without either being rewritten.
+// That is the evolutionary order: make it work somewhere it cannot break
+// anything, then place it.
+func (p *PageHandlers) RoomPage(w http.ResponseWriter, r *http.Request) {
+	p.render(w, r, "room", pageData{
+		Page:     "room",
+		Title:    "FORGE room",
+		RoomID:   r.PathValue("id"),
+		Presence: persona.PresenceHTML(persona.StateIdle, 36),
+	})
+}
+
 // Sigil handles GET /v1/meta/sigil.
 //
 // Served rather than drawn in the browser so there is one implementation of
@@ -221,10 +321,12 @@ func (p *PageHandlers) Index(w http.ResponseWriter, r *http.Request) {
 func (p *PageHandlers) Assets(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimPrefix(r.URL.Path, "/assets/")
 	switch {
-	case name == "shell.css", name == "avatar.css", name == "console.css", name == "workbench.css":
+	case name == "shell.css", name == "avatar.css", name == "console.css",
+		name == "workbench.css", name == "room.css":
 		w.Header().Set("Content-Type", "text/css; charset=utf-8")
 	case name == "pages.js", name == "console.js", name == "workbench.js",
-		name == "forge3d.js", name == "voice.js", name == "orb.js":
+		name == "forge3d.js", name == "voice.js", name == "orb.js",
+		name == "audio-input.js", name == "room.js", name == "room-page.js":
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 	case isPortraitAsset(name):
 		w.Header().Set("Content-Type", "image/png")
@@ -237,10 +339,22 @@ func (p *PageHandlers) Assets(w http.ResponseWriter, r *http.Request) {
 		notFound(p.d.Log)(w, r)
 		return
 	}
-	// Assets are versioned by the build, not by name, so caching is bounded
-	// rather than immutable: a redeploy must not leave a stale script behind a
-	// year-long max-age.
-	w.Header().Set("Cache-Control", "public, max-age=300")
+	// An ETag on every response, so even a request that arrives without a
+	// version — a bookmark, an old cached page — revalidates cheaply into a 304
+	// rather than being served stale or re-downloaded whole.
+	version := assetVersions[name]
+	if version != "" {
+		w.Header().Set("ETag", `"`+version+`"`)
+	}
+	if r.URL.Query().Get("v") == version && version != "" {
+		// The URL names these exact bytes, so it can never go stale: a different
+		// build produces a different URL. This is the case every page hits.
+		w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+	} else {
+		// Unversioned, or naming a version this build does not have. Must be
+		// revalidated: this is precisely how a stale asset used to be served.
+		w.Header().Set("Cache-Control", "no-cache")
+	}
 	http.ServeContent(w, r, name, time.Time{}, strings.NewReader(string(body)))
 }
 
@@ -269,23 +383,23 @@ const pageTemplates = `
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="referrer" content="no-referrer">
 <title>{{.Title}}</title>
-<link rel="stylesheet" href="/assets/shell.css">
-<link rel="stylesheet" href="/assets/avatar.css">
+<link rel="stylesheet" href="{{asset "shell.css"}}">
+<link rel="stylesheet" href="{{asset "avatar.css"}}">
 </head><body><main class="panel" data-page="{{.Page}}" data-token="{{.Token}}">
-<div class="mark">{{.Sigil}}<div class="wordmark">FORGE</div></div>
+<div class="mark">{{.Avatar}}<div class="wordmark">FORGE</div></div>
 {{end}}
 
-{{define "foot"}}</main><script src="/assets/pages.js"></script></body></html>{{end}}
+{{define "foot"}}</main><script src="{{asset "pages.js"}}"></script></body></html>{{end}}
 
 {{define "workbench"}}<!doctype html>
 <html lang="en"><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{{.Title}}</title>
-<link rel="stylesheet" href="/assets/shell.css">
-<link rel="stylesheet" href="/assets/avatar.css">
-<link rel="stylesheet" href="/assets/console.css">
-<link rel="stylesheet" href="/assets/workbench.css">
+<link rel="stylesheet" href="{{asset "shell.css"}}">
+<link rel="stylesheet" href="{{asset "avatar.css"}}">
+<link rel="stylesheet" href="{{asset "console.css"}}">
+<link rel="stylesheet" href="{{asset "workbench.css"}}">
 </head><body class="wb">
 
 <div class="wb-top">
@@ -293,7 +407,7 @@ const pageTemplates = `
        workbench, and two of her on one screen is one too many. -->
   <button type="button" class="whois" id="whois" aria-expanded="false" aria-controls="soul"
           title="Who FORGE is, and what it will not do">
-    <span id="top-sigil" class="top-sigil">{{.Sigil}}</span>
+    <span id="top-sigil" class="top-sigil">{{.Avatar}}</span>
     <span class="whois-txt">
       <span class="wordmark">FORGE</span>
       <span class="tag">{{.Tagline}}</span>
@@ -464,10 +578,84 @@ const pageTemplates = `
   <div class="compare-body" id="compare-body"></div>
 </div>
 
-<script src="/assets/forge3d.js"></script>
-<script src="/assets/voice.js"></script>
-<script src="/assets/orb.js"></script>
-<script src="/assets/workbench.js"></script>
+<script src="{{asset "forge3d.js"}}"></script>
+<script src="{{asset "voice.js"}}"></script>
+<script src="{{asset "orb.js"}}"></script>
+<script src="{{asset "workbench.js"}}"></script>
+</body></html>{{end}}
+
+{{define "room"}}<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>{{.Title}}</title>
+<link rel="stylesheet" href="{{asset "shell.css"}}">
+<link rel="stylesheet" href="{{asset "avatar.css"}}">
+<link rel="stylesheet" href="{{asset "console.css"}}">
+<link rel="stylesheet" href="{{asset "room.css"}}">
+</head><body class="room" data-room="{{.RoomID}}">
+
+<div class="room-top">
+  {{.Avatar}}
+  <span class="wordmark">FORGE</span>
+  <span class="room-title" id="room-title">Room</span>
+  <span class="room-status" id="room-status">connecting</span>
+</div>
+
+<!-- SEC-06's visible state. Never dismissible, and never abbreviated to an icon:
+     it is the only place the room says that transcription sends audio to a
+     speech provider, and an icon cannot say that. Rendered from the server's own
+     sentence so every client says the same thing. -->
+<div class="room-policy" id="policy" role="status">
+  <span class="room-policy__dot" id="policy-dot" aria-hidden="true"></span>
+  <span id="policy-text">Reading what happens to what is said here…</span>
+</div>
+
+<main class="room-main">
+  <section class="room-transcript" aria-label="Transcript">
+    <div class="room-h">Transcript</div>
+    <div id="turns" class="turns" aria-live="polite"></div>
+  </section>
+
+  <aside class="room-side">
+    <div class="room-h">In the room</div>
+    <ul id="roster" class="roster"></ul>
+
+    <div class="room-h">Microphone</div>
+    <div class="room-mic">
+      <label class="vis" for="micpick">Microphone</label>
+      <select id="micpick" aria-label="Microphone"></select>
+      <button type="button" class="room-btn primary" id="joinaudio">Join audio</button>
+      <div id="micnote" class="note"></div>
+    </div>
+  </aside>
+</main>
+
+<!-- AUD-07. Always present, always reachable, never hidden behind a menu: these
+     are the controls somebody reaches for when they want something to stop, and
+     hunting for a control is the one thing that must not be required then. They
+     are disabled rather than removed when audio is not running, so their
+     position never moves. -->
+<div class="room-ctl" role="group" aria-label="Room controls">
+  <button type="button" class="room-btn" id="mute" aria-pressed="false" disabled>Mute</button>
+  <button type="button" class="room-btn" id="pause" aria-pressed="false" disabled>Pause</button>
+  <button type="button" class="room-btn" id="transcribe" aria-pressed="true">Stop transcribing</button>
+  <button type="button" class="room-btn danger" id="delvoice">Delete my speech</button>
+  <button type="button" class="room-btn" id="leave">Leave</button>
+
+  <!-- AUD-06: every critical interaction has a path that needs no microphone.
+       This is not a fallback for a broken mic; it is the equal path. -->
+  <form id="sayform" class="room-say">
+    <input type="text" id="say" placeholder="Type instead of speaking" autocomplete="off">
+    <button type="submit" class="room-btn primary" id="send">Send</button>
+  </form>
+</div>
+
+<div id="err" class="room-err hidden" role="alert"></div>
+
+<script src="{{asset "audio-input.js"}}"></script>
+<script src="{{asset "room.js"}}"></script>
+<script src="{{asset "room-page.js"}}"></script>
 </body></html>{{end}}
 
 {{define "console"}}<!doctype html>
@@ -475,12 +663,12 @@ const pageTemplates = `
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{{.Title}}</title>
-<link rel="stylesheet" href="/assets/shell.css">
-<link rel="stylesheet" href="/assets/avatar.css">
-<link rel="stylesheet" href="/assets/console.css">
+<link rel="stylesheet" href="{{asset "shell.css"}}">
+<link rel="stylesheet" href="{{asset "avatar.css"}}">
+<link rel="stylesheet" href="{{asset "console.css"}}">
 </head><body class="console">
 <div class="topbar">
-  {{.Sigil}}
+  {{.Avatar}}
   <div class="wordmark">FORGE</div>
   <div class="who"><span id="whoami"></span><a href="/">Home</a></div>
 </div>
@@ -508,7 +696,7 @@ const pageTemplates = `
   </div>
   <div id="detail" class="hidden"></div>
 </div>
-<script src="/assets/console.js"></script>
+<script src="{{asset "console.js"}}"></script>
 </body></html>{{end}}
 
 {{define "index"}}{{template "head" .}}

@@ -47,6 +47,12 @@ const (
 	// took 6.8s — neither meets the target, but routing conversation through the
 	// reasoning model guarantees it never will.
 	RoleConverse Role = "converse"
+	// RoleTranscriber turns spoken audio into transcript text (PRD AUD-03).
+	//
+	// A role of its own rather than a reuse of RoleConverse: it is a different
+	// model family entirely — speech recognition, not chat — and routing it
+	// through the conversation model would silently produce nothing usable.
+	RoleTranscriber Role = "transcriber"
 )
 
 // AllRoles returns every role, for configuration and the coherence fence.

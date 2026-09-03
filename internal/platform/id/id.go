@@ -50,10 +50,15 @@ const (
 	PrefixDevice     Prefix = "dev"
 	PrefixRoom       Prefix = "rom"
 	PrefixTurn       Prefix = "trn"
-	PrefixToolCall   Prefix = "tcl"
-	PrefixRequest    Prefix = "req"
-	PrefixTrace      Prefix = "trc"
-	PrefixSpan       Prefix = "spn"
+	// PrefixStream names one live connection to a room, NOT an authenticated
+	// session — those are "ses" and are a different thing with a different
+	// lifetime and its own table. One person with two tabs holds one session and
+	// two streams, and media signalling is addressed to a stream.
+	PrefixStream   Prefix = "stm"
+	PrefixToolCall Prefix = "tcl"
+	PrefixRequest  Prefix = "req"
+	PrefixTrace    Prefix = "trc"
+	PrefixSpan     Prefix = "spn"
 )
 
 // crockford is the base32 alphabet: no I, L, O, or U, so an id read aloud or

@@ -22,3 +22,7 @@ coverage.*
 .idea/
 .vscode/
 *.swp
+
+# Written by TestSpokenAudioBecomesAnAttributedTurn so the end-to-end test can
+# transcribe the container the pipeline itself produced. Generated, not fixture.
+internal/media/testdata/pipeline-output.ogg

@@ -1,0 +1,4 @@
+PASS  inbound track identified, stream id = participant-alice
+PASS  RTP arriving at SFU
+PASS  receiver got 5 forwarded RTP packets
+RESULT SFU-CORE-OK streamID=participant-alice
