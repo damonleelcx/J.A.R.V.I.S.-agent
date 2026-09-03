@@ -256,7 +256,7 @@ func (e *Executor) runTool(ctx context.Context, tc *TaskContext, call llm.ToolCa
 	tier, _ := tc.Grant.Classify(contract)
 
 	if ok, why := tc.Grant.Permits(contract); !ok {
-		e.recordToolCall(ctx, tc, call, engine.ToolRefused, "", string(errs.CodeToolRefused), why, 0, "")
+		e.recordToolCall(ctx, tc, call, engine.ToolRefused, "", string(errs.CodeToolRefused), why, 0, "", "")
 		return toolError(string(errs.CodeToolRefused), why)
 	}
 
@@ -277,7 +277,7 @@ func (e *Executor) runTool(ctx context.Context, tc *TaskContext, call llm.ToolCa
 	if err := e.registry.ValidateInput(name, json.RawMessage(call.Function.Arguments)); err != nil {
 		detail := err.Error()
 		e.recordToolCall(ctx, tc, call, engine.ToolRefused, "",
-			string(errs.CodeValidationFailed), detail, 0, tier)
+			string(errs.CodeValidationFailed), detail, 0, tier, contract.Reversibility)
 		e.log.Info(ctx, logx.EventToolRefusedSchema,
 			"task_id", tc.Task.ID, "tool", name)
 		return toolError(string(errs.CodeValidationFailed), detail)
@@ -307,7 +307,7 @@ func (e *Executor) runTool(ctx context.Context, tc *TaskContext, call llm.ToolCa
 		// secret://github_token` and fails for a reason that has nothing to do
 		// with credentials.
 		e.recordToolCall(ctx, tc, call, engine.ToolRefused, "",
-			string(errs.CodeOf(secErr)), secErr.Error(), 0, tier)
+			string(errs.CodeOf(secErr)), secErr.Error(), 0, tier, contract.Reversibility)
 		e.log.Warn(ctx, logx.EventSecretRefused,
 			"task_id", tc.Task.ID, "tool", name, "code", string(errs.CodeOf(secErr)))
 		return toolError(string(errs.CodeOf(secErr)), secErr.Error())
@@ -335,7 +335,7 @@ func (e *Executor) runTool(ctx context.Context, tc *TaskContext, call llm.ToolCa
 		// header it choked on is one of the likeliest ways a value comes back.
 		detail := resolution.Redactor.Redact(runErr.Error())
 		e.recordToolCall(ctx, tc, call, engine.ToolFailed, "",
-			string(errs.CodeOf(runErr)), detail, elapsed, tier)
+			string(errs.CodeOf(runErr)), detail, elapsed, tier, contract.Reversibility)
 		e.log.Info(ctx, logx.EventToolFailed,
 			"task_id", tc.Task.ID, "tool", name, "code", string(errs.CodeOf(runErr)))
 		return toolError(string(errs.CodeOf(runErr)), detail)
@@ -382,11 +382,11 @@ func (e *Executor) runTool(ctx context.Context, tc *TaskContext, call llm.ToolCa
 			"redactor could not remove it, so the whole result was discarded. The tool ran and "+
 			"its effects stand; only the output was withheld. Do not retry expecting to see it.",
 			handleList(leaked))
-		e.recordToolCall(ctx, tc, call, engine.ToolSucceeded, blocked, "", "", elapsed, tier)
+		e.recordToolCall(ctx, tc, call, engine.ToolSucceeded, blocked, "", "", elapsed, tier, contract.Reversibility)
 		return toolError(string(errs.CodeSecretUnavailable), blocked)
 	}
 
-	e.recordToolCall(ctx, tc, call, engine.ToolSucceeded, raw, "", "", elapsed, tier)
+	e.recordToolCall(ctx, tc, call, engine.ToolSucceeded, raw, "", "", elapsed, tier, contract.Reversibility)
 	e.log.Debug(ctx, logx.EventToolSucceeded,
 		"task_id", tc.Task.ID, "tool", name, "duration_ms", elapsed.Milliseconds())
 
@@ -529,7 +529,7 @@ func (e *Executor) findCompletedCall(ctx context.Context, key string) (json.RawM
 // column stays NULL rather than claiming a tier nobody computed.
 func (e *Executor) recordToolCall(ctx context.Context, tc *TaskContext, call llm.ToolCall,
 	status engine.ToolCallStatus, raw, errCode, errDetail string, elapsed time.Duration,
-	tier engine.RiskTier) {
+	tier engine.RiskTier, undo tools.Reversibility) {
 
 	now := e.clock.Now()
 	err := db.InTx(ctx, e.pool, func(tx pgx.Tx) error {
@@ -537,14 +537,14 @@ func (e *Executor) recordToolCall(ctx context.Context, tc *TaskContext, call llm
 			insert into forge_tool_calls
 				(id, task_id, idempotency_key, tool_name, input, status, output,
 				 raw_output, error_code, error_detail, started_at, ended_at, duration_ms, created_at,
-				 risk_tier)
+				 risk_tier, reversibility)
 			values ($1,$2,$3,$4,$5,$6,$7,$8,nullif($9,''),nullif($10,''),$11,$11,$12,$11,
-				 nullif($13,''))
+				 nullif($13,''),nullif($14,''))
 			on conflict (idempotency_key) do nothing`,
 			id.New(id.PrefixToolCall), tc.Task.ID,
 			idempotencyKey(tc.Task.ID, call.Function.Name, call.Function.Arguments),
 			call.Function.Name, jsonOrObject(call.Function.Arguments), string(status),
-			nil, raw, errCode, errDetail, now, elapsed.Milliseconds(), string(tier))
+			nil, raw, errCode, errDetail, now, elapsed.Milliseconds(), string(tier), string(undo))
 		return err
 	})
 	if err != nil {

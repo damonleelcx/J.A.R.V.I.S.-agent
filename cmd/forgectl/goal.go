@@ -477,3 +477,31 @@ func truncateCLI(s string, n int) string {
 	}
 	return string(r[:n-1]) + "…"
 }
+
+// cmdGoalRecover prints what a stopped goal left behind (PRD AGT-05).
+//
+// A separate command from `goal show` rather than a section of it. `show` is
+// what somebody reads to follow a run; this is what they read after one has
+// stopped, when the question has changed from "how is it going" to "what did it
+// touch and what do I have to be careful about". Merging them would bury the
+// uncertain effects under a timeline.
+func cmdGoalRecover(ctx context.Context, cfg *config.Config, log *logx.Logger, args []string) error {
+	const op = "forgectl.cmdGoalRecover"
+
+	if len(args) == 0 || strings.TrimSpace(args[0]) == "" {
+		return errs.New(op, errs.CodeValidationFailed).
+			WithDetail("usage: forgectl goal recover <goal-id>")
+	}
+	pool, err := db.Connect(ctx, cfg.DB, log)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+
+	plan, err := agent.Recover(ctx, pool, args[0])
+	if err != nil {
+		return err
+	}
+	fmt.Print(plan.Render())
+	return nil
+}
