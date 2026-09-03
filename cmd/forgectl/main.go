@@ -108,6 +108,12 @@ Access (RBAC):
       Membership decides access; forge_projects.owner_id records only who created it.
       A project's last owner cannot be removed or demoted.
 
+Project settings:
+  project character --project <id>             How hard FORGE argues here, and how much it explains
+      [--critique low|normal|high] [--verbosity terse|normal|explanatory]
+      With no setting given, prints the project's current character.
+      No value disables safety: safety-relevant objections are immutable.
+
 Collaboration:
   rooms show <room-id>                         A session's transcript, every turn attributed
   handoff <goal-id>                            State, actions, versions, approvals, evidence,
@@ -357,6 +363,20 @@ func run(ctx context.Context, cmd string, args []string) error {
 		default:
 			return errs.New("forgectl.run", errs.CodeValidationFailed).
 				WithDetail("unknown access subcommand %q; expected matrix, members, grant or revoke", args[0])
+		}
+
+	case "project":
+		if len(args) == 0 {
+			fmt.Fprint(os.Stderr, usage)
+			return errs.New("forgectl.run", errs.CodeValidationFailed).
+				WithDetail("project needs a subcommand: character")
+		}
+		switch args[0] {
+		case "character":
+			return cmdProjectCharacter(ctx, cfg, log, args[1:])
+		default:
+			return errs.New("forgectl.run", errs.CodeValidationFailed).
+				WithDetail("unknown project subcommand %q; expected character", args[0])
 		}
 
 	case "rooms":

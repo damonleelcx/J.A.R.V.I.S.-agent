@@ -38,8 +38,9 @@ func NewConverseHandlers(d Deps) *ConverseHandlers {
 	}
 	return &ConverseHandlers{
 		deps: d,
-		conv: agent.NewConversation(d.LLM, persona.DefaultCharacter()),
-		geo:  geometry.NewService(d.Pool, d.Clock, d.Log),
+		conv: agent.NewConversation(d.LLM, persona.DefaultCharacter()).
+			WithCharacters(agent.NewCharacterStore(d.Pool, d.Log)),
+		geo: geometry.NewService(d.Pool, d.Clock, d.Log),
 	}
 }
 
@@ -144,7 +145,7 @@ func (h *ConverseHandlers) Converse(w http.ResponseWriter, r *http.Request) {
 		return nil
 	}
 
-	emitErr := h.conv.RespondStream(ctx, req.History, req.Message, req.OnScreen,
+	emitErr := h.conv.RespondStream(ctx, req.ProjectID, req.History, req.Message, req.OnScreen,
 		func(ev agent.StreamEvent) error {
 			switch ev.Kind {
 			case "speech":

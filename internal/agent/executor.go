@@ -65,6 +65,10 @@ type Executor struct {
 	// SEC-03). Nil is a legal deployment — one that declares no secrets — and a
 	// call referencing a handle is then refused rather than passed through.
 	secrets *secrets.Broker
+	// characters resolves the project's character (PRD RSN-04). Same shape and
+	// same reason as secrets: nil executes every project with the character this
+	// executor was constructed with.
+	characters *CharacterStore
 }
 
 // NewExecutor wires an executor.
@@ -82,6 +86,9 @@ func NewExecutor(client llm.Client, registry *tools.Registry, repo *engine.Repos
 // every caller and test uses, and so that a deployment without one is an
 // explicit shape rather than a nil someone forgot to pass.
 func (e *Executor) WithSecrets(b *secrets.Broker) *Executor { e.secrets = b; return e }
+
+// WithCharacters makes execution honour the project's critique intensity.
+func (e *Executor) WithCharacters(s *CharacterStore) *Executor { e.characters = s; return e }
 
 // Outcome is what an execution cycle produced.
 type Outcome struct {
@@ -120,7 +127,11 @@ func (e *Executor) Execute(ctx context.Context, tc *TaskContext, workspace strin
 	if note := e.secretsNote(ctx, tc); note != "" {
 		framing += note
 	}
-	messages := tc.Messages(persona.SystemPrompt(e.char, framing))
+	// Resolved once per cycle and used for both the fresh prompt and the rebuilt
+	// one below, so a task cannot be planned under one character and resumed
+	// under another because the row changed mid-flight.
+	char := e.characters.For(ctx, tc.Goal.ProjectID, e.char)
+	messages := tc.Messages(persona.SystemPrompt(char, framing))
 
 	// Resume the conversation from a checkpoint when one exists, so an
 	// interrupted task does not start its reasoning over.
@@ -133,7 +144,7 @@ func (e *Executor) Execute(ctx context.Context, tc *TaskContext, workspace strin
 			// trusting the stored copy: identity is reconstructed every cycle,
 			// and a checkpoint written under an older persona version must not
 			// resurrect it.
-			messages = append([]llm.Message{{Role: llm.System, Content: persona.SystemPrompt(e.char, executorFraming)}},
+			messages = append([]llm.Message{{Role: llm.System, Content: persona.SystemPrompt(char, executorFraming)}},
 				saved.Messages...)
 		} else if err != nil {
 			e.log.WarnWith(ctx, logx.EventTaskResumeDegraded, err,

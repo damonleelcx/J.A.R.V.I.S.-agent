@@ -121,9 +121,11 @@ func run() error {
 	// whatever puts secrets in the environment — systemd, Kubernetes, a vault
 	// agent — stays the custodian.
 	broker := secrets.NewBroker(pool, secrets.EnvLookup{}, clk, log)
+	characters := agent.NewCharacterStore(pool, log)
 	executor := agent.NewExecutor(client, registry, repo, budget, character, clk, log, pool).
-		WithSecrets(broker)
-	verifier := agent.NewVerifier(client, character)
+		WithSecrets(broker).
+		WithCharacters(characters)
+	verifier := agent.NewVerifier(client, character).WithCharacters(characters)
 
 	log.Info(ctx, logx.EventWorkerReady,
 		"concurrency", cfg.Engine.WorkerConcurrency,

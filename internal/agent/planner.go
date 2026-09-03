@@ -64,12 +64,19 @@ Reply with JSON only, matching this shape exactly:
 type Planner struct {
 	client llm.Client
 	char   persona.Character
+	// characters resolves the project's character (PRD RSN-04). Optional, the
+	// same shape as Executor.secrets: nil means every project is planned with the
+	// character this planner was constructed with.
+	characters *CharacterStore
 }
 
 // NewPlanner returns a planner.
 func NewPlanner(client llm.Client, char persona.Character) *Planner {
 	return &Planner{client: client, char: char}
 }
+
+// WithCharacters makes planning honour the project's critique intensity.
+func (p *Planner) WithCharacters(s *CharacterStore) *Planner { p.characters = s; return p }
 
 // PlannedTask is one node the planner proposes.
 type PlannedTask struct {
@@ -125,7 +132,8 @@ func (p *Planner) Plan(ctx context.Context, goal *engine.Goal, priorPlan *PlanRe
 	resp, err := p.client.Complete(ctx, llm.Request{
 		Role: llm.RolePlanner,
 		Messages: []llm.Message{
-			{Role: llm.System, Content: persona.SystemPrompt(p.char, plannerFraming)},
+			{Role: llm.System, Content: persona.SystemPrompt(
+				p.characters.For(ctx, goal.ProjectID, p.char), plannerFraming)},
 			{Role: llm.User, Content: user.String()},
 		},
 		JSONMode:  true,

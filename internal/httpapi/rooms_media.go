@@ -428,7 +428,7 @@ func (h *RoomHandlers) Ask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	reply, err := h.conv.Respond(r.Context(), roomHistory(room), req.Text, "")
+	reply, err := h.conv.Respond(r.Context(), room.ProjectID, roomHistory(room), req.Text, "")
 	if err != nil {
 		WriteError(w, r, h.deps.Log, err)
 		return

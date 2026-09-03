@@ -55,6 +55,14 @@ func NewIntake(client llm.Client, char persona.Character, engineCfg config.Engin
 	}
 }
 
+// WithCharacters makes planning honour the project's critique intensity
+// (PRD RSN-04). Forwarded to the planner: Intake owns one, and a caller that had
+// to reach through to configure it would be a caller that can forget to.
+func (i *Intake) WithCharacters(s *CharacterStore) *Intake {
+	i.planner = i.planner.WithCharacters(s)
+	return i
+}
+
 // DraftRequest is the work as described by a person.
 type DraftRequest struct {
 	// OwnerID is the account the goal belongs to. Required: PRD SAF-05 — work

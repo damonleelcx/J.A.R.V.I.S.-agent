@@ -62,12 +62,18 @@ Reply with JSON only:
 type Verifier struct {
 	client llm.Client
 	char   persona.Character
+	// characters resolves the project's character (PRD RSN-04). Optional; nil
+	// verifies every project with the constructed character.
+	characters *CharacterStore
 }
 
 // NewVerifier returns a verifier.
 func NewVerifier(client llm.Client, char persona.Character) *Verifier {
 	return &Verifier{client: client, char: char}
 }
+
+// WithCharacters makes verification honour the project's critique intensity.
+func (v *Verifier) WithCharacters(s *CharacterStore) *Verifier { v.characters = s; return v }
 
 // Verdict is a verification result.
 type Verdict struct {
@@ -133,7 +139,8 @@ func (v *Verifier) Verify(ctx context.Context, tc *TaskContext, outcome *Outcome
 	resp, err := v.client.Complete(ctx, llm.Request{
 		Role: llm.RoleVerifier,
 		Messages: []llm.Message{
-			{Role: llm.System, Content: persona.SystemPrompt(v.char, verifierFraming)},
+			{Role: llm.System, Content: persona.SystemPrompt(
+				v.characters.For(ctx, tc.Goal.ProjectID, v.char), verifierFraming)},
 			{Role: llm.User, Content: b.String()},
 		},
 		JSONMode:  true,

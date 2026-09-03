@@ -79,7 +79,8 @@ func NewRoomHandlers(d Deps) *RoomHandlers {
 		hub:  hub,
 	}
 	if d.LLM != nil {
-		h.conv = agent.NewConversation(d.LLM, persona.DefaultCharacter())
+		h.conv = agent.NewConversation(d.LLM, persona.DefaultCharacter()).
+			WithCharacters(agent.NewCharacterStore(d.Pool, d.Log))
 	}
 	if d.Config != nil && d.Config.Media.Enabled {
 		// The transcriber is optional and separately so: a deployment with audio

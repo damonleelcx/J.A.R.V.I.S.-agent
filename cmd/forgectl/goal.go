@@ -71,7 +71,8 @@ func cmdGoalNew(ctx context.Context, cfg *config.Config, log *logx.Logger, args 
 	// implementation of "draft, plan, activate" rather than two that drift —
 	// see agent.Intake.
 	client := llm.NewOpenAICompatible(cfg.LLM, log, clock.System{})
-	intake := agent.NewIntake(client, persona.DefaultCharacter(), cfg.Engine, clock.System{})
+	intake := agent.NewIntake(client, persona.DefaultCharacter(), cfg.Engine, clock.System{}).
+		WithCharacters(agent.NewCharacterStore(pool, log))
 
 	goal, err := intake.Draft(ctx, pool, agent.DraftRequest{
 		OwnerID:   ownerID,
@@ -170,7 +171,8 @@ func cmdGoalReplan(ctx context.Context, cfg *config.Config, log *logx.Logger, ar
 	// The same intake every other planning path uses, so a replan produces the
 	// plan the first attempt would have.
 	client := llm.NewOpenAICompatible(cfg.LLM, log, clock.System{})
-	intake := agent.NewIntake(client, persona.DefaultCharacter(), cfg.Engine, clock.System{})
+	intake := agent.NewIntake(client, persona.DefaultCharacter(), cfg.Engine, clock.System{}).
+		WithCharacters(agent.NewCharacterStore(pool, log))
 
 	fmt.Printf("planning %q with %s …\n", goal.Title, intake.PlannerModel())
 	stopTicker := startElapsedTicker("  still planning")

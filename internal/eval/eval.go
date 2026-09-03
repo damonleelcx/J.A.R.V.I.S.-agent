@@ -299,7 +299,9 @@ func (r *Runner) once(ctx context.Context, c Case, run int) Observation {
 
 	var history []agent.Turn
 	for _, message := range c.Turns {
-		reply, err := r.conv.Respond(ctx, history, message, onScreen(obs.Last()))
+		// No project: the evaluation harness measures FORGE at its default
+		// character, so a run's score cannot drift with somebody's setting.
+		reply, err := r.conv.Respond(ctx, "", history, message, onScreen(obs.Last()))
 		if err != nil {
 			obs.Err = err
 			break

@@ -358,6 +358,12 @@ const (
 	EventTTSInterrupted Event = "forge.tts.interrupted"
 	EventTTSFailed      Event = "forge.tts.failed"
 	EventTTSEmpty       Event = "forge.tts.empty_response"
+
+	// A project's character could not be read, so FORGE argued and explained at
+	// the default intensity (PRD RSN-04). WARN rather than silence: a deployment
+	// where every call quietly reverts to the default looks exactly like one
+	// where nobody has changed the setting.
+	EventCharacterFallback Event = "forge.character.fallback"
 )
 
 func init() {
@@ -375,5 +381,6 @@ func init() {
 		EventMediaForwardFailed, EventMediaRefused, EventMediaStateChanged,
 		EventASRTranscribed, EventASRFailed, EventASREmptyResponse, EventASRDropped,
 		EventTTSSpoke, EventTTSInterrupted, EventTTSFailed, EventTTSEmpty,
+		EventCharacterFallback,
 	)
 }

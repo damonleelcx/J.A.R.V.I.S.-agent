@@ -88,6 +88,7 @@ type VariantSaved struct {
 // parses. The scan buys the latency; the full parse keeps the correctness.
 func (c *Conversation) RespondStream(
 	ctx context.Context,
+	projectID string,
 	history []Turn,
 	message string,
 	workspaceNote string,
@@ -99,7 +100,7 @@ func (c *Conversation) RespondStream(
 	if !ok {
 		// Fall back to the buffered path rather than failing. A client that
 		// cannot stream still produces correct answers, just later.
-		reply, err := c.Respond(ctx, history, message, workspaceNote)
+		reply, err := c.Respond(ctx, projectID, history, message, workspaceNote)
 		if err != nil {
 			return err
 		}
@@ -141,7 +142,7 @@ func (c *Conversation) RespondStream(
 		return errs.New(op, errs.CodeValidationFailed).WithDetail("empty message")
 	}
 
-	messages := c.buildMessages(history, message, workspaceNote)
+	messages := c.buildMessages(c.characters.For(ctx, projectID, c.char), history, message, workspaceNote)
 
 	var accumulated strings.Builder
 	speechSent := false
@@ -245,9 +246,9 @@ func (c *Conversation) RespondStream(
 }
 
 // buildMessages assembles the request, shared by both paths.
-func (c *Conversation) buildMessages(history []Turn, message, workspaceNote string) []llm.Message {
+func (c *Conversation) buildMessages(char persona.Character, history []Turn, message, workspaceNote string) []llm.Message {
 	messages := []llm.Message{
-		{Role: llm.System, Content: persona.SystemPrompt(c.char, converseFraming)},
+		{Role: llm.System, Content: persona.SystemPrompt(char, converseFraming)},
 	}
 	const keep = 16
 	if len(history) > keep {

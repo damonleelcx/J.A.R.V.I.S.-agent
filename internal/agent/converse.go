@@ -120,11 +120,20 @@ const NotVerifiedFallback = "Nothing here has been analysed or checked. There is
 type Conversation struct {
 	client llm.Client
 	char   persona.Character
+	// characters resolves the project's character (PRD RSN-04). Optional; nil
+	// answers every project with the character this conversation was built with.
+	characters *CharacterStore
 }
 
 // NewConversation returns the conversational surface.
 func NewConversation(client llm.Client, char persona.Character) *Conversation {
 	return &Conversation{client: client, char: char}
+}
+
+// WithCharacters makes conversation honour the project's critique intensity.
+func (c *Conversation) WithCharacters(s *CharacterStore) *Conversation {
+	c.characters = s
+	return c
 }
 
 // Turn is one exchange, as stored and replayed.
@@ -177,7 +186,11 @@ type Reply struct {
 }
 
 // Respond produces one turn of conversation.
-func (c *Conversation) Respond(ctx context.Context, history []Turn, message string, workspaceNote string) (*Reply, error) {
+//
+// projectID selects the character to answer in (PRD RSN-04). Empty is legal and
+// means the constructed default — the evaluation harness has no project, and a
+// deployment that never sets a character never needs one.
+func (c *Conversation) Respond(ctx context.Context, projectID string, history []Turn, message string, workspaceNote string) (*Reply, error) {
 	const op = "agent.Conversation.Respond"
 
 	if strings.TrimSpace(message) == "" {
@@ -185,7 +198,8 @@ func (c *Conversation) Respond(ctx context.Context, history []Turn, message stri
 	}
 
 	messages := []llm.Message{
-		{Role: llm.System, Content: persona.SystemPrompt(c.char, converseFraming)},
+		{Role: llm.System, Content: persona.SystemPrompt(
+			c.characters.For(ctx, projectID, c.char), converseFraming)},
 	}
 	// Bounded history. A workbench session runs for hours; replaying all of it
 	// on every turn spends the budget on repetition and eventually exceeds the
