@@ -861,6 +861,12 @@
         if (!g) return;
         state.requirements = (g.nodes || []).filter(function (n) { return BUILDABLE_KINDS[n.kind]; });
         renderRequirements();
+        /* The rules in force on this project, which arrive with the graph they
+         * apply to. Before this the ceiling existed only in a terminal, so
+         * somebody in the browser met a refusal with no way to find out what it
+         * was about. */
+        state.domain = g.domain || null;
+        renderIndustry();
       })
       .catch(function () { /* No requirements panel is a smaller loss than a broken workbench. */ });
   }
@@ -1418,15 +1424,37 @@
     });
   }
 
+  /* What the domain means once it is settled: which rules, how far work may go,
+   * and — when a ceiling has been raised — who that rests on and what was NOT
+   * established by it.
+   *
+   * A statement, not a control. The industry belongs to the project from the
+   * moment one exists and the server refuses a change through this path, so
+   * offering the select here would offer an act that cannot happen. What a
+   * person needs instead is the answer to "why was that refused". */
+  function industryStatement() {
+    var d = state.domain;
+    if (!d) return '';
+    var html = '<div class="industry"><div class="settled">' +
+      esc(d.industry || d.pack) + ' · ceiling ' + esc(d.ceiling) + '</div>' +
+      '<div class="foot">' + esc(d.boundary) +
+      ' Work above ' + esc(d.ceiling) + ' here would require ' + esc(d.requires) + '.</div>';
+    if (d.authority) {
+      /* The holder and the caveat are rendered TOGETHER, always. Showing the
+       * name without it would present a claim as a credential. */
+      html += '<div class="foot raised">Ceiling raised on ' + esc(d.authority.holder) +
+        (d.authority.note ? ' (' + esc(d.authority.note) + ')' : '') + '. ' +
+        esc(d.authority.caveat) + '</div>';
+    }
+    return html + '</div>';
+  }
+
   function renderIndustry() {
     var el = $('industry');
     var head = $('industry-head');
     if (!el || !head) return;
-    var html = industryPicker();
+    var html = industryPicker() || industryStatement();
     if (!html) {
-      /* Hidden once a project exists. The industry belongs to the project from
-       * then on and the server refuses a change through this path, so leaving
-       * the control on screen would offer an act that cannot happen. */
       el.classList.add('hidden');
       head.style.display = 'none';
       return;
@@ -1434,6 +1462,7 @@
     head.style.display = '';
     el.classList.remove('hidden');
     el.innerHTML = html;
+    head.textContent = state.projectID ? 'Domain' : 'Industry';
     var pick = document.getElementById('industry-pick');
     if (pick) pick.addEventListener('change', function () {
       state.industry = pick.value;

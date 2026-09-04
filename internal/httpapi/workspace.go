@@ -177,7 +177,53 @@ func (h *WorkspaceHandlers) Graph(w http.ResponseWriter, r *http.Request) {
 			Reads: fmt.Sprintf(def.Reads, g.Title(e.FromID), g.Title(e.ToID)), Note: e.Note,
 		})
 	}
-	WriteJSON(w, http.StatusOK, map[string]any{"nodes": nodes, "edges": edges})
+	// The rules in force, alongside the graph they apply to.
+	//
+	// # Why this rides here rather than on an endpoint of its own
+	//
+	// The workbench needs to show a person which domain their project is worked
+	// under and how far work may go in it — otherwise the ceiling exists only in
+	// a terminal, and somebody in the browser meets a refusal with no way to find
+	// out what it was about. That is the shape of the defect this whole area
+	// removed: a rule that never reaches the surface people use.
+	//
+	// A new endpoint was the obvious move and is the wrong one. This handler
+	// already fires at exactly the right moment — the workbench calls it the
+	// first time a project exists — and the domain is not a separate subject: the
+	// graph review below reports gaps that the DOMAIN decides. An optional field
+	// on a response that is already fetched beats a second round trip and a
+	// second thing to authorise.
+	//
+	// Membership is already checked above, so the recorded holder's name goes no
+	// further than the people who can read the project's graph.
+	body := map[string]any{"nodes": nodes, "edges": edges}
+	if domain, err := h.svc.PackFor(r.Context(), h.deps.Pool, projectID); err == nil {
+		d := map[string]any{
+			"pack": string(domain.Pack), "industry": domain.Industry,
+			"boundary": domain.Summary, "requires": domain.Requires,
+			"ceiling": string(domain.MaxTier),
+		}
+		if a, err := h.svc.ReviewAuthorityFor(r.Context(), h.deps.Pool, projectID); err == nil && a.Recorded() {
+			d["ceiling"] = string(domain.CeilingWith(true))
+			// Everything a reader needs to judge the raised ceiling, including the
+			// part that is NOT established. A client showing the holder without the
+			// caveat would present a claim as a credential — see
+			// docs/qualified-review.md.
+			d["authority"] = map[string]any{
+				"holder": a.Holder, "note": a.Note,
+				"recorded_by": a.RecordedBy, "recorded_at": a.RecordedAt,
+				"verified": false,
+				"caveat": "RECORDED, NOT VERIFIED. This build cannot check a qualification: " +
+					"there is no registry to consult and no credential to validate. The " +
+					"ceiling rose because a named person accepted responsibility, not " +
+					"because a licence was established.",
+			}
+		}
+		body["domain"] = d
+	}
+	// A domain that cannot be read is omitted rather than faked. The graph is
+	// still worth returning: a broken pack column must not take the panel down.
+	WriteJSON(w, http.StatusOK, body)
 }
 
 // Review handles GET /v1/workspace/review?project_id=.
