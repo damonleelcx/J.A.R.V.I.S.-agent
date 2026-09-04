@@ -142,6 +142,7 @@
     /* The picker retires the moment a project exists. Its whole job was to be
      * available BEFORE one did. */
     if (wasNew) renderIndustry();
+    if (wasNew) loadMembers();
   }
 
   /* The conversation, brought back (PRD RSN-07).
@@ -1543,6 +1544,139 @@
        * under, above a sentence describing a different domain, is worse than
        * no sentence at all. */
       renderIndustry();
+    });
+  }
+
+  /* # The people on this project
+   *
+   * Membership decides what everyone here may do, so it is worth seeing next to
+   * the domain that decides how far the work may go. Loaded when a project
+   * appears and re-read after any change, for the reason the domain panel is
+   * re-read: the SERVER decides who holds what, and a panel that patched its own
+   * copy would drift from the thing being enforced.
+   *
+   * `can_manage` from the response decides whether the controls appear. It is an
+   * affordance and not the gate — the writes authorise themselves.
+   */
+  function loadMembers() {
+    if (!state.projectID) return;
+    fetch('/v1/projects/' + encodeURIComponent(state.projectID) + '/members')
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (b) {
+        state.members = b || null;
+        renderMembers();
+      })
+      .catch(function () { /* A missing people panel is a smaller loss than a broken workbench. */ });
+  }
+
+  function memberRow(m, canManage, roles) {
+    var who = esc(m.display_name || m.user_id) + (m.is_you ? ' <span class="you">you</span>' : '');
+    var html = '<li><div class="who">' + who +
+      (m.email ? '<div class="addr">' + esc(m.email) + '</div>' : '') + '</div>';
+    if (!canManage) {
+      return html + '<span class="role">' + esc(m.role) + '</span></li>';
+    }
+    var opts = roles.map(function (r) {
+      return '<option value="' + esc(r.role) + '"' +
+        (r.role === m.role ? ' selected' : '') + '>' + esc(r.role) + '</option>';
+    }).join('');
+    return html +
+      '<select data-role-pick data-user="' + esc(m.user_id) + '" ' +
+      'aria-label="Role for ' + esc(m.display_name || m.user_id) + '">' + opts + '</select>' +
+      '<button class="btn-sm" data-member-remove data-user="' + esc(m.user_id) + '" ' +
+      'aria-label="Remove ' + esc(m.display_name || m.user_id) + '">Remove</button></li>';
+  }
+
+  function renderMembers() {
+    var el = $('members');
+    var head = $('members-head');
+    if (!el || !head) return;
+    var m = state.members;
+    if (!m || !m.members) {
+      el.classList.add('hidden');
+      head.style.display = 'none';
+      return;
+    }
+    head.style.display = '';
+    el.classList.remove('hidden');
+
+    var roles = m.roles || [];
+    var html = '<ul class="members">' + m.members.map(function (row) {
+      return memberRow(row, m.can_manage, roles);
+    }).join('') + '</ul>';
+
+    if (m.can_manage) {
+      html += '<div class="member-add">' +
+        '<input type="text" id="member-email" placeholder="Email of somebody to add" ' +
+        'aria-label="Email of somebody to add">' +
+        '<select id="member-role" aria-label="Role for the person being added">' +
+        roles.map(function (r) {
+          return '<option value="' + esc(r.role) + '"' +
+            (r.role === 'contributor' ? ' selected' : '') + '>' + esc(r.role) + '</option>';
+        }).join('') + '</select>' +
+        '<button class="btn-sm go" id="member-add">Add</button></div>';
+      /* What each role actually permits, from the server's own catalogue. A
+       * person choosing between four words needs to know what they mean. */
+      var chosen = roles.filter(function (r) { return r.role === (state.memberRole || 'contributor'); })[0];
+      if (chosen) html += '<div class="foot">' + esc(chosen.role) + ' ' + esc(chosen.does) + '</div>';
+    }
+    if (state.membersError) {
+      html += '<div class="note bad">' + esc(state.membersError) + '</div>';
+    }
+    el.innerHTML = html;
+    bindMemberControls();
+  }
+
+  function memberRequest(method, path, body) {
+    return fetch('/v1/projects/' + encodeURIComponent(state.projectID) + '/members' + path, {
+      method: method,
+      headers: { 'Content-Type': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined
+    }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (b) {
+        if (!r.ok) {
+          var e = (b && b.error) || {};
+          throw new Error(e.message || ('Request failed (' + r.status + ')'));
+        }
+        /* Every write answers with the whole list, so the panel never has to
+         * guess what it left behind — including when the server refused part of
+         * what was asked. */
+        state.members = b;
+        state.membersError = null;
+        renderMembers();
+      });
+    }).catch(function (err) {
+      state.membersError = err.message;
+      renderMembers();
+    });
+  }
+
+  function bindMemberControls() {
+    Array.prototype.forEach.call(document.querySelectorAll('#members [data-role-pick]'), function (sel) {
+      sel.addEventListener('change', function () {
+        memberRequest('PUT', '/' + encodeURIComponent(sel.getAttribute('data-user')),
+          { role: sel.value });
+      });
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('#members [data-member-remove]'), function (b) {
+      b.addEventListener('click', function () {
+        memberRequest('DELETE', '/' + encodeURIComponent(b.getAttribute('data-user')), null);
+      });
+    });
+    var role = document.getElementById('member-role');
+    if (role) role.addEventListener('change', function () {
+      state.memberRole = role.value;
+      renderMembers();
+    });
+    var add = document.getElementById('member-add');
+    if (add) add.addEventListener('click', function () {
+      var email = (document.getElementById('member-email') || {}).value || '';
+      if (!email.trim()) {
+        state.membersError = 'An email address is required to name who is being added.';
+        renderMembers();
+        return;
+      }
+      memberRequest('POST', '', { email: email, role: (role && role.value) || 'contributor' });
     });
   }
 

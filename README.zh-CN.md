@@ -189,6 +189,33 @@ forgectl project industry --project prj_... --set "Civil engineering"
 到「未知领域」并打 WARN。读失败时放宽权限是安全缺陷；丢掉术语只是答得更差
 （`docs/bugfix/2026-09-04-the-pack-was-written-and-never-read.md`）。
 
+### 成员关系就是鉴权路径，所以它必须可见
+
+`owner_id` 只记录谁创建了项目，**不是**访问路径——每一次鉴权判断读的都是
+`forge_project_members`。这份名单此前只能从终端查询，于是浏览器可以告诉一个人「你不是
+owner」，却无法告诉他谁才是。
+
+```
+GET    /v1/projects/{id}/members            任何成员
+POST   /v1/projects/{id}/members            仅 owner   {"email": "...", "role": "..."}
+PUT    /v1/projects/{id}/members/{user_id}  仅 owner   {"role": "..."}
+DELETE /v1/projects/{id}/members/{user_id}  仅 owner
+```
+
+**读**只在 handler 里把关，别处都不把关——`access.Service.Members` 是一个不接收调用者的
+查询——所以那一道检查是名单与任何人之间唯一的屏障。**写**只在 service 里把关：`SetRole`
+和 `Remove` 各自检查权限，并且各自拒绝把项目变成「没有 owner」（**最后一个 owner** 既不能
+被移除也不能被降级）。一条鉴权规则有两份拷贝，就等于同一个问题有两个答案，所以两层都不
+复述对方的规则。
+
+非成员得到的是 **404** 而不是 403：他不会因此得知这个项目存在。角色不足的成员得到 403
+并附上他缺什么——他本来就知道项目在那里，「找 owner 改一下你的角色」比一条死路有用。
+
+姓名对所有成员可见，**邮箱只给能据此行动的人**。按邮箱添加确实会暴露某个地址是否已注册，
+而注册接口本就如此（这是有明确记录的决定）——并且这条路径要求已认证且仅限 owner，注册接口
+两者皆无。权限检查在解析地址**之前**执行，因此低权限成员无法把这个接口当成「某账号是否
+存在」的探测器。
+
 ### 天花板可以被抬高，并且它会明说「什么都没有被核验」
 
 上面那个 r1 上限是对的，同时也是一条死路：一个确实有执业工程师在场的部署，没有任何办法

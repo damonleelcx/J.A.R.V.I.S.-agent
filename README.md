@@ -539,6 +539,39 @@ domain" and logs. Widening a permission on a failed read is a safety defect;
 losing the vocabulary is a worse answer
 (`docs/bugfix/2026-09-04-the-pack-was-written-and-never-read.md`).
 
+### Membership is the authorisation path, so it is visible
+
+`owner_id` records who created a project and is **not** an access path — every
+authorisation decision reads `forge_project_members`. That list was answerable
+only from a terminal, so the browser could tell somebody they were not an owner
+without telling them who was.
+
+```
+GET    /v1/projects/{id}/members            any member
+POST   /v1/projects/{id}/members            owner only   {"email": "...", "role": "..."}
+PUT    /v1/projects/{id}/members/{user_id}  owner only   {"role": "..."}
+DELETE /v1/projects/{id}/members/{user_id}  owner only
+```
+
+The **read** is gated in the handler and nowhere else — `access.Service.Members`
+is a query that takes no caller — so that check is the only thing between a
+membership list and anyone who asks. The **writes** are gated in the service and
+nowhere else: `SetRole` and `Remove` each check the permission themselves and
+each refuse to strand a project by removing or demoting its **last owner**. Two
+copies of an authorisation rule is two answers to the same question, so neither
+layer restates the other's.
+
+A non-member gets **404**, not 403: they do not learn the project exists. A
+member whose role is too low gets 403 with what they lack — they already know it
+is there, and "ask an owner to change your role" is more use than a dead end.
+
+Names are shown to every member; **addresses only to somebody who can act on
+them**. Adding by email does reveal whether an address has an account, which
+sign-up already does by a documented decision — and this path is authenticated
+and owner-only, where sign-up is neither. The authority check runs *before* the
+address is resolved, so the endpoint cannot be used as an account-existence
+oracle by anyone with a lesser role.
+
 ### A ceiling can rise, and it says out loud that nothing was verified
 
 The r1 limit above was correct and it was a dead end: a deployment that genuinely

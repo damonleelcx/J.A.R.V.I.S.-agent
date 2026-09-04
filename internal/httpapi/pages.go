@@ -744,6 +744,14 @@ const pageTemplates = `
     <div class="h" id="industry-head" style="display:none">Industry</div>
     <div id="industry" class="hidden"></div>
 
+    <!-- Who is in this project (PRD SEC-02, AGT-03). Membership is the single
+         authorisation path in this build, so this list is the answer to "who can
+         see and do what here" — and it was answerable only from a terminal,
+         which meant somebody could learn they were not an owner without being
+         able to see who was. -->
+    <div class="h" id="members-head" style="display:none">People</div>
+    <div id="members" class="hidden"></div>
+
     <div class="h" id="proposal-head" style="display:none">Proposed work</div>
     <div id="proposal" class="hidden"></div>
   </div>
