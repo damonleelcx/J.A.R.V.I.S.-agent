@@ -643,6 +643,14 @@ type Change struct {
 	TaskID *string
 	// Summary is the event's one line.
 	Summary string
+
+	// DerivedFrom names graph nodes this change was PRODUCED FROM — the
+	// requirements and constraints whose recorded words went into the work
+	// (PRD VIS-01, WRK-03).
+	//
+	// Ids are treated as untrusted: only those that turn out to be nodes of THIS
+	// project are linked. See deriveFromIn.
+	DerivedFrom []string
 }
 
 // RecordChange appends a version and, when the change belongs to a goal, writes
@@ -766,11 +774,104 @@ func (s *Service) RecordChangeIn(ctx context.Context, tx db.Querier, c Change) (
 	// The title is the path, and it stays true: an artifact is IDENTIFIED by its
 	// path (FindOrCreateArtifact looks it up that way), so a rename produces a
 	// different artifact rather than a stale title on this one.
-	if _, err := s.AnchorIn(ctx, tx, artifact.ProjectID, KindArtifact,
-		artifact.ID, c.InitiatorID, artifact.Path); err != nil {
+	anchor, err := s.AnchorIn(ctx, tx, artifact.ProjectID, KindArtifact,
+		artifact.ID, c.InitiatorID, artifact.Path)
+	if err != nil {
+		return nil, nil, err
+	}
+	if err := s.deriveFromIn(ctx, tx, anchor, c.DerivedFrom, c.InitiatorID); err != nil {
 		return nil, nil, err
 	}
 	return artifact, version, nil
+}
+
+// deriveFromIn records what this change was produced from, in the caller's
+// transaction.
+//
+// # Why derives_from and not satisfies
+//
+// The workbench's "build from" flow reads a requirement's own words into the
+// turn and the model proposes geometry. What is true afterwards is that the
+// geometry WAS PRODUCED FROM that requirement. What is NOT true is that it meets
+// it: nothing checked that, and satisfies reads "this meets that".
+//
+// Recording satisfies would be the system asserting an unverified claim on its
+// own behalf — the exact thing the split between Verification and Disposition
+// exists to prevent, and the exact thing PRD RSN-06 forbids. It would also be
+// read that way by anything that traverses the graph later: a requirement would
+// look met because somebody once described it out loud.
+//
+// derives_from is the provenance edge and says only what happened. If the shape
+// does turn out to meet the requirement, a person or a test says so, with the
+// edge that means it.
+//
+// # Why the ids are filtered rather than trusted
+//
+// They arrive from a client. A node that is not in this project cannot be linked
+// truthfully at ALL, and attempting it would fail a foreign key or the
+// cross-project check — inside a transaction that is carrying the artifact
+// version, which would then be lost to a stray id. So the nodes are resolved
+// first, in one read, and only real ones are linked.
+//
+// # Why the write is all-or-nothing for the ones that DO resolve
+//
+// Same argument as the anchor above. Provenance that is usually recorded is
+// worse than provenance that is either recorded or absent, because nobody
+// checks the former. EnsureEdge cannot fail for a reason of its own — the
+// endpoints have just been read, and the insert is ON CONFLICT DO NOTHING, so a
+// second turn built from the same requirement is a no-op rather than a
+// transaction-aborting unique violation.
+//
+// What was dropped is logged. A named id that resolved to nothing is a client
+// and a server disagreeing about what exists, and it must not pass in silence.
+func (s *Service) deriveFromIn(ctx context.Context, q db.Querier, anchor *Node,
+	from []string, createdBy string) error {
+
+	if len(from) == 0 || anchor == nil {
+		return nil
+	}
+	nodes, err := s.repo.ListNodes(ctx, q, NodeFilter{ProjectID: anchor.ProjectID, IDs: from})
+	if err != nil {
+		return err
+	}
+	found := map[string]bool{}
+	for i := range nodes {
+		found[nodes[i].ID] = true
+	}
+
+	var unresolved []string
+	for _, id := range from {
+		// The artifact's own anchor is skipped rather than refused: the schema
+		// forbids a self-edge, and a caller naming it has said something
+		// meaningless rather than something wrong.
+		if !found[id] && id != anchor.ID {
+			unresolved = append(unresolved, id)
+		}
+	}
+	if len(unresolved) > 0 {
+		s.log.Warn(ctx, logx.EventProvenanceUnresolved,
+			"project_id", anchor.ProjectID, "artifact_node_id", anchor.ID,
+			"unresolved", strings.Join(unresolved, ","),
+			"detail", "this change named nodes to derive from that are not in this project; "+
+				"they are not linked and the provenance recorded is therefore incomplete")
+	}
+
+	now := s.clock.Now()
+	for i := range nodes {
+		if nodes[i].ID == anchor.ID {
+			continue
+		}
+		e := &Edge{
+			ID: id.New(id.PrefixEdge), ProjectID: anchor.ProjectID, Kind: EdgeDerivesFrom,
+			FromID: anchor.ID, ToID: nodes[i].ID,
+			Note:      "generated from this at the workbench",
+			CreatedBy: createdBy, CreatedAt: now,
+		}
+		if err := s.repo.EnsureEdge(ctx, q, e); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // LogVersioned announces a committed version. Exported because RecordChangeIn

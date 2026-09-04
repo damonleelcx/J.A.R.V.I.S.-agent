@@ -253,12 +253,19 @@ const (
 	EventArtifactVersioned     Event = "forge.artifact.versioned"
 	EventArtifactVerified      Event = "forge.artifact.verified"
 	EventArtifactDispositioned Event = "forge.artifact.dispositioned"
+
+	// A change named nodes it was produced from and some of them are not in the
+	// project (PRD VIS-01, WRK-03). The change is still recorded and the ones
+	// that resolved are still linked; this says the provenance is incomplete,
+	// which from the outside looks identical to work that named nothing.
+	EventProvenanceUnresolved Event = "forge.node.provenance_unresolved"
 )
 
 func init() {
 	allEvents = append(allEvents,
 		EventNodeAdded, EventNodePromoted, EventArtifactVersioned,
 		EventArtifactVerified, EventArtifactDispositioned,
+		EventProvenanceUnresolved,
 	)
 }
 

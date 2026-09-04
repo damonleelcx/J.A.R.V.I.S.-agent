@@ -954,7 +954,12 @@
      * version, so the panel a person is looking at is not showing the state of
      * the project as it was before FORGE answered. */
     changed: function () {
-      if (state.panel === 'files' || state.panel === 'checks') load();
+      /* Every panel that is a reading of the project, not a hand-written pair.
+       * The pair was wrong the moment the Diagram was added: a turn that drew a
+       * new relation left the picture on screen showing the project as it was
+       * one turn ago, with nothing saying so. Held by NEEDS_PROJECT, which
+       * select() reads too, so the two cannot answer differently. */
+      if (NEEDS_PROJECT[state.panel]) load();
       else state.phase = 'idle';
     },
 

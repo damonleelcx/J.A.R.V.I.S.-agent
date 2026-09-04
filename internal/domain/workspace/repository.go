@@ -240,7 +240,12 @@ type NodeFilter struct {
 	ProjectID string
 	Kinds     []Kind
 	Statuses  []Status
-	Limit     int
+	// IDs narrows to specific nodes, and is how a caller ASKS WHICH OF THESE
+	// EXIST HERE. Nodes named by a client cannot be linked or acted on until
+	// they are known to be in this project, and answering that with one query
+	// is what keeps the check from being skipped.
+	IDs   []string
+	Limit int
 }
 
 // ListNodes returns a project's nodes, newest first.
@@ -254,9 +259,20 @@ func (r *Repository) ListNodes(ctx context.Context, q db.Querier, f NodeFilter) 
 	limit := f.Limit
 	if limit <= 0 {
 		limit = 500
+		// A lookup of named ids is answering "which of these exist", and the
+		// answer must cover all of them. Left at 500 a longer list would come
+		// back silently short, and the caller would read the missing rows as
+		// nodes that do not exist.
+		if n := len(f.IDs); n > limit {
+			limit = n
+		}
 	}
 	sql := `select ` + nodeColumns + ` from forge_nodes where project_id = $1`
 	args := []any{f.ProjectID}
+	if len(f.IDs) > 0 {
+		args = append(args, f.IDs)
+		sql += ` and id = any($` + strconv.Itoa(len(args)) + `)`
+	}
 	if len(f.Kinds) > 0 {
 		args = append(args, kindStrings(f.Kinds))
 		sql += ` and kind = any($` + strconv.Itoa(len(args)) + `)`
@@ -315,37 +331,85 @@ func scanEdge(row pgx.Row) (*Edge, error) {
 // rule is about what the nodes actually are. A caller that told us the kinds
 // would be telling us what it believes, and the belief is exactly the thing
 // being checked.
-func (r *Repository) CreateEdge(ctx context.Context, q db.Querier, e *Edge) error {
-	const op = "workspace.Repository.CreateEdge"
+// checkEdge resolves an edge's endpoints and refuses one the vocabulary does not
+// allow. Returns the two nodes so a caller can name them.
+//
+// Every check here is a READ or a comparison in Go. Nothing in it can leave a
+// failed statement behind, which is what lets EnsureEdge run inside a
+// transaction the caller owns — see the comment there.
+func (r *Repository) checkEdge(ctx context.Context, q db.Querier, e *Edge) (*Node, *Node, error) {
+	const op = "workspace.Repository.checkEdge"
 
 	def, err := EdgeKindOf(e.Kind)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	if e.FromID == e.ToID {
-		return errs.New(op, errs.CodeValidationFailed).
+		return nil, nil, errs.New(op, errs.CodeValidationFailed).
 			WithDetail("a node cannot %s itself", e.Kind)
 	}
 	from, err := r.FindNode(ctx, q, e.FromID)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	to, err := r.FindNode(ctx, q, e.ToID)
 	if err != nil {
-		return err
+		return nil, nil, err
 	}
 	if from.ProjectID != to.ProjectID {
-		return errs.New(op, errs.CodeValidationFailed).
+		return nil, nil, errs.New(op, errs.CodeValidationFailed).
 			WithDetail("those nodes are in different projects; the graph does not span projects")
 	}
 	if e.ProjectID == "" {
 		e.ProjectID = from.ProjectID
 	}
 	if e.ProjectID != from.ProjectID {
-		return errs.New(op, errs.CodeValidationFailed).
+		return nil, nil, errs.New(op, errs.CodeValidationFailed).
 			WithDetail("this edge claims project %s but its endpoints are in %s", e.ProjectID, from.ProjectID)
 	}
 	if err := def.Permits(from.Kind, to.Kind); err != nil {
+		return nil, nil, err
+	}
+	return from, to, nil
+}
+
+// EnsureEdge draws a relation that may already hold, inside a transaction the
+// caller owns.
+//
+// # Why this is not CreateEdge with the conflict ignored
+//
+// CreateEdge inserts and recovers from the unique violation by reporting a
+// conflict. That is correct on its own connection and WRONG inside a
+// transaction: in Postgres a failed statement aborts the whole transaction, so
+// by the time the caller decides the conflict was harmless, everything else it
+// was writing is already lost. RecordChangeIn writes a version, an event and an
+// anchor beside this; a second turn built from the same requirement would draw
+// an edge that already exists, and would have destroyed the version it was
+// recording. This is the same trap EnsureAnchor exists for, one edge over.
+//
+// ON CONFLICT DO NOTHING, so the statement cannot fail for a reason the caller
+// would have forgiven.
+func (r *Repository) EnsureEdge(ctx context.Context, q db.Querier, e *Edge) error {
+	const op = "workspace.Repository.EnsureEdge"
+
+	if _, _, err := r.checkEdge(ctx, q, e); err != nil {
+		return err
+	}
+	if _, err := q.Exec(ctx, `
+		insert into forge_edges (id, project_id, kind, from_id, to_id, note, created_by, created_at)
+		values ($1,$2,$3,$4,$5,$6,$7,$8)
+		on conflict do nothing`,
+		e.ID, e.ProjectID, string(e.Kind), e.FromID, e.ToID, e.Note, e.CreatedBy, e.CreatedAt); err != nil {
+		return errs.Wrap(op, errs.CodeDatabaseUnavail, err)
+	}
+	return nil
+}
+
+func (r *Repository) CreateEdge(ctx context.Context, q db.Querier, e *Edge) error {
+	const op = "workspace.Repository.CreateEdge"
+
+	from, to, err := r.checkEdge(ctx, q, e)
+	if err != nil {
 		return err
 	}
 

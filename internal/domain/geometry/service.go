@@ -100,6 +100,12 @@ func (s *Service) Save(ctx context.Context, n NewVariant) (*Variant, error) {
 
 		GoalID:  n.GoalID,
 		Summary: "proposed " + doc.Name,
+
+		// The same list that is recorded in Inputs above, drawn as edges too.
+		// Inputs answers "what was this made from" to somebody reading the
+		// version; the edges answer it to anybody walking the graph, which is
+		// what WRK-03 asks the graph to be able to do.
+		DerivedFrom: n.DerivedFrom,
 	})
 	if err != nil {
 		return nil, err

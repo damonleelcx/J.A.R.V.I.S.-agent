@@ -1582,11 +1582,10 @@ therefore cannot answer "what satisfies this requirement", and the panel draws
 what is true: a column of requirements and a column of files with nothing between
 them.
 
-**Left alone deliberately.** Writing an edge on every turn is a change to the
-main conversational path with its own consequences — it changes the shape of the
-graph that `graph review` reasons over, and it decides on the user's behalf which
-relation was meant (`satisfies`? `derives_from`?). That is a decision to put to
-somebody, not to slip into a panel commit. The panel names the gap instead: nodes
+**Left alone deliberately at the time**, and closed in wave 9.9 once it had been
+asked for: writing an edge on every turn is a change to the main conversational
+path, it changes the shape of the graph that `graph review` reasons over, and it
+decides which relation was meant. The panel names the gap either way: nodes
 joined to nothing are listed under their own heading, because a node with no
 edges is invisible *as an absence* — it looks exactly like a node whose relations
 are off screen.
@@ -1638,6 +1637,99 @@ composed in the browser. Selecting a node lit its 3 relations, dimmed the other
 4, and filtered the sentence list to match. A live turn moved Telemetry from four
 em dashes to 699 ms / 1103 ms / 2525 tokens / "quoted memory", updating while the
 panel was open. No console errors.
+
+---
+
+## Wave 9.9 — the build-from flow records where the shape came from · **DONE**
+
+Wave 9.8's Diagram drew a project as **8 nodes, 0 relations**. Geometry generated
+*from* a requirement recorded nothing that joined the two, so "what was built
+from this requirement?" and "where did this shape come from?" were answerable
+only by reading every version's `inputs` blob by hand. They are edges now.
+
+### The one judgement call: `derives_from`, never `satisfies`
+
+`satisfies` is the tempting edge and it is the wrong one. Nothing checked that
+the geometry meets the requirement — a model was told what the requirement said
+and proposed a shape. `satisfies` reads *"this meets that"*, so recording it
+would have the system assert an unverified claim **on its own behalf**: exactly
+what the split between `Verification` and `Disposition` exists to prevent, what
+SAF-05 means by "the AI approved it is never acceptable authority", and what
+RSN-06 forbids in so many words. Every later traversal would read the requirement
+as met because somebody once described it out loud.
+
+`derives_from` is the provenance edge and says only what happened. If the shape
+does turn out to meet the requirement, a person or a test says so, with the edge
+that means it. `TestProvenanceIsDerivedFromAndNeverSatisfies` holds it, with that
+reasoning in the failure message.
+
+### Where it is written, and the trap that decided it
+
+`workspace.Change` gained `DerivedFrom`, so the edges are drawn in
+`RecordChangeIn` — the same transaction as the version, the timeline event and
+the anchor. Same argument as the anchor in wave 9.7: provenance that is *usually*
+recorded is worse than provenance that is either recorded or absent, because
+nobody checks the former.
+
+That forced `Repository.EnsureEdge`. `CreateEdge` inserts and recovers from the
+unique violation by reporting a conflict — correct on its own connection, and
+**wrong inside a transaction**: in Postgres a failed statement aborts the whole
+transaction, so by the time the caller decides the conflict was harmless, the
+version it was writing is already gone. This is the trap `EnsureAnchor` was
+written for, one edge over, and it would have fired on the **second build from
+any requirement** — the common case, not an edge case. `ON CONFLICT DO NOTHING`.
+
+Proven live rather than argued: a second turn against the same assembly and the
+same requirement left **2 versions and still exactly 1 edge**. Under the drill
+that swaps `EnsureEdge` for `CreateEdge`, that same second turn fails with
+`CONFLICT` and takes its version with it.
+
+### Client ids are resolved before they are trusted
+
+The node ids come from a browser. One naming a node in another project — or one
+deleted between the tick and the save — cannot be linked truthfully at all, and
+attempting it would fail a foreign key or the cross-project check *inside the
+transaction carrying the artifact version*. A stray id would then cost somebody
+the work they had just done.
+
+So the ids are resolved in one read first (`NodeFilter.IDs`), only nodes of this
+project are linked, and what was dropped is logged as
+`forge.node.provenance_unresolved` rather than passing in silence. The artifact's
+own anchor is skipped for the same reason — `forge_edges` forbids a self-edge,
+and a violated check is a failed statement.
+
+### Six fences, each confirmed red under a mutation of what it guards
+
+The edge never drawn · `satisfies` instead of `derives_from` · `CreateEdge`
+instead of `EnsureEdge` (fails with the version lost, exactly as described) ·
+client ids trusted unresolved · the self-edge skip removed · and, through
+`POST /v1/converse` with a stub model that actually returns geometry, the handler
+never populating `DerivedFrom`. That last one exists because the domain fences
+all pass whether or not anything ever *sets* the field — the same shape as the
+defect already recorded in `converse_requirements_test.go`.
+
+### One bug this found in wave 9.8, live
+
+`ForgeStage.changed()` re-read the project for a hardcoded pair of panels —
+`files` and `checks` — which was already stale when the Diagram was added. A turn
+that drew a new relation left the picture on screen showing the project as it was
+one turn ago, with nothing saying so. It reads the same `NEEDS_PROJECT` table
+`select()` does now, so the two cannot answer differently. Verified live: the
+Diagram went 9 nodes → 10 while it was open, without switching panels.
+
+**Not fenced**, and worth stating: this repository has no JavaScript test
+harness, so the guard is structural (one table, two readers) rather than
+automated.
+
+### Verified on the running application
+
+Ticking "Bracket must bolt to a 40mm hole pattern" and asking for a mounting
+plate produced `geometry/mounting-plate.forge.json` joined to that requirement by
+one `derives_from` edge, drawn on the Diagram with its arrowhead into the
+requirement and reading *"geometry/mounting-plate.forge.json derives from Bracket
+must bolt to a 40mm hole pattern — generated from this at the workbench"*. A
+second turn on the same plate added a version and no second edge. A third turn
+with nothing ticked added a node and no edge, which is also correct.
 
 ---
 

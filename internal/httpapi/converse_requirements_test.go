@@ -183,3 +183,99 @@ func TestTheEndpointWritesRequirementsIntoTheTurn(t *testing.T) {
 		t.Errorf("the person's own words were lost:\n%s", last)
 	}
 }
+
+// prototypeLLM answers with geometry, so a turn actually SAVES something.
+//
+// stubLLM above returns prototype:null, which is right for the tests that only
+// care what reached the model — and useless for the one below, where the whole
+// question is what the save wrote into the graph.
+type prototypeLLM struct{ saw []llm.Message }
+
+func (s *prototypeLLM) Complete(_ context.Context, req llm.Request) (*llm.Response, error) {
+	s.saw = req.Messages
+	return &llm.Response{
+		Content: `{"speech":"Here is a bracket.","detail":"","proposed_goal":null,` +
+			`"prototype":{"name":"bracket","units":"mm",` +
+			`"parts":[{"id":"plate","name":"plate","shape":"box",` +
+			`"size":{"width":40,"height":5,"depth":40},` +
+			`"position":[0,0,0],"rotation":[0,0,0]}],` +
+			`"assumptions":["5mm thick, chosen not given"],` +
+			`"not_verified":["nothing here has been analysed"]}}`,
+		FinishReason: "stop",
+		// VIS-04 refuses a variant that cannot name its generator, and
+		// keepGeometry reports that refusal instead of saving. Without this the
+		// test below would fail for a reason that has nothing to do with edges.
+		Model: "stub-model",
+	}, nil
+}
+func (s *prototypeLLM) ModelFor(llm.Role) string { return "stub-model" }
+
+// Building from a requirement joins the geometry to it, through the endpoint.
+//
+// # Why this exists on top of the domain fences
+//
+// internal/domain/workspace/provenance_test.go proves that a change carrying
+// DerivedFrom draws the edge. It passes whether or not anything ever SETS
+// DerivedFrom — and the field is set in exactly one place, three layers up, from
+// the ids this handler resolved. That is the same shape as the defect recorded
+// above this file: "requirementsFor may be correct and simply not called".
+//
+// So this drives POST /v1/converse with from_nodes and then reads the project
+// graph, which is what a person opening the Diagram panel does.
+func TestBuildingFromARequirementJoinsTheGeometryToIt(t *testing.T) {
+	w := workspaceHarness(t)
+	ctx := context.Background()
+
+	req, err := w.svc.Add(ctx, workspace.NewNode{
+		ProjectID: w.project, Kind: workspace.KindRequirement,
+		Title: "Must bolt to a 40mm hole pattern",
+		Body:  "Two M5 clearance holes, 40mm apart.",
+		How:   claim.Observed, CreatedBy: w.owner.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	deps := w.h.deps
+	deps.LLM = &prototypeLLM{}
+	h := NewConverseHandlers(deps)
+
+	body := `{"message":"Model the bracket to meet that.","project_id":"` + w.project +
+		`","from_nodes":["` + req.ID + `"]}`
+	r := httptest.NewRequest("POST", "/v1/converse", strings.NewReader(body))
+	r = r.WithContext(context.WithValue(ctx, ctxKeyUser, w.owner))
+	rec := httptest.NewRecorder()
+	h.Converse(rec, r)
+
+	if !strings.Contains(rec.Body.String(), `"kind":"variant"`) {
+		t.Fatalf("the turn saved no geometry, so there was nothing to join: %d %s",
+			rec.Code, rec.Body.String())
+	}
+
+	g, err := w.svc.Load(ctx, w.project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var joined []string
+	for _, e := range g.Edges {
+		if e.ToID != req.ID {
+			continue
+		}
+		joined = append(joined, string(e.Kind))
+		if e.Kind == workspace.EdgeSatisfies {
+			t.Error("the endpoint recorded `satisfies`. Nothing checked that this shape meets " +
+				"the requirement; the system would be asserting an unverified claim on its own " +
+				"behalf (PRD RSN-06, SAF-05).")
+		}
+	}
+	if len(joined) == 0 {
+		t.Fatalf("geometry was built FROM %q and the graph does not say so.\n"+
+			"DerivedFrom is set in one place — the NewVariant this handler builds — and it may "+
+			"be correct in the domain and simply never populated, which leaves the project graph "+
+			"a column of requirements and a column of files with nothing between them.",
+			req.Title)
+	}
+	if len(joined) != 1 || joined[0] != string(workspace.EdgeDerivesFrom) {
+		t.Fatalf("expected one derives_from edge into the requirement, got %v", joined)
+	}
+}

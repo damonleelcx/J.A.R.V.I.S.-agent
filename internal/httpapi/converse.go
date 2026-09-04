@@ -379,6 +379,13 @@ func (h *ConverseHandlers) keepGeometry(r *http.Request, req converseRequest, pr
 			"history_turns": len(req.History),
 			"model":         model,
 		},
+		// PRD WRK-03. The same server-resolved ids as `from_nodes` above, so the
+		// project graph records that this geometry was produced from those
+		// requirements — a derives_from edge, which is provenance and not a
+		// claim that the shape meets them. Until this, the graph held a column
+		// of requirements and a column of files with nothing between them, and
+		// "what was built from this requirement?" had no answer.
+		DerivedFrom: req.FromNodes,
 	})
 	if err != nil {
 		h.deps.Log.WarnWith(r.Context(), logx.EventGeometrySaved, err, "user_id", user.ID)

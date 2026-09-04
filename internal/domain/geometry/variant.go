@@ -150,6 +150,15 @@ type NewVariant struct {
 	// chain, when the proposal happened inside a goal. Empty is legal and
 	// common: the workbench conversation runs outside one.
 	GoalID string
+	// DerivedFrom names the recorded requirements and constraints this geometry
+	// was generated FROM (PRD VIS-01). The same ids that appear in Inputs, and
+	// for the same reason they do — except that these also become edges in the
+	// project graph, so the question "where did this shape come from" is
+	// answerable by traversal and not only by reading a JSON blob.
+	//
+	// Provenance, never satisfaction: see workspace.Service.deriveFromIn for why
+	// the edge is derives_from and not satisfies.
+	DerivedFrom []string
 }
 
 // Validate refuses a variant that cannot state one of VIS-04's six.
