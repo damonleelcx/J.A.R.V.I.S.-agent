@@ -18,6 +18,7 @@ import (
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/persona"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/errs"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/logx"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/text"
 )
 
 // ConverseHandlers serve the workbench conversation.
@@ -511,12 +512,20 @@ func (h *ConverseHandlers) keepGeometry(r *http.Request, req converseRequest, pr
 // thing this field exists to record.
 const ledgerFieldLimit = 2000
 
-func forLedger(s string) string {
-	if len(s) <= ledgerFieldLimit {
-		return s
-	}
-	return s[:ledgerFieldLimit] + fmt.Sprintf("… [truncated; %d characters in the original]", len(s))
-}
+// forLedger shortens one recorded input to fit.
+//
+// # What this used to do, and why it mattered
+//
+// It counted BYTES. The constant above says characters and always has, so a
+// message in any script that is not ASCII was cut at a third of the stated
+// length — and cut wherever the 2000th byte happened to land, which for UTF-8 is
+// usually the middle of a character. Nothing failed: json.Marshal substitutes a
+// replacement character for the broken sequence, Postgres stores it, and a
+// dimension or a word ends up as "" in a row kept for provenance (PRD WRK-04).
+//
+// text.Clip counts characters, cuts on a boundary, and reports the original
+// length in the same unit as the limit.
+func forLedger(s string) string { return text.Clip(s, ledgerFieldLimit) }
 
 // historyFor reads what was said before this turn, and how much of it is not
 // being shown.

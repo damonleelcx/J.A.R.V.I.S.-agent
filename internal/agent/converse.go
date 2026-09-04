@@ -11,6 +11,7 @@ import (
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/llm"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/persona"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/errs"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/text"
 )
 
 // converseFraming is the role instruction for the workbench conversation.
@@ -244,20 +245,14 @@ func HistoryContent(speech, detail string) string {
 // request the provider refuses.
 const historyDetailLimit = 2000
 
-// clipRunes shortens text and SAYS it did.
+// clipRunes shortens a recorded detail and says it did.
 //
-// By runes rather than bytes: cutting a UTF-8 sequence in half produces bytes
-// that are not text, and the model would receive a replacement character where a
-// dimension used to be. Silent truncation is the worse half of the bug — a
+// The rule — count characters, cut on a boundary, mark the cut — is
+// platform/text.Clip, because it was written here and separately in the ledger
+// and one of the two got it wrong. What is local is WHY this caller wants it: a
 // detail that quietly loses its ending leaves FORGE reasoning from part of its
 // own argument with nothing to indicate the rest existed.
-func clipRunes(s string, limit int) string {
-	r := []rune(s)
-	if len(r) <= limit {
-		return s
-	}
-	return string(r[:limit]) + fmt.Sprintf("… [truncated; %d characters in the original]", len(r))
-}
+func clipRunes(s string, limit int) string { return text.Clip(s, limit) }
 
 // HistoryWindow is how many earlier turns a conversation carries into a request.
 //

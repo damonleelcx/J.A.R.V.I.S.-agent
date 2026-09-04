@@ -1982,8 +1982,8 @@ runes, and the truncation is marked.
 
 By **runes**, not bytes: cutting a UTF-8 sequence in half produces bytes that are
 not text, and the model would receive a replacement character where a dimension
-used to be. (`forLedger` in httpapi has the same latent flaw on the stored
-inputs; left alone, and noted here.)
+used to be. (`forLedger` in httpapi had the same flaw on the stored inputs; fixed
+in wave 9.13, along with the rule itself moving somewhere both callers read it.)
 
 ### Five fences, each confirmed red under a mutation
 
@@ -2001,6 +2001,77 @@ corrosion resistance"* — and put a table in the detail, where alone it named
 three did you say was prone to corrosion, and which alloy did you name for it?"*
 → **"Steel is prone to corrosion, and I named 1045 steel as the example alloy."**
 Neither fact was ever spoken.
+
+---
+
+## Wave 9.13 — a cut that lands between characters · **DONE**
+
+`forLedger` shortens what a person said before it goes into a variant's `inputs`
+— WRK-04's record of what a change was made from. It counted **bytes**, while the
+constant beside it said characters and always had.
+
+Two consequences, and the second is the one that damages the record:
+
+- A message in any script that is not ASCII was cut at **a third** of the stated
+  length. 2000 bytes of Chinese is about 666 characters.
+- The cut landed wherever the 2000th byte fell, which for UTF-8 is usually the
+  middle of a character. Nothing failed loudly — `json.Marshal` substitutes a
+  replacement character for the broken sequence and Postgres stores it happily —
+  so a dimension or a word ends its life as `` in a row kept for provenance.
+
+### The rule moved to where both callers read it
+
+Wave 9.12 wrote the same thing correctly in `internal/agent` and left this one
+alone. Two copies of a four-line rule, one of them wrong, is the argument for
+`internal/platform/text.Clip`: count characters, cut on a boundary, say how much
+was lost and say it in the same unit as the limit. Both callers now go through
+it, and each keeps its own comment about WHY it wants a bound.
+
+This is past the "extract on the third occurrence" line rather than short of it —
+see the survey below.
+
+### Measured on the running application
+
+A 3002-character Chinese request that produced geometry:
+
+| | stored |
+|---|---|
+| characters kept | **2000**, plus a 46-character notice |
+| bytes stored | 6048 |
+| tail | `…外径… [truncated; 3002 characters in the original]` |
+| replacement characters anywhere in `forge_artifact_versions.inputs` | **0** |
+
+Under the old code the same message would have been cut to about 666 characters,
+ending mid-character, and the notice would have claimed "9006 characters".
+
+A second request of 1622 characters — 4866 bytes — is now stored **whole**. The
+old code would have truncated it, because it was over the limit in the only unit
+the code was actually measuring.
+
+### Five fences, each confirmed red under a mutation
+
+Cutting by bytes · counting the limit in bytes · truncating silently · the ledger
+caller hand-rolling it again · and the ledger caller's own end-to-end check
+against the shared rule.
+
+Three of the five mutations did not compile on the first attempt, which is a red
+test that proves nothing — an unused import each time. Rewritten to compile, they
+failed with the sentences the fences exist to catch.
+
+### The same defect elsewhere, found and NOT fixed here
+
+A survey of every byte-slice truncation in the tree. These three are the same
+bug and are left for a decision rather than swept up with this one:
+
+| where | what it truncates | why it matters |
+|---|---|---|
+| `agent/untrusted.go` `excerpt` | untrusted content, into the log and the timeline | SEC-04's record of a suspected injection can end mid-character |
+| `tools/workspace.go` `truncateStr` | command and file output shown to the model | the model reads a replacement character where a value was |
+| `llm/llm.go` `truncate` | provider error snippets | least harmful — it at least says "bytes" |
+
+Two more looked like the same thing and are **correct**: `identity/service.go`
+slices a `[]rune`, and `geometry/repository.go` slices a slug that
+`strings.Map` has already reduced to `[a-z0-9-]`.
 
 ---
 

@@ -2,10 +2,12 @@ package httpapi
 
 import (
 	"context"
+	"fmt"
 	"net/http/httptest"
 	"reflect"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/claim"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/conversation"
@@ -344,5 +346,54 @@ func TestEveryRecordedSpeakerMapsToADistinctModelRole(t *testing.T) {
 	// arrive as FORGE's.
 	if modelRole(conversation.RoleForge) != "forge" {
 		t.Errorf("FORGE's recorded turns reach the model as %q", modelRole(conversation.RoleForge))
+	}
+}
+
+// A recorded input is cut on a character boundary, and says how much it lost.
+//
+// # The defect this holds
+//
+// forLedger counted BYTES while the constant beside it said characters. A
+// message in any script that is not ASCII was therefore cut at a third of the
+// stated length, and cut wherever the 2000th byte happened to land — for UTF-8,
+// usually the middle of a character. Nothing failed loudly: json.Marshal
+// substitutes a replacement character for the broken sequence and Postgres
+// stores it, so a dimension or a word ends its life as "�" in a row kept
+// for provenance (PRD WRK-04).
+//
+// Fenced here as well as in platform/text because this is the caller whose data
+// is a permanent record rather than a log line.
+func TestARecordedInputIsCutOnACharacterBoundary(t *testing.T) {
+	// Every rune is three bytes, so a byte-based cut lands inside one, and the
+	// whole thing is well past the limit either way.
+	said := strings.Repeat("壁厚二点五毫米。", 400)
+
+	got := forLedger(said)
+
+	if !utf8.ValidString(got) {
+		t.Fatal("the stored input is not valid UTF-8: the cut landed inside a character.\n" +
+			"json.Marshal will substitute a replacement character and the ledger will keep it, " +
+			"so the record of what the geometry was asked for contains a symbol nobody typed.")
+	}
+	head := strings.SplitN(got, "…", 2)[0]
+	if n := utf8.RuneCountInString(head); n != ledgerFieldLimit {
+		t.Errorf("kept %d characters against a limit of %d — the limit is being read as bytes, "+
+			"so anything that is not ASCII is cut at a third of the stated length",
+			n, ledgerFieldLimit)
+	}
+	if !strings.Contains(got, "truncated") {
+		t.Error("the input was shortened silently; the record no longer says it is partial")
+	}
+	if !strings.Contains(got, fmt.Sprintf("%d characters", utf8.RuneCountInString(said))) {
+		t.Errorf("the notice counts in a different unit from the limit: %q",
+			got[len(got)-80:])
+	}
+}
+
+// Anything that fits is stored exactly as it was said.
+func TestAnOrdinaryInputIsStoredUntouched(t *testing.T) {
+	const said = "make the base plate 8mm thick"
+	if got := forLedger(said); got != said {
+		t.Errorf("a short message was altered on the way into the record: %q", got)
 	}
 }
