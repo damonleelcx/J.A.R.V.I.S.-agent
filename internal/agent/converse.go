@@ -197,6 +197,68 @@ type Turn struct {
 	Content string `json:"content"`
 }
 
+// HistoryContent renders one of FORGE's replies as a LATER turn should see it.
+//
+// # Why both halves reach the next turn
+//
+// A reply has two: the speech, kept short because it is spoken aloud, and the
+// detail, which is where the reasoning goes because the screen can carry it
+// (PRD §5.3). Only the speech used to travel, so FORGE could explain a choice at
+// length and then, one question later, have no idea why it had chosen it. "Why
+// did you say 3mm?" — the most ordinary follow-up there is — was the one thing
+// it could not answer about its own answer.
+//
+// # Why they stay labelled instead of running together
+//
+// The label is load-bearing, not tidiness. What keeps FORGE's speech short is
+// largely its sense of how it spoke last time, and a model whose own previous
+// turns arrive as long paragraphs learns that long spoken replies are normal.
+// The evaluation suite floors spoken replies at 70 words
+// (internal/eval/scorers.go); saying which half was spoken is what keeps that
+// floor measuring the same thing after the detail started travelling with it.
+//
+// ONE producer, called by the workbench (from its record) and by the evaluation
+// harness (from the reply it just received). An eval that assembles a turn's
+// history differently from the product is measuring a different system.
+func HistoryContent(speech, detail string) string {
+	speech = strings.TrimSpace(speech)
+	detail = strings.TrimSpace(detail)
+	if detail == "" {
+		return speech
+	}
+	shown := "[Shown on screen with that reply, not spoken aloud: " +
+		clipRunes(detail, historyDetailLimit) + "]"
+	if speech == "" {
+		return shown
+	}
+	return speech + "\n\n" + shown
+}
+
+// historyDetailLimit bounds ONE recorded detail inside a later request.
+//
+// HistoryWindow bounds how many turns come back; nothing bounded how LONG one of
+// them could be, and the record is permanent now — so a single reply carrying a
+// long table would ride along in every request for the rest of the conversation.
+// Two thousand characters is longer than any detail observed here and short
+// enough that a full window of them is a few thousand tokens rather than a
+// request the provider refuses.
+const historyDetailLimit = 2000
+
+// clipRunes shortens text and SAYS it did.
+//
+// By runes rather than bytes: cutting a UTF-8 sequence in half produces bytes
+// that are not text, and the model would receive a replacement character where a
+// dimension used to be. Silent truncation is the worse half of the bug — a
+// detail that quietly loses its ending leaves FORGE reasoning from part of its
+// own argument with nothing to indicate the rest existed.
+func clipRunes(s string, limit int) string {
+	r := []rune(s)
+	if len(r) <= limit {
+		return s
+	}
+	return string(r[:limit]) + fmt.Sprintf("… [truncated; %d characters in the original]", len(r))
+}
+
 // HistoryWindow is how many earlier turns a conversation carries into a request.
 //
 // # Why it is exported

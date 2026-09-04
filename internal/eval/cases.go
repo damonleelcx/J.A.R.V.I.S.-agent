@@ -58,6 +58,15 @@ func Cases() []Case {
 			Scorers: []Scorer{
 				partIDsSurviveARevision(),
 				geometryDeclaresAConvertibleUnit(),
+				// Added when FORGE's own DETAIL started travelling into the next
+				// turn's history. That is the mechanism most likely to make
+				// spoken replies grow — a model whose previous turns arrive as
+				// long paragraphs learns that long speech is normal — and this
+				// was the only multi-turn case in the suite, so the scorer that
+				// would notice was attached exclusively to cases with no history
+				// at all. The suite could not measure the risk the change
+				// introduced until it was here.
+				speechIsShort(),
 			},
 		},
 		{

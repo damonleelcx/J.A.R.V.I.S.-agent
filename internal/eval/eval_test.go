@@ -476,3 +476,45 @@ func TestOnScreen_IsEmptyWhenNothingIsDrawn(t *testing.T) {
 		t.Fatalf("no reply at all produced %q", note)
 	}
 }
+
+// The harness carries a turn forward exactly as the product does.
+//
+// # Why this fence exists
+//
+// This has gone wrong once already, and expensively. The on-screen note was
+// added to the product and this harness kept scoring a model that had never been
+// shown it, so part-id stability measured 1 run in 4 for reasons that had
+// nothing to do with the clause being measured. An eval that assembles a turn's
+// history differently from the product is measuring a different system, and it
+// reports the difference as a finding about the model.
+//
+// So the shared half goes through one function. If somebody changes this back to
+// reply.Speech, the product would carry its detail forward and the suite would
+// not — and the suite would then be the last place to notice.
+func TestTheHarnessCarriesATurnForwardTheWayTheProductDoes(t *testing.T) {
+	reply := &agent.Reply{
+		Speech: "Three millimetres is standard.",
+		Detail: "ISO 7089 lists 3mm for an M24 washer.",
+	}
+	turns := carryForward("how thick?", reply)
+
+	if len(turns) != 2 {
+		t.Fatalf("an exchange is two turns, got %d", len(turns))
+	}
+	if turns[0].Role != "user" || turns[0].Content != "how thick?" {
+		t.Errorf("the person's turn is wrong: %+v", turns[0])
+	}
+	if turns[1].Role != "forge" {
+		t.Errorf("FORGE's turn is attributed to %q", turns[1].Role)
+	}
+	if want := agent.HistoryContent(reply.Speech, reply.Detail); turns[1].Content != want {
+		t.Errorf("the harness builds FORGE's history differently from the product.\n"+
+			" harness: %q\n product: %q\n"+
+			"The suite would then be measuring a FORGE that sees less than the real one, and "+
+			"would report the difference as a finding about the model.", turns[1].Content, want)
+	}
+	if !strings.Contains(turns[1].Content, "ISO 7089") {
+		t.Error("the detail is not carried forward here, so every multi-turn case measures a " +
+			"model with less of its own answer than the product gives it")
+	}
+}

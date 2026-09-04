@@ -541,7 +541,7 @@ func (h *ConverseHandlers) historyFor(ctx context.Context, convID, userID string
 	}
 	out := make([]agent.Turn, 0, len(turns))
 	for i := range turns {
-		out = append(out, agent.Turn{Role: modelRole(turns[i].Role), Content: spoken(&turns[i])})
+		out = append(out, agent.Turn{Role: modelRole(turns[i].Role), Content: agent.HistoryContent(turns[i].Text, turns[i].Detail)})
 	}
 	return out, total - len(turns)
 }
@@ -560,21 +560,6 @@ func modelRole(r conversation.Role) string {
 		return "forge"
 	}
 	return "user"
-}
-
-// spoken is the text of a turn as the model should see it.
-//
-// The speech, which is what the client used to send. The detail — the long-form
-// half the screen carries — is deliberately NOT folded in: that would change what
-// the model is given at the same time as changing where it comes from, and only
-// one of those is this change. The fallback exists because a reply may be all
-// detail and no speech, and an empty assistant message is rejected outright by
-// some providers.
-func spoken(t *conversation.Turn) string {
-	if strings.TrimSpace(t.Text) != "" {
-		return t.Text
-	}
-	return t.Detail
 }
 
 // keepSaid records one half of a turn, and never fails the turn.

@@ -1885,15 +1885,12 @@ requirements it injects.
 The constant is exported and read by both the caller and `buildMessages`, so the
 two cannot disagree about how far back a turn can see.
 
-### What deliberately did NOT change
+### Deliberately not changed here, and changed in 9.12
 
-The model is given the **speech** of each recorded turn, which is exactly what
-the client used to send. The record also holds the `detail` — the long-form half
-the screen carries — and folding that in would improve the model's context while
-changing what it is given at the same time as changing where it comes from. Only
-one of those is this change. (The fallback to `detail` when a reply was all
-detail and no speech is not that: an empty assistant message is rejected outright
-by some providers.)
+The model was given the **speech** of each recorded turn, which is exactly what
+the client used to send. Folding in the `detail` would have changed what the
+model is given at the same time as changing where it comes from, and only one of
+those was this change. It was then asked for; see wave 9.12.
 
 ### Five fences, each confirmed red under a mutation
 
@@ -1913,6 +1910,97 @@ The request body now carries `message`, `project_id`, `conversation_id` and
 with `VALIDATION_FAILED`. And across a reload, with the page sending nothing:
 *"Remember: the fixture is called Kestrel"* → reload → *"What is the fixture
 called?"* → **"The fixture is called Kestrel."**
+
+---
+
+## Wave 9.12 — FORGE can say why it said that · **DONE**
+
+A reply has two halves: the **speech**, kept short because it is spoken aloud,
+and the **detail**, which is where the reasoning goes because the screen can
+carry it (PRD §5.3). Only the speech reached the next turn. So FORGE could set
+out three materials with a trade-off for each, and then, one question later, have
+no idea what it had said about any of them — *"why did you say 3mm?"*, the most
+ordinary follow-up there is, was the one thing it could not answer about its own
+answer.
+
+Both halves travel now.
+
+### The label is load-bearing, not tidiness
+
+They arrive as two halves, marked: the speech, then
+`[Shown on screen with that reply, not spoken aloud: …]`.
+
+What keeps FORGE's speech short is largely its sense of how it spoke last time. A
+model whose own previous turns arrive as long paragraphs learns that long SPOKEN
+replies are normal — and speech staying short is a product rule the evaluation
+suite floors at 70 words. Running the two halves together would have traded a
+measured behaviour for an unmeasured one.
+
+### One producer, because this has gone wrong before
+
+`agent.HistoryContent` is called by the workbench (from its record) and by the
+evaluation harness (from the reply it just received). An eval that assembles a
+turn's history differently from the product is measuring a different system —
+which has already happened here once, expensively: the on-screen note was added
+to the product, the harness kept scoring a model that had never been shown it,
+and part-id stability measured 1 run in 4 for reasons that had nothing to do with
+the clause being measured.
+
+### The suite could not see the risk this change introduced
+
+`a-revision-is-recognisable-as-one` is the **only multi-turn case in the suite**,
+and it did not carry the `spoken reply stays short` scorer. Every case that did
+was single-turn — which is to say, every case that could measure whether history
+lengthens speech had no history at all. The scorer is on the multi-turn case now.
+That is not a bonus; without it this change would have been unmeasurable.
+
+### Measured, before and after
+
+Three repeats of the multi-turn case against `qwen-plus`, with the new scorer in
+place both times and the only difference being whether the detail travelled:
+
+| | part ids (tracked) | unit declared (floor 100%) | spoken reply short (floor 90%) |
+|---|---|---|---|
+| **before** — speech only | 3/3 | 3/3 | 3/3 |
+| **after** — detail folded in | 3/3 | 3/3 | 3/3 |
+
+Longest spoken replies after the change: **37, 33 and 27 words**, against a
+ceiling of 70.
+
+**What this does not establish:** the before run was not `--verbose`, so its word
+counts were not captured and there is no numeric comparison — only that the
+ceiling held on both sides and that the after side is nowhere near it. Three runs
+of one case on one model is a measurement of this run, which is what the suite
+says about itself.
+
+### One detail is bounded, and says when it was cut
+
+`HistoryWindow` bounds how many turns come back; nothing bounded how LONG one of
+them could be, and the record is permanent — so one reply carrying a long table
+would ride along in every request for the rest of the conversation. Two thousand
+runes, and the truncation is marked.
+
+By **runes**, not bytes: cutting a UTF-8 sequence in half produces bytes that are
+not text, and the model would receive a replacement character where a dimension
+used to be. (`forLedger` in httpapi has the same latent flaw on the stored
+inputs; left alone, and noted here.)
+
+### Five fences, each confirmed red under a mutation
+
+The detail never travelling · the two halves run together unlabelled · truncation
+by bytes instead of runes · the harness dropping the detail while the product
+carries it · and the product dropping it end to end, from the record to the
+model.
+
+### Verified on the running application
+
+FORGE was asked for three materials with the comparison on screen. It spoke one
+sentence — *"aluminium, steel, and brass, each balancing weight, strength, and
+corrosion resistance"* — and put a table in the detail, where alone it named
+**1045** steel and called it prone to corrosion. After a reload: *"Which of those
+three did you say was prone to corrosion, and which alloy did you name for it?"*
+→ **"Steel is prone to corrosion, and I named 1045 steel as the example alloy."**
+Neither fact was ever spoken.
 
 ---
 

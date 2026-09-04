@@ -322,3 +322,64 @@ func TestAConversationLongerThanTheWindowSaysSo(t *testing.T) {
 			"being applied", carried, agent.HistoryWindow)
 	}
 }
+
+// FORGE is shown its own detail, not only what it said aloud.
+//
+// # What this closes
+//
+// A reply's reasoning lives in the detail — the long-form half the screen
+// carries while the speech stays short (PRD §5.3). Only the speech used to reach
+// the next turn, so FORGE could explain a choice at length and then, one
+// question later, have no idea why it had chosen it. "Why did you say 3mm?" is
+// the most ordinary follow-up there is, and it was the one thing FORGE could not
+// answer about its own answer.
+//
+// The domain fences and the agent's unit tests prove the pieces. This proves the
+// path: what the RECORD holds is what the model is handed.
+func TestTheModelIsShownItsOwnDetail(t *testing.T) {
+	w := workspaceHarness(t)
+	ctx := context.Background()
+
+	talk := conversation.NewService(w.h.deps.Pool, w.h.deps.Clock, w.h.deps.Log)
+	convID, err := talk.Resolve(ctx, "", w.owner.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := talk.Record(ctx, conversation.Said{
+		ConversationID: convID, OwnerID: w.owner.ID,
+		Role: conversation.RoleHuman, Text: "how thick should the washer be?",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := talk.Record(ctx, conversation.Said{
+		ConversationID: convID, OwnerID: w.owner.ID, Role: conversation.RoleForge,
+		Text:   "Three millimetres.",
+		Detail: "ISO 7089 lists 3mm for an M24 washer; thinner ones exist for shim stacks.",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	saw, _ := converseWith(t, w, `{"message":"why did you say that?","conversation_id":"`+convID+`"}`)
+
+	var carried, labelled bool
+	for _, m := range saw {
+		if m.Role != llm.Assistant {
+			continue
+		}
+		if strings.Contains(m.Content, "ISO 7089") {
+			carried = true
+		}
+		if strings.Contains(m.Content, "not spoken aloud") {
+			labelled = true
+		}
+	}
+	if !carried {
+		t.Fatalf("the record holds FORGE's detail and the model was not shown it. Asked why it "+
+			"answered as it did, FORGE has only the sentence it spoke.\nSaw: %+v", saw)
+	}
+	if !labelled {
+		t.Errorf("the detail reached the model with nothing marking it as unspoken. Previous " +
+			"turns that read as long paragraphs teach the model that long SPOKEN replies are " +
+			"normal, and speech staying short is a product rule the suite floors at 70 words.")
+	}
+}

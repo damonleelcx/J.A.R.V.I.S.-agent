@@ -307,12 +307,31 @@ func (r *Runner) once(ctx context.Context, c Case, run int) Observation {
 			break
 		}
 		obs.Replies = append(obs.Replies, reply)
-		history = append(history,
-			agent.Turn{Role: "user", Content: message},
-			agent.Turn{Role: "forge", Content: reply.Speech})
+		history = append(history, carryForward(message, reply)...)
 	}
 	obs.Elapsed = time.Since(start)
 	return obs
+}
+
+// carryForward turns one exchange into the history the NEXT turn is given.
+//
+// # Why this is a function rather than two lines inline
+//
+// It has to match what the product does, and the product's version lives three
+// packages away in the workbench handler. The shared half — how one of FORGE's
+// replies is rendered for a later turn — is agent.HistoryContent, and calling it
+// here is what stops this harness from measuring a FORGE that sees less than the
+// real one does. That has already happened once in this codebase: the on-screen
+// note was added to the product and the eval kept scoring a model that had never
+// been shown it, so a clause measured 1 run in 4 for reasons that were nothing
+// to do with the clause.
+//
+// Extracted so a fence can hold the two together without a network call.
+func carryForward(message string, reply *agent.Reply) []agent.Turn {
+	return []agent.Turn{
+		{Role: "user", Content: message},
+		{Role: "forge", Content: agent.HistoryContent(reply.Speech, reply.Detail)},
+	}
 }
 
 // onScreen describes what the workspace would be showing, so a second turn
