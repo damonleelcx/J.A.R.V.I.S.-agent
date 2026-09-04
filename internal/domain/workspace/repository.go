@@ -131,6 +131,50 @@ func (r *Repository) FindAnchor(ctx context.Context, q db.Querier, projectID str
 	return n, nil
 }
 
+// EnsureAnchor creates an anchor node unless the project already has one, and
+// returns whichever node holds that anchor.
+//
+// # Why this is not CreateNode with the conflict recovered
+//
+// CreateNode inserts and, on a unique violation, reads the winner's row. That
+// is correct outside a transaction and wrong inside one: in Postgres a failed
+// statement aborts the whole transaction, so the recovery read would itself
+// fail with "current transaction is aborted" — and the caller would lose the
+// artifact version it was in the middle of writing.
+//
+// ON CONFLICT DO NOTHING never fails, so it is safe in a transaction somebody
+// else owns. This runs inside the one RecordChange holds.
+func (r *Repository) EnsureAnchor(ctx context.Context, q db.Querier, n *Node) (*Node, error) {
+	const op = "workspace.Repository.EnsureAnchor"
+
+	if err := n.Validate(); err != nil {
+		return nil, err
+	}
+	def, err := KindOf(n.Kind)
+	if err != nil {
+		return nil, err
+	}
+	if def.Anchor == AnchorNone {
+		return nil, errs.New(op, errs.CodeValidationFailed).
+			WithDetail("%s nodes own their content; there is nothing to anchor", n.Kind)
+	}
+	ref, _ := n.AnchorRef()
+
+	if _, err := q.Exec(ctx, `
+		insert into forge_nodes
+			(id, project_id, kind, title, body, how, source, status,
+			 goal_id, decision_id, owner_id, artifact_id, created_by, created_at, updated_at)
+		values ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$14)
+		on conflict do nothing`,
+		n.ID, n.ProjectID, string(n.Kind), n.Title, n.Body, string(n.How), n.Source, string(n.Status),
+		n.GoalID, n.DecisionID, n.OwnerID, n.ArtifactID, n.CreatedBy, n.CreatedAt); err != nil {
+		return nil, errs.Wrap(op, errs.CodeDatabaseUnavail, err)
+	}
+	// Read back rather than trusting the insert: on conflict nothing happened,
+	// and the node that exists is the one every edge already points at.
+	return r.FindAnchor(ctx, q, n.ProjectID, n.Kind, ref)
+}
+
 // UpdateNode rewrites a node's content, status and epistemic label.
 //
 // # Why there is no way to change a node's kind

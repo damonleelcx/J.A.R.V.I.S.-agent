@@ -89,6 +89,16 @@ func (s *Service) Add(ctx context.Context, n NewNode) (*Node, error) {
 // every traversal would then return each of its edges twice and neither anchor
 // would be the wrong one to delete.
 func (s *Service) Anchor(ctx context.Context, projectID string, kind Kind, refID, createdBy string) (*Node, error) {
+	return s.AnchorIn(ctx, s.pool, projectID, kind, refID, createdBy, "")
+}
+
+// AnchorIn is Anchor inside a transaction the caller owns, and commits nothing.
+//
+// title is optional and only meaningful for kinds whose anchored row has a name
+// worth reading in a traversal — an artifact's path, for instance. Empty leaves
+// the node titleless, which Graph.Title renders as "kind ref".
+func (s *Service) AnchorIn(ctx context.Context, q db.Querier, projectID string, kind Kind,
+	refID, createdBy, title string) (*Node, error) {
 	const op = "workspace.Service.Anchor"
 
 	def, err := KindOf(kind)
@@ -99,15 +109,9 @@ func (s *Service) Anchor(ctx context.Context, projectID string, kind Kind, refID
 		return nil, errs.New(op, errs.CodeValidationFailed).
 			WithDetail("%s nodes own their content; there is nothing to anchor", kind)
 	}
-	if existing, err := s.repo.FindAnchor(ctx, s.pool, projectID, kind, refID); err == nil {
-		return existing, nil
-	} else if !errs.Is(err, errs.CodeNotFound) {
-		return nil, err
-	}
-
 	now := s.clock.Now()
 	node := &Node{
-		ID: id.New(id.PrefixNode), ProjectID: projectID, Kind: kind,
+		ID: id.New(id.PrefixNode), ProjectID: projectID, Kind: kind, Title: title,
 		How: def.Default, Status: StatusAccepted,
 		CreatedBy: createdBy, CreatedAt: now, UpdatedAt: now,
 	}
@@ -122,14 +126,10 @@ func (s *Service) Anchor(ctx context.Context, projectID string, kind Kind, refID
 	case AnchorArtifact:
 		node.ArtifactID = &ref
 	}
-	if err := s.repo.CreateNode(ctx, s.pool, node); err != nil {
-		if errs.Is(err, errs.CodeConflict) {
-			// Lost the race. The winner's anchor is the one to use.
-			return s.repo.FindAnchor(ctx, s.pool, projectID, kind, refID)
-		}
-		return nil, err
-	}
-	return node, nil
+	// Find-or-create in one statement. The read-then-insert this used to do had
+	// a window between the two, and closing it with a recovered unique violation
+	// is only safe outside a transaction — see Repository.EnsureAnchor.
+	return s.repo.EnsureAnchor(ctx, q, node)
 }
 
 // Relate draws a typed edge.
@@ -739,6 +739,35 @@ func (s *Service) RecordChangeIn(ctx context.Context, tx db.Querier, c Change) (
 	}
 
 	if err := s.repo.AppendVersion(ctx, tx, version); err != nil {
+		return nil, nil, err
+	}
+
+	// PRD WRK-03: the project graph spans files as well as requirements and
+	// tests. KindArtifact has existed to hold them since the workspace model was
+	// written, and nothing produced one — so every artifact this system recorded
+	// belonged to no graph, and the only way to reach one was an id somebody
+	// already had. A file that cannot be found from its project is a file the
+	// canvas cannot show (PRD WRK-01).
+	//
+	// # Why this is inside the transaction rather than best effort
+	//
+	// Because the alternative is the failure this repository keeps finding. An
+	// anchor written after the commit, or written and allowed to fail quietly,
+	// makes the graph SILENTLY PARTIAL: most artifacts appear, some do not, and
+	// nothing distinguishes "this project has no files" from "the anchor write
+	// lost a race". A listing that is usually complete is worse than one that is
+	// either complete or absent, because nobody checks the former.
+	//
+	// The write is built so it cannot fail for reasons of its own: the node's
+	// shape is fixed here rather than supplied, and the insert is ON CONFLICT DO
+	// NOTHING, so the only way it fails is the database being unreachable — in
+	// which case the version write beside it has failed too.
+	//
+	// The title is the path, and it stays true: an artifact is IDENTIFIED by its
+	// path (FindOrCreateArtifact looks it up that way), so a rename produces a
+	// different artifact rather than a stale title on this one.
+	if _, err := s.AnchorIn(ctx, tx, artifact.ProjectID, KindArtifact,
+		artifact.ID, c.InitiatorID, artifact.Path); err != nil {
 		return nil, nil, err
 	}
 	return artifact, version, nil
