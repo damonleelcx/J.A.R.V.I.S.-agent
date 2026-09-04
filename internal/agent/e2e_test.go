@@ -310,7 +310,10 @@ func newLiveHarness(t *testing.T) *liveHarness {
 	registry.MustRegister(tools.ListTool{})
 	registry.MustRegister(tools.ReadTool{})
 	registry.MustRegister(tools.WriteTool{})
-	registry.MustRegister(tools.ShellTool{})
+	// Built the way the worker builds it (PRD SEC-05): an empty allow-list is a
+	// refusal, not a permission, so a harness that passed none would be exercising
+	// a shell no deployment has.
+	registry.MustRegister(tools.ShellTool{Allowed: []string{"go", "ls", "cat"}})
 	for _, tool := range tools.StandardUnavailableConnectors() {
 		registry.MustRegister(tool)
 	}

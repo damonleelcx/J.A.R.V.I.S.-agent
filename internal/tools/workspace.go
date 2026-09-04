@@ -381,9 +381,26 @@ func (t WriteTool) Run(ctx context.Context, inv Invocation) (*Result, error) {
 // because "re-run the build" and "re-run the deploy script" are indistinguishable
 // from here.
 type ShellTool struct {
-	// Allowed, when non-empty, restricts the first word of a command. A
-	// deployment that grants execute at all should still narrow it to the
-	// commands its work actually needs.
+	// Allowed restricts the first word of a command to this list.
+	//
+	// # Why empty means "refuse everything" and not "allow everything"
+	//
+	// It used to mean the opposite, and nothing ever set it: the field existed,
+	// only tests passed a value, and every deployment therefore ran a shell that
+	// would execute anything the host could run — while the code read as though
+	// a control was in place (PRD SEC-05).
+	//
+	// The direction of that failure is what makes it worth changing rather than
+	// just wiring up. Configuration gets forgotten; the question is what happens
+	// when it is. Empty-means-permit turns a forgotten line into an unrestricted
+	// shell nobody notices. Empty-means-refuse turns the same omission into a
+	// tool that refuses its first call with a message naming the variable to
+	// set. One of those is discovered by an operator in a minute and the other
+	// by an attacker.
+	//
+	// FORGE confines no network egress — see docs/security-promises.md — so this
+	// list is the control over what a model-composed command can reach, not a
+	// refinement of one.
 	Allowed []string
 }
 
@@ -394,6 +411,11 @@ func (t ShellTool) Contract() Contract {
 		"A non-zero exit code is returned as data, not as a failure — read it and decide."
 	if len(t.Allowed) > 0 {
 		desc += " Only these commands are permitted: " + strings.Join(t.Allowed, ", ") + "."
+	} else {
+		// Said in the contract the model reads, so it does not spend an iteration
+		// discovering it. An unconfigured shell is a broken deployment, and the
+		// model wasting a turn on it helps nobody.
+		desc += " This deployment has configured no permitted commands, so every call is refused."
 	}
 	return Contract{
 		Name:        "shell_run",
@@ -429,13 +451,19 @@ func (t ShellTool) Run(ctx context.Context, inv Invocation) (*Result, error) {
 	if strings.TrimSpace(in.Command) == "" {
 		return nil, errs.New(op, errs.CodeValidationFailed).WithDetail("command is required")
 	}
-	if len(t.Allowed) > 0 {
-		first := strings.Fields(in.Command)
-		if len(first) == 0 || !slicesContains(t.Allowed, filepath.Base(first[0])) {
-			return nil, errs.New(op, errs.CodeForbidden).
-				WithDetail("command %q is not in this deployment's allow-list (%s)",
-					in.Command, strings.Join(t.Allowed, ", "))
-		}
+	if len(t.Allowed) == 0 {
+		return nil, errs.New(op, errs.CodeForbidden).
+			WithDetail("this deployment has configured no permitted shell commands, so shell_run " +
+				"refuses every call. Set FORGE_SHELL_ALLOWED_COMMANDS to the commands this " +
+				"deployment's work needs, e.g. FORGE_SHELL_ALLOWED_COMMANDS=go,git,ls,cat. " +
+				"An empty list denies rather than permits, because a forgotten setting must not " +
+				"produce a shell that runs anything the host can run")
+	}
+	first := strings.Fields(in.Command)
+	if len(first) == 0 || !slicesContains(t.Allowed, filepath.Base(first[0])) {
+		return nil, errs.New(op, errs.CodeForbidden).
+			WithDetail("command %q is not in this deployment's allow-list (%s)",
+				in.Command, strings.Join(t.Allowed, ", "))
 	}
 	root, err := resolveInWorkspace(inv.Workspace, "")
 	if err != nil {

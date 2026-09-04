@@ -44,6 +44,10 @@ type Config struct {
 	LLM    LLMConfig
 	Engine EngineConfig
 	Media  MediaConfig
+	// Security is what this deployment DECLARES about handling customer content
+	// (PRD SEC-01, SEC-05). See docs/security-promises.md for what is promised
+	// and, as importantly, what is not.
+	Security SecurityConfig
 }
 
 // HTTPConfig covers the public API and console surface.
@@ -135,6 +139,58 @@ type AuthConfig struct {
 	CookieSecure bool
 	// CookieDomain optionally scopes the session cookie.
 	CookieDomain string
+}
+
+// DataBoundary is the data-handling posture of the model endpoint this
+// deployment sends customer content to (PRD SEC-01).
+//
+// # Why this is a declaration and not a control
+//
+// SEC-01 asks that customer content is not used for training absent affirmative
+// opt-in. FORGE is not the trainer. It cannot observe what a provider does with
+// a request after it leaves, and a product that claimed otherwise about a
+// third-party endpoint would be claiming to know something it cannot.
+//
+// What it CAN enforce is that nothing leaves under terms nobody stated. The
+// operator holds the contract with the provider and is the only party who knows
+// what it says, so they declare it, and FORGE refuses to run without the
+// declaration.
+//
+// # Why there is no default
+//
+// Because every possible default is a lie. Defaulting to no_training would have
+// FORGE asserting a contract term nobody checked — the most dangerous shape
+// available, since it reads as a promise. Defaulting to training_opted_in would
+// consent on the customer's behalf. Silence is not a posture, so silence stops
+// the process.
+type DataBoundary string
+
+const (
+	// BoundaryNoTraining: the operator asserts this endpoint's terms forbid
+	// training on submitted content.
+	BoundaryNoTraining DataBoundary = "no_training"
+	// BoundaryTrainingOptedIn: the customer affirmatively opted in. Set only
+	// when there is a record of them doing so.
+	BoundaryTrainingOptedIn DataBoundary = "training_opted_in"
+)
+
+// Valid reports whether b is a declared posture.
+func (b DataBoundary) Valid() bool {
+	return b == BoundaryNoTraining || b == BoundaryTrainingOptedIn
+}
+
+// SecurityConfig is what this deployment declares about content leaving it.
+type SecurityConfig struct {
+	// DataBoundary is the declared posture of the model endpoint (PRD SEC-01).
+	DataBoundary DataBoundary
+	// ShellAllowed restricts which commands shell_run may execute (PRD SEC-05).
+	//
+	// Empty means UNRESTRICTED, which is refused in production. This is the only
+	// thing standing between a model-composed command and everything the host can
+	// reach: FORGE does not confine network egress, so "which commands may run"
+	// is the control, and an empty list is not a permissive setting but the
+	// absence of one.
+	ShellAllowed []string
 }
 
 // LLMConfig covers the model portfolio.
@@ -576,6 +632,38 @@ func Load(required ...Section) (*Config, []string, error) {
 			cfg.LLM.Verifier, cfg.LLM.Executor))
 	}
 
+	// PRD SEC-01 and SEC-05. Required alongside the sections whose work they
+	// describe: the boundary is a property of the model endpoint, and the shell
+	// allow-list is a property of the engine that runs tools.
+	cfg.Security = SecurityConfig{
+		DataBoundary: DataBoundary(strings.ToLower(strings.TrimSpace(l.str("FORGE_DATA_BOUNDARY", "")))),
+		ShellAllowed: l.list("FORGE_SHELL_ALLOWED_COMMANDS"),
+	}
+	if set.has(SectionLLM) && !cfg.Security.DataBoundary.Valid() {
+		l.fail("FORGE_DATA_BOUNDARY", fmt.Sprintf(
+			"must be %q or %q, and has no default because every default would be a claim nobody "+
+				"checked (got %q). This states what your contract with the model endpoint at %s says "+
+				"about training on submitted content. FORGE cannot observe what a provider does with "+
+				"a request; it can refuse to send one under terms nobody has stated. "+
+				"See docs/security-promises.md",
+			BoundaryNoTraining, BoundaryTrainingOptedIn, cfg.Security.DataBoundary, cfg.LLM.BaseURL))
+	}
+	if set.has(SectionEngine) && len(cfg.Security.ShellAllowed) == 0 {
+		// Production refuses; everywhere else warns. An unrestricted shell on a
+		// developer's laptop is how the tool is meant to be used while building;
+		// an unrestricted shell in production hands a model-composed command
+		// everything the host can reach, and FORGE confines no network egress.
+		problem := "is empty, so shell_run may execute anything the host can run. FORGE does not " +
+			"confine network egress (see docs/security-promises.md), so this list is the control, " +
+			"not a refinement of one. Set it to the commands this deployment's work actually needs, " +
+			"e.g. FORGE_SHELL_ALLOWED_COMMANDS=go,git,ls,cat"
+		if prod {
+			l.fail("FORGE_SHELL_ALLOWED_COMMANDS", problem)
+		} else {
+			l.warnings = append(l.warnings, "FORGE_SHELL_ALLOWED_COMMANDS "+problem)
+		}
+	}
+
 	cfg.Engine = EngineConfig{
 		WorkerConcurrency:        l.intVal("FORGE_WORKER_CONCURRENCY", 4),
 		LeaseDuration:            l.dur("FORGE_LEASE_DURATION", 2*time.Minute),
@@ -658,12 +746,25 @@ func (c *Config) Redacted() map[string]any {
 		"media_transcribe":   c.Media.Transcribe,
 		"media_silence_gap":  c.Media.SilenceGap.String(),
 		"media_ice_servers":  len(c.Media.ICEServers),
+		"data_boundary":      string(c.Security.DataBoundary),
+		"shell_allowed":      shellAllowedForPrint(c.Security.ShellAllowed),
 		"worker_concurrency": c.Engine.WorkerConcurrency,
 		"lease_duration":     c.Engine.LeaseDuration.String(),
 		"max_attempts_task":  c.Engine.MaxAttemptsPerTask,
 		"max_tasks_per_goal": c.Engine.MaxTasksPerGoal,
 		"max_wallclock_goal": c.Engine.MaxWallClockPerGoal.String(),
 	}
+}
+
+// shellAllowedForPrint renders the shell allow-list so that "unrestricted" reads
+// as a state rather than as an empty field somebody skims past. `config` is what
+// an operator runs to answer "what is this deployment actually doing", and a
+// blank line next to shell_allowed is the wrong answer to that question.
+func shellAllowedForPrint(allowed []string) string {
+	if len(allowed) == 0 {
+		return "unrestricted: shell_run may execute anything the host can run — set FORGE_SHELL_ALLOWED_COMMANDS"
+	}
+	return strings.Join(allowed, ",")
 }
 
 // redactURL strips the password from a Postgres URL while keeping the host and

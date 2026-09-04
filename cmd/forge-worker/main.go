@@ -73,6 +73,11 @@ func run() error {
 		// operator must be told rather than left to discover it in an audit.
 		log.Warn(ctx, logx.EventConfigDefault, "warning", w)
 	}
+	// The worker is the process that actually sends content to the model and
+	// runs the shell, so the declarations it is running under (PRD SEC-01,
+	// SEC-05) belong in ITS operational record, not only the server's. Redacted
+	// carries both. See docs/security-promises.md.
+	log.Info(ctx, logx.EventConfigLoaded, "config", cfg.Redacted())
 
 	pool, err := db.Connect(ctx, cfg.DB, log)
 	if err != nil {
@@ -91,7 +96,11 @@ func run() error {
 	registry.MustRegister(tools.ListTool{})
 	registry.MustRegister(tools.ReadTool{})
 	registry.MustRegister(tools.WriteTool{})
-	registry.MustRegister(tools.ShellTool{})
+	// PRD SEC-05. The allow-list had no producer until now: ShellTool.Allowed was
+	// a field only tests ever set, so every deployment ran an unrestricted shell
+	// while the code read as though a control existed. Config refuses an empty
+	// list in production.
+	registry.MustRegister(tools.ShellTool{Allowed: cfg.Security.ShellAllowed})
 	// Memory as tools rather than as a silent context injection (PRD MEM-01).
 	// Going through the registry means every recall and every write lands in the
 	// tool-call ledger and the timeline, so "why did FORGE think that?" is

@@ -10,6 +10,7 @@ import (
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/access"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/claim"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/engine"
+	domainpack "github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/pack"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/clock"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/db"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/errs"
@@ -577,6 +578,31 @@ func (s *Service) EnsureProject(ctx context.Context, q db.Querier, projectID, ow
 	if strings.TrimSpace(pack) == "" {
 		return "", errs.New(op, errs.CodeValidationFailed).
 			WithDetail("a project must declare its domain pack, which selects the rules that apply inside it")
+	}
+	// PRD SEC-07. The pack was free text until now: a typo, a pack this build has
+	// never heard of and a regulated domain were all equally acceptable and
+	// equally inert, so the column recorded a claim about which rules applied
+	// while no rule ever consulted it.
+	//
+	// The closed set is checked here rather than by a database constraint because
+	// the refusal has to explain itself — "violates check constraint" tells
+	// somebody nothing about why medicine is not on the list.
+	def, known := domainpack.Lookup(pack)
+	if !known {
+		return "", errs.New(op, errs.CodeValidationFailed).
+			WithDetail("%q is not a domain pack this build knows. A pack nothing recognises selects no "+
+				"rules while looking like it selected some. Available here: %s",
+				pack, strings.Join(domainpack.AvailableNames(), ", "))
+	}
+	if !def.Available {
+		// Refused rather than gated, and deliberately not switchable by
+		// configuration — see internal/domain/pack. An environment variable that
+		// turned on patient-specific clinical use would make a regulated boundary
+		// something an operator crosses by editing a file.
+		return "", errs.New(op, errs.CodeForbidden).
+			WithDetail("this build is not validated for the %q pack, so a project cannot be created in "+
+				"it.\n\n%s\n\nIt would require %s.\n\nAvailable here: %s",
+				def.Pack, def.Summary, def.Requires, strings.Join(domainpack.AvailableNames(), ", "))
 	}
 	now := s.clock.Now()
 	newID := id.New(id.PrefixProject)

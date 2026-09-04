@@ -232,7 +232,7 @@ func TestReadReportsTruncationRatherThanHidingIt(t *testing.T) {
 
 func TestShellRunsInTheWorkspace(t *testing.T) {
 	ws := workspace(t)
-	res, err := ShellTool{}.Run(context.Background(), inv(ws, "shell_run",
+	res, err := ShellTool{Allowed: []string{"ls"}}.Run(context.Background(), inv(ws, "shell_run",
 		map[string]string{"command": "ls README.md && pwd", "reason": "confirm the working directory"}))
 	if err != nil {
 		t.Fatal(err)
@@ -262,7 +262,7 @@ func TestShellDoesNotInheritTheServersSecrets(t *testing.T) {
 	t.Setenv("FORGE_LLM_API_KEY", "sk-SHOULD-NOT-APPEAR")
 	t.Setenv("FORGE_DATABASE_URL", "postgres://user:PGPASSWORD@host/db")
 
-	res, err := ShellTool{}.Run(context.Background(), inv(ws, "shell_run",
+	res, err := ShellTool{Allowed: []string{"env"}}.Run(context.Background(), inv(ws, "shell_run",
 		map[string]string{"command": "env", "reason": "attempt to read the parent environment"}))
 	if err != nil {
 		t.Fatal(err)
@@ -279,7 +279,7 @@ func TestShellReturnsNonZeroExitAsDataNotFailure(t *testing.T) {
 	// it as a tool error would make "the test suite failed" indistinguishable
 	// from "the tool broke".
 	ws := workspace(t)
-	res, err := ShellTool{}.Run(context.Background(), inv(ws, "shell_run",
+	res, err := ShellTool{Allowed: []string{"exit"}}.Run(context.Background(), inv(ws, "shell_run",
 		map[string]string{"command": "exit 3", "reason": "check a non-zero exit"}))
 	if err != nil {
 		t.Fatalf("a non-zero exit was raised as a tool failure: %v", err)
@@ -396,7 +396,7 @@ func TestLimitedWriterAlwaysReportsTruncation(t *testing.T) {
 // buffering, a large command output must not reach the model whole.
 func TestShellOutputIsBounded(t *testing.T) {
 	ws := workspace(t)
-	res, err := (ShellTool{}).Run(context.Background(), inv(ws, "shell_run",
+	res, err := (ShellTool{Allowed: []string{"yes"}}).Run(context.Background(), inv(ws, "shell_run",
 		map[string]string{"command": "yes hello | head -c 500000", "reason": "produce a lot of output"}))
 	if err != nil {
 		t.Fatal(err)
@@ -661,5 +661,44 @@ func TestWritingOverAFileRaisesTheCallsTier(t *testing.T) {
 	// redefinition of the tool.
 	if (WriteTool{}).Contract().RiskTier != engine.RiskR1 {
 		t.Error("the contract's declared tier moved; the raise must be per call")
+	}
+}
+
+// An unconfigured shell refuses everything (PRD SEC-05).
+//
+// # Why the empty list denies instead of permitting
+//
+// It used to permit, and nothing ever set it: ShellTool.Allowed was a field only
+// tests passed a value to, so every deployment ran a shell that would execute
+// anything the host could run, while the code read as though a control existed.
+//
+// Wiring it up was necessary and not sufficient. Configuration gets forgotten;
+// what matters is the direction of that failure. Empty-means-permit turns a
+// forgotten line into an unrestricted shell nobody notices. Empty-means-refuse
+// turns the same omission into a tool that refuses its first call and names the
+// variable to set. One of those is found by an operator in a minute, the other
+// by whoever goes looking for it.
+func TestAnUnconfiguredShellRefusesEverything(t *testing.T) {
+	ws := workspace(t)
+
+	_, err := ShellTool{}.Run(context.Background(), inv(ws, "shell_run",
+		map[string]string{"command": "ls", "reason": "anything at all"}))
+	if err == nil {
+		t.Fatal("a shell with no configured allow-list ran a command.\n" +
+			"An empty list is the absence of a control, not a permissive one, and FORGE " +
+			"confines no network egress — so this list is what stands between a " +
+			"model-composed command and everything the host can reach")
+	}
+	if errs.CodeOf(err) != errs.CodeForbidden {
+		t.Errorf("refused with %s, expected %s", errs.CodeOf(err), errs.CodeForbidden)
+	}
+	if !strings.Contains(err.Error(), "FORGE_SHELL_ALLOWED_COMMANDS") {
+		t.Errorf("the refusal does not name the variable that fixes it: %v", err)
+	}
+
+	// The contract says so too, so the model does not spend an iteration
+	// discovering it.
+	if !strings.Contains(ShellTool{}.Contract().Description, "refused") {
+		t.Error("the contract a model reads does not say the shell is unconfigured")
 	}
 }

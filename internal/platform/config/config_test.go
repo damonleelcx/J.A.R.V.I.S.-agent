@@ -16,6 +16,10 @@ func minimalEnv() map[string]string {
 		"FORGE_DATABASE_URL":   "postgres://forge:pw@localhost:5432/forge?sslmode=disable",
 		"FORGE_SESSION_SECRET": strings.Repeat("s", 48),
 		"FORGE_LLM_API_KEY":    "sk-test",
+		// PRD SEC-01. Part of a minimal VALID configuration now, not an extra:
+		// there is no default, because every default would be a claim about a
+		// contract nobody checked.
+		"FORGE_DATA_BOUNDARY": "no_training",
 	}
 }
 
@@ -254,4 +258,158 @@ func sprintMap(m map[string]any) string {
 		fmt.Fprintf(&b, "%s=%v ", k, v)
 	}
 	return b.String()
+}
+
+// The data boundary and the shell allow-list (PRD SEC-01, SEC-05).
+//
+// Both are declarations a deployment makes about content leaving it, and both
+// are checked here because config is where a deployment is either refused or
+// allowed to run. See docs/security-promises.md.
+
+// SEC-01: there is no default, and silence stops the process.
+//
+// Every possible default is a lie. no_training would have FORGE asserting a
+// contract term nobody checked — the most dangerous shape, because it reads as
+// a promise. training_opted_in would consent on the customer's behalf. So an
+// unset boundary is a configuration error rather than a posture.
+func TestTheDataBoundaryHasNoDefault(t *testing.T) {
+	env := minimalEnv()
+	delete(env, "FORGE_DATA_BOUNDARY")
+
+	_, _, err := loadWith(t, env)
+	if err == nil {
+		t.Fatal("a deployment loaded with no declared data boundary.\n" +
+			"Whatever default made that possible is FORGE asserting something about a provider " +
+			"contract that nobody checked")
+	}
+	if errs.CodeOf(err) != errs.CodeConfigInvalid {
+		t.Errorf("failed with %s, expected %s", errs.CodeOf(err), errs.CodeConfigInvalid)
+	}
+	for _, want := range []string{"FORGE_DATA_BOUNDARY", "no_training", "training_opted_in"} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the failure does not mention %q: %v", want, err)
+		}
+	}
+}
+
+// A value outside the two postures is refused rather than treated as unset.
+//
+// "none", "n/a" and "unknown" are the words an operator reaches for when they
+// do not know the answer, and each would otherwise sit in the column looking
+// like a declaration.
+func TestAnUndeclaredBoundaryIsNotAPosture(t *testing.T) {
+	for _, value := range []string{"unknown", "none", "no", "opted_in", "false"} {
+		env := minimalEnv()
+		env["FORGE_DATA_BOUNDARY"] = value
+		if _, _, err := loadWith(t, env); err == nil {
+			t.Errorf("%q was accepted as a data-handling posture", value)
+		}
+	}
+	// Both real postures load, including the opt-in one: refusing to run when a
+	// customer HAS opted in would be a different product than the one described.
+	for _, value := range []string{"no_training", "training_opted_in", "  NO_TRAINING "} {
+		env := minimalEnv()
+		env["FORGE_DATA_BOUNDARY"] = value
+		cfg, _, err := loadWith(t, env)
+		if err != nil {
+			t.Errorf("%q was refused: %v", value, err)
+			continue
+		}
+		if !cfg.Security.DataBoundary.Valid() {
+			t.Errorf("%q loaded as %q, which is not a posture", value, cfg.Security.DataBoundary)
+		}
+	}
+}
+
+// The boundary is required only where content actually leaves.
+//
+// `forgectl config` has to be able to print a broken configuration — that is
+// exactly when somebody runs it — so a diagnostic command that requires no LLM
+// must not be blocked by an undeclared boundary.
+func TestTheBoundaryIsRequiredOnlyWhereContentLeaves(t *testing.T) {
+	env := minimalEnv()
+	delete(env, "FORGE_DATA_BOUNDARY")
+	for k, v := range env {
+		t.Setenv(k, v)
+	}
+	if _, _, err := Load(SectionNone); err != nil {
+		t.Errorf("a diagnostic load was blocked by an undeclared boundary: %v\n"+
+			"config-print is what somebody runs to find out WHY the deployment will not start", err)
+	}
+}
+
+// SEC-05: production refuses an unrestricted shell; development is warned.
+//
+// The asymmetry is deliberate. An unrestricted shell on a laptop is how the
+// tool is used while building. An unrestricted shell in production hands a
+// model-composed command everything the host can reach, and FORGE confines no
+// network egress — so this list is the control, not a refinement of one.
+func TestAnUnrestrictedShellIsRefusedInProduction(t *testing.T) {
+	env := minimalEnv()
+	env["FORGE_ENV"] = "production"
+	env["FORGE_PUBLIC_URL"] = "https://forge.example.com"
+	// Everything else production requires, so the only thing under test is the
+	// shell allow-list. A test that passes because SOME problem was reported is
+	// not a test of this one.
+	env["FORGE_MAIL_TRANSPORT"] = "smtp"
+	env["FORGE_SMTP_HOST"] = "smtp.example.com"
+
+	_, _, err := loadWith(t, env)
+	if err == nil {
+		t.Fatal("a production deployment started with no shell allow-list, so shell_run may " +
+			"execute anything the host can run")
+	}
+	if !strings.Contains(err.Error(), "FORGE_SHELL_ALLOWED_COMMANDS") {
+		t.Errorf("the failure does not name the variable to set: %v", err)
+	}
+
+	env["FORGE_SHELL_ALLOWED_COMMANDS"] = "go,git,ls"
+	cfg, _, err := loadWith(t, env)
+	if err != nil {
+		t.Fatalf("production with an allow-list was refused: %v", err)
+	}
+	if len(cfg.Security.ShellAllowed) != 3 {
+		t.Errorf("allow-list = %v; the parsed list is what the tool is built with",
+			cfg.Security.ShellAllowed)
+	}
+}
+
+func TestAnUnrestrictedShellWarnsOutsideProduction(t *testing.T) {
+	env := minimalEnv()
+	delete(env, "FORGE_SHELL_ALLOWED_COMMANDS")
+
+	_, warnings, err := loadWith(t, env)
+	if err != nil {
+		t.Fatalf("development was refused for an unset allow-list: %v", err)
+	}
+	var found bool
+	for _, w := range warnings {
+		if strings.Contains(w, "FORGE_SHELL_ALLOWED_COMMANDS") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("nothing warned about an unrestricted shell: %v\n"+
+			"Silence here is how the field went unset in every deployment for as long as it "+
+			"existed", warnings)
+	}
+}
+
+// Both declarations appear in what an operator prints.
+//
+// "What is this deployment actually doing" is the question `config` answers,
+// and an unrestricted shell must not read as a blank field somebody skims past.
+func TestTheSecurityDeclarationsAreVisibleInConfigPrint(t *testing.T) {
+	env := minimalEnv()
+	cfg, _, err := loadWith(t, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	printed := fmt.Sprint(cfg.Redacted())
+	if !strings.Contains(printed, "no_training") {
+		t.Errorf("the declared data boundary is not in config output: %s", printed)
+	}
+	if !strings.Contains(printed, "unrestricted") {
+		t.Errorf("an unrestricted shell does not say so in config output: %s", printed)
+	}
 }
