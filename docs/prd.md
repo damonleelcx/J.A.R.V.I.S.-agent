@@ -148,6 +148,19 @@ Implementation carve-outs.
 
 A ceiling of **none** means no project may be created in that pack at all.
 
+A pack also carries the **schema** (node kinds a project in it is expected to
+hold), its **geometry frame** (default unit and axis convention), its **data
+handling** rules, and the **tool adapters** the domain needs — all of which are
+unavailable in this build, and are declared so a refusal can name which solver
+the domain wanted rather than only that none exists.
+
+**Raising a ceiling.** Recording a named, attributed qualified-review authority
+on a project raises its domain's ceiling to that pack's review ceiling (r2 for
+every engineering domain). Nothing else raises it, and no record raises
+`general`, `medical` or `robotics`. This build **cannot verify a qualification** —
+it records an attributed claim and says "recorded, not verified" wherever the
+claim is read. See `docs/qualified-review.md`.
+
 ## Explicit non-goals
 
 - Sentient or human-equivalent general intelligence
@@ -168,4 +181,5 @@ later.
 | AUD-02 latency targets | Implementable, but **cannot be certified** without real users on real hardware in the target environment. Reported as *unverified*, never as passing. |
 | Medical pack | Educational and device-concept scope only. Patient-specific use requires a separately validated deployment and is **not** enabled by this codebase. |
 | Ceilings, not availability (2026-09-04) | A pack used to be available or not, and six of eight were not. That refused a whole domain because its *riskiest* action could not be gated: `mechanical` was closed because this build cannot gate drawing release (R3), which also closed concept CAD, renders and revisions (R1) — the work this product exists to do. Packs now carry a **tier ceiling** instead. The boundary is unchanged (nothing reaches R2 in an engineering pack) and is now enforced where risk actually lives — per action, via `tools.Grant`, at the moment the work is attempted rather than at the door. `Requires` reads as *what would raise the ceiling*. |
+| Qualified review (2026-09-04) | An engineering pack's r1 ceiling can be raised to r2 by recording a **named** person accountable in that domain, attributed to whoever recorded it. This establishes traceability (AGT-07), **not** a qualification: there is no registry to consult from inside this build and no credential to validate. Every surface says "recorded, not verified" in those words, and a fence fails if that stops being true — without it the mechanism would launder authority nothing checked. `medical` and `robotics` are unreachable by any record. |
 | Industry list (2026-09-04) | The nine engineering packs plus `general` are the industries the product's selector offers, and the pack table is the single producer of that list. Packs the selector does **not** offer (`software`, `robotics`, `medical`) carry no industry label. `robotics` and `medical` remain uncreatable: neither is offered to users, and widening them is not something a change about industry coverage may do quietly. |

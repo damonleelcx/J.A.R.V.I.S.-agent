@@ -539,6 +539,43 @@ domain" and logs. Widening a permission on a failed read is a safety defect;
 losing the vocabulary is a worse answer
 (`docs/bugfix/2026-09-04-the-pack-was-written-and-never-read.md`).
 
+### A ceiling can rise, and it says out loud that nothing was verified
+
+The r1 limit above was correct and it was a dead end: a deployment that genuinely
+has a licensed engineer in the room had no way to say so.
+
+```bash
+forgectl project review-authority --project prj_... \
+  --holder "R. Okonkwo" --note "CEng MICE 481920" --as usr_...
+```
+
+Recording a **named, attributed** authority raises that domain's ceiling to r2.
+Nothing else does; an unattributed claim raises nothing; `general`, `medical` and
+`robotics` are unreachable by any record; and clearing is as easy as setting,
+because a mechanism that raises a ceiling and cannot lower it is one nobody
+should switch on.
+
+What that establishes is that a named person accepted responsibility, with an
+author and a timestamp — which is what AGT-07 asks of any consequential
+transition. What it does **not** establish is a qualification: there is no
+registry to consult from inside this build and no credential to validate. So the
+phrase **"RECORDED, NOT VERIFIED"** appears verbatim in the refusal the model
+reads and the output a person reads, and a fence fails if it stops appearing.
+That is not politeness — without it the mechanism launders authority nothing
+checked, and somebody doing r2 work would believe a licence had been established
+(`docs/qualified-review.md`).
+
+A pack carries four other things that used to be missing: the node kinds a
+project in that domain is expected to hold (which `graph review` now reports as
+gaps), its geometry frame — a vehicle is X-forward and a building is Z-up against
+a site datum, and a coordinate read in the wrong frame is wrong without looking
+wrong — its data-handling rules, and the tool adapters the domain needs. Every
+one of those adapters is unavailable. They are declared anyway so a refusal can
+say *"civil work needs FEA and this deployment has none"* rather than only that
+no solver exists. Wiring a real one was considered and rejected against this
+repository's own spike, which concluded it "replaces the thing our product is
+currently for" (`docs/spikes/2026-09-02-zoo-text-to-cad`).
+
 ## Measuring the model, not the harness
 
 Everything above proves the *harness* is correct. `forgectl eval run` measures
