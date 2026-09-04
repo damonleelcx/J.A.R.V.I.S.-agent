@@ -222,5 +222,16 @@ func (n *NewVariant) Validate() error {
 		}
 		seen[p.ID] = true
 	}
+	// PRD VIS-03. Checked at the same door as everything else the requirement
+	// list guards, and for the same reason the VIS-06 check above gives: the
+	// conversation boundary guarantees it for the path that exists today, and
+	// this guarantees it for every path written later.
+	//
+	// The tolerance rule is the one that matters here. A model asked for a
+	// drawing produces tolerances readily, and a stored one is read as an
+	// instruction to a machinist.
+	if err := ValidateOverlays(n.Document.Overlays); err != nil {
+		return err
+	}
 	return nil
 }

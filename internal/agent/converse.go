@@ -62,7 +62,20 @@ Reply with JSON only:
       }
     ],
     "assumptions": ["anything you chose that they did not specify"],
-    "not_verified": ["what this render does NOT establish"]
+    "not_verified": ["what this render does NOT establish"],
+    "overlays": [
+      {
+        "id": "stable-kebab-id",
+        "kind": "dimension" | "datum",
+        "label": "what this marks",
+        "from": [0,0,0], "to": [0,0,0],
+        "value": 42.0, "unit": "mm",
+        "tolerance": "ONLY from a drawing or specification — see below",
+        "how": "observed" | "retrieved" | "calculated" | "inferred" | "assumed" | "proposed",
+        "source": "where it came from",
+        "note": "what a reader needs alongside the number"
+      }
+    ]
   },
   "proposed_goal": null or {
     "title": "short title",
@@ -91,6 +104,17 @@ About "prototype":
   the figure is from memory, and prefer not to quote a number at all unless it
   changes what you would build. A wrong figure attached to a real standard is
   more dangerous than no figure, because it is specific enough to be acted on.
+- "overlays" are engineering marks on the model: dimensions and datums. Leave it
+  out unless somebody GAVE you a figure to mark. You do not need to dimension the
+  overall size — FORGE measures the model's own extents itself and draws them,
+  labelled as its own arithmetic, so repeating them here adds nothing.
+- NEVER invent a TOLERANCE. Nothing about a shape implies one: it is a
+  manufacturing decision about process and fit, and the same cylinder is ±0.5 or
+  ±0.005 depending on what it does. A tolerance is read as an instruction to a
+  machinist, so one you produced from reasoning is the most dangerous number you
+  can emit here. Only mark a tolerance somebody gave you, label it "observed" or
+  "retrieved", and name the drawing or specification it came from. Anything else
+  is removed before the render is drawn and the reader is told you tried.
 - "not_verified" is mandatory whenever geometry is present, and it must be
   specific. "Not stress-analysed" and "no interference check was run" are useful;
   "this is a concept" is not. There is no FEA or CAD kernel in this deployment,
@@ -297,6 +321,22 @@ func (r *Reply) validate() error {
 			}
 			r.Prototype.Units = ""
 			r.Prototype.NotVerified = append(r.Prototype.NotVerified, note)
+		}
+		// PRD VIS-03. Overlays arrive from the model like everything else here,
+		// and a dimension line with a tolerance on it is the most authoritative
+		// mark that can appear on a render. The storage door refuses a bad one
+		// outright; this door drops it and says so, because refusing the whole
+		// turn would throw away the shape somebody is waiting on — the same
+		// treatment the unrecognised unit gets above.
+		//
+		// Appended to NotVerified rather than logged, because that is the one
+		// place the reader is already looking, and "FORGE tried to state a
+		// tolerance and it was removed" is exactly what they need to know about
+		// what is in front of them.
+		if len(r.Prototype.Overlays) > 0 {
+			kept, dropped := geometry.DrawableOverlays(r.Prototype.Overlays)
+			r.Prototype.Overlays = kept
+			r.Prototype.NotVerified = append(r.Prototype.NotVerified, dropped...)
 		}
 		// PRD VIS-06 as an invariant rather than an instruction: geometry
 		// without a statement of what it does not establish is exactly the

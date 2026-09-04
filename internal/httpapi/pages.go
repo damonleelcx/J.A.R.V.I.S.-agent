@@ -457,6 +457,11 @@ const pageTemplates = `
        bottom-left corner. One element, two placements — see workbench.css. -->
   <div class="stage" id="stage">
     <canvas id="canvas"></canvas>
+    <!-- Dimension text, as HTML over the canvas rather than glyphs in GL (PRD
+         VIS-03). aria-hidden because every number here is also in the parts
+         panel, and a screen reader walking absolutely-positioned fragments in
+         paint order would read them in an arbitrary sequence. -->
+    <div class="dimlayer" id="dimlayer" aria-hidden="true"></div>
     <div class="stage-empty hidden" id="stage-empty"></div>
 
     <div class="viewctl">
@@ -467,6 +472,9 @@ const pageTemplates = `
       <button id="reset">Fit</button>
       <label style="font-size:11.5px;color:var(--ink-dim);display:flex;align-items:center;gap:5px;padding-left:5px">
         <input type="checkbox" id="grid" checked> grid
+      </label>
+      <label style="font-size:11.5px;color:var(--ink-dim);display:flex;align-items:center;gap:5px">
+        <input type="checkbox" id="dims"> dimensions
       </label>
     </div>
 

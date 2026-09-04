@@ -29,6 +29,17 @@
     return new Float32Array([1,0,0,0, 0,1,0,0, 0,0,1,0, 0,0,0,1]);
   }
 
+  /* Column-major, matching multiply() below and what WebGL expects: element
+   * [c*4+r] is column c, row r. Getting this backwards produces a projection
+   * that looks almost right until the camera moves off-axis. */
+  function mulMat4Vec4(m, v) {
+    var out = [0, 0, 0, 0];
+    for (var r = 0; r < 4; r++) {
+      out[r] = m[0*4+r]*v[0] + m[1*4+r]*v[1] + m[2*4+r]*v[2] + m[3*4+r]*v[3];
+    }
+    return out;
+  }
+
   function multiply(a, b) {
     var out = new Float32Array(16);
     for (var c = 0; c < 4; c++) {
@@ -401,6 +412,12 @@
     this.spec = null;
     this.explode = 0;
     this.section = { axis: 0, at: 0 };
+    this.overlays = [];
+    this.showOverlays = false;
+    /* The layer DOM labels are placed into, when the host gives us one. Without
+     * it the lines still draw and the numbers do not — which is the safe half to
+     * lose, since a line with no number claims nothing. */
+    this.labelLayer = (opts && opts.labels) || null;
     this.showGrid = true;
     this.selected = null;
     this.transparency = 1.0;
@@ -567,6 +584,29 @@
     this.bounds = { min: min, max: max, span: span, centre: centre };
   };
 
+  /* Engineering overlays (PRD VIS-03).
+   *
+   * Two lists, kept apart all the way to the screen. `authored` is what somebody
+   * put on the model — a dimension off a drawing, a tolerance, a datum.
+   * `measured` is what FORGE derived from the parts. They are drawn
+   * DIFFERENTLY on purpose, and that is the whole requirement: "engineering
+   * overlays without confusing appearance with validated data".
+   *
+   * A dimension line with a number on it is the most authoritative mark you can
+   * put on a picture. It is what a drawing IS. So the encoding borrows the
+   * convention an engineer already reads: a value that came from outside FORGE
+   * is drawn SOLID, and a value FORGE worked out itself is drawn DASHED, the way
+   * a reference dimension is. Nobody has to learn a legend to be warned. */
+  Studio.prototype.setOverlays = function (authored, measured) {
+    this.overlays = (authored || []).concat(measured || []);
+    this.draw();
+  };
+
+  Studio.prototype.setOverlaysVisible = function (on) {
+    this.showOverlays = !!on;
+    this.draw();
+  };
+
   Studio.prototype.setExplode = function (v) { this.explode = v; this.draw(); };
   Studio.prototype.setTransparency = function (v) { this.transparency = v; this.draw(); };
   Studio.prototype.setGrid = function (on) { this.showGrid = !!on; this.draw(); };
@@ -674,6 +714,13 @@
       gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, part.buffers.index);
       gl.drawElements(gl.TRIANGLES, part.count, gl.UNSIGNED_SHORT, 0);
     });
+
+    /* PRD VIS-03, drawn last so the marks sit over the model rather than
+     * inside it, and placed last so the numbers follow the same camera the
+     * lines were drawn with — computing them from a stale matrix is how a
+     * label ends up beside the wrong feature. */
+    if (this.showOverlays) this._drawOverlays(view, proj);
+    this._placeLabels(view, proj);
   };
 
   /* The grid is a scale reference (PRD VIS-02), not decoration. Without one a
@@ -721,6 +768,234 @@
     gl.vertexAttribPointer(pos, 3, gl.FLOAT, false, 0, 0);
     gl.drawArrays(gl.LINES, 0, this._gridCount);
   };
+
+  /* fromOutside reports whether an overlay's value came from beyond FORGE.
+   *
+   * The same two labels the server enforces for tolerances (geometry/overlay.go).
+   * Kept as one predicate rather than scattered comparisons so the line style,
+   * the colour and the chip text can never disagree about which side a value is
+   * on — three places deciding independently is how a dashed line ends up with
+   * a "from a drawing" chip. */
+  function fromOutside(o) {
+    return o && (o.how === 'observed' || o.how === 'retrieved');
+  }
+
+  /* _overlaySegments turns one dimension into line segments in model space.
+   *
+   * A dimension is the span plus a tick at each end, perpendicular to it, so the
+   * mark reads as a measurement rather than as an edge of the model. Derived
+   * dimensions are broken into dashes here rather than with a line style,
+   * because WebGL has no dashed lines — the dashes ARE separate segments. */
+  function overlaySegments(o, tick) {
+    var a = o.from, b = o.to;
+    if (!a || !b || a.length !== 3 || b.length !== 3) return [];
+
+    var dir = normalize(sub(b, a));
+    /* Any vector not parallel to the span gives a usable tick direction. */
+    var ref = Math.abs(dir[1]) > 0.9 ? [1, 0, 0] : [0, 1, 0];
+    var side = scale3(normalize(cross(dir, ref)), tick);
+
+    var out = [];
+    if (fromOutside(o)) {
+      out.push(a[0], a[1], a[2], b[0], b[1], b[2]);
+    } else {
+      /* Eight dashes along the span. A count rather than a fixed length, so the
+       * mark reads the same on a 4 mm pin and a 4 m beam. */
+      var n = 8;
+      for (var i = 0; i < n; i++) {
+        var t0 = i / n, t1 = t0 + 0.5 / n;
+        out.push(a[0] + (b[0]-a[0])*t0, a[1] + (b[1]-a[1])*t0, a[2] + (b[2]-a[2])*t0,
+                 a[0] + (b[0]-a[0])*t1, a[1] + (b[1]-a[1])*t1, a[2] + (b[2]-a[2])*t1);
+      }
+    }
+    /* Ticks are solid either way: they mark where the measurement was taken,
+     * which is not in question. */
+    out.push(a[0]-side[0], a[1]-side[1], a[2]-side[2], a[0]+side[0], a[1]+side[1], a[2]+side[2]);
+    out.push(b[0]-side[0], b[1]-side[1], b[2]-side[2], b[0]+side[0], b[1]+side[1], b[2]+side[2]);
+    return out;
+  }
+
+  /* A datum is drawn as a short cross at its position — a mark saying "measure
+   * from here", not a length. */
+  function datumSegments(o, tick) {
+    var p = o.from;
+    if (!p || p.length !== 3) return [];
+    var out = [];
+    for (var i = 0; i < 3; i++) {
+      var d = [0, 0, 0];
+      d[i] = tick;
+      out.push(p[0]-d[0], p[1]-d[1], p[2]-d[2], p[0]+d[0], p[1]+d[1], p[2]+d[2]);
+    }
+    return out;
+  }
+
+  Studio.prototype._drawOverlays = function (view, proj) {
+    var gl = this.gl;
+    if (!this.overlays.length) return;
+
+    var span = (this.bounds && this.bounds.span) || 10;
+    var tick = span * 0.02;
+
+    var stated = [], derived = [];
+    this.overlays.forEach(function (o) {
+      var segs = o.kind === 'datum' ? datumSegments(o, tick) : overlaySegments(o, tick);
+      (fromOutside(o) ? stated : derived).push.apply(fromOutside(o) ? stated : derived, segs);
+    });
+
+    /* Depth testing OFF for overlays. A dimension is an annotation ON the
+     * drawing, not an object in the scene: one that vanishes behind the part it
+     * measures is worse than useless, because the reader sees a number with no
+     * visible extent and cannot tell which feature it belongs to. */
+    gl.disable(gl.DEPTH_TEST);
+    this._drawSegments(stated,  view, proj, [0.55, 0.85, 0.95], 0.95);
+    this._drawSegments(derived, view, proj, [0.52, 0.60, 0.72], 0.85);
+    gl.enable(gl.DEPTH_TEST);
+  };
+
+  Studio.prototype._drawSegments = function (verts, view, proj, colour, opacity) {
+    if (!verts.length) return;
+    var gl = this.gl;
+    if (this._olBuffer) gl.deleteBuffer(this._olBuffer);
+    this._olBuffer = makeBuffer(gl, gl.ARRAY_BUFFER, new Float32Array(verts));
+
+    gl.useProgram(this.lineProg);
+    var pos = gl.getAttribLocation(this.lineProg, 'aPos');
+    gl.uniformMatrix4fv(gl.getUniformLocation(this.lineProg, 'uView'), false, view);
+    gl.uniformMatrix4fv(gl.getUniformLocation(this.lineProg, 'uProj'), false, proj);
+    gl.uniform3fv(gl.getUniformLocation(this.lineProg, 'uColor'), colour);
+    gl.uniform1f(gl.getUniformLocation(this.lineProg, 'uOpacity'), opacity);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this._olBuffer);
+    gl.enableVertexAttribArray(pos);
+    gl.vertexAttribPointer(pos, 3, gl.FLOAT, false, 0, 0);
+    gl.drawArrays(gl.LINES, 0, verts.length / 3);
+  };
+
+  /* project maps a model-space point to canvas pixels, or null if it is behind
+   * the camera. Behind-the-camera points project to a mathematically valid
+   * position on the wrong side of the screen, so they are dropped rather than
+   * drawn somewhere misleading. */
+  function project(p, view, proj, w, h) {
+    var v = mulMat4Vec4(view, [p[0], p[1], p[2], 1]);
+    var c = mulMat4Vec4(proj, v);
+    if (c[3] <= 0.0001) return null;
+    return {
+      x: (c[0] / c[3] * 0.5 + 0.5) * w,
+      y: (1 - (c[1] / c[3] * 0.5 + 0.5)) * h
+    };
+  }
+
+  /* _placeLabels positions the numbers as HTML over the canvas.
+   *
+   * DOM rather than glyphs in GL. A dimension whose text is a blurry texture is
+   * a dimension somebody misreads, and this viewer has no font atlas — building
+   * one to draw eight numbers would be a lot of machinery to make the type
+   * worse. The cost is that labels only appear where a host gave us a layer. */
+  Studio.prototype._placeLabels = function (view, proj) {
+    var layer = this.labelLayer;
+    if (!layer) return;
+    if (!this.showOverlays || !this.overlays.length) { layer.innerHTML = ''; return; }
+
+    var rect = this.canvas.getBoundingClientRect();
+    var w = rect.width, h = rect.height;
+    var html = [];
+
+    this.overlays.forEach(function (o) {
+      var anchor = o.kind === 'datum'
+        ? o.from
+        : (o.from && o.to ? [(o.from[0]+o.to[0])/2, (o.from[1]+o.to[1])/2, (o.from[2]+o.to[2])/2] : null);
+      if (!anchor || anchor.length !== 3) return;
+      var at = project(anchor, view, proj, w, h);
+      if (!at) return;
+
+      var outside = fromOutside(o);
+      /* A datum marks a reference and carries no magnitude, so it has nothing to
+       * put here — its name is already in the label. Repeating it produced
+       * "A A", which reads as a second mark rather than as one. */
+      var text = '';
+      if (o.kind !== 'datum') {
+        text = esc(String(o.value)) + ' ' + esc(o.unit || '');
+        if (o.tolerance) text += ' <b>' + esc(o.tolerance) + '</b>';
+      }
+      /* The chip is not decoration and is not optional. VIS-03's whole clause is
+       * "without confusing appearance with validated data" — a mark floating
+       * over a render, with no statement of where it came from, is exactly that
+       * confusion.
+       *
+       * "from the model" is the plain-language form of `calculated`, and it is
+       * only true of something measured off the geometry. Every other FORGE-side
+       * label keeps its own word: a datum FORGE picked is `proposed`, and
+       * calling that "from the model" would claim it was derived from the shape
+       * when it is a guess at somebody's intent. */
+      var chipText = outside || o.how !== 'calculated' ? o.how : 'from the model';
+      var chip = '<i class="' + (outside ? 'dim-src' : 'dim-model') + '">' +
+                 esc(chipText) + '</i>';
+
+      html.push(
+        '<div class="dim' + (outside ? ' dim-stated' : '') + '"' +
+        ' style="left:' + at.x.toFixed(1) + 'px;top:' + at.y.toFixed(1) + 'px"' +
+        ' title="' + esc(o.note || o.source || '') + '">' +
+        '<span class="dim-label">' + esc(o.label) + '</span>' +
+        '<span class="dim-value">' + text + '</span>' + chip + '</div>');
+    });
+
+    layer.innerHTML = html.join('');
+    this._spreadLabels(layer);
+  };
+
+  /* _spreadLabels pushes overlapping labels apart, downward.
+   *
+   * Dimensions cluster: the extents of a model all anchor near its middle, and
+   * from most camera angles several midpoints project within a few pixels of
+   * each other. Left alone they stack into an unreadable pile — which on a
+   * drawing is not a cosmetic problem. VIS-03 is "overlays WITHOUT confusing
+   * appearance with validated data", and two numbers overlapping so that one
+   * reads as part of the other is that confusion in its most literal form.
+   *
+   * Measured rather than estimated. Guessing a label's width from its character
+   * count is wrong the moment the font loads differently or a tolerance is long,
+   * and the failure mode is silent. One forced layout per draw for a handful of
+   * elements is cheap next to the frame that was just rendered.
+   *
+   * Downward only, and never upward: a label that moves has to stay BELOW its
+   * anchor so the eye still travels from the mark to the number in one
+   * direction. */
+  Studio.prototype._spreadLabels = function (layer) {
+    var nodes = layer.children;
+    if (nodes.length < 2) return;
+
+    var boxes = [];
+    for (var i = 0; i < nodes.length; i++) {
+      var r = nodes[i].getBoundingClientRect();
+      boxes.push({ node: nodes[i], top: r.top, left: r.left, w: r.width, h: r.height, shift: 0 });
+    }
+    boxes.sort(function (a, b) { return a.top - b.top; });
+
+    var gap = 3;
+    for (var j = 1; j < boxes.length; j++) {
+      for (var k = 0; k < j; k++) {
+        var a = boxes[k], b = boxes[j];
+        var aTop = a.top + a.shift, bTop = b.top + b.shift;
+        /* Only a real overlap moves anything: two labels far apart horizontally
+         * are both readable however close their vertical positions are. */
+        var overlapX = a.left < b.left + b.w && b.left < a.left + a.w;
+        var overlapY = aTop < bTop + b.h && bTop < aTop + a.h;
+        if (overlapX && overlapY) {
+          b.shift += (aTop + a.h + gap) - bTop;
+        }
+      }
+    }
+    boxes.forEach(function (box) {
+      if (box.shift) {
+        box.node.style.marginTop = box.shift.toFixed(1) + 'px';
+      }
+    });
+  };
+
+  function esc(s) {
+    return String(s == null ? '' : s)
+      .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;');
+  }
 
   /* snapshot returns a PNG data URL of the current view.
    *

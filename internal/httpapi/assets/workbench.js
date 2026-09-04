@@ -28,6 +28,7 @@
   var state = {
     history: [],
     prototype: null,
+    measured: [],
     selectedPart: null,
     speak: true,
     lastLatency: null,
@@ -598,10 +599,16 @@
            '. Keep these part ids when you revise it.';
   }
 
-  function loadPrototype(proto) {
+  function loadPrototype(proto, measured) {
     state.prototype = proto;
+    state.measured = measured || [];
     state.selectedPart = null;
     studio.load(proto);
+    /* PRD VIS-03. Authored and derived stay separate all the way here — the
+     * server sends two lists and the studio draws them differently, so a
+     * dimension somebody took off a drawing never looks like one FORGE worked
+     * out from its own guess. */
+    studio.setOverlays(proto.overlays || [], state.measured);
     setPlace(true);
     renderParts();
     renderProvenance();
@@ -768,7 +775,7 @@
 
         case 'prototype':
           ev.prototype.model_note = state.model || 'FORGE';
-          loadPrototype(ev.prototype);
+          loadPrototype(ev.prototype, ev.measured);
           break;
 
         case 'variant':
@@ -1285,6 +1292,14 @@
       });
     });
     $('reset').addEventListener('click', function () { studio.resetView(); });
+    /* PRD VIS-03. Off by default: a first look at a proposed shape should be the
+     * shape, and a viewport that opens covered in numbers trains people to
+     * dismiss them. Turning them on is one click, and what they mean is on
+     * every label. */
+    $('dims').addEventListener('change', function (e) {
+      studio.setOverlaysVisible(e.target.checked);
+    });
+
     $('grid').addEventListener('change', function (e) { studio.setGrid(e.target.checked); });
 
     $('explode').addEventListener('input', function (e) {
@@ -1360,6 +1375,7 @@
   function boot() {
     safely('orb', function () { orb = new ForgeOrb.Orb($('orb')); });
     studio = new Forge3D.Studio($('canvas'), {
+      labels: $('dimlayer'),
       onError: function (msg) {
         // A renderer that cannot start is stated as a failure, in its own words,
         // rather than left to read as "nothing modelled yet".

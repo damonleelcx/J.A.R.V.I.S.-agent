@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/geometry"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/llm"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/persona"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/errs"
@@ -20,6 +21,14 @@ type StreamEvent struct {
 	// Prototype and Goal carry the structured tail.
 	Prototype *Prototype    `json:"prototype,omitempty"`
 	Goal      *ProposedGoal `json:"goal,omitempty"`
+	// Measured is what FORGE derived from the prototype's own parts (PRD
+	// VIS-03), computed here so the browser never does this arithmetic itself.
+	//
+	// Two copies of a derivation is the failure this codebase has already
+	// recorded once: AUD-04's readback rules exist in Go and JavaScript, and the
+	// fence counts them rather than comparing them, so it cannot catch a rule
+	// neither copy implements. One producer, in Go, where it is fenced.
+	Measured []geometry.Overlay `json:"measured,omitempty"`
 	// Recalled lists figures the reply attributed to a published standard.
 	// Emitted whether or not there is geometry: a standard quoted in prose is
 	// exactly as unverifiable as one quoted in an assumption.
@@ -115,7 +124,8 @@ func (c *Conversation) RespondStream(
 			}
 		}
 		if reply.Prototype != nil {
-			if err := emit(StreamEvent{Kind: "prototype", Prototype: reply.Prototype}); err != nil {
+			if err := emit(StreamEvent{Kind: "prototype", Prototype: reply.Prototype,
+				Measured: geometry.Measure(*reply.Prototype, geometry.Unit(reply.Prototype.Units))}); err != nil {
 				return err
 			}
 		}
@@ -216,7 +226,8 @@ func (c *Conversation) RespondStream(
 			}
 		}
 		if reply.Prototype != nil {
-			if err := emit(StreamEvent{Kind: "prototype", Prototype: reply.Prototype}); err != nil {
+			if err := emit(StreamEvent{Kind: "prototype", Prototype: reply.Prototype,
+				Measured: geometry.Measure(*reply.Prototype, geometry.Unit(reply.Prototype.Units))}); err != nil {
 				return err
 			}
 		}

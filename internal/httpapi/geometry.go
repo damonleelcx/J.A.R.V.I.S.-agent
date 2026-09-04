@@ -76,7 +76,19 @@ type VariantDTO struct {
 
 	// Document is the geometry itself, in the shape the viewport already draws,
 	// so a variant can be loaded into the studio without a translation layer.
+	// Its Overlays are the ones somebody AUTHORED.
 	Document geometry.Document `json:"document"`
+
+	// Measured is what FORGE derived from the parts, computed here rather than
+	// stored (PRD VIS-03).
+	//
+	// A separate field on purpose. Merging derived dimensions into the document
+	// would make "somebody measured this part" and "FORGE did arithmetic on its
+	// own guess" arrive in one array, distinguishable only by an epistemic label
+	// a client might not render — and the whole point of VIS-03 is that a
+	// dimension line is the most authoritative mark on a drawing. Two fields
+	// mean a client cannot show them identically by accident.
+	Measured []geometry.Overlay `json:"measured"`
 }
 
 func toVariantDTO(v geometry.Variant) VariantDTO {
@@ -92,7 +104,20 @@ func toVariantDTO(v geometry.Variant) VariantDTO {
 		InitiatorID: v.InitiatorID,
 		CreatedAt:   v.CreatedAt.UTC().Format(time.RFC3339),
 		Document:    v.Document,
+		Measured:    measuredOrEmpty(v),
 	}
+}
+
+// measuredOrEmpty derives this variant's dimensions in its own resolved unit.
+//
+// Never null. "This model has no derivable extents" and "nobody computed any"
+// must not arrive looking the same — the same rule Assumptions follows above.
+func measuredOrEmpty(v geometry.Variant) []geometry.Overlay {
+	out := geometry.Measure(v.Document, v.Units)
+	if out == nil {
+		return []geometry.Overlay{}
+	}
+	return out
 }
 
 // Formats handles GET /v1/geometry/formats.

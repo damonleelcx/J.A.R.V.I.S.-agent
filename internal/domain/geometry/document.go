@@ -41,6 +41,13 @@ type Document struct {
 	// geometry is present — PRD VIS-06: photorealism never implies
 	// manufacturability, structural adequacy, or compliance.
 	NotVerified []string `json:"not_verified"`
+	// Overlays are engineering annotations somebody authored on this model:
+	// dimensions taken from a drawing, tolerances, datums (PRD VIS-03). Only
+	// what was AUTHORED lives here. Dimensions FORGE derives from the parts are
+	// computed at read time by Measure and travel separately, because a value
+	// somebody stated and a value FORGE worked out are different claims and must
+	// not become indistinguishable by sharing a field.
+	Overlays []Overlay `json:"overlays,omitempty"`
 }
 
 // Part is one solid.
