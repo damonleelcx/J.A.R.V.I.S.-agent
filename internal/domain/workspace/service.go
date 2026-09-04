@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/access"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/claim"
@@ -760,6 +761,123 @@ func (s *Service) PackFor(ctx context.Context, q db.Querier, projectID string) (
 				"Industries: %s", projectID, stored, projectID, strings.Join(domainpack.Names(), ", "))
 	}
 	return def, nil
+}
+
+// ReviewAuthority is the qualified-review claim recorded on a project.
+//
+// Recorded, NEVER verified. This build cannot check a licence — there is no
+// registry to consult and no credential to validate — so what is held is a claim
+// with an author. See 0021_project_review_authority.sql.
+type ReviewAuthority struct {
+	// Holder is the named person the claim is about.
+	Holder string
+	// Note is what they were recorded as holding: a registration number, a role,
+	// a scope. Free text, unverified.
+	Note string
+	// RecordedBy is who made the claim (PRD AGT-07). A raised ceiling rests on an
+	// attributed statement, never an anonymous one.
+	RecordedBy string
+	RecordedAt time.Time
+}
+
+// Recorded reports whether an authority is actually on the project.
+func (a ReviewAuthority) Recorded() bool {
+	return strings.TrimSpace(a.Holder) != "" && strings.TrimSpace(a.RecordedBy) != ""
+}
+
+// ReviewAuthorityFor reads the claim recorded on a project, if any.
+//
+// A project with none returns the zero value and no error: absence is the normal
+// state and the safe one, not a failure.
+func (s *Service) ReviewAuthorityFor(ctx context.Context, q db.Querier, projectID string) (ReviewAuthority, error) {
+	const op = "workspace.Service.ReviewAuthorityFor"
+
+	var a ReviewAuthority
+	var holder, note, by *string
+	var at *time.Time
+	if err := q.QueryRow(ctx,
+		`select review_authority_holder, review_authority_note,
+		        review_authority_recorded_by, review_authority_recorded_at
+		   from forge_projects where id = $1`, projectID).Scan(&holder, &note, &by, &at); err != nil {
+		return a, errs.Wrap(op, errs.CodeNotFound, err).
+			WithDetail("no project %s", projectID)
+	}
+	if holder != nil {
+		a.Holder = *holder
+	}
+	if note != nil {
+		a.Note = *note
+	}
+	if by != nil {
+		a.RecordedBy = *by
+	}
+	if at != nil {
+		a.RecordedAt = *at
+	}
+	return a, nil
+}
+
+// RecordReviewAuthority names the person a raised ceiling will rest on.
+//
+// # What this does NOT do
+//
+// It does not verify anything. It writes an attributed claim, and the ceiling in
+// the domain pack rises because a named human accepted responsibility — not
+// because a qualification was established. Callers must say so where a person
+// can read it.
+//
+// Empty holder CLEARS the claim, which is the only way back down. Clearing is
+// deliberately as easy as setting: a mechanism that raises a ceiling and cannot
+// lower it is one nobody should switch on.
+func (s *Service) RecordReviewAuthority(ctx context.Context, q db.Querier,
+	projectID, holder, note, recordedBy string) error {
+	const op = "workspace.Service.RecordReviewAuthority"
+
+	holder, note = strings.TrimSpace(holder), strings.TrimSpace(note)
+	if holder == "" {
+		if _, err := q.Exec(ctx, `
+			update forge_projects
+			   set review_authority_holder = null, review_authority_note = null,
+			       review_authority_recorded_by = null, review_authority_recorded_at = null,
+			       updated_at = $2
+			 where id = $1`, projectID, s.clock.Now()); err != nil {
+			return errs.Wrap(op, errs.CodeDatabaseUnavail, err)
+		}
+		return nil
+	}
+	if strings.TrimSpace(recordedBy) == "" {
+		return errs.New(op, errs.CodeValidationFailed).
+			WithDetail("a review authority must name who recorded it. A raised ceiling rests " +
+				"on an attributed statement; an anonymous one would let work above the " +
+				"ordinary limit happen on the strength of a value with no author.")
+	}
+	// The domain has to have a raised ceiling to reach. Recording an authority on
+	// a project whose pack offers none would store a claim that changes nothing
+	// while looking exactly like one that does.
+	def, err := s.PackFor(ctx, q, projectID)
+	if err != nil {
+		return err
+	}
+	if def.ReviewAuthority == "" {
+		return errs.New(op, errs.CodeForbidden).
+			WithDetail("the %s domain has no qualified-review authority that would raise its "+
+				"ceiling, so recording one would change nothing while appearing to.\n\n%s",
+				def.Pack, def.Requires)
+	}
+	now := s.clock.Now()
+	tag, err := q.Exec(ctx, `
+		update forge_projects
+		   set review_authority_holder = $2, review_authority_note = nullif($3, ''),
+		       review_authority_recorded_by = $4, review_authority_recorded_at = $5,
+		       updated_at = $5
+		 where id = $1`, projectID, holder, note, recordedBy, now)
+	if err != nil {
+		return errs.Wrap(op, errs.CodeDatabaseUnavail, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return errs.New(op, errs.CodeNotFound).WithDetail("no project %s", projectID)
+	}
+	return nil
 }
 
 // RecordChange appends a version and, when the change belongs to a goal, writes

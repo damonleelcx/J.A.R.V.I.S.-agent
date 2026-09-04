@@ -135,6 +135,12 @@ Project settings:
                                        The domain whose rules apply, and the ceiling on work here
       With no --set, prints the industry in force, its ceiling, and what would raise it.
       An industry is chosen when the project is created (goal new --industry).
+  project review-authority --project <id> [--holder "<name>" [--note "..."] --as <user-id>] [--clear]
+                                       The named person a raised ceiling rests on
+      Engineering domains stop at r1 because this build implements no qualified review.
+      Recording a named, attributed authority raises that domain's ceiling.
+      This does NOT verify a licence: there is no registry to consult and no credential
+      to validate. It records a CLAIM with an author, and every line it prints says so.
 
 Collaboration:
   rooms show <room-id>                         A session's transcript, every turn attributed
@@ -403,16 +409,19 @@ func run(ctx context.Context, cmd string, args []string) error {
 		if len(args) == 0 {
 			fmt.Fprint(os.Stderr, usage)
 			return errs.New("forgectl.run", errs.CodeValidationFailed).
-				WithDetail("project needs a subcommand: character, industry")
+				WithDetail("project needs a subcommand: character, industry, review-authority")
 		}
 		switch args[0] {
 		case "character":
 			return cmdProjectCharacter(ctx, cfg, log, args[1:])
 		case "industry":
 			return cmdProjectIndustry(ctx, cfg, log, args[1:])
+		case "review-authority":
+			return cmdProjectReviewAuthority(ctx, cfg, log, args[1:])
 		default:
 			return errs.New("forgectl.run", errs.CodeValidationFailed).
-				WithDetail("unknown project subcommand %q; expected character or industry", args[0])
+				WithDetail("unknown project subcommand %q; expected character, industry or "+
+					"review-authority", args[0])
 		}
 
 	case "rooms":

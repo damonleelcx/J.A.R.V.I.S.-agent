@@ -178,6 +178,52 @@ type Definition struct {
 	// build has no mechanism that could enforce one, and pretending otherwise
 	// would be the fabricated-capability failure in a new place.
 	DataRules string
+	// ReviewAuthority is the qualification that raises this domain's ceiling —
+	// who has to be accountable before consequential work may happen here.
+	//
+	// Empty means NOTHING raises it. That is the state for `medical` and
+	// `robotics`, which no record reaches, and for `general`, where the answer to
+	// "who is qualified in an unknown domain" has no meaning.
+	ReviewAuthority string
+	// ReviewCeiling is the highest tier reachable once such an authority is
+	// recorded on a project. Never above the tier the domain could bear even
+	// with one, and never r5.
+	//
+	// # What recording an authority does and does not establish
+	//
+	// This build CANNOT verify a licence: no registry to check, no credential to
+	// validate, no way to acquire either from in here. What a record holds is a
+	// CLAIM, attributed to whoever made it. Every surface that reads it says
+	// "recorded, not verified" in those words, because without that sentence the
+	// mechanism becomes a way to launder authority nothing checked.
+	//
+	// What it buys is still real: work above r1 becomes traceable to a named
+	// person who accepted responsibility for it, which is what PRD AGT-07 asks of
+	// every consequential transition. That is the honest ceiling on what software
+	// can do about a professional qualification.
+	ReviewCeiling engine.RiskTier
+}
+
+// PermitsWithAuthority reports the ceiling in force given whether a qualified
+// review authority is recorded on the project.
+//
+// # Why a method rather than two fields the caller compares
+//
+// The rule has three parts — the domain must offer a raised ceiling, the raised
+// ceiling must be valid, and a record must exist — and a caller that assembled
+// them itself would eventually assemble them differently somewhere else. There
+// is one place work gets permitted and there is one place that decides how far.
+func (d Definition) CeilingWith(authorityRecorded bool) engine.RiskTier {
+	if !authorityRecorded || d.ReviewAuthority == "" || !d.ReviewCeiling.Valid() {
+		return d.MaxTier
+	}
+	if d.ReviewCeiling.Prohibited() || !d.ReviewCeiling.AtLeast(d.MaxTier) {
+		// A "raised" ceiling that is lower than the ordinary one, or that reaches
+		// r5, is a table error rather than a permission. The unraised ceiling is
+		// the safe reading of it.
+		return d.MaxTier
+	}
+	return d.ReviewCeiling
 }
 
 // Available reports whether a project may be created in this pack at all.
@@ -221,6 +267,9 @@ var definitions = []Definition{
 		Adapters: []string{"cad_parametric_edit", "cad_import", "fea_solve"},
 		DataRules: "Models and drawings are commercial-in-confidence. Keep supplier part " +
 			"numbers, pricing and unreleased tolerances out of shared transcripts.",
+		ReviewAuthority: "a named engineer accountable for drawing release, tooling and " +
+			"certification in this project",
+		ReviewCeiling: engine.RiskR2,
 	},
 	{
 		Pack:     Manufacturing,
@@ -240,6 +289,9 @@ var definitions = []Definition{
 		Adapters:     []string{"cad_import"},
 		DataRules: "Process parameters, cycle times and tooling costs are commercially " +
 			"sensitive. Supplier terms do not belong in a transcript.",
+		ReviewAuthority: "a named manufacturing engineer accountable for releasing a routing, " +
+			"tooling or process",
+		ReviewCeiling: engine.RiskR2,
 	},
 	{
 		Pack:     Automotive,
@@ -261,6 +313,9 @@ var definitions = []Definition{
 		DataRules: "Programme names and launch dates are confidential before reveal. VINs " +
 			"and telematics identify vehicles and their drivers; treat them as " +
 			"personal data.",
+		ReviewAuthority: "a named engineer accountable for the safety function this work " +
+			"touches",
+		ReviewCeiling: engine.RiskR2,
 	},
 	{
 		Pack:     Aerospace,
@@ -282,6 +337,9 @@ var definitions = []Definition{
 		DataRules: "Design data may be export-controlled. Do not move it between " +
 			"jurisdictions, into shared rooms, or into a transcript without checking " +
 			"what regime it falls under.",
+		ReviewAuthority: "a named engineer accountable under the operating certificate of the " +
+			"organisation flying the vehicle",
+		ReviewCeiling: engine.RiskR2,
 	},
 	{
 		Pack:     Civil,
@@ -303,6 +361,9 @@ var definitions = []Definition{
 		Adapters: []string{"fea_solve"},
 		DataRules: "Site and ground investigation data is client-confidential, and survey " +
 			"files carry precise locations. Treat them as identifying.",
+		ReviewAuthority: "a named licensed engineer accountable for calculations and issued " +
+			"drawings",
+		ReviewCeiling: engine.RiskR2,
 	},
 	{
 		Pack:     Electrical,
@@ -321,6 +382,9 @@ var definitions = []Definition{
 		Adapters:     []string{"spice_simulate", "cad_import"},
 		DataRules: "Schematics and firmware are commercial-in-confidence. Credentials, keys " +
 			"and calibration constants must never enter a transcript.",
+		ReviewAuthority: "a named engineer accountable for the hazardous classes this work " +
+			"touches",
+		ReviewCeiling: engine.RiskR2,
 	},
 	{
 		Pack:     Construction,
@@ -340,6 +404,9 @@ var definitions = []Definition{
 		Adapters:     nil,
 		DataRules: "Site records identify individuals. Method statements, incident notes and " +
 			"access arrangements are confidential and some are safety-sensitive.",
+		ReviewAuthority: "a named engineer or architect of record accountable for issued " +
+			"documents and field direction",
+		ReviewCeiling: engine.RiskR2,
 	},
 	{
 		Pack:     ProductDesign,
@@ -359,6 +426,8 @@ var definitions = []Definition{
 		Adapters:     []string{"cad_import"},
 		DataRules: "Unreleased industrial design is the most leak-sensitive material in this " +
 			"domain: a render is recognisable long before launch.",
+		ReviewAuthority: "a named owner accountable for what goes to tooling",
+		ReviewCeiling:   engine.RiskR2,
 	},
 	{
 		Pack:     Architecture,
@@ -380,6 +449,8 @@ var definitions = []Definition{
 		Adapters: nil,
 		DataRules: "Client and occupant information is confidential, and drawings can reveal " +
 			"security-relevant detail about a building's access and services.",
+		ReviewAuthority: "a named architect of record accountable for issued drawings",
+		ReviewCeiling:   engine.RiskR2,
 	},
 	{
 		Pack:     General,

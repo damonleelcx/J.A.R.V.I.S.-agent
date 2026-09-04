@@ -261,7 +261,18 @@ func (w *Worker) runTask(ctx context.Context, task *engine.Task) {
 		return
 	}
 
-	grant := grantFor(goal, domain, w.production)
+	// Read next to the domain and from the same pool, so "which rules" and "who
+	// is accountable for going past them" can never come from two reads that
+	// disagree. An unreadable authority fails the task for PackFor's reason: a
+	// permission that cannot be read is not an unrestricted one.
+	authority, err := domainworkspace.NewService(w.pool, w.clock, w.log).
+		ReviewAuthorityFor(ctx, w.pool, goal.ProjectID)
+	if err != nil {
+		w.failTask(ctx, task, errs.CodeOf(err), err.Error())
+		return
+	}
+
+	grant := grantFor(goal, domain, authority, w.production)
 	tc, err := w.assembler.Assemble(ctx, w.pool, task, goal, grant, w.budgetNote(goal))
 	if err != nil {
 		w.failTask(ctx, task, errs.CodeOf(err), err.Error())
@@ -665,7 +676,8 @@ func (w *Worker) budgetNote(goal *engine.Goal) string {
 // ever narrow it.
 //
 // See docs/bugfix/2026-09-04-the-pack-was-written-and-never-read.md.
-func grantFor(goal *engine.Goal, domain domainpack.Definition, production bool) tools.Grant {
+func grantFor(goal *engine.Goal, domain domainpack.Definition, authority domainworkspace.ReviewAuthority,
+	production bool) tools.Grant {
 	caps := []tools.Capability{tools.CapRead}
 	if goal.Autonomy.AtLeast(engine.AutonomyDraft) {
 		caps = append(caps, tools.CapWrite)
@@ -673,15 +685,31 @@ func grantFor(goal *engine.Goal, domain domainpack.Definition, production bool) 
 	if goal.Autonomy.AllowsExecution() {
 		caps = append(caps, tools.CapExecute, tools.CapSimulate)
 	}
-	ceiling := lowerTier(goal.RiskTier, domain.MaxTier)
+	// The ONLY place a domain ceiling rises, and only for an attributed claim.
+	//
+	// What was established is that a named person accepted responsibility. What
+	// was NOT established is a qualification: this build cannot check a licence,
+	// and CeilingSource below says so in those words. Without that sentence this
+	// mechanism would launder authority nothing verified.
+	domainCeiling := domain.CeilingWith(authority.Recorded())
+	ceiling := lowerTier(goal.RiskTier, domainCeiling)
 	// Named only when the DOMAIN is the binding limit. When the goal's own tier
 	// is what stops the work there is no second authority to point at, and
 	// naming the pack anyway would send somebody to change an industry that was
 	// not the thing in their way.
 	var source string
-	if domain.MaxTier.Valid() && ceiling == domain.MaxTier && ceiling != goal.RiskTier {
+	if domainCeiling.Valid() && ceiling == domainCeiling && ceiling != goal.RiskTier {
 		source = fmt.Sprintf("That ceiling is the %s domain's, not this goal's: %s Work above %s "+
-			"here would require %s.", domain.Pack, domain.Summary, domain.MaxTier, domain.Requires)
+			"here would require %s.", domain.Pack, domain.Summary, domainCeiling, domain.Requires)
+		if authority.Recorded() {
+			// Said wherever a raised ceiling is in play, including when something
+			// is refused ABOVE the raised one. A reader has to know the limit they
+			// hit moved, and on what.
+			source += fmt.Sprintf(" This project's ceiling was raised to %s because %s was "+
+				"recorded as %s — RECORDED, NOT VERIFIED: this build cannot check a "+
+				"qualification, and what it holds is a claim attributed to whoever made it.",
+				domainCeiling, authority.Holder, domain.ReviewAuthority)
+		}
 	}
 	return tools.Grant{
 		Capabilities:  caps,

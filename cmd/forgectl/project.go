@@ -6,10 +6,13 @@ import (
 	"strings"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/pack"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/workspace"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/clock"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/config"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/db"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/errs"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/logx"
+	"time"
 )
 
 // Setting how FORGE works on a project (PRD RSN-04).
@@ -253,5 +256,109 @@ func cmdProjectIndustry(ctx context.Context, cfg *config.Config, log *logx.Logge
 			"them cannot be produced here, and will not be simulated.")
 	}
 	fmt.Printf("\nWork above %s here would require %s.\n", d.MaxTier, d.Requires)
+	return nil
+}
+
+// cmdProjectReviewAuthority names the person a raised ceiling rests on.
+//
+// # What this command can and cannot do
+//
+// Every engineering pack stops at r1 — reversible draft — because this build
+// implements none of the qualified review that r2 and above require in those
+// domains. Correct, and a dead end for a deployment that DOES have a licensed
+// engineer: there was no way to say so.
+//
+// This is that way, and it is deliberately blunt about its limits. It cannot
+// verify a licence: there is no registry to consult from in here and no
+// credential to validate. What it writes is a CLAIM with an author, and every
+// line it prints says so. What that buys is real — work above r1 becomes
+// traceable to a named person who accepted responsibility, which is what PRD
+// AGT-07 asks of any consequential transition — but it is not verification and
+// must never be printed as though it were.
+//
+// Clearing is as easy as setting. A mechanism that raises a ceiling and cannot
+// lower it is one nobody should switch on.
+func cmdProjectReviewAuthority(ctx context.Context, cfg *config.Config, log *logx.Logger, args []string) error {
+	const op = "forgectl.cmdProjectReviewAuthority"
+
+	fs := newFlagSet("project review-authority")
+	project := fs.String("project", "", "project id (required)")
+	holder := fs.String("holder", "", "the named person accountable in this domain")
+	note := fs.String("note", "", "what they hold: a registration number, a role, a scope")
+	as := fs.String("as", "", "user id of whoever is recording this (required with --holder)")
+	clear := fs.Bool("clear", false, "remove the recorded authority and lower the ceiling again")
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	// Only the project is required. With neither --holder nor --clear this is a
+	// READ, which is what somebody reaches for first: the usage text promises
+	// that, and a guard demanding --holder would have made the promise false.
+	if *project == "" {
+		return errs.New(op, errs.CodeValidationFailed).
+			WithDetail("usage: forgectl project review-authority --project <id> \\\n" +
+				"          --holder \"<name>\" [--note \"<registration or role>\"] --as <user-id>\n" +
+				"       forgectl project review-authority --project <id> --clear\n\n" +
+				"With neither, this prints what is recorded.\n\n" +
+				"This does NOT verify anything. It records a claim, attributed to whoever " +
+				"made it, and raises the domain's ceiling because a named person accepted " +
+				"responsibility — not because a qualification was established.")
+	}
+
+	pool, err := db.Connect(ctx, cfg.DB, log)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+	svc := workspace.NewService(pool, clock.System{}, log)
+
+	switch {
+	case *clear:
+		if err := svc.RecordReviewAuthority(ctx, pool, *project, "", "", ""); err != nil {
+			return err
+		}
+		fmt.Println("Cleared. This project's ceiling is the domain's ordinary one again.")
+	case *holder != "":
+		if *as == "" {
+			return errs.New(op, errs.CodeValidationFailed).
+				WithDetail("--as is required: a raised ceiling rests on an attributed statement. " +
+					"An anonymous one would let work above the ordinary limit happen on the " +
+					"strength of a value with no author.")
+		}
+		if err := svc.RecordReviewAuthority(ctx, pool, *project, *holder, *note, *as); err != nil {
+			return err
+		}
+	}
+
+	a, err := svc.ReviewAuthorityFor(ctx, pool, *project)
+	if err != nil {
+		return err
+	}
+	d, err := svc.PackFor(ctx, pool, *project)
+	if err != nil {
+		return err
+	}
+	fmt.Printf("%s\n", describeIndustry(string(d.Pack)))
+	if !a.Recorded() {
+		fmt.Printf("  authority  none recorded\n  ceiling    %s\n", d.MaxTier)
+		if d.ReviewAuthority == "" {
+			fmt.Printf("\nNothing raises the ceiling in this domain. %s\n", d.Requires)
+			return nil
+		}
+		fmt.Printf("\nRecording %s would raise it to %s.\n", d.ReviewAuthority, d.ReviewCeiling)
+		return nil
+	}
+	fmt.Printf("  authority  %s\n", a.Holder)
+	if a.Note != "" {
+		fmt.Printf("  holding    %s\n", a.Note)
+	}
+	fmt.Printf("  recorded   by %s at %s\n", a.RecordedBy, a.RecordedAt.UTC().Format(time.RFC3339))
+	fmt.Printf("  ceiling    %s (raised from %s)\n", d.CeilingWith(true), d.MaxTier)
+	// Said every time, in these words. A raised ceiling that does not state what
+	// was NOT established is a way to launder authority nothing checked.
+	fmt.Printf("\nRECORDED, NOT VERIFIED. This build cannot check a qualification: there is no\n" +
+		"registry to consult and no credential to validate. What is stored is a claim,\n" +
+		"attributed to whoever made it, and the ceiling rose because a named person\n" +
+		"accepted responsibility for the work — not because a licence was established.\n")
+	fmt.Printf("\nThe domain asks for %s.\n", d.ReviewAuthority)
 	return nil
 }
