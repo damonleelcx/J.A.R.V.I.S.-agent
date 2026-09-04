@@ -1446,7 +1446,78 @@
         (d.authority.note ? ' (' + esc(d.authority.note) + ')' : '') + '. ' +
         esc(d.authority.caveat) + '</div>';
     }
+    html += authorityControl(d);
     return html + '</div>';
+  }
+
+  /* # Recording an authority from the workbench
+   *
+   * Offered only to somebody the server would actually let do it — the graph
+   * response says whether this caller may, and that flag is an affordance rather
+   * than the gate: PUT is authorised server-side whatever the panel shows.
+   *
+   * # Why recording takes two presses
+   *
+   * The same rule "Start this" follows, for a stronger reason. This is the only
+   * control in the product that WIDENS what may be done, and what it records is
+   * a claim nothing verifies. So the caveat is put in front of the person BEFORE
+   * they commit, not printed at them afterwards: somebody who reads "recorded,
+   * not verified" only in the confirmation has already acted on the belief it
+   * corrects.
+   */
+  function authorityControl(d) {
+    if (!d.can_record_authority) return '';
+    if (d.authority) {
+      return '<div class="authority-act">' +
+        '<button class="btn-sm" id="authority-clear">Clear authority</button></div>';
+    }
+    if (!d.asks_for && !state.authorityForm) return '';
+    if (!state.authorityForm) {
+      return '<div class="authority-act">' +
+        '<button class="btn-sm" id="authority-open">Record review authority</button></div>';
+    }
+    return '<div class="authority-form">' +
+      '<label for="authority-holder">Who is accountable</label>' +
+      '<input type="text" id="authority-holder" placeholder="Their name" ' +
+      'value="' + esc(state.authorityHolder || '') + '">' +
+      '<label for="authority-note">What they hold</label>' +
+      '<input type="text" id="authority-note" placeholder="Registration, role or scope" ' +
+      'value="' + esc(state.authorityNote || '') + '">' +
+      /* Read before the act, never only after it. */
+      '<div class="foot raised">' + esc(theCaveat()) + '</div>' +
+      (state.authorityError ? '<div class="note bad">' + esc(state.authorityError) + '</div>' : '') +
+      '<div class="authority-act">' +
+      '<button class="btn-sm go" id="authority-save">Record it</button>' +
+      '<button class="btn-sm" id="authority-cancel">Cancel</button></div>' +
+      '</div>';
+  }
+
+  /* The caveat, taken from the server when it has been seen and otherwise stated
+   * here in the same words. Not fetched on demand: the person is mid-decision,
+   * and a sentence that arrives late is one they may act without. */
+  function theCaveat() {
+    if (state.domain && state.domain.authority && state.domain.authority.caveat) {
+      return state.domain.authority.caveat;
+    }
+    return 'RECORDED, NOT VERIFIED. This build cannot check a qualification: there is no ' +
+      'registry to consult and no credential to validate. The ceiling rises because a named ' +
+      'person accepted responsibility, not because a licence was established.';
+  }
+
+  function authorityRequest(method, body) {
+    return fetch('/v1/projects/' + encodeURIComponent(state.projectID) + '/review-authority', {
+      method: method,
+      headers: { 'Content-Type': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined
+    }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (b) {
+        if (!r.ok) {
+          var e = (b && b.error) || {};
+          throw new Error(e.message || ('Request failed (' + r.status + ')'));
+        }
+        return b;
+      });
+    });
   }
 
   function renderIndustry() {
@@ -1463,6 +1534,7 @@
     el.classList.remove('hidden');
     el.innerHTML = html;
     head.textContent = state.projectID ? 'Domain' : 'Industry';
+    bindAuthorityControls();
     var pick = document.getElementById('industry-pick');
     if (pick) pick.addEventListener('change', function () {
       state.industry = pick.value;
@@ -1471,6 +1543,56 @@
        * under, above a sentence describing a different domain, is worse than
        * no sentence at all. */
       renderIndustry();
+    });
+  }
+
+  function bindAuthorityControls() {
+    var open = document.getElementById('authority-open');
+    if (open) open.addEventListener('click', function () {
+      state.authorityForm = true;
+      state.authorityError = null;
+      renderIndustry();
+    });
+    var cancel = document.getElementById('authority-cancel');
+    if (cancel) cancel.addEventListener('click', function () {
+      state.authorityForm = false;
+      state.authorityError = null;
+      renderIndustry();
+    });
+    var save = document.getElementById('authority-save');
+    if (save) save.addEventListener('click', function () {
+      var holder = (document.getElementById('authority-holder') || {}).value || '';
+      var note = (document.getElementById('authority-note') || {}).value || '';
+      /* Kept so a refused write does not throw away what was typed. */
+      state.authorityHolder = holder;
+      state.authorityNote = note;
+      if (!holder.trim()) {
+        state.authorityError = 'A name is required: the ceiling rests on a named person.';
+        renderIndustry();
+        return;
+      }
+      save.disabled = true;
+      authorityRequest('PUT', { holder: holder, note: note }).then(function () {
+        state.authorityForm = false;
+        state.authorityHolder = null;
+        state.authorityNote = null;
+        state.authorityError = null;
+        /* Re-read rather than patch state locally: the ceiling that results is
+         * the SERVER's answer, and a panel that computed its own would eventually
+         * show a limit that is not the one being enforced. */
+        loadRequirements();
+      }).catch(function (err) {
+        state.authorityError = err.message;
+        renderIndustry();
+      });
+    });
+    var clear = document.getElementById('authority-clear');
+    if (clear) clear.addEventListener('click', function () {
+      clear.disabled = true;
+      authorityRequest('DELETE', null).then(loadRequirements).catch(function (err) {
+        state.authorityError = err.message;
+        renderIndustry();
+      });
     });
   }
 

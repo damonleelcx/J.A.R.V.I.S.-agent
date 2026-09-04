@@ -203,6 +203,17 @@ func (h *WorkspaceHandlers) Graph(w http.ResponseWriter, r *http.Request) {
 			"boundary": domain.Summary, "requires": domain.Requires,
 			"ceiling": string(domain.MaxTier),
 		}
+		// Whether THIS caller may record one, so the panel can offer the control
+		// to somebody who can use it and not to somebody who would be refused.
+		//
+		// A UI AFFORDANCE, NOT THE GATE. The gate is requirePermission on
+		// PUT/DELETE /v1/projects/{id}/review-authority, which runs whatever this
+		// says. A client that flipped this to true would get a 403; a future
+		// reader must not mistake it for the control and stop checking there.
+		if h.deps.Access != nil {
+			d["can_record_authority"] = h.deps.Access.Require(
+				r.Context(), projectID, user.ID, access.PermProjectManage) == nil
+		}
 		if a, err := h.svc.ReviewAuthorityFor(r.Context(), h.deps.Pool, projectID); err == nil && a.Recorded() {
 			d["ceiling"] = string(domain.CeilingWith(true))
 			// Everything a reader needs to judge the raised ceiling, including the

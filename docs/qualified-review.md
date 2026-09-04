@@ -107,6 +107,17 @@ way down. An empty body is far more likely to be a client bug than an intention
 to lower a ceiling, and guessing wrong in that direction silently removes a
 control.
 
+In the **workbench**, the domain panel offers the control to somebody the server
+would actually let use it — the graph response carries `can_record_authority`,
+which is an *affordance and not the gate*: PUT authorises server-side whatever
+the panel showed, and `TestGraph_TheRecordAffordanceIsNotThePermission` asserts
+both halves.
+
+Recording takes **two presses**, the same rule "Start this" follows and for a
+stronger reason: the caveat is put in front of the person *before* they commit,
+not printed at them afterwards. Somebody who reads "recorded, not verified" only
+in the confirmation has already acted on the belief it corrects.
+
 **The caveat is on every response**, recorded or not. A client that only received
 it alongside a holder would have to remember to render it; one that always has it
 cannot show a holder without it by accident.

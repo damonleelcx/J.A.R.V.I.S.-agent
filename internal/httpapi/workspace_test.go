@@ -538,6 +538,60 @@ func TestGraph_CarriesTheDomainInForce(t *testing.T) {
 	if _, raised := domain["authority"]; raised {
 		t.Error("a project with nobody recorded reports a review authority")
 	}
+	if domain["can_record_authority"] != true {
+		t.Errorf("the owner is not told they may record an authority (%v), so the panel "+
+			"offers no control to the one person who can use it", domain["can_record_authority"])
+	}
+}
+
+// A member who may NOT record one is told so, and the flag is only an affordance.
+//
+// # Why the flag exists and why it is not the control
+//
+// The panel has to decide whether to offer a button, and offering one that
+// always 403s is worse than offering none. So the graph says whether THIS caller
+// may write.
+//
+// It is not a permission. PUT and DELETE authorise server-side whatever the flag
+// said, and this asserts BOTH halves: a maintainer is told no, and a maintainer
+// who ignored that and called PUT anyway is still refused. A future reader must
+// not mistake the affordance for the gate and stop checking there.
+func TestGraph_TheRecordAffordanceIsNotThePermission(t *testing.T) {
+	h := workspaceHarness(t)
+	ctx := context.Background()
+
+	id, err := h.svc.EnsureProject(ctx, h.pool, "", h.owner.ID, "Bridge", "Civil engineering")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.access.SetRole(ctx, access.Grant{
+		ProjectID: id, UserID: h.other.ID, Role: access.RoleMaintainer, By: h.owner.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	r := httptest.NewRequest("GET", "/v1/workspace/graph?project_id="+id, nil)
+	r = r.WithContext(context.WithValue(ctx, ctxKeyUser, h.other))
+	rec := httptest.NewRecorder()
+	h.h.Graph(rec, r)
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	domain, _ := body["domain"].(map[string]any)
+	if domain == nil {
+		t.Fatal("no domain on the response")
+	}
+	if domain["can_record_authority"] != false {
+		t.Errorf("a maintainer is told they may record an authority (%v); the panel would "+
+			"offer a control that always fails", domain["can_record_authority"])
+	}
+	// And the flag is not what stops them.
+	put := reviewAuthReq(t, h, "PUT", id, `{"holder":"Someone Else"}`, h.other)
+	if put.Code != 403 {
+		t.Errorf("a maintainer who ignored the affordance recorded an authority (%d). "+
+			"The flag is a hint; the gate is requirePermission on the write", put.Code)
+	}
 }
 
 // A raised ceiling is reported WITH the caveat, never the holder alone.
