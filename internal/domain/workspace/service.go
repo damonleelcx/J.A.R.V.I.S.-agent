@@ -426,6 +426,56 @@ func (s *Service) Review(ctx context.Context, projectID string) (*Review, error)
 
 	sortFindings(rev.Defects)
 	sortFindings(rev.Gaps)
+
+	// --- gaps: what this DOMAIN expects and the project does not have ---
+	//
+	// # Why the pack decides this and not a fixed list
+	//
+	// "Incomplete" is not a property of a graph, it is a property of a graph in a
+	// domain. A civil project with no recorded load case is missing the thing
+	// every number in it should rest on; a software project is not missing
+	// anything by having none. A single list would either nag every project about
+	// kinds most of them will never use, or ask so little that it never noticed
+	// the one that mattered.
+	//
+	// So this is the pack's Schema, read here — the pack's first VALIDATOR rather
+	// than another thing it merely declares.
+	//
+	// They are gaps, never defects. A gap is "expected, worth showing, never a
+	// failure", which is the right weight: a project part-way through legitimately
+	// has them, and a validator that turned an unfinished project red is one
+	// people learn to run with a flag that hides it.
+	if def, err := s.PackFor(ctx, s.pool, projectID); err != nil {
+		// The domain is unreadable, so nothing can be said about what it expects.
+		// Reported rather than skipped: a review that quietly checked less than it
+		// usually does looks exactly like a review that found less.
+		rev.Gaps = append(rev.Gaps, Finding{
+			Problem: "domain-unreadable",
+			Detail: "this project's domain could not be read, so nothing was checked against " +
+				"what its rules expect: " + err.Error(),
+		})
+	} else {
+		present := map[Kind]bool{}
+		for i := range g.Nodes {
+			present[g.Nodes[i].Kind] = true
+		}
+		for _, want := range def.Schema {
+			k := Kind(want)
+			if present[k] {
+				continue
+			}
+			gloss := string(k)
+			if kd, err := KindOf(k); err == nil {
+				gloss = kd.Gloss
+			}
+			rev.Gaps = append(rev.Gaps, Finding{
+				Problem: "domain-expects-" + want,
+				Detail: fmt.Sprintf("%s work records at least one %s — %s — and this project has none",
+					def.Industry, want, gloss),
+			})
+		}
+	}
+
 	return rev, nil
 }
 
