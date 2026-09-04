@@ -126,3 +126,59 @@ func TestDomainStore_NilAnswersGeneral(t *testing.T) {
 		t.Error("a nil store asserted domain conventions")
 	}
 }
+
+// The frame and the handling rules reach the model too, not only the prose.
+//
+// # Why these need their own fence
+//
+// TestFramingFor_EveryIndustryContributesItsConventions asserts the Conventions
+// paragraph arrives. The frame and the data rules are separate fields added
+// later, and "the conventions arrived" would stay green if either of them
+// silently stopped being spliced in.
+//
+// The frame is the one that matters most: it DIFFERS between domains — a vehicle
+// is X-forward, a building is Z-up against a site datum — and a coordinate read
+// in the wrong frame is wrong without looking wrong. A model never told which
+// frame it is working in will pick one.
+func TestFramingFor_CarriesTheFrameAndTheHandlingRules(t *testing.T) {
+	for _, label := range []string{
+		"Mechanical engineering", "Manufacturing", "Automotive", "Aerospace",
+		"Civil engineering", "Electrical engineering", "Construction",
+		"Product design", "Architecture",
+	} {
+		d := defOf(t, label)
+		framing := framingFor(d)
+
+		if strings.TrimSpace(d.GeometryAxes) == "" {
+			t.Errorf("%s states no coordinate frame", label)
+		} else if !strings.Contains(framing, d.GeometryAxes) {
+			t.Errorf("%s: the coordinate frame never reaches the model, so a position it "+
+				"proposes means whatever the model assumed", label)
+		}
+		if d.GeometryUnit != "" && !strings.Contains(framing, d.GeometryUnit) {
+			t.Errorf("%s: the default unit does not reach the model", label)
+		}
+		if strings.TrimSpace(d.DataRules) == "" {
+			t.Errorf("%s states no handling rules", label)
+		} else if !strings.Contains(framing, d.DataRules) {
+			t.Errorf("%s: the handling rules never reach the model — and the model is the "+
+				"thing that decides what goes into a reply, so a rule it never sees is a "+
+				"rule addressed to nobody", label)
+		}
+	}
+}
+
+// `general` still contributes nothing, frame and handling included.
+//
+// The property that makes all of this safe on an existing deployment: a project
+// that never stated a domain gets byte-identical framing to what it got before
+// packs were read at all.
+func TestFramingFor_AnUnstatedDomainAddsNoFrameOrRules(t *testing.T) {
+	general := defOf(t, "general")
+	if general.GeometryAxes != "" || general.GeometryUnit != "" {
+		t.Error("the `general` pack asserts a coordinate frame for a domain nobody stated")
+	}
+	if got := framingFor(general); got != converseFraming {
+		t.Error("an unstated domain changed the framing")
+	}
+}
