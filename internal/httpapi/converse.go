@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/agent"
@@ -29,6 +30,10 @@ type ConverseHandlers struct {
 	// provenance record — the same reason RecordChange is not on the HTTP
 	// surface (see router.go).
 	geo *geometry.Service
+	// workspace reads recorded requirements a turn is based on (PRD VIS-01).
+	// Optional: a deployment without it simply has no requirements to build
+	// from, and a turn that names some gets an ordinary answer.
+	workspace *workspace.Service
 }
 
 // NewConverseHandlers wires the conversation endpoint.
@@ -40,7 +45,8 @@ func NewConverseHandlers(d Deps) *ConverseHandlers {
 		deps: d,
 		conv: agent.NewConversation(d.LLM, persona.DefaultCharacter()).
 			WithCharacters(agent.NewCharacterStore(d.Pool, d.Log)),
-		geo: geometry.NewService(d.Pool, d.Clock, d.Log),
+		geo:       geometry.NewService(d.Pool, d.Clock, d.Log),
+		workspace: workspace.NewService(d.Pool, d.Clock, d.Log),
 	}
 }
 
@@ -66,6 +72,67 @@ type converseRequest struct {
 	// routed to the vision model — a deployment without one refuses rather than
 	// asking a text model to look at a picture.
 	Images []string `json:"images,omitempty"`
+	// FromNodes names recorded requirements or constraints this turn is based on
+	// (PRD VIS-01: geometry generated from requirements).
+	//
+	// Ids only. The server loads those nodes and writes their text into the
+	// turn itself — it does not take the text from the client. A client that
+	// could send both would be able to name requirement A and paste the words
+	// of B, and the variant's provenance would say the geometry came from a
+	// requirement the model never saw.
+	FromNodes []string `json:"from_nodes,omitempty"`
+}
+
+// requirementBlockPrefix opens the block the server writes into a turn. It
+// announces itself so the model can tell a recorded requirement from the
+// person's own words, and so a reader of the transcript can too.
+const requirementBlockPrefix = "[Recorded requirements this is to be built from:\n"
+
+// requirementsFor reads the named requirements and writes them into the turn.
+//
+// Returns the message the model will see and the ids that were actually
+// resolved. Membership is checked by the same authorisation the rest of this
+// handler uses, so naming a node in somebody else's project resolves nothing.
+func (h *ConverseHandlers) requirementsFor(r *http.Request, projectID string,
+	ids []string, message string) (string, []string) {
+
+	if len(ids) == 0 || projectID == "" || h.workspace == nil {
+		return message, nil
+	}
+	g, err := h.workspace.Load(r.Context(), projectID)
+	if err != nil {
+		// Read failure loses the requirement block, not the turn. Logged rather
+		// than swallowed: a workbench where "model this requirement" silently
+		// becomes an ordinary message is one nobody can debug from the outside.
+		h.deps.Log.WarnWith(r.Context(), logx.EventWorkspaceUnreadable, err, "project_id", projectID)
+		return message, nil
+	}
+	want := map[string]bool{}
+	for _, id := range ids {
+		want[id] = true
+	}
+
+	var block strings.Builder
+	var used []string
+	for _, n := range g.Nodes {
+		if !want[n.ID] {
+			continue
+		}
+		if block.Len() == 0 {
+			block.WriteString(requirementBlockPrefix)
+		}
+		fmt.Fprintf(&block, "- (%s) %s", n.Kind, n.Title)
+		if n.Body != "" {
+			fmt.Fprintf(&block, " — %s", n.Body)
+		}
+		block.WriteString("\n")
+		used = append(used, n.ID)
+	}
+	if block.Len() == 0 {
+		return message, nil
+	}
+	block.WriteString("]\n\n")
+	return block.String() + message, used
 }
 
 // Converse handles POST /v1/converse as Server-Sent Events.
@@ -150,7 +217,19 @@ func (h *ConverseHandlers) Converse(w http.ResponseWriter, r *http.Request) {
 		return nil
 	}
 
-	emitErr := h.conv.RespondStream(ctx, req.ProjectID, req.History, req.Message, req.OnScreen, req.Images,
+	// PRD VIS-01. The requirement text is read from the graph HERE, server-side,
+	// and prepended to the turn — so what the model sees is what the recorded
+	// requirement says, and the ids written into the variant's inputs are ids
+	// this server resolved rather than ones a client asserted.
+	//
+	// A node that cannot be resolved is skipped rather than failing the turn:
+	// the person is mid-sentence, and refusing to answer because one selected
+	// requirement was deleted a moment ago would lose the message they typed.
+	// What was actually used is recorded, so the record never overstates.
+	message, usedNodes := h.requirementsFor(r, req.ProjectID, req.FromNodes, req.Message)
+	req.FromNodes = usedNodes
+
+	emitErr := h.conv.RespondStream(ctx, req.ProjectID, req.History, message, req.OnScreen, req.Images,
 		func(ev agent.StreamEvent) error {
 			switch ev.Kind {
 			case "speech":
@@ -290,8 +369,12 @@ func (h *ConverseHandlers) keepGeometry(r *http.Request, req converseRequest, pr
 		// request actually carried, never from anything the client asserts about
 		// its own provenance.
 		Inputs: map[string]any{
-			"source":        "workbench conversation",
-			"message":       forLedger(req.Message),
+			"source":  "workbench conversation",
+			"message": forLedger(req.Message),
+			// PRD VIS-01 and VIS-04: what this geometry was made FROM. Only the
+			// nodes the server resolved appear here.
+			"from_nodes":    req.FromNodes,
+			"images":        len(req.Images),
 			"on_screen":     forLedger(req.OnScreen),
 			"history_turns": len(req.History),
 			"model":         model,

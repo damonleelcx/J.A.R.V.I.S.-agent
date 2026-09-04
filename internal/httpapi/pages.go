@@ -578,6 +578,13 @@ const pageTemplates = `
 
   <!-- Artifacts, evidence, and the one place work can be started. -->
   <div class="wb-right rail">
+    <!-- PRD VIS-01: geometry generated from recorded requirements. Ticking one
+         sends its ID; the server reads the requirement's own words out of the
+         project graph and writes them into the turn, so what the model sees is
+         what the requirement says rather than what a client pasted. -->
+    <div class="h hidden" id="reqs-head">Build from</div>
+    <div id="reqs" class="hidden"></div>
+
     <div class="h">Parts</div>
     <div id="parts"></div>
 

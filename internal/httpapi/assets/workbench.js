@@ -31,6 +31,8 @@
     measured: [],
     states: [],
     images: [],
+    requirements: [],
+    fromNodes: [],
     selectedPart: null,
     speak: true,
     lastLatency: null,
@@ -110,8 +112,13 @@
   var PROJECT_KEY = 'forge.workbench.project';
 
   function rememberProject(id) {
+    var wasNew = id && id !== state.projectID;
     state.projectID = id || state.projectID;
     try { window.localStorage.setItem(PROJECT_KEY, state.projectID); } catch (e) { /* not fatal */ }
+    /* The graph is worth re-reading once a project exists: the first turn of a
+     * session creates it, and requirements recorded elsewhere — the console,
+     * forgectl — are what this panel is for. */
+    if (wasNew) loadRequirements();
   }
 
   function restoreVariants() {
@@ -119,6 +126,7 @@
     try { id = window.localStorage.getItem(PROJECT_KEY); } catch (e) { return; }
     if (!id) return;
     state.projectID = id;
+    loadRequirements();
     fetch('/v1/geometry?project_id=' + encodeURIComponent(id))
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (b) {
@@ -680,6 +688,56 @@
     });
   }
 
+  /* Recorded requirements this conversation can build from (PRD VIS-01).
+   *
+   * Only requirements and constraints: those are the kinds that say what the
+   * thing must do and must stay inside, which is what geometry can be generated
+   * FROM. A hazard or a decision is about the work, not about the shape.
+   *
+   * Loaded once a project exists — before that there is no graph to read, and
+   * an empty "Build from" heading over nothing would read as a project whose
+   * requirements nobody wrote rather than as no project yet. */
+  var BUILDABLE_KINDS = { requirement: true, constraint: true };
+
+  function loadRequirements() {
+    if (!state.projectID) return;
+    fetch('/v1/workspace/graph?project_id=' + encodeURIComponent(state.projectID))
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (g) {
+        if (!g) return;
+        state.requirements = (g.nodes || []).filter(function (n) { return BUILDABLE_KINDS[n.kind]; });
+        renderRequirements();
+      })
+      .catch(function () { /* No requirements panel is a smaller loss than a broken workbench. */ });
+  }
+
+  function renderRequirements() {
+    var el = $('reqs'), head = $('reqs-head');
+    if (!el) return;
+    if (!state.requirements.length) {
+      el.classList.add('hidden');
+      if (head) head.classList.add('hidden');
+      return;
+    }
+    el.classList.remove('hidden');
+    if (head) head.classList.remove('hidden');
+    el.innerHTML = state.requirements.map(function (n) {
+      var on = state.fromNodes.indexOf(n.id) >= 0;
+      return '<label class="req"><input type="checkbox" data-req="' + esc(n.id) + '"' +
+        (on ? ' checked' : '') + '>' +
+        '<span><b>' + esc(n.title) + '</b>' +
+        '<i>' + esc(n.kind) + '</i></span></label>';
+    }).join('');
+    Array.prototype.forEach.call(el.querySelectorAll('[data-req]'), function (box) {
+      box.addEventListener('change', function () {
+        var id = box.getAttribute('data-req');
+        var at = state.fromNodes.indexOf(id);
+        if (box.checked && at < 0) state.fromNodes.push(id);
+        if (!box.checked && at >= 0) state.fromNodes.splice(at, 1);
+      });
+    });
+  }
+
   function renderStates(states) {
     var el = $('states');
     if (!el) return;
@@ -856,13 +914,14 @@
     var sending = state.images.slice();
     state.images = [];
     renderAttachments('');
+    var fromNodes = state.fromNodes.slice();
 
     var bubble = addTurn('forge', '…');
     state.recalled = [];
     var t0 = performance.now();
     setStatus('thinking');
 
-    streamTurn(text, sending, function (ev) {
+    streamTurn(text, sending, fromNodes, function (ev) {
       switch (ev.kind) {
         case 'speech':
           bubble.querySelector('.body').textContent = ev.text;
@@ -956,7 +1015,7 @@
    * only GET. Reading the fetch body as a stream is the same protocol by hand,
    * and it keeps the request shape honest rather than smuggling a conversation
    * into a query string. */
-  function streamTurn(text, images, onEvent) {
+  function streamTurn(text, images, fromNodes, onEvent) {
     return fetch('/v1/converse', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -974,6 +1033,11 @@
          * as it is sent, so a sketch does not silently ride along on every
          * later message. */
         images: images && images.length ? images : undefined,
+        /* Ids only. The server reads the requirement's own words out of the
+         * graph — a client that sent both could name requirement A and paste
+         * the words of B, and the variant's provenance would then record a
+         * requirement the model never saw. */
+        from_nodes: fromNodes && fromNodes.length ? fromNodes : undefined,
         on_screen: describeOnScreen()
       })
     }).then(function (r) {

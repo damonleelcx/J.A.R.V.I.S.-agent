@@ -387,6 +387,12 @@ const (
 	// somebody who chose would never expect. Only a hand-edited row can produce
 	// it, and a silent recovery would leave nothing to find afterwards.
 	EventChoiceUnreadable Event = "forge.goal.choice_unreadable"
+
+	// A turn named recorded requirements to build from and the project graph
+	// could not be read (PRD VIS-01). The turn proceeds as an ordinary message;
+	// said loudly because from the outside it looks identical to a workbench
+	// where "model this requirement" simply does nothing.
+	EventWorkspaceUnreadable Event = "forge.workspace.unreadable"
 )
 
 func init() {
@@ -405,7 +411,7 @@ func init() {
 		EventASRTranscribed, EventASRFailed, EventASREmptyResponse, EventASRDropped,
 		EventTTSSpoke, EventTTSInterrupted, EventTTSFailed, EventTTSEmpty,
 		EventCharacterFallback, EventToolExceededTier, EventPlanHazardsLoaded,
-		EventChoiceUnreadable,
+		EventChoiceUnreadable, EventWorkspaceUnreadable,
 		EventAssumptionUnfiled,
 	)
 }

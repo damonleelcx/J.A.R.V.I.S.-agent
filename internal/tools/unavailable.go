@@ -83,6 +83,18 @@ func StandardUnavailableConnectors() []Tool {
 			obj(`"model":{"type":"string"},"change":{"type":"string"}`),
 		),
 		NewUnavailable(
+			"cad_import",
+			"Read a CAD file — STEP, IGES, native part or assembly — and turn it into geometry "+
+				"this workbench can show and revise.",
+			"No CAD kernel is linked into this build, so a CAD file cannot be read. This is the one "+
+				"input PRD VIS-01 names that nothing here can accept: text, voice, a sketch and a "+
+				"photograph all reach FORGE, and a STEP file does not. Export a view as an image and "+
+				"attach that, or state the dimensions — both produce a model FORGE drew rather than "+
+				"one it read, which is the honest difference and is labelled as such.",
+			[]Capability{CapRead}, engine.RiskR1,
+			obj(`"path":{"type":"string"},"units":{"type":"string"}`),
+		),
+		NewUnavailable(
 			"fea_solve",
 			"Run a finite-element analysis and return stresses, displacements and factors of safety.",
 			"No FEA solver is available here. Structural adequacy cannot be established by this deployment, "+
