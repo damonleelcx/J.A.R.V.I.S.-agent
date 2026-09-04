@@ -223,9 +223,26 @@ func framingFor(domain domainpack.Definition) string {
 	if strings.TrimSpace(domain.Conventions) == "" {
 		return converseFraming
 	}
-	return converseFraming + "\n\nThis project is " + domain.Industry + " work. " +
-		"What that requires of an answer here:\n\n" + domain.Conventions +
-		"\n\nThe boundary of this domain: " + domain.Summary
+	out := converseFraming + "\n\nThis project is " + domain.Industry + " work. " +
+		"What that requires of an answer here:\n\n" + domain.Conventions
+	// The frame every coordinate in this reply is read in. Stated separately from
+	// the prose because it is the one line that makes a position mean anything,
+	// and it DIFFERS between domains — a vehicle is X-forward, a building is Z-up
+	// against a site datum. A number read in the wrong frame is wrong without
+	// looking wrong.
+	if strings.TrimSpace(domain.GeometryAxes) != "" {
+		out += "\n\nCoordinates here: " + domain.GeometryAxes
+		if domain.GeometryUnit != "" {
+			out += " Default unit: " + domain.GeometryUnit + "."
+		}
+	}
+	// What must not travel. The model is the thing that decides what goes into a
+	// reply, so a handling rule that never reached it would be a rule addressed
+	// to nobody.
+	if strings.TrimSpace(domain.DataRules) != "" {
+		out += "\n\nHandling material in this domain: " + domain.DataRules
+	}
+	return out + "\n\nThe boundary of this domain: " + domain.Summary
 }
 
 // Turn is one exchange, as stored and replayed.

@@ -238,7 +238,20 @@ func cmdProjectIndustry(ctx context.Context, cfg *config.Config, log *logx.Logge
 		return nil
 	}
 	fmt.Printf("  ceiling    %s\n", d.MaxTier)
+	if d.GeometryUnit != "" {
+		fmt.Printf("  geometry   %s; %s\n", d.GeometryUnit, d.GeometryAxes)
+	}
 	fmt.Printf("\n%s\n", d.Summary)
+	if d.DataRules != "" {
+		fmt.Printf("\nHandling: %s\n", d.DataRules)
+	}
+	// What the domain needs and this build does not have, named together. The
+	// two are separate facts and stating only the first would read as a promise.
+	if len(d.Adapters) > 0 {
+		fmt.Printf("\nWork in this domain typically needs: %s\n", strings.Join(d.Adapters, ", "))
+		fmt.Println("None of them is available in this build. Results that would come from " +
+			"them cannot be produced here, and will not be simulated.")
+	}
 	fmt.Printf("\nWork above %s here would require %s.\n", d.MaxTier, d.Requires)
 	return nil
 }

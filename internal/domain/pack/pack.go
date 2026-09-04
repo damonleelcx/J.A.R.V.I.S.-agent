@@ -138,6 +138,46 @@ type Definition struct {
 	// conventions BY DEFINITION (it is the unknown-domain pack), and a project
 	// cannot be created in `robotics` or `medical` at all.
 	Conventions string
+	// Schema is the node kinds a project in this domain is expected to carry
+	// (workspace.Kind values). A civil project with no recorded load case is
+	// incomplete; a software one is not, and only the pack knows the difference.
+	//
+	// Plain strings rather than workspace.Kind: workspace imports this package,
+	// so importing it back would be a cycle. TestPackSchemaKindsAreRealKinds in
+	// internal/domain/workspace holds the two vocabularies together — it can see
+	// both, which is exactly why it lives there and not here.
+	Schema []string
+	// GeometryUnit is the length unit geometry in this domain defaults to, as a
+	// geometry.Unit value ("mm", "cm", "m", "in"), or empty where the domain does
+	// not imply one.
+	GeometryUnit string
+	// GeometryAxes is the frame a reader has to assume to make sense of a
+	// coordinate here. Stated because it DIFFERS between domains — a vehicle
+	// frame is X-forward and a building is Z-up against a site datum — and a
+	// position with the wrong frame assumed is wrong without looking wrong.
+	GeometryAxes string
+	// Adapters are the tool adapters this domain needs, by the names in
+	// internal/tools. Every one of them is UNAVAILABLE in this build.
+	//
+	// # Why declare tools that do not work
+	//
+	// A refusal that says "no FEA solver is available" is true and generic. One
+	// that can say "civil work needs FEA and this deployment has none" tells
+	// somebody whether they are missing a dependency or standing outside what
+	// this product does. The spike that looked at integrating a real kernel
+	// recommended against it (docs/spikes/2026-09-02-zoo-text-to-cad), so what a
+	// domain REQUIRES and what this build HAS are separate facts, and the honest
+	// thing is to state both rather than to let the gap go unnamed.
+	Adapters []string
+	// DataRules is how material in this domain must be handled: what is
+	// sensitive, and what must not travel into a transcript or a shared room.
+	//
+	// Short and readable rather than a policy engine. It is shown to the person
+	// (forgectl project industry) and to the model (the conversation framing),
+	// which is where a handling rule can actually change what happens — this
+	// build has no mechanism that could enforce one, and pretending otherwise
+	// would be the fabricated-capability failure in a new place.
+	DataRules string
 }
 
 // Available reports whether a project may be created in this pack at all.
@@ -174,6 +214,13 @@ var definitions = []Definition{
 			"matters carries a tolerance or says it has none yet. Fasteners are metric by\n" +
 			"designation (M3, M4) with a stated clearance or thread fit. Say what a proposed\n" +
 			"part is DATUMED from — a hole pattern with no datum cannot be made.",
+		Schema:       []string{"requirement", "constraint", "component", "interface", "hazard"},
+		GeometryUnit: "mm",
+		GeometryAxes: "Y up; the origin is the assembly's centre and parts are centred on their " +
+			"own position.",
+		Adapters: []string{"cad_parametric_edit", "cad_import", "fea_solve"},
+		DataRules: "Models and drawings are commercial-in-confidence. Keep supplier part " +
+			"numbers, pricing and unreleased tolerances out of shared transcripts.",
 	},
 	{
 		Pack:     Manufacturing,
@@ -187,6 +234,12 @@ var definitions = []Definition{
 			"injection moulding, sheet metal) — a radius that is free on one is impossible on\n" +
 			"another. Draft angles, minimum wall and bend radius are stated, not assumed.\n" +
 			"Say what would have to change if the volume were 100x.",
+		Schema:       []string{"requirement", "constraint", "component", "test"},
+		GeometryUnit: "mm",
+		GeometryAxes: "Y up; the origin is the assembly's centre.",
+		Adapters:     []string{"cad_import"},
+		DataRules: "Process parameters, cycle times and tooling costs are commercially " +
+			"sensitive. Supplier terms do not belong in a transcript.",
 	},
 	{
 		Pack:     Automotive,
@@ -200,6 +253,14 @@ var definitions = []Definition{
 			"service access, harness routing. Name the load case for any structural claim.\n" +
 			"Anything touching braking, steering, restraint or battery is a SAFETY function —\n" +
 			"say so plainly and do not treat it as an ordinary part.",
+		Schema:       []string{"requirement", "constraint", "component", "interface", "hazard", "test"},
+		GeometryUnit: "mm",
+		GeometryAxes: "Vehicle frame: X forward, Y right, Z up. Say so whenever a coordinate is " +
+			"given.",
+		Adapters: []string{"cad_import", "fea_solve"},
+		DataRules: "Programme names and launch dates are confidential before reveal. VINs " +
+			"and telematics identify vehicles and their drivers; treat them as " +
+			"personal data.",
 	},
 	{
 		Pack:     Aerospace,
@@ -213,6 +274,14 @@ var definitions = []Definition{
 			"safety for any structural claim, or say neither is established. Distinguish\n" +
 			"flight hardware from ground support equipment in the first answer. Never imply\n" +
 			"airworthiness, qualification or release — none of that happens here.",
+		Schema:       []string{"requirement", "constraint", "component", "interface", "hazard", "evidence", "test"},
+		GeometryUnit: "mm",
+		GeometryAxes: "Body frame: X forward, Y right, Z up. State the frame and the datum " +
+			"every time.",
+		Adapters: []string{"cad_import", "fea_solve"},
+		DataRules: "Design data may be export-controlled. Do not move it between " +
+			"jurisdictions, into shared rooms, or into a transcript without checking " +
+			"what regime it falls under.",
 	},
 	{
 		Pack:     Civil,
@@ -227,6 +296,13 @@ var definitions = []Definition{
 			"member size with no calculation behind it is a starting point, and saying so is\n" +
 			"the difference between useful and dangerous. Levels are given relative to a\n" +
 			"stated datum.",
+		Schema:       []string{"requirement", "constraint", "component", "hazard", "evidence"},
+		GeometryUnit: "mm",
+		GeometryAxes: "Z up; levels are given against a stated datum, never against 'the " +
+			"ground'.",
+		Adapters: []string{"fea_solve"},
+		DataRules: "Site and ground investigation data is client-confidential, and survey " +
+			"files carry precise locations. Treat them as identifying.",
 	},
 	{
 		Pack:     Electrical,
@@ -239,6 +315,12 @@ var definitions = []Definition{
 			"claim rests on, and the voltage class it assumes. Give wire sizes with a\n" +
 			"standard (AWG or mm2) and connectors by series. Anything above SELV, plus RF and\n" +
 			"battery, is a hazard class — say so and do not design past it.",
+		Schema:       []string{"requirement", "constraint", "component", "interface", "hazard", "test"},
+		GeometryUnit: "mm",
+		GeometryAxes: "Y up; board coordinates are stated from a named origin corner.",
+		Adapters:     []string{"spice_simulate", "cad_import"},
+		DataRules: "Schematics and firmware are commercial-in-confidence. Credentials, keys " +
+			"and calibration constants must never enter a transcript.",
 	},
 	{
 		Pack:     Construction,
@@ -252,6 +334,12 @@ var definitions = []Definition{
 			"Distinguish permanent works from temporary works — the second kills people and\n" +
 			"is usually the part left implicit. Give levels against a stated datum. Say what\n" +
 			"trade owns each interface.",
+		Schema:       []string{"requirement", "constraint", "hazard", "evidence", "test"},
+		GeometryUnit: "mm",
+		GeometryAxes: "Z up; setting-out and levels are given against a stated site datum.",
+		Adapters:     nil,
+		DataRules: "Site records identify individuals. Method statements, incident notes and " +
+			"access arrangements are confidential and some are safety-sensitive.",
 	},
 	{
 		Pack:     ProductDesign,
@@ -265,6 +353,12 @@ var definitions = []Definition{
 			"which surfaces are cosmetic (an A-surface) and which are not. Wall thickness and\n" +
 			"draft are stated for anything moulded. Say what the concept does NOT yet resolve\n" +
 			"— a form study is not a mechanism.",
+		Schema:       []string{"requirement", "constraint", "component", "criterion"},
+		GeometryUnit: "mm",
+		GeometryAxes: "Y up; the origin is the product's centre.",
+		Adapters:     []string{"cad_import"},
+		DataRules: "Unreleased industrial design is the most leak-sensitive material in this " +
+			"domain: a render is recognisable long before launch.",
 	},
 	{
 		Pack:     Architecture,
@@ -279,6 +373,13 @@ var definitions = []Definition{
 			"affect the answer. Distinguish massing and layout studies from anything that\n" +
 			"looks like a coordinated drawing — the first is a sketch and must not read as\n" +
 			"the second.",
+		Schema:       []string{"requirement", "constraint", "criterion", "evidence"},
+		GeometryUnit: "mm",
+		GeometryAxes: "Z up; levels against a stated datum, plan coordinates against a named " +
+			"grid.",
+		Adapters: nil,
+		DataRules: "Client and occupant information is confidential, and drawings can reveal " +
+			"security-relevant detail about a building's access and services.",
 	},
 	{
 		Pack:     General,
@@ -287,6 +388,10 @@ var definitions = []Definition{
 		MaxTier:  engine.RiskR2,
 		Requires: "the domain to be identified, so that the rules which apply to it can be the ones " +
 			"applied rather than the general fallback",
+		Schema:   []string{"requirement", "constraint"},
+		Adapters: nil,
+		DataRules: "The domain is unknown, so nothing can be assumed safe to share. Treat " +
+			"material as confidential and ask before it leaves this project.",
 	},
 	// Below here: packs the industry selector does not offer.
 	{
@@ -295,6 +400,10 @@ var definitions = []Definition{
 		MaxTier: engine.RiskR2,
 		Requires: "release and deployment authority over the system being changed, which this build " +
 			"does not hold — it grants no deploy, transact or control capability at all",
+		Schema:   []string{"requirement", "constraint", "component", "interface", "test"},
+		Adapters: nil,
+		DataRules: "Secrets never enter a transcript, and production data is not test data. " +
+			"A sandbox that reads live records is production.",
 	},
 	{
 		Pack:    Robotics,
