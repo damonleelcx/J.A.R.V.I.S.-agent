@@ -492,12 +492,13 @@ func (t ShellTool) Run(ctx context.Context, inv Invocation) (*Result, error) {
 	runErr := cmd.Run()
 	elapsed := time.Since(start)
 
-	// Append the truncation notices after the command exits, so they do not
-	// depend on the shape of the output. Silently clipped output is
-	// indistinguishable from complete output, which is the worst way for a tool
-	// result to be wrong.
-	stdout.WriteString(outLimit.note())
-	stderr.WriteString(errLimit.note())
+	// Read once, after the command exits, so the notice does not depend on the
+	// shape of the output. Silently clipped output is indistinguishable from
+	// complete output, which is the worst way for a tool result to be wrong —
+	// and reading through text() is also what removes a character the byte
+	// budget cut in half.
+	outText := outLimit.text()
+	errText := errLimit.text()
 
 	exitCode := 0
 	timedOut := ctx.Err() != nil
@@ -512,18 +513,18 @@ func (t ShellTool) Run(ctx context.Context, inv Invocation) (*Result, error) {
 	if timedOut {
 		return nil, errs.New(op, errs.CodeExternalUnavailable).
 			WithDetail("the command exceeded its %s timeout and was killed. "+
-				"Partial output: %s", t.Contract().Timeout, truncateStr(stdout.String(), 500))
+				"Partial output: %s", t.Contract().Timeout, truncateStr(outText, 500))
 	}
 
 	out, _ := json.Marshal(map[string]any{
 		"command":     in.Command,
 		"exit_code":   exitCode,
-		"stdout":      stdout.String(),
-		"stderr":      stderr.String(),
+		"stdout":      outText,
+		"stderr":      errText,
 		"duration_ms": elapsed.Milliseconds(),
 	})
 	raw := fmt.Sprintf("$ %s\n(exit %d in %s)\n--- stdout ---\n%s\n--- stderr ---\n%s",
-		in.Command, exitCode, elapsed.Round(time.Millisecond), stdout.String(), stderr.String())
+		in.Command, exitCode, elapsed.Round(time.Millisecond), outText, errText)
 
 	evidence := ""
 	if exitCode == 0 {
@@ -593,13 +594,40 @@ func (l *limitedWriter) Write(p []byte) (int, error) {
 	return consumed, nil
 }
 
-// note returns the truncation notice, or "" when nothing was dropped.
-func (l *limitedWriter) note() string {
+// text is the output as it should be read: what was kept, then the notice.
+//
+// # Why the trim happens here and not in Write
+//
+// The budget is in BYTES and that is correct — it is bounding memory while
+// output streams in, and a character-counting budget would have to decode every
+// chunk to know how full it was. But a byte offset can fall inside a character,
+// and the tail of that character is then dropped and never completed, so the
+// kept output ends in a sequence that is not text. The model reads a replacement
+// character where a value used to be.
+//
+// Fixing it in Write would need to know whether the BUILDER currently ends
+// mid-character, because a chunk boundary can split a character too — harmlessly,
+// since the next chunk completes it. Here, after the command has exited, there
+// is no next chunk and the question is simply whether the end is broken.
+//
+// # Only when this writer did the cutting
+//
+// A command that emits a partial character of its own is relaying its own data,
+// and quietly editing it would be a different and worse problem than the one
+// being solved. So the trim is conditional on `truncated`: we do not create a
+// broken ending, and we do not repair one either.
+//
+// The trimmed bytes move from the kept side of the notice to the dropped side,
+// so the two numbers still describe the string beside them. At most three.
+func (l *limitedWriter) text() string {
+	body := l.w.String()
 	if !l.truncated {
-		return ""
+		return body
 	}
-	return fmt.Sprintf("\n… output truncated: kept %d bytes, dropped at least %d more\n",
-		l.written, l.dropped)
+	kept := text.TrimPartialRune(body)
+	split := len(body) - len(kept)
+	return kept + fmt.Sprintf("\n… output truncated: kept %d bytes, dropped at least %d more\n",
+		l.written-split, l.dropped+split)
 }
 
 func slicesContains(hay []string, needle string) bool {

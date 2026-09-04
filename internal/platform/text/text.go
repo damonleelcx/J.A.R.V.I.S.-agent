@@ -59,3 +59,35 @@ func Clip(s string, limit int) string {
 	}
 	return s[:cut] + fmt.Sprintf("… [truncated; %d characters in the original]", total)
 }
+
+// TrimPartialRune removes an incomplete UTF-8 sequence from the end of s.
+//
+// # What this is for, and what it is NOT for
+//
+// A byte budget applied to a stream — bounding how much of a command's output is
+// held in memory — has to cut at a byte offset, and that offset can fall inside
+// a character. The tail bytes are then dropped and never completed, so the
+// string ends in a sequence that is not text. This removes that stub.
+//
+// It is not a repair function. Invalid bytes in the MIDDLE of s are left exactly
+// where they are: they came from the data, and quietly rewriting somebody's
+// output is a different and worse problem than the one this solves. Only a
+// broken ENDING — the kind a cut creates — is removed.
+//
+// A tail of four or more continuation bytes cannot come from a cut sequence
+// (UTF-8 is at most four bytes) so it is left alone as data.
+func TrimPartialRune(s string) string {
+	for i := len(s) - 1; i >= 0 && i >= len(s)-3; i-- {
+		if !utf8.RuneStart(s[i]) {
+			continue // a continuation byte; keep walking back to the start byte
+		}
+		// The last sequence begins here. If it decodes, s ends cleanly — a
+		// complete sequence consumes exactly the bytes that remain, because
+		// everything after i is a continuation byte.
+		if r, size := utf8.DecodeRuneInString(s[i:]); r == utf8.RuneError && size == 1 {
+			return s[:i]
+		}
+		return s
+	}
+	return s
+}

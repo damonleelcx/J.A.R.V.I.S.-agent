@@ -370,7 +370,7 @@ func TestLimitedWriterAlwaysReportsTruncation(t *testing.T) {
 				}
 				total += n
 			}
-			out := buf.String() + w.note()
+			out := w.text()
 
 			if buf.Len() > limit {
 				t.Errorf("kept %d bytes with a limit of %d", buf.Len(), limit)

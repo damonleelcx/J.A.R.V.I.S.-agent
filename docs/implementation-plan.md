@@ -2090,20 +2090,77 @@ valid UTF-8 at all — a binary payload on a JSON path, which `transcribe.go` ca
 genuinely meet — is unharmed: each invalid byte counts as one and nothing new is
 broken. Fenced.
 
-### Not changed: `limitedWriter`
+### Raised here, closed in 9.15: `limitedWriter`
 
-It also cuts on a byte boundary, and its budget is genuinely in bytes — it is
-bounding MEMORY while a command's output streams in, and its notice honestly says
-"kept N bytes, dropped at least N more". The right fix there is different in kind
-(drop a trailing partial rune when the buffer is finally read, not change the
-budget's unit), so it is left alone and named here rather than folded into a
-change about character limits.
+It also cuts on a byte boundary, and its budget is genuinely in bytes. Named
+rather than folded into a change about character limits, because the fix is
+different in kind; then asked for. See wave 9.15.
 
 ### Three fences, each confirmed red under a mutation
 
 Each helper is package-private, so each package holds its own: put the byte slice
 back and the excerpt, the quoted output and the quoted response each fail with
 what that particular string costs when it breaks.
+
+---
+
+## Wave 9.15 — the last cut, and the one place the budget stays in bytes · **DONE**
+
+`limitedWriter` caps how much of a command's output is held in memory: 64 KiB of
+stdout, 32 KiB of stderr. It clipped at a byte offset, and the offset can land
+inside a character — so the tail of that character was dropped, never completed,
+and the output handed to the MODEL ended in a sequence that is not text.
+
+### The budget stays in bytes, and that is the point
+
+Every other truncation in waves 9.13 and 9.14 had a limit that meant characters
+and counted bytes. This one genuinely means bytes: it is bounding memory while
+output streams in, and a character-counting budget would have to decode every
+chunk to know how full it was. The notice — *"kept N bytes, dropped at least N
+more"* — is true and stays.
+
+So the fix is not the unit. It is that what was kept must still be text.
+
+### Why the trim is at the read and not in `Write`
+
+`Write` carries the scars of two earlier bugs (a short return that killed the
+command with `EPIPE`; a notice appended from inside `Write` that never fired when
+output arrived in one burst). It is also the wrong place: a chunk boundary can
+split a character too, harmlessly, because the next chunk completes it. Deciding
+inside `Write` would mean knowing whether the BUILDER currently ends
+mid-character.
+
+After the command exits there is no next chunk, and the question is simply
+whether the end is broken. `limitedWriter.text()` is now the one way to read the
+result — trim, then notice — and the caller reads it once instead of appending
+the notice into the builder and calling `String()` in four places.
+
+### Only when this writer did the cutting
+
+A command that emits a partial character of its own is relaying its own data, and
+quietly editing that is a different and worse problem than the one being solved.
+The trim is conditional on `truncated`: **we do not create a broken ending, and
+we do not repair one either.** Fenced in both directions.
+
+The bytes the trim removes move from the kept side of the notice to the dropped
+side, so the two numbers still describe the string beside them. At most three.
+
+### `text.TrimPartialRune`
+
+Walks back at most three bytes to the last start byte and drops the sequence if
+it does not decode. Invalid bytes in the MIDDLE of the output are left exactly
+where they are — that is data, not damage this code caused. A tail of four or
+more continuation bytes cannot come from a cut sequence, so it is left alone too.
+
+### Four fences, each confirmed red under a mutation
+
+No trim at all (the defect) · trimming output that was never clipped · the notice
+disappearing, which is the invariant `TestLimitedWriterAlwaysReportsTruncation`
+has held since CI found it · and `TrimPartialRune` looking back only one byte,
+which fixes a two-byte cut and misses a one-byte one.
+
+That last mutation is the useful one: a version of this that only checks the
+final byte passes a naive test and leaves exactly half the real cases broken.
 
 ---
 

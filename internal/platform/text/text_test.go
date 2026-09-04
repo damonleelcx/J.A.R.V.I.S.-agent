@@ -67,3 +67,40 @@ func TestClipHandlesEmptyText(t *testing.T) {
 		t.Errorf("empty text came back as %q", got)
 	}
 }
+
+// A byte budget applied to a stream cuts at an offset, and the offset can fall
+// inside a character. What is left is a stub that is not text.
+
+func TestTrimPartialRuneRemovesACutCharacter(t *testing.T) {
+	whole := "壁厚二点五毫米" // three bytes per rune
+	for cut := 1; cut <= 2; cut++ {
+		s := whole[:len(whole)-cut] // ends inside the last character
+		if utf8.ValidString(s) {
+			t.Fatalf("the fixture is not actually broken at cut=%d", cut)
+		}
+		got := TrimPartialRune(s)
+		if !utf8.ValidString(got) {
+			t.Errorf("cut=%d left an incomplete sequence in place: %q", cut, got)
+		}
+		if want := "壁厚二点五毫"; got != want {
+			t.Errorf("cut=%d gave %q, wanted %q", cut, got, want)
+		}
+	}
+}
+
+func TestTrimPartialRuneLeavesCompleteTextAlone(t *testing.T) {
+	for _, s := range []string{"", "abc", "壁厚二点五毫米", "mixed 混合 text"} {
+		if got := TrimPartialRune(s); got != s {
+			t.Errorf("complete text was altered: %q became %q", s, got)
+		}
+	}
+}
+
+// Invalid bytes in the middle came from the data. Rewriting somebody's output is
+// a different and worse problem than the one this solves.
+func TestTrimPartialRuneDoesNotRepairTheMiddle(t *testing.T) {
+	s := "before" + string([]byte{0xff}) + "after"
+	if got := TrimPartialRune(s); got != s {
+		t.Errorf("an invalid byte in the middle was removed: %q became %q", s, got)
+	}
+}
