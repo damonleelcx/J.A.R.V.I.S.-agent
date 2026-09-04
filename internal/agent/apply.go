@@ -290,6 +290,19 @@ func (a *PlanApplier) Activate(ctx context.Context, pool *db.Pool, goal *engine.
 			a.logAssumptionFailure(ctx, goal, err)
 		}
 	}
+	// PRD RSN-03: an open choice holds consequential work.
+	//
+	// Here for the same reason the clarification gate is here — forgectl and the
+	// HTTP API both pass through this function — and immediately after it,
+	// because the two are the same shape: FORGE put something in front of a
+	// person, and until they answer, starting the work would decide it for them.
+	open, err := optionsFor(ctx, pool, goal.ID)
+	if err != nil {
+		return err
+	}
+	if err := gateOnOptions(open, goal); err != nil {
+		return err
+	}
 
 	now := a.clock.Now()
 	tag, err := pool.Exec(ctx, `

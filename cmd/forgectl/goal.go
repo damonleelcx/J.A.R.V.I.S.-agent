@@ -290,6 +290,14 @@ func cmdGoalShow(ctx context.Context, cfg *config.Config, log *logx.Logger, args
 		}
 	}
 
+	// PRD RSN-03. An open choice is the most important thing on this screen: the
+	// goal is held and nothing else explains why.
+	if choice, err := agent.RenderOptions(ctx, pool, goal.ID); err != nil {
+		return err
+	} else if choice != "" {
+		fmt.Print(choice)
+	}
+
 	fmt.Printf("\n  TASKS\n")
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "  \tSTATUS\tVERIFIED\tATT\tTITLE")
@@ -529,5 +537,183 @@ func cmdGoalAnswer(ctx context.Context, cfg *config.Config, log *logx.Logger, ar
 	}
 	fmt.Printf("answered. %s is no longer held, and the answer is on the goal.\n"+
 		"Replan it so the plan is built on the answer: forgectl goal replan %s\n", args[0], args[0])
+	return nil
+}
+
+// The three commands behind an open choice (PRD RSN-03).
+//
+// Three rather than one, and the order is the requirement. `goal options` will
+// not run until criteria exist, because criteria written in the same breath as
+// the options are criteria chosen to fit them — and no inspection of the output
+// can tell that apart from an honest comparison. Splitting the commands is what
+// makes "the criteria were stated first" a fact about the record rather than a
+// claim about the reasoning.
+
+// cmdGoalCriteria states the basis for choosing, before any option exists.
+func cmdGoalCriteria(ctx context.Context, cfg *config.Config, log *logx.Logger, args []string) error {
+	const op = "forgectl.cmdGoalCriteria"
+
+	const usage = "usage: forgectl goal criteria <goal-id> key=\"what it measures\" key=\"...\"\n" +
+		"At least two: with one basis for choosing there is no tradeoff, one option simply wins.\n\n" +
+		"  forgectl goal criteria gol_123 \\\n" +
+		"    lead-time=\"How long until something works end to end\" \\\n" +
+		"    reversibility=\"How hard it is to undo once it is live\""
+
+	if len(args) < 2 {
+		return errs.New(op, errs.CodeValidationFailed).WithDetail(usage)
+	}
+	goalID := args[0]
+
+	criteria := make([]agent.Criterion, 0, len(args)-1)
+	for _, raw := range args[1:] {
+		key, statement, ok := strings.Cut(raw, "=")
+		if !ok {
+			return errs.New(op, errs.CodeValidationFailed).
+				WithDetail("%q is not key=statement.\n\n%s", raw, usage)
+		}
+		criteria = append(criteria, agent.Criterion{
+			Key:       strings.TrimSpace(key),
+			Statement: strings.TrimSpace(statement),
+		})
+	}
+
+	pool, err := db.Connect(ctx, cfg.DB, log)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+
+	// Said before it happens, because it is the surprising part: restating
+	// criteria throws away options that were argued against the old ones.
+	prior, err := agent.CriteriaFor(ctx, pool, goalID)
+	if err != nil {
+		return err
+	}
+	if err := agent.StateCriteria(ctx, pool, goalID, criteria); err != nil {
+		return err
+	}
+	if len(prior) > 0 {
+		fmt.Printf("replaced %d criteria. Any options offered against them have been cleared: they "+
+			"were argued on a basis that no longer stands.\n", len(prior))
+	}
+	fmt.Printf("%d criteria stated for %s:\n", len(criteria), goalID)
+	for _, c := range criteria {
+		fmt.Printf("  %-16s %s\n", c.Key, c.Statement)
+	}
+	fmt.Printf("\nNow ask for options: forgectl goal options %s\n", goalID)
+	return nil
+}
+
+// cmdGoalOptions asks FORGE for materially different ways to meet the goal.
+func cmdGoalOptions(ctx context.Context, cfg *config.Config, log *logx.Logger, args []string) error {
+	const op = "forgectl.cmdGoalOptions"
+
+	if len(args) < 1 {
+		return errs.New(op, errs.CodeValidationFailed).
+			WithDetail("usage: forgectl goal options <goal-id>")
+	}
+	goalID := args[0]
+
+	pool, err := db.Connect(ctx, cfg.DB, log)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+
+	goal, err := loadGoalCLI(ctx, pool, goalID)
+	if err != nil {
+		return err
+	}
+	criteria, err := agent.CriteriaFor(ctx, pool, goalID)
+	if err != nil {
+		return err
+	}
+	if len(criteria) == 0 {
+		// The refusal that carries the requirement. It is also the one most
+		// likely to read as bureaucracy, so it says why rather than just no.
+		return errs.New(op, errs.CodeValidationFailed).
+			WithDetail("goal %s has no stated criteria, so there is nothing to argue options against.\n\n"+
+				"Asking for both at once is the failure this prevents: criteria written alongside "+
+				"the options are the criteria the preferred option wins on, and the result reads "+
+				"exactly like a fair comparison.\n\n"+
+				"State them first:\n  forgectl goal criteria %s key=\"what it measures\" key=\"...\"",
+				goalID, goalID)
+	}
+
+	adviser := agent.NewAdviser(llm.NewOpenAICompatible(cfg.LLM, log, clock.System{}),
+		persona.DefaultCharacter()).
+		WithCharacters(agent.NewCharacterStore(pool, log))
+
+	fmt.Printf("weighing %d criteria with %s …\n", len(criteria), adviser.Model())
+	stopTicker := startElapsedTicker("  still weighing")
+	set, err := adviser.Offer(ctx, goal, criteria)
+	stopTicker()
+	if err != nil {
+		return err
+	}
+	if err := agent.StoreOptions(ctx, pool, goalID, set); err != nil {
+		return err
+	}
+	// Said out loud. A comparison that passed on the second attempt is a
+	// different artefact from one that passed on the first, and the person about
+	// to choose is the one who should decide what that is worth.
+	for _, refusal := range set.Refused {
+		fmt.Printf("\nthe first answer was refused and FORGE was asked again: %s\n", refusal)
+	}
+	rendered, err := agent.RenderOptions(ctx, pool, goalID)
+	if err != nil {
+		return err
+	}
+	fmt.Print(rendered)
+	return nil
+}
+
+// cmdGoalChoose records which option somebody picked.
+func cmdGoalChoose(ctx context.Context, cfg *config.Config, log *logx.Logger, args []string) error {
+	const op = "forgectl.cmdGoalChoose"
+
+	fs := newFlagSet("goal choose")
+	as := fs.String("as", "", "email of the person choosing (required)")
+	why := fs.String("why", "", "why, in your own words. Required when no stated criterion prefers it")
+	if len(args) < 2 {
+		return errs.New(op, errs.CodeValidationFailed).
+			WithDetail("usage: forgectl goal choose <goal-id> <option-key> --as you@example.com [--why \"...\"]")
+	}
+	goalID, optionKey := args[0], args[1]
+	if err := fs.Parse(args[2:]); err != nil {
+		return err
+	}
+	if *as == "" {
+		return errs.New(op, errs.CodeValidationFailed).
+			WithDetail("--as is required: a choice that names nobody cannot be questioned later")
+	}
+
+	pool, err := db.Connect(ctx, cfg.DB, log)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+
+	var chooserID string
+	if err := pool.QueryRow(ctx,
+		`select id from forge_users where lower(email) = lower($1)`, *as).Scan(&chooserID); err != nil {
+		return errs.Wrap(op, errs.CodeNotFound, err).
+			WithDetail("no account with email %q; a decision must be attributable to a real account", *as)
+	}
+
+	result, err := agent.ChooseOption(ctx, pool, clock.System{}, log, agent.ChooseRequest{
+		GoalID: goalID, OptionKey: optionKey, ByUserID: chooserID, Why: *why,
+	})
+	if err != nil {
+		return err
+	}
+	fmt.Printf("chose %s — %s\n", result.Option.Key, result.Option.Title)
+	fmt.Printf("recorded in the decision log as %s (forgectl decisions show %s)\n",
+		result.DecisionID, result.DecisionID)
+	if result.Superseded != "" {
+		fmt.Printf("this supersedes %s, the choice made the last time this question was open\n",
+			result.Superseded)
+	}
+	fmt.Printf("\nReplan so the work is built on it: forgectl goal replan %s\n", goalID)
 	return nil
 }

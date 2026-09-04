@@ -50,6 +50,16 @@ Goals:
   goal answer <id> "..."  Answer the question FORGE refused to guess past. Consequential
                       work stays held until this is given; below r2 the question is
                       recorded as a labelled assumption and the work proceeds.
+  goal criteria <id> key="what it measures" key="..."
+                      State how a choice will be judged, before any option exists. At
+                      least two: with one basis for choosing there is no tradeoff.
+  goal options <id>   Materially different ways to meet the goal, each rated against
+                      every criterion above. Refuses without criteria; refuses a set
+                      where one option wins on everything, and may answer that there
+                      is only one sensible approach.
+  goal choose <id> <option> --as you@example.com [--why "..."]
+                      Pick one. Recorded in the decision log with the rejected options
+                      and why. Consequential work is held until this is given.
   goal recover <id>   What a stopped goal left behind: effects that stand, what can be
                       undone, and which calls ran and then failed. Read from the record,
                       not written by a model.
@@ -239,7 +249,8 @@ func run(ctx context.Context, cmd string, args []string) error {
 		if len(args) == 0 {
 			fmt.Fprint(os.Stderr, usage)
 			return errs.New("forgectl.run", errs.CodeValidationFailed).
-				WithDetail("goal needs a subcommand: new, replan, start, show, recover or answer")
+				WithDetail("goal needs a subcommand: new, replan, start, show, criteria, options, " +
+					"choose, recover or answer")
 		}
 		switch args[0] {
 		case "new":
@@ -252,11 +263,18 @@ func run(ctx context.Context, cmd string, args []string) error {
 			return cmdGoalShow(ctx, cfg, log, args[1:])
 		case "recover":
 			return cmdGoalRecover(ctx, cfg, log, args[1:])
+		case "criteria":
+			return cmdGoalCriteria(ctx, cfg, log, args[1:])
+		case "options":
+			return cmdGoalOptions(ctx, cfg, log, args[1:])
+		case "choose":
+			return cmdGoalChoose(ctx, cfg, log, args[1:])
 		case "answer":
 			return cmdGoalAnswer(ctx, cfg, log, args[1:])
 		default:
 			return errs.New("forgectl.run", errs.CodeValidationFailed).
-				WithDetail("unknown goal subcommand %q; expected new, replan, start, show, recover or answer", args[0])
+				WithDetail("unknown goal subcommand %q; expected new, replan, start, show, criteria, "+
+					"options, choose, recover or answer", args[0])
 		}
 
 	case "memory":

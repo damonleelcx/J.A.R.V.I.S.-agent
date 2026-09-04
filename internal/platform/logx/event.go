@@ -380,6 +380,13 @@ const (
 	// not written down, which is exactly the state this requirement exists to
 	// prevent, so it is said loudly.
 	EventAssumptionUnfiled Event = "forge.goal.assumption_unfiled"
+
+	// A goal names a chosen option that is not in its option set (PRD RSN-03).
+	// The planner is told nothing rather than told the wrong approach, so the
+	// work proceeds as though no choice had been made — which is the one outcome
+	// somebody who chose would never expect. Only a hand-edited row can produce
+	// it, and a silent recovery would leave nothing to find afterwards.
+	EventChoiceUnreadable Event = "forge.goal.choice_unreadable"
 )
 
 func init() {
@@ -398,6 +405,7 @@ func init() {
 		EventASRTranscribed, EventASRFailed, EventASREmptyResponse, EventASRDropped,
 		EventTTSSpoke, EventTTSInterrupted, EventTTSFailed, EventTTSEmpty,
 		EventCharacterFallback, EventToolExceededTier, EventPlanHazardsLoaded,
+		EventChoiceUnreadable,
 		EventAssumptionUnfiled,
 	)
 }
