@@ -38,6 +38,7 @@
     lastLatency: null,
     firstToken: null,
     lastBargeIn: null,
+    turnAudio: null,   // set while a turn is in flight; see send()
     model: null,
     busy: false,
     /* Whether geometry exists. Held rather than passed around because the voice
@@ -942,11 +943,32 @@
     var t0 = performance.now();
     setStatus('thinking');
 
+    /* What this turn actually costs, measured as it happens (PRD NFR-05).
+     *
+     * Two clocks, kept apart. `first_token_ms` and `total_ms` come from the
+     * server and describe the model's part; `audioMS` is this browser's, and is
+     * the moment speech became audible — which additionally contains the
+     * network, the parse, and the synthesiser starting. They are recorded under
+     * different names because they answer different questions, and the Telemetry
+     * panel refuses to average them. A field nothing measured stays null and is
+     * drawn as an em dash rather than a zero. */
+    var turn = {
+      prompt: text.length > 44 ? text.slice(0, 44) + '…' : text,
+      at: new Date().toISOString().slice(11, 19) + ' UTC',
+      serverFirstMS: null, serverTotalMS: null, browserTotalMS: null,
+      audioMS: null, model: null, tokens: null,
+      retrieval: false, geometry: false, failed: false, bargeInMS: null
+    };
+    /* Where onState writes the moment speech starts. Held on `state` because the
+     * voice layer reports to one handler for the whole page, not to this turn. */
+    state.turnAudio = function (at) { if (turn.audioMS == null) turn.audioMS = at - t0; };
+
     streamTurn(text, sending, fromNodes, function (ev) {
       switch (ev.kind) {
         case 'speech':
           bubble.querySelector('.body').textContent = ev.text;
           state.history.push({ role: 'forge', content: ev.text });
+          if (ev.first_token_ms) turn.serverFirstMS = ev.first_token_ms;
           state.firstToken = ev.first_token_ms || Math.round(performance.now() - t0);
           updateMeta();
           // Speaking starts HERE, not at 'done'. This is the whole reason the
@@ -964,6 +986,7 @@
           break;
 
         case 'prototype':
+          turn.geometry = true;
           ev.prototype.model_note = state.model || 'FORGE';
           loadPrototype(ev.prototype, ev.measured);
           break;
@@ -992,12 +1015,14 @@
           // provenance banner if geometry is on screen. A figure quoted in
           // prose is exactly as unverifiable as one quoted in an assumption,
           // so it must not depend on there being a model to hang it on.
+          turn.retrieval = (ev.recalled || []).length > 0;
           state.recalled = ev.recalled || [];
           bubble.appendChild(recalledBlock(state.recalled));
           renderProvenance();
           break;
 
         case 'error':
+          turn.failed = true;
           var e = document.createElement('div');
           e.className = 'detail';
           e.style.color = 'var(--bad)';
@@ -1007,15 +1032,25 @@
 
         case 'done':
           state.model = ev.model || state.model;
+          turn.model = ev.model || state.model;
+          turn.tokens = ev.tokens || null;
+          if (ev.total_ms) turn.serverTotalMS = ev.total_ms;
           state.lastLatency = ev.total_ms || Math.round(performance.now() - t0);
           updateMeta();
           break;
       }
     }).catch(function (err) {
+      turn.failed = true;
       bubble.querySelector('.body').textContent = err.message;
       bubble.querySelector('.body').style.color = 'var(--bad)';
     }).then(function () {
       state.busy = false;
+      turn.browserTotalMS = Math.round(performance.now() - t0);
+      state.turnAudio = null;
+      /* Handed over whatever happened, including a turn that failed. A telemetry
+       * panel that only recorded the turns that worked would report a latency
+       * distribution with its worst cases removed. */
+      if (window.ForgeStage) window.ForgeStage.turn(turn);
       /* Resolved from what the voice layer is ACTUALLY doing, not from whether
        * speak() was called.
        *
@@ -1376,7 +1411,10 @@
    * only way either claim can be checked. */
   function updateMeta() {
     var bits = [];
-    if (state.firstToken != null) bits.push('spoke at ' + state.firstToken + 'ms');
+    /* "first token", not "spoke at". What is measured is when the model's first
+     * words arrived, which is before the synthesiser has said anything; the
+     * Telemetry panel keeps that distinction and this line used to blur it. */
+    if (state.firstToken != null) bits.push('first token ' + state.firstToken + 'ms');
     if (state.lastLatency != null) bits.push('full reply ' + state.lastLatency + 'ms');
     if (state.lastBargeIn != null) bits.push('barge-in ' + state.lastBargeIn + 'ms');
     $('meta').textContent = bits.join(' · ');
@@ -1415,9 +1453,15 @@
         // shows what actually happened so the claim can be checked rather than
         // taken on faith.
         state.lastBargeIn = Math.round(ms);
+        if (window.ForgeStage) window.ForgeStage.bargeIn(state.lastBargeIn);
         updateMeta();
       },
       onState: function (s) {
+        /* The moment speech became audible, for the turn that is in flight. This
+         * is the browser's own clock and it is the closest thing this build has
+         * to AUD-02's "first audio" — the panel says so, and says what it still
+         * does not include. */
+        if (s.speaking && state.turnAudio) state.turnAudio(performance.now());
         $('mic').setAttribute('aria-pressed', String(s.listening));
         $('mic').classList.toggle('listening', s.listening);
         if (s.speaking) setStatus('speaking');

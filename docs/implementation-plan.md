@@ -1456,12 +1456,10 @@ has an answer. Files reads the graph, then each artifact's own history; no
 project-wide endpoint was added, because the fan-out is bounded by the number of
 files in one project and an endpoint is a public contract to maintain forever.
 
-**Not covered:** diagrams and telemetry, which WRK-01 also names. Neither has a
-producer in this build — there is nothing to render — so neither got a panel that
-would have to invent its own subject. That is a smaller claim than the two panels
-below make, and it is deliberate: an empty panel is worth building when the
-emptiness is a *permanent property of the build*, and worth skipping when it is
-simply work nobody has done yet.
+**Not covered here:** diagrams and telemetry, which WRK-01 also names. Both
+landed in wave 9.8 — and the reason given at the time for skipping them, that
+neither had a producer, was **wrong for diagrams and only half right for
+telemetry**. See wave 9.8 for what was actually there.
 
 ### Why the two empty panels exist at all
 
@@ -1529,6 +1527,117 @@ anybody ruled on it". A conversation turn then produced
 `geometry/spacer-ring.forge.json` and the panels went six files to seven —
 through the live write path, not a reload. Keyboard: arrows, Home and End move
 and activate; no console errors.
+
+---
+
+## Wave 9.8 — diagrams and telemetry · **DONE**
+
+The last two things WRK-01 names that the stage did not carry. Two more panels:
+**Diagram** and **Telemetry**.
+
+### The premise of wave 9.7 was wrong, and worth recording
+
+Wave 9.7 skipped both on the grounds that neither had a producer. That was a
+claim made without looking hard enough:
+
+- **Diagrams had a producer all along.** WRK-03's project graph is a diagram —
+  typed nodes, typed edges, and a sentence for each relation the server already
+  composes. `GET /v1/workspace/graph` had been returning all of it, and wave
+  9.7's own Files panel was calling that endpoint and throwing the edges away.
+- **Telemetry had half a producer.** Every turn already reports `first_token_ms`,
+  `total_ms`, `model` and `tokens`, and the browser already measures barge-in.
+  What is missing is not the measurement but a *store*: the server writes those
+  numbers to its log and has no endpoint that reads them back.
+
+The correct half of the claim survives in the panel: telemetry says, in the
+panel, that it holds this browser session and nothing before it.
+
+### Diagram — deterministic, and that is the point
+
+No force simulation. A physics layout puts the same graph somewhere different
+every time it is opened, which makes *"has anything changed?"* — the question
+somebody actually brings to a diagram — unanswerable by looking. Columns come
+from the vocabulary's own grouping; order within a column is kind then name.
+Same graph, same picture, every time.
+
+**Boxes are HTML, lines are SVG.** Text in SVG neither wraps nor ellipsises, so a
+node title would have to be truncated by counting characters and guessing at the
+font. HTML buttons over an SVG that draws only the edges also bring keyboard
+focus and hit-testing with them, which AUD-06 would otherwise have to be built by
+hand.
+
+**The columns are declared in Go**, beside the vocabulary they group, and
+rendered into the page. A kind added to `workspace.Kinds()` with no column would
+otherwise be drawn *nowhere* — in a picture that still looks complete, which is
+this repository's recurring failure in the one form where it is hardest to spot.
+`TestEveryNodeKindHasAColumn` holds it, and a kind that matches no column still
+lands in a visibly odd "not in any column" column rather than vanishing.
+
+### What the Diagram immediately showed, and what was NOT done about it
+
+On a real project: **8 nodes, 0 relations.** Geometry generated *from* a
+requirement — the workbench's "Build from" flow, which reads the requirement's
+own words into the turn — records no edge back to that requirement. The graph
+therefore cannot answer "what satisfies this requirement", and the panel draws
+what is true: a column of requirements and a column of files with nothing between
+them.
+
+**Left alone deliberately.** Writing an edge on every turn is a change to the
+main conversational path with its own consequences — it changes the shape of the
+graph that `graph review` reasons over, and it decides on the user's behalf which
+relation was meant (`satisfies`? `derives_from`?). That is a decision to put to
+somebody, not to slip into a panel commit. The panel names the gap instead: nodes
+joined to nothing are listed under their own heading, because a node with no
+edges is invisible *as an absence* — it looks exactly like a node whose relations
+are off screen.
+
+### Telemetry — two clocks, kept apart
+
+The server measures request arrival → first speech token: the model's part. The
+browser measures Send → speech actually audible: the person's part, which also
+contains the network, the parse, and the synthesiser starting.
+
+Measured live on one turn: **first token 699 ms (server), first audio 1103 ms
+(browser).** Averaging them would produce a number that is neither — and 699 ms
+alone would have read as comfortably inside AUD-02's 700 ms while what a person
+actually waited for was 1103 ms. They are separate columns with separate names,
+and every figure says which clock produced it.
+
+**No pass/fail against AUD-02.** Its threshold is end-of-utterance → first audio,
+and nothing here measures end-of-utterance: the browser's clock starts at Send,
+and a typed turn has no utterance to end. The threshold is shown for scale. A
+tick against the wrong metric is worse than no tick.
+
+**Nothing renders as zero.** A figure that was not measured is an em dash *and a
+reason in the same box* — "no reply has been spoken aloud", "nobody has
+interrupted". A metric nobody collected, drawn as 0 ms, looks better than any
+real measurement. The panel also names what this build does not collect at all:
+history across reloads, retrieval time, tool calls, other people's turns.
+
+### A fence from wave 9.7 was vacuous, and the drill found it
+
+`TestEveryVerificationAndDispositionHasAChip` used `strings.Contains`. Renaming
+`.wbn-account` to `.wbn-accountable` in the equivalent new fence left it **green**
+— a substring match answers "does some class start with this" and reports a
+missing rule as a present one, which is the direction a fence must never fail in.
+Both fences now require the class to END, and both were re-drilled against
+rename-to-a-superstring and against deletion.
+
+### Fences, each confirmed red under a mutation
+
+`TestEveryNodeKindHasAColumn` (a kind with no column; a kind in two columns),
+`TestEveryDiagramColumnHasANodeColour` (a colour deleted; a colour renamed to a
+superstring; the columns never reaching the page), and the corrected
+`TestEveryVerificationAndDispositionHasAChip`.
+
+### Verified on the running application
+
+A project with 8 nodes and 7 relations across 5 edge kinds drew all five columns,
+with anchored nodes carrying the server's own fallback label rather than one
+composed in the browser. Selecting a node lit its 3 relations, dimmed the other
+4, and filtered the sentence list to match. A live turn moved Telemetry from four
+em dashes to 699 ms / 1103 ms / 2525 tokens / "quoted memory", updating while the
+panel was open. No console errors.
 
 ---
 

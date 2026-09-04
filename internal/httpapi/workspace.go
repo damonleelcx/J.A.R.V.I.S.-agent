@@ -45,6 +45,13 @@ type NodeDTO struct {
 	Actionable bool   `json:"actionable"`
 	Source     string `json:"source,omitempty"`
 	Status     string `json:"status"`
+	// Label is how this node is NAMED to a reader. Title is what was stored,
+	// which is empty for an anchor whose content lives in another table — a
+	// decision, an owner — and a client filling that gap itself would be a
+	// second producer of the same string, drifting from the one the edge
+	// sentences below are already built with. Set by Graph, which is the only
+	// caller that holds the whole graph and can resolve it.
+	Label string `json:"label,omitempty"`
 	// Anchors resolve to the row they point at, so a client never has to guess
 	// which of four columns carries it.
 	AnchorKind string `json:"anchor_kind,omitempty"`
@@ -158,7 +165,9 @@ func (h *WorkspaceHandlers) Graph(w http.ResponseWriter, r *http.Request) {
 	}
 	nodes := make([]NodeDTO, 0, len(g.Nodes))
 	for _, n := range g.Nodes {
-		nodes = append(nodes, toNodeDTO(n))
+		dto := toNodeDTO(n)
+		dto.Label = g.Title(n.ID)
+		nodes = append(nodes, dto)
 	}
 	edges := make([]EdgeDTO, 0, len(g.Edges))
 	for _, e := range g.Edges {

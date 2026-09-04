@@ -2,7 +2,9 @@ package httpapi
 
 import (
 	"fmt"
+	"strings"
 
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/workspace"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/tools"
 )
 
@@ -75,12 +77,20 @@ func stagePanels() []StagePanel {
 			Gloss: "The prototype and what qualifies it.",
 		},
 		{
+			ID: "diagram", Label: "Diagram", Available: true,
+			Gloss: "How this project's parts relate, and what is joined to nothing.",
+		},
+		{
 			ID: "files", Label: "Files", Available: true,
 			Gloss: "Every file, every version, every diff.",
 		},
 		{
 			ID: "checks", Label: "Checks", Available: true,
 			Gloss: "What a machine found. What a person decided.",
+		},
+		{
+			ID: "telemetry", Label: "Telemetry", Available: true,
+			Gloss: "What was measured this session, and what is not measured at all.",
 		},
 		{
 			ID: "eda", Label: "EDA", Available: false,
@@ -131,4 +141,57 @@ func stageConnectors(names ...string) []RefusedConnector {
 		out = append(out, RefusedConnector{Name: c.Name, Reason: c.UnavailableReason})
 	}
 	return out
+}
+
+// The diagram's columns (PRD WRK-01 "diagrams", over WRK-03's project graph).
+//
+// # Why the grouping is here and not in the browser
+//
+// The diagram draws every node the graph returns, and it places each one by
+// KIND. A grouping that lived only in the script would go out of step with the
+// vocabulary the moment a kind was added in Go — and the failure mode is the bad
+// one: the new kind matches no column, so it is drawn nowhere, and the diagram
+// silently shows a subset of the project while looking complete. That is the
+// partial listing this codebase keeps finding, in picture form.
+//
+// So the grouping is declared beside the vocabulary it groups, rendered into the
+// page, and held by TestEveryNodeKindHasAColumn — which fails if a kind is
+// missing, listed twice, or invented.
+//
+// # Why these five, and in this order
+//
+// They are the questions somebody asks of a project, left to right: what must it
+// do, what is being built, what checks it, what could go wrong, who is
+// accountable. The order is not a flow — edges run both ways across it, and the
+// arrowheads say which way each one goes.
+type StageNodeRole struct {
+	ID    string
+	Label string
+	// Kinds is the node kinds in this column, space-separated for the data
+	// attribute the page carries them in.
+	Kinds string
+}
+
+func stageNodeRoles() []StageNodeRole {
+	group := func(id, label string, kinds ...workspace.Kind) StageNodeRole {
+		names := make([]string, 0, len(kinds))
+		for _, k := range kinds {
+			names = append(names, string(k))
+		}
+		return StageNodeRole{ID: id, Label: label, Kinds: strings.Join(names, " ")}
+	}
+	return []StageNodeRole{
+		group("intent", "What it must do",
+			workspace.KindRequirement, workspace.KindConstraint,
+			workspace.KindCriterion, workspace.KindAssumption),
+		group("build", "What is being built",
+			workspace.KindGoal, workspace.KindComponent,
+			workspace.KindInterface, workspace.KindArtifact),
+		group("check", "What checks it",
+			workspace.KindTest, workspace.KindEvidence),
+		group("risk", "What could go wrong",
+			workspace.KindRisk, workspace.KindHazard),
+		group("account", "Who is accountable",
+			workspace.KindOwner, workspace.KindDecision),
+	}
 }

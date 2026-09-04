@@ -181,16 +181,15 @@ func TestEveryVerificationAndDispositionHasAChip(t *testing.T) {
 		t.Fatal("the domain reports no states; this fence is looking at nothing")
 	}
 	for _, v := range workspace.Verifications() {
-		want := ".wbchip-v-" + string(v)
-		if !strings.Contains(sheet, want) {
-			t.Errorf("verification state %q renders as an unstyled chip: workbench.css has no %s",
-				v, want)
+		if !definesClass(sheet, "wbchip-v-"+string(v)) {
+			t.Errorf("verification state %q renders as an unstyled chip: workbench.css has no "+
+				".wbchip-v-%s", v, v)
 		}
 	}
 	for _, d := range workspace.Dispositions() {
-		want := ".wbchip-d-" + string(d)
-		if !strings.Contains(sheet, want) {
-			t.Errorf("disposition %q renders as an unstyled chip: workbench.css has no %s", d, want)
+		if !definesClass(sheet, "wbchip-d-"+string(d)) {
+			t.Errorf("disposition %q renders as an unstyled chip: workbench.css has no "+
+				".wbchip-d-%s", d, d)
 		}
 	}
 }
@@ -284,4 +283,107 @@ func TestScriptsOnlyWriteClassesTheStylesheetsDefine(t *testing.T) {
 		t.Fatalf("only %d class(es) found across %d script(s); the scan is not working",
 			checked, len(scripts))
 	}
+}
+
+// Every node kind the graph can hold has a column to be drawn in.
+//
+// # The defect this exists for
+//
+// The Diagram places each node by KIND. A kind that matches no column is a node
+// that is drawn NOWHERE — and the picture that results looks complete, because
+// nothing on it says a node is missing. That is the partial listing this
+// codebase keeps finding, in the one form where it is hardest to notice: an
+// absence in a drawing.
+//
+// Held against workspace.Kinds() rather than a copy, so adding a kind in the
+// domain is what turns this red. The panel also has a belt to this brace — a
+// kind matching no column lands in a visibly odd "not in any column" column
+// rather than vanishing — but a bug somebody has to notice is not a fence.
+func TestEveryNodeKindHasAColumn(t *testing.T) {
+	roles := stageNodeRoles()
+	if len(roles) < 2 {
+		t.Fatalf("only %d column(s) declared; this fence is looking at nothing", len(roles))
+	}
+
+	placed := map[string][]string{} // kind -> columns naming it
+	known := map[string]bool{}
+	for _, k := range workspace.Kinds() {
+		known[string(k.Kind)] = true
+	}
+	if len(known) < 5 {
+		t.Fatalf("the domain reports %d kind(s); this fence is looking at nothing", len(known))
+	}
+
+	for _, r := range roles {
+		for _, kind := range strings.Fields(r.Kinds) {
+			if !known[kind] {
+				t.Errorf("column %q names %q, which is not a node kind. Nothing will ever be "+
+					"drawn there, and whatever it was meant to hold is drawn nowhere.", r.ID, kind)
+			}
+			placed[kind] = append(placed[kind], r.ID)
+		}
+	}
+	for kind := range known {
+		switch len(placed[kind]) {
+		case 1:
+		case 0:
+			t.Errorf("node kind %q has no column: every %s in a project would be drawn nowhere, "+
+				"in a diagram that would still look complete", kind, kind)
+		default:
+			t.Errorf("node kind %q is in %d columns (%v); it would be drawn twice and the two "+
+				"copies would have different relations", kind, len(placed[kind]), placed[kind])
+		}
+	}
+}
+
+// Every column has a colour, and the page carries the columns at all.
+//
+// The node's colour is built as wbn-<column>, so a column added in Go without a
+// rule here renders as an unmarked box — legible, but carrying none of the
+// information the colour exists to carry. `other` is checked too: it is the
+// column a kind lands in when it matches none, which is exactly when somebody
+// needs to see that something is wrong.
+func TestEveryDiagramColumnHasANodeColour(t *testing.T) {
+	css, err := assetFS.ReadFile("assets/workbench.css")
+	if err != nil {
+		t.Fatal(err)
+	}
+	sheet := string(css)
+
+	ids := []string{"other"}
+	for _, r := range stageNodeRoles() {
+		ids = append(ids, r.ID)
+	}
+	for _, id := range ids {
+		if !definesClass(sheet, "wbn-"+id) {
+			t.Errorf("diagram column %q draws unmarked boxes: workbench.css has no .wbn-%s", id, id)
+		}
+	}
+
+	// And the columns must reach the page, or the script reads an empty list and
+	// draws every node into the fallback column.
+	html := workbenchHTML(t)
+	for _, r := range stageNodeRoles() {
+		if !strings.Contains(html, `data-role="`+r.ID+`"`) {
+			t.Errorf("column %q is declared in Go and is not on the page; the diagram cannot "+
+				"read it", r.ID)
+		}
+		if !strings.Contains(html, `data-kinds="`+r.Kinds+`"`) {
+			t.Errorf("column %q reaches the page without its kinds (%q)", r.ID, r.Kinds)
+		}
+	}
+}
+
+// definesClass reports whether the stylesheet defines exactly this class.
+//
+// # Why this is not strings.Contains
+//
+// It was, and the drill caught it: renaming .wbn-account to .wbn-accountable
+// left the fence GREEN, because the old name is a prefix of the new one. A
+// substring match answers "does some class start with this" and reports a
+// missing rule as a present one — which is the direction a fence must never
+// fail in. The class has to END here: the next character must be one that
+// cannot continue a class name.
+func definesClass(sheet, name string) bool {
+	return regexp.MustCompile(`\.` + regexp.QuoteMeta(name) + `(?:[^\w-]|$)`).MatchString(sheet)
 }

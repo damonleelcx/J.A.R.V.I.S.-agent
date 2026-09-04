@@ -1033,6 +1033,11 @@
   position: absolute;
   top: 0; left: 0; right: 0;
   height: 44px;
+  /* Queried on its OWN width, not the window's. The stage is a column in a
+   * three-column layout, so a wide window can still leave this bar narrow — and
+   * a viewport media query hid the gloss on a phone while squeezing it to four
+   * characters on a desktop, which is the case that actually happens. */
+  container-type: inline-size;
   display: flex;
   align-items: center;
   gap: 12px;
@@ -1086,7 +1091,10 @@
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-@media (max-width: 1000px) { .stagegloss { display: none; } }
+/* The gloss goes when the tabs need the room. It is a one-line summary and the
+ * panel below it carries the substance; each tab also keeps the same text in its
+ * title, so it is reachable at every width. */
+@container (max-width: 900px) { .stagegloss { display: none; } }
 
 .wbpanel {
   position: absolute;
@@ -1348,3 +1356,220 @@
   color: #e6cd8f;
 }
 .wbconn-r { margin: 4px 0 0; font-size: 12px; line-height: 1.6; color: var(--ink-dim); }
+
+/* ---- Diagram: the project graph, drawn (PRD WRK-01, WRK-03) --------------
+ *
+ * Boxes are HTML buttons and lines are SVG underneath them. Text in SVG neither
+ * wraps nor ellipsises, so a title would have to be truncated by counting
+ * characters and guessing at the font; buttons also bring keyboard focus and
+ * hit-testing with them, which AUD-06 would otherwise have to be built.
+ *
+ * Colour carries the COLUMN, not the kind. Fourteen kinds would need fourteen
+ * colours nobody could tell apart, and the column is the thing a reader is
+ * scanning for: what must it do, what is being built, what checks it.
+ */
+
+.wbdia { position: relative; margin: 12px 0 6px; }
+.wbedges { position: absolute; left: 0; top: 0; }
+
+.wbe {
+  fill: none;
+  stroke: var(--edge-solid);
+  stroke-width: 1.5;
+}
+.wbarrowhead { fill: var(--edge-solid); }
+
+/* Focus on one node dims the rest rather than removing it. A relation that
+ * disappears while you are looking at its neighbour reads as a relation that
+ * does not exist. */
+.wbe.on { stroke: var(--core); stroke-width: 2; }
+.wbe.off { opacity: .22; }
+
+.wbcolhead {
+  position: absolute;
+  font-size: 9.5px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  padding-bottom: 6px;
+}
+
+.wbn {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  text-align: left;
+  padding: 6px 10px;
+  border: 1px solid var(--edge-solid);
+  border-left-width: 3px;
+  border-radius: 8px;
+  background: #0f131b;
+  color: var(--ink);
+  cursor: pointer;
+  overflow: hidden;
+}
+.wbn:hover { border-color: var(--core-dim); }
+.wbn:focus-visible { outline: 2px solid var(--core-dim); outline-offset: 2px; }
+.wbn.sel { border-color: var(--core); background: #10202a; }
+.wbn.off { opacity: .35; }
+.wbn-k {
+  font-size: 9px;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+.wbn-t {
+  font-size: 11.5px;
+  font-weight: 600;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  /* An anchored node's label is "decision dec_01M1H2W957FSP1R3E8W50D8RSC" — one
+   * long token with no break opportunity in it, which without this does not wrap
+   * and is simply cut off mid-identifier. */
+  overflow-wrap: anywhere;
+}
+
+/* One colour per column. TestEveryDiagramColumnHasANodeColour holds this list
+ * against stageNodeRoles(), so a column added in Go without a colour here fails
+ * rather than rendering as an unmarked box. `other` is the column a kind lands
+ * in when it matches none, and it is deliberately the loud one. */
+.wbn-intent  { border-left-color: #6fb2c7; }
+.wbn-build   { border-left-color: #8fa2d8; }
+.wbn-check   { border-left-color: #7fc79a; }
+.wbn-risk    { border-left-color: #d69aa2; }
+.wbn-account { border-left-color: #cbb079; }
+.wbn-other   { border-left-color: #f0bcc0; border-style: dashed; }
+
+.wbrel { margin-top: 18px; border-top: 1px solid var(--edge-solid); padding-top: 14px; }
+.wbrel-h {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  flex-wrap: wrap;
+  font-size: 12.5px;
+  color: var(--ink);
+  margin-bottom: 10px;
+}
+.wbrel-c { font-size: 11px; color: var(--ink-dim); }
+.wbrel-k {
+  font-size: 9.5px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  margin-top: 10px;
+}
+.wbrel-l { margin: 4px 0 0; padding-left: 18px; font-size: 12px; line-height: 1.6; color: var(--ink-dim); }
+.wbrel-l b { color: var(--ink); }
+.wbrel-l i { font-style: normal; opacity: .75; }
+
+.wbopen {
+  padding: 3px 9px;
+  font-size: 11px;
+  border: 1px solid var(--edge-solid);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-dim);
+  cursor: pointer;
+}
+.wbopen:hover { color: var(--ink); border-color: var(--core-dim); }
+.wbopen:focus-visible { outline: 2px solid var(--core-dim); outline-offset: 2px; }
+
+/* A node joined to nothing is invisible as an absence — it looks exactly like a
+ * node whose relations are off screen. Named, because "what has nobody connected
+ * up yet" is one of the two questions a project graph is kept for. */
+.wbiso { margin-top: 16px; border-top: 1px dashed var(--edge-solid); padding-top: 13px; }
+.wbiso-h {
+  font-size: 9.5px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: #e6cd8f;
+  margin-bottom: 6px;
+}
+
+/* The roles the diagram reads its columns from. Data, not display. */
+.wbroles { display: none; }
+
+/* ---- Telemetry (PRD NFR-05, AUD-02) ------------------------------------- */
+
+.wbtel-h {
+  font-size: 9.5px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  margin: 20px 0 9px;
+}
+.wbtel-h:first-child { margin-top: 4px; }
+
+.wbtel-g {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  gap: 9px;
+}
+
+.wbstat {
+  border: 1px solid var(--edge-solid);
+  border-radius: 9px;
+  padding: 10px 12px;
+  background: #0d1119;
+}
+.wbstat-n { font-size: 19px; font-weight: 600; color: var(--ink); font-variant-numeric: tabular-nums; }
+.wbstat-l { margin-top: 2px; font-size: 11px; color: var(--ink); }
+/* The reason a figure is missing, in the same box as the figure. An em dash with
+ * no explanation is indistinguishable from a measurement of nothing. */
+.wbstat-w { margin-top: 3px; font-size: 10.5px; color: var(--ink-dim); line-height: 1.4; }
+
+.wbwarn { color: #e6cd8f; }
+
+.wbmeas {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 4px 14px;
+  font-size: 12px;
+  align-items: baseline;
+}
+.wbmeas-k {
+  font-size: 9.5px;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+.wbmeas-v { color: var(--ink); font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 11.5px; }
+
+.wbturns { list-style: none; margin: 0; padding: 0; display: grid; gap: 9px; }
+.wbturn {
+  border: 1px solid var(--edge-solid);
+  border-radius: 9px;
+  padding: 9px 12px;
+  background: #0d1119;
+}
+.wbturn.bad { border-color: #6a3238; }
+.wbturn-h { display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap; }
+.wbturn-m {
+  display: flex;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--ink-dim);
+  font-variant-numeric: tabular-nums;
+}
+/* Which clock produced each number, beside the number. Two clocks answer
+ * different questions about the same turn and a reader cannot tell them apart
+ * from the value. */
+.wbturn-m i { font-style: normal; opacity: .6; }
+.wbturn-t { margin-top: 5px; font-size: 10.5px; color: var(--ink-dim); }
+
+.wbunmeas { margin-top: 22px; border-top: 1px solid var(--edge-solid); padding-top: 14px; }
+.wbunmeas-h {
+  font-size: 9.5px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: #e6cd8f;
+  margin-bottom: 8px;
+}

@@ -177,6 +177,10 @@ type pageData struct {
 	// build, and why they are empty is a fact about the build that must have one
 	// source. Only the workbench sets this.
 	Panels []StagePanel
+	// NodeRoles are the diagram's columns, declared beside the node vocabulary
+	// they group so a kind added in Go cannot quietly go undrawn. Only the
+	// workbench sets this.
+	NodeRoles []StageNodeRole
 }
 
 func (p *PageHandlers) render(w http.ResponseWriter, r *http.Request, name string, data pageData) {
@@ -254,10 +258,11 @@ func (p *PageHandlers) Workbench(w http.ResponseWriter, r *http.Request) {
 	// endpoints as the conversation moves — the state-to-expression rule stays
 	// on the server, where the console already gets it from.
 	p.render(w, r, "workbench", pageData{
-		Page:     "workbench",
-		Title:    "FORGE workbench",
-		Presence: persona.PresenceHTML(persona.StateIdle, 36),
-		Panels:   stagePanels(),
+		Page:      "workbench",
+		Title:     "FORGE workbench",
+		Presence:  persona.PresenceHTML(persona.StateIdle, 36),
+		Panels:    stagePanels(),
+		NodeRoles: stageNodeRoles(),
 	})
 }
 
@@ -498,6 +503,7 @@ const pageTemplates = `
         {{range $i, $p := .Panels}}<button type="button" role="tab"
                 class="stagetab{{if not $p.Available}} stagetab--empty{{end}}"
                 id="tab-{{$p.ID}}" data-panel="{{$p.ID}}" data-gloss="{{$p.Gloss}}"
+                title="{{$p.Gloss}}"
                 aria-controls="panel-{{$p.ID}}"
                 aria-selected="{{if eq $i 0}}true{{else}}false{{end}}"
                 tabindex="{{if eq $i 0}}0{{else}}-1{{end}}">{{$p.Label}}</button>
@@ -570,6 +576,29 @@ const pageTemplates = `
       <div class="wblist" id="files-list"></div>
       <div class="wbdetail" id="files-detail"></div>
       </div>
+    </div>
+
+  <!-- Diagram (PRD WRK-01 "diagrams", drawn over WRK-03's project graph). The
+       columns are declared in Go — see stageNodeRoles — and carried here as data
+       rather than decided in the script, so a node kind added to the vocabulary
+       cannot end up drawn nowhere. The list of relations beside the picture is
+       not a caption: it is the same information for somebody who cannot see the
+       picture (PRD AUD-06). -->
+    <div class="wbpanel" id="panel-diagram" role="tabpanel" aria-labelledby="tab-diagram">
+      <div class="wbroles" id="diagram-roles" hidden>
+        {{range .NodeRoles}}<i data-role="{{.ID}}" data-label="{{.Label}}" data-kinds="{{.Kinds}}"></i>{{end}}
+      </div>
+      <div id="diagram-body"></div>
+    </div>
+
+  <!-- Telemetry (PRD NFR-05, AUD-02). Every figure here was MEASURED, and the
+       panel says which clock measured it: a number from the server and a number
+       from the browser answer different questions, and averaging them into one
+       "latency" would answer neither. What this deployment does not measure is
+       listed rather than left blank — a metric nobody collects renders as zero,
+       and zero looks like good news. -->
+    <div class="wbpanel" id="panel-telemetry" role="tabpanel" aria-labelledby="tab-telemetry">
+      <div id="telemetry-body"></div>
     </div>
 
   <!-- Checks. Verification state across every version in the project, with what
