@@ -479,7 +479,17 @@ const pageTemplates = `
 
   <!-- Conversation. The control plane (PRD §2.3). -->
   <div class="wb-left">
-    <div class="railhead">Conversation</div>
+    <div class="railhead">
+      Conversation
+      <!-- PRD AUD-07 asks for delete-session to be reachable at all times, and
+           MEM-01 asks each layer to state its retention. This layer keeps what
+           was said until the person says otherwise, which is only true if
+           saying otherwise is something they can do — so the control sits with
+           the conversation rather than in an operator's console. Two presses:
+           it cannot be undone. -->
+      <button type="button" class="ghost forget" id="forget"
+              title="Delete the record of this conversation. The work it produced stays.">Delete</button>
+    </div>
     <div class="transcript" id="transcript"></div>
   </div>
 

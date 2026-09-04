@@ -49,6 +49,7 @@
      * card is allowed to display: nothing → proposed → planned → active.
      * Held in one field so the card cannot render two states at once. */
     projectID: null,      // where this conversation's variants are kept
+    conversationID: null, // the record this conversation is being kept in
     variants: [],         // what has been proposed so far, newest first
     picked: [],           // version ids chosen for the side-by-side view
     recalled: [],         // standards figures FORGE quoted from memory this turn
@@ -116,6 +117,20 @@
    * of them is a reason to fail the workbench. */
   var PROJECT_KEY = 'forge.workbench.project';
 
+  /* The record this workbench is continuing (PRD RSN-07).
+   *
+   * An IDENTIFIER, like the project key beside it — never the conversation
+   * itself. The turns live on the server, every read is scoped to the signed-in
+   * person, and a stale or copied value therefore restores nothing rather than
+   * somebody else's afternoon. */
+  var CONV_KEY = 'forge.workbench.conversation';
+
+  function rememberConversation(id) {
+    if (!id || id === state.conversationID) return;
+    state.conversationID = id;
+    try { window.localStorage.setItem(CONV_KEY, id); } catch (e) { /* not fatal */ }
+  }
+
   function rememberProject(id) {
     var wasNew = id && id !== state.projectID;
     state.projectID = id || state.projectID;
@@ -125,6 +140,115 @@
      * session creates it, and requirements recorded elsewhere — the console,
      * forgectl — are what this panel is for. */
     if (wasNew) loadRequirements();
+  }
+
+  /* The conversation, brought back (PRD RSN-07).
+   *
+   * # Why the history is rebuilt and not only the screen
+   *
+   * Painting the transcript and sending an empty history would be the worst of
+   * both: the page would look resumed while FORGE had no idea what had been
+   * said, and the person would find out by being asked something they already
+   * answered. RSN-07 asks to resume from a structured checkpoint rather than a
+   * summary; the turns ARE the structure, so they go back into `state.history`
+   * exactly as they were recorded.
+   *
+   * The record is the server's, not this page's. A conversation id that is not
+   * this person's returns nothing, and nothing is what is then shown. */
+  function restoreConversation() {
+    var id = null;
+    try { id = window.localStorage.getItem(CONV_KEY); } catch (e) { return Promise.resolve(false); }
+    if (!id) return Promise.resolve(false);
+    state.conversationID = id;
+
+    return fetch('/v1/conversations/' + encodeURIComponent(id))
+      .then(function (r) {
+        if (r.status === 404) {
+          /* Deleted, or never this person's. Forgetting the key is right: a
+           * workbench that kept asking for a conversation that is gone would
+           * send an id the server refuses on every turn. */
+          forgetConversationKey();
+          return null;
+        }
+        return r.ok ? r.json() : null;
+      })
+      .then(function (b) {
+        if (!b || !b.turns || !b.turns.length) return false;
+        b.turns.forEach(function (t) {
+          var who = t.role === 'human' ? 'you' : 'forge';
+          var body = t.text || '';
+          if (t.images) {
+            body += (body ? ' ' : '') + '[' + t.images +
+              (t.images === 1 ? ' image' : ' images') + ' attached]';
+          }
+          addTurn(who, body, t.detail || '', true);
+          /* Back into the history the model is given, in the recorded order and
+           * the recorded words. */
+          state.history.push({ role: t.role === 'human' ? 'user' : 'forge', content: t.text || '' });
+        });
+        var note = document.createElement('div');
+        note.className = 'turn note';
+        note.innerHTML = '<div class="body">' + esc(b.note || '') + '</div>';
+        $('transcript').appendChild(note);
+        $('transcript').scrollTop = $('transcript').scrollHeight;
+        return true;
+      })
+      .catch(function () { return false; });
+  }
+
+  function forgetConversationKey() {
+    state.conversationID = null;
+    try { window.localStorage.removeItem(CONV_KEY); } catch (e) { /* not fatal */ }
+  }
+
+  /* Deleting the record, in two deliberate steps (PRD AUD-07, MEM-01).
+   *
+   * This layer's retention is "until the person says otherwise", which is only
+   * true if saying otherwise is something they can actually do — so the control
+   * is beside the conversation rather than in an operator's console. Two steps
+   * because it cannot be undone: the first press asks, the second does it, and
+   * anything else on the page cancels.
+   *
+   * It deletes the RECORD. The variants, the project graph and the artifacts
+   * this conversation produced are work, not transcript, and they stay — the
+   * button says so rather than leaving somebody to guess. */
+  function initForget() {
+    var btn = $('forget');
+    if (!btn) return;
+    var armed = false;
+
+    function disarm() {
+      armed = false;
+      btn.textContent = 'Delete';
+      btn.classList.remove('armed');
+    }
+    document.addEventListener('click', function (e) {
+      if (armed && e.target !== btn) disarm();
+    }, true);
+
+    btn.addEventListener('click', function () {
+      if (!state.conversationID) return;
+      if (!armed) {
+        armed = true;
+        btn.textContent = 'Delete for good?';
+        btn.classList.add('armed');
+        return;
+      }
+      btn.disabled = true;
+      fetch('/v1/conversations/' + encodeURIComponent(state.conversationID), { method: 'DELETE' })
+        .then(function (r) {
+          if (!r.ok) throw new Error('the record could not be deleted');
+          forgetConversationKey();
+          state.history = [];
+          $('transcript').innerHTML = '';
+          addTurn('forge', 'The record of this conversation is deleted. What you built — the ' +
+            'variants and everything in the project — is still here.');
+        })
+        .catch(function (err) {
+          addTurn('forge', err.message + '. Nothing was deleted.');
+        })
+        .then(function () { btn.disabled = false; disarm(); });
+    });
   }
 
   function restoreVariants() {
@@ -480,10 +604,20 @@
 
   /* ---- transcript ------------------------------------------------------- */
 
-  function addTurn(who, body, detail) {
+  /* restored marks a turn as coming from the record rather than from this
+   * session, and it is not decoration.
+   *
+   * A live reply arrives with its epistemic labels, the standards it quoted from
+   * memory, and the provenance of anything it drew. Those are DERIVED as the
+   * reply lands; they are not stored, so they do not come back. A restored turn
+   * rendered as an ordinary one would therefore say "FORGE made no claims here",
+   * which is a different statement from "nobody kept them" — and the first one
+   * is false. */
+  function addTurn(who, body, detail, restored) {
     var el = document.createElement('div');
-    el.className = 'turn ' + (who === 'you' ? 'you' : 'forge');
-    el.innerHTML = '<div class="lbl">' + (who === 'you' ? 'You' : 'FORGE') + '</div>' +
+    el.className = 'turn ' + (who === 'you' ? 'you' : 'forge') + (restored ? ' restored' : '');
+    el.innerHTML = '<div class="lbl">' + (who === 'you' ? 'You' : 'FORGE') +
+      (restored ? '<span class="from-record">from the record</span>' : '') + '</div>' +
       '<div class="body">' + esc(body) + '</div>' +
       (detail ? '<div class="detail">' + esc(detail) + '</div>' : '');
     $('transcript').appendChild(el);
@@ -991,6 +1125,24 @@
           loadPrototype(ev.prototype, ev.measured);
           break;
 
+        case 'conversation':
+          /* The id arrives before the reply, so a turn that then fails still
+           * leaves a record the person can come back to. */
+          rememberConversation(ev.conversation && ev.conversation.id);
+          if (ev.conversation && ev.conversation.not_kept) {
+            /* Said in the transcript, quietly, for the same reason a variant
+             * that could not be saved is: the answer is on screen and still
+             * useful, but what the person can do NEXT has changed — this turn
+             * will not be here after a reload — and finding that out by
+             * reloading is the worst moment to learn it. */
+            var nk = document.createElement('div');
+            nk.className = 'detail';
+            nk.style.color = 'var(--warn)';
+            nk.textContent = ev.conversation.not_kept;
+            if (bubble) bubble.appendChild(nk);
+          }
+          break;
+
         case 'variant':
           /* What happened to this turn's geometry. Both outcomes are shown: a
            * workbench that said nothing after a failed save would leave somebody
@@ -1085,6 +1237,12 @@
          * per turn. The server checks it against membership every time, so
          * naming somebody else's project is refused rather than trusted. */
         project_id: state.projectID || '',
+        /* The record this turn joins (PRD RSN-07). Empty on the first turn: the
+         * server mints one and sends it back in the `conversation` event. A id
+         * that is not this person's is REFUSED rather than swapped for a new
+         * one, so "continue that conversation" cannot quietly become "start a
+         * different one". */
+        conversation_id: state.conversationID || '',
         /* PRD VIS-01. Attached to THIS turn only; the array is cleared as soon
          * as it is sent, so a sketch does not silently ride along on every
          * later message. */
@@ -1635,6 +1793,13 @@
       window.ForgeStage.mount({ onPanel: function () { setPlace(); } });
     });
     safely('variants', restoreVariants);
+    safely('forget', initForget);
+
+    /* Started here and awaited below, so the restored turns are on screen before
+     * anything is said about being ready — a greeting above a conversation that
+     * is already in progress reads as the conversation having been lost. */
+    var restoring = Promise.resolve(false);
+    safely('conversation', function () { restoring = restoreConversation(); });
     setStatus('idle');
     setPlace(false);
     renderParts();
@@ -1653,9 +1818,18 @@
       return r.json();
     }).then(function (b) {
       $('who').textContent = (b.user && b.user.email) || '';
-      addTurn('forge',
-        'Ready. Describe what you are building and I will propose a shape you can turn around. ' +
-        'Hold the microphone or the space bar to talk; press Escape to stop me mid-sentence.');
+      restoring.then(function (resumed) {
+        if (resumed) {
+          /* Not "Ready". The conversation above is where this left off, and
+           * saying so is the difference between a resumed session and one that
+           * merely looks like it kept the text. */
+          setCaption('Picking up where you left off.', false);
+          return;
+        }
+        addTurn('forge',
+          'Ready. Describe what you are building and I will propose a shape you can turn around. ' +
+          'Hold the microphone or the space bar to talk; press Escape to stop me mid-sentence.');
+      });
     }).catch(function () {
       $('who').innerHTML = '<a href="/console">Sign in</a>';
       setCaption('Sign in from the console to start.', false);

@@ -1733,6 +1733,109 @@ with nothing ticked added a node and no edge, which is also correct.
 
 ---
 
+## Wave 9.10 — what was said is kept · **DONE**
+
+The workbench conversation was never written down. `history` was posted BY THE
+BROWSER on every turn and the only turn table in the schema was
+`forge_room_turns`, which belongs to rooms. So a reload lost the thread while the
+work it produced survived: the variants came back, the requirements came back,
+the project came back, and the conversation that made all three did not.
+
+PRD RSN-07 asks to resume from a **structured checkpoint, not a conversation
+summary**. The agentic side has had exactly that since wave 1 — checkpoints,
+resume state, a recovery drill that kills a worker mid-task. The conversational
+side, which is the surface a person actually uses, had nothing.
+
+### One table, and no conversations table beside it
+
+A conversation IS its turns. It has no title, no members, no lifecycle and no
+state of its own, so a row holding an id and an owner would be a second place for
+those two facts to disagree with the turns. A conversation therefore exists
+exactly when it has a turn, its owner is its turns' owner, and deleting its turns
+deletes it — the same reasoning that kept a `forge_variants` table out of the
+geometry package.
+
+`project_id` is nullable and recorded **per turn**, because a project is created
+by the first thing worth keeping rather than by the first sentence. Early turns
+genuinely belong to no project, which is a fact about the conversation rather
+than a gap in it.
+
+### The id is minted by the server, and a client may not name one
+
+An id a client chooses is one it can choose twice, guess, or aim at somebody
+else's record. So the rule has no exceptions: an id that already exists must
+belong to the caller, and an id that does not exist is **refused rather than
+created**. A refusal does not distinguish "somebody else's" from "never existed"
+— both are `NOT_FOUND`, because the difference is exactly the fact a stranger
+would be probing for.
+
+It is also announced **before the reply**, not with it. A turn can fail; if the
+id only arrived with a successful answer, a failed first turn would leave a
+record in the database that the browser cannot name, and the next reload would
+start a second conversation with the first unreachable forever.
+
+### Resume means the history, not the picture
+
+Painting the transcript and sending an empty history would be the worst of both:
+the page would look resumed while FORGE had no idea what had been said, and the
+person would find out by being asked something they had already answered. The
+restored turns go back into the history the model is given, in the recorded order
+and the recorded words.
+
+Verified live: *"Remember this: the project code name is Blue Heron"* → reload →
+*"What is the project code name?"* → **"The project code name is Blue Heron."**
+
+### A restored turn is marked, and the mark is not decoration
+
+A live reply arrives with its epistemic labels, the standards it quoted from
+memory, and the provenance of anything it drew. Those are DERIVED as the reply
+lands; they are not stored, so they do not come back. A restored turn rendered as
+an ordinary one would therefore say *"FORGE made no claims here"* — which is a
+different statement from *"nobody kept them"*, and a false one. So restored turns
+carry `from the record`, and the response says in words what the record leaves
+out.
+
+### Retention, and the control that makes it true
+
+MEM-01 asks each layer to state its retention. This layer's is **until the person
+deletes it** — no expiry, because an expiry nobody chose is a promise the schema
+cannot keep without a sweeper that exists and runs. That is only a real statement
+if deleting works, and AUD-07 requires deletion to be reachable at all times, so
+the control is beside the conversation rather than in an operator's console. Two
+presses, because it cannot be undone.
+
+It deletes the **record**. The variants, the graph and the artifacts the
+conversation produced are work rather than transcript, and the message says so
+rather than leaving somebody to guess. Verified live: 0 turns left, 9 artifacts
+untouched.
+
+### A failed write is reported, never silent
+
+A person has their answer; losing it because the transcript could not be written
+would trade the thing they asked for against the record of having asked. But a
+turn that was not kept is invisible until somebody reloads and finds a gap, which
+is the worst moment to learn it — so it travels on the stream the way a variant
+that could not be saved does, and it goes in the log with a reason.
+
+### Seven fences, each confirmed red under a mutation
+
+Nothing ever recorded · the id arriving only with the reply · reads not scoped to
+the owner (drilled at both the domain and the endpoint) · deletes not scoped to
+the owner · a client naming any conversation it likes · and the schema's role
+constraint dropped, which is the schema-code coherence rule this repository
+already had for verification states.
+
+### Still open
+
+The server now holds the turns and the client still SENDS its own `history`. That
+is safe for the record — what is stored is what the server observed — but it
+means a client can still put words in FORGE's mouth for the duration of one turn,
+which is a prompt-injection surface SEC-04 would rather not have. Making the
+server build the history from its own record is the natural next step and is a
+change to what the model sees, so it is being raised rather than slipped in.
+
+---
+
 ## Carried defects
 
 Eight of the eleven carried here are closed. The three that remain are not
@@ -1802,12 +1905,14 @@ oversights and are stated with what each would actually take.
 
 ### Not closed, and what each would take
 
-- **SSO is not implemented.** RBAC, MFA and device trust are. This is blocked on
-  something this repository cannot supply: a real identity provider to verify
-  against. Building it against a fake is the one thing that must not happen —
-  this codebase's own history is that a stub matching the provider hid five
-  shipped defects, and an unverified authentication path is worse than none.
-  **What it needs:** an IdP tenant. It is then a self-contained piece of work.
+- **SSO is out of scope, by decision** (2026-09-04). Email and password, with
+  RBAC, MFA and device trust behind them, is the authentication this product
+  ships. SEC-02 names SSO and this build will not have it; that is a stated
+  position rather than a gap, and the entry is kept here so nobody re-opens it as
+  one. The original entry follows for context: it was blocked on an IdP tenant to
+  verify against, because building it against a fake is the one thing that must
+  not happen — this codebase's own history is that a stub matching a provider hid
+  five shipped defects, and an unverified authentication path is worse than none.
 - **FORGE now has a voice in a room** (wave 9.6), so this entry is closed. What
   remains is a product question, not a gap: when FORGE should speak without being
   asked. The original

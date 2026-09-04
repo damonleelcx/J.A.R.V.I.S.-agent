@@ -254,6 +254,14 @@ const (
 	EventArtifactVerified      Event = "forge.artifact.verified"
 	EventArtifactDispositioned Event = "forge.artifact.dispositioned"
 
+	// A workbench conversation was recorded, or deleted at somebody's request
+	// (PRD RSN-07, AUD-07). The write is per turn and is NOT logged — one line
+	// per sentence would drown the log — but a turn that could not be kept is,
+	// because from the outside a lost turn is invisible until a reload.
+	EventConversationKept      Event = "forge.conversation.kept"
+	EventConversationNotKept   Event = "forge.conversation.not_kept"
+	EventConversationForgotten Event = "forge.conversation.forgotten"
+
 	// A change named nodes it was produced from and some of them are not in the
 	// project (PRD VIS-01, WRK-03). The change is still recorded and the ones
 	// that resolved are still linked; this says the provenance is incomplete,
@@ -266,6 +274,7 @@ func init() {
 		EventNodeAdded, EventNodePromoted, EventArtifactVersioned,
 		EventArtifactVerified, EventArtifactDispositioned,
 		EventProvenanceUnresolved,
+		EventConversationKept, EventConversationNotKept, EventConversationForgotten,
 	)
 }
 

@@ -10,6 +10,7 @@ import (
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/agent"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/access"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/conversation"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/geometry"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/workspace"
 
@@ -34,6 +35,11 @@ type ConverseHandlers struct {
 	// Optional: a deployment without it simply has no requirements to build
 	// from, and a turn that names some gets an ordinary answer.
 	workspace *workspace.Service
+	// talk keeps what was said (PRD RSN-07). Here for the same reason geo is:
+	// this is the only place that sees both halves of a turn at the moment they
+	// happen, and a client posting its own transcript would be writing a record
+	// of a conversation nobody can check it had.
+	talk *conversation.Service
 }
 
 // NewConverseHandlers wires the conversation endpoint.
@@ -47,12 +53,23 @@ func NewConverseHandlers(d Deps) *ConverseHandlers {
 			WithCharacters(agent.NewCharacterStore(d.Pool, d.Log)),
 		geo:       geometry.NewService(d.Pool, d.Clock, d.Log),
 		workspace: workspace.NewService(d.Pool, d.Clock, d.Log),
+		talk:      conversation.NewService(d.Pool, d.Clock, d.Log),
 	}
 }
 
 type converseRequest struct {
 	Message string       `json:"message"`
 	History []agent.Turn `json:"history"`
+	// ConversationID names the record this turn joins (PRD RSN-07). Empty on the
+	// first turn: the server mints one and returns it in the `conversation`
+	// event, and the client sends it back afterwards — the same shape ProjectID
+	// follows below, and for the same reason.
+	//
+	// An id that names somebody else's conversation, or one that does not exist,
+	// is REFUSED rather than silently replaced with a fresh one. A client that
+	// asked to continue a specific conversation and was quietly given a new one
+	// would go on believing the old one was being appended to.
+	ConversationID string `json:"conversation_id,omitempty"`
 	// ProjectID is where geometry proposed in this turn is kept (PRD VIS-04).
 	// Empty on the first turn of a workbench session: the server makes a project
 	// then and returns its id in the `variant` event, and the client sends it
@@ -229,11 +246,43 @@ func (h *ConverseHandlers) Converse(w http.ResponseWriter, r *http.Request) {
 	message, usedNodes := h.requirementsFor(r, req.ProjectID, req.FromNodes, req.Message)
 	req.FromNodes = usedNodes
 
+	// PRD RSN-07. The record is opened BEFORE the model is called, and the id
+	// goes out first, so that a turn which then fails still leaves a
+	// conversation the person can come back to. A record that only exists once
+	// an answer arrives is a record that loses exactly the turns somebody would
+	// most want to see again.
+	//
+	// A refusal here is fatal to the turn on purpose: the caller asked to
+	// continue a NAMED conversation, and answering into a different one — or
+	// into none — while saying nothing about it is the silent substitution this
+	// whole endpoint's provenance rules exist to prevent.
+	convID, err := h.talk.Resolve(ctx, req.ConversationID, user.ID)
+	if err != nil {
+		WriteError(w, r, h.deps.Log, err)
+		return
+	}
+	kept := h.keepSaid(ctx, conversation.Said{
+		ConversationID: convID, OwnerID: user.ID, ProjectID: req.ProjectID,
+		Role: conversation.RoleHuman, Text: req.Message, Images: len(req.Images),
+	})
+	if err := send(agent.StreamEvent{Kind: "conversation", Conversation: kept}); err != nil {
+		return
+	}
+
+	// What FORGE said, accumulated as it streams. Each `speech` event carries
+	// the whole reply so far rather than a fragment — the workbench replaces the
+	// bubble's text with it — so the last one is the complete utterance and
+	// overwriting is correct. Details are appended, because more than one can
+	// arrive and each is a separate paragraph of the same answer.
+	var spokeText string
+	var detailText []string
+
 	emitErr := h.conv.RespondStream(ctx, req.ProjectID, req.History, message, req.OnScreen, req.Images,
 		func(ev agent.StreamEvent) error {
 			switch ev.Kind {
 			case "speech":
 				spoke = true
+				spokeText = ev.Text
 				firstTokenMS = ev.FirstTokenMS
 			case "prototype":
 				hadPrototype = true
@@ -243,8 +292,25 @@ func (h *ConverseHandlers) Converse(w http.ResponseWriter, r *http.Request) {
 				// configuration, and a variant whose generator is a guess is one
 				// of VIS-04's six facts recorded wrongly.
 				pending = ev.Prototype
+			case "detail":
+				if strings.TrimSpace(ev.Text) != "" {
+					detailText = append(detailText, ev.Text)
+				}
 			case "done":
 				totalMS, tokens, model = ev.TotalMS, ev.Tokens, ev.Model
+				// Written before `done` reaches the client, for the same reason
+				// the variant is: `done` stays the last event anybody has to
+				// listen for.
+				reply := h.keepSaid(ctx, conversation.Said{
+					ConversationID: convID, OwnerID: user.ID, ProjectID: req.ProjectID,
+					Role: conversation.RoleForge, Text: spokeText,
+					Detail: strings.Join(detailText, "\n\n"),
+				})
+				if reply.NotKept != "" {
+					if err := send(agent.StreamEvent{Kind: "conversation", Conversation: reply}); err != nil {
+						return err
+					}
+				}
 				if pending != nil {
 					// Before `done`, so `done` stays the last event a client
 					// sees and nothing has to listen past it.
@@ -414,4 +480,24 @@ func forLedger(s string) string {
 		return s
 	}
 	return s[:ledgerFieldLimit] + fmt.Sprintf("… [truncated; %d characters in the original]", len(s))
+}
+
+// keepSaid records one half of a turn, and never fails the turn.
+//
+// # Why a failure here is reported rather than raised
+//
+// The person has their answer. Losing it because the transcript could not be
+// written would trade the thing they asked for against the record of having
+// asked — the wrong way round. But the failure cannot be silent either: a turn
+// that was not kept is invisible until somebody reloads and finds a gap, which
+// is the worst moment to learn it. So it travels on the stream the way a variant
+// that could not be saved does, and it goes in the log with a reason.
+func (h *ConverseHandlers) keepSaid(ctx context.Context, said conversation.Said) *agent.ConversationKept {
+	out := &agent.ConversationKept{ID: said.ConversationID}
+	if _, err := h.talk.Record(ctx, said); err != nil {
+		h.deps.Log.WarnWith(ctx, logx.EventConversationNotKept, err,
+			"conversation_id", said.ConversationID, "role", string(said.Role))
+		out.NotKept = "This turn was not added to the record: " + userFacing(err)
+	}
+	return out
 }

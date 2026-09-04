@@ -1573,3 +1573,42 @@
   color: #e6cd8f;
   margin-bottom: 8px;
 }
+
+/* ---- the conversation record (PRD RSN-07, AUD-07) ------------------------
+ *
+ * A restored turn is marked, and the mark is not decoration. A live reply
+ * arrives with its epistemic labels, the standards it quoted from memory and
+ * the provenance of anything it drew; those are derived as the reply lands and
+ * are not stored, so they do not come back. A restored turn rendered as an
+ * ordinary one would say "FORGE made no claims here" — which is a different
+ * statement from "nobody kept them", and a false one.
+ */
+
+.railhead { display: flex; align-items: center; gap: 10px; }
+
+.forget {
+  margin-left: auto;
+  padding: 3px 9px;
+  font-size: 10.5px;
+  letter-spacing: .02em;
+}
+.forget.armed { color: #f0bcc0; border-color: #6a3238; }
+.forget:disabled { opacity: .45; cursor: not-allowed; }
+
+.turn.restored { opacity: .88; border-style: dashed; }
+.from-record {
+  margin-left: 8px;
+  font-size: 9px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  font-weight: 500;
+}
+
+/* What the record does NOT contain, said once at the join between the restored
+ * turns and the live ones. */
+.turn.note {
+  border-style: dashed;
+  background: transparent;
+}
+.turn.note .body { color: var(--ink-dim); font-size: 11.5px; line-height: 1.55; }

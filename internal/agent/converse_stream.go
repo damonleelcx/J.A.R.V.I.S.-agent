@@ -40,6 +40,15 @@ type StreamEvent struct {
 	// and why. Emitted by the HTTP layer rather than by the model loop, because
 	// storing is not part of the conversation — see httpapi/converse.go.
 	Variant *VariantSaved `json:"variant,omitempty"`
+	// Conversation reports the record this turn joined (PRD RSN-07). Emitted by
+	// the HTTP layer rather than by the model loop, for the same reason Variant
+	// is: keeping what was said is not part of holding the conversation, and the
+	// loop that talks must not also be the thing that decides what is filed.
+	//
+	// Emitted BEFORE the reply, because a client needs the id even for a turn
+	// that then fails — otherwise a failed first turn leaves the person with a
+	// conversation they cannot come back to.
+	Conversation *ConversationKept `json:"conversation,omitempty"`
 	// FirstTokenMS and TotalMS are measured, not targeted. PRD AUD-02 names
 	// ≤700ms; this reports what actually happened so the claim is checkable.
 	FirstTokenMS int64  `json:"first_token_ms,omitempty"`
@@ -47,6 +56,19 @@ type StreamEvent struct {
 	Model        string `json:"model,omitempty"`
 	Tokens       int64  `json:"tokens,omitempty"`
 	Error        string `json:"error,omitempty"`
+}
+
+// ConversationKept is the fate of a turn's record.
+//
+// Both outcomes travel, like VariantSaved's. A workbench that said nothing when
+// the record failed would leave somebody believing they could reload and find
+// this conversation, and they would find out by losing it.
+type ConversationKept struct {
+	// ID is the conversation this turn belongs to. Present even when the turn
+	// was not kept, so the client can go on naming the same record.
+	ID string `json:"id"`
+	// NotKept says why nothing was written, and is empty when it was.
+	NotKept string `json:"not_kept,omitempty"`
 }
 
 // VariantSaved is the fate of a turn's geometry.

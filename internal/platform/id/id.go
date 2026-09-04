@@ -50,6 +50,9 @@ const (
 	PrefixDevice     Prefix = "dev"
 	PrefixRoom       Prefix = "rom"
 	PrefixTurn       Prefix = "trn"
+	// PrefixConversation names one workbench conversation. Not a room: a room is
+	// several people and a media plane, this is one person and a record.
+	PrefixConversation Prefix = "cnv"
 	// PrefixStream names one live connection to a room, NOT an authenticated
 	// session — those are "ses" and are a different thing with a different
 	// lifetime and its own table. One person with two tabs holds one session and

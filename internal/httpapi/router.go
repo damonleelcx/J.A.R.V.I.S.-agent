@@ -165,6 +165,14 @@ func NewRouter(d Deps) http.Handler {
 	// Only the disposition — what a person decided — is exposed here.
 	mux.Handle("POST /v1/workspace/versions/{id}/disposition", authed(ws.Dispose))
 
+	// --- the workbench record (PRD RSN-07, AUD-07) ---
+	// Read and delete only. Turns are WRITTEN by /v1/converse, where both halves
+	// of a turn are known to be real; a POST here would let a client file a
+	// record of a conversation nobody can check it had.
+	talk := NewConversationHandlers(d)
+	mux.Handle("GET /v1/conversations/{id}", authed(talk.Get))
+	mux.Handle("DELETE /v1/conversations/{id}", authed(talk.Forget))
+
 	// --- geometry: variants, comparison, export (PRD VIS-04, VIS-05) ---
 	// A variant is an artifact VERSION, so there is no create endpoint here:
 	// geometry is written by the server at the moment it is produced, in
