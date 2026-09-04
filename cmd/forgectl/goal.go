@@ -108,7 +108,14 @@ func cmdGoalNew(ctx context.Context, cfg *config.Config, log *logx.Logger, args 
 		// A question is a legitimate outcome. A plan built on a wrong assumption
 		// costs far more than an answered question, so this is not an error.
 		fmt.Printf("\nFORGE needs an answer before it can plan this:\n\n  %s\n\n", outcome.ClarificationNeeded)
-		fmt.Printf("Goal %s is saved as a draft. Re-run with a statement that answers this.\n", goal.ID)
+		// Points at the answer path rather than at writing the goal again. The
+		// question is now stored on the goal and the planner reads the answer
+		// back, so re-stating the whole goal to smuggle the answer into its
+		// statement is no longer the way through — and telling somebody to do
+		// that would throw away the goal id, its project and its history.
+		fmt.Printf("Goal %s is saved as a draft. Answer it, then plan again:\n"+
+			"  forgectl goal answer %s \"...\"\n  forgectl goal replan %s\n",
+			goal.ID, goal.ID, goal.ID)
 		return nil
 	}
 
@@ -190,7 +197,8 @@ func cmdGoalReplan(ctx context.Context, cfg *config.Config, log *logx.Logger, ar
 		// reason Plan returns it rather than raising it.
 		fmt.Printf("\nThe planner needs an answer before it can plan this:\n  %s\n\n",
 			wrap(outcome.ClarificationNeeded, 74, "  "))
-		fmt.Println("The goal is still a draft. Answer the question in its statement and replan.")
+		fmt.Printf("The goal is still a draft. Answer it, then plan again:\n"+
+			"  forgectl goal answer %s \"...\"\n  forgectl goal replan %s\n", goal.ID, goal.ID)
 		return nil
 	}
 	fmt.Printf("\nPlanned: %d task(s).\n", len(outcome.Tasks))

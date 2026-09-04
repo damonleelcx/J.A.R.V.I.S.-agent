@@ -1043,28 +1043,6 @@ func rationale(chosen Option, criteria []Criterion, why string) string {
 // What the planner is told once somebody has chosen
 // ---------------------------------------------------------------------------
 
-// ChoiceStore reads a goal's settled choice for the planner.
-//
-// Nil is a legal value, like CharacterStore: a deployment that never offers
-// options never has one to read, and planning proceeds unchanged.
-type ChoiceStore struct{ pool *db.Pool }
-
-// NewChoiceStore returns a store reading from forge_goals.
-func NewChoiceStore(pool *db.Pool) *ChoiceStore {
-	if pool == nil {
-		return nil
-	}
-	return &ChoiceStore{pool: pool}
-}
-
-// For returns the goal's choice, or nil when there is none.
-func (s *ChoiceStore) For(ctx context.Context, goalID string) (*optionHold, error) {
-	if s == nil {
-		return nil, nil
-	}
-	return optionsFor(ctx, s.pool, goalID)
-}
-
 // settledChoiceBrief is what a plan is told about a choice that was made.
 //
 // # Why this exists at all

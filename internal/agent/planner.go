@@ -70,10 +70,11 @@ type Planner struct {
 	// same shape as Executor.secrets: nil means every project is planned with the
 	// character this planner was constructed with.
 	characters *CharacterStore
-	// choices loads the option somebody chose, so the plan is built on it
-	// rather than on whatever this roll of the model prefers (PRD RSN-03).
-	// Optional in the same shape as the rest.
-	choices *ChoiceStore
+	// settled loads what a person has already decided about this goal — the
+	// answer to a question it asked (PRD RSN-02) and the option they chose
+	// (PRD RSN-03) — so the plan is built on both rather than on whatever this
+	// roll of the model prefers. Optional in the same shape as the rest.
+	settled *SettledStore
 	// hazards loads the project graph for r3+ goals (PRD SAF-02). Optional in
 	// the same shape as the rest: nil means hazard-aware planning is not wired,
 	// which is a deployment without a workspace service rather than a bug.
@@ -89,8 +90,9 @@ func NewPlanner(client llm.Client, char persona.Character) *Planner {
 // WithCharacters makes planning honour the project's critique intensity.
 func (p *Planner) WithCharacters(s *CharacterStore) *Planner { p.characters = s; return p }
 
-// WithChoices makes planning build on the option somebody chose (PRD RSN-03).
-func (p *Planner) WithChoices(s *ChoiceStore) *Planner { p.choices = s; return p }
+// WithSettled makes planning build on what a person already decided: the answer
+// to a question it asked (PRD RSN-02) and the option they chose (PRD RSN-03).
+func (p *Planner) WithSettled(s *SettledStore) *Planner { p.settled = s; return p }
 
 // WithHazards makes planning account for the project's recorded hazards at r3
 // and above (PRD SAF-02).
@@ -153,17 +155,18 @@ func (p *Planner) Plan(ctx context.Context, goal *engine.Goal, priorPlan *PlanRe
 	}
 	user.WriteString(hazardBrief(hs))
 
-	// PRD RSN-03. Same rule as the hazards above: a read that fails stops the
-	// plan, because a plan produced as though nobody had chosen anything is a
-	// plan for a different approach than the one that was agreed to — and it
-	// would carry no sign that it had ignored the choice.
-	choice, err := p.choices.For(ctx, goal.ID)
+	// PRD RSN-02 and RSN-03. Same rule as the hazards above: a read that fails
+	// stops the plan, because a plan produced as though nothing had been decided
+	// is a plan for a question somebody already answered and an approach nobody
+	// agreed to — and it would carry no sign that it had ignored either.
+	settled, err := p.settled.For(ctx, goal.ID)
 	if err != nil {
 		return nil, err
 	}
-	brief, unreadable := settledChoiceBrief(choice)
+	brief, unreadable := settled.Brief()
 	if unreadable && p.log != nil {
-		p.log.Warn(ctx, logx.EventChoiceUnreadable, "goal_id", goal.ID, "chosen_option", choice.Chosen)
+		p.log.Warn(ctx, logx.EventChoiceUnreadable,
+			"goal_id", goal.ID, "chosen_option", settled.Choice.Chosen)
 	}
 	user.WriteString(brief)
 

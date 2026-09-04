@@ -33,8 +33,14 @@ import (
 // is not a judgement call — it is the definition, already written down.
 
 // clarificationHold is what the gate found.
+//
+// Answer is the text somebody gave, which the gate does not need — it only asks
+// whether one exists — and the planner does. It is read here rather than by a
+// second query so that "what was answered" and "is this goal held" can never
+// come from two reads that disagree. See settled.go.
 type clarificationHold struct {
 	Question string
+	Answer   string
 	Answered bool
 }
 
@@ -50,7 +56,11 @@ func clarificationFor(ctx context.Context, q db.Querier, goalID string) (*clarif
 	if question == nil {
 		return nil, nil
 	}
-	return &clarificationHold{Question: *question, Answered: answer != nil}, nil
+	hold := &clarificationHold{Question: *question, Answered: answer != nil}
+	if answer != nil {
+		hold.Answer = *answer
+	}
+	return hold, nil
 }
 
 // recordQuestion stores what the planner refused to guess past.

@@ -160,9 +160,10 @@ func (in *Intake) Plan(ctx context.Context, pool *db.Pool, goal *engine.Goal) (*
 	// struct. Below r3 the planner never asks it anything.
 	in.planner = in.planner.
 		WithHazards(workspace.NewService(pool, in.clock, in.log), in.log).
-		// PRD RSN-03, attached here for the same reason the hazard source is: the
-		// pool arrives with the call.
-		WithChoices(NewChoiceStore(pool))
+		// PRD RSN-02 and RSN-03, attached here for the same reason the hazard
+		// source is: the pool arrives with the call. One store for both, so a
+		// deployment cannot end up with the choice wired and the answer not.
+		WithSettled(NewSettledStore(pool))
 
 	result, err := in.planner.Plan(ctx, goal, nil, "")
 	if err != nil {

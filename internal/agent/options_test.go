@@ -623,7 +623,7 @@ func TestActivateHoldsAGoalWithAnOpenChoice(t *testing.T) {
 // ignored.
 //
 // It goes through Intake.Plan rather than Planner.Plan, so removing the
-// WithChoices wiring — not just the prompt block — turns it red.
+// WithSettled wiring — not just the prompt block — turns it red.
 func TestTheChosenApproachReachesThePlan(t *testing.T) {
 	f := newRecoveryFixture(t)
 	ctx := context.Background()
