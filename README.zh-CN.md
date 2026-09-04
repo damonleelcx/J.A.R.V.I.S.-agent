@@ -199,6 +199,10 @@ forgectl project review-authority --project prj_... \
   --holder "R. Okonkwo" --note "CEng MICE 481920" --as usr_...
 ```
 
+也提供 `PUT /v1/projects/{id}/review-authority`，仅限 owner——这是本处唯一被放到 API 上的
+控制项，因为对工程工作真正负责的人是在浏览器里看着那条拒绝提示的，而不是在 shell 前。
+记录人恒为已认证用户，试图指定他人会被**拒绝**而不是被忽略。
+
 记录一位**具名且有署名来源**的责任人，会把该领域的天花板抬到 r2。除此之外没有别的方式；
 没有署名来源的声明不会抬高任何东西；`general`、`medical`、`robotics` 无论记录什么都抬不
 动；而清除和设置一样容易——一个能抬高天花板却降不回来的机制，没有人应该打开它。

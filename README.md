@@ -549,6 +549,11 @@ forgectl project review-authority --project prj_... \
   --holder "R. Okonkwo" --note "CEng MICE 481920" --as usr_...
 ```
 
+Also `PUT /v1/projects/{id}/review-authority`, owner-only — the one control here
+that reached the API, because the people accountable for engineering work are in
+the browser looking at the refusal, not at a shell. The recorder is the
+authenticated user, and naming somebody else is refused rather than ignored.
+
 Recording a **named, attributed** authority raises that domain's ceiling to r2.
 Nothing else does; an unattributed claim raises nothing; `general`, `medical` and
 `robotics` are unreachable by any record; and clearing is as easy as setting,

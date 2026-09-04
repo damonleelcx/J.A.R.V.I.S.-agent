@@ -27,6 +27,18 @@ import (
 //
 // If a project API ever exists, this belongs on it and this command should call
 // it rather than the database.
+//
+// # Update (2026-09-04): one of these IS on the API now
+//
+// `project review-authority` has an HTTP equivalent —
+// PUT/DELETE /v1/projects/{id}/review-authority — because it is the only control
+// here that widens what may be done, and terminal-only meant it could be
+// exercised by whoever had shell access and by nobody else, while the people
+// accountable for the work are in the browser looking at the refusal.
+//
+// The reasoning above still holds for `project character`: it changes how FORGE
+// talks, and nothing about it is urgent to somebody without a terminal. The two
+// commands are not the same kind of act and do not have to make the same choice.
 
 // critiqueValues and verbosityValues mirror the CHECK constraints in
 // 0014_project_character.sql.

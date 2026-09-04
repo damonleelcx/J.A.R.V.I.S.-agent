@@ -80,6 +80,37 @@ forgectl project review-authority --project prj_...            # read
 forgectl project review-authority --project prj_... --clear    # back down
 ```
 
+Over HTTP, where the people accountable for the work actually are:
+
+```
+GET    /v1/projects/{id}/review-authority     any project member
+PUT    /v1/projects/{id}/review-authority     owner only   {"holder": "...", "note": "..."}
+DELETE /v1/projects/{id}/review-authority     owner only
+```
+
+**Owner-only for the writes** (`access.PermProjectManage`). A maintainer decides
+individual approvals; recording an authority changes the ceiling for every piece
+of work in the project from then on, which is administration of the project
+rather than a decision inside it. Members below owner can still **read** it —
+they are governed by the ceiling and need to know what it rests on.
+
+**The recorder is the authenticated user, never a field in the body.** Attempting
+to name the attester is *refused*, not ignored: `DecodeJSON` rejects unknown
+fields, so a client that thought it was choosing who attested is told it was not
+rather than being quietly overruled. Attribution is the entire value of the
+record — a caller who could name the attester could put a claim in somebody
+else's mouth, and the ceiling would rest on a statement its supposed author never
+made.
+
+**An empty holder on PUT is refused, not treated as a clear.** `DELETE` is the
+way down. An empty body is far more likely to be a client bug than an intention
+to lower a ceiling, and guessing wrong in that direction silently removes a
+control.
+
+**The caveat is on every response**, recorded or not. A client that only received
+it alongside a holder would have to remember to render it; one that always has it
+cannot show a holder without it by accident.
+
 ## Verification
 
 Fences in `internal/agent/pack_ceiling_test.go` and
@@ -91,6 +122,8 @@ confirmed to turn a fence red and then restored byte-identical:
 | `CeilingWith` ignores whether an authority was recorded | `AnAuthorityRaisesTheDomainCeiling`, `AnUnattributedClaimRaisesNothing` |
 | The refusal drops the not-verified sentence | `ARaisedCeilingSaysItWasNotVerified` |
 | `medical` gains a raised ceiling | `NoAuthorityRaisesADomainThatOffersNone` |
+| Writes gated on the maintainer permission instead of owner | `ReviewAuthorityHTTP_OnlyAnOwnerMayRecord` |
+| The caveat is sent only when something is recorded | `ReviewAuthorityHTTP_TheCaveatIsAlwaysPresent` |
 
 ## Related
 

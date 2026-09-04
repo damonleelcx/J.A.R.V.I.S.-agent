@@ -153,6 +153,18 @@ func NewRouter(d Deps) http.Handler {
 	ws := NewWorkspaceHandlers(d)
 	mux.HandleFunc("GET /v1/workspace/kinds", ws.Kinds)
 	mux.Handle("GET /v1/workspace/graph", authed(ws.Graph))
+
+	// --- the qualified-review claim a raised ceiling rests on ---
+	//
+	// The one mechanism in the product that WIDENS what may be done, so the write
+	// verbs are gated on access.PermProjectManage — owner-only — rather than on
+	// the maintainer permission that decides individual approvals. Recording an
+	// authority changes the ceiling for every piece of work in the project from
+	// then on. See internal/httpapi/review_authority.go.
+	reviewAuth := NewReviewAuthorityHandlers(d)
+	mux.Handle("GET /v1/projects/{id}/review-authority", authed(reviewAuth.Get))
+	mux.Handle("PUT /v1/projects/{id}/review-authority", authed(reviewAuth.Put))
+	mux.Handle("DELETE /v1/projects/{id}/review-authority", authed(reviewAuth.Delete))
 	mux.Handle("GET /v1/workspace/review", authed(ws.Review))
 	mux.Handle("POST /v1/workspace/nodes", authed(ws.AddNode))
 	mux.Handle("PATCH /v1/workspace/nodes/{id}", authed(ws.EditNode))
