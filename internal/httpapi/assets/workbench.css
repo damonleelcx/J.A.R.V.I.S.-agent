@@ -1008,3 +1008,343 @@
   text-transform: uppercase;
   color: var(--ink-dim);
 }
+
+/* ---- the stage's panels (PRD WRK-01) ------------------------------------
+ *
+ * The stage used to be one thing — the model — and WRK-01 asks it to be the
+ * shared canvas: code, previews, diagrams, telemetry, requirements, diffs,
+ * simulations, test results. These are the other panels.
+ *
+ * The layout rule that matters: the model layer is ALWAYS laid out. It is
+ * hidden with `visibility`, never `display`, because a display:none ancestor
+ * collapses the canvas's client box to zero and the WebGL viewport sizes itself
+ * from that box. Switching away and back would return a 640x480 fallback
+ * viewport with the wrong aspect. The other panels are plain content and are
+ * display:none when inactive, which is what keeps them out of the tab order and
+ * out of the accessibility tree.
+ *
+ * The voice surface is NOT a panel and is never hidden by one. It lives beside
+ * them in the stage, and every panel docks it (see stage.js's onPanel), because
+ * AUD-06 requires a non-audio path at all times and AUD-07 requires stop to
+ * always be reachable — including while somebody is reading a diff.
+ */
+
+.stagebar {
+  position: absolute;
+  top: 0; left: 0; right: 0;
+  height: 44px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 12px;
+  background: color-mix(in srgb, #0a0e17 88%, transparent);
+  border-bottom: 1px solid var(--edge-solid);
+  backdrop-filter: blur(6px);
+  z-index: 6;
+}
+
+.stagetabs { display: flex; gap: 4px; flex: 0 0 auto; }
+
+.stagetab {
+  padding: 5px 12px;
+  font-size: 12px;
+  font-weight: 600;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink-dim);
+  cursor: pointer;
+}
+.stagetab:hover { color: var(--ink); background: rgba(255, 255, 255, .05); }
+.stagetab:focus-visible { outline: 2px solid var(--core-dim); outline-offset: 2px; }
+.stagetab[aria-selected="true"] {
+  color: #08202a;
+  background: var(--core);
+  border-color: transparent;
+}
+
+/* A panel this build cannot fill is marked BEFORE it is opened, so that opening
+ * it is a choice to read why rather than a discovery that it is blank. It stays
+ * fully operable — the explanation is the content, and a disabled tab would hide
+ * the one thing the panel exists to say. */
+.stagetab--empty::after {
+  content: "";
+  display: inline-block;
+  width: 5px; height: 5px;
+  margin-left: 6px;
+  vertical-align: middle;
+  border-radius: 50%;
+  background: var(--ink-dim);
+}
+.stagetab--empty[aria-selected="true"]::after { background: #08202a; }
+
+.stagegloss {
+  font-size: 11.5px;
+  color: var(--ink-dim);
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 1000px) { .stagegloss { display: none; } }
+
+.wbpanel {
+  position: absolute;
+  inset: 44px 0 0 0;
+  display: none;
+  overflow-y: auto;
+  min-height: 0;
+}
+.wbpanel.on { display: block; }
+
+/* Scroll runway under the docked voice surface.
+ *
+ * The dock sits in the bottom-left corner of the stage and does not move — it
+ * holds stop-speaking, which PRD AUD-07 requires to be in the same place every
+ * time somebody reaches for it. So a panel behind it must be able to scroll its
+ * last row clear rather than leaving it permanently covered: content hidden
+ * under a fixed island reads as content that is not there.
+ *
+ * Runway rather than a bottom inset, which was the other option: reserving the
+ * dock's full height would take 250px off a 650px stage for a panel whose whole
+ * job is showing a long diff, and it would do it across the full width to solve
+ * an overlap that is half of it. */
+.wbpanel:not(.wbpanel-model) { padding-bottom: 276px; }
+
+/* Except where the panel's own columns scroll, which is the split below: the
+ * runway belongs to whichever box actually scrolls. */
+.wbpanel:has(.wbsplit) { overflow: hidden; padding-bottom: 0; }
+
+/* See the section note: laid out always, hidden by visibility. */
+.wbpanel-model { display: block; visibility: hidden; overflow: visible; }
+.wbpanel-model.on { visibility: visible; }
+
+/* ---- Files: the list, and one file's history --------------------------- */
+
+.wbsplit {
+  display: grid;
+  grid-template-columns: minmax(180px, 260px) 1fr;
+  height: 100%;
+  min-height: 0;
+}
+@media (max-width: 900px) { .wbsplit { grid-template-columns: 1fr; } }
+
+.wblist {
+  border-right: 1px solid var(--edge-solid);
+  padding: 10px 10px 276px;
+  overflow-y: auto;
+  align-content: start;
+}
+.wbdetail { padding: 14px 16px 276px; overflow-y: auto; min-width: 0; }
+
+.wbfile {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 7px 9px;
+  margin-bottom: 2px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--ink-dim);
+  cursor: pointer;
+}
+.wbfile:hover { background: rgba(255, 255, 255, .04); color: var(--ink); }
+.wbfile:focus-visible { outline: 2px solid var(--core-dim); outline-offset: 1px; }
+.wbfile[aria-current="true"] { background: #10161f; border-color: var(--core-dim); color: var(--ink); }
+.wbfile-p {
+  display: block;
+  font-size: 12.5px;
+  font-weight: 600;
+  word-break: break-all;
+}
+.wbfile-m { display: block; margin-top: 2px; font-size: 10.5px; color: var(--ink-dim); }
+
+.wbhead { margin-bottom: 14px; }
+.wbhead-t { font-size: 14px; font-weight: 600; margin: 0; word-break: break-all; }
+.wbhead-s { margin-top: 3px; font-size: 11.5px; color: var(--ink-dim); }
+
+.wbvers { list-style: none; margin: 0; padding: 0; display: grid; gap: 12px; }
+
+.wbver {
+  border: 1px solid var(--edge-solid);
+  border-radius: 10px;
+  padding: 11px 13px;
+  background: #0d1119;
+}
+.wbver-h { display: flex; align-items: baseline; gap: 9px; flex-wrap: wrap; }
+.wbver-n { font-size: 12.5px; font-weight: 700; color: var(--ink); font-variant-numeric: tabular-nums; }
+.wbver-w { font-size: 11px; color: var(--ink-dim); font-variant-numeric: tabular-nums; }
+.wbver-a {
+  font-size: 9.5px;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+}
+.wbver-f { display: flex; gap: 6px; flex-wrap: wrap; margin-top: 7px; }
+
+/* The server's own sentence about whether this version may be relied on. Not
+ * green by default: "accepted and passed" is the only state that earns it, and
+ * that state is rare enough that colouring the rest would be reassuring noise. */
+.wbver-u { margin: 8px 0 0; font-size: 11.5px; line-height: 1.5; color: var(--ink-dim); }
+.wbver-u.ok { color: #9fd8a8; }
+
+.wbver-m {
+  display: flex;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 7px;
+  font-size: 10.5px;
+  color: var(--ink-dim);
+}
+.wbver-r { margin: 6px 0 0; font-size: 11.5px; color: var(--ink); }
+.wbver-i { margin-top: 8px; font-size: 11.5px; color: var(--ink-dim); }
+.wbver-i summary { cursor: pointer; }
+.wbver-nodiff { margin: 8px 0 0; font-size: 11.5px; color: var(--ink-dim); font-style: italic; }
+
+.wbjson, .wbdiff {
+  margin: 7px 0 0;
+  padding: 9px 11px;
+  border: 1px solid var(--edge-solid);
+  border-radius: 8px;
+  background: #080b11;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  line-height: 1.55;
+  overflow-x: auto;
+  max-height: 460px;
+  overflow-y: auto;
+  white-space: pre;
+  color: var(--ink-dim);
+}
+.wbd-l { display: block; }
+.wbd-add { color: #9fd8a8; background: rgba(80, 170, 100, .09); }
+.wbd-del { color: #e8a6ac; background: rgba(200, 90, 100, .09); }
+.wbd-hunk { color: #86d3e8; }
+.wbd-file { color: var(--ink); font-weight: 600; }
+
+/* ---- Checks ------------------------------------------------------------- */
+
+.wbchecks { list-style: none; margin: 14px 0 0; padding: 0; display: grid; gap: 9px; }
+.wbcheck {
+  border: 1px solid var(--edge-solid);
+  border-radius: 9px;
+  padding: 9px 12px;
+  background: #0d1119;
+}
+.wbcheck-f {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: var(--ink);
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  word-break: break-all;
+}
+.wbcheck-f:hover { color: var(--core); }
+.wbcheck-f:focus-visible { outline: 2px solid var(--core-dim); outline-offset: 2px; }
+
+.wbsum {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  flex-wrap: wrap;
+  font-size: 12.5px;
+  color: var(--ink-dim);
+}
+.wbsum-n { color: var(--ink); font-weight: 700; font-variant-numeric: tabular-nums; }
+.wbsum-c { display: flex; gap: 6px; margin-left: auto; }
+
+.wbnote {
+  margin: 9px 0 0;
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--ink);
+}
+
+/* ---- chips: what a machine found, what a person decided ------------------
+ *
+ * Two vocabularies, deliberately not one palette. Verification is a machine's
+ * finding and disposition is a person's decision (PRD SAF-05), and the reason
+ * they are separate columns in the ledger is the reason they must not read as
+ * two values of the same thing here. Verification carries the colour; a
+ * disposition is outlined, whatever it says.
+ *
+ * `unverified` and `pending` are the honest defaults and are NOT green and NOT
+ * silent — they are the states this build is almost always in, and a grey chip
+ * that blends into the row is how "nothing checked this" comes to look like
+ * "nothing wrong with this".
+ */
+.wbchip {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--edge-solid);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: .02em;
+  color: var(--ink-dim);
+}
+.wbchip i { font-style: normal; font-weight: 400; opacity: .85; }
+
+.wbchip-v-passed { color: #9fd8a8; border-color: #35603f; background: rgba(80, 170, 100, .1); }
+.wbchip-v-failed { color: #f0bcc0; border-color: #6a3238; background: rgba(200, 90, 100, .12); }
+.wbchip-v-unverified { color: #e6cd8f; border-color: #6a5626; background: rgba(180, 140, 40, .1); }
+
+.wbchip-d-pending { color: var(--ink-dim); }
+.wbchip-d-accepted { color: var(--ink); border-color: var(--core-dim); }
+.wbchip-d-rejected { color: #f0bcc0; border-color: #6a3238; }
+.wbchip-d-superseded { color: var(--ink-dim); border-style: dashed; }
+
+/* ---- shared states ------------------------------------------------------ */
+
+.wbempty {
+  padding: 18px;
+  font-size: 12.5px;
+  line-height: 1.6;
+  color: var(--ink-dim);
+}
+
+/* A failure to read, said where the answer was expected. This panel is what the
+ * person opened; an empty one would answer their question wrongly. */
+.wbproblem {
+  margin: 12px 0;
+  padding: 10px 13px;
+  border: 1px solid #6a3238;
+  border-radius: 9px;
+  background: color-mix(in srgb, #2a1216 88%, transparent);
+  color: #f0bcc0;
+  font-size: 12px;
+  line-height: 1.55;
+}
+
+/* ---- a panel this build cannot fill -------------------------------------
+ *
+ * Rendered by the server from the connectors' own refusals (see stage.go). It
+ * is prose, not an error state: nothing went wrong, and a red box would say
+ * something did. What it must not look like is a feature that is loading. */
+.wbrefusal { max-width: 62ch; padding: 26px 22px 34px; }
+.wbrefusal-h { font-size: 14.5px; font-weight: 600; margin: 0 0 12px; color: var(--ink); }
+.wbrefusal-p { margin: 0 0 11px; font-size: 12.5px; line-height: 1.65; color: var(--ink-dim); }
+
+.wbrefused { margin-top: 20px; border-top: 1px solid var(--edge-solid); padding-top: 15px; }
+.wbrefused-h {
+  font-size: 9.5px;
+  letter-spacing: .07em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  margin-bottom: 10px;
+}
+.wbconn { margin-bottom: 13px; }
+.wbconn-n {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11.5px;
+  color: #e6cd8f;
+}
+.wbconn-r { margin: 4px 0 0; font-size: 12px; line-height: 1.6; color: var(--ink-dim); }

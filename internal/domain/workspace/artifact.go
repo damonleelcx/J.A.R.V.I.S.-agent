@@ -104,6 +104,16 @@ const (
 	Failed     Verification = "failed"
 )
 
+var verifications = []Verification{Unverified, Passed, Failed}
+
+// Verifications returns every recognised verification state.
+//
+// Exported for the same reason Agents is: a surface that renders these — the
+// workbench's Checks panel, the schema's CHECK constraint — must be held against
+// the vocabulary rather than against a copy of it. A state added here and
+// nowhere else should turn something red.
+func Verifications() []Verification { return append([]Verification(nil), verifications...) }
+
 // Valid reports whether v is a recognised verification state.
 func (v Verification) Valid() bool {
 	return v == Unverified || v == Passed || v == Failed
@@ -122,6 +132,11 @@ const (
 	// owes a decision on a version nothing uses.
 	Superseded Disposition = "superseded"
 )
+
+var dispositions = []Disposition{Pending, Accepted, Rejected, Superseded}
+
+// Dispositions returns every recognised human disposition. See Verifications.
+func Dispositions() []Disposition { return append([]Disposition(nil), dispositions...) }
 
 // Valid reports whether d is a recognised disposition.
 func (d Disposition) Valid() bool {

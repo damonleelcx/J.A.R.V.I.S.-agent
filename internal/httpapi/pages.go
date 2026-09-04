@@ -27,7 +27,7 @@ import (
 //
 //go:embed assets/shell.css assets/avatar.css assets/console.css assets/workbench.css
 //go:embed assets/pages.js assets/console.js assets/workbench.js assets/forge3d.js
-//go:embed assets/voice.js assets/orb.js
+//go:embed assets/stage.js assets/voice.js assets/orb.js
 //go:embed assets/audio-input.js assets/room.js assets/room-page.js assets/room.css
 //go:embed assets/portrait/*.png
 var assetFS embed.FS
@@ -49,7 +49,7 @@ func NewPageHandlers(d Deps) *PageHandlers {
 	return &PageHandlers{
 		d: d,
 		tmpl: template.Must(template.New("pages").
-			Funcs(template.FuncMap{"asset": assetURL}).
+			Funcs(template.FuncMap{"asset": assetURL, "paras": paragraphs}).
 			Parse(pageTemplates)),
 	}
 }
@@ -108,6 +108,24 @@ func assetURL(name string) string {
 	return "/assets/" + name
 }
 
+// paragraphs splits a declared reason into its paragraphs for rendering.
+//
+// The reasons in stage.go and in internal/tools are written as prose with blank
+// lines between paragraphs, because that is how they read in a Go error and in
+// the model's tool description. Rendered into HTML unsplit they become one wall,
+// and the second paragraph — which is always the "do this instead" half — stops
+// being findable. Split here rather than stored as a slice so the same string
+// serves both readers.
+func paragraphs(s string) []string {
+	out := []string{}
+	for _, p := range strings.Split(s, "\n\n") {
+		if p = strings.TrimSpace(p); p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
 type pageData struct {
 	// Presence is FORGE's portrait with the state sigil badged onto it. Used on
 	// surfaces with room for it; the sigil alone is used where there is not.
@@ -153,6 +171,12 @@ type pageData struct {
 	Tagline        string
 	PersonaVersion int
 	Soul           []persona.Commitment
+
+	// Panels are the workbench stage's views (PRD WRK-01). Rendered rather than
+	// fetched for the reason given in stage.go: two of them are empty in this
+	// build, and why they are empty is a fact about the build that must have one
+	// source. Only the workbench sets this.
+	Panels []StagePanel
 }
 
 func (p *PageHandlers) render(w http.ResponseWriter, r *http.Request, name string, data pageData) {
@@ -233,6 +257,7 @@ func (p *PageHandlers) Workbench(w http.ResponseWriter, r *http.Request) {
 		Page:     "workbench",
 		Title:    "FORGE workbench",
 		Presence: persona.PresenceHTML(persona.StateIdle, 36),
+		Panels:   stagePanels(),
 	})
 }
 
@@ -326,7 +351,8 @@ func (p *PageHandlers) Assets(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/css; charset=utf-8")
 	case name == "pages.js", name == "console.js", name == "workbench.js",
 		name == "forge3d.js", name == "voice.js", name == "orb.js",
-		name == "audio-input.js", name == "room.js", name == "room-page.js":
+		name == "audio-input.js", name == "room.js", name == "room-page.js",
+		name == "stage.js":
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 	case isPortraitAsset(name):
 		w.Header().Set("Content-Type", "image/png")
@@ -455,7 +481,38 @@ const pageTemplates = `
   <!-- The stage. Holds the model AND the voice surface: the voice surface is
        centred here until there is something to look at, then docks to the
        bottom-left corner. One element, two placements — see workbench.css. -->
-  <div class="stage" id="stage">
+  <div class="stage" id="stage" data-panel="model">
+
+    <!-- PRD WRK-01's shared canvas is more than one kind of thing: code, EDA
+         previews, diagrams, telemetry, requirements, diffs, simulations, test
+         results. The stage showed exactly one of them. These tabs are how the
+         rest reach the middle of the screen without taking it away from the
+         model, which is still what the product is for.
+
+         The panels are DECLARED IN GO (stage.go) and rendered here. Two of them
+         are empty in this build and say so in the words of the connectors whose
+         absence empties them — see the file comment for why that text has one
+         source rather than two. -->
+    <div class="stagebar">
+      <div class="stagetabs" role="tablist" aria-label="What to look at">
+        {{range $i, $p := .Panels}}<button type="button" role="tab"
+                class="stagetab{{if not $p.Available}} stagetab--empty{{end}}"
+                id="tab-{{$p.ID}}" data-panel="{{$p.ID}}" data-gloss="{{$p.Gloss}}"
+                aria-controls="panel-{{$p.ID}}"
+                aria-selected="{{if eq $i 0}}true{{else}}false{{end}}"
+                tabindex="{{if eq $i 0}}0{{else}}-1{{end}}">{{$p.Label}}</button>
+        {{end}}
+      </div>
+      <!-- What the selected panel shows, in one line. Mirrored by stage.js from
+           the tab's data-gloss so the words stay in Go with the panel. -->
+      <div class="stagegloss" id="stagegloss"></div>
+    </div>
+
+  <!-- The model. Always laid out, hidden with visibility rather than display
+       when another panel is up: the WebGL viewport sizes itself from the
+       canvas's client box, and a display:none ancestor makes that box zero. It
+       would come back at 640x480 with the camera pointing somewhere else. -->
+    <div class="wbpanel wbpanel-model on" id="panel-model" role="tabpanel" aria-labelledby="tab-model">
     <canvas id="canvas"></canvas>
     <!-- Dimension text, as HTML over the canvas rather than glyphs in GL (PRD
          VIS-03). aria-hidden because every number here is also in the parts
@@ -497,8 +554,51 @@ const pageTemplates = `
       <input type="range" id="sectionat" min="0" max="1" step="0.01" value="0.5">
     </div>
 
-    <!-- Never dismissible: PRD VIS-06. -->
+    <!-- Never dismissible: PRD VIS-06. Inside the model panel because it
+         qualifies THE RENDER — switching to the file list does not dismiss it,
+         it leaves the picture it is about, and the two come back together.
+         There is no path that shows the model without it. -->
     <div class="provenance hidden" id="provenance"></div>
+    </div>
+
+  <!-- Files (PRD WRK-01: code, diffs; WRK-04: the seven facts every change
+       carries). Every artifact is anchored into the project graph as it is
+       written, so this reads the graph for the project's files and then each
+       file's own history. Filled by stage.js. -->
+    <div class="wbpanel" id="panel-files" role="tabpanel" aria-labelledby="tab-files">
+    <div class="wbsplit">
+      <div class="wblist" id="files-list"></div>
+      <div class="wbdetail" id="files-detail"></div>
+      </div>
+    </div>
+
+  <!-- Checks. Verification state across every version in the project, with what
+       a machine found and what a person decided kept apart — they are separate
+       columns in the ledger for the reason PRD SAF-05 gives, and a panel that
+       merged them would be the place that reintroduced "the AI approved it". -->
+    <div class="wbpanel" id="panel-checks" role="tabpanel" aria-labelledby="tab-checks">
+    <div id="checks-body"></div>
+    </div>
+
+  <!-- The panels this build cannot fill. Present, not absent: an absent panel
+       reads as one nobody got to, and the reader supplies a generous guess. -->
+  {{range .Panels}}{{if not .Available}}
+    <div class="wbpanel wbpanel-refusal" id="panel-{{.ID}}" role="tabpanel" aria-labelledby="tab-{{.ID}}">
+    <div class="wbrefusal">
+      <h2 class="wbrefusal-h">{{.Label}} is empty in this build, and will stay empty</h2>
+      {{range paras .Reason}}<p class="wbrefusal-p">{{.}}</p>{{end}}
+      <div class="wbrefused">
+        <div class="wbrefused-h">Declared here, and refused</div>
+        {{range .Refused}}
+        <div class="wbconn">
+          <code class="wbconn-n">{{.Name}}</code>
+          <p class="wbconn-r">{{.Reason}}</p>
+        </div>
+        {{end}}
+      </div>
+      </div>
+    </div>
+  {{end}}{{end}}
 
     <div class="voice" id="voice" data-place="hero">
       <!-- FORGE. The character portrait and the state sigil, both served by the
@@ -614,6 +714,7 @@ const pageTemplates = `
 <script src="{{asset "forge3d.js"}}"></script>
 <script src="{{asset "voice.js"}}"></script>
 <script src="{{asset "orb.js"}}"></script>
+<script src="{{asset "stage.js"}}"></script>
 <script src="{{asset "workbench.js"}}"></script>
 </body></html>{{end}}
 

@@ -451,3 +451,50 @@ func TestAPI_ThereIsNoWayToPostAnArtifactVersion(t *testing.T) {
 		}
 	}
 }
+
+// The reason a version may not be relied on is written for a person.
+//
+// # The defect this holds
+//
+// usable_why used to be err.Error(), which prefixes the operation and the error
+// registry's generic cause. Every version in a project therefore carried
+// "workspace.Version.Usable: VALIDATION_FAILED: One or more request fields
+// failed validation" ahead of the sentence that says what is actually true —
+// and that generic half is false here, since a version nobody has looked at is
+// not a failed request field. It went unnoticed while nothing rendered the
+// field; the workbench's Checks panel shows it against every version at once,
+// which is where two lines of machinery repeated seven times became the panel.
+//
+// Fenced on both halves: the sentence must be there, and the machinery must not.
+func TestTheReasonAVersionIsNotUsableIsWrittenForAPerson(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		v    workspace.Version
+		want string
+	}{
+		{"pending", workspace.Version{Version: 1, Verification: workspace.Unverified,
+			Disposition: workspace.Pending}, "not a sign-off"},
+		{"rejected", workspace.Version{Version: 2, Verification: workspace.Passed,
+			Disposition: workspace.Rejected, DispositionReason: "wrong hole pattern"},
+			"rejected by a person"},
+		{"superseded", workspace.Version{Version: 3, Verification: workspace.Passed,
+			Disposition: workspace.Superseded}, "read the current version instead"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := usableWhy(tc.v.Usable())
+			if !strings.Contains(got, tc.want) {
+				t.Errorf("the reason does not say what is true: %q does not contain %q", got, tc.want)
+			}
+			for _, machinery := range []string{"workspace.Version.Usable", "VALIDATION_FAILED",
+				"CONFLICT", "FORBIDDEN", "request fields failed validation"} {
+				if strings.Contains(got, machinery) {
+					t.Errorf("the reason shown to a person carries %q, which is for a log: %q",
+						machinery, got)
+				}
+			}
+		})
+	}
+	if got := usableWhy(nil); strings.Contains(got, ":") {
+		t.Errorf("the usable case should read as a sentence, not an error: %q", got)
+	}
+}

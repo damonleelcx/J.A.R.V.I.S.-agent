@@ -1437,6 +1437,101 @@ question rather than a gap: **when FORGE should speak without being asked.**
 
 ---
 
+## Wave 9.7 — the shared canvas · **DONE**
+
+WRK-01 asks the workspace to carry "code, CAD/EDA previews, diagrams, telemetry,
+requirements, diffs, simulations, test results". The stage carried one of them.
+Everything else the system records — every version of every file, every diff,
+what a machine found, what a person decided — was in the database, in the API,
+in `forgectl`, and nowhere a person building something was looking.
+
+The stage now has a tab strip and five panels: **Model**, **Files**, **Checks**,
+**EDA**, **Simulation**. The last two are empty in this build and say so.
+
+### What made this possible, and what it is still missing
+
+The immediate blocker was closed in the commit before this one: every artifact is
+anchored into its project graph as it is written, so "list this project's files"
+has an answer. Files reads the graph, then each artifact's own history; no
+project-wide endpoint was added, because the fan-out is bounded by the number of
+files in one project and an endpoint is a public contract to maintain forever.
+
+**Not covered:** diagrams and telemetry, which WRK-01 also names. Neither has a
+producer in this build — there is nothing to render — so neither got a panel that
+would have to invent its own subject. That is a smaller claim than the two panels
+below make, and it is deliberate: an empty panel is worth building when the
+emptiness is a *permanent property of the build*, and worth skipping when it is
+simply work nobody has done yet.
+
+### Why the two empty panels exist at all
+
+This is `tools.Unavailable`'s argument one layer up. A panel that is absent reads
+as a feature nobody got to, and the reader fills the gap with a guess — usually a
+generous one. A panel that is present and says no solver was ever linked cannot
+be misread, and it says so at the moment somebody went looking for a simulation,
+which is the moment it matters.
+
+The text is not written in the browser. Each empty panel NAMES the connectors
+whose absence empties it (`fea_solve`, `spice_simulate`) and shows their own
+`UnavailableReason`, so there is one copy of the fact rather than two. The fence
+that holds it goes red the day somebody links a solver — because on that day the
+Simulation panel would otherwise go on telling every reader that no solver exists,
+in text nobody would think to go and look for.
+
+### Two decisions in the layout
+
+**The model layer is hidden with `visibility`, never `display`.** The WebGL
+viewport sizes itself from the canvas's client box, and a `display:none` ancestor
+makes that box zero: switching away and back would return a 640×480 fallback
+viewport with the wrong aspect. Verified on the running app — 620×602 CSS,
+1240×1204 buffer, unchanged across a round trip through four other panels.
+
+**The voice surface is not a panel and no panel hides it.** It docks instead, the
+same dock geometry already used when geometry appears, because AUD-06 requires a
+non-audio path at all times and AUD-07 requires stop-speaking to keep its
+position — including while somebody is reading a diff. The panels carry scroll
+runway under it so nothing is permanently covered.
+
+### One defect this surfaced
+
+`usable_why` was `err.Error()`, so every version carried
+`workspace.Version.Usable: VALIDATION_FAILED: One or more request fields failed
+validation` ahead of the sentence that says what is actually true — and that
+generic half is false here, since a version nobody has looked at is not a failed
+request field. It went unnoticed because nothing rendered the field; the Checks
+panel shows it against every version at once, which is where two lines of
+machinery repeated seven times became the panel. It now returns the error's
+detail. Fenced on both halves: the sentence must be there, and the machinery must
+not.
+
+### Six fences, each drilled red
+
+`TestEveryDeclaredPanelIsOnThePage` (a declared panel with no markup),
+`TestAnEmptyPanelNamesConnectorsThatAreActuallyRefused` (a cited connector that
+became available), `TestAnEmptyPanelSaysWhyOnThePage` (the reason never reaching
+the page), `TestEveryVerificationAndDispositionHasAChip` (a new ledger state
+rendering unstyled — held against the domain's own vocabularies),
+`TestScriptsOnlyWriteClassesTheStylesheetsDefine` (the half of the interface the
+existing class fence cannot see, since it reads rendered HTML and most of this
+page is written by a script), and
+`TestTheReasonAVersionIsNotUsableIsWrittenForAPerson`.
+
+Each was confirmed to fail under a mutation of the thing it guards, with
+`-count=1`, before being kept.
+
+### Verified on the running application
+
+Against the live database: seven files listed with their version counts; a
+version showing all seven WRK-04 facts, a `passed` verification with its note
+beside a `pending` disposition that it does not imply; a unified diff rendered
+with its added line coloured; `superseded` reading "version 1 was replaced before
+anybody ruled on it". A conversation turn then produced
+`geometry/spacer-ring.forge.json` and the panels went six files to seven —
+through the live write path, not a reload. Keyboard: arrows, Home and End move
+and activate; no console errors.
+
+---
+
 ## Carried defects
 
 Eight of the eleven carried here are closed. The three that remain are not

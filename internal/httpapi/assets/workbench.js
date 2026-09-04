@@ -40,6 +40,10 @@
     lastBargeIn: null,
     model: null,
     busy: false,
+    /* Whether geometry exists. Held rather than passed around because the voice
+     * surface's placement now has two causes — geometry, and a stage panel that
+     * is not the model — and one field is what stops them disagreeing. */
+    building: false,
     /* The proposal's lifecycle, which is also the AGT-08 state machine this
      * card is allowed to display: nothing → proposed → planned → active.
      * Held in one field so the card cannot render two states at once. */
@@ -115,6 +119,7 @@
     var wasNew = id && id !== state.projectID;
     state.projectID = id || state.projectID;
     try { window.localStorage.setItem(PROJECT_KEY, state.projectID); } catch (e) { /* not fatal */ }
+    if (window.ForgeStage) window.ForgeStage.setProject(state.projectID);
     /* The graph is worth re-reading once a project exists: the first turn of a
      * session creates it, and requirements recorded elsewhere — the console,
      * forgectl — are what this panel is for. */
@@ -127,6 +132,7 @@
     if (!id) return;
     state.projectID = id;
     loadRequirements();
+    if (window.ForgeStage) window.ForgeStage.setProject(id);
     fetch('/v1/geometry?project_id=' + encodeURIComponent(id))
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (b) {
@@ -162,6 +168,10 @@
      * quietly wrong. */
     state.variants.unshift(railRow(v));
     renderVariants();
+    /* A variant IS an artifact version, so the file list and the checks a person
+     * may be looking at are now one turn out of date. Told rather than polled:
+     * this is the only moment the page knows a version was written. */
+    if (window.ForgeStage) window.ForgeStage.changed();
   }
 
   function renderVariants() {
@@ -580,8 +590,19 @@
    * one place — a second trigger elsewhere would eventually disagree with this
    * one about which state the interface is in. */
   function setPlace(building) {
-    $('voice').setAttribute('data-place', building ? 'dock' : 'hero');
-    $('stage').classList.toggle('building', building);
+    if (building !== undefined) state.building = !!building;
+    /* Docked when there is something to look at OR when the person is looking at
+     * a panel that is not the model. The hero placement takes the middle of the
+     * stage, which is where a file list and a diff are; the dock is not a
+     * reduced placement (see workbench.css) so nothing becomes unreachable —
+     * which is what AUD-06 and AUD-07 require of every path this can take.
+     *
+     * ONE condition, in one place. The class stays tied to geometry alone: it
+     * is what hides the viewport's own controls, and a section slider is no more
+     * meaningful over an open diff than over an empty scene. */
+    var onModel = !window.ForgeStage || window.ForgeStage.panel() === 'model';
+    $('voice').setAttribute('data-place', (state.building || !onModel) ? 'dock' : 'hero');
+    $('stage').classList.toggle('building', state.building);
   }
 
   /* ---- the stage -------------------------------------------------------- */
@@ -1566,6 +1587,9 @@
     safely('attach', initAttach);
     safely('soul', initSoul);
     safely('compare', initCompare);
+    safely('stage', function () {
+      window.ForgeStage.mount({ onPanel: function () { setPlace(); } });
+    });
     safely('variants', restoreVariants);
     setStatus('idle');
     setPlace(false);

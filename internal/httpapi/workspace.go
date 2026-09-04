@@ -2,8 +2,10 @@ package httpapi
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/access"
@@ -435,9 +437,26 @@ func (h *WorkspaceHandlers) ArtifactHistory(w http.ResponseWriter, r *http.Reque
 	})
 }
 
+// usableWhy renders the reason in words a person can act on.
+//
+// The DETAIL, not the whole error. err.Error() prefixes the operation and the
+// registry's generic cause — "workspace.Version.Usable: VALIDATION_FAILED: One
+// or more request fields failed validation (…)" — which is right for a log and
+// wrong here twice over: it buries the sentence that matters behind two lines of
+// machinery, and its generic half is untrue, since nothing about a version
+// nobody has looked at is a failed request field. Version.Usable writes the
+// real sentence into Detail; this is the field that reads it.
+//
+// Surfaced by the workbench's Checks panel, which shows this string against
+// every version in a project — where the prefix repeated N times was the whole
+// panel.
 func usableWhy(err error) string {
 	if err == nil {
 		return "verified by a machine and accepted by a person"
+	}
+	var e *errs.Error
+	if errors.As(err, &e) && strings.TrimSpace(e.Detail) != "" {
+		return e.Detail
 	}
 	return err.Error()
 }
