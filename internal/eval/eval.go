@@ -301,7 +301,7 @@ func (r *Runner) once(ctx context.Context, c Case, run int) Observation {
 	for _, message := range c.Turns {
 		// No project: the evaluation harness measures FORGE at its default
 		// character, so a run's score cannot drift with somebody's setting.
-		reply, err := r.conv.Respond(ctx, "", history, message, onScreen(obs.Last()))
+		reply, err := r.conv.Respond(ctx, "", history, message, onScreen(obs.Last()), nil)
 		if err != nil {
 			obs.Err = err
 			break

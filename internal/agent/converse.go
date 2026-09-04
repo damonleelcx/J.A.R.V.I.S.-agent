@@ -245,42 +245,42 @@ type Reply struct {
 // projectID selects the character to answer in (PRD RSN-04). Empty is legal and
 // means the constructed default — the evaluation harness has no project, and a
 // deployment that never sets a character never needs one.
-func (c *Conversation) Respond(ctx context.Context, projectID string, history []Turn, message string, workspaceNote string) (*Reply, error) {
+//
+// images are data URIs attached to this turn — a sketch, a photograph of a
+// part, a screenshot of a drawing (PRD VIS-01). They route the turn to the
+// vision model, and a deployment that has not configured one refuses rather
+// than sending a picture to a model that cannot see.
+func (c *Conversation) Respond(ctx context.Context, projectID string, history []Turn, message string, workspaceNote string, images []string) (*Reply, error) {
 	const op = "agent.Conversation.Respond"
 
 	if strings.TrimSpace(message) == "" {
 		return nil, errs.New(op, errs.CodeValidationFailed).WithDetail("empty message")
 	}
-
-	messages := []llm.Message{
-		{Role: llm.System, Content: persona.SystemPrompt(
-			c.characters.For(ctx, projectID, c.char), converseFraming)},
-	}
-	// Bounded history. A workbench session runs for hours; replaying all of it
-	// on every turn spends the budget on repetition and eventually exceeds the
-	// window. The most recent exchanges are what bear on the next one.
-	const keep = 16
-	if len(history) > keep {
-		history = history[len(history)-keep:]
-	}
-	for _, t := range history {
-		role := llm.User
-		if t.Role == "forge" {
-			role = llm.Assistant
+	role := llm.RoleConverse
+	if len(images) > 0 {
+		// The same discipline as a missing CAD kernel (tools/unavailable.go).
+		// Most text models do not fail on an image — they describe their own
+		// confusion in confident prose, which is exactly the answer this product
+		// exists not to produce. So the absence is reported, never worked around.
+		if c.client.ModelFor(llm.RoleVision) == "" {
+			return nil, errs.New(op, errs.CodeConnectorUnavailable).
+				WithDetail("this deployment has no vision model configured, so FORGE cannot look at " +
+					"the image. Set FORGE_LLM_VISION_MODEL to a model that reads images. It is " +
+					"deliberately unset by default: a text model sent a picture does not refuse, it " +
+					"describes what it imagines, and that answer is indistinguishable from one it saw.")
 		}
-		messages = append(messages, llm.Message{Role: role, Content: t.Content})
+		role = llm.RoleVision
 	}
 
-	user := message
-	if workspaceNote != "" {
-		// What is currently on screen, so "make that taller" resolves against
-		// what they are looking at rather than against the transcript.
-		user = "[What is on screen right now: " + workspaceNote + "]\n\n" + message
-	}
-	messages = append(messages, llm.Message{Role: llm.User, Content: user})
+	// One builder, not two. buildMessages has always said it was "shared by both
+	// paths" and this function had its own copy of it — so the streaming path
+	// and the buffered path assembled the same request separately, and an image
+	// added to one would simply not exist in the other.
+	messages := c.buildMessages(c.characters.For(ctx, projectID, c.char),
+		history, message, workspaceNote, images)
 
 	resp, err := c.client.Complete(ctx, llm.Request{
-		Role:      llm.RoleConverse,
+		Role:      role,
 		Messages:  messages,
 		JSONMode:  true,
 		MaxTokens: 6000,

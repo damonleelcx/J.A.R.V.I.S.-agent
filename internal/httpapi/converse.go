@@ -61,6 +61,11 @@ type converseRequest struct {
 	// rather than against the transcript. PRD WRK-02: a spoken reference should
 	// land on the thing being referred to.
 	OnScreen string `json:"on_screen"`
+	// Images are data URIs for a sketch or photograph attached to this turn
+	// (PRD VIS-01). Bounded by the HTTP body limit like everything else, and
+	// routed to the vision model — a deployment without one refuses rather than
+	// asking a text model to look at a picture.
+	Images []string `json:"images,omitempty"`
 }
 
 // Converse handles POST /v1/converse as Server-Sent Events.
@@ -145,7 +150,7 @@ func (h *ConverseHandlers) Converse(w http.ResponseWriter, r *http.Request) {
 		return nil
 	}
 
-	emitErr := h.conv.RespondStream(ctx, req.ProjectID, req.History, req.Message, req.OnScreen,
+	emitErr := h.conv.RespondStream(ctx, req.ProjectID, req.History, req.Message, req.OnScreen, req.Images,
 		func(ev agent.StreamEvent) error {
 			switch ev.Kind {
 			case "speech":

@@ -30,6 +30,7 @@
     prototype: null,
     measured: [],
     states: [],
+    images: [],
     selectedPart: null,
     speak: true,
     lastLatency: null,
@@ -620,6 +621,65 @@
    * dropdown reading "as modelled" implies somebody could have made more and
    * did not, which is a different claim from "this assembly has one
    * configuration". */
+  /* Attaching a sketch or a photograph (PRD VIS-01).
+   *
+   * Read in the browser as a data URI and sent with the turn, rather than
+   * uploaded and referenced: there is nowhere to upload TO — no asset store, no
+   * object bucket — and inventing one to carry a picture into a single request
+   * would be a lot of storage for something that is used once and never read
+   * again.
+   *
+   * The size cap is the reason this is not a one-liner. A phone photograph is
+   * several megabytes, base64 makes it a third larger again, and the server's
+   * body limit would reject the turn with a message about JSON rather than
+   * about the picture. Refusing here says which file and how big. */
+  var MAX_IMAGE_BYTES = 2 * 1024 * 1024;
+
+  function initAttach() {
+    var input = $('attach');
+    if (!input) return;
+    input.addEventListener('change', function () {
+      var files = Array.prototype.slice.call(input.files || []);
+      input.value = '';
+      files.forEach(function (file) {
+        if (file.size > MAX_IMAGE_BYTES) {
+          renderAttachments('“' + file.name + '” is ' + Math.round(file.size / 1024) +
+            'kB. The limit is ' + (MAX_IMAGE_BYTES / 1024) + 'kB — a smaller export or a ' +
+            'screenshot of the part you mean will work.');
+          return;
+        }
+        var reader = new FileReader();
+        reader.onload = function () {
+          state.images.push(String(reader.result));
+          renderAttachments('');
+        };
+        reader.onerror = function () {
+          renderAttachments('“' + file.name + '” could not be read.');
+        };
+        reader.readAsDataURL(file);
+      });
+    });
+  }
+
+  function renderAttachments(problem) {
+    var el = $('attached');
+    if (!el) return;
+    if (!state.images.length && !problem) { el.innerHTML = ''; el.classList.add('hidden'); return; }
+    el.classList.remove('hidden');
+    var html = state.images.map(function (src, i) {
+      return '<span class="att"><img src="' + esc(src) + '" alt="">' +
+             '<button type="button" data-drop="' + i + '" aria-label="Remove">×</button></span>';
+    });
+    if (problem) html.push('<span class="attproblem">' + esc(problem) + '</span>');
+    el.innerHTML = html.join('');
+    Array.prototype.forEach.call(el.querySelectorAll('[data-drop]'), function (b) {
+      b.addEventListener('click', function () {
+        state.images.splice(parseInt(b.getAttribute('data-drop'), 10), 1);
+        renderAttachments('');
+      });
+    });
+  }
+
   function renderStates(states) {
     var el = $('states');
     if (!el) return;
@@ -789,13 +849,20 @@
     addTurn('you', text);
     setCaption(text, false);
     state.history.push({ role: 'user', content: text });
+    /* Detached from the turn before the request goes out, so a picture is used
+     * once. Leaving it on `state` would re-send it with every later message —
+     * silently, at a cost nobody asked for, and answering "make that taller"
+     * against a sketch from four turns ago. */
+    var sending = state.images.slice();
+    state.images = [];
+    renderAttachments('');
 
     var bubble = addTurn('forge', '…');
     state.recalled = [];
     var t0 = performance.now();
     setStatus('thinking');
 
-    streamTurn(text, function (ev) {
+    streamTurn(text, sending, function (ev) {
       switch (ev.kind) {
         case 'speech':
           bubble.querySelector('.body').textContent = ev.text;
@@ -889,7 +956,7 @@
    * only GET. Reading the fetch body as a stream is the same protocol by hand,
    * and it keeps the request shape honest rather than smuggling a conversation
    * into a query string. */
-  function streamTurn(text, onEvent) {
+  function streamTurn(text, images, onEvent) {
     return fetch('/v1/converse', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -903,6 +970,10 @@
          * per turn. The server checks it against membership every time, so
          * naming somebody else's project is refused rather than trusted. */
         project_id: state.projectID || '',
+        /* PRD VIS-01. Attached to THIS turn only; the array is cleared as soon
+         * as it is sent, so a sketch does not silently ride along on every
+         * later message. */
+        images: images && images.length ? images : undefined,
         on_screen: describeOnScreen()
       })
     }).then(function (r) {
@@ -1428,6 +1499,7 @@
     });
     safely('voice', initVoice);
     safely('controls', initControls);
+    safely('attach', initAttach);
     safely('soul', initSoul);
     safely('compare', initCompare);
     safely('variants', restoreVariants);

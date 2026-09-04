@@ -53,6 +53,15 @@ const (
 	// model family entirely — speech recognition, not chat — and routing it
 	// through the conversation model would silently produce nothing usable.
 	RoleTranscriber Role = "transcriber"
+	// RoleVision reads images: a sketch, a photograph of a part, a screenshot of
+	// a drawing (PRD VIS-01).
+	//
+	// A role of its own rather than a flag on RoleConverse, because it is a
+	// different model — the conversation model is chosen for latency and most
+	// text models cannot see at all. A deployment that has not configured one
+	// has no vision, and says so rather than sending an image to a model that
+	// will describe its own confusion.
+	RoleVision Role = "vision"
 	// RoleSpeaker turns FORGE's words into audio for a room (PRD AUD-05).
 	//
 	// Its own role for the same reason as the transcriber: it is a different
@@ -66,10 +75,20 @@ func AllRoles() []Role {
 	return []Role{RolePlanner, RoleExecutor, RoleVerifier, RoleSummarizer, RoleConverse}
 }
 
-// Valid reports whether r is a recognised role.
+// Valid reports whether r is a recognised CHAT role.
+//
+// Both Complete and Stream gate on this, so a role missing here cannot make a
+// request at all — which is how RoleVision first failed: it was added to the
+// model map and left out of this switch, and every image turn was refused as an
+// unknown role. Transcriber and Speaker are deliberately absent: they do not go
+// through Complete or Stream, they have their own methods.
+//
+// RoleVision is here and NOT in AllRoles, which reads as "roles a deployment
+// must configure". Vision is optional by design: no vision model means image
+// input is unavailable and says so.
 func (r Role) Valid() bool {
 	switch r {
-	case RolePlanner, RoleExecutor, RoleVerifier, RoleSummarizer, RoleConverse:
+	case RolePlanner, RoleExecutor, RoleVerifier, RoleSummarizer, RoleConverse, RoleVision:
 		return true
 	}
 	return false
@@ -97,6 +116,52 @@ type Message struct {
 	ToolCallID string `json:"tool_call_id,omitempty"`
 	// Name identifies the tool on a tool-result turn.
 	Name string `json:"name,omitempty"`
+	// Images are data URIs attached to a user turn (PRD VIS-01): a sketch
+	// somebody drew, a photograph of a part, a screenshot of a drawing.
+	//
+	// Marshalled into the provider's multi-part content array, and ONLY when
+	// present — see MarshalJSON. Every existing request keeps its exact wire
+	// shape, because a content array where a string used to be is the kind of
+	// change that works against one provider and quietly fails against another.
+	Images []string `json:"-"`
+}
+
+// contentPart is one element of the provider's multi-part content array.
+type contentPart struct {
+	Type     string    `json:"type"`
+	Text     string    `json:"text,omitempty"`
+	ImageURL *imageURL `json:"image_url,omitempty"`
+}
+
+type imageURL struct {
+	URL string `json:"url"`
+}
+
+// MarshalJSON emits the flat shape unless the turn carries images.
+//
+// The provider's OpenAI-compatible surface accepts either a string or an array
+// for `content`, and this codebase already relies on the array form for audio
+// (see transcribe.go). Switching shape only when there is a second part keeps
+// every text-only request byte-identical to what shipped before.
+func (m Message) MarshalJSON() ([]byte, error) {
+	type flat Message // no MarshalJSON, so no recursion
+	if len(m.Images) == 0 {
+		return json.Marshal(flat(m))
+	}
+	parts := make([]contentPart, 0, len(m.Images)+1)
+	if m.Content != "" {
+		parts = append(parts, contentPart{Type: "text", Text: m.Content})
+	}
+	for _, img := range m.Images {
+		parts = append(parts, contentPart{Type: "image_url", ImageURL: &imageURL{URL: img}})
+	}
+	return json.Marshal(struct {
+		Role       MessageRole   `json:"role"`
+		Content    []contentPart `json:"content"`
+		ToolCalls  []ToolCall    `json:"tool_calls,omitempty"`
+		ToolCallID string        `json:"tool_call_id,omitempty"`
+		Name       string        `json:"name,omitempty"`
+	}{m.Role, parts, m.ToolCalls, m.ToolCallID, m.Name})
 }
 
 // ToolCall is a model's request to invoke a tool.

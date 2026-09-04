@@ -529,6 +529,19 @@ const pageTemplates = `
         </button>
         <form id="sayform">
           <input type="text" id="say" placeholder="…or type it" autocomplete="off">
+          <!-- PRD VIS-01: a sketch or a photograph is an input to geometry, not
+               an attachment to a message. Read in the browser and sent with the
+               turn — there is no asset store to upload to, and a picture used
+               once does not need one. -->
+          <label class="node attach" id="attachbtn" title="Attach a sketch or photograph">
+            <input type="file" id="attach" accept="image/*" multiple hidden>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                 stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              <rect x="3" y="3" width="18" height="18" rx="2"></rect>
+              <circle cx="8.5" cy="8.5" r="1.5"></circle>
+              <path d="M21 15l-5-5L5 21"></path>
+            </svg>
+          </label>
           <!-- An explicit submit control. Implicit submission (Enter in a
                single-field form) is not relied on: it is easy to lose to a
                stray handler, and losing it silently would leave the ONLY
@@ -540,6 +553,7 @@ const pageTemplates = `
             </svg>
           </button>
         </form>
+        <div class="attached hidden" id="attached"></div>
         <span class="ctl-div" aria-hidden="true"></span>
         <!-- Stop speaking. Icon-only inside the console bar, but always present
              and always clickable (PRD AUD-07), with the accessible name on the

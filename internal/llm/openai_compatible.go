@@ -57,6 +57,7 @@ func NewOpenAICompatible(cfg config.LLMConfig, log *logx.Logger, clk clock.Clock
 		baseURL: strings.TrimRight(cfg.BaseURL, "/"),
 		apiKey:  cfg.APIKey,
 		models: map[Role]string{
+			RoleVision:      cfg.Vision,
 			RolePlanner:     cfg.Planner,
 			RoleExecutor:    cfg.Executor,
 			RoleVerifier:    cfg.Verifier,

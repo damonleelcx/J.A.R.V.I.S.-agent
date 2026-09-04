@@ -101,6 +101,7 @@ func (c *Conversation) RespondStream(
 	history []Turn,
 	message string,
 	workspaceNote string,
+	images []string,
 	emit func(StreamEvent) error,
 ) error {
 	const op = "agent.Conversation.RespondStream"
@@ -109,7 +110,7 @@ func (c *Conversation) RespondStream(
 	if !ok {
 		// Fall back to the buffered path rather than failing. A client that
 		// cannot stream still produces correct answers, just later.
-		reply, err := c.Respond(ctx, projectID, history, message, workspaceNote)
+		reply, err := c.Respond(ctx, projectID, history, message, workspaceNote, images)
 		if err != nil {
 			return err
 		}
@@ -152,7 +153,17 @@ func (c *Conversation) RespondStream(
 		return errs.New(op, errs.CodeValidationFailed).WithDetail("empty message")
 	}
 
-	messages := c.buildMessages(c.characters.For(ctx, projectID, c.char), history, message, workspaceNote)
+	role := llm.RoleConverse
+	if len(images) > 0 {
+		if c.client.ModelFor(llm.RoleVision) == "" {
+			return errs.New(op, errs.CodeConnectorUnavailable).
+				WithDetail("this deployment has no vision model configured, so FORGE cannot look at " +
+					"the image. Set FORGE_LLM_VISION_MODEL to a model that reads images.")
+		}
+		role = llm.RoleVision
+	}
+	messages := c.buildMessages(c.characters.For(ctx, projectID, c.char),
+		history, message, workspaceNote, images)
 
 	var accumulated strings.Builder
 	speechSent := false
@@ -160,7 +171,7 @@ func (c *Conversation) RespondStream(
 	started := false
 
 	err := streamer.Stream(ctx, llm.Request{
-		Role:      llm.RoleConverse,
+		Role:      role,
 		Messages:  messages,
 		JSONMode:  true,
 		MaxTokens: 6000,
@@ -256,8 +267,10 @@ func (c *Conversation) RespondStream(
 	return err
 }
 
-// buildMessages assembles the request, shared by both paths.
-func (c *Conversation) buildMessages(char persona.Character, history []Turn, message, workspaceNote string) []llm.Message {
+// buildMessages assembles the request, shared by both paths — which it now
+// genuinely is. Respond used to keep its own copy of this, so the two ways into
+// a conversation built the same request separately.
+func (c *Conversation) buildMessages(char persona.Character, history []Turn, message, workspaceNote string, images []string) []llm.Message {
 	messages := []llm.Message{
 		{Role: llm.System, Content: persona.SystemPrompt(char, converseFraming)},
 	}
@@ -276,7 +289,10 @@ func (c *Conversation) buildMessages(char persona.Character, history []Turn, mes
 	if workspaceNote != "" {
 		user = "[What is on screen right now: " + workspaceNote + "]\n\n" + message
 	}
-	return append(messages, llm.Message{Role: llm.User, Content: user})
+	// Images ride on the CURRENT turn only. A sketch from four turns ago is not
+	// what "make that taller" refers to, and re-sending every image every turn
+	// would grow the request without bound.
+	return append(messages, llm.Message{Role: llm.User, Content: user, Images: images})
 }
 
 // extractCompletedStringField returns the value of a top-level JSON string field

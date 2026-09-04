@@ -219,6 +219,14 @@ type LLMConfig struct {
 	// Neither meets the target — but routing conversation through the reasoning
 	// model guarantees it never will.
 	Converse string
+	// Vision reads images attached to a turn (PRD VIS-01).
+	//
+	// EMPTY BY DEFAULT, and that is the design. Most text models cannot see, and
+	// one sent an image does not fail — it describes its own confusion in
+	// confident prose, which is the shape of answer this product exists to
+	// refuse. An unset vision model means image input is unavailable and says
+	// so, the same way a missing CAD kernel does.
+	Vision string
 	// Transcriber turns room audio into transcript text (PRD AUD-03).
 	//
 	// A speech model, not a chat model. It is reached through the ordinary chat
@@ -620,6 +628,7 @@ func Load(required ...Section) (*Config, []string, error) {
 		Verifier:       l.str("FORGE_LLM_VERIFIER_MODEL", "deepseek-v4-pro"),
 		Summarizer:     l.str("FORGE_LLM_SUMMARIZER_MODEL", "qwen3.8-flash"),
 		Converse:       l.str("FORGE_LLM_CONVERSE_MODEL", "qwen-plus"),
+		Vision:         l.str("FORGE_LLM_VISION_MODEL", ""),
 		Transcriber:    l.str("FORGE_LLM_TRANSCRIBER_MODEL", "qwen3-asr-flash-2026-02-10"),
 		Speaker:        l.str("FORGE_LLM_SPEAKER_MODEL", "qwen3-omni-flash"),
 		Voice:          l.str("FORGE_LLM_VOICE", "Cherry"),
@@ -740,6 +749,7 @@ func (c *Config) Redacted() map[string]any {
 		"llm_executor":       c.LLM.Executor,
 		"llm_verifier":       c.LLM.Verifier,
 		"llm_summarizer":     c.LLM.Summarizer,
+		"llm_vision":         visionForPrint(c.LLM.Vision),
 		"media_enabled":      c.Media.Enabled,
 		"media_udp_ports":    fmt.Sprintf("%d-%d", c.Media.UDPPortMin, c.Media.UDPPortMax),
 		"media_max_parts":    c.Media.MaxParticipants,
@@ -754,6 +764,16 @@ func (c *Config) Redacted() map[string]any {
 		"max_tasks_per_goal": c.Engine.MaxTasksPerGoal,
 		"max_wallclock_goal": c.Engine.MaxWallClockPerGoal.String(),
 	}
+}
+
+// visionForPrint says that image input is off rather than leaving a blank field.
+// "No vision model" is a capability statement, and an empty string next to
+// llm_vision reads as a value somebody forgot to fill in.
+func visionForPrint(model string) string {
+	if strings.TrimSpace(model) == "" {
+		return "<none — image input is unavailable in this deployment>"
+	}
+	return model
 }
 
 // shellAllowedForPrint renders the shell allow-list so that "unrestricted" reads

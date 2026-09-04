@@ -129,7 +129,7 @@ func TestAProjectsCharacterReachesTheModel(t *testing.T) {
 		conv := NewConversation(spy, persona.DefaultCharacter()).WithCharacters(store)
 		p := projectWith(t, pool, "high", "explanatory")
 
-		if _, err := conv.Respond(context.Background(), p, nil, "is this bracket strong enough?", ""); err != nil {
+		if _, err := conv.Respond(context.Background(), p, nil, "is this bracket strong enough?", "", nil); err != nil {
 			t.Fatal(err)
 		}
 		if !strings.Contains(spy.system, argueHard) {
@@ -147,7 +147,7 @@ func TestAProjectsCharacterReachesTheModel(t *testing.T) {
 		conv := NewConversation(spy, persona.DefaultCharacter()).WithCharacters(store)
 		p := projectWith(t, pool, "low", "terse")
 
-		if _, err := conv.Respond(context.Background(), p, nil, "is this bracket strong enough?", ""); err != nil {
+		if _, err := conv.Respond(context.Background(), p, nil, "is this bracket strong enough?", "", nil); err != nil {
 			t.Fatal(err)
 		}
 		if !strings.Contains(spy.system, argueLittle) {
@@ -165,7 +165,7 @@ func TestAProjectsCharacterReachesTheModel(t *testing.T) {
 		spy := &promptSpy{}
 		conv := NewConversation(spy, persona.DefaultCharacter()).WithCharacters(store)
 
-		if _, err := conv.Respond(context.Background(), "", nil, "hello", ""); err != nil {
+		if _, err := conv.Respond(context.Background(), "", nil, "hello", "", nil); err != nil {
 			t.Fatalf("a conversation with no project failed: %v\nThe evaluation harness has "+
 				"none, and a deployment that never sets a character must still work", err)
 		}
@@ -180,7 +180,7 @@ func TestAProjectsCharacterReachesTheModel(t *testing.T) {
 
 		// A project id that does not exist. A tone setting must never be able to
 		// stop FORGE answering.
-		if _, err := conv.Respond(context.Background(), "prj_MISSING", nil, "hello", ""); err != nil {
+		if _, err := conv.Respond(context.Background(), "prj_MISSING", nil, "hello", "", nil); err != nil {
 			t.Fatalf("an unknown project stopped the conversation: %v", err)
 		}
 		if !strings.Contains(spy.system, "How I speak") {
