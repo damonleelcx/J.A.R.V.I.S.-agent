@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/claim"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/conversation"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/workspace"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/llm"
 )
@@ -277,5 +278,71 @@ func TestBuildingFromARequirementJoinsTheGeometryToIt(t *testing.T) {
 	}
 	if len(joined) != 1 || joined[0] != string(workspace.EdgeDerivesFrom) {
 		t.Fatalf("expected one derives_from edge into the requirement, got %v", joined)
+	}
+}
+
+// The request cannot carry the conversation's history.
+//
+// # What this closes
+//
+// The client used to send one and the server used it verbatim, so a caller could
+// include an `assistant` turn saying whatever it liked and steer the next reply
+// with a conversation that never happened. PRD SEC-04 treats documents, tool
+// output and imported results as untrusted input; a transcript asserted by the
+// caller is the same kind of thing, and it was the one place taken at face
+// value.
+//
+// Structural, and it earns its place for the same reason the requirement-text
+// fence above does: the moment somebody adds the field back for convenience the
+// guarantee is gone, and a behavioural test would still pass for every client
+// that happens not to lie.
+func TestTheRequestCannotCarryItsOwnHistory(t *testing.T) {
+	for _, forbidden := range []string{"History", "Turns", "Transcript", "Messages", "Context"} {
+		if hasField(converseRequest{}, forbidden) {
+			t.Errorf("converseRequest has a %s field. The history comes from the server's own "+
+				"record; a client that could send one could put words in FORGE's mouth and "+
+				"steer the next reply with a conversation that never happened (PRD SEC-04).",
+				forbidden)
+		}
+	}
+	if !hasField(converseRequest{}, "ConversationID") {
+		t.Error("converseRequest cannot name the conversation it continues, so the server has " +
+			"nothing to read a history from")
+	}
+}
+
+// Every speaker the record can hold maps to a DISTINCT role the model sees.
+//
+// # Why this is not obvious
+//
+// The two vocabularies are nearly the same and not quite — the record says human
+// and forge, the model loop says user and forge — and buildMessages maps
+// anything that is not "forge" onto the user role. So getting it wrong does not
+// fail: it silently reassigns every one of FORGE's own turns to the person, and
+// the model reads back a transcript in which it never spoke. Nothing about the
+// reply would look wrong.
+func TestEveryRecordedSpeakerMapsToADistinctModelRole(t *testing.T) {
+	roles := conversation.Roles()
+	if len(roles) < 2 {
+		t.Fatalf("the record reports %d speaker(s); this fence is looking at nothing", len(roles))
+	}
+	seen := map[string]conversation.Role{}
+	for _, r := range roles {
+		got := modelRole(r)
+		if got == "" {
+			t.Errorf("recorded speaker %q maps to no model role", r)
+			continue
+		}
+		if other, clash := seen[got]; clash {
+			t.Errorf("%q and %q both map to the model role %q. One of them is being read as the "+
+				"other, and a transcript in which FORGE never spoke reads as a normal one.",
+				r, other, got)
+		}
+		seen[got] = r
+	}
+	// The one that matters, named rather than inferred: FORGE's own turns must
+	// arrive as FORGE's.
+	if modelRole(conversation.RoleForge) != "forge" {
+		t.Errorf("FORGE's recorded turns reach the model as %q", modelRole(conversation.RoleForge))
 	}
 }

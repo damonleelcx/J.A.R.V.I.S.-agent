@@ -58,8 +58,20 @@ func NewConverseHandlers(d Deps) *ConverseHandlers {
 }
 
 type converseRequest struct {
-	Message string       `json:"message"`
-	History []agent.Turn `json:"history"`
+	Message string `json:"message"`
+	// There is deliberately no History field.
+	//
+	// The client used to send one, and the server used it verbatim. That let a
+	// caller put words in FORGE's mouth — an `assistant` turn saying whatever it
+	// liked — and steer the next reply with a conversation that never happened.
+	// PRD SEC-04 treats tool output, documents and imported results as untrusted
+	// input; a transcript asserted by the caller is the same kind of thing and
+	// was the one place it was taken at face value.
+	//
+	// The history now comes from the server's own record of this conversation,
+	// the way the room path has always built its own (see roomHistory). The
+	// field is REMOVED rather than ignored, so a client still sending one is
+	// refused by the strict decoder instead of quietly having it dropped.
 	// ConversationID names the record this turn joins (PRD RSN-07). Empty on the
 	// first turn: the server mints one and returns it in the `conversation`
 	// event, and the client sends it back afterwards — the same shape ProjectID
@@ -261,6 +273,23 @@ func (h *ConverseHandlers) Converse(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, r, h.deps.Log, err)
 		return
 	}
+
+	// BEFORE the turn is recorded, and the order is load-bearing: this turn's
+	// message is passed to the model separately, so reading the record after
+	// writing it would hand the model the same sentence twice — once as history
+	// and once as the thing being answered.
+	history, earlier := h.historyFor(ctx, convID, user.ID)
+	if earlier > 0 {
+		// Said to the model rather than left implicit. The window is a real
+		// limit and a persisted conversation will meet it; a model given the
+		// last sixteen turns with nothing to say otherwise will answer "we have
+		// not discussed that" about something the record plainly contains, which
+		// is a fabricated claim about the person's own history (PRD RSN-06).
+		message = fmt.Sprintf("[Earlier in this conversation: %d turn(s) before these are not "+
+			"shown to you. Do not treat what you cannot see as something that was never said.]\n\n%s",
+			earlier, message)
+	}
+
 	kept := h.keepSaid(ctx, conversation.Said{
 		ConversationID: convID, OwnerID: user.ID, ProjectID: req.ProjectID,
 		Role: conversation.RoleHuman, Text: req.Message, Images: len(req.Images),
@@ -277,7 +306,7 @@ func (h *ConverseHandlers) Converse(w http.ResponseWriter, r *http.Request) {
 	var spokeText string
 	var detailText []string
 
-	emitErr := h.conv.RespondStream(ctx, req.ProjectID, req.History, message, req.OnScreen, req.Images,
+	emitErr := h.conv.RespondStream(ctx, req.ProjectID, history, message, req.OnScreen, req.Images,
 		func(ev agent.StreamEvent) error {
 			switch ev.Kind {
 			case "speech":
@@ -314,7 +343,7 @@ func (h *ConverseHandlers) Converse(w http.ResponseWriter, r *http.Request) {
 				if pending != nil {
 					// Before `done`, so `done` stays the last event a client
 					// sees and nothing has to listen past it.
-					saved := h.keepGeometry(r, req, pending, model)
+					saved := h.keepGeometry(r, req, pending, model, len(history))
 					savedVariant = saved.VersionID
 					if err := send(agent.StreamEvent{Kind: "variant", Variant: saved}); err != nil {
 						return err
@@ -393,7 +422,14 @@ func (h *ConverseHandlers) Models(w http.ResponseWriter, r *http.Request) {
 // What it must NOT do is stay quiet. A workbench that showed nothing after a
 // failed save leaves somebody believing they can come back to a shape that was
 // never written down, and they find out when they go looking for it.
-func (h *ConverseHandlers) keepGeometry(r *http.Request, req converseRequest, proto *agent.Prototype, model string) *agent.VariantSaved {
+// keepGeometry stores what a turn proposed.
+//
+// historyTurns is passed rather than read off the request: it is one of WRK-04's
+// facts about how this geometry came to be — how much of the conversation the
+// model could see when it drew this — and since the history is now the server's
+// own record, so is the count. A number taken from the request would be the
+// client describing a context the server assembled.
+func (h *ConverseHandlers) keepGeometry(r *http.Request, req converseRequest, proto *agent.Prototype, model string, historyTurns int) *agent.VariantSaved {
 	projectID := req.ProjectID
 	if h.geo == nil || h.deps.Pool == nil {
 		return &agent.VariantSaved{NotKept: "This deployment has no database, so geometry is not kept between turns."}
@@ -442,7 +478,7 @@ func (h *ConverseHandlers) keepGeometry(r *http.Request, req converseRequest, pr
 			"from_nodes":    req.FromNodes,
 			"images":        len(req.Images),
 			"on_screen":     forLedger(req.OnScreen),
-			"history_turns": len(req.History),
+			"history_turns": historyTurns,
 			"model":         model,
 		},
 		// PRD WRK-03. The same server-resolved ids as `from_nodes` above, so the
@@ -480,6 +516,65 @@ func forLedger(s string) string {
 		return s
 	}
 	return s[:ledgerFieldLimit] + fmt.Sprintf("… [truncated; %d characters in the original]", len(s))
+}
+
+// historyFor reads what was said before this turn, and how much of it is not
+// being shown.
+//
+// # Why a read failure is not fatal
+//
+// The person is mid-sentence. Refusing to answer because the record could not be
+// read would lose the message they just typed to a database blip, and a turn
+// with no history is a turn FORGE can still hold — it simply holds it without
+// context, which is what the first turn of every conversation looks like.
+//
+// It is not silent either: from the outside, a model that has forgotten the last
+// ten minutes and a model that is being asked its first question look identical,
+// and only the log can tell them apart.
+func (h *ConverseHandlers) historyFor(ctx context.Context, convID, userID string) ([]agent.Turn, int) {
+	turns, total, err := h.talk.Recent(ctx, convID, userID, agent.HistoryWindow)
+	if err != nil {
+		h.deps.Log.WarnWith(ctx, logx.EventConversationUnreadable, err,
+			"conversation_id", convID,
+			"detail", "this turn was answered with no memory of the ones before it")
+		return nil, 0
+	}
+	out := make([]agent.Turn, 0, len(turns))
+	for i := range turns {
+		out = append(out, agent.Turn{Role: modelRole(turns[i].Role), Content: spoken(&turns[i])})
+	}
+	return out, total - len(turns)
+}
+
+// modelRole maps a recorded speaker onto the role the model loop understands.
+//
+// # Why this is a function with a fence rather than a comparison inline
+//
+// The two vocabularies are nearly the same and not quite: the record says human
+// and forge, the loop says user and forge, and buildMessages maps ANYTHING that
+// is not "forge" to the user role. So a wrong mapping does not fail — it
+// silently reassigns every one of FORGE's own turns to the person, and the model
+// then reads a transcript in which it never spoke.
+func modelRole(r conversation.Role) string {
+	if r == conversation.RoleForge {
+		return "forge"
+	}
+	return "user"
+}
+
+// spoken is the text of a turn as the model should see it.
+//
+// The speech, which is what the client used to send. The detail — the long-form
+// half the screen carries — is deliberately NOT folded in: that would change what
+// the model is given at the same time as changing where it comes from, and only
+// one of those is this change. The fallback exists because a reply may be all
+// detail and no speech, and an empty assistant message is rejected outright by
+// some providers.
+func spoken(t *conversation.Turn) string {
+	if strings.TrimSpace(t.Text) != "" {
+		return t.Text
+	}
+	return t.Detail
 }
 
 // keepSaid records one half of a turn, and never fails the turn.

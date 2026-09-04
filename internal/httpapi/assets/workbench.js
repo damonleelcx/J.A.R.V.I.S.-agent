@@ -26,7 +26,6 @@
   var voice = null;
   var orb = null;
   var state = {
-    history: [],
     prototype: null,
     measured: [],
     states: [],
@@ -144,14 +143,14 @@
 
   /* The conversation, brought back (PRD RSN-07).
    *
-   * # Why the history is rebuilt and not only the screen
+   * # This paints the screen, and nothing else
    *
-   * Painting the transcript and sending an empty history would be the worst of
-   * both: the page would look resumed while FORGE had no idea what had been
-   * said, and the person would find out by being asked something they already
-   * answered. RSN-07 asks to resume from a structured checkpoint rather than a
-   * summary; the turns ARE the structure, so they go back into `state.history`
-   * exactly as they were recorded.
+   * The page used to keep its own copy of the conversation and send it with
+   * every turn. It does not any more: the server builds the model's history from
+   * the record it wrote itself, so a client cannot put words in FORGE's mouth by
+   * describing a conversation that never happened. What is left here is the
+   * transcript a person reads, and losing it would cost a repaint rather than a
+   * memory.
    *
    * The record is the server's, not this page's. A conversation id that is not
    * this person's returns nothing, and nothing is what is then shown. */
@@ -182,9 +181,6 @@
               (t.images === 1 ? ' image' : ' images') + ' attached]';
           }
           addTurn(who, body, t.detail || '', true);
-          /* Back into the history the model is given, in the recorded order and
-           * the recorded words. */
-          state.history.push({ role: t.role === 'human' ? 'user' : 'forge', content: t.text || '' });
         });
         var note = document.createElement('div');
         note.className = 'turn note';
@@ -239,7 +235,6 @@
         .then(function (r) {
           if (!r.ok) throw new Error('the record could not be deleted');
           forgetConversationKey();
-          state.history = [];
           $('transcript').innerHTML = '';
           addTurn('forge', 'The record of this conversation is deleted. What you built — the ' +
             'variants and everything in the project — is still here.');
@@ -1062,7 +1057,6 @@
     clearPartial();
     addTurn('you', text);
     setCaption(text, false);
-    state.history.push({ role: 'user', content: text });
     /* Detached from the turn before the request goes out, so a picture is used
      * once. Leaving it on `state` would re-send it with every later message —
      * silently, at a cost nobody asked for, and answering "make that taller"
@@ -1101,7 +1095,6 @@
       switch (ev.kind) {
         case 'speech':
           bubble.querySelector('.body').textContent = ev.text;
-          state.history.push({ role: 'forge', content: ev.text });
           if (ev.first_token_ms) turn.serverFirstMS = ev.first_token_ms;
           state.firstToken = ev.first_token_ms || Math.round(performance.now() - t0);
           updateMeta();
@@ -1229,7 +1222,6 @@
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         message: text,
-        history: state.history.slice(0, -1),
         /* The project this conversation's variants accumulate in (PRD VIS-04).
          * Empty on the first turn: the server makes one and returns its id in
          * the `variant` event, and it is sent back on every turn afterwards so

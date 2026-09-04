@@ -261,6 +261,11 @@ const (
 	EventConversationKept      Event = "forge.conversation.kept"
 	EventConversationNotKept   Event = "forge.conversation.not_kept"
 	EventConversationForgotten Event = "forge.conversation.forgotten"
+	// The record of a conversation could not be read, so the turn was answered
+	// with no memory of the ones before it. Loud, because from the outside a
+	// model that has forgotten the last ten minutes and one being asked its
+	// first question look exactly alike.
+	EventConversationUnreadable Event = "forge.conversation.unreadable"
 
 	// A change named nodes it was produced from and some of them are not in the
 	// project (PRD VIS-01, WRK-03). The change is still recorded and the ones
@@ -275,6 +280,7 @@ func init() {
 		EventArtifactVerified, EventArtifactDispositioned,
 		EventProvenanceUnresolved,
 		EventConversationKept, EventConversationNotKept, EventConversationForgotten,
+		EventConversationUnreadable,
 	)
 }
 

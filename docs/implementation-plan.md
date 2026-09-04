@@ -1825,14 +1825,94 @@ the owner · a client naming any conversation it likes · and the schema's role
 constraint dropped, which is the schema-code coherence rule this repository
 already had for verification states.
 
-### Still open
+### Raised here, closed in 9.11
 
-The server now holds the turns and the client still SENDS its own `history`. That
-is safe for the record — what is stored is what the server observed — but it
-means a client can still put words in FORGE's mouth for the duration of one turn,
-which is a prompt-injection surface SEC-04 would rather not have. Making the
-server build the history from its own record is the natural next step and is a
-change to what the model sees, so it is being raised rather than slipped in.
+The server held the turns and the client still SENT its own `history`, so a
+caller could still put words in FORGE's mouth for the duration of one turn. That
+was flagged rather than slipped in, because it changes what the model sees. It
+was then asked for; see wave 9.11.
+
+---
+
+## Wave 9.11 — the history comes from the record · **DONE**
+
+The client sent the conversation's history and the server used it verbatim. So a
+caller could include an `assistant` turn saying whatever it liked — *"I already
+approved this"* — and steer the next reply with a conversation that never
+happened. PRD SEC-04 treats documents, tool output and imported results as
+untrusted input; a transcript asserted by the caller is the same kind of thing,
+and it was the one place taken at face value.
+
+The room path had been doing this correctly since wave 9: `roomHistory` builds
+`[]agent.Turn` from the room's own record. The workbench was the exception, and
+it was the exception because until wave 9.10 there was no record to build from.
+
+### The field is removed, not ignored
+
+`converseRequest` has no `History` field. A client still sending one is refused
+by the strict decoder — loudly, with the field named — rather than having it
+quietly dropped, which would leave somebody sending a history for months in the
+belief that it mattered. Held by a structural fence in the same shape as the one
+that keeps requirement TEXT out of the request: the moment somebody adds the
+field back for convenience the guarantee is gone, and a behavioural test would
+still pass for every client that happens not to lie.
+
+### Two things that fail silently, and are fenced accordingly
+
+**The order of the read and the write.** This turn's message is recorded BEFORE
+the model is called, so a turn that then fails is still in the record. The
+history must therefore be read BEFORE that write — read after it, and the model
+is handed the same sentence twice, once as something already said and once as the
+thing to answer. Nothing errors; it reads as the person repeating themselves.
+
+**The speaker mapping.** The record says `human` / `forge`; the model loop says
+`user` / `forge`; and `buildMessages` maps anything that is not `forge` onto the
+user role. So a wrong mapping does not fail — it silently reassigns every one of
+FORGE's own turns to the person, and the model reads back a transcript in which
+it never spoke.
+
+### The window is now load-bearing, so it says so
+
+`HistoryWindow` (16) was a silent trim inside `buildMessages`, and it barely
+mattered when the history was one browser session long. A persisted conversation
+meets it routinely. A model handed the last sixteen turns with nothing said
+otherwise will answer *"we have not discussed that"* about something the record
+plainly contains — a fabricated claim about the person's own history, which is
+what RSN-06 forbids. The server now counts what it did not send and tells the
+model, in a labelled block, the same way `requirementsFor` announces the
+requirements it injects.
+
+The constant is exported and read by both the caller and `buildMessages`, so the
+two cannot disagree about how far back a turn can see.
+
+### What deliberately did NOT change
+
+The model is given the **speech** of each recorded turn, which is exactly what
+the client used to send. The record also holds the `detail` — the long-form half
+the screen carries — and folding that in would improve the model's context while
+changing what it is given at the same time as changing where it comes from. Only
+one of those is this change. (The fallback to `detail` when a reply was all
+detail and no speech is not that: an empty assistant message is rejected outright
+by some providers.)
+
+### Five fences, each confirmed red under a mutation
+
+The record never read · the history read AFTER this turn is recorded, which puts
+the message being answered in its own history twice · the speaker mapping
+inverted · trimming not announced · and the `History` field put back.
+
+The ordering drill is worth noting: the first mutation written for it did not
+compile, which is a red test that proves nothing. It was rewritten to move the
+`keepSaid` call above the read instead — the same defect, in a form that builds —
+and it then failed with the sentence the fence exists to catch.
+
+### Verified on the running application
+
+The request body now carries `message`, `project_id`, `conversation_id` and
+`on_screen`, and no history at all. A hand-made request carrying one is refused
+with `VALIDATION_FAILED`. And across a reload, with the page sending nothing:
+*"Remember: the fixture is called Kestrel"* → reload → *"What is the fixture
+called?"* → **"The fixture is called Kestrel."**
 
 ---
 

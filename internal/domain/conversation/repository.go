@@ -114,6 +114,61 @@ func (r *Repository) List(ctx context.Context, q db.Querier, conversationID, own
 	return out, nil
 }
 
+// Recent returns the last `limit` turns in order, and how many there are in all.
+//
+// # Why the total comes back with them
+//
+// The tail is what the model is given; the total is what was said. A caller that
+// only had the tail could not tell a whole conversation from the end of a long
+// one, and would present a trimmed context as a complete one — which is how a
+// model comes to deny something the record plainly contains.
+func (r *Repository) Recent(ctx context.Context, q db.Querier, conversationID, ownerID string, limit int) ([]Turn, int, error) {
+	const op = "conversation.Repository.Recent"
+
+	if limit <= 0 {
+		return nil, 0, errs.New(op, errs.CodeValidationFailed).
+			WithDetail("a history window of %d turns is not a window", limit)
+	}
+	var total int
+	if err := q.QueryRow(ctx, `select count(*) from forge_conversation_turns
+		where conversation_id = $1 and owner_id = $2`, conversationID, ownerID).Scan(&total); err != nil {
+		return nil, 0, errs.Wrap(op, errs.CodeDatabaseUnavail, err)
+	}
+	if total == 0 {
+		// Not an error. A conversation's first turn has nothing before it, and
+		// that is the common case rather than a failure.
+		return []Turn{}, 0, nil
+	}
+
+	// The LAST n, returned in the order they were said. Ordered descending to
+	// take the tail and re-ordered here rather than in SQL, because a window
+	// function for a handful of rows is harder to read than a reverse.
+	rows, err := q.Query(ctx, `select `+turnColumns+`
+		from forge_conversation_turns
+		where conversation_id = $1 and owner_id = $2
+		order by seq desc limit $3`, conversationID, ownerID, limit)
+	if err != nil {
+		return nil, 0, errs.Wrap(op, errs.CodeDatabaseUnavail, err)
+	}
+	defer rows.Close()
+
+	out := []Turn{}
+	for rows.Next() {
+		t, err := scanTurn(rows)
+		if err != nil {
+			return nil, 0, err
+		}
+		out = append(out, *t)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, errs.Wrap(op, errs.CodeDatabaseUnavail, err)
+	}
+	for i, j := 0, len(out)-1; i < j; i, j = i+1, j-1 {
+		out[i], out[j] = out[j], out[i]
+	}
+	return out, total, nil
+}
+
 // OwnerOf returns who a conversation belongs to, or NOT_FOUND when it has no
 // turns — which is the only sense in which a conversation does not exist.
 func (r *Repository) OwnerOf(ctx context.Context, q db.Querier, conversationID string) (string, error) {

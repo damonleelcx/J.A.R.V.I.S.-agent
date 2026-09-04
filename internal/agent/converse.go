@@ -197,6 +197,21 @@ type Turn struct {
 	Content string `json:"content"`
 }
 
+// HistoryWindow is how many earlier turns a conversation carries into a request.
+//
+// # Why it is exported
+//
+// The workbench reads a conversation's history out of its own record and hands
+// it here, so two places now decide how far back a turn can see. If they
+// disagreed, the caller would read a hundred turns for buildMessages to throw
+// most of them away — and, worse, would believe it had passed a complete context
+// while the model saw a fraction of it. One constant, read by both.
+//
+// Sixteen is a working figure rather than a measured one. It is enough to hold a
+// design discussion together and short enough that a long session does not spend
+// its budget re-reading itself.
+const HistoryWindow = 16
+
 // Prototype is a proposed 3D form.
 //
 // An ALIAS rather than a struct of its own: the shape the model emits and the

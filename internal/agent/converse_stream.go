@@ -296,9 +296,8 @@ func (c *Conversation) buildMessages(char persona.Character, history []Turn, mes
 	messages := []llm.Message{
 		{Role: llm.System, Content: persona.SystemPrompt(char, converseFraming)},
 	}
-	const keep = 16
-	if len(history) > keep {
-		history = history[len(history)-keep:]
+	if len(history) > HistoryWindow {
+		history = history[len(history)-HistoryWindow:]
 	}
 	for _, t := range history {
 		role := llm.User

@@ -111,6 +111,23 @@ func (s *Service) History(ctx context.Context, conversationID, ownerID string) (
 	return turns, nil
 }
 
+// Recent returns the tail of a conversation and how long the whole of it is.
+//
+// Empty and no error for a conversation with no turns — unlike History, which
+// treats absence as NOT_FOUND. The difference is what each is for: History
+// answers "show me this conversation", where nothing is a wrong answer, and this
+// answers "what came before this turn", where nothing is the right one on the
+// first turn of every conversation there has ever been.
+func (s *Service) Recent(ctx context.Context, conversationID, ownerID string, limit int) ([]Turn, int, error) {
+	const op = "conversation.Service.Recent"
+
+	if strings.TrimSpace(conversationID) == "" || strings.TrimSpace(ownerID) == "" {
+		return nil, 0, errs.New(op, errs.CodeValidationFailed).
+			WithDetail("reading a conversation needs both the conversation and whose it is")
+	}
+	return s.repo.Recent(ctx, s.pool, conversationID, ownerID, limit)
+}
+
 // Forget deletes a conversation and reports how many turns went with it.
 //
 // PRD AUD-07 asks for delete-session to be reachable at all times, and MEM-01
