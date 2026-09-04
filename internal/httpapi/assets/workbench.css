@@ -688,6 +688,33 @@
 .proposal.live .tier { color: var(--core); }
 .proposal .ttl { margin-top: 6px; font-weight: 650; font-size: 13.5px; line-height: 1.4; }
 .proposal .say { margin-top: 6px; font-size: 12.5px; line-height: 1.55; color: var(--ink-dim); }
+/* The industry a NEW project will be created in (PRD §"Domain packs").
+ *
+ * Every value below is taken from a control that already exists on this page —
+ * the label and select from `.states`, the explanatory line from
+ * `.proposal .foot` — rather than chosen fresh. A second visual vocabulary for
+ * the same kind of control is how a surface stops looking like one product.
+ *
+ * It sits above `.acts` deliberately: the industry decides the rules the work is
+ * done under, so it is read BEFORE the button that starts it, not beside it. */
+.proposal .industry { margin-top: 12px; }
+.proposal .industry label {
+  display: block;
+  font-size: 10.5px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  margin-bottom: 5px;
+}
+.proposal .industry select {
+  width: 100%;
+  background: #0f131b;
+  color: var(--ink);
+  border: 1px solid var(--edge-solid);
+  border-radius: 6px;
+  padding: 4px;
+}
+
 .proposal .acts { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
 .proposal .foot { margin-top: 10px; font-size: 11.5px; line-height: 1.55; color: var(--ink-dim); }
 .proposal .foot code {

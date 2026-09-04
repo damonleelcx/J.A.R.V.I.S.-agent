@@ -673,11 +673,22 @@ func grantFor(goal *engine.Goal, domain domainpack.Definition, production bool) 
 	if goal.Autonomy.AllowsExecution() {
 		caps = append(caps, tools.CapExecute, tools.CapSimulate)
 	}
+	ceiling := lowerTier(goal.RiskTier, domain.MaxTier)
+	// Named only when the DOMAIN is the binding limit. When the goal's own tier
+	// is what stops the work there is no second authority to point at, and
+	// naming the pack anyway would send somebody to change an industry that was
+	// not the thing in their way.
+	var source string
+	if domain.MaxTier.Valid() && ceiling == domain.MaxTier && ceiling != goal.RiskTier {
+		source = fmt.Sprintf("That ceiling is the %s domain's, not this goal's: %s Work above %s "+
+			"here would require %s.", domain.Pack, domain.Summary, domain.MaxTier, domain.Requires)
+	}
 	return tools.Grant{
-		Capabilities: caps,
-		MaxRiskTier:  lowerTier(goal.RiskTier, domain.MaxTier),
-		Autonomy:     goal.Autonomy,
-		Production:   production,
+		Capabilities:  caps,
+		MaxRiskTier:   ceiling,
+		Autonomy:      goal.Autonomy,
+		Production:    production,
+		CeilingSource: source,
 	}
 }
 

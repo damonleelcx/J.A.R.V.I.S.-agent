@@ -1376,12 +1376,74 @@
    * a human presses a button. Two things on one screen are still two acts.
    */
 
+  /* # The industry selector (PRD §"Domain packs")
+   *
+   * A project is worked under a domain pack: its units, its vocabulary, and the
+   * highest risk tier work may reach inside it. Until this existed the browser
+   * could not say which — only `forgectl goal new --industry` could — so every
+   * project started from the workbench was filed as "Other", the pack that means
+   * UNKNOWN DOMAIN and deliberately carries no conventions at all.
+   *
+   * The options are fetched from /v1/meta/industries rather than written here.
+   * A copy of a closed set in the page is the copy that goes stale, and somebody
+   * would then pick an industry the server no longer knows — refused for a name
+   * this very file had shown them.
+   *
+   * Shown only while no project exists. The industry belongs to the PROJECT, and
+   * the server refuses one sent alongside an existing project id rather than
+   * dropping it silently; offering the control there would be offering an act
+   * that cannot happen. Changing it afterwards is deliberate and lives in
+   * `forgectl project industry`.
+   */
+  function loadIndustries() {
+    if (state.industries) return Promise.resolve(state.industries);
+    return fetch('/v1/meta/industries').then(function (r) {
+      return r.ok ? r.json() : { industries: [] };
+    }).then(function (b) {
+      state.industries = (b && b.industries) || [];
+      return state.industries;
+    }).catch(function () {
+      /* An unreachable catalogue must not block the proposal. The goal is
+       * created without an industry, which is `general` — the honest answer
+       * when nothing established a domain — rather than no goal at all. */
+      state.industries = [];
+      return state.industries;
+    });
+  }
+
+  function industryPicker() {
+    if (state.projectID) return '';
+    var list = state.industries || [];
+    if (!list.length) return '';
+    var opts = list.map(function (d) {
+      var sel = d.id === state.industry ? ' selected' : '';
+      return '<option value="' + esc(d.id) + '"' + sel + '>' + esc(d.label) + '</option>';
+    }).join('');
+    var chosen = null;
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].id === state.industry) { chosen = list[i]; }
+    }
+    return '<div class="industry">' +
+      '<label for="industry-pick">Industry</label>' +
+      '<select id="industry-pick">' + opts + '</select>' +
+      (chosen ? '<div class="foot">' + esc(chosen.boundary) +
+                ' Work above ' + esc(chosen.ceiling) + ' here would require ' +
+                esc(chosen.requires) + '.</div>' : '') +
+      '</div>';
+  }
+
   function proposeGoal(goal) {
     state.proposal = goal;
     state.goal = null;
     state.planTasks = null;
     state.goalPhase = 'proposed';
+    /* "Other" is the default and it is a real answer, not a placeholder: the
+     * `general` pack means unknown domain, lowers autonomy and triggers expert
+     * review. Defaulting to a guessed industry would file work under rules
+     * nobody chose while looking exactly like a stated one. */
+    if (!state.industry) state.industry = 'general';
     renderProposal();
+    loadIndustries().then(renderProposal);
   }
 
   function api(path, body) {
@@ -1420,7 +1482,12 @@
     api('/v1/goals', {
       title: state.proposal.title,
       statement: state.proposal.statement,
-      risk_tier: state.proposal.risk_tier || 'r1'
+      risk_tier: state.proposal.risk_tier || 'r1',
+      /* Only when this conversation has no project yet. The server REFUSES an
+       * industry sent with a project id — the industry belongs to the project,
+       * and changing it would change the rules its earlier work was done under —
+       * so sending one here would turn every follow-up goal into an error. */
+      industry: state.projectID ? '' : (state.industry || '')
     }).then(function (b) {
       state.goal = b.goal;
       state.planTasks = b.tasks || [];
@@ -1511,6 +1578,10 @@
       }
     }
 
+    if (phase === 'proposed' || phase === 'failed') {
+      html += industryPicker();
+    }
+
     html += '<div class="acts">';
     if (phase === 'proposed' || phase === 'failed') {
       html += '<button class="btn-sm go" id="do-plan">Start this</button>';
@@ -1552,6 +1623,15 @@
     if (plan) plan.addEventListener('click', startThis);
     var start = document.getElementById('do-start');
     if (start) start.addEventListener('click', startIt);
+    var pick = document.getElementById('industry-pick');
+    if (pick) pick.addEventListener('change', function () {
+      state.industry = pick.value;
+      /* Re-rendered so the boundary line under the control describes the
+       * industry now selected. A control that changes what the work is done
+       * under, above a sentence describing a different domain, is worse than no
+       * sentence at all. */
+      renderProposal();
+    });
   }
 
   /* ---- voice glue -------------------------------------------------------- */

@@ -1,10 +1,12 @@
 package agent
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/engine"
 	domainpack "github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/pack"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/tools"
 )
 
 // The domain pack limits what a goal may do (PRD §"Domain packs", §8.1).
@@ -102,5 +104,60 @@ func TestGrantFor_AnAbsentPackDoesNotWidenAnything(t *testing.T) {
 	}
 	if lowerTier(engine.RiskR1, "") != engine.RiskR1 {
 		t.Error("an invalid pack ceiling did not fall back to the goal's tier")
+	}
+}
+
+// A domain ceiling refusal names the authority that would raise it.
+//
+// # Why this is a fence
+//
+// The refusal used to read "this tool is tier r2, above this goal's ceiling of
+// r1" for BOTH cases: a goal whose own tier the person can change in a second,
+// and the rule set of a licensed domain they cannot change at all. Identical
+// text, opposite remedies. A limit with no path is a dead end, and the pack
+// table already states the path — it just never reached the place work is
+// actually stopped.
+func TestGrantFor_ADomainCeilingNamesItsAuthority(t *testing.T) {
+	civil := packNamed(t, "civil")
+	grant := grantFor(goalAt(engine.RiskR2), civil, false)
+
+	if grant.CeilingSource == "" {
+		t.Fatal("an r2 goal held to r1 by the civil pack carries no explanation.\n" +
+			"The person is told they hit a ceiling and not that it belongs to a licensed " +
+			"domain, so they will go looking for a setting to change")
+	}
+	for _, want := range []string{"civil", "licensed engineer"} {
+		if !strings.Contains(grant.CeilingSource, want) {
+			t.Errorf("the explanation does not mention %q: %q", want, grant.CeilingSource)
+		}
+	}
+	// And it reaches the refusal the model and the person actually read.
+	ok, reason := grant.Permits(tools.Contract{
+		Name: "release-drawings", RiskTier: engine.RiskR2,
+		Capabilities: []tools.Capability{tools.CapWrite}, Reversibility: tools.ReversibleManual,
+	})
+	if ok {
+		t.Fatal("an r2 tool was permitted under an r1 domain ceiling")
+	}
+	if !strings.Contains(reason, "licensed engineer") {
+		t.Errorf("the refusal does not carry the authority: %q", reason)
+	}
+}
+
+// When the GOAL's own tier is the binding limit, no domain is named.
+//
+// The half that keeps the message honest. Naming the pack when the pack was not
+// what stopped the work sends somebody to change an industry that was never in
+// their way — and teaches them the explanation is noise.
+func TestGrantFor_AGoalCeilingNamesNoDomain(t *testing.T) {
+	// software permits r2; the goal is the thing holding this to r0.
+	grant := grantFor(goalAt(engine.RiskR0), packNamed(t, "software"), false)
+	if grant.CeilingSource != "" {
+		t.Errorf("the goal's own ceiling was attributed to the domain: %q", grant.CeilingSource)
+	}
+	// Equal ceilings are the goal's too: nothing was taken away by the domain.
+	equal := grantFor(goalAt(engine.RiskR1), packNamed(t, "architecture"), false)
+	if equal.CeilingSource != "" {
+		t.Errorf("a domain that removed nothing was named as the limit: %q", equal.CeilingSource)
 	}
 }
