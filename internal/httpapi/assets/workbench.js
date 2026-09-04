@@ -139,6 +139,9 @@
      * session creates it, and requirements recorded elsewhere — the console,
      * forgectl — are what this panel is for. */
     if (wasNew) loadRequirements();
+    /* The picker retires the moment a project exists. Its whole job was to be
+     * available BEFORE one did. */
+    if (wasNew) renderIndustry();
   }
 
   /* The conversation, brought back (PRD RSN-07).
@@ -1229,6 +1232,10 @@
          * per turn. The server checks it against membership every time, so
          * naming somebody else's project is refused rather than trusted. */
         project_id: state.projectID || '',
+        /* Sent every turn. The server ignores it once the project exists, so
+         * the client does not have to know which turn happened to be the one
+         * that created it. */
+        industry: state.projectID ? '' : (state.industry || ''),
         /* The record this turn joins (PRD RSN-07). Empty on the first turn: the
          * server mints one and sends it back in the `conversation` event. A id
          * that is not this person's is REFUSED rather than swapped for a new
@@ -1411,6 +1418,33 @@
     });
   }
 
+  function renderIndustry() {
+    var el = $('industry');
+    var head = $('industry-head');
+    if (!el || !head) return;
+    var html = industryPicker();
+    if (!html) {
+      /* Hidden once a project exists. The industry belongs to the project from
+       * then on and the server refuses a change through this path, so leaving
+       * the control on screen would offer an act that cannot happen. */
+      el.classList.add('hidden');
+      head.style.display = 'none';
+      return;
+    }
+    head.style.display = '';
+    el.classList.remove('hidden');
+    el.innerHTML = html;
+    var pick = document.getElementById('industry-pick');
+    if (pick) pick.addEventListener('change', function () {
+      state.industry = pick.value;
+      /* Re-rendered so the boundary line under the control describes the
+       * industry now selected. A control that changes what the work is done
+       * under, above a sentence describing a different domain, is worse than
+       * no sentence at all. */
+      renderIndustry();
+    });
+  }
+
   function industryPicker() {
     if (state.projectID) return '';
     var list = state.industries || [];
@@ -1423,9 +1457,14 @@
     for (var i = 0; i < list.length; i++) {
       if (list[i].id === state.industry) { chosen = list[i]; }
     }
+    /* No visible <label>: the section heading above already says "Industry",
+     * and two of the same word stacked reads as a mistake. The accessible name
+     * comes from aria-label so a screen reader is not left with a bare combobox
+     * (PRD AUD-06 asks every critical interaction to have a non-audio path, and
+     * an unnamed control is not one). */
     return '<div class="industry">' +
-      '<label for="industry-pick">Industry</label>' +
-      '<select id="industry-pick">' + opts + '</select>' +
+      '<select id="industry-pick" aria-label="Industry this project works in">' +
+      opts + '</select>' +
       (chosen ? '<div class="foot">' + esc(chosen.boundary) +
                 ' Work above ' + esc(chosen.ceiling) + ' here would require ' +
                 esc(chosen.requires) + '.</div>' : '') +
@@ -1437,13 +1476,19 @@
     state.goal = null;
     state.planTasks = null;
     state.goalPhase = 'proposed';
+    renderProposal();
+  }
+
+  /* Loaded once, at startup, because the project is created by the first KEPT
+   * VARIANT — which can happen long before any work is proposed. A catalogue
+   * fetched at proposal time would arrive after the decision it informs. */
+  function startIndustry() {
     /* "Other" is the default and it is a real answer, not a placeholder: the
      * `general` pack means unknown domain, lowers autonomy and triggers expert
      * review. Defaulting to a guessed industry would file work under rules
      * nobody chose while looking exactly like a stated one. */
     if (!state.industry) state.industry = 'general';
-    renderProposal();
-    loadIndustries().then(renderProposal);
+    loadIndustries().then(renderIndustry);
   }
 
   function api(path, body) {
@@ -1578,10 +1623,6 @@
       }
     }
 
-    if (phase === 'proposed' || phase === 'failed') {
-      html += industryPicker();
-    }
-
     html += '<div class="acts">';
     if (phase === 'proposed' || phase === 'failed') {
       html += '<button class="btn-sm go" id="do-plan">Start this</button>';
@@ -1623,15 +1664,6 @@
     if (plan) plan.addEventListener('click', startThis);
     var start = document.getElementById('do-start');
     if (start) start.addEventListener('click', startIt);
-    var pick = document.getElementById('industry-pick');
-    if (pick) pick.addEventListener('change', function () {
-      state.industry = pick.value;
-      /* Re-rendered so the boundary line under the control describes the
-       * industry now selected. A control that changes what the work is done
-       * under, above a sentence describing a different domain, is worse than no
-       * sentence at all. */
-      renderProposal();
-    });
   }
 
   /* ---- voice glue -------------------------------------------------------- */
@@ -1856,6 +1888,7 @@
         $('stage-empty').classList.remove('hidden');
       }
     });
+    safely('industry', startIndustry);
     safely('voice', initVoice);
     safely('controls', initControls);
     safely('attach', initAttach);

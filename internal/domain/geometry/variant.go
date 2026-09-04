@@ -138,9 +138,24 @@ type NewVariant struct {
 	// InitiatorID is the person the proposal was made for. Never a service
 	// account: a variant traces to somebody who asked for it.
 	InitiatorID string
-	Agent       workspace.Agent
-	Generator   string
-	Document    Document
+	// Industry is the domain a NEWLY created project works in — the label the
+	// product's selector shows ("Civil engineering") or the pack id ("civil").
+	//
+	// Empty resolves to `general`, the pack that MEANS unknown domain. Ignored
+	// when ProjectID names an existing project, because the industry belongs to
+	// the project and this is not the surface that changes one.
+	//
+	// # Why this is here at all
+	//
+	// A project created by keeping a variant used to pass the constant "general"
+	// forever, so the conversation path — where most first projects are born —
+	// could never state a domain no matter what the person had chosen on screen.
+	// The goal path gained a producer and this one did not, which left the same
+	// hole in half the product.
+	Industry  string
+	Agent     workspace.Agent
+	Generator string
+	Document  Document
 	// Inputs is what the geometry was made from — for a workbench proposal, the
 	// message that produced it. Required, because "made from nothing" and
 	// "nobody recorded what it was made from" are different and only one of

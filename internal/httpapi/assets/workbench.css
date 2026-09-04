@@ -695,24 +695,33 @@
  * `.proposal .foot` — rather than chosen fresh. A second visual vocabulary for
  * the same kind of control is how a surface stops looking like one product.
  *
- * It sits above `.acts` deliberately: the industry decides the rules the work is
- * done under, so it is read BEFORE the button that starts it, not beside it. */
-.proposal .industry { margin-top: 12px; }
-.proposal .industry label {
-  display: block;
-  font-size: 10.5px;
-  letter-spacing: .06em;
-  text-transform: uppercase;
-  color: var(--ink-dim);
-  margin-bottom: 5px;
-}
-.proposal .industry select {
+ * It lives in its own side-panel section rather than on the proposal card: a
+ * project is created by the first KEPT VARIANT, which happens before any work is
+ * proposed, so a control that only appeared with the proposal arrived too late
+ * to decide anything. */
+#industry .industry { margin-top: 2px; }
+/* Air before the next section. `.h` carries no top margin except after another
+ * `.h`, so a section whose last element is a PARAGRAPH runs straight into the
+ * heading below it. Fixed on this section rather than on `.h`, which every
+ * other panel already lays out correctly. */
+#industry { margin-bottom: 14px; }
+#industry .industry select {
   width: 100%;
   background: #0f131b;
   color: var(--ink);
   border: 1px solid var(--edge-solid);
   border-radius: 6px;
   padding: 4px;
+}
+/* The boundary line under the control. Same values as `.proposal .foot`, which
+ * is where this text lived before the picker moved out of the proposal card —
+ * copied rather than re-selected because the two are different sections and a
+ * shared selector would tie their spacing together for no reason. */
+#industry .foot {
+  margin-top: 10px;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--ink-dim);
 }
 
 .proposal .acts { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }

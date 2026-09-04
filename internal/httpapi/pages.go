@@ -733,6 +733,17 @@ const pageTemplates = `
     <div class="h" id="variants-head" style="display:none">Variants</div>
     <div id="variants"></div>
 
+    <!-- The domain this conversation's work belongs to (PRD §"Domain packs").
+         Placed HERE, in the side panel, rather than on the proposal card where
+         it started: a project is created the first time geometry is kept, which
+         happens before any work is proposed. A control that only appeared with
+         the proposal could not be reached in time, so half the projects this
+         product creates would be filed as "Other" whatever the person chose.
+         It hides itself once a project exists — the industry belongs to the
+         project from then on, and "forgectl project industry" changes it. -->
+    <div class="h" id="industry-head" style="display:none">Industry</div>
+    <div id="industry" class="hidden"></div>
+
     <div class="h" id="proposal-head" style="display:none">Proposed work</div>
     <div id="proposal" class="hidden"></div>
   </div>

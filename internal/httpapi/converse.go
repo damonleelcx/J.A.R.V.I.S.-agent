@@ -93,6 +93,13 @@ type converseRequest struct {
 	// The id is checked against the caller's membership on every turn, so a
 	// client naming somebody else's project is refused rather than trusted.
 	ProjectID string `json:"project_id"`
+	// Industry is the domain a NEWLY created project works in (PRD §"Domain
+	// packs"). Sent by the workbench's selector alongside the first turn that
+	// keeps geometry, and ignored once ProjectID names a project — the industry
+	// belongs to the project, and this is not the surface that changes one.
+	//
+	// Empty is `general`: the pack that MEANS unknown domain, not a guess.
+	Industry string `json:"industry,omitempty"`
 	// OnScreen describes what the workspace is currently showing, so a phrase
 	// like "make that taller" resolves against what the person is looking at
 	// rather than against the transcript. PRD WRK-02: a spoken reference should
@@ -463,6 +470,10 @@ func (h *ConverseHandlers) keepGeometry(r *http.Request, req converseRequest, pr
 	v, err := h.geo.Save(ctx, geometry.NewVariant{
 		ProjectID:   projectID,
 		InitiatorID: user.ID,
+		// Only meaningful when this call CREATES the project. Save ignores it
+		// otherwise, which is why it is safe to send on every turn: the client
+		// does not have to know which turn happened to be the first one.
+		Industry: strings.TrimSpace(req.Industry),
 		// The workbench conversation, which is neither a person nor the goal
 		// engine. See migration 0011 for why the vocabulary gained this actor
 		// rather than reusing 'human' or 'system'.
