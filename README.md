@@ -503,6 +503,42 @@ everything `oneOf` was written to reject while the contract goes on claiming the
 arguments were checked. A tool whose schema outgrows the validator cannot start,
 rather than cannot be trusted.
 
+### A project names its industry, and the industry sets a ceiling
+
+Ten industries — mechanical, manufacturing, automotive, aerospace, civil,
+electrical, construction, product design, architecture, and "Other" — each map to
+a **domain pack**: the rule set a project is worked under. A pack carries the
+domain's units and vocabulary, and the highest risk tier work may reach inside it
+here.
+
+```bash
+forgectl goal new --owner you@example.com --title "Studio massing" \
+  --statement "Study massing options for a small studio." --industry "Architecture"
+forgectl project industry --project prj_... --set "Civil engineering"
+```
+
+The ceiling replaced a boolean, and the reason is the interesting part. Every
+engineering pack used to be **unavailable**, because this build cannot gate
+drawing release — PRD tier R3, needing a licensed engineer it cannot represent.
+That was true and it was decided at the wrong granularity: it also refused
+concept CAD, a render and a revision, which are R1 and are the work this product
+is for. A mechanical engineer could not open a project to sketch a bracket
+because the build could not certify one.
+
+So a pack limits how far work goes rather than whether it starts. R1 happens; R2
+and above is refused naming the authority that would permit it. `medical` and
+`robotics` still permit nothing at all — neither is offered in the selector, and
+one is a stated PRD non-goal.
+
+The column that records all this was, until 2026-09-04, **written and never
+read**: a project could record that mechanical rules applied while no rule
+anywhere applied them, and both of its writers passed a constant. The read side
+is now two readers with deliberately different failure modes — an unreadable
+*permission* fails the task, an unreadable *vocabulary* falls back to "unknown
+domain" and logs. Widening a permission on a failed read is a safety defect;
+losing the vocabulary is a worse answer
+(`docs/bugfix/2026-09-04-the-pack-was-written-and-never-read.md`).
+
 ## Measuring the model, not the harness
 
 Everything above proves the *harness* is correct. `forgectl eval run` measures
@@ -525,6 +561,14 @@ reliably work, so the variant comparison's match-by-name fallback is load-bearin
 rather than a safety net — and there is now a number saying so. Requiring it
 would hold the suite permanently red until somebody lowered a number, which is
 how every floor in a suite eventually stops meaning anything.
+
+The suite carries two kinds of case, and the report prints them apart.
+**Regressions** trace to a defect this build actually produced and carry floors.
+**Coverage** cases are the ten industries the selector offers — a claim the
+product makes that somebody should be able to check — and carry no floors,
+because nothing has measured them before and a floor invented from one run is a
+target dressed as an observation. Interleaved, the second reads as the first, and
+the usual response to a wall of red is to lower a number.
 
 The suite is deliberately not part of `make test`: it calls a real model, costs
 money, and is non-deterministic. It runs on demand and weekly.

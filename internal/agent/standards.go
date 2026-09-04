@@ -94,7 +94,11 @@ var standardsFamilies = []struct {
 }{
 	// Motor and mechanical frames
 	{"NEMA", `NEMA\s?-?\s?\d{1,3}[A-Z]?`},
-	{"IEC frame", `IEC\s?\d{2,3}[A-Z]?`},
+	// Both an IEC motor FRAME (IEC 80) and an IEC standard (IEC 61508). Widened
+	// from \d{2,3} on 2026-09-04: the narrow form matched the first three digits
+	// of a five-digit standard, so a claim about IEC 61508 was reported as
+	// "IEC 615" — detected, but named as something that does not exist.
+	{"IEC", `IEC\s?\d{2,5}(?:-\d+)?[A-Z]?`},
 	// General engineering standards bodies
 	{"ISO", `ISO\s?\d{3,5}(?:-\d+)?`},
 	{"DIN", `DIN\s?\d{3,5}(?:-\d+)?`},
@@ -116,6 +120,38 @@ var standardsFamilies = []struct {
 	{"AWG", `\b\d{1,2}\s?AWG\b`},
 	// Bearings and common part series
 	{"bearing series", `\b6[0-9]{3}(?:-2RS|ZZ)?\b`},
+
+	// # The industries added on 2026-09-04
+	//
+	// Every family below belongs to a domain the product's industry selector now
+	// offers. Without them the fabrication guard was MECHANICAL AND ELECTRICAL
+	// ONLY: a civil answer citing "ACI 318" or an aerospace one citing "DO-178C"
+	// named a published standard, carried a specific figure, and passed the check
+	// whose entire job is to say "this was recalled, not verified". Shipping nine
+	// industries on top of a guard that cannot see them would have made the panel
+	// silent exactly where it is newest and least trusted.
+	//
+	// Structural, civil, construction and architecture
+	{"AISC", `AISC\s?\d{3}(?:-\d{2})?`},
+	{"ACI", `ACI\s?\d{3}(?:\.\d+)?(?:R)?(?:-\d{2})?`},
+	{"ASCE", `ASCE\s?(?:/?\s?SEI\s?)?\d{1,2}(?:-\d{2})?`},
+	{"AASHTO", `AASHTO\s?(?:LRFD|[A-Z]{1,2}\s?-?\s?\d{1,3}|\d{1,3})`},
+	{"Eurocode", `(?:Eurocode\s?\d|\bEC[1-9]\b)`},
+	{"building code", `\b(?:IBC|IRC|IECC|NFPA)\s?\d{2,4}(?:-\d{2})?`},
+	{"ADA", `\bADA(?:AG)?\s?\d{3,4}(?:\.\d+)*`},
+	// Aerospace
+	{"AS/EN aerospace", `\bAS\s?9\d{3}[A-Z]?`},
+	{"MIL standard", `MIL-(?:STD|DTL|PRF|HDBK)-\d{2,5}[A-Z]?`},
+	{"DO", `\bDO-\d{3}[A-Z]?`},
+	{"ARP", `\bARP\s?\d{4}[A-Z]?`},
+	// Automotive
+	{"FMVSS", `FMVSS\s?(?:No\.?\s?)?\d{3}`},
+	{"UNECE", `\b(?:UN\s?)?ECE\s?R\s?\d{1,3}`},
+	{"IATF", `IATF\s?\d{5}(?:-\d{4})?`},
+	// Electronics and electrical installation
+	{"IPC", `\bIPC-?\s?[A-Z]?-?\d{3,4}[A-Z]?`},
+	{"IEEE", `IEEE\s?\d{3,4}(?:\.\d+)*(?:-\d{4})?`},
+	{"NEC article", `\bNEC\s?(?:Article\s?)?\d{3}(?:\.\d+)*`},
 }
 
 var standardsRE = func() *regexp.Regexp {

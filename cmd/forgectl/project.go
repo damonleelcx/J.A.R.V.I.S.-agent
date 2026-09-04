@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/pack"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/config"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/db"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/errs"
@@ -119,5 +120,125 @@ func cmdProjectCharacter(ctx context.Context, cfg *config.Config, log *logx.Logg
 	// Said every time rather than only when it is turned down, because the thing
 	// worth knowing is that this setting cannot reach safety at all.
 	fmt.Println("\nSafety-relevant objections are always raised in full; no value here changes that.")
+	return nil
+}
+
+// The industry a project works in (PRD §"Domain packs").
+//
+// # Why this is a command rather than a field on project creation
+//
+// There is no `project new`. Projects are created as a side effect of the first
+// goal — `forgectl goal new --industry ...` — because a project with no work in
+// it is a row nobody asked for. So this command exists for the other two things
+// a person needs: seeing which rules are in force, and changing them when the
+// first goal filed the project under the wrong domain or under "Other".
+//
+// Changing it is deliberate and says what it changed, because the industry
+// decides the ceiling on what may be done in the project. Silently re-filing
+// somebody's work under different rules is the failure this whole area exists to
+// prevent.
+
+// industryChoices renders the selector's list for flag help and error text.
+//
+// Built from pack.Industries() rather than written out, because this is the same
+// list the product offers and a second copy would be the one that goes stale.
+func industryChoices() string {
+	var out []string
+	for _, d := range pack.Industries() {
+		out = append(out, string(d.Pack))
+	}
+	return strings.Join(out, " | ")
+}
+
+// describeIndustry names an industry the way a person picked it, for output.
+func describeIndustry(given string) string {
+	d, ok := pack.Lookup(given)
+	if !ok {
+		// Unresolvable values never reach here — EnsureProject refuses them — so
+		// this is the empty case: nothing was stated and `general` was used.
+		d, _ = pack.Lookup(string(pack.General))
+	}
+	if d.Industry != "" {
+		return fmt.Sprintf("%s (%s)", d.Industry, d.Pack)
+	}
+	return string(d.Pack)
+}
+
+// cmdProjectIndustry shows or changes the industry a project works in.
+func cmdProjectIndustry(ctx context.Context, cfg *config.Config, log *logx.Logger, args []string) error {
+	const op = "forgectl.cmdProjectIndustry"
+
+	fs := newFlagSet("project industry")
+	project := fs.String("project", "", "project id (required)")
+	set := fs.String("set", "", "change the industry to: "+industryChoices())
+	if err := fs.Parse(args); err != nil {
+		return err
+	}
+	if *project == "" {
+		return errs.New(op, errs.CodeValidationFailed).
+			WithDetail("usage: forgectl project industry --project <id> [--set <industry>]\n"+
+				"With no --set, this prints the industry in force and what it permits.\n"+
+				"Industries: %s", industryChoices())
+	}
+
+	// Validated BEFORE the database is touched, so a typo costs nothing and the
+	// error names the list. The value written is the canonical pack id for the
+	// reason EnsureProject writes one: the column has no constraint, and a domain
+	// spelled three ways is a source of truth that has stopped being single.
+	var target pack.Definition
+	if *set != "" {
+		d, ok := pack.Lookup(*set)
+		if !ok {
+			return errs.New(op, errs.CodeValidationFailed).
+				WithDetail("%q is not an industry this build knows.\nIndustries: %s",
+					*set, industryChoices())
+		}
+		if !d.Available() {
+			return errs.New(op, errs.CodeForbidden).
+				WithDetail("no project may be worked in the %s pack.\n\n%s\n\nIt would require %s.",
+					d.Pack, d.Summary, d.Requires)
+		}
+		target = d
+	}
+
+	pool, err := db.Connect(ctx, cfg.DB, log)
+	if err != nil {
+		return err
+	}
+	defer pool.Close()
+
+	if *set != "" {
+		tag, err := pool.Exec(ctx,
+			`update forge_projects set pack = $2, updated_at = now() where id = $1`,
+			*project, string(target.Pack))
+		if err != nil {
+			return errs.Wrap(op, errs.CodeDatabaseUnavail, err)
+		}
+		if tag.RowsAffected() == 0 {
+			return errs.New(op, errs.CodeNotFound).
+				WithDetail("no project %s. Nothing was changed.", *project)
+		}
+	}
+
+	var name, stored string
+	if err := pool.QueryRow(ctx,
+		`select name, pack from forge_projects where id = $1`, *project).Scan(&name, &stored); err != nil {
+		return errs.Wrap(op, errs.CodeNotFound, err).WithDetail("no project %s", *project)
+	}
+	d, known := pack.Lookup(stored)
+
+	fmt.Printf("%s (%s)\n", name, *project)
+	fmt.Printf("  industry   %s\n", describeIndustry(stored))
+	if !known {
+		// Pre-dates the closed set, or was written by something that bypassed
+		// EnsureProject. Said plainly rather than rendered as though it selected
+		// rules, because it selects none.
+		fmt.Printf("\nThis build does not recognise %q, so NO pack rules are in force here.\n"+
+			"Set one with --set <industry>. Industries: %s\n", stored, industryChoices())
+		return nil
+	}
+	fmt.Printf("  ceiling    %s\n", d.MaxTier)
+	fmt.Printf("\n%s\n", d.Summary)
+	fmt.Printf("\nWork above %s here would require %s.\n", d.MaxTier, d.Requires)
 	return nil
 }

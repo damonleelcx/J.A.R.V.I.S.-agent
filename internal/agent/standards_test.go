@@ -242,3 +242,103 @@ func TestStandardsClaim_IgnoresNotVerifiedDisclaimers(t *testing.T) {
 		t.Fatalf("disclaimers were flagged as recalled claims: %+v", claims)
 	}
 }
+
+// The guard covers every industry the product offers (2026-09-04).
+//
+// # Why this is a fence and not a nicety
+//
+// The fabrication guard only fires on families it can NAME. Before the industry
+// list existed the table was mechanical and electrical, which was the right
+// scope for the product at the time. Adding civil, aerospace, automotive,
+// construction and architecture without adding their standards bodies would have
+// shipped nine industries whose answers cannot be checked: a recalled ACI 318
+// figure or a DO-178C claim would carry a specific number, name a published
+// standard, and be reported as ordinary prose.
+//
+// That is worse than not covering the industry at all, because the panel's
+// silence reads as "nothing here was recalled". Partial coverage that says so
+// beats total coverage that is asserted — so the coverage has to be real where
+// the product claims it.
+func TestStandardsClaim_CoversTheIndustriesTheProductOffers(t *testing.T) {
+	// One representative citation per industry the selector offers, each with a
+	// figure attached so the claim is quantitative and would mislead if missed.
+	for _, tc := range []struct{ industry, sentence, want string }{
+		{"Civil engineering", "Development length per ACI 318 is 305 mm here.", "ACI 318"},
+		{"Construction", "The assembly meets IBC 2021 at 1200 mm clear width.", "IBC 2021"},
+		{"Architecture", "Ramp slope follows ADA 405.2 at 4.8 degrees.", "ADA 405.2"},
+		{"Civil engineering", "Wind load from ASCE 7-22 gives 1.2 kPa.", "ASCE 7-22"},
+		{"Aerospace", "DO-178C level B allows a 3.5 mm margin here.", "DO-178C"},
+		{"Aerospace", "Per MIL-STD-810 the fixture holds 40 N.", "MIL-STD-810"},
+		{"Automotive", "FMVSS 208 requires the sensor within 25 mm.", "FMVSS 208"},
+		{"Automotive", "ECE R94 gives a 30 mm intrusion limit.", "ECE R94"},
+		{"Electrical engineering", "IPC-2221 asks for 0.5 mm clearance at that voltage.", "IPC-2221"},
+		{"Electrical engineering", "IEEE 802.3 allows 100 m of cable.", "IEEE 802.3"},
+		{"Mechanical engineering", "Functional safety per IEC 61508 at 5 mm travel.", "IEC 61508"},
+	} {
+		claims := FindStandardsClaims(&Reply{Speech: tc.sentence})
+		if len(claims) == 0 {
+			t.Errorf("%s: %q named a published standard with a figure and was not flagged at all.\n"+
+				"An answer in this industry can recite a recalled number and the panel will "+
+				"say nothing", tc.industry, tc.sentence)
+			continue
+		}
+		if !namesStandard(claims[0], tc.want) {
+			t.Errorf("%s: %q was flagged but not as %q — got %v.\n"+
+				"A claim named as something that does not exist is worse than an unnamed one: "+
+				"the reader cannot look it up", tc.industry, tc.sentence, tc.want, claims[0].Standards)
+		}
+		if len(claims[0].Figures) == 0 {
+			t.Errorf("%s: %q carried a dimensioned figure and none was captured",
+				tc.industry, tc.sentence)
+		}
+	}
+}
+
+// The widened IEC pattern names the whole designation, not its first digits.
+//
+// Regression: the pattern was \d{2,3}, sized for IEC motor FRAMES. "IEC 61508"
+// matched its leading "IEC 615", so the claim was detected and then reported
+// under a designation that does not exist — which sends a reader looking for a
+// standard they will never find.
+func TestStandardsClaim_IECDesignationIsNotTruncated(t *testing.T) {
+	claims := FindStandardsClaims(&Reply{Speech: "Rated to IEC 61508 SIL 2 at 24 V."})
+	if len(claims) == 0 {
+		t.Fatal("IEC 61508 was not flagged")
+	}
+	if namesStandard(claims[0], "IEC 615") {
+		t.Errorf("the claim names the truncated %q; got %v", "IEC 615", claims[0].Standards)
+	}
+	if !namesStandard(claims[0], "IEC 61508") {
+		t.Errorf("the claim does not name IEC 61508: %v", claims[0].Standards)
+	}
+	// The motor-frame form the pattern was originally sized for still works.
+	if c := FindStandardsClaims(&Reply{Speech: "An IEC 80 frame is 80 mm to the shaft."}); len(c) == 0 {
+		t.Error("widening the pattern lost the IEC motor-frame case it was written for")
+	}
+}
+
+// A family NAME on its own is prose, not a claim.
+//
+// The rule the table is built on: "ISO" is a word, "ISO 4762" is a claim. A
+// pattern whose quantifiers all permit zero matches the bare token and turns
+// every mention of a standards body into a recalled-figure banner — which trains
+// people to ignore the banner, destroying it for the cases that matter.
+//
+// Caught by review of the 2026-09-04 additions: the AASHTO pattern was
+// `AASHTO\s?[A-Z]{0,4}\s?-?\s?\d{0,3}`, and both quantifiers permitted zero.
+func TestStandardsClaim_ABareFamilyNameIsNotAClaim(t *testing.T) {
+	for _, bare := range []string{
+		"We should check what AASHTO says about this.",
+		"The ACI has guidance on that.",
+		"Ask whether ASCE covers it.",
+		"IPC has a document on the subject.",
+		"That is an IEEE matter.",
+		"The IBC is the governing code here.",
+	} {
+		if claims := FindStandardsClaims(&Reply{Speech: bare}); len(claims) > 0 {
+			t.Errorf("%q was flagged as a standards claim: %+v.\n"+
+				"Naming a standards body is not citing a standard, and a banner on ordinary "+
+				"prose is a banner people learn to skip", bare, claims)
+		}
+	}
+}

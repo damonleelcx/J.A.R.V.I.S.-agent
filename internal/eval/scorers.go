@@ -501,3 +501,107 @@ func trim(s string, n int) string {
 	}
 	return s[:n] + "…"
 }
+
+// ---------------------------------------------------------------------------
+// Industry coverage (2026-09-04)
+// ---------------------------------------------------------------------------
+
+// The scorers below back the coverage cases rather than a regression. What they
+// measure is whether FORGE is USABLE in a domain the product's industry selector
+// offers — which, until packs were read, it had no way to be: every industry got
+// byte-identical instructions and the only domain vocabulary in the system was
+// whatever the model happened to bring.
+//
+// All of them are Tracked rather than floored, deliberately. A floor set from
+// the first good measurement is a target dressed as an observation, and none of
+// these has the history behind it that the regression floors do.
+
+// answerIsGroundedInTheDomain: the reply uses the vocabulary and the units the
+// pack asks for, rather than generic prose that would fit any industry.
+//
+// Judged on the pack's OWN terms — the keywords come from the industry, not from
+// a list kept here — so adding an industry cannot leave this scorer silently
+// measuring nothing.
+func answerIsGroundedInTheDomain(industry string, terms ...string) Scorer {
+	return Scorer{
+		Name:    "the answer is in " + industry + " terms",
+		Asserts: fmt.Sprintf("the reply uses at least one of %s", strings.Join(terms, ", ")),
+		Tracked: true,
+		FloorWhy: "TRACKED, not required. A domain is served when its practitioners recognise the answer as theirs. " +
+			"Keyword presence is a weak proxy for that and is honest about being one: it " +
+			"catches the case that matters — a reply that would read identically in any " +
+			"industry — and claims nothing more.",
+		Judge: func(o *Observation) (bool, string) {
+			var seen []string
+			for _, r := range o.Replies {
+				if r == nil {
+					continue
+				}
+				hay := strings.ToLower(r.Speech + "\n" + r.Detail)
+				if r.Prototype != nil {
+					hay += "\n" + strings.ToLower(r.Prototype.Name)
+					for _, p := range r.Prototype.Parts {
+						hay += "\n" + strings.ToLower(p.Name+" "+p.Note)
+					}
+					for _, a := range r.Prototype.Assumptions {
+						hay += "\n" + strings.ToLower(a)
+					}
+				}
+				for _, term := range terms {
+					if strings.Contains(hay, strings.ToLower(term)) {
+						seen = append(seen, term)
+					}
+				}
+			}
+			if len(seen) == 0 {
+				return false, "the reply used none of the domain's terms; it would read the " +
+					"same in any industry"
+			}
+			return true, "used " + strings.Join(dedupe(seen), ", ")
+		},
+	}
+}
+
+// theRequestIsAnsweredAtAll: something usable came back.
+//
+// The floor of coverage. An industry is not served by a reply that changes the
+// subject, asks for the whole brief back, or says nothing — and that is the
+// failure mode a domain the model has never been framed for actually produces.
+func theRequestIsAnsweredAtAll() Scorer {
+	return Scorer{
+		Name:    "the request is answered",
+		Asserts: "the reply says something substantive rather than deflecting the question",
+		Tracked: true,
+		FloorWhy: "TRACKED, not required, because the honest answer to some requests IS a " +
+			"question (PRD RSN-02), and a floor here would push the model to answer past its " +
+			"own uncertainty — the opposite of what this product is for.",
+		Judge: func(o *Observation) (bool, string) {
+			for _, r := range o.Replies {
+				if r == nil {
+					continue
+				}
+				if r.Prototype != nil && len(r.Prototype.Parts) > 0 {
+					return true, fmt.Sprintf("proposed %q with %d part(s)",
+						r.Prototype.Name, len(r.Prototype.Parts))
+				}
+				if len(strings.Fields(r.Detail)) >= 25 {
+					return true, fmt.Sprintf("%d words of detail on screen", len(strings.Fields(r.Detail)))
+				}
+			}
+			return false, "no geometry and no substantive detail; the request was not engaged with"
+		},
+	}
+}
+
+// dedupe keeps the first occurrence of each string.
+func dedupe(in []string) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, s := range in {
+		if !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	return out
+}

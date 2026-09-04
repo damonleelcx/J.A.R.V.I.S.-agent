@@ -1,6 +1,7 @@
 package eval
 
 import (
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/pack"
 	"strings"
 	"testing"
 
@@ -517,4 +518,130 @@ func TestTheHarnessCarriesATurnForwardTheWayTheProductDoes(t *testing.T) {
 		t.Error("the detail is not carried forward here, so every multi-turn case measures a " +
 			"model with less of its own answer than the product gives it")
 	}
+}
+
+// Industry coverage (2026-09-04).
+//
+// The suite now carries two kinds of case, and the value of that distinction is
+// entirely in it being enforced. A coverage case that drifted into claiming a
+// regression would put an unmeasured property behind a rule that says every case
+// traces to an observed defect — which is how the rule stops being true.
+
+// theIndustriesTheProductOffers is the selector's list, written out.
+//
+// Hardcoded rather than read from pack.Industries(): a fence that enumerates
+// what it checks cannot fail, because deleting the industry deletes its
+// assertion in the same motion.
+var theIndustriesTheProductOffers = []string{
+	"Mechanical engineering", "Manufacturing", "Automotive", "Aerospace",
+	"Civil engineering", "Electrical engineering", "Construction",
+	"Product design", "Architecture", "Other",
+}
+
+// Every industry the product offers has a case measuring it.
+//
+// The whole point of the coverage kind. A selector entry with no case behind it
+// is a claim nobody checks — and the industries were added precisely because
+// nothing could be asked about them.
+func TestEveryIndustryOfferedHasACoverageCase(t *testing.T) {
+	covered := map[string]string{}
+	for _, c := range Cases() {
+		if c.Kind == KindCoverage {
+			covered[c.Industry] = c.ID
+		}
+	}
+	for _, industry := range theIndustriesTheProductOffers {
+		if covered[industry] == "" {
+			t.Errorf("the product offers %q in its industry selector and no case measures whether "+
+				"FORGE can work in it.\n"+
+				"A dropdown entry with nothing behind it is a claim nobody checks", industry)
+		}
+	}
+	if len(covered) != len(theIndustriesTheProductOffers) {
+		t.Errorf("%d industries have coverage cases and the selector offers %d; one has been "+
+			"changed without the other", len(covered), len(theIndustriesTheProductOffers))
+	}
+}
+
+// Every coverage case names an industry that actually resolves to a pack.
+//
+// Without this the runner falls back to answering with no domain at all, and the
+// case would quietly measure the default while its id claimed an industry.
+func TestEveryCoverageCaseNamesARealIndustry(t *testing.T) {
+	for _, c := range Cases() {
+		if c.Kind != KindCoverage {
+			continue
+		}
+		if c.Industry == "" {
+			t.Errorf("%s is a coverage case naming no industry, so it is answered with no domain "+
+				"and measures the default", c.ID)
+			continue
+		}
+		if _, ok := pack.Lookup(c.Industry); !ok {
+			t.Errorf("%s names the industry %q, which resolves to no pack. The case would run "+
+				"with no domain conventions while claiming to measure that industry",
+				c.ID, c.Industry)
+		}
+	}
+}
+
+// Every case declares which kind it is, and regression cases name no industry.
+//
+// The second half matters: a regression case pinned to a domain would be scored
+// under framing the original defect never had, so a fix could be masked by
+// vocabulary the model was handed.
+func TestEveryCaseDeclaresItsKind(t *testing.T) {
+	for _, c := range Cases() {
+		switch c.Kind {
+		case KindRegression:
+			if c.Industry != "" {
+				t.Errorf("%s is a regression case pinned to the %q domain. The defect it traces "+
+					"to happened without that framing, so scoring it with the framing measures "+
+					"a different system", c.ID, c.Industry)
+			}
+		case KindCoverage:
+			// Checked above.
+		default:
+			t.Errorf("%s declares no kind. A case is either a regression — traceable to an "+
+				"observed defect — or coverage of a claim the product makes, and which one "+
+				"decides how its result should be read", c.ID)
+		}
+	}
+}
+
+// Coverage scorers are Tracked, never floored.
+//
+// A floor needs a measurement behind it, and none of these has one: no industry
+// case has ever run. A floor invented here would be a target dressed as an
+// observation, and the first time it failed somebody would lower it.
+func TestCoverageScorersAreTrackedNotFloored(t *testing.T) {
+	for _, c := range Cases() {
+		if c.Kind != KindCoverage {
+			continue
+		}
+		for _, s := range c.Scorers {
+			if s.Tracked {
+				continue
+			}
+			// The honesty scorers a coverage case shares with the regression
+			// suite keep their own floors — they are measured properties, and
+			// suspending them in a new domain is exactly what must not happen.
+			if s.Floor > 0 && isSharedHonestyScorer(s.Name) {
+				continue
+			}
+			t.Errorf("%s/%s: a coverage scorer carries floor %v with no measurement behind it",
+				c.ID, s.Name, s.Floor)
+		}
+	}
+}
+
+// isSharedHonestyScorer names the floored scorers a coverage case legitimately
+// carries: the rules that apply to any physical proposal in any domain.
+func isSharedHonestyScorer(name string) bool {
+	for _, s := range []Scorer{standardsAreLabelled(), speechIsShort()} {
+		if s.Name == name {
+			return true
+		}
+	}
+	return false
 }

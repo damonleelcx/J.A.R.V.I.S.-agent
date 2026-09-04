@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/engine"
+	domainpack "github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/pack"
+	domainworkspace "github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/workspace"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/clock"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/config"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/db"
@@ -245,7 +247,21 @@ func (w *Worker) runTask(ctx context.Context, task *engine.Task) {
 		return
 	}
 
-	grant := grantFor(goal, w.production)
+	// The rules in force on this project, read fresh rather than cached on the
+	// goal: an industry corrected with `forgectl project industry` has to take
+	// effect on the next task, not on the next restart. One query against a pool
+	// already open, next to a model call that costs seconds.
+	//
+	// A failure here fails the TASK rather than defaulting to a permissive
+	// ceiling. An unreadable rule set is not the same as an unrestricted one, and
+	// PackFor's error says which project and how to fix it.
+	domain, err := domainworkspace.NewService(w.pool, w.clock, w.log).PackFor(ctx, w.pool, goal.ProjectID)
+	if err != nil {
+		w.failTask(ctx, task, errs.CodeOf(err), err.Error())
+		return
+	}
+
+	grant := grantFor(goal, domain, w.production)
 	tc, err := w.assembler.Assemble(ctx, w.pool, task, goal, grant, w.budgetNote(goal))
 	if err != nil {
 		w.failTask(ctx, task, errs.CodeOf(err), err.Error())
@@ -629,7 +645,27 @@ func (w *Worker) budgetNote(goal *engine.Goal) string {
 // that can disagree. Deploy, transact and control are never granted by this
 // build — they are the capabilities whose tools do not exist here, and granting
 // a capability with no tool behind it only creates a false sense of scope.
-func grantFor(goal *engine.Goal, production bool) tools.Grant {
+//
+// # Why the domain pack is a second ceiling (2026-09-04)
+//
+// The ceiling used to be the goal's own tier alone. That meant the domain a
+// project works in had no bearing on what could be done in it: a goal created at
+// r2 reached r2 whether the project was software, where a merge is reviewed and
+// reversible, or civil, where the equivalent act needs a licensed engineer this
+// build cannot represent.
+//
+// The pack was the natural home for that limit and was doing nothing — the
+// column was written by EnsureProject and read by no rule anywhere. This is the
+// read. The LOWER of the two ceilings applies, because both are statements about
+// what may happen and the stricter of two limits is the one that means anything.
+//
+// Deliberately not additive with the goal's tier: a project cannot RAISE what a
+// goal may do. A pack with a high ceiling permits nothing the goal did not
+// already permit, which keeps the property that lowering a goal's tier can only
+// ever narrow it.
+//
+// See docs/bugfix/2026-09-04-the-pack-was-written-and-never-read.md.
+func grantFor(goal *engine.Goal, domain domainpack.Definition, production bool) tools.Grant {
 	caps := []tools.Capability{tools.CapRead}
 	if goal.Autonomy.AtLeast(engine.AutonomyDraft) {
 		caps = append(caps, tools.CapWrite)
@@ -639,8 +675,24 @@ func grantFor(goal *engine.Goal, production bool) tools.Grant {
 	}
 	return tools.Grant{
 		Capabilities: caps,
-		MaxRiskTier:  goal.RiskTier,
+		MaxRiskTier:  lowerTier(goal.RiskTier, domain.MaxTier),
 		Autonomy:     goal.Autonomy,
 		Production:   production,
 	}
+}
+
+// lowerTier returns the stricter of two ceilings.
+//
+// An invalid pack ceiling yields the goal's own, which is the pre-pack
+// behaviour: this is reached only by callers holding a zero Definition, and
+// silently widening to "no ceiling" would be the worst possible reading of an
+// absent limit.
+func lowerTier(goalTier, packTier engine.RiskTier) engine.RiskTier {
+	if !packTier.Valid() {
+		return goalTier
+	}
+	if packTier.AtLeast(goalTier) {
+		return goalTier
+	}
+	return packTier
 }

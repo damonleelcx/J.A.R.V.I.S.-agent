@@ -41,6 +41,8 @@ Goals:
       --autonomy discuss|draft|sandbox_execute|approval_gated   (default sandbox_execute)
       --risk r0|r1|r2|r3|r4                                     (default r1)
       --project <id>      reuse an existing project
+      --industry <name>   domain for the NEW project; "project industry" lists them.
+                          Omitted means "Other": lower autonomy and expert review.
       --start             activate immediately instead of leaving it a draft
   goal replan <id>    Plan a draft goal whose plan never landed. Planning is a model call
                       and can time out; what survives is a draft with no tasks, which cannot
@@ -129,6 +131,10 @@ Project settings:
       [--critique low|normal|high] [--verbosity terse|normal|explanatory]
       With no setting given, prints the project's current character.
       No value disables safety: safety-relevant objections are immutable.
+  project industry --project <id> [--set <industry>]
+                                       The domain whose rules apply, and the ceiling on work here
+      With no --set, prints the industry in force, its ceiling, and what would raise it.
+      An industry is chosen when the project is created (goal new --industry).
 
 Collaboration:
   rooms show <room-id>                         A session's transcript, every turn attributed
@@ -397,14 +403,16 @@ func run(ctx context.Context, cmd string, args []string) error {
 		if len(args) == 0 {
 			fmt.Fprint(os.Stderr, usage)
 			return errs.New("forgectl.run", errs.CodeValidationFailed).
-				WithDetail("project needs a subcommand: character")
+				WithDetail("project needs a subcommand: character, industry")
 		}
 		switch args[0] {
 		case "character":
 			return cmdProjectCharacter(ctx, cfg, log, args[1:])
+		case "industry":
+			return cmdProjectIndustry(ctx, cfg, log, args[1:])
 		default:
 			return errs.New("forgectl.run", errs.CodeValidationFailed).
-				WithDetail("unknown project subcommand %q; expected character", args[0])
+				WithDetail("unknown project subcommand %q; expected character or industry", args[0])
 		}
 
 	case "rooms":

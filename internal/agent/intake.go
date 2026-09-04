@@ -2,8 +2,10 @@ package agent
 
 import (
 	"context"
+	"strings"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/engine"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/pack"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/workspace"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/llm"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/persona"
@@ -80,6 +82,16 @@ type DraftRequest struct {
 	// ProjectID is an existing project, or empty to create one named after the
 	// goal.
 	ProjectID string
+	// Industry is the domain the new project works in — either the label the
+	// product's selector shows ("Civil engineering") or the pack id ("civil").
+	//
+	// Empty means UNSTATED, which resolves to the `general` pack rather than to a
+	// guess. See Draft for why nothing here tries to infer it.
+	//
+	// Meaningless together with ProjectID, and refused rather than ignored: the
+	// industry belongs to the project, so passing one alongside an existing
+	// project is a caller who believes they are setting something.
+	Industry  string
 	Title     string
 	Statement string
 	Autonomy  engine.Autonomy
@@ -121,6 +133,44 @@ func (in *Intake) Draft(ctx context.Context, pool *db.Pool, req DraftRequest) (*
 			WithDetail("risk tier %q is not recognised", req.RiskTier)
 	}
 
+	// The industry is a property of the PROJECT, so asking for one while naming an
+	// existing project is a caller who thinks they are setting something. Refused
+	// rather than dropped: EnsureProject returns early on a known project id, so
+	// the value would otherwise vanish without a word.
+	if req.ProjectID != "" && strings.TrimSpace(req.Industry) != "" {
+		return nil, errs.New(op, errs.CodeValidationFailed).
+			WithDetail("an industry cannot be set while adding a goal to the existing project %s — "+
+				"the industry belongs to the project, and changing it would change the rules "+
+				"under which its earlier work was done.\n"+
+				"Change it deliberately with `forgectl project industry --project %s --set <industry>`, "+
+				"or omit --industry to add this goal to the project as it is.",
+				req.ProjectID, req.ProjectID)
+	}
+
+	// # Why an unstated industry is `general` and NOT a guess (2026-09-04)
+	//
+	// This used to pass the constant "software", which was wrong for most of what
+	// this product is used for: a bracket goal was filed under a pack whose rules
+	// are about merging code. The obvious replacement is to infer the domain from
+	// the title and statement — and it is not done here, for two reasons.
+	//
+	// Draft calls no model. That is a stated property a few lines up and the
+	// workbench depends on it: the goal id has to exist before the minutes of
+	// planning start, so somebody who closes the tab still has something to
+	// return to. An inference step would put a model call in front of the one
+	// operation that is currently free.
+	//
+	// And `general` is not a fallback invented to fill the hole — it is the pack
+	// whose entire definition is this situation: "unknown domain or missing
+	// standards: autonomy is lower and expert review is triggered". A guessed
+	// industry that lands wrong files work under rules nobody chose while looking
+	// exactly like a stated one. Saying "unknown" is the honest answer and it is
+	// already a first-class one.
+	industry := strings.TrimSpace(req.Industry)
+	if industry == "" && req.ProjectID == "" {
+		industry = string(pack.General)
+	}
+
 	now := in.clock.Now()
 	// One producer of projects, not two. The workbench also needs "a project to
 	// put this in, making one if there is not one" when it keeps a geometry
@@ -128,7 +178,7 @@ func (in *Intake) Draft(ctx context.Context, pool *db.Pool, req DraftRequest) (*
 	// that one on the part that is easiest to forget — the membership row,
 	// without which the person who just created a project cannot see it.
 	projectID, err := workspace.NewService(pool, in.clock, nil).
-		EnsureProject(ctx, pool, req.ProjectID, req.OwnerID, req.Title, "software")
+		EnsureProject(ctx, pool, req.ProjectID, req.OwnerID, req.Title, industry)
 	if err != nil {
 		return nil, err
 	}

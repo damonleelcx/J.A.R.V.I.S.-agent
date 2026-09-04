@@ -51,7 +51,8 @@ func NewConverseHandlers(d Deps) *ConverseHandlers {
 	return &ConverseHandlers{
 		deps: d,
 		conv: agent.NewConversation(d.LLM, persona.DefaultCharacter()).
-			WithCharacters(agent.NewCharacterStore(d.Pool, d.Log)),
+			WithCharacters(agent.NewCharacterStore(d.Pool, d.Log)).
+			WithDomains(agent.NewDomainStore(d.Pool, d.Log)),
 		geo:       geometry.NewService(d.Pool, d.Clock, d.Log),
 		workspace: workspace.NewService(d.Pool, d.Clock, d.Log),
 		talk:      conversation.NewService(d.Pool, d.Clock, d.Log),

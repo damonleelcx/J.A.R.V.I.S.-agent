@@ -592,23 +592,39 @@ func (s *Service) EnsureProject(ctx context.Context, q db.Querier, projectID, ow
 		return "", errs.New(op, errs.CodeValidationFailed).
 			WithDetail("%q is not a domain pack this build knows. A pack nothing recognises selects no "+
 				"rules while looking like it selected some. Available here: %s",
-				pack, strings.Join(domainpack.AvailableNames(), ", "))
+				pack, strings.Join(domainpack.Names(), ", "))
 	}
-	if !def.Available {
+	if !def.Available() {
 		// Refused rather than gated, and deliberately not switchable by
 		// configuration — see internal/domain/pack. An environment variable that
 		// turned on patient-specific clinical use would make a regulated boundary
 		// something an operator crosses by editing a file.
+		//
+		// Only medical and robotics reach here. Every other pack is workable up to
+		// a CEILING rather than refused at the door: refusing the whole domain
+		// because its R3 release step cannot be gated also refused the R1 concept
+		// work, which is the work this product is for. The ceiling is enforced per
+		// action in agent.grantFor, not here — creating a project is not the act
+		// the boundary is about.
 		return "", errs.New(op, errs.CodeForbidden).
 			WithDetail("this build is not validated for the %q pack, so a project cannot be created in "+
 				"it.\n\n%s\n\nIt would require %s.\n\nAvailable here: %s",
-				def.Pack, def.Summary, def.Requires, strings.Join(domainpack.AvailableNames(), ", "))
+				def.Pack, def.Summary, def.Requires, strings.Join(domainpack.Names(), ", "))
 	}
 	now := s.clock.Now()
 	newID := id.New(id.PrefixProject)
+	// The CANONICAL pack id is stored, never the string the caller passed.
+	//
+	// Lookup accepts "Mechanical engineering" (what the industry selector shows),
+	// "SOFTWARE" and "product_design", because refusing a person the name the
+	// product itself displayed would be absurd. Persisting those forms would not
+	// be: `pack` has no check constraint (0003_workspace.sql), so the column would
+	// accumulate one domain under several spellings and every future reader would
+	// need to know all of them. The rules are looked up by id, so the id is what
+	// the row records.
 	if _, err := q.Exec(ctx,
 		`insert into forge_projects (id, owner_id, name, pack, created_at, updated_at)
-		 values ($1,$2,$3,$4,$5,$5)`, newID, ownerID, name, pack, now); err != nil {
+		 values ($1,$2,$3,$4,$5,$5)`, newID, ownerID, name, string(def.Pack), now); err != nil {
 		return "", errs.Wrap(op, errs.CodeDatabaseUnavail, err)
 	}
 	// The creator becomes the project's owner in the MEMBERSHIP table, which is
@@ -651,6 +667,49 @@ type Change struct {
 	// Ids are treated as untrusted: only those that turn out to be nodes of THIS
 	// project are linked. See deriveFromIn.
 	DerivedFrom []string
+}
+
+// PackFor returns the rule set in force on a project.
+//
+// # Why this exists (2026-09-04)
+//
+// `forge_projects.pack` was written by EnsureProject and then read by NOTHING.
+// A project recorded which domain's rules applied and no rule anywhere consulted
+// it, which is the same as having no column with extra steps — worse, because
+// the record asserted a rule set was in force.
+//
+// This is the read side. Its first consumer is the per-action ceiling in
+// agent.grantFor: a pack limits how far work may go inside it, and a limit
+// nothing reads is a limit that does not exist.
+//
+// # Why an unrecognised pack is an ERROR and not a default
+//
+// Returning `general` for a value this build does not know would be the original
+// defect wearing a different hat: work would proceed under rules nobody chose,
+// and the project would look exactly like one whose domain was decided. The
+// caller is told what the row says, that nothing is in force, and how to fix it.
+//
+// EnsureProject makes this unreachable for anything it created — the set is
+// closed and the canonical id is what gets stored — so reaching it means a row
+// predates that gate or something wrote the column directly.
+func (s *Service) PackFor(ctx context.Context, q db.Querier, projectID string) (domainpack.Definition, error) {
+	const op = "workspace.Service.PackFor"
+
+	var stored string
+	if err := q.QueryRow(ctx,
+		`select pack from forge_projects where id = $1`, projectID).Scan(&stored); err != nil {
+		return domainpack.Definition{}, errs.Wrap(op, errs.CodeNotFound, err).
+			WithDetail("no project %s, so the rules in force on it cannot be read", projectID)
+	}
+	def, known := domainpack.Lookup(stored)
+	if !known {
+		return domainpack.Definition{}, errs.New(op, errs.CodeInvariantViolated).
+			WithDetail("project %s declares the domain %q, which this build does not recognise, "+
+				"so NO pack rules are in force on it.\n"+
+				"Set one with: forgectl project industry --project %s --set <industry>\n"+
+				"Industries: %s", projectID, stored, projectID, strings.Join(domainpack.Names(), ", "))
+	}
+	return def, nil
 }
 
 // RecordChange appends a version and, when the change belongs to a goal, writes
