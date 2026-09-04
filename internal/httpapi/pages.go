@@ -478,6 +478,10 @@ const pageTemplates = `
       </label>
     </div>
 
+    <!-- Assembly states (PRD VIS-02). Hidden until an assembly has any: an
+         empty picker implies configurations somebody chose not to make. -->
+    <div class="states hidden" id="states"></div>
+
     <div class="sliders">
       <label for="explode">Exploded view</label>
       <input type="range" id="explode" min="0" max="1" step="0.01" value="0">

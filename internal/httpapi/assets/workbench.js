@@ -29,6 +29,7 @@
     history: [],
     prototype: null,
     measured: [],
+    states: [],
     selectedPart: null,
     speak: true,
     lastLatency: null,
@@ -609,9 +610,46 @@
      * dimension somebody took off a drawing never looks like one FORGE worked
      * out from its own guess. */
     studio.setOverlays(proto.overlays || [], state.measured);
+    renderStates(proto.states || []);
     setPlace(true);
     renderParts();
     renderProvenance();
+  }
+
+  /* PRD VIS-02. The picker only appears when the assembly HAS states: an empty
+   * dropdown reading "as modelled" implies somebody could have made more and
+   * did not, which is a different claim from "this assembly has one
+   * configuration". */
+  function renderStates(states) {
+    var el = $('states');
+    if (!el) return;
+    state.states = states;
+    if (!states.length) {
+      el.classList.add('hidden');
+      el.innerHTML = '';
+      studio.setState(null);
+      return;
+    }
+    var opts = ['<option value="">as modelled</option>'];
+    states.forEach(function (st, i) {
+      opts.push('<option value="' + i + '">' + esc(st.name) + '</option>');
+    });
+    el.innerHTML = '<label for="statepick">Assembly state</label>' +
+      '<select id="statepick">' + opts.join('') + '</select>' +
+      '<p class="statenote" id="statenote"></p>';
+    el.classList.remove('hidden');
+    studio.setState(null);
+    $('statepick').addEventListener('change', function (e) {
+      var st = e.target.value === '' ? null : state.states[parseInt(e.target.value, 10)];
+      studio.setState(st);
+      /* What the state claims, said next to the control that applies it. A
+       * position FORGE proposed is a guess at how the thing comes apart, and
+       * nothing here checked that it can. */
+      $('statenote').textContent = st
+        ? (st.note ? st.note + ' — ' : '') + 'positions are ' + (st.how || 'proposed') +
+          '; no interference or clearance check exists here'
+        : '';
+    });
   }
 
   function renderParts() {
@@ -626,6 +664,11 @@
         '<span class="nm">' + esc(p.name || p.id) +
         '<div class="dim">' + esc(p.shape) + dimensionsOf(p) + '</div>' +
         (p.note ? '<div class="dim">' + esc(p.note) + '</div>' : '') +
+        /* PRD VIS-02. The material is a claim about what the part IS — cost,
+         * weight, whether it can be welded all follow from it — so it is shown
+         * with how FORGE came to it, never as a bare noun. */
+        (p.material ? '<div class="dim mat">' + esc(p.material.name) +
+          ' <i>' + esc(p.material.how || 'assumed') + '</i></div>' : '') +
         '</span></div>';
     }).join('');
 

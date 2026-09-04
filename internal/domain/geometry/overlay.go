@@ -71,6 +71,14 @@ const (
 	Dimension OverlayKind = "dimension"
 	// Datum is a labelled reference feature that dimensions are taken from.
 	Datum OverlayKind = "datum"
+	// Note is an annotation pinned to a point on the model (PRD VIS-02).
+	//
+	// A kind here rather than a mechanism of its own. An annotation is anchored
+	// text with a provenance, which is what this file already draws — and
+	// routing it through the same table means a note FORGE wrote carries the
+	// same label as a dimension FORGE guessed, instead of arriving as unmarked
+	// prose floating over a render.
+	Note OverlayKind = "note"
 )
 
 // Overlay is one engineering annotation drawn over the model.
@@ -119,6 +127,7 @@ var overlayKinds = []struct {
 }{
 	{Dimension, true, true, "a measured distance between two points on the model"},
 	{Datum, false, false, "a labelled reference feature that dimensions are taken from"},
+	{Note, false, false, "a comment pinned to a point on the model"},
 }
 
 func (k OverlayKind) def() (bool, bool, string, bool) {

@@ -48,6 +48,10 @@ type Document struct {
 	// somebody stated and a value FORGE worked out are different claims and must
 	// not become indistinguishable by sharing a field.
 	Overlays []Overlay `json:"overlays,omitempty"`
+	// States are named configurations of this assembly (PRD VIS-02): which parts
+	// are shown, and where they sit. A state that moves anything is a claim
+	// about how the thing comes apart, and nothing here checks it.
+	States []AssemblyState `json:"states,omitempty"`
 }
 
 // Part is one solid.
@@ -61,6 +65,12 @@ type Part struct {
 	Color    string             `json:"color"`
 	Opacity  float64            `json:"opacity"`
 	Note     string             `json:"note"`
+	// Material is what this part is made of (PRD VIS-02). Optional, and a claim
+	// when present: naming a material is a statement everything downstream
+	// depends on, so it carries how it was arrived at. Nil means nobody said,
+	// which is different from "unspecified material" and is left as nothing
+	// rather than filled in.
+	Material *Material `json:"material,omitempty"`
 }
 
 // Label returns the part's human name, falling back to its id.

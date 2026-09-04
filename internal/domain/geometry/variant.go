@@ -233,5 +233,32 @@ func (n *NewVariant) Validate() error {
 	if err := ValidateOverlays(n.Document.Overlays); err != nil {
 		return err
 	}
+	// PRD VIS-02. Same door, same reason.
+	for i := range n.Document.Parts {
+		if m := n.Document.Parts[i].Material; m != nil {
+			if err := m.Validate(); err != nil {
+				return err
+			}
+		}
+	}
+	if err := ValidateStates(n.Document.States, n.Document.Parts); err != nil {
+		return err
+	}
+	// A state that moves parts claims they can move that way, and nothing here
+	// checked it. Added rather than required of the caller: every path that
+	// stores geometry has to carry this, and one that forgot would produce
+	// exactly the render VIS-06 exists to prevent.
+	if note := StatesNotVerified(n.Document.States); note != "" && !hasNote(n.Document.NotVerified, note) {
+		n.Document.NotVerified = append(n.Document.NotVerified, note)
+	}
 	return nil
+}
+
+func hasNote(list []string, note string) bool {
+	for _, n := range list {
+		if n == note {
+			return true
+		}
+	}
+	return false
 }

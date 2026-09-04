@@ -323,6 +323,8 @@
     'uniform int uSectionAxis;',   // 0 none, 1 x, 2 y, 3 z
     'uniform float uSectionAt;',
     'uniform float uHighlight;',
+    'uniform float uSpecPower;',
+    'uniform float uSpecGloss;',
     'void main() {',
     '  if (uSectionAxis == 1 && vWorld.x > uSectionAt) discard;',
     '  if (uSectionAxis == 2 && vWorld.y > uSectionAt) discard;',
@@ -332,7 +334,7 @@
     '  float diff = max(dot(N, L), 0.0);',
     '  vec3 V = normalize(uCamPos - vWorld);',
     '  vec3 H = normalize(L + V);',
-    '  float spec = pow(max(dot(N, H), 0.0), 28.0) * 0.32;',
+    '  float spec = pow(max(dot(N, H), 0.0), uSpecPower) * uSpecGloss;',
     // A little rim light so silhouettes read against a dark background — the
     // difference between "a shape" and "a mass" at a glance.
     '  float rim = pow(1.0 - max(dot(N, V), 0.0), 2.5) * 0.30;',
@@ -414,6 +416,7 @@
     this.section = { axis: 0, at: 0 };
     this.overlays = [];
     this.showOverlays = false;
+    this.state = null;
     /* The layer DOM labels are placed into, when the host gives us one. Without
      * it the lines still draw and the numbers do not — which is the safe half to
      * lose, since a line with no number claims nothing. */
@@ -663,7 +666,9 @@
       cam: gl.getUniformLocation(P, 'uCamPos'),
       secAxis: gl.getUniformLocation(P, 'uSectionAxis'),
       secAt: gl.getUniformLocation(P, 'uSectionAt'),
-      highlight: gl.getUniformLocation(P, 'uHighlight')
+      highlight: gl.getUniformLocation(P, 'uHighlight'),
+      specPower: gl.getUniformLocation(P, 'uSpecPower'),
+      specGloss: gl.getUniformLocation(P, 'uSpecGloss')
     };
     gl.uniformMatrix4fv(loc.view, false, view);
     gl.uniformMatrix4fv(loc.proj, false, proj);
@@ -696,6 +701,14 @@
         pos = add(pos, scale3(normalize(dir), self.explode * self.bounds.span * 0.6));
       }
 
+      /* PRD VIS-02. The active assembly state moves parts and hides them. It is
+       * applied here rather than baked into the loaded geometry so that
+       * switching states costs a redraw instead of a rebuild, and so the
+       * document on screen stays the document that was stored. */
+      var st = self._stateFor(s.id);
+      if (st.hidden) return;
+      if (st.offset) pos = add(pos, st.offset);
+
       var model = multiply(translation(pos),
                     multiply(rotationXYZ(s.rotation || [0,0,0]),
                              scaling(s.scale || [1,1,1])));
@@ -704,6 +717,12 @@
       gl.uniform3fv(loc.color, hexToRGB(s.color || '#b8bcc4'));
       gl.uniform1f(loc.opacity, num(s.opacity, 1) * self.transparency);
       gl.uniform1f(loc.highlight, self.selected === s.id ? 1 : 0);
+      /* The finish, as the document declared it. Not looked up from the material
+       * NAME: that table would have to exist here and in Go, and this codebase
+       * has already recorded what two copies of one rule cost. */
+      var sh = shadingFor(s.material);
+      gl.uniform1f(loc.specPower, sh[0]);
+      gl.uniform1f(loc.specGloss, sh[1]);
 
       gl.bindBuffer(gl.ARRAY_BUFFER, part.buffers.position);
       gl.enableVertexAttribArray(loc.pos);
@@ -767,6 +786,47 @@
     gl.enableVertexAttribArray(pos);
     gl.vertexAttribPointer(pos, 3, gl.FLOAT, false, 0, 0);
     gl.drawArrays(gl.LINES, 0, this._gridCount);
+  };
+
+  /* What each finish looks like (PRD VIS-02).
+   *
+   * The renderer owns this and the server does not. Go holds the closed set of
+   * finish NAMES, because it validates them and describes them to the model;
+   * these two numbers are the specular exponent and its strength, which nothing
+   * outside this file has any use for. Splitting the table by who needs it is
+   * what stops the two halves drifting — neither side holds the other's.
+   *
+   * An unknown finish falls back rather than failing: the material's NAME is the
+   * claim, and losing the look is a much smaller harm than losing the part. */
+  var FINISHES = {
+    metal:      [42, 0.55],
+    painted:    [26, 0.30],
+    plastic:    [18, 0.22],
+    glass:      [60, 0.70],
+    rubber:     [6,  0.05],
+    unfinished: [20, 0.18]
+  };
+
+  function shadingFor(material) {
+    var f = material && material.finish;
+    return FINISHES[f] || FINISHES.unfinished;
+  }
+
+  /* _stateFor resolves what the active assembly state does to one part. */
+  Studio.prototype._stateFor = function (id) {
+    var st = this.state;
+    if (!st) return {};
+    if (st.hidden && st.hidden.indexOf(id) >= 0) return { hidden: true };
+    var off = st.offsets && st.offsets[id];
+    return off && off.length === 3 ? { offset: off } : {};
+  };
+
+  /* setState selects a named assembly state, or null for the assembly as
+   * modelled. Redraws rather than reloads: switching states must not rebuild
+   * geometry, and the document on screen stays the document that was stored. */
+  Studio.prototype.setState = function (state) {
+    this.state = state || null;
+    this.draw();
   };
 
   /* fromOutside reports whether an overlay's value came from beyond FORGE.
@@ -838,7 +898,9 @@
 
     var stated = [], derived = [];
     this.overlays.forEach(function (o) {
-      var segs = o.kind === 'datum' ? datumSegments(o, tick) : overlaySegments(o, tick);
+      /* Anything that is not a span gets the anchor cross: a datum marks where
+       * measurements are taken from, a note marks what it is about. */
+      var segs = o.kind === 'dimension' ? overlaySegments(o, tick) : datumSegments(o, tick);
       (fromOutside(o) ? stated : derived).push.apply(fromOutside(o) ? stated : derived, segs);
     });
 
@@ -900,7 +962,7 @@
     var html = [];
 
     this.overlays.forEach(function (o) {
-      var anchor = o.kind === 'datum'
+      var anchor = o.kind !== 'dimension'
         ? o.from
         : (o.from && o.to ? [(o.from[0]+o.to[0])/2, (o.from[1]+o.to[1])/2, (o.from[2]+o.to[2])/2] : null);
       if (!anchor || anchor.length !== 3) return;
@@ -912,9 +974,14 @@
        * put here — its name is already in the label. Repeating it produced
        * "A A", which reads as a second mark rather than as one. */
       var text = '';
-      if (o.kind !== 'datum') {
+      if (o.kind === 'dimension') {
         text = esc(String(o.value)) + ' ' + esc(o.unit || '');
         if (o.tolerance) text += ' <b>' + esc(o.tolerance) + '</b>';
+      } else if (o.kind === 'note') {
+        /* An annotation IS its text. The label names what it is about and the
+         * note says the thing, which is the opposite way round from a
+         * dimension, where the number is the point. */
+        text = esc(o.note || '');
       }
       /* The chip is not decoration and is not optional. VIS-03's whole clause is
        * "without confusing appearance with validated data" — a mark floating

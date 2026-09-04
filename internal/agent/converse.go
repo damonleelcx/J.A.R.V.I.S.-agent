@@ -26,7 +26,12 @@ import (
 //     proposal, and saying so is not hedging — PRD VIS-06 makes it a hard
 //     requirement, because photorealism convinces people of things nobody
 //     checked.
-const converseFraming = `You are in CONVERSATION at the workbench. The person is talking to you, probably
+//
+// A var rather than a const because the finish list is spliced in from
+// geometry.FinishGuide(). Repeating those names here would put the closed set in
+// two places, and the copy in a prompt is the one that silently goes stale — the
+// model would keep offering a finish the viewer stopped drawing.
+var converseFraming = `You are in CONVERSATION at the workbench. The person is talking to you, probably
 by voice, while looking at a 3D viewport and a workspace panel beside it.
 
 How to answer:
@@ -58,7 +63,19 @@ Reply with JSON only:
         "rotation": [0,0,0],
         "color": "#b8bcc4",
         "opacity": 1.0,
-        "note": "what this part is for"
+        "note": "what this part is for",
+        "material": null or {"name": "aluminium 6061-T6", "finish": "metal",
+                             "how": "observed|retrieved|inferred|assumed", "source": ""}
+      }
+    ],
+    "states": [
+      {
+        "id": "stable-kebab-id",
+        "name": "what this configuration is",
+        "hidden": ["part-ids not shown in this state"],
+        "offsets": {"part-id": [0, 10, 0]},
+        "how": "proposed",
+        "note": "what this state is for"
       }
     ],
     "assumptions": ["anything you chose that they did not specify"],
@@ -104,7 +121,21 @@ About "prototype":
   the figure is from memory, and prefer not to quote a number at all unless it
   changes what you would build. A wrong figure attached to a real standard is
   more dangerous than no figure, because it is specific enough to be acted on.
-- "overlays" are engineering marks on the model: dimensions and datums. Leave it
+- "material" is a CLAIM about what a part is made of, not a rendering hint.
+  Cost, weight, whether it can be welded and whether it survives the load all
+  follow from it. If they told you, label it "observed" and quote them; if you
+  chose it because a bracket is usually aluminium, label it "assumed" — that is
+  a real answer and it is shown as one. "finish" is only how it catches light:
+  ` + geometry.FinishGuide() + `.
+- "states" are named configurations: which parts are shown, and where they sit.
+  A state with "offsets" says these pieces separate along this path, and
+  NOTHING here checks that they can — there is no interference, clearance or
+  kinematic test in this deployment. Offer states when somebody is asking how a
+  thing goes together or comes apart; do not add an "exploded" state, the
+  viewer already has a slider for that.
+- "overlays" are engineering marks on the model: dimensions, datums and notes.
+  A note is a comment pinned to a point — use it for something about ONE
+  feature, not for the general remarks that belong in your reply. Leave it
   out unless somebody GAVE you a figure to mark. You do not need to dimension the
   overall size — FORGE measures the model's own extents itself and draws them,
   labelled as its own arithmetic, so repeating them here adds nothing.
@@ -337,6 +368,30 @@ func (r *Reply) validate() error {
 			kept, dropped := geometry.DrawableOverlays(r.Prototype.Overlays)
 			r.Prototype.Overlays = kept
 			r.Prototype.NotVerified = append(r.Prototype.NotVerified, dropped...)
+		}
+		// PRD VIS-02. Materials and states arrive from the model like everything
+		// else here. A material with an unusable finish keeps its NAME and loses
+		// its look — the name is the claim — and a state referring to a part
+		// that does not exist is dropped, because the viewer would show the
+		// assembly unchanged and a reader would take that for the state making
+		// no difference.
+		for i := range r.Prototype.Parts {
+			if m := r.Prototype.Parts[i].Material; m != nil {
+				if err := m.Validate(); err != nil {
+					r.Prototype.Parts[i].Material = nil
+					r.Prototype.NotVerified = append(r.Prototype.NotVerified,
+						"A material FORGE named could not be read and was dropped: "+err.Error())
+				}
+			}
+		}
+		if err := geometry.ValidateStates(r.Prototype.States, r.Prototype.Parts); err != nil {
+			r.Prototype.States = nil
+			r.Prototype.NotVerified = append(r.Prototype.NotVerified,
+				"The assembly states FORGE proposed referred to parts that are not in this "+
+					"assembly, so none of them is shown. "+err.Error())
+		}
+		if note := geometry.StatesNotVerified(r.Prototype.States); note != "" {
+			r.Prototype.NotVerified = append(r.Prototype.NotVerified, note)
 		}
 		// PRD VIS-06 as an invariant rather than an instruction: geometry
 		// without a statement of what it does not establish is exactly the

@@ -828,7 +828,13 @@
   overflow: hidden;
 }
 
-.dim {
+/* Every selector below is scoped to the layer. `.dim` is already the parts
+ * panel's class for a part's dimensions (see .part .dim above), and a bare
+ * rule here absolutely-positioned every one of them — the panel collapsed into
+ * a pile the moment overlays shipped. Specificity did not save it: .part .dim
+ * overrides colour and size and says nothing about position or border, so the
+ * properties it does not mention still applied. */
+.dimlayer .dim {
   position: absolute;
   transform: translate(-50%, -50%);
   display: flex;
@@ -850,27 +856,27 @@
 
 /* Stated: it came from outside FORGE, so it is drawn the way a real dimension
  * is — solid, brighter, and carrying the word for where it came from. */
-.dim-stated {
+.dimlayer .dim-stated {
   border-style: solid;
   border-color: #4d7f93;
   color: #d6e6ee;
   background: rgba(10, 22, 30, 0.9);
 }
 
-.dim-label {
+.dimlayer .dim-label {
   font-size: 10.5px;
   letter-spacing: .04em;
   text-transform: uppercase;
   opacity: .72;
 }
 
-.dim-value { font-variant-numeric: tabular-nums; }
-.dim-value b { font-weight: 600; }
+.dimlayer .dim-value { font-variant-numeric: tabular-nums; }
+.dimlayer .dim-value b { font-weight: 600; }
 
 /* The provenance chip. Not decoration: VIS-03 is "overlays WITHOUT confusing
  * appearance with validated data", and a number floating over a render with no
  * statement of where it came from is that confusion exactly. */
-.dim-src, .dim-model {
+.dimlayer .dim-src, .dimlayer .dim-model {
   font-style: normal;
   font-size: 9.5px;
   letter-spacing: .05em;
@@ -878,5 +884,60 @@
   padding: 1px 5px;
   border-radius: 3px;
 }
-.dim-src   { background: #17414f; color: #86d3e8; }
-.dim-model { background: #232a37; color: #8894a8; }
+.dimlayer .dim-src   { background: #17414f; color: #86d3e8; }
+.dimlayer .dim-model { background: #232a37; color: #8894a8; }
+
+/* Assembly states (PRD VIS-02). Sits under the view buttons, above the
+ * sliders — it changes WHAT is shown, where the sliders change how. */
+.states {
+  position: absolute;
+  top: 52px;
+  left: 14px;
+  z-index: 3;
+  width: 210px;
+  padding: 10px 12px;
+  border-radius: 9px;
+  background: rgba(12, 17, 27, 0.9);
+  border: 1px solid var(--edge-solid);
+}
+
+.states label {
+  display: block;
+  font-size: 10.5px;
+  letter-spacing: .06em;
+  text-transform: uppercase;
+  color: var(--ink-dim);
+  margin-bottom: 5px;
+}
+
+.states select {
+  width: 100%;
+  background: #0f131b;
+  color: var(--ink);
+  border: 1px solid var(--edge-solid);
+  border-radius: 6px;
+  padding: 4px;
+}
+
+/* What the state claims, next to the control that applies it. */
+.statenote {
+  margin: 7px 0 0;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--ink-dim);
+}
+
+/* The material line in the parts panel. Its provenance is set apart rather than
+ * run into the name, so "aluminium 6061" and "FORGE guessed" cannot be read as
+ * one phrase. */
+.part .dim.mat i {
+  font-style: normal;
+  font-size: 9.5px;
+  letter-spacing: .05em;
+  text-transform: uppercase;
+  padding: 1px 4px;
+  margin-left: 4px;
+  border-radius: 3px;
+  background: #232a37;
+  color: #8894a8;
+}
