@@ -17,11 +17,11 @@ package llm
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"strings"
 	"time"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/errs"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/text"
 )
 
 // Role names what a request is for.
@@ -268,9 +268,19 @@ type Client interface {
 	ModelFor(role Role) string
 }
 
-func truncate(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + fmt.Sprintf("… (%d bytes)", len(s))
-}
+// truncate shortens a provider's response before it is quoted into an error.
+//
+// # Two things changed here, and the second is deliberate
+//
+// It cut at n BYTES, landing inside a character for any body that is not ASCII —
+// and a provider's error message is exactly the kind of text that is not. These
+// strings end up in errs.Error details, which are marshalled into an HTTP
+// response, so a broken sequence becomes a replacement character in an answer an
+// operator is reading to work out what went wrong.
+//
+// The notice also changes unit: it said "(N bytes)" and now reports characters,
+// because that is what the limit counts and one number describing the other was
+// the confusion in the first place. A body that is not valid UTF-8 at all — a
+// binary payload on a JSON path — is unharmed: each invalid byte counts as one
+// and nothing new is broken.
+func truncate(s string, n int) string { return text.Clip(s, n) }

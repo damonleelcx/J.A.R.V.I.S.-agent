@@ -13,6 +13,7 @@ import (
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/engine"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/errs"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/text"
 )
 
 // maxReadBytes bounds what a single read returns.
@@ -610,9 +611,15 @@ func slicesContains(hay []string, needle string) bool {
 	return false
 }
 
-func truncateStr(s string, n int) string {
-	if len(s) <= n {
-		return s
-	}
-	return s[:n] + "…"
-}
+// truncateStr shortens output that is being quoted back into an error.
+//
+// Through text.Clip because it used to cut at n BYTES, which for output in any
+// script that is not ASCII lands inside a character. This particular string is
+// handed to the MODEL as the partial output of a command that timed out, and a
+// replacement character where a value used to be is a value the model will read
+// as something else.
+//
+// Distinct from limitedWriter below, whose budget is genuinely in bytes: that
+// one is bounding memory while output streams in, this one is quoting a string
+// that already exists.
+func truncateStr(s string, n int) string { return text.Clip(s, n) }

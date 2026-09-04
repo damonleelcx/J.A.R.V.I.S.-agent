@@ -2058,20 +2058,52 @@ Three of the five mutations did not compile on the first attempt, which is a red
 test that proves nothing — an unused import each time. Rewritten to compile, they
 failed with the sentences the fences exist to catch.
 
-### The same defect elsewhere, found and NOT fixed here
+### The same defect elsewhere, surveyed here and fixed in 9.14
 
-A survey of every byte-slice truncation in the tree. These three are the same
-bug and are left for a decision rather than swept up with this one:
-
-| where | what it truncates | why it matters |
-|---|---|---|
-| `agent/untrusted.go` `excerpt` | untrusted content, into the log and the timeline | SEC-04's record of a suspected injection can end mid-character |
-| `tools/workspace.go` `truncateStr` | command and file output shown to the model | the model reads a replacement character where a value was |
-| `llm/llm.go` `truncate` | provider error snippets | least harmful — it at least says "bytes" |
+A survey of every byte-slice truncation in the tree found three more of the same
+bug — `agent/untrusted.go` `excerpt`, `tools/workspace.go` `truncateStr` and
+`llm/llm.go` `truncate`. They were raised rather than swept up with this one, and
+then asked for; see wave 9.14.
 
 Two more looked like the same thing and are **correct**: `identity/service.go`
 slices a `[]rune`, and `geometry/repository.go` slices a slug that
 `strings.Map` has already reduced to `[a-z0-9-]`.
+
+---
+
+## Wave 9.14 — the other three cuts · **DONE**
+
+The three byte-slice truncations surveyed in 9.13, all now `text.Clip`.
+
+| where | what it truncates | what a broken cut costs |
+|---|---|---|
+| `agent/untrusted.go` `excerpt` | suspected injection content, into the log and the timeline | SEC-04's record of an attack ends in a character the document never contained, so it cannot be searched for, quoted, or matched back |
+| `tools/workspace.go` `truncateStr` | a timed-out command's partial output, quoted **to the model** | a replacement character where a value used to be is a value the model reads as something else |
+| `llm/llm.go` `truncate` | a provider's response, quoted into an `errs.Error` detail | that detail is marshalled into an HTTP response, so the operator reading it to diagnose a failure sees a symbol the provider never sent |
+
+### One deliberate change of unit
+
+`llm.truncate` reported `(N bytes)`, which was at least honest about what it
+counted. It reports characters now, because that is what the limit counts and one
+number describing the other is what caused this whole thread. A body that is not
+valid UTF-8 at all — a binary payload on a JSON path, which `transcribe.go` can
+genuinely meet — is unharmed: each invalid byte counts as one and nothing new is
+broken. Fenced.
+
+### Not changed: `limitedWriter`
+
+It also cuts on a byte boundary, and its budget is genuinely in bytes — it is
+bounding MEMORY while a command's output streams in, and its notice honestly says
+"kept N bytes, dropped at least N more". The right fix there is different in kind
+(drop a trailing partial rune when the buffer is finally read, not change the
+budget's unit), so it is left alone and named here rather than folded into a
+change about character limits.
+
+### Three fences, each confirmed red under a mutation
+
+Each helper is package-private, so each package holds its own: put the byte slice
+back and the excerpt, the quoted output and the quoted response each fail with
+what that particular string costs when it breaks.
 
 ---
 

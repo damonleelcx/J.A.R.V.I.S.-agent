@@ -5,6 +5,8 @@ import (
 	"regexp"
 	"sort"
 	"strings"
+
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/text"
 )
 
 // Prompt-injection defence (PRD SEC-04).
@@ -207,11 +209,19 @@ func Summarise(findings []Finding) string {
 	return strings.Join(names, "; ")
 }
 
+// excerpt is the fragment of suspected content a Finding carries.
+//
+// # Why it goes through text.Clip
+//
+// It used to cut at 160 BYTES, which for anything that is not ASCII lands inside
+// a character — and this string travels into the log and onto the timeline as
+// the record of a suspected injection (PRD SEC-04). A record of an attack that
+// ends in a replacement character is a record somebody cannot search for, quote,
+// or match against the document it came from.
+//
+// The character count comes with it now, which an excerpt of an attack wants:
+// 160 characters of a 40,000-character document is a different situation from
+// 160 characters of 200.
 func excerpt(s string) string {
-	s = strings.Join(strings.Fields(s), " ")
-	const max = 160
-	if len(s) > max {
-		return s[:max] + "…"
-	}
-	return s
+	return text.Clip(strings.Join(strings.Fields(s), " "), 160)
 }
