@@ -688,6 +688,126 @@
 .proposal.live .tier { color: var(--core); }
 .proposal .ttl { margin-top: 6px; font-weight: 650; font-size: 13.5px; line-height: 1.4; }
 .proposal .say { margin-top: 6px; font-size: 12.5px; line-height: 1.55; color: var(--ink-dim); }
+/* The industry a NEW project will be created in (PRD §"Domain packs").
+ *
+ * Every value below is taken from a control that already exists on this page —
+ * the label and select from `.states`, the explanatory line from
+ * `.proposal .foot` — rather than chosen fresh. A second visual vocabulary for
+ * the same kind of control is how a surface stops looking like one product.
+ *
+ * It lives in its own side-panel section rather than on the proposal card: a
+ * project is created by the first KEPT VARIANT, which happens before any work is
+ * proposed, so a control that only appeared with the proposal arrived too late
+ * to decide anything. */
+#industry .industry { margin-top: 2px; }
+/* Air before the next section. `.h` carries no top margin except after another
+ * `.h`, so a section whose last element is a PARAGRAPH runs straight into the
+ * heading below it. Fixed on this section rather than on `.h`, which every
+ * other panel already lays out correctly. */
+#industry { margin-bottom: 14px; }
+#industry .industry select {
+  width: 100%;
+  background: #0f131b;
+  color: var(--ink);
+  border: 1px solid var(--edge-solid);
+  border-radius: 6px;
+  padding: 4px;
+}
+/* The boundary line under the control. Same values as `.proposal .foot`, which
+ * is where this text lived before the picker moved out of the proposal card —
+ * copied rather than re-selected because the two are different sections and a
+ * shared selector would tie their spacing together for no reason. */
+/* The settled domain: a statement rather than a control. Uses `.tier`'s
+ * treatment from the proposal card — small, uppercase, coloured — because it is
+ * the same kind of fact: what this work is being done under. */
+#industry .settled {
+  /* `.proposal .ttl`'s treatment, not `.h`'s. This is the VALUE under the
+   * "Domain" heading — what this project is worked as — and giving it the
+   * heading's uppercase-and-core styling stacked two headings on top of each
+   * other, which reads as a mistake even when the words differ. */
+  font-weight: 650; font-size: 13.5px; line-height: 1.4;
+}
+/* A raised ceiling is marked, because it is the one state where the limit is not
+ * the build's own. Warn rather than core: it rests on a claim nothing verified. */
+#industry .foot.raised {
+  color: var(--warn);
+  border-top: 1px solid var(--edge-solid);
+  padding-top: 8px;
+}
+/* Who is in this project. The row shape follows `.proposal .steps li` — a flex
+ * row with the name taking the slack and the status at the end — because it is
+ * the same kind of list and a second layout for it would be a second thing to
+ * keep looking right. */
+#members { margin-bottom: 14px; }
+.members { margin: 0; padding: 0; list-style: none; }
+.members li {
+  display: flex; gap: 8px; align-items: center;
+  padding: 7px 0; border-top: 1px solid var(--edge-solid);
+  font-size: 12.5px;
+}
+.members li:first-child { border-top: none; }
+.members .who { flex: 1; min-width: 0; }
+.members .addr {
+  color: var(--ink-dim); font-size: 11px; margin-top: 2px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* The caller's own row, marked so somebody can find themselves in a long list
+ * without matching their own name. */
+.members .you {
+  font-size: 10px; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--core); margin-left: 5px;
+}
+.members .role { color: var(--ink-dim); font-size: 11.5px; }
+.members select, .member-add select, .member-add input[type=text] {
+  background: #0f131b;
+  color: var(--ink);
+  border: 1px solid var(--edge-solid);
+  border-radius: 6px;
+  padding: 3px 5px;
+  font: inherit;
+  font-size: 11.5px;
+}
+.member-add {
+  display: flex; gap: 6px; margin-top: 10px; flex-wrap: wrap; align-items: center;
+}
+.member-add input[type=text] { flex: 1; min-width: 130px; padding: 5px 7px; font-size: 12.5px; }
+.member-add input[type=text]:focus, .members select:focus { outline: none; border-color: var(--core-dim); }
+#members .foot {
+  margin-top: 8px; font-size: 11.5px; line-height: 1.55; color: var(--ink-dim);
+}
+
+/* Recording an authority. Inputs borrow `.voice-ctl input[type=text]`'s
+ * treatment and the buttons are the page's own `.btn-sm`, so nothing new is
+ * invented for a form that appears in one place. */
+#industry .authority-act { display: flex; gap: 8px; margin-top: 10px; flex-wrap: wrap; }
+#industry .authority-form { margin-top: 10px; }
+#industry .authority-form label {
+  display: block;
+  font-size: 10.5px; letter-spacing: .06em; text-transform: uppercase;
+  color: var(--ink-dim);
+  margin: 8px 0 4px;
+}
+#industry .authority-form input[type=text] {
+  width: 100%;
+  background: #0f131b;
+  color: var(--ink);
+  border: 1px solid var(--edge-solid);
+  border-radius: 6px;
+  padding: 5px 7px;
+  font: inherit;
+  font-size: 12.5px;
+}
+#industry .authority-form input[type=text]:focus {
+  outline: none;
+  border-color: var(--core-dim);
+}
+#industry .foot {
+  margin-top: 10px;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--ink-dim);
+}
+
 .proposal .acts { display: flex; gap: 8px; margin-top: 12px; flex-wrap: wrap; }
 .proposal .foot { margin-top: 10px; font-size: 11.5px; line-height: 1.55; color: var(--ink-dim); }
 .proposal .foot code {

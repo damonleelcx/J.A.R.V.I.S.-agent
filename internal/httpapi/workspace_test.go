@@ -498,3 +498,157 @@ func TestTheReasonAVersionIsNotUsableIsWrittenForAPerson(t *testing.T) {
 		t.Errorf("the usable case should read as a sentence, not an error: %q", got)
 	}
 }
+
+// The graph carries the rules in force on the project it belongs to.
+//
+// # Why this is on the graph response and why it is fenced
+//
+// The ceiling used to exist only in a terminal: a person in the browser met a
+// refusal with no way to find out what it was about, which is the shape of the
+// defect this whole area removed — a rule that never reaches the surface people
+// use. The workbench already fetches this endpoint the first time a project
+// exists, so the domain rides along rather than costing a second endpoint.
+//
+// Fenced because it is optional data on a response nobody would notice losing:
+// the panel would simply stop rendering, and a silent panel looks exactly like a
+// project with nothing to say.
+func TestGraph_CarriesTheDomainInForce(t *testing.T) {
+	h := workspaceHarness(t)
+	ctx := context.Background()
+
+	id, err := h.svc.EnsureProject(ctx, h.pool, "", h.owner.ID, "Bridge", "Civil engineering")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := graphBodyFor(t, h, id)
+
+	domain, ok := body["domain"].(map[string]any)
+	if !ok {
+		t.Fatalf("the graph carries no domain, so the workbench cannot say which rules "+
+			"apply or how far work may go:\n%v", body)
+	}
+	for _, want := range []string{"pack", "industry", "boundary", "requires", "ceiling"} {
+		if s, _ := domain[want].(string); strings.TrimSpace(s) == "" {
+			t.Errorf("the domain carries no %s", want)
+		}
+	}
+	if domain["ceiling"] != "r1" {
+		t.Errorf("ceiling = %v; expected the civil pack's r1", domain["ceiling"])
+	}
+	if _, raised := domain["authority"]; raised {
+		t.Error("a project with nobody recorded reports a review authority")
+	}
+	if domain["can_record_authority"] != true {
+		t.Errorf("the owner is not told they may record an authority (%v), so the panel "+
+			"offers no control to the one person who can use it", domain["can_record_authority"])
+	}
+}
+
+// A member who may NOT record one is told so, and the flag is only an affordance.
+//
+// # Why the flag exists and why it is not the control
+//
+// The panel has to decide whether to offer a button, and offering one that
+// always 403s is worse than offering none. So the graph says whether THIS caller
+// may write.
+//
+// It is not a permission. PUT and DELETE authorise server-side whatever the flag
+// said, and this asserts BOTH halves: a maintainer is told no, and a maintainer
+// who ignored that and called PUT anyway is still refused. A future reader must
+// not mistake the affordance for the gate and stop checking there.
+func TestGraph_TheRecordAffordanceIsNotThePermission(t *testing.T) {
+	h := workspaceHarness(t)
+	ctx := context.Background()
+
+	id, err := h.svc.EnsureProject(ctx, h.pool, "", h.owner.ID, "Bridge", "Civil engineering")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.access.SetRole(ctx, access.Grant{
+		ProjectID: id, UserID: h.other.ID, Role: access.RoleMaintainer, By: h.owner.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	r := httptest.NewRequest("GET", "/v1/workspace/graph?project_id="+id, nil)
+	r = r.WithContext(context.WithValue(ctx, ctxKeyUser, h.other))
+	rec := httptest.NewRecorder()
+	h.h.Graph(rec, r)
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	domain, _ := body["domain"].(map[string]any)
+	if domain == nil {
+		t.Fatal("no domain on the response")
+	}
+	if domain["can_record_authority"] != false {
+		t.Errorf("a maintainer is told they may record an authority (%v); the panel would "+
+			"offer a control that always fails", domain["can_record_authority"])
+	}
+	// And the flag is not what stops them.
+	put := reviewAuthReq(t, h, "PUT", id, `{"holder":"Someone Else"}`, h.other)
+	if put.Code != 403 {
+		t.Errorf("a maintainer who ignored the affordance recorded an authority (%d). "+
+			"The flag is a hint; the gate is requirePermission on the write", put.Code)
+	}
+}
+
+// A raised ceiling is reported WITH the caveat, never the holder alone.
+//
+// A client showing the name without it would present a claim as a credential.
+// That is the failure docs/qualified-review.md exists to prevent, and the
+// caveat travelling in the same object is what makes showing one without the
+// other a deliberate act rather than an oversight.
+func TestGraph_ARaisedCeilingTravelsWithItsCaveat(t *testing.T) {
+	h := workspaceHarness(t)
+	ctx := context.Background()
+
+	id, err := h.svc.EnsureProject(ctx, h.pool, "", h.owner.ID, "Bridge", "Civil engineering")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := h.svc.RecordReviewAuthority(ctx, h.pool, id,
+		"R. Okonkwo", "CEng MICE 481920", h.owner.ID); err != nil {
+		t.Fatal(err)
+	}
+
+	domain, _ := graphBodyFor(t, h, id)["domain"].(map[string]any)
+	if domain == nil {
+		t.Fatal("no domain on the response")
+	}
+	if domain["ceiling"] != "r2" {
+		t.Errorf("ceiling = %v; a recorded authority should have raised it to r2", domain["ceiling"])
+	}
+	a, ok := domain["authority"].(map[string]any)
+	if !ok {
+		t.Fatal("the ceiling rose and the response does not say what it rests on")
+	}
+	if a["holder"] != "R. Okonkwo" {
+		t.Errorf("holder = %v", a["holder"])
+	}
+	if a["verified"] != false {
+		t.Errorf("verified = %v; this build verifies nothing and must not imply it", a["verified"])
+	}
+	caveat, _ := a["caveat"].(string)
+	if !strings.Contains(caveat, "RECORDED, NOT VERIFIED") {
+		t.Errorf("the authority travels without its caveat, so a client can render a claim "+
+			"as a credential without doing anything wrong: %q", caveat)
+	}
+}
+
+func graphBodyFor(t *testing.T, h *wsHarness, projectID string) map[string]any {
+	t.Helper()
+	r := httptest.NewRequest("GET", "/v1/workspace/graph?project_id="+projectID, nil)
+	r = r.WithContext(context.WithValue(context.Background(), ctxKeyUser, h.owner))
+	rec := httptest.NewRecorder()
+	h.h.Graph(rec, r)
+	if rec.Code != 200 {
+		t.Fatalf("graph returned %d: %s", rec.Code, rec.Body.String())
+	}
+	var body map[string]any
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("decoding: %v", err)
+	}
+	return body
+}

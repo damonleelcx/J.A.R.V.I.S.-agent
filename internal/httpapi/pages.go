@@ -721,6 +721,11 @@ const pageTemplates = `
          sends its ID; the server reads the requirement's own words out of the
          project graph and writes them into the turn, so what the model sees is
          what the requirement says rather than what a client pasted. -->
+    <!-- Bound to a project the person is not on. Loud and first, because every
+         panel below it will be empty and an empty panel reads as "nothing here
+         yet" rather than "you cannot see this". -->
+    <div id="project-denied" class="note bad hidden" role="alert"></div>
+
     <div class="h hidden" id="reqs-head">Build from</div>
     <div id="reqs" class="hidden"></div>
 
@@ -732,6 +737,25 @@ const pageTemplates = `
          with a later one. Pick two or more and open them side by side. -->
     <div class="h" id="variants-head" style="display:none">Variants</div>
     <div id="variants"></div>
+
+    <!-- The domain this conversation's work belongs to (PRD §"Domain packs").
+         Placed HERE, in the side panel, rather than on the proposal card where
+         it started: a project is created the first time geometry is kept, which
+         happens before any work is proposed. A control that only appeared with
+         the proposal could not be reached in time, so half the projects this
+         product creates would be filed as "Other" whatever the person chose.
+         It hides itself once a project exists — the industry belongs to the
+         project from then on, and "forgectl project industry" changes it. -->
+    <div class="h" id="industry-head" style="display:none">Industry</div>
+    <div id="industry" class="hidden"></div>
+
+    <!-- Who is in this project (PRD SEC-02, AGT-03). Membership is the single
+         authorisation path in this build, so this list is the answer to "who can
+         see and do what here" — and it was answerable only from a terminal,
+         which meant somebody could learn they were not an owner without being
+         able to see who was. -->
+    <div class="h" id="members-head" style="display:none">People</div>
+    <div id="members" class="hidden"></div>
 
     <div class="h" id="proposal-head" style="display:none">Proposed work</div>
     <div id="proposal" class="hidden"></div>
@@ -895,6 +919,11 @@ const pageTemplates = `
 
 <div id="main" class="layout">
   <div>
+    <!-- Where your work is. Membership is the single authorisation path in this
+         build, so "which projects am I in, and as what" was previously a
+         question only a terminal could answer — and it is the first question
+         somebody opening this page has. -->
+    <div class="card"><h2>Your projects</h2><div id="projects"><div class="spin">Loading…</div></div></div>
     <div class="card"><h2>Waiting for you</h2><div id="approvals"><div class="spin">Loading…</div></div></div>
     <div class="card"><h2>Goals</h2><div id="goals"><div class="spin">Loading…</div></div></div>
   </div>

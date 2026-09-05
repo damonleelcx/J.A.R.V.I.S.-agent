@@ -47,6 +47,14 @@ type createGoalRequest struct {
 	RiskTier  string `json:"risk_tier"`
 	Autonomy  string `json:"autonomy"`
 	ProjectID string `json:"project_id"`
+	// Industry is the domain a NEW project is created in — the label the
+	// selector shows ("Civil engineering") or the pack id ("civil"). Ignored
+	// nowhere: sent alongside project_id it is REFUSED, because the industry
+	// belongs to the project and a caller passing both believes they are
+	// setting something. See agent.Intake.Draft.
+	//
+	// Omitted means unstated, which is the `general` pack rather than a guess.
+	Industry string `json:"industry"`
 }
 
 // Field ceilings. These are not security controls — BodyLimit already bounds the
@@ -109,6 +117,7 @@ func (h *GoalHandlers) CreateGoal(w http.ResponseWriter, r *http.Request) {
 	goal, err := h.intake.Draft(ctx, h.deps.Pool, agent.DraftRequest{
 		OwnerID:   user.ID,
 		ProjectID: req.ProjectID,
+		Industry:  strings.TrimSpace(req.Industry),
 		Title:     req.Title,
 		Statement: req.Statement,
 		Autonomy:  autonomy,

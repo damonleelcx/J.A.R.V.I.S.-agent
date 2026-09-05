@@ -143,6 +143,23 @@ type Grant struct {
 	// depending on where it was called from, which is the property a permission
 	// check must not have.
 	Production bool
+	// CeilingSource explains where MaxRiskTier came from and what would raise
+	// it, when the ceiling is the DOMAIN's rather than the goal's own.
+	//
+	// # Why the refusal needs this (2026-09-04)
+	//
+	// The reason returned below used to be "this tool is tier r2, above this
+	// goal's ceiling of r1" — accurate, and a dead end. The person reading it
+	// cannot tell whether they hit their own goal's setting, which they can
+	// change, or the rule set of a licensed domain, which they cannot. The first
+	// is a two-second fix and the second needs an authority this build has no
+	// way to represent, and the message read identically for both.
+	//
+	// internal/domain/pack states this per domain and already shows it at
+	// project creation and in `forgectl project industry`. This carries it to the
+	// place work is actually stopped. Empty when the ceiling is the goal's own,
+	// where there is no second authority to name.
+	CeilingSource string
 }
 
 // Classify returns the tier a call on this contract actually sits at, given the
@@ -203,6 +220,12 @@ func (g Grant) Permits(c Contract) (bool, string) {
 			// the part that lets the model choose a different approach.
 			reason += ". It is declared " + string(c.RiskTier) +
 				" and classified higher here because " + strings.Join(why, ", and ")
+		}
+		// The authority that would raise it, when the ceiling is the domain's.
+		// A limit with no path is a dead end — the same rule the pack table
+		// follows at project creation, applied where work is actually stopped.
+		if g.CeilingSource != "" {
+			reason += ". " + g.CeilingSource
 		}
 		return false, reason
 	}

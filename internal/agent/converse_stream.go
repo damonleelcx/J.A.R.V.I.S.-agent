@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/geometry"
+	domainpack "github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/pack"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/llm"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/persona"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/errs"
@@ -185,6 +186,7 @@ func (c *Conversation) RespondStream(
 		role = llm.RoleVision
 	}
 	messages := c.buildMessages(c.characters.For(ctx, projectID, c.char),
+		c.domains.For(ctx, projectID),
 		history, message, workspaceNote, images)
 
 	var accumulated strings.Builder
@@ -292,9 +294,10 @@ func (c *Conversation) RespondStream(
 // buildMessages assembles the request, shared by both paths — which it now
 // genuinely is. Respond used to keep its own copy of this, so the two ways into
 // a conversation built the same request separately.
-func (c *Conversation) buildMessages(char persona.Character, history []Turn, message, workspaceNote string, images []string) []llm.Message {
+func (c *Conversation) buildMessages(char persona.Character, domain domainpack.Definition,
+	history []Turn, message, workspaceNote string, images []string) []llm.Message {
 	messages := []llm.Message{
-		{Role: llm.System, Content: persona.SystemPrompt(char, converseFraming)},
+		{Role: llm.System, Content: persona.SystemPrompt(char, framingFor(domain))},
 	}
 	if len(history) > HistoryWindow {
 		history = history[len(history)-HistoryWindow:]

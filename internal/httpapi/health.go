@@ -5,6 +5,7 @@ import (
 	"sort"
 	"time"
 
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/pack"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/db"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/errs"
 )
@@ -81,4 +82,43 @@ func (h *HealthHandlers) ErrorCodes(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	WriteJSON(w, http.StatusOK, map[string]any{"error_codes": out, "count": len(out)})
+}
+
+// Industries handles GET /v1/meta/industries.
+//
+// # Why this is an endpoint rather than a list in the page
+//
+// The workbench needs the industry selector's options, and the obvious shortcut
+// is to write them into workbench.js. That would be a second copy of a closed
+// set whose whole purpose is to be the one place the rules are filed under — and
+// the copy in the JavaScript is the one that silently goes stale, so a person
+// would pick an industry the server no longer knows and be refused for a name
+// the product itself showed them.
+//
+// Same reasoning as ErrorCodes directly above, and the same /v1/meta namespace:
+// a client builds its vocabulary from the running server rather than from a copy
+// that drifts.
+//
+// Unauthenticated, like the error registry. This is a product catalogue — which
+// domains this build can work in and how far — and it says nothing about any
+// project, user or piece of work.
+func (h *HealthHandlers) Industries(w http.ResponseWriter, r *http.Request) {
+	defs := pack.Industries()
+	out := make([]map[string]any, 0, len(defs))
+	for _, d := range defs {
+		out = append(out, map[string]any{
+			// The id is what a caller sends back; the label is what a person reads.
+			// Both, because sending the label back must also work — Lookup accepts
+			// it — and a UI that only had one of them would have to invent the other.
+			"id":       string(d.Pack),
+			"label":    d.Industry,
+			"ceiling":  string(d.MaxTier),
+			"boundary": d.Summary,
+			// What would be needed to work above the ceiling. Published so a UI can
+			// say why a limit exists at the moment somebody meets it, rather than
+			// only reporting that it does.
+			"requires": d.Requires,
+		})
+	}
+	WriteJSON(w, http.StatusOK, map[string]any{"industries": out, "count": len(out)})
 }

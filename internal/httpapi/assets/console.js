@@ -12,7 +12,7 @@
 (function () {
   'use strict';
 
-  var state = { goals: [], selected: null, timer: null, everSignedIn: false };
+  var state = { goals: [], projects: [], selected: null, timer: null, everSignedIn: false };
 
   function $(id) { return document.getElementById(id); }
 
@@ -120,6 +120,54 @@
     return '<img class="sig" src="/v1/meta/sigil?state=' + encodeURIComponent(stateName) +
            '&size=' + size + '" width="' + size + '" height="' + size +
            '" alt="" aria-hidden="true">';
+  }
+
+  /* ---- your projects ---------------------------------------------------- */
+
+  /* # Why this is here and not on the workbench
+   *
+   * Membership is the single authorisation path in this build, so "which
+   * projects am I in, and as what" is the first question somebody opening this
+   * page has — and it was answerable only from a terminal. The workbench is one
+   * conversation about one project; this is the view of what exists, which is
+   * where a list of them belongs.
+   *
+   * Each row carries the DOMAIN and its ceiling, not just a name. "Which of
+   * these is the one I want" is answered badly by four names and well by four
+   * names with what each is for.
+   */
+  function renderProjects() {
+    var el = $('projects');
+    if (!state.projects.length) {
+      el.innerHTML = '<div class="empty">You are not in any projects yet.<br><br>' +
+        'One is created with your first goal:<br>' +
+        '<code style="font-size:12px">forgectl goal new --industry …</code></div>';
+      return;
+    }
+    el.innerHTML = state.projects.map(function (p) {
+      var bits = [p.role];
+      if (p.unrecognised_pack) {
+        /* Said rather than left blank. A project whose domain this build does
+         * not recognise selects NO rules, and a blank would read as one that
+         * simply had not been given a domain. */
+        bits.push('<b style="color:var(--warn)">domain not recognised</b>');
+      } else if (p.industry) {
+        bits.push(esc(p.industry) + ' · ceiling ' + esc(p.ceiling));
+      }
+      /* A link, not a button with a handler. It navigates, the address is
+       * visible on hover, and it opens in a new tab the way a person expects a
+       * link to — none of which a scripted click gives for free. */
+      return '<a class="goal" href="/workbench?project=' + encodeURIComponent(p.id) + '">' +
+        '<div><div class="t">' + esc(p.name) + '</div>' +
+        '<div class="m">' + bits.join(' · ') + '</div></div></a>';
+    }).join('');
+  }
+
+  function loadProjects() {
+    return api('/v1/projects').then(function (b) {
+      state.projects = b.projects || [];
+      renderProjects();
+    });
   }
 
   /* ---- goals ------------------------------------------------------------ */
@@ -290,7 +338,7 @@
   /* ---- polling ---------------------------------------------------------- */
 
   function refresh() {
-    return Promise.all([loadGoals(), loadApprovals()]).then(function () {
+    return Promise.all([loadProjects(), loadGoals(), loadApprovals()]).then(function () {
       $('err').classList.add('hidden');
     }).catch(function (err) {
       if (err instanceof NotAuthenticated) {

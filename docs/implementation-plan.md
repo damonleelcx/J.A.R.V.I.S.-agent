@@ -2231,6 +2231,60 @@ oversights and are stated with what each would actually take.
   comparison's match-by-name fallback stays either way — it reports which basis
   it used, so it is honest whichever way the number goes.
 
+- **The ten industries are selectable, and the domain pack is finally read**
+  (2026-09-04). The product's industry selector offers ten domains; five had no
+  pack at all, four had one that refused every project at the door, and the
+  column recording the choice was **written by EnsureProject and read by
+  nothing** — while both of its writers passed a constant, so every project in
+  every deployment was `software` or `general`.
+
+  Three changes, in dependency order. **Availability became a tier ceiling**: a
+  pack limits how far work goes rather than whether it starts, because
+  `mechanical` was closed over drawing release (R3) and that also closed concept
+  CAD (R1), which is the work. **The pack got producers** — `goal new
+  --industry`, `project industry --set`, and `industry` on `POST /v1/goals` — and
+  an unstated one resolves to `general`, the pack that *means* unknown, rather
+  than to the old `"software"` constant or to a guess. **The pack got readers**:
+  `grantFor` takes the lower of the goal's tier and the pack's, and the
+  conversation is framed in the domain's units and vocabulary.
+
+  Two things fell out of it. The fabrication guard was **mechanical and
+  electrical only**, so nine new industries would have shipped with it silent —
+  extending it found a truncation bug (`IEC 61508` reported as the non-existent
+  `IEC 615`). And the safety fence asserting those packs were unavailable had to
+  be **restated rather than removed**: it now holds that no engineering pack
+  reaches R2, that medical and robotics remain uncreatable at every tier, and
+  that no row can authorise R5 — strictly more than it held before. Every fence
+  was mutation-drilled.
+  `docs/bugfix/2026-09-04-the-pack-was-written-and-never-read.md`.
+
+- **The domain pack is now a rule set rather than a label** (2026-09-04, second
+  wave). Six things the PRD says a pack bundles were absent; five landed and the
+  sixth was deliberately not built.
+
+  **Schema, geometry frame, data-handling rules and required adapters** are
+  declarations on the table, each with a consumer: the schema drives a validator
+  in `graph review`, the frame and the handling rules reach the model on every
+  turn, and the adapters let a refusal name which solver a domain wanted. All
+  four are plain strings so the pack stays a leaf — workspace, geometry and tools
+  import it — with a fence in each of those packages holding the vocabularies
+  together.
+
+  **Validators** reuse `Review`'s existing Gaps rather than a new channel:
+  "incomplete" is a property of a graph IN A DOMAIN, and gaps are already
+  "expected, worth showing, never a failure". Geometry deliberately got none —
+  its frame reaches the model and its units are already fenced, and a warnings
+  channel with one consumer is surface invented ahead of a need.
+
+  **Qualified review** is the only piece that widens what the system will do, and
+  it is documented on its own in `docs/qualified-review.md`. A named, attributed
+  authority raises an engineering domain's ceiling to r2; nothing else does; and
+  every surface says "recorded, not verified" because this build cannot check a
+  licence. Three mutation drills, each confirmed red then restored.
+
+  **Tool adapters were NOT wired to real backends**, and that is a decision
+  rather than a gap — see below.
+
 ### Not closed, and what each would take
 
 - **SSO is out of scope, by decision** (2026-09-04). Email and password, with
@@ -2252,6 +2306,53 @@ oversights and are stated with what each would actually take.
   mode, independent audio deletion). The premises are proven rather than
   assumed — see `docs/spikes/2026-09-03-webrtc-sfu/`. **What it needs:** waves
   9.2 to 9.5, in that order.
+- **The industry coverage suite has run, and one failure was lost to operator
+  error** (2026-09-04). Against **qwen-plus at `--repeats 3`**, all fourteen
+  cases scored **3/3 on every scorer** — four regressions and ten coverage
+  cases. The coverage scorers stay **Tracked**: one clean run of one model is
+  exactly the measurement that must not become a floor.
+
+  The domain conventions demonstrably reach the model. Architecture replies used
+  *massing, circulation, core, envelope, daylight*; every industry's terms
+  scorer held in all three runs. `covers-other` — the control, whose `general`
+  pack asserts no vocabulary — still answered substantively rather than
+  deflecting, which is what makes the other nine readable as a comparison.
+
+  **The unresolved part:** the first full run reported "at least one scorer fell
+  below its floor", and the evidence was destroyed before it could be read — the
+  run was piped through `tail -120`, which discarded eleven of fourteen cases and
+  also swallowed the real exit code (the pipeline reported `tail`'s 0, not the
+  eval's 1). Re-running those eleven produced 3/3 throughout, so the failure did
+  **not** reproduce.
+
+  Two explanations fit and this build cannot distinguish them: model variance on
+  a floor that requires 3/3 over three runs (`speechIsShort`, at 90%, is the
+  most fragile), or a transient API error — an errored run is deliberately kept
+  apart from the scores, and `Met()` on zero scored runs is false, so an outage
+  reads as below-floor. It is recorded here rather than closed, because "it
+  passed the second time" is not a diagnosis.
+
+  **What would settle it:** always run with `--json`, never through a pipe. A
+  second full run would give a second sample; it would not recover the lost one.
+
+- **No real CAD, FEA or SPICE backend, by decision.** Packs now declare which
+  adapters their domain needs and every one is `CONNECTOR_UNAVAILABLE`. Wiring a
+  real one was considered and rejected against this repository's own completed
+  research: `docs/spikes/2026-09-02-zoo-text-to-cad` concludes "do not integrate
+  Zoo now… that is not a component you drop in; it is a subsystem, and it
+  replaces the thing our product is currently for", and puts the cost at a
+  websocket a browser cannot open, a stateful project mirror and a 56 MB CLI to
+  export. **What it would take:** the spike is the estimate. Revisit when the
+  product needs a manufacturable artefact rather than a shape to talk about.
+
+- **The industry IS now inferred — as a suggestion.** The planner returns what
+  domain it made of a goal on the reply it was already producing, and Intake
+  writes it into the project graph as an assumption that changes nothing. The
+  original entry read "never inferred, only stated"; that is now half true and
+  deliberately so. **What is still not done:** nothing acts on the suggestion
+  automatically, and nothing should — a guessed domain that became the rule set
+  is the defect this whole area removed.
+
 - **Pre-migration events are unattestable.** 11 events on the dev database
   predate the audit chain. This is permanent BY DESIGN and must not be "fixed":
   backfilling would mean minting attestations for events nothing attested, which

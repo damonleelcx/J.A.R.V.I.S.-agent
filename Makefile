@@ -138,9 +138,24 @@ release-check: fmt-check vet test-integration drill build ## Everything a releas
 	@echo "  · the evaluation suite (real model, costs money, non-deterministic) — make eval"
 	@echo "  · every item under 'Carried defects' in docs/implementation-plan.md"
 
+# EVAL_REPORT is written on EVERY run, and that is not a convenience.
+#
+# A run costs money and takes minutes, and its result is a rate that has to be
+# read against the previous one. On 2026-09-04 a run reported a below-floor
+# scorer and the diagnosis was lost because the invocation was piped through
+# `tail` — which discarded eleven of fourteen cases AND replaced the eval's exit
+# status with the pipe's, so a red run reported success. Re-running produced 3/3
+# and the original failure was never explained.
+#
+# Writing the full report to a file makes that irrecoverable-by-accident state
+# impossible: whatever happens to the terminal, every reply and every scorer's
+# reasoning is on disk.
+EVAL_REPORT ?= eval-report.json
+
 .PHONY: eval
 eval: ## Run the evaluation suite against a real model (costs money, takes minutes)
-	go run ./cmd/forgectl eval run --repeats 3
+	go run ./cmd/forgectl eval run --repeats 3 --json "$(EVAL_REPORT)"
+	@echo "Full report, with every reply: $(EVAL_REPORT)"
 
 .PHONY: eval-list
 eval-list: ## What the evaluation suite measures, and why each case exists

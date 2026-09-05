@@ -139,6 +139,10 @@
      * session creates it, and requirements recorded elsewhere — the console,
      * forgectl — are what this panel is for. */
     if (wasNew) loadRequirements();
+    /* The picker retires the moment a project exists. Its whole job was to be
+     * available BEFORE one did. */
+    if (wasNew) renderIndustry();
+    if (wasNew) loadMembers();
   }
 
   /* The conversation, brought back (PRD RSN-07).
@@ -244,6 +248,46 @@
         })
         .then(function () { btn.disabled = false; disarm(); });
     });
+  }
+
+  /* # Switching project (?project=<id>)
+   *
+   * The console lists the projects somebody is in and links each one here. This
+   * is the receiving end.
+   *
+   * # Why the conversation does NOT come with you
+   *
+   * A conversation's variants accumulate IN A PROJECT (PRD VIS-04). Carrying one
+   * across a switch would put its history under rules it was not conducted
+   * under and its variants in a project they do not belong to — the transcript
+   * would straddle two rule sets and the rail would mix work from both. So the
+   * switch starts a fresh conversation, and the previous one stays exactly where
+   * it was: still in its own project, still restorable by going back to it.
+   *
+   * The parameter is stripped from the URL afterwards so a refresh does not
+   * re-switch — and, more to the point, so a link somebody copies out of their
+   * address bar carries the project rather than a one-shot instruction to
+   * abandon whatever conversation the recipient was in.
+   */
+  function switchProjectFromURL() {
+    var wanted = null;
+    try {
+      wanted = new URLSearchParams(window.location.search).get('project');
+    } catch (e) { return; }
+    if (!wanted) return;
+
+    var current = null;
+    try { current = window.localStorage.getItem(PROJECT_KEY); } catch (e) { /* not fatal */ }
+    if (wanted !== current) {
+      /* A different project means a different conversation. Forgetting the KEY
+       * rather than deleting the record: the old conversation is untouched and
+       * remains in its project — this only stops it being reopened here. */
+      forgetConversationKey();
+      try { window.localStorage.setItem(PROJECT_KEY, wanted); } catch (e) { /* not fatal */ }
+    }
+    try {
+      window.history.replaceState({}, '', window.location.pathname);
+    } catch (e) { /* an address bar that keeps the parameter is not worth failing over */ }
   }
 
   function restoreVariants() {
@@ -850,14 +894,64 @@
    * requirements nobody wrote rather than as no project yet. */
   var BUILDABLE_KINDS = { requirement: true, constraint: true };
 
+  /* # Being bound to a project you are not on
+   *
+   * ?project= puts the workbench on a project, and nothing stops somebody
+   * editing that id by hand. Every endpoint authorises, so nothing leaks — but
+   * what the person GOT was a workbench whose panels were all empty, and an
+   * empty panel reads as "nothing here yet" rather than "you cannot see this".
+   * A surface that answers the wrong question silently is the failure this
+   * codebase treats as worse than an error.
+   *
+   * The graph fetch is the check: it is the first project-scoped call the
+   * workbench makes, it already authorises, and a refusal there means every
+   * other panel is about to be refused too. No extra request for a state that
+   * should never happen.
+   *
+   * 404 rather than 403 for a non-member is deliberate in access.Service — it
+   * refuses to confirm the project exists — so the two are reported the same
+   * way here on purpose. Saying "no such project, or not yours" is the whole
+   * truth this build is willing to tell, and pretending to know which would
+   * undo that decision at the last step.
+   */
+  function denyProject(status) {
+    var el = $('project-denied');
+    if (!el) return;
+    state.projectDenied = true;
+    el.classList.remove('hidden');
+    el.innerHTML = '<strong>This project is not one of yours.</strong><br>' +
+      'Nothing on this page will load' +
+      (status === 403 ? ', because your role here does not allow reading it' :
+        ' — either it does not exist, or you are not a member') + '.<br><br>' +
+      '<a href="/console">Your projects</a> · ' +
+      '<button class="btn-sm" id="project-unbind">Work without a project</button>';
+    var unbind = document.getElementById('project-unbind');
+    if (unbind) unbind.addEventListener('click', function () {
+      /* Offered rather than done automatically. Clearing it silently would send
+       * somebody who mistyped an id into a workbench that looks fine, with no
+       * sign that the project they asked for was refused. */
+      try { window.localStorage.removeItem(PROJECT_KEY); } catch (e) { /* not fatal */ }
+      window.location.href = '/workbench';
+    });
+  }
+
   function loadRequirements() {
     if (!state.projectID) return;
     fetch('/v1/workspace/graph?project_id=' + encodeURIComponent(state.projectID))
-      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (r) {
+        if (r.status === 403 || r.status === 404) { denyProject(r.status); return null; }
+        return r.ok ? r.json() : null;
+      })
       .then(function (g) {
         if (!g) return;
         state.requirements = (g.nodes || []).filter(function (n) { return BUILDABLE_KINDS[n.kind]; });
         renderRequirements();
+        /* The rules in force on this project, which arrive with the graph they
+         * apply to. Before this the ceiling existed only in a terminal, so
+         * somebody in the browser met a refusal with no way to find out what it
+         * was about. */
+        state.domain = g.domain || null;
+        renderIndustry();
       })
       .catch(function () { /* No requirements panel is a smaller loss than a broken workbench. */ });
   }
@@ -1229,6 +1323,10 @@
          * per turn. The server checks it against membership every time, so
          * naming somebody else's project is refused rather than trusted. */
         project_id: state.projectID || '',
+        /* Sent every turn. The server ignores it once the project exists, so
+         * the client does not have to know which turn happened to be the one
+         * that created it. */
+        industry: state.projectID ? '' : (state.industry || ''),
         /* The record this turn joins (PRD RSN-07). Empty on the first turn: the
          * server mints one and sends it back in the `conversation` event. A id
          * that is not this person's is REFUSED rather than swapped for a new
@@ -1376,12 +1474,390 @@
    * a human presses a button. Two things on one screen are still two acts.
    */
 
+  /* # The industry selector (PRD §"Domain packs")
+   *
+   * A project is worked under a domain pack: its units, its vocabulary, and the
+   * highest risk tier work may reach inside it. Until this existed the browser
+   * could not say which — only `forgectl goal new --industry` could — so every
+   * project started from the workbench was filed as "Other", the pack that means
+   * UNKNOWN DOMAIN and deliberately carries no conventions at all.
+   *
+   * The options are fetched from /v1/meta/industries rather than written here.
+   * A copy of a closed set in the page is the copy that goes stale, and somebody
+   * would then pick an industry the server no longer knows — refused for a name
+   * this very file had shown them.
+   *
+   * Shown only while no project exists. The industry belongs to the PROJECT, and
+   * the server refuses one sent alongside an existing project id rather than
+   * dropping it silently; offering the control there would be offering an act
+   * that cannot happen. Changing it afterwards is deliberate and lives in
+   * `forgectl project industry`.
+   */
+  function loadIndustries() {
+    if (state.industries) return Promise.resolve(state.industries);
+    return fetch('/v1/meta/industries').then(function (r) {
+      return r.ok ? r.json() : { industries: [] };
+    }).then(function (b) {
+      state.industries = (b && b.industries) || [];
+      return state.industries;
+    }).catch(function () {
+      /* An unreachable catalogue must not block the proposal. The goal is
+       * created without an industry, which is `general` — the honest answer
+       * when nothing established a domain — rather than no goal at all. */
+      state.industries = [];
+      return state.industries;
+    });
+  }
+
+  /* What the domain means once it is settled: which rules, how far work may go,
+   * and — when a ceiling has been raised — who that rests on and what was NOT
+   * established by it.
+   *
+   * A statement, not a control. The industry belongs to the project from the
+   * moment one exists and the server refuses a change through this path, so
+   * offering the select here would offer an act that cannot happen. What a
+   * person needs instead is the answer to "why was that refused". */
+  function industryStatement() {
+    var d = state.domain;
+    if (!d) return '';
+    var html = '<div class="industry"><div class="settled">' +
+      esc(d.industry || d.pack) + ' · ceiling ' + esc(d.ceiling) + '</div>' +
+      '<div class="foot">' + esc(d.boundary) +
+      ' Work above ' + esc(d.ceiling) + ' here would require ' + esc(d.requires) + '.</div>';
+    if (d.authority) {
+      /* The holder and the caveat are rendered TOGETHER, always. Showing the
+       * name without it would present a claim as a credential. */
+      html += '<div class="foot raised">Ceiling raised on ' + esc(d.authority.holder) +
+        (d.authority.note ? ' (' + esc(d.authority.note) + ')' : '') + '. ' +
+        esc(d.authority.caveat) + '</div>';
+    }
+    html += authorityControl(d);
+    return html + '</div>';
+  }
+
+  /* # Recording an authority from the workbench
+   *
+   * Offered only to somebody the server would actually let do it — the graph
+   * response says whether this caller may, and that flag is an affordance rather
+   * than the gate: PUT is authorised server-side whatever the panel shows.
+   *
+   * # Why recording takes two presses
+   *
+   * The same rule "Start this" follows, for a stronger reason. This is the only
+   * control in the product that WIDENS what may be done, and what it records is
+   * a claim nothing verifies. So the caveat is put in front of the person BEFORE
+   * they commit, not printed at them afterwards: somebody who reads "recorded,
+   * not verified" only in the confirmation has already acted on the belief it
+   * corrects.
+   */
+  function authorityControl(d) {
+    if (!d.can_record_authority) return '';
+    if (d.authority) {
+      return '<div class="authority-act">' +
+        '<button class="btn-sm" id="authority-clear">Clear authority</button></div>';
+    }
+    if (!d.asks_for && !state.authorityForm) return '';
+    if (!state.authorityForm) {
+      return '<div class="authority-act">' +
+        '<button class="btn-sm" id="authority-open">Record review authority</button></div>';
+    }
+    return '<div class="authority-form">' +
+      '<label for="authority-holder">Who is accountable</label>' +
+      '<input type="text" id="authority-holder" placeholder="Their name" ' +
+      'value="' + esc(state.authorityHolder || '') + '">' +
+      '<label for="authority-note">What they hold</label>' +
+      '<input type="text" id="authority-note" placeholder="Registration, role or scope" ' +
+      'value="' + esc(state.authorityNote || '') + '">' +
+      /* Read before the act, never only after it. */
+      '<div class="foot raised">' + esc(theCaveat()) + '</div>' +
+      (state.authorityError ? '<div class="note bad">' + esc(state.authorityError) + '</div>' : '') +
+      '<div class="authority-act">' +
+      '<button class="btn-sm go" id="authority-save">Record it</button>' +
+      '<button class="btn-sm" id="authority-cancel">Cancel</button></div>' +
+      '</div>';
+  }
+
+  /* The caveat, taken from the server when it has been seen and otherwise stated
+   * here in the same words. Not fetched on demand: the person is mid-decision,
+   * and a sentence that arrives late is one they may act without. */
+  function theCaveat() {
+    if (state.domain && state.domain.authority && state.domain.authority.caveat) {
+      return state.domain.authority.caveat;
+    }
+    return 'RECORDED, NOT VERIFIED. This build cannot check a qualification: there is no ' +
+      'registry to consult and no credential to validate. The ceiling rises because a named ' +
+      'person accepted responsibility, not because a licence was established.';
+  }
+
+  function authorityRequest(method, body) {
+    return fetch('/v1/projects/' + encodeURIComponent(state.projectID) + '/review-authority', {
+      method: method,
+      headers: { 'Content-Type': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined
+    }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (b) {
+        if (!r.ok) {
+          var e = (b && b.error) || {};
+          throw new Error(e.message || ('Request failed (' + r.status + ')'));
+        }
+        return b;
+      });
+    });
+  }
+
+  function renderIndustry() {
+    var el = $('industry');
+    var head = $('industry-head');
+    if (!el || !head) return;
+    var html = industryPicker() || industryStatement();
+    if (!html) {
+      el.classList.add('hidden');
+      head.style.display = 'none';
+      return;
+    }
+    head.style.display = '';
+    el.classList.remove('hidden');
+    el.innerHTML = html;
+    head.textContent = state.projectID ? 'Domain' : 'Industry';
+    bindAuthorityControls();
+    var pick = document.getElementById('industry-pick');
+    if (pick) pick.addEventListener('change', function () {
+      state.industry = pick.value;
+      /* Re-rendered so the boundary line under the control describes the
+       * industry now selected. A control that changes what the work is done
+       * under, above a sentence describing a different domain, is worse than
+       * no sentence at all. */
+      renderIndustry();
+    });
+  }
+
+  /* # The people on this project
+   *
+   * Membership decides what everyone here may do, so it is worth seeing next to
+   * the domain that decides how far the work may go. Loaded when a project
+   * appears and re-read after any change, for the reason the domain panel is
+   * re-read: the SERVER decides who holds what, and a panel that patched its own
+   * copy would drift from the thing being enforced.
+   *
+   * `can_manage` from the response decides whether the controls appear. It is an
+   * affordance and not the gate — the writes authorise themselves.
+   */
+  function loadMembers() {
+    if (!state.projectID) return;
+    fetch('/v1/projects/' + encodeURIComponent(state.projectID) + '/members')
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (b) {
+        state.members = b || null;
+        renderMembers();
+      })
+      .catch(function () { /* A missing people panel is a smaller loss than a broken workbench. */ });
+  }
+
+  function memberRow(m, canManage, roles) {
+    var who = esc(m.display_name || m.user_id) + (m.is_you ? ' <span class="you">you</span>' : '');
+    var html = '<li><div class="who">' + who +
+      (m.email ? '<div class="addr">' + esc(m.email) + '</div>' : '') + '</div>';
+    if (!canManage) {
+      return html + '<span class="role">' + esc(m.role) + '</span></li>';
+    }
+    var opts = roles.map(function (r) {
+      return '<option value="' + esc(r.role) + '"' +
+        (r.role === m.role ? ' selected' : '') + '>' + esc(r.role) + '</option>';
+    }).join('');
+    return html +
+      '<select data-role-pick data-user="' + esc(m.user_id) + '" ' +
+      'aria-label="Role for ' + esc(m.display_name || m.user_id) + '">' + opts + '</select>' +
+      '<button class="btn-sm" data-member-remove data-user="' + esc(m.user_id) + '" ' +
+      'aria-label="Remove ' + esc(m.display_name || m.user_id) + '">Remove</button></li>';
+  }
+
+  function renderMembers() {
+    var el = $('members');
+    var head = $('members-head');
+    if (!el || !head) return;
+    var m = state.members;
+    if (!m || !m.members) {
+      el.classList.add('hidden');
+      head.style.display = 'none';
+      return;
+    }
+    head.style.display = '';
+    el.classList.remove('hidden');
+
+    var roles = m.roles || [];
+    var html = '<ul class="members">' + m.members.map(function (row) {
+      return memberRow(row, m.can_manage, roles);
+    }).join('') + '</ul>';
+
+    if (m.can_manage) {
+      html += '<div class="member-add">' +
+        '<input type="text" id="member-email" placeholder="Email of somebody to add" ' +
+        'aria-label="Email of somebody to add">' +
+        '<select id="member-role" aria-label="Role for the person being added">' +
+        roles.map(function (r) {
+          return '<option value="' + esc(r.role) + '"' +
+            (r.role === 'contributor' ? ' selected' : '') + '>' + esc(r.role) + '</option>';
+        }).join('') + '</select>' +
+        '<button class="btn-sm go" id="member-add">Add</button></div>';
+      /* What each role actually permits, from the server's own catalogue. A
+       * person choosing between four words needs to know what they mean. */
+      var chosen = roles.filter(function (r) { return r.role === (state.memberRole || 'contributor'); })[0];
+      if (chosen) html += '<div class="foot">' + esc(chosen.role) + ' ' + esc(chosen.does) + '</div>';
+    }
+    if (state.membersError) {
+      html += '<div class="note bad">' + esc(state.membersError) + '</div>';
+    }
+    el.innerHTML = html;
+    bindMemberControls();
+  }
+
+  function memberRequest(method, path, body) {
+    return fetch('/v1/projects/' + encodeURIComponent(state.projectID) + '/members' + path, {
+      method: method,
+      headers: { 'Content-Type': 'application/json' },
+      body: body ? JSON.stringify(body) : undefined
+    }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (b) {
+        if (!r.ok) {
+          var e = (b && b.error) || {};
+          throw new Error(e.message || ('Request failed (' + r.status + ')'));
+        }
+        /* Every write answers with the whole list, so the panel never has to
+         * guess what it left behind — including when the server refused part of
+         * what was asked. */
+        state.members = b;
+        state.membersError = null;
+        renderMembers();
+      });
+    }).catch(function (err) {
+      state.membersError = err.message;
+      renderMembers();
+    });
+  }
+
+  function bindMemberControls() {
+    Array.prototype.forEach.call(document.querySelectorAll('#members [data-role-pick]'), function (sel) {
+      sel.addEventListener('change', function () {
+        memberRequest('PUT', '/' + encodeURIComponent(sel.getAttribute('data-user')),
+          { role: sel.value });
+      });
+    });
+    Array.prototype.forEach.call(document.querySelectorAll('#members [data-member-remove]'), function (b) {
+      b.addEventListener('click', function () {
+        memberRequest('DELETE', '/' + encodeURIComponent(b.getAttribute('data-user')), null);
+      });
+    });
+    var role = document.getElementById('member-role');
+    if (role) role.addEventListener('change', function () {
+      state.memberRole = role.value;
+      renderMembers();
+    });
+    var add = document.getElementById('member-add');
+    if (add) add.addEventListener('click', function () {
+      var email = (document.getElementById('member-email') || {}).value || '';
+      if (!email.trim()) {
+        state.membersError = 'An email address is required to name who is being added.';
+        renderMembers();
+        return;
+      }
+      memberRequest('POST', '', { email: email, role: (role && role.value) || 'contributor' });
+    });
+  }
+
+  function bindAuthorityControls() {
+    var open = document.getElementById('authority-open');
+    if (open) open.addEventListener('click', function () {
+      state.authorityForm = true;
+      state.authorityError = null;
+      renderIndustry();
+    });
+    var cancel = document.getElementById('authority-cancel');
+    if (cancel) cancel.addEventListener('click', function () {
+      state.authorityForm = false;
+      state.authorityError = null;
+      renderIndustry();
+    });
+    var save = document.getElementById('authority-save');
+    if (save) save.addEventListener('click', function () {
+      var holder = (document.getElementById('authority-holder') || {}).value || '';
+      var note = (document.getElementById('authority-note') || {}).value || '';
+      /* Kept so a refused write does not throw away what was typed. */
+      state.authorityHolder = holder;
+      state.authorityNote = note;
+      if (!holder.trim()) {
+        state.authorityError = 'A name is required: the ceiling rests on a named person.';
+        renderIndustry();
+        return;
+      }
+      save.disabled = true;
+      authorityRequest('PUT', { holder: holder, note: note }).then(function () {
+        state.authorityForm = false;
+        state.authorityHolder = null;
+        state.authorityNote = null;
+        state.authorityError = null;
+        /* Re-read rather than patch state locally: the ceiling that results is
+         * the SERVER's answer, and a panel that computed its own would eventually
+         * show a limit that is not the one being enforced. */
+        loadRequirements();
+      }).catch(function (err) {
+        state.authorityError = err.message;
+        renderIndustry();
+      });
+    });
+    var clear = document.getElementById('authority-clear');
+    if (clear) clear.addEventListener('click', function () {
+      clear.disabled = true;
+      authorityRequest('DELETE', null).then(loadRequirements).catch(function (err) {
+        state.authorityError = err.message;
+        renderIndustry();
+      });
+    });
+  }
+
+  function industryPicker() {
+    if (state.projectID) return '';
+    var list = state.industries || [];
+    if (!list.length) return '';
+    var opts = list.map(function (d) {
+      var sel = d.id === state.industry ? ' selected' : '';
+      return '<option value="' + esc(d.id) + '"' + sel + '>' + esc(d.label) + '</option>';
+    }).join('');
+    var chosen = null;
+    for (var i = 0; i < list.length; i++) {
+      if (list[i].id === state.industry) { chosen = list[i]; }
+    }
+    /* No visible <label>: the section heading above already says "Industry",
+     * and two of the same word stacked reads as a mistake. The accessible name
+     * comes from aria-label so a screen reader is not left with a bare combobox
+     * (PRD AUD-06 asks every critical interaction to have a non-audio path, and
+     * an unnamed control is not one). */
+    return '<div class="industry">' +
+      '<select id="industry-pick" aria-label="Industry this project works in">' +
+      opts + '</select>' +
+      (chosen ? '<div class="foot">' + esc(chosen.boundary) +
+                ' Work above ' + esc(chosen.ceiling) + ' here would require ' +
+                esc(chosen.requires) + '.</div>' : '') +
+      '</div>';
+  }
+
   function proposeGoal(goal) {
     state.proposal = goal;
     state.goal = null;
     state.planTasks = null;
     state.goalPhase = 'proposed';
     renderProposal();
+  }
+
+  /* Loaded once, at startup, because the project is created by the first KEPT
+   * VARIANT — which can happen long before any work is proposed. A catalogue
+   * fetched at proposal time would arrive after the decision it informs. */
+  function startIndustry() {
+    /* "Other" is the default and it is a real answer, not a placeholder: the
+     * `general` pack means unknown domain, lowers autonomy and triggers expert
+     * review. Defaulting to a guessed industry would file work under rules
+     * nobody chose while looking exactly like a stated one. */
+    if (!state.industry) state.industry = 'general';
+    loadIndustries().then(renderIndustry);
   }
 
   function api(path, body) {
@@ -1420,7 +1896,12 @@
     api('/v1/goals', {
       title: state.proposal.title,
       statement: state.proposal.statement,
-      risk_tier: state.proposal.risk_tier || 'r1'
+      risk_tier: state.proposal.risk_tier || 'r1',
+      /* Only when this conversation has no project yet. The server REFUSES an
+       * industry sent with a project id — the industry belongs to the project,
+       * and changing it would change the rules its earlier work was done under —
+       * so sending one here would turn every follow-up goal into an error. */
+      industry: state.projectID ? '' : (state.industry || '')
     }).then(function (b) {
       state.goal = b.goal;
       state.planTasks = b.tasks || [];
@@ -1776,6 +2257,11 @@
         $('stage-empty').classList.remove('hidden');
       }
     });
+    /* BEFORE anything reads the stored project or conversation, so a switch is
+     * in force by the time the panels restore rather than being applied over
+     * the top of the previous project's state. */
+    safely('switch', switchProjectFromURL);
+    safely('industry', startIndustry);
     safely('voice', initVoice);
     safely('controls', initControls);
     safely('attach', initAttach);

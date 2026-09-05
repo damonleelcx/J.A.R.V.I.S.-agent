@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/access"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/claim"
@@ -426,6 +427,56 @@ func (s *Service) Review(ctx context.Context, projectID string) (*Review, error)
 
 	sortFindings(rev.Defects)
 	sortFindings(rev.Gaps)
+
+	// --- gaps: what this DOMAIN expects and the project does not have ---
+	//
+	// # Why the pack decides this and not a fixed list
+	//
+	// "Incomplete" is not a property of a graph, it is a property of a graph in a
+	// domain. A civil project with no recorded load case is missing the thing
+	// every number in it should rest on; a software project is not missing
+	// anything by having none. A single list would either nag every project about
+	// kinds most of them will never use, or ask so little that it never noticed
+	// the one that mattered.
+	//
+	// So this is the pack's Schema, read here — the pack's first VALIDATOR rather
+	// than another thing it merely declares.
+	//
+	// They are gaps, never defects. A gap is "expected, worth showing, never a
+	// failure", which is the right weight: a project part-way through legitimately
+	// has them, and a validator that turned an unfinished project red is one
+	// people learn to run with a flag that hides it.
+	if def, err := s.PackFor(ctx, s.pool, projectID); err != nil {
+		// The domain is unreadable, so nothing can be said about what it expects.
+		// Reported rather than skipped: a review that quietly checked less than it
+		// usually does looks exactly like a review that found less.
+		rev.Gaps = append(rev.Gaps, Finding{
+			Problem: "domain-unreadable",
+			Detail: "this project's domain could not be read, so nothing was checked against " +
+				"what its rules expect: " + err.Error(),
+		})
+	} else {
+		present := map[Kind]bool{}
+		for i := range g.Nodes {
+			present[g.Nodes[i].Kind] = true
+		}
+		for _, want := range def.Schema {
+			k := Kind(want)
+			if present[k] {
+				continue
+			}
+			gloss := string(k)
+			if kd, err := KindOf(k); err == nil {
+				gloss = kd.Gloss
+			}
+			rev.Gaps = append(rev.Gaps, Finding{
+				Problem: "domain-expects-" + want,
+				Detail: fmt.Sprintf("%s work records at least one %s — %s — and this project has none",
+					def.Industry, want, gloss),
+			})
+		}
+	}
+
 	return rev, nil
 }
 
@@ -592,23 +643,39 @@ func (s *Service) EnsureProject(ctx context.Context, q db.Querier, projectID, ow
 		return "", errs.New(op, errs.CodeValidationFailed).
 			WithDetail("%q is not a domain pack this build knows. A pack nothing recognises selects no "+
 				"rules while looking like it selected some. Available here: %s",
-				pack, strings.Join(domainpack.AvailableNames(), ", "))
+				pack, strings.Join(domainpack.Names(), ", "))
 	}
-	if !def.Available {
+	if !def.Available() {
 		// Refused rather than gated, and deliberately not switchable by
 		// configuration — see internal/domain/pack. An environment variable that
 		// turned on patient-specific clinical use would make a regulated boundary
 		// something an operator crosses by editing a file.
+		//
+		// Only medical and robotics reach here. Every other pack is workable up to
+		// a CEILING rather than refused at the door: refusing the whole domain
+		// because its R3 release step cannot be gated also refused the R1 concept
+		// work, which is the work this product is for. The ceiling is enforced per
+		// action in agent.grantFor, not here — creating a project is not the act
+		// the boundary is about.
 		return "", errs.New(op, errs.CodeForbidden).
 			WithDetail("this build is not validated for the %q pack, so a project cannot be created in "+
 				"it.\n\n%s\n\nIt would require %s.\n\nAvailable here: %s",
-				def.Pack, def.Summary, def.Requires, strings.Join(domainpack.AvailableNames(), ", "))
+				def.Pack, def.Summary, def.Requires, strings.Join(domainpack.Names(), ", "))
 	}
 	now := s.clock.Now()
 	newID := id.New(id.PrefixProject)
+	// The CANONICAL pack id is stored, never the string the caller passed.
+	//
+	// Lookup accepts "Mechanical engineering" (what the industry selector shows),
+	// "SOFTWARE" and "product_design", because refusing a person the name the
+	// product itself displayed would be absurd. Persisting those forms would not
+	// be: `pack` has no check constraint (0003_workspace.sql), so the column would
+	// accumulate one domain under several spellings and every future reader would
+	// need to know all of them. The rules are looked up by id, so the id is what
+	// the row records.
 	if _, err := q.Exec(ctx,
 		`insert into forge_projects (id, owner_id, name, pack, created_at, updated_at)
-		 values ($1,$2,$3,$4,$5,$5)`, newID, ownerID, name, pack, now); err != nil {
+		 values ($1,$2,$3,$4,$5,$5)`, newID, ownerID, name, string(def.Pack), now); err != nil {
 		return "", errs.Wrap(op, errs.CodeDatabaseUnavail, err)
 	}
 	// The creator becomes the project's owner in the MEMBERSHIP table, which is
@@ -651,6 +718,166 @@ type Change struct {
 	// Ids are treated as untrusted: only those that turn out to be nodes of THIS
 	// project are linked. See deriveFromIn.
 	DerivedFrom []string
+}
+
+// PackFor returns the rule set in force on a project.
+//
+// # Why this exists (2026-09-04)
+//
+// `forge_projects.pack` was written by EnsureProject and then read by NOTHING.
+// A project recorded which domain's rules applied and no rule anywhere consulted
+// it, which is the same as having no column with extra steps — worse, because
+// the record asserted a rule set was in force.
+//
+// This is the read side. Its first consumer is the per-action ceiling in
+// agent.grantFor: a pack limits how far work may go inside it, and a limit
+// nothing reads is a limit that does not exist.
+//
+// # Why an unrecognised pack is an ERROR and not a default
+//
+// Returning `general` for a value this build does not know would be the original
+// defect wearing a different hat: work would proceed under rules nobody chose,
+// and the project would look exactly like one whose domain was decided. The
+// caller is told what the row says, that nothing is in force, and how to fix it.
+//
+// EnsureProject makes this unreachable for anything it created — the set is
+// closed and the canonical id is what gets stored — so reaching it means a row
+// predates that gate or something wrote the column directly.
+func (s *Service) PackFor(ctx context.Context, q db.Querier, projectID string) (domainpack.Definition, error) {
+	const op = "workspace.Service.PackFor"
+
+	var stored string
+	if err := q.QueryRow(ctx,
+		`select pack from forge_projects where id = $1`, projectID).Scan(&stored); err != nil {
+		return domainpack.Definition{}, errs.Wrap(op, errs.CodeNotFound, err).
+			WithDetail("no project %s, so the rules in force on it cannot be read", projectID)
+	}
+	def, known := domainpack.Lookup(stored)
+	if !known {
+		return domainpack.Definition{}, errs.New(op, errs.CodeInvariantViolated).
+			WithDetail("project %s declares the domain %q, which this build does not recognise, "+
+				"so NO pack rules are in force on it.\n"+
+				"Set one with: forgectl project industry --project %s --set <industry>\n"+
+				"Industries: %s", projectID, stored, projectID, strings.Join(domainpack.Names(), ", "))
+	}
+	return def, nil
+}
+
+// ReviewAuthority is the qualified-review claim recorded on a project.
+//
+// Recorded, NEVER verified. This build cannot check a licence — there is no
+// registry to consult and no credential to validate — so what is held is a claim
+// with an author. See 0021_project_review_authority.sql.
+type ReviewAuthority struct {
+	// Holder is the named person the claim is about.
+	Holder string
+	// Note is what they were recorded as holding: a registration number, a role,
+	// a scope. Free text, unverified.
+	Note string
+	// RecordedBy is who made the claim (PRD AGT-07). A raised ceiling rests on an
+	// attributed statement, never an anonymous one.
+	RecordedBy string
+	RecordedAt time.Time
+}
+
+// Recorded reports whether an authority is actually on the project.
+func (a ReviewAuthority) Recorded() bool {
+	return strings.TrimSpace(a.Holder) != "" && strings.TrimSpace(a.RecordedBy) != ""
+}
+
+// ReviewAuthorityFor reads the claim recorded on a project, if any.
+//
+// A project with none returns the zero value and no error: absence is the normal
+// state and the safe one, not a failure.
+func (s *Service) ReviewAuthorityFor(ctx context.Context, q db.Querier, projectID string) (ReviewAuthority, error) {
+	const op = "workspace.Service.ReviewAuthorityFor"
+
+	var a ReviewAuthority
+	var holder, note, by *string
+	var at *time.Time
+	if err := q.QueryRow(ctx,
+		`select review_authority_holder, review_authority_note,
+		        review_authority_recorded_by, review_authority_recorded_at
+		   from forge_projects where id = $1`, projectID).Scan(&holder, &note, &by, &at); err != nil {
+		return a, errs.Wrap(op, errs.CodeNotFound, err).
+			WithDetail("no project %s", projectID)
+	}
+	if holder != nil {
+		a.Holder = *holder
+	}
+	if note != nil {
+		a.Note = *note
+	}
+	if by != nil {
+		a.RecordedBy = *by
+	}
+	if at != nil {
+		a.RecordedAt = *at
+	}
+	return a, nil
+}
+
+// RecordReviewAuthority names the person a raised ceiling will rest on.
+//
+// # What this does NOT do
+//
+// It does not verify anything. It writes an attributed claim, and the ceiling in
+// the domain pack rises because a named human accepted responsibility — not
+// because a qualification was established. Callers must say so where a person
+// can read it.
+//
+// Empty holder CLEARS the claim, which is the only way back down. Clearing is
+// deliberately as easy as setting: a mechanism that raises a ceiling and cannot
+// lower it is one nobody should switch on.
+func (s *Service) RecordReviewAuthority(ctx context.Context, q db.Querier,
+	projectID, holder, note, recordedBy string) error {
+	const op = "workspace.Service.RecordReviewAuthority"
+
+	holder, note = strings.TrimSpace(holder), strings.TrimSpace(note)
+	if holder == "" {
+		if _, err := q.Exec(ctx, `
+			update forge_projects
+			   set review_authority_holder = null, review_authority_note = null,
+			       review_authority_recorded_by = null, review_authority_recorded_at = null,
+			       updated_at = $2
+			 where id = $1`, projectID, s.clock.Now()); err != nil {
+			return errs.Wrap(op, errs.CodeDatabaseUnavail, err)
+		}
+		return nil
+	}
+	if strings.TrimSpace(recordedBy) == "" {
+		return errs.New(op, errs.CodeValidationFailed).
+			WithDetail("a review authority must name who recorded it. A raised ceiling rests " +
+				"on an attributed statement; an anonymous one would let work above the " +
+				"ordinary limit happen on the strength of a value with no author.")
+	}
+	// The domain has to have a raised ceiling to reach. Recording an authority on
+	// a project whose pack offers none would store a claim that changes nothing
+	// while looking exactly like one that does.
+	def, err := s.PackFor(ctx, q, projectID)
+	if err != nil {
+		return err
+	}
+	if def.ReviewAuthority == "" {
+		return errs.New(op, errs.CodeForbidden).
+			WithDetail("the %s domain has no qualified-review authority that would raise its "+
+				"ceiling, so recording one would change nothing while appearing to.\n\n%s",
+				def.Pack, def.Requires)
+	}
+	now := s.clock.Now()
+	tag, err := q.Exec(ctx, `
+		update forge_projects
+		   set review_authority_holder = $2, review_authority_note = nullif($3, ''),
+		       review_authority_recorded_by = $4, review_authority_recorded_at = $5,
+		       updated_at = $5
+		 where id = $1`, projectID, holder, note, recordedBy, now)
+	if err != nil {
+		return errs.Wrap(op, errs.CodeDatabaseUnavail, err)
+	}
+	if tag.RowsAffected() == 0 {
+		return errs.New(op, errs.CodeNotFound).WithDetail("no project %s", projectID)
+	}
+	return nil
 }
 
 // RecordChange appends a version and, when the change belongs to a goal, writes

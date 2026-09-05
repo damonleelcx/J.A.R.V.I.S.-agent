@@ -46,14 +46,45 @@ import (
 	"time"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/agent"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/pack"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/llm"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/persona"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/errs"
 )
 
 // Case is one fixed conversation, run repeatedly.
+// Kind separates the two reasons a case exists.
+//
+// # Why this is a field and not a comment
+//
+// cases.go opens by saying every case traces to an observed defect, and it was
+// right: a case nobody can trace to a real failure is the first one deleted when
+// it is inconvenient. Industry coverage does not fit that rule — nothing has
+// failed yet in "does FORGE answer an architect in architectural terms", because
+// until 2026-09-04 it could not be asked.
+//
+// Diluting the rule to admit them would cost the suite the property that makes
+// it trustworthy. So there are two kinds, named, and the report prints them
+// apart: a regression is a promise this build already broke once, and a coverage
+// case is a claim the product makes that somebody should be able to check.
+type Kind string
+
+const (
+	// KindRegression: this exact failure was observed. Why names it.
+	KindRegression Kind = "regression"
+	// KindCoverage: the product claims to serve this, and nothing measured it.
+	KindCoverage Kind = "coverage"
+)
+
 type Case struct {
 	ID string `json:"id"`
+	// Kind is regression (the default, and what every case was before coverage
+	// cases existed) or coverage.
+	Kind Kind `json:"kind,omitempty"`
+	// Industry pins the domain pack this case is answered under, by the label the
+	// product's selector shows. Empty means no domain — which is what every
+	// regression case wants, and what the harness did before industries existed.
+	Industry string `json:"industry,omitempty"`
 	// Why names the defect this case exists because of. Not decoration: a case
 	// nobody can trace to a real failure is one that gets deleted the first time
 	// it is inconvenient, and a suite of those measures nothing.
@@ -222,6 +253,7 @@ func (r *Report) Met() bool {
 // matching the provider's shape hid five shipped defects. There is no fake
 // client in this package and no way to inject one.
 type Runner struct {
+	client  llm.Client
 	conv    *agent.Conversation
 	model   string
 	repeats int
@@ -243,6 +275,7 @@ func NewRunner(client llm.Client, repeats int) (*Runner, error) {
 		repeats = 1
 	}
 	return &Runner{
+		client:  client,
 		conv:    agent.NewConversation(client, persona.DefaultCharacter()),
 		model:   client.ModelFor(llm.RoleConverse),
 		repeats: repeats,
@@ -292,16 +325,43 @@ func (r *Runner) Run(ctx context.Context, only []string) (*Report, error) {
 	return report, nil
 }
 
+// convFor returns the conversation a case is answered in.
+//
+// Built per case only when the case names an industry, so a suite of ordinary
+// regression cases behaves exactly as it did before industries existed — same
+// conversation, same framing, same scores.
+func (r *Runner) convFor(c Case) *agent.Conversation {
+	if c.Industry == "" {
+		return r.conv
+	}
+	def, ok := pack.Lookup(c.Industry)
+	if !ok {
+		// Unreachable through Select — TestEveryCoverageCaseNamesARealIndustry
+		// holds it — and if it ever happens, answering under no domain is the
+		// honest failure: the case then measures the default and its score says
+		// so, rather than the suite inventing a domain.
+		return r.conv
+	}
+	return agent.NewConversation(r.client, persona.DefaultCharacter()).
+		WithDomains(agent.PinnedDomainStore(def))
+}
+
 // once runs one case one time, carrying the conversation forward between turns.
 func (r *Runner) once(ctx context.Context, c Case, run int) Observation {
 	obs := Observation{Case: c.ID, Run: run}
 	start := time.Now()
 
+	conv := r.convFor(c)
 	var history []agent.Turn
 	for _, message := range c.Turns {
 		// No project: the evaluation harness measures FORGE at its default
 		// character, so a run's score cannot drift with somebody's setting.
-		reply, err := r.conv.Respond(ctx, "", history, message, onScreen(obs.Last()), nil)
+		//
+		// The DOMAIN is pinned separately when a case names an industry. That
+		// reasoning does not carry over to it: a character is a per-deployment
+		// setting somebody can change, and a pack is a table in this repository,
+		// so pinning one cannot make a score drift with anybody's configuration.
+		reply, err := conv.Respond(ctx, "", history, message, onScreen(obs.Last()), nil)
 		if err != nil {
 			obs.Err = err
 			break

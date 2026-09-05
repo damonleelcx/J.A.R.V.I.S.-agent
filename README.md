@@ -503,6 +503,130 @@ everything `oneOf` was written to reject while the contract goes on claiming the
 arguments were checked. A tool whose schema outgrows the validator cannot start,
 rather than cannot be trusted.
 
+### A project names its industry, and the industry sets a ceiling
+
+Ten industries — mechanical, manufacturing, automotive, aerospace, civil,
+electrical, construction, product design, architecture, and "Other" — each map to
+a **domain pack**: the rule set a project is worked under. A pack carries the
+domain's units and vocabulary, and the highest risk tier work may reach inside it
+here.
+
+```bash
+forgectl goal new --owner you@example.com --title "Studio massing" \
+  --statement "Study massing options for a small studio." --industry "Architecture"
+forgectl project industry --project prj_... --set "Civil engineering"
+```
+
+The ceiling replaced a boolean, and the reason is the interesting part. Every
+engineering pack used to be **unavailable**, because this build cannot gate
+drawing release — PRD tier R3, needing a licensed engineer it cannot represent.
+That was true and it was decided at the wrong granularity: it also refused
+concept CAD, a render and a revision, which are R1 and are the work this product
+is for. A mechanical engineer could not open a project to sketch a bracket
+because the build could not certify one.
+
+So a pack limits how far work goes rather than whether it starts. R1 happens; R2
+and above is refused naming the authority that would permit it. `medical` and
+`robotics` still permit nothing at all — neither is offered in the selector, and
+one is a stated PRD non-goal.
+
+The column that records all this was, until 2026-09-04, **written and never
+read**: a project could record that mechanical rules applied while no rule
+anywhere applied them, and both of its writers passed a constant. The read side
+is now two readers with deliberately different failure modes — an unreadable
+*permission* fails the task, an unreadable *vocabulary* falls back to "unknown
+domain" and logs. Widening a permission on a failed read is a safety defect;
+losing the vocabulary is a worse answer
+(`docs/bugfix/2026-09-04-the-pack-was-written-and-never-read.md`).
+
+### Membership is the authorisation path, so it is visible
+
+`owner_id` records who created a project and is **not** an access path — every
+authorisation decision reads `forge_project_members`. That list was answerable
+only from a terminal, so the browser could tell somebody they were not an owner
+without telling them who was.
+
+```
+GET    /v1/projects/{id}/members            any member
+POST   /v1/projects/{id}/members            owner only   {"email": "...", "role": "..."}
+PUT    /v1/projects/{id}/members/{user_id}  owner only   {"role": "..."}
+DELETE /v1/projects/{id}/members/{user_id}  owner only
+```
+
+The **read** is gated in the handler and nowhere else — `access.Service.Members`
+is a query that takes no caller — so that check is the only thing between a
+membership list and anyone who asks. The **writes** are gated in the service and
+nowhere else: `SetRole` and `Remove` each check the permission themselves and
+each refuse to strand a project by removing or demoting its **last owner**. Two
+copies of an authorisation rule is two answers to the same question, so neither
+layer restates the other's.
+
+A non-member gets **404**, not 403: they do not learn the project exists. A
+member whose role is too low gets 403 with what they lack — they already know it
+is there, and "ask an owner to change your role" is more use than a dead end.
+
+Names are shown to every member; **addresses only to somebody who can act on
+them**. Adding by email does reveal whether an address has an account, which
+sign-up already does by a documented decision — and this path is authenticated
+and owner-only, where sign-up is neither. The authority check runs *before* the
+address is resolved, so the endpoint cannot be used as an account-existence
+oracle by anyone with a lesser role.
+
+`GET /v1/projects` lists the ones you are in, with your role and each one's
+domain — scoped by construction rather than by a permission check, since it reads
+the caller's own membership rows and can return nothing else. The console shows
+them, because "which projects am I in, and as what" is the first question
+somebody opening that page has, and **each row links through to the workbench**
+for that project.
+
+Switching **starts a fresh conversation**. A conversation's variants accumulate
+*in a project* (VIS-04), so carrying one across would put its history under rules
+it was not conducted under and its variants in a project they do not belong to.
+The previous conversation is not deleted — only forgotten *here* — so it stays in
+its own project and comes back by going back to it.
+
+### A ceiling can rise, and it says out loud that nothing was verified
+
+The r1 limit above was correct and it was a dead end: a deployment that genuinely
+has a licensed engineer in the room had no way to say so.
+
+```bash
+forgectl project review-authority --project prj_... \
+  --holder "R. Okonkwo" --note "CEng MICE 481920" --as usr_...
+```
+
+Also `PUT /v1/projects/{id}/review-authority`, owner-only — the one control here
+that reached the API, because the people accountable for engineering work are in
+the browser looking at the refusal, not at a shell. The recorder is the
+authenticated user, and naming somebody else is refused rather than ignored.
+
+Recording a **named, attributed** authority raises that domain's ceiling to r2.
+Nothing else does; an unattributed claim raises nothing; `general`, `medical` and
+`robotics` are unreachable by any record; and clearing is as easy as setting,
+because a mechanism that raises a ceiling and cannot lower it is one nobody
+should switch on.
+
+What that establishes is that a named person accepted responsibility, with an
+author and a timestamp — which is what AGT-07 asks of any consequential
+transition. What it does **not** establish is a qualification: there is no
+registry to consult from inside this build and no credential to validate. So the
+phrase **"RECORDED, NOT VERIFIED"** appears verbatim in the refusal the model
+reads and the output a person reads, and a fence fails if it stops appearing.
+That is not politeness — without it the mechanism launders authority nothing
+checked, and somebody doing r2 work would believe a licence had been established
+(`docs/qualified-review.md`).
+
+A pack carries four other things that used to be missing: the node kinds a
+project in that domain is expected to hold (which `graph review` now reports as
+gaps), its geometry frame — a vehicle is X-forward and a building is Z-up against
+a site datum, and a coordinate read in the wrong frame is wrong without looking
+wrong — its data-handling rules, and the tool adapters the domain needs. Every
+one of those adapters is unavailable. They are declared anyway so a refusal can
+say *"civil work needs FEA and this deployment has none"* rather than only that
+no solver exists. Wiring a real one was considered and rejected against this
+repository's own spike, which concluded it "replaces the thing our product is
+currently for" (`docs/spikes/2026-09-02-zoo-text-to-cad`).
+
 ## Measuring the model, not the harness
 
 Everything above proves the *harness* is correct. `forgectl eval run` measures
@@ -525,6 +649,14 @@ reliably work, so the variant comparison's match-by-name fallback is load-bearin
 rather than a safety net — and there is now a number saying so. Requiring it
 would hold the suite permanently red until somebody lowered a number, which is
 how every floor in a suite eventually stops meaning anything.
+
+The suite carries two kinds of case, and the report prints them apart.
+**Regressions** trace to a defect this build actually produced and carry floors.
+**Coverage** cases are the ten industries the selector offers — a claim the
+product makes that somebody should be able to check — and carry no floors,
+because nothing has measured them before and a floor invented from one run is a
+target dressed as an observation. Interleaved, the second reads as the first, and
+the usual response to a wall of red is to lower a number.
 
 The suite is deliberately not part of `make test`: it calls a real model, costs
 money, and is non-deterministic. It runs on demand and weekly.

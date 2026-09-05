@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/pack"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/workspace"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/clock"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/db"
@@ -78,9 +79,18 @@ func (s *Service) Save(ctx context.Context, n NewVariant) (*Variant, error) {
 	// A workbench conversation has no project until something needs keeping.
 	// Created here rather than refused, through the ONE producer of projects, so
 	// the membership row that makes it visible to its creator cannot be
-	// forgotten. "general" is the honest pack: nothing in this conversation has
-	// declared a domain, and a pack is a rule set rather than a label.
-	projectID, err := s.ws.EnsureProject(ctx, tx, n.ProjectID, n.InitiatorID, doc.Name, "general")
+	// forgotten.
+	//
+	// The domain comes from the caller now. It used to be the constant "general"
+	// with the note that nothing in the conversation had declared one — true when
+	// nothing could, and false once the workbench gained a selector. `general` is
+	// still the answer when nobody says, and it is still the honest one: it is
+	// the pack that MEANS unknown domain rather than a guess dressed as a choice.
+	industry := strings.TrimSpace(n.Industry)
+	if industry == "" {
+		industry = string(pack.General)
+	}
+	projectID, err := s.ws.EnsureProject(ctx, tx, n.ProjectID, n.InitiatorID, doc.Name, industry)
 	if err != nil {
 		return nil, err
 	}

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/geometry"
+	domainpack "github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/pack"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/llm"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/persona"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/errs"
@@ -179,6 +180,11 @@ type Conversation struct {
 	// characters resolves the project's character (PRD RSN-04). Optional; nil
 	// answers every project with the character this conversation was built with.
 	characters *CharacterStore
+	// domains resolves the project's industry, for its units and vocabulary
+	// (PRD §"Domain packs"). Optional; nil answers every project with `general`,
+	// which carries no conventions and so asserts nothing about a domain nobody
+	// established.
+	domains *DomainStore
 }
 
 // NewConversation returns the conversational surface.
@@ -190,6 +196,53 @@ func NewConversation(client llm.Client, char persona.Character) *Conversation {
 func (c *Conversation) WithCharacters(s *CharacterStore) *Conversation {
 	c.characters = s
 	return c
+}
+
+// WithDomains makes conversation answer in the project's industry — its units,
+// its vocabulary, and what a first answer there is expected to establish.
+func (c *Conversation) WithDomains(s *DomainStore) *Conversation {
+	c.domains = s
+	return c
+}
+
+// framingFor returns the conversation instruction for a domain.
+//
+// # Why the conventions go AFTER the framing rather than into it
+//
+// converseFraming is how FORGE talks — speech short, detail on screen, propose
+// geometry for physical things. That is invariant. The pack adds what it must
+// get right to be useful HERE: units, vocabulary, what a first answer has to
+// establish. Two different kinds of instruction, so they are two blocks, and the
+// domain one can be absent without leaving a hole in the other.
+//
+// `general` carries no conventions by definition — it is the unknown-domain
+// pack — so an unstated industry gets exactly the framing this had before packs
+// were read at all. That is the property that makes this safe to add: nothing
+// changes for a project that never chose a domain.
+func framingFor(domain domainpack.Definition) string {
+	if strings.TrimSpace(domain.Conventions) == "" {
+		return converseFraming
+	}
+	out := converseFraming + "\n\nThis project is " + domain.Industry + " work. " +
+		"What that requires of an answer here:\n\n" + domain.Conventions
+	// The frame every coordinate in this reply is read in. Stated separately from
+	// the prose because it is the one line that makes a position mean anything,
+	// and it DIFFERS between domains — a vehicle is X-forward, a building is Z-up
+	// against a site datum. A number read in the wrong frame is wrong without
+	// looking wrong.
+	if strings.TrimSpace(domain.GeometryAxes) != "" {
+		out += "\n\nCoordinates here: " + domain.GeometryAxes
+		if domain.GeometryUnit != "" {
+			out += " Default unit: " + domain.GeometryUnit + "."
+		}
+	}
+	// What must not travel. The model is the thing that decides what goes into a
+	// reply, so a handling rule that never reached it would be a rule addressed
+	// to nobody.
+	if strings.TrimSpace(domain.DataRules) != "" {
+		out += "\n\nHandling material in this domain: " + domain.DataRules
+	}
+	return out + "\n\nThe boundary of this domain: " + domain.Summary
 }
 
 // Turn is one exchange, as stored and replayed.
@@ -349,7 +402,7 @@ func (c *Conversation) Respond(ctx context.Context, projectID string, history []
 	// and the buffered path assembled the same request separately, and an image
 	// added to one would simply not exist in the other.
 	messages := c.buildMessages(c.characters.For(ctx, projectID, c.char),
-		history, message, workspaceNote, images)
+		c.domains.For(ctx, projectID), history, message, workspaceNote, images)
 
 	resp, err := c.client.Complete(ctx, llm.Request{
 		Role:      role,

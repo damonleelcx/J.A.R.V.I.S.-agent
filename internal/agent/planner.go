@@ -48,6 +48,12 @@ Reply with JSON only, matching this shape exactly:
 {
   "rationale": "one paragraph on the shape of this plan and why",
   "clarification_needed": "" or "the specific question that must be answered first",
+  "suggested_industry": "" or one of: mechanical, manufacturing, automotive, aerospace,
+      civil, electrical, construction, product-design, architecture. Say which
+      engineering domain this work belongs to ONLY if the goal makes it obvious.
+      This does NOT change anything: it is recorded as an assumption for a person
+      to accept or ignore, and the project keeps whatever domain it was created
+      in. Leave it empty when the work is general or you would be guessing.
   "tasks": [
     {
       "key": "stable-kebab-identifier",
@@ -126,10 +132,26 @@ type PlanResult struct {
 	// ClarificationNeeded, when non-empty, means the planner refused to guess.
 	// That is a success, not a failure: a plan built on a wrong assumption costs
 	// far more than a question.
-	ClarificationNeeded string        `json:"clarification_needed"`
-	Tasks               []PlannedTask `json:"tasks"`
-	Usage               llm.Usage     `json:"-"`
-	Model               string        `json:"-"`
+	ClarificationNeeded string `json:"clarification_needed"`
+	// SuggestedIndustry is the domain the planner thinks this work belongs to,
+	// or empty.
+	//
+	// # Why a suggestion and never a decision
+	//
+	// The industry selects the rule set a project is worked under, and it is
+	// STATED — in the workbench selector or `goal new --industry`. This is what
+	// the planner noticed while doing work it was doing anyway; it costs no extra
+	// call and it changes nothing.
+	//
+	// Acting on it would undo the fix this whole area was: a guessed domain that
+	// became the rules reads in the record exactly like a chosen one. So Intake
+	// writes it into the project graph as an ASSUMPTION, epistemically
+	// `inferred` (PRD RSN-05), where a person can see it and act or not. The pack
+	// column is never touched by it.
+	SuggestedIndustry string        `json:"suggested_industry"`
+	Tasks             []PlannedTask `json:"tasks"`
+	Usage             llm.Usage     `json:"-"`
+	Model             string        `json:"-"`
 }
 
 // Plan decomposes a goal.

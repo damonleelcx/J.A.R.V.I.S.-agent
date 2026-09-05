@@ -2,8 +2,10 @@ package agent
 
 import (
 	"context"
+	"strings"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/engine"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/pack"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/workspace"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/llm"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/persona"
@@ -60,6 +62,18 @@ func NewIntake(client llm.Client, char persona.Character, engineCfg config.Engin
 	}
 }
 
+// logger returns somewhere to write, never nil.
+//
+// The log field is optional by design, and several collaborators call their
+// logger without checking. Handing them a discard logger keeps "nil is legal"
+// true rather than true-until-a-collaborator-logs.
+func (in *Intake) logger() *logx.Logger {
+	if in.log != nil {
+		return in.log
+	}
+	return logx.Discard()
+}
+
 // WithLog gives the intake somewhere to record what planning did, notably the
 // hazard load that PRD SAF-02 requires at r3 and above.
 func (i *Intake) WithLog(log *logx.Logger) *Intake { i.log = log; return i }
@@ -80,6 +94,16 @@ type DraftRequest struct {
 	// ProjectID is an existing project, or empty to create one named after the
 	// goal.
 	ProjectID string
+	// Industry is the domain the new project works in — either the label the
+	// product's selector shows ("Civil engineering") or the pack id ("civil").
+	//
+	// Empty means UNSTATED, which resolves to the `general` pack rather than to a
+	// guess. See Draft for why nothing here tries to infer it.
+	//
+	// Meaningless together with ProjectID, and refused rather than ignored: the
+	// industry belongs to the project, so passing one alongside an existing
+	// project is a caller who believes they are setting something.
+	Industry  string
 	Title     string
 	Statement string
 	Autonomy  engine.Autonomy
@@ -121,6 +145,44 @@ func (in *Intake) Draft(ctx context.Context, pool *db.Pool, req DraftRequest) (*
 			WithDetail("risk tier %q is not recognised", req.RiskTier)
 	}
 
+	// The industry is a property of the PROJECT, so asking for one while naming an
+	// existing project is a caller who thinks they are setting something. Refused
+	// rather than dropped: EnsureProject returns early on a known project id, so
+	// the value would otherwise vanish without a word.
+	if req.ProjectID != "" && strings.TrimSpace(req.Industry) != "" {
+		return nil, errs.New(op, errs.CodeValidationFailed).
+			WithDetail("an industry cannot be set while adding a goal to the existing project %s — "+
+				"the industry belongs to the project, and changing it would change the rules "+
+				"under which its earlier work was done.\n"+
+				"Change it deliberately with `forgectl project industry --project %s --set <industry>`, "+
+				"or omit --industry to add this goal to the project as it is.",
+				req.ProjectID, req.ProjectID)
+	}
+
+	// # Why an unstated industry is `general` and NOT a guess (2026-09-04)
+	//
+	// This used to pass the constant "software", which was wrong for most of what
+	// this product is used for: a bracket goal was filed under a pack whose rules
+	// are about merging code. The obvious replacement is to infer the domain from
+	// the title and statement — and it is not done here, for two reasons.
+	//
+	// Draft calls no model. That is a stated property a few lines up and the
+	// workbench depends on it: the goal id has to exist before the minutes of
+	// planning start, so somebody who closes the tab still has something to
+	// return to. An inference step would put a model call in front of the one
+	// operation that is currently free.
+	//
+	// And `general` is not a fallback invented to fill the hole — it is the pack
+	// whose entire definition is this situation: "unknown domain or missing
+	// standards: autonomy is lower and expert review is triggered". A guessed
+	// industry that lands wrong files work under rules nobody chose while looking
+	// exactly like a stated one. Saying "unknown" is the honest answer and it is
+	// already a first-class one.
+	industry := strings.TrimSpace(req.Industry)
+	if industry == "" && req.ProjectID == "" {
+		industry = string(pack.General)
+	}
+
 	now := in.clock.Now()
 	// One producer of projects, not two. The workbench also needs "a project to
 	// put this in, making one if there is not one" when it keeps a geometry
@@ -128,7 +190,7 @@ func (in *Intake) Draft(ctx context.Context, pool *db.Pool, req DraftRequest) (*
 	// that one on the part that is easiest to forget — the membership row,
 	// without which the person who just created a project cannot see it.
 	projectID, err := workspace.NewService(pool, in.clock, nil).
-		EnsureProject(ctx, pool, req.ProjectID, req.OwnerID, req.Title, "software")
+		EnsureProject(ctx, pool, req.ProjectID, req.OwnerID, req.Title, industry)
 	if err != nil {
 		return nil, err
 	}
@@ -176,6 +238,9 @@ func (in *Intake) Plan(ctx context.Context, pool *db.Pool, goal *engine.Goal) (*
 	if err := recordQuestion(ctx, pool, goal.ID, result.ClarificationNeeded); err != nil {
 		return nil, err
 	}
+	// What the planner made of the domain, recorded where a person will see it.
+	// Never applied — see recordIndustryReading.
+	in.recordIndustryReading(ctx, pool, goal, result.SuggestedIndustry)
 	if result.ClarificationNeeded != "" {
 		// Returned rather than raised. A question is the planner working
 		// correctly, and an error would push the caller into treating it as a
@@ -189,6 +254,94 @@ func (in *Intake) Plan(ctx context.Context, pool *db.Pool, goal *engine.Goal) (*
 	return &PlanOutcome{
 		Plan: plan, Tasks: tasks, Rationale: result.Rationale, Result: result,
 	}, nil
+}
+
+// recordIndustryReading writes what the planner made of the goal's domain into
+// the project graph, when the project has not been given one.
+//
+// # Why this proposes and never applies
+//
+// The industry selects the rule set a project is worked under. It is STATED —
+// in the workbench selector, or `goal new --industry` — and the whole point of
+// reading the pack was to stop a constant deciding it for everybody.
+//
+// A guessed industry that became the rules would read in the record exactly like
+// a chosen one, which is the defect this area removed wearing a different hat.
+// So this writes a node and changes nothing: the project keeps whatever domain
+// it was created in, and a person can act on the reading or ignore it. PRD
+// RSN-02 permits a labelled assumption for low-risk exploration; this is one.
+//
+// # Why it costs nothing
+//
+// The suggestion rides on the planner's existing reply. There is no second model
+// call, so a deployment that never looks at these nodes pays nothing for them.
+//
+// # Why the label is `assumed` and not `inferred`
+//
+// The node's KIND is assumption, and workspace.KindOf permits assumptions
+// exactly one epistemic label: assumed. That is deliberate — "an assumption
+// filed as observed is not an assumption" — and the rule is right even though
+// `inferred` describes how the planner arrived at it. What is being assumed is
+// the PACK: nobody stated a domain, so the work proceeds under `general`. How
+// FORGE read the goal is the node's body, not its epistemic status.
+//
+// # Why a failure here is swallowed
+//
+// A note about the domain is not worth failing a plan the person waited minutes
+// for. Logged at WARN so a deployment where every one of these vanishes does not
+// look like one where the planner never suggested anything.
+func (in *Intake) recordIndustryReading(ctx context.Context, pool *db.Pool, goal *engine.Goal, suggested string) {
+	suggested = strings.TrimSpace(suggested)
+	if suggested == "" {
+		return
+	}
+	def, ok := pack.Lookup(suggested)
+	// A suggestion outside the closed set is dropped rather than recorded. The
+	// model is asked for one of nine names; anything else is it inventing a
+	// domain, and a node naming a pack that does not exist would send somebody
+	// looking for rules there are none of.
+	if !ok || def.Industry == "" {
+		if in.log != nil {
+			in.log.Warn(ctx, logx.EventNodeAdded, "goal_id", goal.ID,
+				"suggested", suggested,
+				"detail", "the planner suggested a domain this build does not offer; not recorded")
+		}
+		return
+	}
+	// A non-nil logger, because Intake's own contract says nil is a legal value
+	// and workspace.Service.Add calls s.log.Info unguarded. Passing in.log
+	// straight through panics for any caller that took the documented option —
+	// forgectl's tests build an intake without a logger, and so does anything
+	// else that follows the comment on the field.
+	ws := workspace.NewService(pool, in.clock, in.logger())
+	current, err := ws.PackFor(ctx, pool, goal.ProjectID)
+	if err != nil {
+		return // the project's rules are unreadable; a note about them helps nobody
+	}
+	// Only when nobody has said. A project already working in a domain does not
+	// need the planner's opinion about it, and writing one every time somebody
+	// planned a goal would fill the graph with noise.
+	if current.Pack != pack.General {
+		return
+	}
+	if _, err := ws.Add(ctx, workspace.NewNode{
+		ProjectID: goal.ProjectID,
+		Kind:      workspace.KindAssumption,
+		Title:     "Working as " + current.Industry + "; this looks like " + def.Industry + " work",
+		Body: "No industry was stated for this project, so it is worked under the " +
+			string(current.Pack) + " pack: " + current.Summary + "\n\n" +
+			"Planning this goal, FORGE read the work as " + def.Industry + ". " +
+			"Nothing has been changed by that reading — the domain decides which rules " +
+			"apply and it is yours to state, not FORGE's to assume.\n\n" +
+			"If it is right: forgectl project industry --project " + goal.ProjectID +
+			" --set " + string(def.Pack) + "\n" +
+			def.Industry + " would mean: " + def.Summary,
+		Source:    "planner, while planning goal " + goal.ID,
+		CreatedBy: goal.CreatedBy,
+	}); err != nil && in.log != nil {
+		in.log.WarnWith(ctx, logx.EventNodeAdded, err, "goal_id", goal.ID,
+			"detail", "the planner's reading of the domain could not be recorded")
+	}
 }
 
 // Replan plans a draft goal that has none, so a planning failure is recoverable.

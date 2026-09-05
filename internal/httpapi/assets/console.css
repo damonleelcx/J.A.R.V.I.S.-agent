@@ -63,6 +63,10 @@
   cursor: pointer;
   border: 1px solid transparent;
 }
+/* A project row is an <a> so it navigates, shows its address on hover and opens
+ * in a new tab the way a link should. It must look identical to the goal rows
+ * beside it, so the anchor's own colour and underline are cleared. */
+a.goal { color: inherit; text-decoration: none; }
 .goal:hover { background: #1a2233; }
 .goal[aria-current="true"] { background: #17202f; border-color: var(--core-dim); }
 .goal .t { font-weight: 600; font-size: 14px; line-height: 1.35; }

@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/engine"
+	domainpack "github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/pack"
+	domainworkspace "github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/workspace"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/clock"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/config"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/db"
@@ -245,7 +247,32 @@ func (w *Worker) runTask(ctx context.Context, task *engine.Task) {
 		return
 	}
 
-	grant := grantFor(goal, w.production)
+	// The rules in force on this project, read fresh rather than cached on the
+	// goal: an industry corrected with `forgectl project industry` has to take
+	// effect on the next task, not on the next restart. One query against a pool
+	// already open, next to a model call that costs seconds.
+	//
+	// A failure here fails the TASK rather than defaulting to a permissive
+	// ceiling. An unreadable rule set is not the same as an unrestricted one, and
+	// PackFor's error says which project and how to fix it.
+	domain, err := domainworkspace.NewService(w.pool, w.clock, w.log).PackFor(ctx, w.pool, goal.ProjectID)
+	if err != nil {
+		w.failTask(ctx, task, errs.CodeOf(err), err.Error())
+		return
+	}
+
+	// Read next to the domain and from the same pool, so "which rules" and "who
+	// is accountable for going past them" can never come from two reads that
+	// disagree. An unreadable authority fails the task for PackFor's reason: a
+	// permission that cannot be read is not an unrestricted one.
+	authority, err := domainworkspace.NewService(w.pool, w.clock, w.log).
+		ReviewAuthorityFor(ctx, w.pool, goal.ProjectID)
+	if err != nil {
+		w.failTask(ctx, task, errs.CodeOf(err), err.Error())
+		return
+	}
+
+	grant := grantFor(goal, domain, authority, w.production)
 	tc, err := w.assembler.Assemble(ctx, w.pool, task, goal, grant, w.budgetNote(goal))
 	if err != nil {
 		w.failTask(ctx, task, errs.CodeOf(err), err.Error())
@@ -629,7 +656,28 @@ func (w *Worker) budgetNote(goal *engine.Goal) string {
 // that can disagree. Deploy, transact and control are never granted by this
 // build — they are the capabilities whose tools do not exist here, and granting
 // a capability with no tool behind it only creates a false sense of scope.
-func grantFor(goal *engine.Goal, production bool) tools.Grant {
+//
+// # Why the domain pack is a second ceiling (2026-09-04)
+//
+// The ceiling used to be the goal's own tier alone. That meant the domain a
+// project works in had no bearing on what could be done in it: a goal created at
+// r2 reached r2 whether the project was software, where a merge is reviewed and
+// reversible, or civil, where the equivalent act needs a licensed engineer this
+// build cannot represent.
+//
+// The pack was the natural home for that limit and was doing nothing — the
+// column was written by EnsureProject and read by no rule anywhere. This is the
+// read. The LOWER of the two ceilings applies, because both are statements about
+// what may happen and the stricter of two limits is the one that means anything.
+//
+// Deliberately not additive with the goal's tier: a project cannot RAISE what a
+// goal may do. A pack with a high ceiling permits nothing the goal did not
+// already permit, which keeps the property that lowering a goal's tier can only
+// ever narrow it.
+//
+// See docs/bugfix/2026-09-04-the-pack-was-written-and-never-read.md.
+func grantFor(goal *engine.Goal, domain domainpack.Definition, authority domainworkspace.ReviewAuthority,
+	production bool) tools.Grant {
 	caps := []tools.Capability{tools.CapRead}
 	if goal.Autonomy.AtLeast(engine.AutonomyDraft) {
 		caps = append(caps, tools.CapWrite)
@@ -637,10 +685,53 @@ func grantFor(goal *engine.Goal, production bool) tools.Grant {
 	if goal.Autonomy.AllowsExecution() {
 		caps = append(caps, tools.CapExecute, tools.CapSimulate)
 	}
-	return tools.Grant{
-		Capabilities: caps,
-		MaxRiskTier:  goal.RiskTier,
-		Autonomy:     goal.Autonomy,
-		Production:   production,
+	// The ONLY place a domain ceiling rises, and only for an attributed claim.
+	//
+	// What was established is that a named person accepted responsibility. What
+	// was NOT established is a qualification: this build cannot check a licence,
+	// and CeilingSource below says so in those words. Without that sentence this
+	// mechanism would launder authority nothing verified.
+	domainCeiling := domain.CeilingWith(authority.Recorded())
+	ceiling := lowerTier(goal.RiskTier, domainCeiling)
+	// Named only when the DOMAIN is the binding limit. When the goal's own tier
+	// is what stops the work there is no second authority to point at, and
+	// naming the pack anyway would send somebody to change an industry that was
+	// not the thing in their way.
+	var source string
+	if domainCeiling.Valid() && ceiling == domainCeiling && ceiling != goal.RiskTier {
+		source = fmt.Sprintf("That ceiling is the %s domain's, not this goal's: %s Work above %s "+
+			"here would require %s.", domain.Pack, domain.Summary, domainCeiling, domain.Requires)
+		if authority.Recorded() {
+			// Said wherever a raised ceiling is in play, including when something
+			// is refused ABOVE the raised one. A reader has to know the limit they
+			// hit moved, and on what.
+			source += fmt.Sprintf(" This project's ceiling was raised to %s because %s was "+
+				"recorded as %s — RECORDED, NOT VERIFIED: this build cannot check a "+
+				"qualification, and what it holds is a claim attributed to whoever made it.",
+				domainCeiling, authority.Holder, domain.ReviewAuthority)
+		}
 	}
+	return tools.Grant{
+		Capabilities:  caps,
+		MaxRiskTier:   ceiling,
+		Autonomy:      goal.Autonomy,
+		Production:    production,
+		CeilingSource: source,
+	}
+}
+
+// lowerTier returns the stricter of two ceilings.
+//
+// An invalid pack ceiling yields the goal's own, which is the pre-pack
+// behaviour: this is reached only by callers holding a zero Definition, and
+// silently widening to "no ceiling" would be the worst possible reading of an
+// absent limit.
+func lowerTier(goalTier, packTier engine.RiskTier) engine.RiskTier {
+	if !packTier.Valid() {
+		return goalTier
+	}
+	if packTier.AtLeast(goalTier) {
+		return goalTier
+	}
+	return packTier
 }

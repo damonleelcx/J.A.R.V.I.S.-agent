@@ -43,6 +43,8 @@ func cmdGoalNew(ctx context.Context, cfg *config.Config, log *logx.Logger, args 
 	risk := fs.String("risk", "r1", "r0 | r1 | r2 | r3 | r4")
 	email := fs.String("owner", "", "email of an existing account to own this goal (required)")
 	project := fs.String("project", "", "existing project id, or empty to create one")
+	industry := fs.String("industry", "", "industry for the NEW project: "+industryChoices()+
+		"\n\t(omit to file the project as \"Other\", which lowers autonomy and triggers expert review)")
 	start := fs.Bool("start", false, "activate the goal immediately after planning")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -79,6 +81,7 @@ func cmdGoalNew(ctx context.Context, cfg *config.Config, log *logx.Logger, args 
 	goal, err := intake.Draft(ctx, pool, agent.DraftRequest{
 		OwnerID:   ownerID,
 		ProjectID: *project,
+		Industry:  *industry,
 		Title:     *title,
 		Statement: *statement,
 		Autonomy:  engine.Autonomy(*autonomy),
@@ -88,7 +91,11 @@ func cmdGoalNew(ctx context.Context, cfg *config.Config, log *logx.Logger, args 
 		return err
 	}
 	if *project == "" {
-		fmt.Printf("created project %s\n", goal.ProjectID)
+		// The industry is printed with the project because it is the thing that
+		// decides which rules the work is done under, and an unstated one silently
+		// resolving to "Other" is exactly the kind of default somebody needs to see
+		// rather than discover later from a refusal.
+		fmt.Printf("created project %s in %s\n", goal.ProjectID, describeIndustry(*industry))
 	}
 	fmt.Printf("created goal %s\n\n", goal.ID)
 

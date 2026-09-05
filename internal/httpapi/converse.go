@@ -51,7 +51,8 @@ func NewConverseHandlers(d Deps) *ConverseHandlers {
 	return &ConverseHandlers{
 		deps: d,
 		conv: agent.NewConversation(d.LLM, persona.DefaultCharacter()).
-			WithCharacters(agent.NewCharacterStore(d.Pool, d.Log)),
+			WithCharacters(agent.NewCharacterStore(d.Pool, d.Log)).
+			WithDomains(agent.NewDomainStore(d.Pool, d.Log)),
 		geo:       geometry.NewService(d.Pool, d.Clock, d.Log),
 		workspace: workspace.NewService(d.Pool, d.Clock, d.Log),
 		talk:      conversation.NewService(d.Pool, d.Clock, d.Log),
@@ -92,6 +93,13 @@ type converseRequest struct {
 	// The id is checked against the caller's membership on every turn, so a
 	// client naming somebody else's project is refused rather than trusted.
 	ProjectID string `json:"project_id"`
+	// Industry is the domain a NEWLY created project works in (PRD §"Domain
+	// packs"). Sent by the workbench's selector alongside the first turn that
+	// keeps geometry, and ignored once ProjectID names a project — the industry
+	// belongs to the project, and this is not the surface that changes one.
+	//
+	// Empty is `general`: the pack that MEANS unknown domain, not a guess.
+	Industry string `json:"industry,omitempty"`
 	// OnScreen describes what the workspace is currently showing, so a phrase
 	// like "make that taller" resolves against what the person is looking at
 	// rather than against the transcript. PRD WRK-02: a spoken reference should
@@ -127,6 +135,39 @@ func (h *ConverseHandlers) requirementsFor(r *http.Request, projectID string,
 	ids []string, message string) (string, []string) {
 
 	if len(ids) == 0 || projectID == "" || h.workspace == nil {
+		return message, nil
+	}
+	// Membership, BEFORE the graph is read.
+	//
+	// # The leak this closes (2026-09-04)
+	//
+	// project_id and from_nodes both come from the client, and this function
+	// loaded the named project's graph without asking whether the caller could
+	// see it. A non-member holding a node id — and ids travel: screenshots,
+	// logs, a pasted link — could have another project's requirement TITLE AND
+	// BODY read out of the graph and written into their own turn's prompt.
+	//
+	// keepGeometry a few hundred lines down had always checked membership on the
+	// same project_id before WRITING. Reading was simply never gated, which is
+	// the ordinary shape of this defect: the dangerous-looking path was guarded
+	// and the quiet one was not.
+	//
+	// Read rather than write: this injects text, it does not change the project.
+	// A viewer may legitimately build a turn from a requirement they can see.
+	// UserFrom returns NIL when the context carries no user, and this function is
+	// reachable without one — directly in tests today, and from anywhere a future
+	// route forgets the authed() wrapper. An absent user is treated as an absent
+	// permission, which is the only safe reading of it; dereferencing here would
+	// turn a missing gate into a crash and hide which of the two it was.
+	user, ok := UserFrom(r.Context())
+	if !ok || user == nil {
+		return message, nil
+	}
+	if err := h.deps.requirePermission(r, projectID, user.ID, access.PermProjectRead); err != nil {
+		h.deps.Log.WarnWith(r.Context(), logx.EventWorkspaceUnreadable, err,
+			"project_id", projectID, "user_id", user.ID,
+			"detail", "a turn named requirements in a project the caller cannot read; "+
+				"the turn proceeds without them")
 		return message, nil
 	}
 	g, err := h.workspace.Load(r.Context(), projectID)
@@ -462,6 +503,10 @@ func (h *ConverseHandlers) keepGeometry(r *http.Request, req converseRequest, pr
 	v, err := h.geo.Save(ctx, geometry.NewVariant{
 		ProjectID:   projectID,
 		InitiatorID: user.ID,
+		// Only meaningful when this call CREATES the project. Save ignores it
+		// otherwise, which is why it is safe to send on every turn: the client
+		// does not have to know which turn happened to be the first one.
+		Industry: strings.TrimSpace(req.Industry),
 		// The workbench conversation, which is neither a person nor the goal
 		// engine. See migration 0011 for why the vocabulary gained this actor
 		// rather than reusing 'human' or 'system'.

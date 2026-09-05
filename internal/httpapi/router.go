@@ -84,6 +84,7 @@ func NewRouter(d Deps) http.Handler {
 	mux.HandleFunc("GET /healthz", health.Live)
 	mux.HandleFunc("GET /readyz", health.Ready)
 	mux.HandleFunc("GET /v1/meta/error-codes", health.ErrorCodes)
+	mux.HandleFunc("GET /v1/meta/industries", health.Industries)
 
 	// --- identity (unauthenticated, rate limited) ---
 	mux.Handle("POST /v1/auth/sign-up", limited(limitSignUp, authHandlers.SignUp))
@@ -152,6 +153,35 @@ func NewRouter(d Deps) http.Handler {
 	ws := NewWorkspaceHandlers(d)
 	mux.HandleFunc("GET /v1/workspace/kinds", ws.Kinds)
 	mux.Handle("GET /v1/workspace/graph", authed(ws.Graph))
+
+	// --- the qualified-review claim a raised ceiling rests on ---
+	//
+	// The one mechanism in the product that WIDENS what may be done, so the write
+	// verbs are gated on access.PermProjectManage — owner-only — rather than on
+	// the maintainer permission that decides individual approvals. Recording an
+	// authority changes the ceiling for every piece of work in the project from
+	// then on. See internal/httpapi/review_authority.go.
+	// --- who is in a project ---
+	//
+	// Membership is the single authorisation path in this build, so this list is
+	// the answer to "who can see and do what here". The READ is gated here and
+	// nowhere else: access.Service.Members is a query that checks nothing. The
+	// WRITES are not gated here at all — SetRole and Remove authorise themselves
+	// and refuse to strand a project by removing its last owner, and a second
+	// copy of either rule is a second answer to the same question.
+	members := NewMemberHandlers(d)
+	// Scoped by construction rather than by a permission check: it reads the
+	// caller's own membership rows and can return nothing else.
+	mux.Handle("GET /v1/projects", authed(members.Mine))
+	mux.Handle("GET /v1/projects/{id}/members", authed(members.List))
+	mux.Handle("POST /v1/projects/{id}/members", authed(members.Add))
+	mux.Handle("PUT /v1/projects/{id}/members/{user_id}", authed(members.SetRole))
+	mux.Handle("DELETE /v1/projects/{id}/members/{user_id}", authed(members.Remove))
+
+	reviewAuth := NewReviewAuthorityHandlers(d)
+	mux.Handle("GET /v1/projects/{id}/review-authority", authed(reviewAuth.Get))
+	mux.Handle("PUT /v1/projects/{id}/review-authority", authed(reviewAuth.Put))
+	mux.Handle("DELETE /v1/projects/{id}/review-authority", authed(reviewAuth.Delete))
 	mux.Handle("GET /v1/workspace/review", authed(ws.Review))
 	mux.Handle("POST /v1/workspace/nodes", authed(ws.AddNode))
 	mux.Handle("PATCH /v1/workspace/nodes/{id}", authed(ws.EditNode))

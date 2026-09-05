@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	domainpack "github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/pack"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/llm"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/persona"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/errs"
@@ -99,8 +100,8 @@ func TestBothPathsBuildOneRequest(t *testing.T) {
 	conv := NewConversation(&visionStub{reply: sawIt}, persona.DefaultCharacter())
 
 	history := []Turn{{Role: "user", Content: "hello"}, {Role: "forge", Content: "hi"}}
-	built := conv.buildMessages(persona.DefaultCharacter(), history, "model this",
-		"a bracket is on screen", []string{"data:image/png;base64,AAAA"})
+	built := conv.buildMessages(persona.DefaultCharacter(), domainpack.Definition{}, history,
+		"model this", "a bracket is on screen", []string{"data:image/png;base64,AAAA"})
 
 	last := built[len(built)-1]
 	if len(last.Images) != 1 {
