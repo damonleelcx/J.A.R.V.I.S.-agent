@@ -137,6 +137,31 @@ func (h *ConverseHandlers) requirementsFor(r *http.Request, projectID string,
 	if len(ids) == 0 || projectID == "" || h.workspace == nil {
 		return message, nil
 	}
+	// Membership, BEFORE the graph is read.
+	//
+	// # The leak this closes (2026-09-04)
+	//
+	// project_id and from_nodes both come from the client, and this function
+	// loaded the named project's graph without asking whether the caller could
+	// see it. A non-member holding a node id — and ids travel: screenshots,
+	// logs, a pasted link — could have another project's requirement TITLE AND
+	// BODY read out of the graph and written into their own turn's prompt.
+	//
+	// keepGeometry a few hundred lines down had always checked membership on the
+	// same project_id before WRITING. Reading was simply never gated, which is
+	// the ordinary shape of this defect: the dangerous-looking path was guarded
+	// and the quiet one was not.
+	//
+	// Read rather than write: this injects text, it does not change the project.
+	// A viewer may legitimately build a turn from a requirement they can see.
+	user, _ := UserFrom(r.Context())
+	if err := h.deps.requirePermission(r, projectID, user.ID, access.PermProjectRead); err != nil {
+		h.deps.Log.WarnWith(r.Context(), logx.EventWorkspaceUnreadable, err,
+			"project_id", projectID, "user_id", user.ID,
+			"detail", "a turn named requirements in a project the caller cannot read; "+
+				"the turn proceeds without them")
+		return message, nil
+	}
 	g, err := h.workspace.Load(r.Context(), projectID)
 	if err != nil {
 		// Read failure loses the requirement block, not the turn. Logged rather

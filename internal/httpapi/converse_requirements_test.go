@@ -397,3 +397,98 @@ func TestAnOrdinaryInputIsStoredUntouched(t *testing.T) {
 		t.Errorf("a short message was altered on the way into the record: %q", got)
 	}
 }
+
+// A turn cannot read requirements out of a project the caller cannot see.
+//
+// # The leak this holds closed (2026-09-04)
+//
+// `project_id` and `from_nodes` both come from the client, and requirementsFor
+// loaded the named project's graph without asking whether the caller could see
+// it. A NON-MEMBER holding a node id — and ids travel: screenshots, logs, a
+// pasted link — could have another project's requirement title and body read out
+// of the graph and written into their own prompt.
+//
+// keepGeometry had always checked membership on the same project_id before
+// WRITING. Reading was never gated, which is the ordinary shape of this defect:
+// the dangerous-looking path was guarded and the quiet one was not.
+//
+// "You need a node id first" is not an authorisation model, which is why this
+// fence asserts the outcome rather than the difficulty.
+func TestRequirementsAreNotReadableAcrossAProjectBoundary(t *testing.T) {
+	w := workspaceHarness(t)
+	ctx := context.Background()
+
+	secret, err := w.svc.Add(ctx, workspace.NewNode{
+		ProjectID: w.project, Kind: workspace.KindRequirement,
+		Title: "Confidential bridge loading",
+		Body:  "Deck must carry 45 tonnes at midspan.",
+		How:   claim.Observed, CreatedBy: w.owner.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	stub := &stubLLM{}
+	deps := w.h.deps
+	deps.LLM = stub
+	h := NewConverseHandlers(deps)
+
+	// w.other is not a member of w.project, and names its requirement anyway.
+	body := `{"message":"hello","project_id":"` + w.project +
+		`","from_nodes":["` + secret.ID + `"]}`
+	r := httptest.NewRequest("POST", "/v1/converse", strings.NewReader(body))
+	r = r.WithContext(context.WithValue(ctx, ctxKeyUser, w.other))
+	rec := httptest.NewRecorder()
+	h.Converse(rec, r)
+
+	if len(stub.saw) == 0 {
+		t.Fatalf("the turn never reached a model: %d %s", rec.Code, rec.Body.String())
+	}
+	last := stub.saw[len(stub.saw)-1].Content
+	for _, secretText := range []string{"45 tonnes at midspan", "Confidential bridge loading"} {
+		if strings.Contains(last, secretText) {
+			t.Errorf("a non-member's turn was injected with %q from a project they cannot "+
+				"read.\nThe whole message was:\n%s", secretText, last)
+		}
+	}
+	// The turn still happens — losing the requirement block is not losing the
+	// conversation, which is what the surrounding code already does on a read
+	// failure. The person is simply not handed somebody else's words.
+	if !strings.Contains(last, "hello") {
+		t.Errorf("the caller's own message was lost along with the refused block:\n%s", last)
+	}
+}
+
+// And a MEMBER still gets theirs, which is the half that makes the fence honest.
+func TestRequirementsAreStillReadableByAMember(t *testing.T) {
+	w := workspaceHarness(t)
+	ctx := context.Background()
+
+	req, err := w.svc.Add(ctx, workspace.NewNode{
+		ProjectID: w.project, Kind: workspace.KindRequirement,
+		Title: "Must bolt to a 40mm hole pattern",
+		Body:  "Two M5 clearance holes, 40mm apart.",
+		How:   claim.Observed, CreatedBy: w.owner.ID,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	stub := &stubLLM{}
+	deps := w.h.deps
+	deps.LLM = stub
+	h := NewConverseHandlers(deps)
+
+	body := `{"message":"Model that.","project_id":"` + w.project +
+		`","from_nodes":["` + req.ID + `"]}`
+	r := httptest.NewRequest("POST", "/v1/converse", strings.NewReader(body))
+	r = r.WithContext(context.WithValue(ctx, ctxKeyUser, w.owner))
+	rec := httptest.NewRecorder()
+	h.Converse(rec, r)
+
+	if len(stub.saw) == 0 {
+		t.Fatalf("no model call: %d %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(stub.saw[len(stub.saw)-1].Content, "Two M5 clearance holes") {
+		t.Error("the owner's own requirement no longer reaches the turn; the gate is too tight")
+	}
+}
