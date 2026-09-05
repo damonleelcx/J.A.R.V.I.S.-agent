@@ -3090,6 +3090,30 @@ the browser's seam rule, and the one that stopped the path being marked closed
 before flattening, both passed: with a sharp seam there is no arc to start in the
 middle of. Both fixtures now round every corner including the first.
 
+### What the live runs found, and the one thing they changed
+
+Asked for a bent coolant line — the same prompt as wave 19's, against the richer
+contract — **qwen-plus reached for a `sweep` in five runs out of six.** Before
+these three waves it described the same part with three extrusions butted end to
+end in both of its runs. That is a rate, and rates belong in the eval suite
+against a measured floor, which still has no geometry cases in it; what is
+reported here is six runs, not a number to rely on.
+
+Two of the six produced a **correct, buildable bent tube that FORGE threw away**,
+for one reason: the model puts a `radius` on EVERY path point, ends included, and
+a radius on an end was a refusal.
+
+It is now a warning, and the part is built. The reasoning is the one already
+written down for a box carrying a profile: an ERROR is a part that could not be
+read, and a WARNING is something in it that was ignored. A radius at an end has
+exactly one reading — there is no corner there — unlike a z on an outline point,
+which could be a coordinate in the wrong column or a sweep whose path was never
+written. Losing a whole part to an inert number is the wrong trade.
+
+That also turned up a smaller lie: `Solids` appended "so it is not in this file"
+to EVERY problem, including ones that do not remove the part. It now says that
+only of errors.
+
 ## Carried defects
 
 Eight of the eleven carried here are closed. The three that remain are not

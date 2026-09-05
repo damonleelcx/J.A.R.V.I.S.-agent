@@ -325,6 +325,36 @@ func (d *Document) resolvedProfiles() (map[string]outline, map[string]polyline, 
 			if bad {
 				continue
 			}
+			// A bend radius on an END of an open path is IGNORED rather than
+			// refused, and said so.
+			//
+			// # Why this one is not a refusal when the others are
+			//
+			// There is no corner at an end, so the number changes nothing. Unlike
+			// a z on an outline point — which could be a coordinate in the wrong
+			// column or a sweep whose path was never written, and has no single
+			// reading — this has exactly one: there is nothing there to round.
+			//
+			// Refusing cost the whole part. Measured over five live runs on
+			// 2026-09-05: qwen-plus filled in a radius on EVERY path point,
+			// ends included, in two of them — and both times a correct, buildable
+			// bent tube vanished from the file because of an inert number on a
+			// point with no corner. That is the same bargain a box carrying a
+			// profile already gets: the extra is reported, and the part is built
+			// from what still says what it is.
+			if !p.PathClosed {
+				for _, i := range []int{0, len(bends) - 1} {
+					if bends[i] == 0 {
+						continue
+					}
+					problems = append(problems, Problem{Severity: Warning, Name: label,
+						Detail: fmt.Sprintf("has a corner radius on path point %d, which is "+
+							"where the path %s rather than a corner; there is nothing there "+
+							"to round, so it was ignored",
+							i+1, map[bool]string{true: "starts", false: "ends"}[i == 0])})
+					bends[i] = 0
+				}
+			}
 			route := polyline{Points: way, Radii: bends, Closed: p.PathClosed}
 			if err := route.validate("path"); err != nil {
 				add(label, "%v", err)

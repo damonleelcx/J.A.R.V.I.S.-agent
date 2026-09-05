@@ -629,3 +629,60 @@ func TestSwept_AClosedPathNeedsThreePoints(t *testing.T) {
 		t.Errorf("a two-point loop was accepted or badly explained: %+v", problems)
 	}
 }
+
+// A bend radius on the END of an open path is ignored, and the part is still
+// built.
+//
+// # Why this one is not a refusal when its neighbours are
+//
+// There is no corner at an end, so the number changes nothing. Unlike a z on an
+// outline point — which could be a coordinate in the wrong column, or a sweep
+// whose path was never written, and has no single reading — this has exactly
+// one: there is nothing there to round.
+//
+// Refusing cost the whole part. Over five live runs on 2026-09-05 qwen-plus
+// filled in a radius on EVERY path point, ends included, in two of them, and
+// both times a correct, buildable bent tube vanished from the file because of an
+// inert number on a point with no corner. It is the same bargain a box carrying
+// a profile already gets: the extra is reported, and the part is built from what
+// still says what it is.
+func TestSwept_ARadiusOnAnEndIsIgnoredRatherThanFatal(t *testing.T) {
+	doc := Document{Name: "line", Units: "mm",
+		Parts: []Part{{ID: "s", Name: "Coolant line", Shape: "sweep",
+			Profile: points([2]float64{-5, -5}, [2]float64{5, -5}, [2]float64{5, 5}, [2]float64{-5, 5}),
+			Path:    []Point{{Radius: 8}, {Z: 40, Radius: 12}, {X: 30, Z: 40, Radius: 8}}}}}
+
+	problems := doc.ProfileProblems()
+	if len(problems) != 2 {
+		t.Fatalf("expected the two ends to be reported, got %d: %+v", len(problems), problems)
+	}
+	for _, p := range problems {
+		if p.Severity != Warning {
+			t.Errorf("a radius on an end was reported as %s; it is inert, not fatal", p.Severity)
+		}
+		if !strings.Contains(p.Detail, "it was ignored") {
+			t.Errorf("the note does not say what happened to it: %q", p.Detail)
+		}
+	}
+
+	// And the part is BUILT, with the bend in the middle intact.
+	solids, notes := Solids(doc, Millimetre)
+	if len(solids) != 1 {
+		t.Fatalf("%d solids: %v", len(solids), notes)
+	}
+	arcs := 0
+	for _, e := range solids[0].Path.Edges {
+		if e.Via != nil {
+			arcs++
+		}
+	}
+	if arcs != 1 {
+		t.Errorf("%d arcs in the path; the ends carry no corner and the middle carries one", arcs)
+	}
+	// Nothing in the export label may claim the part is missing when it is here.
+	for _, n := range notes {
+		if strings.Contains(n, "not in this file") {
+			t.Errorf("the export says %q about a part that is in the file", n)
+		}
+	}
+}

@@ -115,8 +115,16 @@ func Solids(d Document, unit Unit) ([]Solid, []string) {
 
 	profiles, paths, profileProblems := d.resolvedProfiles()
 	for _, problem := range profileProblems {
-		inferred = append(inferred, fmt.Sprintf("%s %s, so it is not in this file.",
-			problem.Name, problem.Detail))
+		// An ERROR means the part could not be read and is absent. A WARNING
+		// means something in it was ignored and the rest was built — and saying
+		// "so it is not in this file" about a part that IS in this file would be
+		// the export telling a reader the opposite of the truth.
+		if problem.Severity == Error {
+			inferred = append(inferred, fmt.Sprintf("%s %s, so it is not in this file.",
+				problem.Name, problem.Detail))
+			continue
+		}
+		inferred = append(inferred, fmt.Sprintf("%s %s.", problem.Name, problem.Detail))
 	}
 
 	out := make([]Solid, 0, len(d.Parts))

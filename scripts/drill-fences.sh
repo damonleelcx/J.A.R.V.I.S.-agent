@@ -294,6 +294,14 @@ drill "the renderer draws the outline and ignores its holes" internal/httpapi/as
   "s = s.replace('var bores = holeOutlines(holes);\n    var way = flattenDrawing', 'var bores = [];\n    var way = flattenDrawing', 1)" \
   ./internal/httpapi 'TestRendererSweepsTheSameSolidAsTheExporter'
 
+drill "an inert radius on a path's end is fatal again" internal/domain/geometry/profile.go \
+  's = s.replace("\t\t\t\t\tbends[i] = 0", "\t\t\t\t\t_ = i", 1)' \
+  ./internal/domain/geometry 'TestSwept_ARadiusOnAnEndIsIgnoredRatherThanFatal'
+
+drill "the export calls a part absent when it is present" internal/domain/geometry/solid.go \
+  's = s.replace("\t\tif problem.Severity == Error {", "\t\tif true {", 1)' \
+  ./internal/domain/geometry 'TestSwept_ARadiusOnAnEndIsIgnoredRatherThanFatal'
+
 echo
 echo "Closed paths"
 drill "a closed path is swept as an open one" internal/domain/geometry/curve.go \

@@ -261,8 +261,10 @@ About "prototype":
   for the same reason every other dimension does.
   Two radii on one edge must fit: each eats r × tan(half the turn) of the edge
   either side of it, so two big radii on a short edge are refused rather than
-  guessed at. A radius where the edges are in line, or where a path starts or
-  ends, is refused too — there is no corner there to round.
+  guessed at, as is a radius where the edges either side are in line.
+  Do not put one on the FIRST or LAST point of an open path: those are ends, not
+  corners, and there is nothing there to round. It is ignored and reported rather
+  than refused, but it is still a number that means nothing.
   A SLOT is a rectangle whose radius is half its width on all four corners: the
   arcs at each end meet and the straight between them disappears. A stadium, a
   racetrack, a rounded gusset and a D-section are all the same one number.
