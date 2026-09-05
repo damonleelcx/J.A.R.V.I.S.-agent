@@ -629,3 +629,280 @@ func dedupe(in []string) []string {
 	}
 	return out
 }
+
+// ---------------------------------------------------------------------------
+// the drawing vocabulary
+// ---------------------------------------------------------------------------
+//
+// # What these measure, and the one thing they deliberately do not
+//
+// FORGE's contract offers a vocabulary for shapes that are not primitives: an
+// outline extruded, turned or carried along a path; a corner radius; holes in a
+// section; a path that closes. Waves 17 to 22 proved every one of them against
+// the kernel, the renderer and the measurement path. None of that says whether a
+// MODEL reaches for them, and a capability no model uses is dead code with a
+// test suite.
+//
+// So these ask two different questions and keep them apart:
+//
+//   - whether what the model drew CAN BE BUILT — a requirement, floored, and a
+//     regression: two live runs on 2026-09-05 produced a correct bent tube that
+//     FORGE refused outright.
+//   - whether the model REACHED for the vocabulary the part needs — a rate.
+//
+// What they do not do is judge whether the shape was the right choice. A stepped
+// bush really is two cylinders, and a model saying so is right; a scorer
+// demanding a revolve there would be measuring this suite's taste. The prompts
+// are chosen so the vocabulary is the honest answer, and the rate is reported
+// for what it is.
+
+// outlinesResolveIntoShapes: whatever was drawn, FORGE can read it.
+//
+// # What it measures, and why it is a rate rather than a gate
+//
+// A part FORGE cannot resolve is a part that is not in the exported file, and
+// the person is looking at a design with a piece missing. That is worth
+// measuring on every drawing case.
+//
+// It is TRACKED, and the reason is a finding rather than a shrug. Measured at 17
+// of 24 against qwen-plus (2026-09-05, four cases over six runs each), and SIX of
+// the seven refusals are one thing:
+//
+//	A LOOP THAT REPEATS ITS FIRST POINT TO CLOSE ITSELF.
+//
+// It is the GeoJSON and WKT convention, and every polygon format a model has
+// read. This contract asks the opposite — "the outline is closed for you; do not
+// repeat the first point at the end" — and the model reaches for what it knows.
+// It appeared on outlines and on closed paths alike, sometimes with a corner
+// radius attached to the repeated point, which is why some of them are reported
+// as a radius on a point that "sits on top of its neighbour".
+//
+// The seventh is a `radius` on a path point whose neighbours are IN LINE: no
+// corner there, so the number changes nothing — the same shape of inertness that
+// wave 22 stopped being fatal at a path's end, one point along.
+//
+// Every one of those has exactly one reading, and the repeated point is
+// redundant rather than meaningful. Whether to read them that way is a DECISION,
+// and a floor over this rate would measure whether that decision has been taken
+// rather than whether the model draws buildable parts. So the number is reported
+// and the decision is named, which is what this package does with a rate it
+// cannot yet stand behind.
+func outlinesResolveIntoShapes() Scorer {
+	return Scorer{
+		Name:    "an outline the model draws resolves into a shape",
+		Asserts: "no part is dropped from the build because its outline, holes or path could not be read",
+		Tracked: true,
+		FloorWhy: "TRACKED at 17 of 24 against qwen-plus (2026-09-05). SIX of the seven refusals are one " +
+			"thing — a loop repeating its first point to close itself, which is the convention every " +
+			"polygon format uses and this contract asks against — and a floor over that rate would " +
+			"measure whether that reading has been adopted rather than whether the model draws " +
+			"buildable parts.",
+		Judge: func(o *Observation) (bool, string) {
+			var drawn, readable int
+			var refusals []string
+			for _, r := range o.Replies {
+				if r == nil || r.Prototype == nil {
+					continue
+				}
+				drawn++
+				var errors []string
+				for _, p := range r.Prototype.ProfileProblems() {
+					if p.Severity == geometry.Error {
+						errors = append(errors, fmt.Sprintf("%s %s", p.Name, trim(p.Detail, 90)))
+					}
+				}
+				if len(errors) == 0 {
+					readable++
+					continue
+				}
+				refusals = append(refusals, errors...)
+			}
+			if drawn == 0 {
+				return true, "no geometry was proposed in this run"
+			}
+			if readable == drawn {
+				return true, fmt.Sprintf("%d of %d prototypes resolved with nothing refused", readable, drawn)
+			}
+			return false, fmt.Sprintf("%d of %d resolved; refused: %s",
+				readable, drawn, strings.Join(dedupe(refusals), "; "))
+		},
+	}
+}
+
+// aPartIsDrawnAs measures whether the model reached for a shape.
+//
+// TRACKED, always. Whether a model chooses a sweep over three extrusions is not
+// a property this build can require: the design does not depend on it, the
+// alternative is sometimes correct, and a floor here would sit red until
+// somebody lowered it to make the red go away — which is how every floor in a
+// suite eventually stops meaning anything. It is the rate itself that is worth
+// having, read against the one before it.
+func aPartIsDrawnAs(shape, what string) Scorer {
+	return Scorer{
+		Name:    fmt.Sprintf("the %s is drawn as a %q", what, shape),
+		Asserts: fmt.Sprintf("at least one part uses the %q shape, which is what this part IS", shape),
+		Tracked: true,
+		FloorWhy: "TRACKED. Measured against qwen-plus over six runs each on 2026-09-05: extrusion 6/6, " +
+			"sweep 6/6 on both prompts that need one, revolve 4/6. A model describing a stepped bush as two " +
+			"cylinders is RIGHT, and a floor here would demand a vocabulary rather than a shape — what the " +
+			"rate is for is a capability going dead, which only shows over runs.",
+		Judge: func(o *Observation) (bool, string) {
+			shapes := map[string]int{}
+			for _, r := range o.Replies {
+				if r == nil || r.Prototype == nil {
+					continue
+				}
+				for _, p := range r.Prototype.Parts {
+					shapes[strings.ToLower(strings.TrimSpace(p.Shape))]++
+				}
+			}
+			if len(shapes) == 0 {
+				return false, "no geometry was proposed at all"
+			}
+			return shapes[shape] > 0, fmt.Sprintf("drew %s", shapeTally(shapes))
+		},
+	}
+}
+
+// aSectionCarriesItsOwnVoid: holes in the outline, rather than a cut.
+//
+// The distinction the contract draws, and the one thing about holes a model has
+// to get right: a bore that follows a bent tube round the corner CANNOT be cut
+// with a cylinder, so a hollow bent part is expressible only as a section with a
+// loop inside it. A model that reaches for a cut here has described a part with
+// a straight hole through a curved tube.
+func aSectionCarriesItsOwnVoid() Scorer {
+	return Scorer{
+		Name:    "a hollow section is drawn with a hole in its outline",
+		Asserts: "some part carries `holes`, rather than a cylinder cut through a shape that bends",
+		Tracked: true,
+		FloorWhy: "TRACKED at 4 of 6 against qwen-plus (2026-09-05) on a prompt that states a wall " +
+			"thickness. The other two reached for a cut feature instead, which on a part that turns a " +
+			"corner is a straight hole through a bent tube — so the rate is the whole question, and it " +
+			"stays an observation because a cut is the right answer on parts that do not bend.",
+		Judge: func(o *Observation) (bool, string) {
+			var withHoles, cuts, parts int
+			for _, r := range o.Replies {
+				if r == nil || r.Prototype == nil {
+					continue
+				}
+				for _, p := range r.Prototype.Parts {
+					parts++
+					withHoles += len(p.Holes)
+				}
+				for _, f := range r.Prototype.Features {
+					if strings.EqualFold(f.Op, "cut") {
+						cuts++
+					}
+				}
+			}
+			if parts == 0 {
+				return false, "no geometry was proposed at all"
+			}
+			return withHoles > 0, fmt.Sprintf("%d loops inside outlines, %d cut features, over %d parts",
+				withHoles, cuts, parts)
+		},
+	}
+}
+
+// aPathComesBackOnItself: a ring drawn as a loop rather than as four bars.
+func aPathComesBackOnItself() Scorer {
+	return Scorer{
+		Name:    "a ring is drawn as a closed path",
+		Asserts: "some swept part sets `path_closed`, rather than a loop assembled from separate pieces",
+		Tracked: true,
+		FloorWhy: "TRACKED at 6 of 6 against qwen-plus (2026-09-05) on a prompt that says the loop is bent " +
+			"from one length. A ring made of four mitred bars is a different part made a different way, and " +
+			"both are real answers — so this reports which one a model reaches for rather than requiring " +
+			"either, and six runs is six runs.",
+		Judge: func(o *Observation) (bool, string) {
+			var swept, closed, parts int
+			for _, r := range o.Replies {
+				if r == nil || r.Prototype == nil {
+					continue
+				}
+				for _, p := range r.Prototype.Parts {
+					parts++
+					if strings.EqualFold(p.Shape, "sweep") {
+						swept++
+						if p.PathClosed {
+							closed++
+						}
+					}
+				}
+			}
+			if parts == 0 {
+				return false, "no geometry was proposed at all"
+			}
+			return closed > 0, fmt.Sprintf("%d of %d parts were swept, %d of those round a closed path",
+				swept, parts, closed)
+		},
+	}
+}
+
+// aCornerCarriesARadius: the drawing has a radius in it somewhere.
+//
+// Counted on outlines, on the loops inside them and on paths together, because
+// they are one field and one idea — and on a path it is the BEND RADIUS, which
+// is the difference between a bent tube and a welded elbow.
+func aCornerCarriesARadius() Scorer {
+	return Scorer{
+		Name:    "a corner that should be round is given a radius",
+		Asserts: "some point of an outline, a hole or a path carries `radius`",
+		Tracked: true,
+		FloorWhy: "TRACKED at 8 of 12 against qwen-plus (2026-09-05), and the split inside that number is " +
+			"the finding: 6 of 6 where the prompt NAMED a corner radius, 2 of 6 where the part was merely " +
+			"described as bent. A sharp corner is a legitimate drawing of many parts, so this is an " +
+			"observation — but a model that only rounds a corner when told to is one drawing welded " +
+			"elbows where a bent tube was asked for.",
+		Judge: func(o *Observation) (bool, string) {
+			var outline, bend, points int
+			for _, r := range o.Replies {
+				if r == nil || r.Prototype == nil {
+					continue
+				}
+				for _, p := range r.Prototype.Parts {
+					for _, pt := range p.Profile {
+						points++
+						if pt.Radius != 0 || strings.TrimSpace(pt.RadiusFrom) != "" {
+							outline++
+						}
+					}
+					for _, hole := range p.Holes {
+						for _, pt := range hole {
+							points++
+							if pt.Radius != 0 || strings.TrimSpace(pt.RadiusFrom) != "" {
+								outline++
+							}
+						}
+					}
+					for _, pt := range p.Path {
+						points++
+						if pt.Radius != 0 || strings.TrimSpace(pt.RadiusFrom) != "" {
+							bend++
+						}
+					}
+				}
+			}
+			if points == 0 {
+				return false, "nothing with an outline or a path was drawn at all"
+			}
+			return outline+bend > 0, fmt.Sprintf("%d rounded outline corners and %d bend radii over %d drawn points",
+				outline, bend, points)
+		},
+	}
+}
+
+// shapeTally renders what was drawn, in a fixed order so two runs read alike.
+func shapeTally(shapes map[string]int) string {
+	names := make([]string, 0, len(shapes))
+	for s := range shapes {
+		names = append(names, s)
+	}
+	sort.Strings(names)
+	parts := make([]string, 0, len(names))
+	for _, n := range names {
+		parts = append(parts, fmt.Sprintf("%d×%s", shapes[n], n))
+	}
+	return strings.Join(parts, ", ")
+}

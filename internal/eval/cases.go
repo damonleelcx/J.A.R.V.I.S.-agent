@@ -100,7 +100,112 @@ func Cases() []Case {
 			},
 		},
 	}
+	cases = append(cases, drawingVocabulary()...)
 	return append(cases, industryCoverage()...)
+}
+
+// drawingVocabulary is one case per shape the contract offers that is not a
+// primitive.
+//
+// # What these are for
+//
+// Waves 17 to 22 gave a document a vocabulary for shapes a box and a cylinder
+// cannot say: an outline extruded, turned, or carried along a path; a corner
+// radius; holes in a section; a path that closes. Every one is proved against
+// the CAD kernel, the renderer and the measurement path — and none of that says
+// whether a MODEL reaches for it. A capability no model uses is dead code with a
+// test suite behind it, and nothing else in this repository can notice.
+//
+// # Why the prompts are parts and not instructions
+//
+// None of them names a field. "Design a bent coolant line" is a part; "use a
+// sweep with path_closed" would measure whether the model can follow an
+// instruction, which is not in doubt and is not what ships. Each prompt is
+// chosen so the vocabulary is the honest answer — an L-section is not a box, a
+// vee groove is not a cone, a bore that turns a corner cannot be cut — and the
+// rate is reported for what it is.
+//
+// # Why four and not eight
+//
+// Each case is a live model call on every run, and a suite too expensive to run
+// is a suite that stops being run. Four prompts cover six pieces of vocabulary
+// between them, because a bent hollow tube exercises the sweep, the holes and
+// the bend radius at once — which is also how a person would meet all three.
+func drawingVocabulary() []Case {
+	// Every case carries this. Whatever the model reached for, FORGE has to be
+	// able to read it, or the part is not in the file — and that is the one
+	// property here that is a requirement rather than an observation.
+	buildable := func(rest ...Scorer) []Scorer {
+		return append([]Scorer{outlinesResolveIntoShapes()}, append(rest, speechIsShort())...)
+	}
+	return []Case{
+		{
+			ID:   "draws-a-section-that-is-not-a-primitive",
+			Kind: KindCapability,
+			Why: "Wave 17 gave a part an OUTLINE, because an L-bracket, a T-section, a channel and a " +
+				"gusset — the cross-sections most fabricated parts actually are — could not be said at " +
+				"all. An L-section is the canonical case: it cannot be one box, and it is concave, so a " +
+				"model that reaches for it is reaching for the thing the feature exists for.",
+			Turns: []string{
+				"Design a steel angle bracket — an L-shaped cross section, 40 mm on each leg, 8 mm " +
+					"thick, 60 mm long — with a bolt hole through each leg.",
+			},
+			Scorers: buildable(aPartIsDrawnAs("extrusion", "section")),
+		},
+		{
+			ID:   "draws-a-turned-part",
+			Kind: KindCapability,
+			Why: "Wave 18 gave a part a REVOLVE, for the shaft, the boss, the flange, the pulley, the " +
+				"dome. The first prompt tried was a stepped bush and qwen-plus answered with two " +
+				"cylinders and a bore, which is CORRECT and measured nothing. A vee groove has sloped " +
+				"walls that are neither a cylinder nor a cone on the axis, so a primitive cannot " +
+				"express it and the model has to reach for the outline or say it cannot.",
+			Turns: []string{
+				"Design a V-belt pulley: 80 mm outside diameter, 20 mm wide, with a vee groove cut all " +
+					"the way round the rim — 34 degrees included angle, 12 mm deep — and a 16 mm bore " +
+					"through the middle.",
+			},
+			Scorers: buildable(aPartIsDrawnAs("revolve", "pulley")),
+		},
+		{
+			ID:   "draws-a-bent-hollow-part",
+			Kind: KindCapability,
+			Why: "Waves 19 to 22, and the case that traces to a real defect. Asked for a bent coolant " +
+				"line, qwen-plus first described it as three extrusions butted end to end — which " +
+				"leaves a gap on the outside of every corner — and later, reaching for a sweep, put a " +
+				"`radius` on every path point including the ends, which was a refusal, so a correct " +
+				"buildable tube vanished from the file in two runs of six. Wall thickness makes the " +
+				"bore part of the section here: a bore that turns a corner cannot be cut by any tool " +
+				"this vocabulary can place in space.",
+			Turns: []string{
+				"Design a coolant line for a machine tool, bent from a single length of 20 by 12 mm " +
+					"rectangular tube with a 2 mm wall: 300 mm up from the pump, then 200 mm across, " +
+					"then down 150 mm into the manifold.",
+			},
+			Scorers: buildable(
+				aPartIsDrawnAs("sweep", "line"),
+				aSectionCarriesItsOwnVoid(),
+				aCornerCarriesARadius(),
+			),
+		},
+		{
+			ID:   "draws-a-closed-loop",
+			Kind: KindCapability,
+			Why: "Wave 22 gave a sweep's path a CLOSED form, for the ring, the hoop, the frame, the " +
+				"gasket. A loop bent from one length and a loop welded from four mitred bars are " +
+				"different parts made different ways, and both are real answers — so this reports " +
+				"which one a model reaches for when the prompt says it is bent from one piece.",
+			Turns: []string{
+				"Design a carrying handle for a tool tray: one length of 8 mm square stainless bar " +
+					"bent into a closed rectangular loop, 240 mm by 90 mm, with 20 mm radius corners.",
+			},
+			Scorers: buildable(
+				aPartIsDrawnAs("sweep", "handle"),
+				aPathComesBackOnItself(),
+				aCornerCarriesARadius(),
+			),
+		},
+	}
 }
 
 // industryCoverage is one case per industry the product's selector offers.

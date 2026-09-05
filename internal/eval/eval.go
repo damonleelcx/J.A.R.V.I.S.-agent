@@ -73,7 +73,29 @@ const (
 	// KindRegression: this exact failure was observed. Why names it.
 	KindRegression Kind = "regression"
 	// KindCoverage: the product claims to serve this, and nothing measured it.
+	// Bound to the industry selector: one case per entry, no more and no fewer.
 	KindCoverage Kind = "coverage"
+	// KindCapability: the build shipped a VOCABULARY and nothing measured
+	// whether a model reaches for it.
+	//
+	// # Why a third kind rather than filing these under one of the two
+	//
+	// They are not regressions: waves 17 to 22 added extrusions, revolves,
+	// sweeps, corner radii, holes and closed paths, and a model describing a
+	// stepped bush as two cylinders instead of a revolve is RIGHT. There is no
+	// defect to trace, and calling one a regression would break the rule that
+	// makes the regression suite worth having.
+	//
+	// They are not industry coverage either: that kind is pinned to the
+	// selector, one case per entry, and TestEveryIndustryOfferedHasACoverageCase
+	// counts them. A geometry case wearing an industry would either break that
+	// count or claim to measure a domain it is not about.
+	//
+	// So they are named, exactly as coverage was named when it did not fit the
+	// regression rule. What they measure is the question a shipped capability
+	// raises and nothing else in this repository can answer: a vocabulary no
+	// model reaches for is dead code with a test suite behind it.
+	KindCapability Kind = "capability"
 )
 
 type Case struct {

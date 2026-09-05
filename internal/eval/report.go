@@ -43,6 +43,12 @@ func (r *Report) Render(verbose bool) string {
 	renderSection(&b, r, KindRegression, verbose,
 		"REGRESSIONS — each traces to a defect this build actually produced.",
 		"A rate below the floor means a promise that was fixed once has broken again.")
+	renderSection(&b, r, KindCapability, verbose,
+		"CAPABILITY — each is a drawing vocabulary this build shipped.",
+		"The rates say whether a model REACHES for them. They are tracked rather than "+
+			"floored, because a model describing a stepped bush as two cylinders is right "+
+			"and a floor here would demand a vocabulary rather than a shape. What they "+
+			"catch is a capability going dead: nobody using it, over runs.")
 	renderSection(&b, r, KindCoverage, verbose,
 		"COVERAGE — each is an industry the product offers in its selector.",
 		"These have no floors: nothing has measured them before, and a floor invented "+

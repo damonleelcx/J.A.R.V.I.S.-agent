@@ -3114,6 +3114,73 @@ That also turned up a smaller lie: `Solids` appended "so it is not in this file"
 to EVERY problem, including ones that do not remove the part. It now says that
 only of errors.
 
+## Wave 23 — the eval suite gets the drawing vocabulary · **DONE**
+
+Waves 17 to 22 proved six pieces of vocabulary against the kernel, the renderer
+and the measurement path, and each one closed with the same sentence: **how often
+a model reaches for it is a rate, and rates belong in the eval suite.** Three
+waves later that gap was the oldest thing in this document. It is now four cases.
+
+### A third kind of case
+
+`KindCapability`. They are not regressions — a model describing a stepped bush as
+two cylinders is RIGHT, and there is no defect to trace. They are not industry
+coverage — that kind is pinned to the selector and counted one per entry. So they
+are named, exactly as coverage was named when it did not fit the regression rule,
+and the report prints the three apart.
+
+Four prompts cover six pieces of vocabulary, because a bent hollow tube exercises
+the sweep, the holes and the bend radius at once — which is also how a person
+meets all three. None of them names a field: "design a bent coolant line" is a
+part, and "use a sweep" would measure instruction-following, which is not in
+doubt and is not what ships.
+
+### What the first run measured
+
+Against qwen-plus, four cases over six runs each, 2026-09-05:
+
+| what | rate |
+| --- | --- |
+| an L-section is drawn as an **extrusion** | 6/6 |
+| a bent line is drawn as a **sweep** | 6/6 |
+| a bent-from-one-length loop is drawn as a **closed path** | 6/6 |
+| a vee-groove pulley is drawn as a **revolve** | 4/6 |
+| a walled tube is drawn with **holes** in its section | 4/6 |
+| a corner is given a **radius** | 8/12 |
+
+The vocabulary lands. Two numbers are worth reading past:
+
+- **The radius splits 6/6 against 2/6.** Six of six where the prompt NAMED a
+  corner radius; two of six where the part was only described as bent. A model
+  that rounds a corner when told to and not otherwise is one drawing welded
+  elbows where a bent tube was asked for.
+- **Holes at 4 of 6.** The other two reached for a `cut` feature — which on a
+  part that turns a corner is a straight hole through a bent tube, and is the
+  exact thing holes were added because you cannot do.
+
+### And the finding the suite exists to produce
+
+**17 of 24 drawings resolved.** Seven were refused outright, so the part was not
+in the file — and **six of the seven are one thing**:
+
+> A loop that repeats its first point to close itself.
+
+It is the GeoJSON and WKT convention, and every polygon format a model has read.
+This contract asks the opposite — *"the outline is closed for you; do not repeat
+the first point at the end"* — and the model reaches for what it knows. It turned
+up on outlines and on closed paths alike, sometimes with a corner radius attached
+to the repeated point.
+
+The seventh is a `radius` on a path point whose neighbours are **in line**: no
+corner there, so the number changes nothing — the same inertness wave 22 stopped
+being fatal at a path's END, one point along.
+
+Every one of those has exactly one reading, and the repeated point is redundant
+rather than meaningful. **Whether to read them that way is a decision, and it has
+not been taken** — so the scorer reports the rate rather than flooring it. A floor
+here would measure whether the decision had been made, not whether the model
+draws buildable parts.
+
 ## Carried defects
 
 Eight of the eleven carried here are closed. The three that remain are not
