@@ -208,6 +208,11 @@ func TestTessellate_ReachesTheOutlineShapes(t *testing.T) {
 			Size: map[string]float64{"depth": 20}}, 100 * 20},
 		{"a revolve", Part{ID: "r", Shape: "revolve", Axis: "y", Profile: ring},
 			math.Pi * (400 - 100) * 5},
+		// Bent, and centred on its own path, so the expectation is the mitre
+		// identity from sweep_test.go: 100 mm² carried 50 mm.
+		{"a sweep", Part{ID: "s", Shape: "sweep",
+			Profile: []Point{{X: -5, Y: -5}, {X: 5, Y: -5}, {X: 5, Y: 5}, {X: -5, Y: 5}},
+			Path:    []Point{{}, {Z: 20}, {X: 30, Z: 20}}}, 100 * 50},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mesh := Tessellate(Document{Name: "d", Units: "mm", Parts: []Part{tc.part}}, Millimetre)

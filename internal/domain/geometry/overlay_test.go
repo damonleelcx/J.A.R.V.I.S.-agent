@@ -356,3 +356,44 @@ func TestMeasureSweepsARevolveAllTheWayRound(t *testing.T) {
 		}
 	}
 }
+
+// A sweep is measured along its PATH, including the mitre that overhangs the
+// outside of a bend.
+//
+// # Why the obvious approximation is wrong
+//
+// The tempting answer is the path's own bounding box grown by the outline's
+// radius. That is right for a round section and too big for every other one, and
+// it is also too SMALL in the one place it matters: a mitred right-angle corner
+// reaches half a section-width further along both legs than the path does, and
+// there is real material there.
+//
+// So the extent is taken from the rings the sweep actually visits, which is
+// exact — a swept polygon is a polyhedron and its corners are its rings'
+// corners. Here: a 10 mm square carried 20 mm up and then 30 mm along x, so the
+// mitre puts material at z = 25 and the far end cap stops square at x = 30.
+func TestMeasureFollowsASweptPathAndItsMitre(t *testing.T) {
+	doc := Document{
+		Name: "pipe", Units: "mm",
+		Parts: []Part{{ID: "s", Shape: "sweep",
+			Profile:  []Point{{X: -5, Y: -5}, {X: 5, Y: -5}, {X: 5, Y: 5}, {X: -5, Y: 5}},
+			Path:     []Point{{}, {Z: 20}, {X: 30, Z: 20}},
+			Position: []float64{0, 0, 0}}},
+	}
+	got := Measure(doc, "mm")
+	if len(got) != 3 {
+		t.Fatalf("expected three extents, got %d", len(got))
+	}
+	// x: from the start section at -5 to the end cap at 30.
+	// y: the section is 10 wide and the path never leaves y = 0.
+	// z: from the start cap at 0 to the outside of the mitre at 25.
+	want := map[int][2]float64{0: {-5, 30}, 1: {-5, 5}, 2: {0, 25}}
+	for axis, w := range want {
+		o := got[axis]
+		if math.Abs(o.From[axis]-w[0]) > 1e-9 || math.Abs(o.To[axis]-w[1]) > 1e-9 {
+			t.Errorf("axis %d measured %v..%v, want %v..%v — the outline was not carried "+
+				"along its path, or the mitre at the bend was not counted",
+				axis, o.From[axis], o.To[axis], w[0], w[1])
+		}
+	}
+}

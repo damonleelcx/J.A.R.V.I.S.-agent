@@ -938,3 +938,272 @@ func TestKernel_ARevolveTakesAHole(t *testing.T) {
 		t.Errorf("volume = %.4f mm³, want %.4f", got.Volume, want)
 	}
 }
+
+func sweepDoc(profile [][2]float64, path [][3]float64) geometry.Document {
+	pts := make([]geometry.Point, len(profile))
+	for i, p := range profile {
+		pts[i] = geometry.Point{X: p[0], Y: p[1]}
+	}
+	way := make([]geometry.Point, len(path))
+	for i, p := range path {
+		way[i] = geometry.Point{X: p[0], Y: p[1], Z: p[2]}
+	}
+	return geometry.Document{
+		Name: "run", Units: "mm",
+		Parts: []geometry.Part{{ID: "s", Name: "Run", Shape: "sweep",
+			Profile: pts, Path: way,
+			Position: []float64{0, 0, 0}, Rotation: []float64{0, 0, 0}}},
+	}
+}
+
+func pathLength(path [][3]float64) float64 {
+	var total float64
+	for i := 0; i+1 < len(path); i++ {
+		d := [3]float64{path[i+1][0] - path[i][0], path[i+1][1] - path[i][1], path[i+1][2] - path[i][2]}
+		total += math.Sqrt(d[0]*d[0] + d[1]*d[1] + d[2]*d[2])
+	}
+	return total
+}
+
+// A real B-Rep sweep encloses area × path length, exactly, however it bends.
+//
+// # Why this figure and not one observed once
+//
+// At every bend the section sits in the plane bisecting the two segments, which
+// cuts a wedge off the inside of the corner and adds an equal one outside. They
+// cancel when the outline's centroid rides the path — so the volume is
+// arithmetic a reader can check, in the same way the revolve figures come from
+// Pappus.
+//
+// It is also the assertion that pins the KERNEL's transition mode. Measured
+// 2026-09-05 on build123d 0.11.1, OCCT's default (Transition.TRANSFORMED)
+// returned 1600 mm³ for the elbow below, whose correct volume is 5000, and
+// Transition.ROUND returned 4946 by rounding a corner nobody asked to have
+// rounded. Neither is a small error and neither announces itself.
+func TestKernel_SweepsAnOutlineAlongAPath(t *testing.T) {
+	k := kernel(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	square := [][2]float64{{-5, -5}, {5, -5}, {5, 5}, {-5, 5}}
+	const area = 100.0
+
+	for _, tc := range []struct {
+		name string
+		pts  [][2]float64
+		path [][3]float64
+	}{
+		{"straight up", square, [][3]float64{{0, 0, 0}, {0, 0, 20}}},
+		// Setting off along +X: OCCT sweeps a section along the path WITHOUT
+		// reorienting it, so a section left in its own plane comes back flat
+		// with zero volume (measured 2026-09-05). The section frame FORGE sends
+		// is what stops that.
+		{"straight along x", square, [][3]float64{{0, 0, 0}, {20, 0, 0}}},
+		{"a right-angled elbow", square, [][3]float64{{0, 0, 0}, {0, 0, 20}, {30, 0, 20}}},
+		{"three bends, out of plane", square,
+			[][3]float64{{0, 0, 0}, {0, 0, 20}, {30, 0, 20}, {30, 25, 20}}},
+		// A concave section, so the mitre is applied to a shape that ear
+		// clipping and OCCT have to agree about.
+		{"a channel section", [][2]float64{{-10, -5}, {10, -5}, {10, 5}, {6, 5}, {6, -1},
+			{-6, -1}, {-6, 5}, {-10, 5}}, [][3]float64{{0, 0, 0}, {0, 0, 40}, {35, 0, 40}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			doc := sweepDoc(tc.pts, tc.path)
+			got, err := k.BuildDocument(ctx, doc, geometry.Millimetre, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			sectionArea := area
+			if tc.name == "a channel section" {
+				sectionArea = 20*10 - 12*6 // 200 less the notch
+			}
+			want := sectionArea * pathLength(tc.path)
+			if math.Abs(got.Volume-want) > 0.01 {
+				t.Errorf("volume = %.4f mm³, want %.4f — a short figure means the mitre is "+
+					"eating material the bend should keep, and a long one means the corners "+
+					"overlap", got.Volume, want)
+			}
+		})
+	}
+}
+
+// The kernel builds the solid the viewport DREW, down to its extents.
+//
+// # Why volume is not enough here, and what this is really guarding
+//
+// Three things about a sweep have more than one defensible answer and none of
+// them changes the volume: which way up the section starts, how it is carried
+// round a bend, and where the mitre puts the corner. A kernel that framed the
+// section its own way would return the same number for a solid rotated out of
+// the drawing.
+//
+// So the section frame is computed ONCE, in geometry.sweptSections, and travels
+// to the kernel as a matrix — the same bargain the placement matrix already
+// makes. This asserts the bargain held: same volume AND same box, from an
+// outline with no rotational symmetry at all, on a path that leaves its first
+// plane.
+//
+// A swept polygon has no curved surface anywhere on it, so the two are the same
+// polyhedron and the agreement is EXACT. That is not true of a revolve, whose
+// facets are inscribed in the real surface.
+func TestKernel_ASweptSolidIsTheOneTheRendererDrew(t *testing.T) {
+	k := kernel(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	// An L, so a section rolled by 90° would put the long leg somewhere else.
+	//
+	// The path sets off along +X and NOT along +Z, deliberately: a path that
+	// starts up local Z is framed by the identity, so a kernel that ignored the
+	// frame entirely would build the right solid anyway and this test would hold
+	// nothing. A drill on 2026-09-05 made exactly that substitution against an
+	// earlier version of this test and it stayed green.
+	//
+	// The two bends are in DIFFERENT planes for the same class of reason: a
+	// single bend cannot tell a carried frame from a recomputed one.
+	profile := [][2]float64{{-2, -6}, {6, -6}, {6, -2}, {2, -2}, {2, 6}, {-2, 6}}
+	path := [][3]float64{{0, 0, 0}, {30, 0, 0}, {30, 0, 25}, {30, 20, 25}}
+	doc := sweepDoc(profile, path)
+
+	got, err := k.BuildDocument(ctx, doc, geometry.Millimetre, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	mesh := geometry.Tessellate(doc, geometry.Millimetre)
+	var drawn float64
+	lo := [3]float64{math.Inf(1), math.Inf(1), math.Inf(1)}
+	hi := [3]float64{math.Inf(-1), math.Inf(-1), math.Inf(-1)}
+	for _, tr := range mesh.Triangles() {
+		drawn += (tr.A[0]*(tr.B[1]*tr.C[2]-tr.C[1]*tr.B[2]) -
+			tr.A[1]*(tr.B[0]*tr.C[2]-tr.C[0]*tr.B[2]) +
+			tr.A[2]*(tr.B[0]*tr.C[1]-tr.C[0]*tr.B[1])) / 6
+		for _, v := range [][3]float64{tr.A, tr.B, tr.C} {
+			for axis := 0; axis < 3; axis++ {
+				lo[axis] = math.Min(lo[axis], v[axis])
+				hi[axis] = math.Max(hi[axis], v[axis])
+			}
+		}
+	}
+
+	if math.Abs(got.Volume-drawn) > 1e-6*math.Max(1, drawn) {
+		t.Errorf("the kernel built %.6f mm³ and the viewport drew %.6f — a swept polygon has "+
+			"no curved surface, so these are the same polyhedron or one of them is wrong",
+			got.Volume, drawn)
+	}
+	for axis, name := range []string{"x", "y", "z"} {
+		if math.Abs(got.Bounds[axis]-lo[axis]) > 1e-6 || math.Abs(got.Bounds[axis+3]-hi[axis]) > 1e-6 {
+			t.Errorf("%s: the kernel spans %v..%v and the viewport %v..%v — same volume, "+
+				"different box, which is what a section framed differently looks like",
+				name, got.Bounds[axis], got.Bounds[axis+3], lo[axis], hi[axis])
+		}
+	}
+}
+
+// A sweep along a straight path IS the extrusion, in the kernel too.
+//
+// The renderer's copy of this property is asserted facet for facet
+// (TestSwept_AStraightPathUpZIsExactlyTheExtrusion). This is the other half:
+// that the kernel does not quietly build a different solid from the same
+// document — which it would if the section were framed, placed or centred
+// differently on the two paths through the code.
+func TestKernel_AStraightSweepIsTheExtrusion(t *testing.T) {
+	k := kernel(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	outline := [][2]float64{{0, 0}, {40, 0}, {40, 8}, {8, 8}, {8, 40}, {0, 40}}
+	swept := sweepDoc(outline, [][3]float64{{0, 0, -10}, {0, 0, 10}})
+
+	extruded := swept
+	extruded.Parts = []geometry.Part{{ID: "e", Name: "Angle", Shape: "extrusion",
+		Profile: swept.Parts[0].Profile, Size: map[string]float64{"depth": 20},
+		Position: []float64{0, 0, 0}, Rotation: []float64{0, 0, 0}}}
+
+	a, err := k.BuildDocument(ctx, swept, geometry.Millimetre, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := k.BuildDocument(ctx, extruded, geometry.Millimetre, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if math.Abs(a.Volume-b.Volume) > 1e-6 {
+		t.Errorf("the sweep encloses %.6f and the extrusion %.6f", a.Volume, b.Volume)
+	}
+	for i := range a.Bounds {
+		if math.Abs(a.Bounds[i]-b.Bounds[i]) > 1e-6 {
+			t.Errorf("the sweep spans %v and the extrusion %v — a straight path is an "+
+				"extrusion, so anything else here is a second convention that has drifted",
+				a.Bounds, b.Bounds)
+			break
+		}
+	}
+}
+
+// The three paths that are not solids never reach the kernel.
+//
+// # Why each is caught in Go
+//
+// A repeated point comes back from OCCT as "BRep_API: command not done" and a
+// reversal comes back with an EMPTY message, so neither reaches a reader as
+// anything actionable. The third is worse and is the reason this test exists: a
+// bend tighter than its own outline is NOT refused by OCCT at all. It returned a
+// solid of 14546 mm³ for a shape whose surface folds through itself — a
+// plausible number, a file that opens, and nothing anywhere saying it is wrong.
+func TestKernel_APathThatIsNotASolidIsRefusedWithAReason(t *testing.T) {
+	square := [][2]float64{{-5, -5}, {5, -5}, {5, 5}, {-5, 5}}
+	for _, tc := range []struct {
+		name, wants string
+		path        [][3]float64
+	}{
+		{"a repeated point", "zero length", [][3]float64{{0, 0, 0}, {0, 0, 0}, {0, 0, 20}}},
+		{"a reversal", "doubles back", [][3]float64{{0, 0, 0}, {0, 0, 20}, {0, 0, 5}}},
+		{"a bend tighter than the outline", "bends too tightly",
+			[][3]float64{{0, 0, 0}, {0, 0, 3}, {20, 0, 3}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			doc := sweepDoc(square, tc.path)
+			problems := doc.ProfileProblems()
+			if len(problems) == 0 {
+				t.Fatal("this path was accepted, and what it sweeps is not a solid")
+			}
+			if !strings.Contains(problems[0].Detail, tc.wants) {
+				t.Errorf("the refusal does not say what is wrong: %q", problems[0].Detail)
+			}
+			if solids, _ := geometry.Solids(doc, geometry.Millimetre); len(solids) != 0 {
+				t.Errorf("%d solids were built from a path that is not one", len(solids))
+			}
+		})
+	}
+}
+
+// Features apply to a sweep like anything else, which is what keeps this one
+// vocabulary rather than four.
+func TestKernel_ASweepTakesAHole(t *testing.T) {
+	k := kernel(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	// A 20×10 bar carried 60 mm up local Z, with a 6 mm hole through its side.
+	doc := sweepDoc([][2]float64{{-10, -5}, {10, -5}, {10, 5}, {-10, 5}},
+		[][3]float64{{0, 0, 0}, {0, 0, 60}})
+	doc.Parts = append(doc.Parts, geometry.Part{ID: "hole", Name: "Hole", Shape: "cylinder",
+		Size: map[string]float64{"radius": 3, "height": 40}, Position: []float64{0, 0, 30},
+		Rotation: []float64{0, 0, 0}})
+	doc.Features = []geometry.Feature{{ID: "drill", Op: "cut", Of: "s", With: []string{"hole"}}}
+
+	got, err := k.BuildDocument(ctx, doc, geometry.Millimetre, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.FeatureFailures) > 0 {
+		t.Fatalf("the cut was not applied to the sweep: %v", got.FeatureFailures)
+	}
+	// The bar is 200 mm² × 60 mm; the hole is a 3 mm cylinder through 10 mm of
+	// it, drilled along the bar's own y.
+	if want := 200.0*60 - math.Pi*9*10; math.Abs(got.Volume-want) > 0.01 {
+		t.Errorf("volume = %.4f mm³, want %.4f — the hole was not taken out of the sweep",
+			got.Volume, want)
+	}
+}

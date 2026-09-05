@@ -1,8 +1,16 @@
 package httpapi
 
 import (
+	"bytes"
+	"encoding/json"
+	"fmt"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/geometry"
 )
 
 // The renderer must know that a cut tool is material being REMOVED.
@@ -127,6 +135,9 @@ func TestRendererDrawsOutlineShapes(t *testing.T) {
 		{"case 'revolve'", "the renderer has no revolve case, so every turned part — a shaft, " +
 			"a boss, a dome — is drawn as a bounding box"},
 		{"revolveGeometry", "there is no revolve builder at all"},
+		{"case 'sweep'", "the renderer has no sweep case, so every part that bends — a pipe " +
+			"run, a handrail, a cable tray — is drawn as a bounding box"},
+		{"sweepSections", "there is no sweep builder at all"},
 	} {
 		if !strings.Contains(js, want.needle) {
 			t.Errorf("forge3d.js no longer contains %q: %s", want.needle, want.why)
@@ -138,5 +149,157 @@ func TestRendererDrawsOutlineShapes(t *testing.T) {
 	if !strings.Contains(js, "clipped.pts") {
 		t.Error("the caller does not use the ordering earClip returned, so the caps and the " +
 			"side walls can disagree about which way round the outline is")
+	}
+}
+
+// The viewport and the exporter must produce the SAME swept solid, facet for
+// facet.
+//
+// # Why a string fence is not enough for this one
+//
+// The fences above check that the renderer HAS an extrusion case and a revolve
+// case, which is all a text search can do. That is enough for those two, because
+// what they could get wrong is caught elsewhere: an extrusion has no convention
+// beyond the outline itself, and a revolve's only choice is an axis.
+//
+// A sweep has three, and none of them changes the volume: which way up the
+// section starts, how it is carried round a bend, and where the mitre puts the
+// corner. A browser copy that rolled the section as it went would draw a rail
+// with its flat face pointing somewhere nobody asked for, export a different
+// solid, and pass every volume test on both sides.
+//
+// So this runs the renderer's own builder in node and compares its facets with
+// the ones geometry.Tessellate produces — the two implementations, on the same
+// document, meeting at the geometry rather than at a substring.
+//
+// # Why it skips rather than fails without node
+//
+// Node is a development tool, not a deployment one: this asset runs in a
+// browser, and nothing about the product requires node to exist. It is the same
+// bargain the CAD kernel tests make with FORGE_CAD_PYTHON.
+func TestRendererSweepsTheSameSolidAsTheExporter(t *testing.T) {
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("no node on PATH; skipping the renderer/exporter sweep comparison")
+	}
+	src, err := assetFS.ReadFile("assets/forge3d.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	asset := filepath.Join(dir, "forge3d.js")
+	if err := os.WriteFile(asset, src, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	// A section that is neither round nor square, on a path that bends twice and
+	// leaves its first plane — so a rolled section, a mitre computed the wrong
+	// way and a section framed differently at the start all show up.
+	profile := []geometry.Point{{X: -2, Y: -6}, {X: 6, Y: -6}, {X: 6, Y: -2},
+		{X: 2, Y: -2}, {X: 2, Y: 6}, {X: -2, Y: 6}}
+	path := []geometry.Point{{}, {Z: 30}, {X: 40, Z: 30}, {X: 40, Y: 25, Z: 30}}
+
+	harness := filepath.Join(dir, "run.js")
+	script := `
+      // The asset is browser code and attaches itself to a global. Nothing else
+      // about it is touched: it is loaded exactly as a page loads it.
+      const fs = require('fs'), vm = require('vm');
+      const sandbox = { window: {}, console };
+      vm.createContext(sandbox);
+      vm.runInContext(fs.readFileSync(process.argv[2], 'utf8'), sandbox);
+      const part = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
+      const built = sandbox.window.Forge3D.geometry.sweep(part.profile, part.path);
+      if (built.approximated) { console.error(built.approximated); process.exit(2); }
+      process.stdout.write(JSON.stringify({p: built.geo.positions, n: built.geo.normals}));
+    `
+	if err := os.WriteFile(harness, []byte(script), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	partJSON, err := json.Marshal(map[string]any{"profile": profile, "path": path})
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := filepath.Join(dir, "part.json")
+	if err := os.WriteFile(input, partJSON, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command(node, harness, asset, input)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("the renderer could not build this sweep: %v %s", err, stderr.String())
+	}
+	var drawnGeo struct {
+		P []float64 `json:"p"`
+		N []float64 `json:"n"`
+	}
+	if err := json.Unmarshal(out, &drawnGeo); err != nil {
+		t.Fatal(err)
+	}
+	flat := drawnGeo.P
+	if len(flat)%9 != 0 || len(flat) == 0 {
+		t.Fatalf("the renderer returned %d position values, which is not whole triangles", len(flat))
+	}
+	if len(drawnGeo.N) != len(flat) {
+		t.Fatalf("%d normals for %d positions", len(drawnGeo.N), len(flat))
+	}
+
+	doc := geometry.Document{Name: "rail", Units: "mm",
+		Parts: []geometry.Part{{ID: "s", Shape: "sweep", Profile: profile, Path: path}}}
+	exported := geometry.Tessellate(doc, geometry.Millimetre).Triangles()
+
+	// Compared as a SET of facets. The order each builder emits its caps and
+	// walls in is not a property of the solid, but every corner and every
+	// winding is.
+	//
+	// The NORMAL is part of the key, and not decoration. This renderer is handed
+	// each normal explicitly and draws with back-face culling off, so a facet
+	// lit from the wrong side looks like a shading bug rather than like a solid
+	// that is inside out — and the exported file, built from the same winding,
+	// would be the one that is actually wrong. Comparing positions alone would
+	// let the two agree about the shape and disagree about which side of it is
+	// material.
+	key := func(a, b, c, n [3]float64) string {
+		corner := [3][3]float64{a, b, c}
+		first := 0
+		for i := 1; i < 3; i++ {
+			if fmt.Sprint(corner[i]) < fmt.Sprint(corner[first]) {
+				first = i
+			}
+		}
+		// Negative zero is folded away: the two arrive at the same normal by
+		// different arithmetic and differ in the sign of zero on axes the facet
+		// does not face at all.
+		flatten := func(v [3]float64) [3]float64 { return [3]float64{v[0] + 0, v[1] + 0, v[2] + 0} }
+		return fmt.Sprintf("%.6v/%.6v/%.6v n%.5v", flatten(corner[first]),
+			flatten(corner[(first+1)%3]), flatten(corner[(first+2)%3]), flatten(n))
+	}
+	drawn := map[string]int{}
+	for i := 0; i < len(flat); i += 9 {
+		// Every vertex of a facet carries the same normal here; the first is the
+		// facet's.
+		drawn[key([3]float64{flat[i], flat[i+1], flat[i+2]},
+			[3]float64{flat[i+3], flat[i+4], flat[i+5]},
+			[3]float64{flat[i+6], flat[i+7], flat[i+8]},
+			[3]float64{drawnGeo.N[i], drawnGeo.N[i+1], drawnGeo.N[i+2]})]++
+	}
+	if len(exported) != len(flat)/9 {
+		t.Errorf("the exporter built %d facets and the renderer drew %d", len(exported), len(flat)/9)
+	}
+	for _, tr := range exported {
+		k := key(tr.A, tr.B, tr.C, tr.Normal)
+		if drawn[k] == 0 {
+			t.Fatalf("the exporter built the facet %s and the renderer did not draw it — the "+
+				"two disagree about where this sweep's material is, so the file and the "+
+				"picture are different shapes", k)
+		}
+		drawn[k]--
+	}
+	for k, n := range drawn {
+		if n > 0 {
+			t.Fatalf("the renderer drew %d of the facet %s that the exporter did not build", n, k)
+		}
 	}
 }

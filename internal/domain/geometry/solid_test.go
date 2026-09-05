@@ -97,3 +97,60 @@ func TestSolids_ConvertsAnOutlineToMillimetresToo(t *testing.T) {
 		t.Errorf("depth = %v mm, want 25.4", d)
 	}
 }
+
+// A SWEEP's path converts too, and it arrives with the frame its section starts
+// in.
+//
+// # Why both halves are in one test
+//
+// A path left in inches while nothing else is puts the bends in the wrong place
+// — the same 25.4× error the outline case above guards, in the field that says
+// where the part GOES rather than how wide it is.
+//
+// The frame is the one thing about a sweep that reaches the CAD kernel as a
+// CONVENTION rather than as geometry: which way up the section starts. Sending
+// it means the kernel does not decide, and a sweep arriving without one would be
+// built with its section oriented however OCCT felt — visible on any outline
+// that is not rotationally symmetric, invisible on the round ones.
+func TestSolids_ConvertsASweepsPathAndFramesItsSection(t *testing.T) {
+	doc := geometry.Document{
+		Name: "rail", Units: "in",
+		Parts: []geometry.Part{{ID: "s", Name: "Rail", Shape: "sweep",
+			Profile: []geometry.Point{{X: -1, Y: -1}, {X: 1, Y: -1}, {X: 1, Y: 1}, {X: -1, Y: 1}},
+			Path:    []geometry.Point{{}, {Z: 2}, {X: 3, Z: 2}}}},
+	}
+	got, notes := geometry.Solids(doc, geometry.Inch)
+	if len(got) != 1 {
+		t.Fatalf("%d solids: %v", len(got), notes)
+	}
+	// 2 in = 50.8 mm, 3 in = 76.2 mm.
+	for i, want := range [][3]float64{{0, 0, 0}, {0, 0, 50.8}, {76.2, 0, 50.8}} {
+		p := got[0].Path[i]
+		for axis := 0; axis < 3; axis++ {
+			if math.Abs(p[axis]-want[axis]) > 1e-9 {
+				t.Errorf("path point %d = %v mm, want %v — the path is still in inches while "+
+					"the outline is in millimetres, so every bend is in the wrong place",
+					i+1, p, want)
+			}
+		}
+	}
+	if got[0].SectionFrame == nil {
+		t.Fatal("the sweep carries no section frame, so the kernel has to decide which way up " +
+			"the outline starts — and it will not decide what the renderer decided")
+	}
+	// The path sets off along +Z, so the section starts exactly as it was drawn.
+	// Compared with a tolerance because normalising a direction goes through a
+	// square root, and 50.8/50.8 comes back one bit short of 1.
+	for i, want := range [9]float64{1, 0, 0, 0, 1, 0, 0, 0, 1} {
+		if math.Abs(got[0].SectionFrame[i]-want) > 1e-9 {
+			t.Fatalf("a path along local Z framed the section as %v, want the identity — an "+
+				"outline swept straight up is the outline as drawn", *got[0].SectionFrame)
+		}
+	}
+	// And nothing else carries one, because nothing else has a section.
+	plain, _ := geometry.Solids(inchCube(), geometry.Inch)
+	if plain[0].SectionFrame != nil {
+		t.Errorf("a box arrived carrying a section frame (%v); a zero or invented frame is a "+
+			"convention nothing asked for", *plain[0].SectionFrame)
+	}
+}

@@ -236,7 +236,12 @@
     };
   }
 
-  var SUPPORTED = ['box', 'cylinder', 'cone', 'sphere', 'plane', 'tube'];
+  /* Every shape buildGeometry has a case for. It went stale the moment outlines
+   * arrived — 'extrusion' and 'revolve' were drawn correctly and named nowhere,
+   * which makes a list called "supported shapes" say the opposite of the truth
+   * about three of them. */
+  var SUPPORTED = ['box', 'cylinder', 'cone', 'sphere', 'plane', 'tube',
+                   'extrusion', 'revolve', 'sweep'];
 
   /* buildGeometry returns { geo, approximated }.
    *
@@ -455,6 +460,162 @@
     return { geo: { positions: positions, normals: normals, indices: indices } };
   }
 
+  /* An outline carried along a PATH — the shape everything that bends is made
+   * of: a pipe run, a handrail, a cable tray, a wire form.
+   *
+   * # Why this is a third implementation and what keeps it honest
+   *
+   * internal/domain/geometry/sweep.go decides where every ring of points goes,
+   * and the CAD kernel builds a real B-Rep from the same numbers. This draws the
+   * same rings for the viewport, which cannot call either.
+   *
+   * What is shared is the PROPERTY, as with ear clipping: a swept polygon is a
+   * polyhedron with no curved surface anywhere on it, so all three produce the
+   * SAME solid rather than three approximations of one — and its volume is the
+   * outline's area times the path's length whenever the outline is centred on
+   * the path, which is what the fences on both sides assert.
+   *
+   * Corners are mitred: each ring sits in the plane bisecting the two segments,
+   * which is what a fabricated bend is, and the section is carried between
+   * segments by the smallest rotation that takes one direction to the next, so
+   * it does not twist as the path bends.
+   */
+  function sweepSections(profile, path) {
+    function sub(a, b) { return [a[0]-b[0], a[1]-b[1], a[2]-b[2]]; }
+    function add(a, b) { return [a[0]+b[0], a[1]+b[1], a[2]+b[2]]; }
+    function mul(a, s) { return [a[0]*s, a[1]*s, a[2]*s]; }
+    function dot(a, b) { return a[0]*b[0] + a[1]*b[1] + a[2]*b[2]; }
+    function crs(a, b) {
+      return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
+    }
+    function len(a) { return Math.sqrt(dot(a, a)); }
+    function unit(a) { var l = len(a); return l ? mul(a, 1/l) : [0,0,0]; }
+    /* The smallest rotation taking unit a to unit b — Rodrigues, angle in
+     * [0, pi]. Antiparallel has no such axis, so a fixed perpendicular is used
+     * and the answer is at least deterministic; the only path that reaches it
+     * sets off straight down. */
+    function rotation(a, b) {
+      var axis = crs(a, b), sin = len(axis), cos = dot(a, b);
+      if (sin < 1e-12) {
+        if (cos > 0) return function (v) { return v; };
+        var lean = Math.abs(a[0]) > Math.abs(a[1]) ? [0,1,0] : [1,0,0];
+        var k0 = unit(crs(a, lean));
+        return function (v) { return sub(mul(k0, 2*dot(v, k0)), v); };
+      }
+      var k = mul(axis, 1/sin);
+      return function (v) {
+        return add(add(mul(v, cos), mul(crs(k, v), sin)), mul(k, dot(k, v)*(1-cos)));
+      };
+    }
+
+    if (profile.length < 3 || path.length < 2) return null;
+    var i, j, k, segments = path.length - 1, tangent = [];
+    for (i = 0; i < segments; i++) {
+      var d = sub(path[i+1], path[i]);
+      if (len(d) < 1e-12) return null;   /* a zero-length segment */
+      tangent.push(unit(d));
+    }
+    var bisector = [tangent[0]];
+    for (j = 1; j < path.length - 1; j++) {
+      var sum = add(tangent[j-1], tangent[j]);
+      if (len(sum) < 1e-9) return null;  /* the path doubles back */
+      bisector.push(unit(sum));
+    }
+    bisector.push(tangent[segments-1]);
+
+    /* The frame at the first segment is the smallest rotation from +Z, so a
+     * path straight up local Z leaves the outline exactly as drawn and the
+     * sweep IS the extrusion. */
+    var start = rotation([0,0,1], tangent[0]);
+    var axisX = [start([1,0,0])], axisY = [start([0,1,0])];
+    for (i = 1; i < segments; i++) {
+      var turn = rotation(tangent[i-1], tangent[i]);
+      axisX.push(turn(axisX[i-1]));
+      axisY.push(turn(axisY[i-1]));
+    }
+
+    var rings = [];
+    for (j = 0; j < path.length; j++) {
+      var into = j > 0 ? j - 1 : 0, t = tangent[into], m = bisector[j];
+      var denom = dot(t, m), ring = [];
+      for (k = 0; k < profile.length; k++) {
+        /* On the perpendicular section at the vertex, then slid ALONG the
+         * segment onto the bisector plane. Sliding rather than projecting is
+         * what makes it a mitre: each point stays on the line the sweep carries
+         * it along, so the two faces meet edge to edge. */
+        var base = add(path[j], add(mul(axisX[into], profile[k][0]),
+                                    mul(axisY[into], profile[k][1])));
+        ring.push(add(base, mul(t, dot(sub(path[j], base), m) / denom)));
+      }
+      rings.push(ring);
+    }
+    return rings;
+  }
+
+  function sweepGeometry(profile, path) {
+    var raw = (profile || []).map(function (p) { return [num(p.x, 0), num(p.y, 0)]; });
+    var way = (path || []).map(function (p) { return [num(p.x, 0), num(p.y, 0), num(p.z, 0)]; });
+    if (raw.length < 3 || way.length < 2) {
+      return {
+        geo: boxGeometry(1, 1, 1),
+        approximated: 'a sweep needs an outline of at least three points and a path of at ' +
+                      'least two, so it is drawn as a unit box'
+      };
+    }
+    var clipped = earClip(raw);
+    var pts = clipped.pts, tris = clipped.tris;
+    var rings = tris.length ? sweepSections(pts, way) : null;
+    if (!rings) {
+      return {
+        geo: boxGeometry(1, 1, 1),
+        approximated: 'this outline could not be closed into a surface, or this path ' +
+                      'repeats a point or doubles back, so it is drawn as a unit box'
+      };
+    }
+
+    var positions = [], normals = [], indices = [], n = 0;
+    function normalOf(a, b, c) {
+      var ux = b[0]-a[0], uy = b[1]-a[1], uz = b[2]-a[2];
+      var vx = c[0]-a[0], vy = c[1]-a[1], vz = c[2]-a[2];
+      var nx = uy*vz - uz*vy, ny = uz*vx - ux*vz, nz = ux*vy - uy*vx;
+      var l = Math.sqrt(nx*nx + ny*ny + nz*nz) || 1;
+      return [nx/l, ny/l, nz/l];
+    }
+    function tri(a, b, c, nn) {
+      var norm = nn || normalOf(a, b, c);
+      [a, b, c].forEach(function (v) {
+        positions.push(v[0], v[1], v[2]);
+        normals.push(norm[0], norm[1], norm[2]);
+        indices.push(n++);
+      });
+    }
+
+    var last = rings.length - 1;
+    /* The two ends, each facing away from the material between them. Taken from
+     * where one outline point MOVED between the first two rings, which is
+     * parallel to the segment however the mitre tilted the ring. */
+    function direction(from, to) {
+      var v = [to[0]-from[0], to[1]-from[1], to[2]-from[2]];
+      var l = Math.sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2]) || 1;
+      return [v[0]/l, v[1]/l, v[2]/l];
+    }
+    var startN = direction(rings[1][0], rings[0][0]);
+    var endN = direction(rings[last-1][0], rings[last][0]);
+    tris.forEach(function (t) {
+      tri(rings[0][t[2]], rings[0][t[1]], rings[0][t[0]], startN);
+      tri(rings[last][t[0]], rings[last][t[1]], rings[last][t[2]], endN);
+    });
+    for (var i = 0; i < last; i++) {
+      for (var k = 0; k < pts.length; k++) {
+        var j2 = (k + 1) % pts.length;
+        var a = rings[i][k], b = rings[i][j2], c = rings[i+1][j2], d = rings[i+1][k];
+        tri(a, b, c);
+        tri(a, c, d);
+      }
+    }
+    return { geo: { positions: positions, normals: normals, indices: indices } };
+  }
+
   function buildGeometry(part) {
     var s = part.size || {};
     switch (part.shape) {
@@ -465,6 +626,7 @@
       case 'plane':    return { geo: planeGeometry(num(s.width,1), num(s.depth,1)) };
       case 'extrusion': return extrusionGeometry(part.profile || [], num(s.depth, 1));
       case 'revolve':   return revolveGeometry(part.profile || [], part.axis);
+      case 'sweep':     return sweepGeometry(part.profile || [], part.path || []);
       case 'tube':
         /* A tube is drawn as its outer wall. The bore is not modelled, and that
          * is reported: an inner diameter that is not there is exactly the kind
@@ -1331,7 +1493,15 @@
     Studio: Studio,
     geometry: {
       box: boxGeometry, cylinder: cylinderGeometry,
-      sphere: sphereGeometry, plane: planeGeometry
+      sphere: sphereGeometry, plane: planeGeometry,
+      /* Exported because a sweep is the one shape here whose CONVENTIONS have to
+       * agree with two other implementations — which way up the section starts,
+       * how it is carried round a bend, and that corners are mitred. Volume
+       * would not catch a section that came round a bend rolled, so the fence
+       * compares this builder's facets against the Go one's, facet for facet
+       * (TestRendererSweepsTheSameSolidAsTheExporter). It cannot do that unless
+       * it can call this. */
+      sweep: sweepGeometry
     }
   };
 })(window);

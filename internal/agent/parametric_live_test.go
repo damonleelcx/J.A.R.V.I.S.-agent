@@ -353,6 +353,101 @@ func TestLiveModelDesignsWithAnOutline(t *testing.T) {
 	}
 }
 
+// Can the model design a part that BENDS?
+//
+// A sweep is the third thing here that is not a primitive, and it asks for
+// something the other two do not: a PATH, in three dimensions, with the outline
+// riding its origin. Two things about that are easy to get wrong and only a
+// model can say whether the contract conveys them — that the outline should be
+// drawn around (0, 0) when the path is meant to run down the middle, and that a
+// bend cannot be tighter than the outline is wide.
+//
+// The prompt is chosen because primitives cannot express it. Three boxes end to
+// end leave a gap on the outside of each corner and an overlap on the inside,
+// which is exactly the material a mitre puts right — so a model that reaches for
+// boxes has produced something visibly wrong rather than something simpler.
+//
+// What is asserted is that whatever comes back BUILDS. How often it reaches for
+// a sweep is a rate, and rates belong in the eval suite against a measured floor.
+func TestLiveModelDesignsABentPart(t *testing.T) {
+	if os.Getenv("FORGE_LIVE_LLM_TESTS") == "" || os.Getenv("FORGE_LLM_API_KEY") == "" {
+		t.Skip("set FORGE_LLM_API_KEY and FORGE_LIVE_LLM_TESTS=1")
+	}
+	python := os.Getenv("FORGE_CAD_PYTHON")
+	if python == "" {
+		t.Skip("FORGE_CAD_PYTHON is unset; run `make cad-venv`")
+	}
+	log := logx.New(logx.Options{Level: slog.LevelError, Output: os.Stderr, Service: "live"})
+	client := llm.NewOpenAICompatible(config.LLMConfig{
+		BaseURL:        envOrDefault("FORGE_LLM_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+		APIKey:         os.Getenv("FORGE_LLM_API_KEY"),
+		Converse:       envOrDefault("FORGE_LLM_CONVERSE_MODEL", "qwen-plus"),
+		RequestTimeout: 3 * time.Minute, MaxRetries: 2,
+	}, log, clock.System{})
+
+	conv := agent.NewConversation(client, persona.DefaultCharacter())
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	var reply *agent.Reply
+	for attempt := 1; attempt <= 2 && (reply == nil || reply.Prototype == nil); attempt++ {
+		r, err := conv.Respond(ctx, "", nil,
+			"Design an aluminium coolant line for a machine tool: a 20 mm by 12 mm "+
+				"rectangular bar that runs 300 mm up from the pump, then turns and runs "+
+				"200 mm horizontally, then turns again and drops 150 mm into the manifold.",
+			"", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		reply = r
+		if reply.Prototype == nil {
+			t.Logf("attempt %d produced no geometry; it said: %.200s", attempt, reply.Speech)
+		}
+	}
+	if reply.Prototype == nil {
+		t.Skip("the model returned unreadable JSON twice, so there is no output of its own " +
+			"to build; this says nothing about the kernel and the run is not a result")
+	}
+
+	var sweeps int
+	for _, p := range reply.Prototype.Parts {
+		if strings.EqualFold(p.Shape, "sweep") {
+			sweeps++
+			t.Logf("sweep %q: %d outline points, %d path points", p.ID, len(p.Profile), len(p.Path))
+			for i, pt := range p.Path {
+				t.Logf("  path %d: (%v, %v, %v)", i+1, pt.X, pt.Y, pt.Z)
+			}
+		}
+	}
+	for _, pr := range reply.Prototype.ProfileProblems() {
+		t.Logf("outline %s on %q: %s", pr.Severity, pr.Name, pr.Detail)
+	}
+	// What it reached for INSTEAD is the finding when it does not reach for a
+	// sweep, and "sweeps 0" on its own does not say whether it drew three boxes,
+	// three extrusions, or gave up and drew one straight bar.
+	for _, p := range reply.Prototype.Parts {
+		t.Logf("part %q: shape %q size %v at %v", p.ID, p.Shape, p.Size, p.Position)
+	}
+	t.Logf("parts %d, sweeps %d, features %d",
+		len(reply.Prototype.Parts), sweeps, len(reply.Prototype.Features))
+
+	k := cad.New(python, log)
+	defer k.Close()
+	built, err := k.BuildDocument(ctx, *reply.Prototype, geometry.Millimetre, "step")
+	if err != nil {
+		t.Fatalf("the model's own document did not build: %v", err)
+	}
+	t.Logf("built %d part(s), volume %.1f mm³, %d bytes of STEP; skipped=%v failures=%v",
+		built.Parts, built.Volume, len(built.STEP), built.Skipped, built.FeatureFailures)
+	if !bytes.HasPrefix(built.STEP, []byte("ISO-10303-21;")) {
+		t.Fatal("no STEP file from the model's own document")
+	}
+	if sweeps == 0 {
+		t.Log("the model described a bent part without a sweep, so the sweep contract is " +
+			"not landing")
+	}
+}
+
 // Can the model design a TURNED part?
 //
 // A revolve is the second thing here that is not a primitive, and it asks for

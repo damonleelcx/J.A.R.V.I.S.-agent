@@ -15,10 +15,12 @@ import (
 // else: an L-bracket, a T-section, a channel, a gusset — the ordinary
 // cross-sections most fabricated parts actually are — could not be said at all.
 //
-// An outline is a closed 2D shape, and there are two things worth doing with
+// An outline is a closed 2D shape, and there are three things worth doing with
 // one. EXTRUDING it sweeps it along an axis, which is where most fabricated
 // parts begin. REVOLVING it turns it about an axis, which is where every turned
-// one does: a shaft, a boss, a flange, a pulley, a dome, a nozzle.
+// one does: a shaft, a boss, a flange, a pulley, a dome, a nozzle. SWEEPING it
+// carries it along a path, which is where everything that BENDS comes from — a
+// pipe run, a handrail, a cable tray, a wire form (see sweep.go).
 //
 // Between them they are the difference between "primitives with material
 // removed" and a vocabulary somebody can design in.
@@ -48,10 +50,16 @@ import (
 // parameters is a drawing that stops being true the first time somebody changes
 // one.
 type Point struct {
-	X     float64 `json:"x"`
-	Y     float64 `json:"y"`
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
+	// Z is read ONLY on a sweep's path, which is the one list of points here
+	// that is not confined to a plane. An outline carrying one is refused rather
+	// than flattened: a z somebody typed is a z they meant, and silently
+	// dropping it draws a different shape from the one they described.
+	Z     float64 `json:"z,omitempty"`
 	XFrom string  `json:"x_from,omitempty"`
 	YFrom string  `json:"y_from,omitempty"`
+	ZFrom string  `json:"z_from,omitempty"`
 }
 
 // revolveAxes is the closed set of axes an outline may be turned about.
@@ -69,13 +77,27 @@ var revolveAxes = map[string]string{"": "y", "y": "y", "x": "x"}
 // thinly — it is a document that means nothing, and it is refused.
 const minProfilePoints = 3
 
-// resolvedProfiles evaluates every extrusion's outline, and says what is wrong.
+// outlineShapes is the closed set of shapes that are drawn from an outline
+// rather than from dimensions.
+//
+// One table, because "does this shape read a profile" is asked in four places
+// and a shape that is in three of them is a part that resolves, draws, and then
+// exports as a bounding box.
+var outlineShapes = map[string]bool{"extrusion": true, "revolve": true, "sweep": true}
+
+// resolvedProfiles evaluates every outline and every sweep path, and says what
+// is wrong with them.
 //
 // Returned in DOCUMENT units. Solids converts to millimetres afterwards, in the
 // one place that owns that conversion.
-func (d *Document) resolvedProfiles() (map[string][][2]float64, []Problem) {
+//
+// Profiles and paths come back from ONE pass because they are one question: a
+// sweep with an unreadable path is exactly as absent from the file as one with
+// an unreadable outline, and a caller that had to ask twice would eventually ask
+// once.
+func (d *Document) resolvedProfiles() (map[string][][2]float64, map[string][][3]float64, []Problem) {
 	if d == nil {
-		return nil, nil
+		return nil, nil, nil
 	}
 	res := d.Resolve()
 	lookup := func(n string) (float64, bool) {
@@ -84,6 +106,7 @@ func (d *Document) resolvedProfiles() (map[string][][2]float64, []Problem) {
 	}
 
 	out := map[string][][2]float64{}
+	paths := map[string][][3]float64{}
 	var problems []Problem
 	add := func(name, format string, args ...any) {
 		problems = append(problems, Problem{Severity: Error, Name: name,
@@ -92,8 +115,8 @@ func (d *Document) resolvedProfiles() (map[string][][2]float64, []Problem) {
 
 	for _, p := range d.Parts {
 		shape := strings.ToLower(strings.TrimSpace(p.Shape))
-		usesOutline := shape == "extrusion" || shape == "revolve"
-		if !usesOutline && len(p.Profile) == 0 {
+		usesOutline := outlineShapes[shape]
+		if !usesOutline && len(p.Profile) == 0 && len(p.Path) == 0 {
 			continue
 		}
 		label := p.Label()
@@ -101,13 +124,31 @@ func (d *Document) resolvedProfiles() (map[string][][2]float64, []Problem) {
 			// A profile on a box is not a box with a profile: it is somebody
 			// meaning one thing and writing another, and guessing which would
 			// put a shape in the file that nobody asked for.
-			add(label, "carries a profile but its shape is %q; an outline is only used "+
-				"when the shape is \"extrusion\" or \"revolve\"", p.Shape)
+			carries := "an outline"
+			if len(p.Profile) == 0 {
+				carries = "a path"
+			}
+			add(label, "carries %s but its shape is %q; an outline is only used when the "+
+				"shape is \"extrusion\", \"revolve\" or \"sweep\", and a path only when it "+
+				"is \"sweep\"", carries, p.Shape)
+			continue
+		}
+		if shape != "sweep" && len(p.Path) > 0 {
+			// Same reasoning one line up, from the other side: a path on an
+			// extrusion is somebody who meant a sweep, and building the
+			// extrusion would quietly throw the path away.
+			add(label, "is an %s but carries a path; an outline is only carried along a path "+
+				"when the shape is \"sweep\"", shape)
 			continue
 		}
 		if len(p.Profile) < minProfilePoints {
 			add(label, "is an %s with %d point(s); an outline needs at least %d to "+
 				"enclose anything", shape, len(p.Profile), minProfilePoints)
+			continue
+		}
+		if shape == "sweep" && len(p.Path) < minPathPoints {
+			add(label, "is a sweep with a path of %d point(s); a path needs at least %d, "+
+				"because one point is a place and not a direction", len(p.Path), minPathPoints)
 			continue
 		}
 		if _, known := revolveAxes[strings.ToLower(strings.TrimSpace(p.Axis))]; !known && shape == "revolve" {
@@ -119,6 +160,15 @@ func (d *Document) resolvedProfiles() (map[string][][2]float64, []Problem) {
 		pts := make([][2]float64, 0, len(p.Profile))
 		bad := false
 		for i, pt := range p.Profile {
+			if pt.Z != 0 || strings.TrimSpace(pt.ZFrom) != "" {
+				// Dropping it would draw a flat outline where somebody described
+				// a shape that leaves its plane, and say nothing. An outline
+				// that wants a z is a sweep whose path has not been written.
+				add(label, "point %d carries a z; an outline lies in the part's own XY plane, "+
+					"and z is only read on a sweep's path", i+1)
+				bad = true
+				break
+			}
 			x, err := coordinate(pt.X, pt.XFrom, lookup)
 			if err != nil {
 				add(label, "point %d: x %v", i+1, err)
@@ -174,20 +224,61 @@ func (d *Document) resolvedProfiles() (map[string][][2]float64, []Problem) {
 				continue
 			}
 		}
+		if shape == "sweep" {
+			way := make([][3]float64, 0, len(p.Path))
+			for i, pt := range p.Path {
+				x, xerr := coordinate(pt.X, pt.XFrom, lookup)
+				y, yerr := coordinate(pt.Y, pt.YFrom, lookup)
+				z, zerr := coordinate(pt.Z, pt.ZFrom, lookup)
+				if err := firstOf(xerr, yerr, zerr); err != nil {
+					add(label, "path point %d: %v", i+1, err)
+					bad = true
+					break
+				}
+				way = append(way, [3]float64{x, y, z})
+			}
+			if bad {
+				continue
+			}
+			// Built here, and the result thrown away, because every fault a path
+			// can have is a fault of the path AND the outline together: whether
+			// a bend is too tight depends on how wide the outline is. Refused
+			// rather than drawn partially, because this is the path the kernel
+			// reads — and the one fault OCCT does not catch, a fold, comes back
+			// from it as a plausible solid with the wrong volume.
+			if _, _, err := sweptSections(pts, way); err != nil {
+				add(label, "%v", err)
+				continue
+			}
+			paths[p.ID] = way
+		}
 		out[p.ID] = pts
 	}
 	sortProblems(problems)
-	return out, problems
+	return out, paths, problems
 }
 
-// ProfileProblems is everything wrong with this document's outlines.
+// firstOf is the first error of several, so three coordinates can be evaluated
+// and reported as one point rather than as three lines about the same point.
+func firstOf(errs ...error) error {
+	for _, err := range errs {
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// ProfileProblems is everything wrong with this document's outlines — and with
+// the paths the swept ones follow, which are the same claim: a part that is not
+// in the shape.
 //
 // Exported so the conversation boundary can tell a reader, for the same reason
 // the feature and parameter problems are: an extrusion that does not resolve is
 // a part that is simply NOT THERE, and the render looks like a design with a
 // piece missing rather than like an error.
 func (d *Document) ProfileProblems() []Problem {
-	_, problems := d.resolvedProfiles()
+	_, _, problems := d.resolvedProfiles()
 	return problems
 }
 

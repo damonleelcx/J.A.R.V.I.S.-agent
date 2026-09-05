@@ -440,6 +440,35 @@ func localBox(p Part) (min, max [3]float64) {
 		}
 		r := math.Max(math.Abs(lo[0]), math.Abs(hi[0]))
 		return [3]float64{-r, lo[1], -r}, [3]float64{r, hi[1], r}
+	case "sweep":
+		// The extent of the points the sweep actually visits, which is exact
+		// rather than conservative: a swept polygon is a polyhedron, and its
+		// corners are its rings' corners. A bounding box of the path grown by
+		// the outline's radius would be right for a round section and too big
+		// for every other one, and a dimension line drawn against it would be a
+		// number this system worked out and got wrong.
+		pts, way, ok := literalSweep(p)
+		if !ok {
+			return [3]float64{}, [3]float64{}
+		}
+		rings, _, err := sweptSections(pts, way)
+		if rings == nil {
+			// A path that cannot be swept has no extent to measure. Nothing,
+			// rather than a guess: see profileExtent.
+			_ = err
+			return [3]float64{}, [3]float64{}
+		}
+		min = [3]float64{math.Inf(1), math.Inf(1), math.Inf(1)}
+		max = [3]float64{math.Inf(-1), math.Inf(-1), math.Inf(-1)}
+		for _, ring := range rings {
+			for _, pt := range ring {
+				for axis := 0; axis < 3; axis++ {
+					min[axis] = math.Min(min[axis], pt[axis])
+					max[axis] = math.Max(max[axis], pt[axis])
+				}
+			}
+		}
+		return min, max
 	default:
 		return sym([3]float64{get("width", 1) / 2, get("height", 1) / 2, get("depth", 1) / 2})
 	}
@@ -453,6 +482,29 @@ func localBox(p Part) (min, max [3]float64) {
 // read must not become a zero that silently shrinks the part. A profile written
 // entirely in expressions therefore contributes no measured extent, which is a
 // miss rather than a wrong number.
+// literalSweep is a sweep's outline and path as plain coordinates.
+//
+// Expressions are NOT evaluated, for the same reason profileExtent does not
+// evaluate them: this runs on a stored document with no parameter context, and a
+// coordinate it cannot read must not become a zero that moves a bend. A sweep
+// written in expressions therefore contributes no measured extent — a miss
+// rather than a wrong number.
+func literalSweep(p Part) (profile [][2]float64, path [][3]float64, ok bool) {
+	for _, pt := range p.Profile {
+		if pt.XFrom != "" || pt.YFrom != "" {
+			return nil, nil, false
+		}
+		profile = append(profile, [2]float64{pt.X, pt.Y})
+	}
+	for _, pt := range p.Path {
+		if pt.XFrom != "" || pt.YFrom != "" || pt.ZFrom != "" {
+			return nil, nil, false
+		}
+		path = append(path, [3]float64{pt.X, pt.Y, pt.Z})
+	}
+	return profile, path, len(profile) >= minProfilePoints && len(path) >= minPathPoints
+}
+
 func profileExtent(p Part) (min, max [2]float64, ok bool) {
 	min = [2]float64{math.Inf(1), math.Inf(1)}
 	max = [2]float64{math.Inf(-1), math.Inf(-1)}

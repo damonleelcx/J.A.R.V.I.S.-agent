@@ -94,8 +94,16 @@ type Part struct {
 	PositionFrom map[string]string `json:"position_from,omitempty"`
 	// Profile is a closed outline in the part's own XY plane (see profile.go).
 	// An "extrusion" sweeps it along local Z by Size["depth"]; a "revolve"
-	// turns it about Axis. Read for no other shape.
+	// turns it about Axis; a "sweep" carries it along Path. Read for no other
+	// shape.
 	Profile []Point `json:"profile,omitempty"`
+	// Path is the OPEN polyline a "sweep" carries its profile along, in the
+	// part's own local frame and read for no other shape (see sweep.go). Its
+	// points are the one place a Point's Z means anything.
+	//
+	// A sweep needs no "depth": the path says how far, in three dimensions,
+	// which is the whole reason it is not an extrusion.
+	Path []Point `json:"path,omitempty"`
 	// Axis is which way a "revolve" turns: "y" (the default, and up) or "x".
 	Axis     string    `json:"axis,omitempty"`
 	Rotation []float64 `json:"rotation"`

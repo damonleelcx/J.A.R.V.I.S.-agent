@@ -95,9 +95,9 @@ func (d *Document) bind(compareToAuthored bool) []Problem {
 		return v.Number, ok
 	}
 
-	// Profile coordinates written as expressions become NUMBERS here, exactly as
-	// a bound size does, and for the same reason: nothing downstream evaluates
-	// anything. The renderer, the tessellator and the measurement path all read
+	// Profile and path coordinates written as expressions become NUMBERS here,
+	// exactly as a bound size does, and for the same reason: nothing downstream
+	// evaluates anything. The renderer, the tessellator and the measurement path all read
 	// a stored document with no parameter context, and a coordinate they cannot
 	// read would become a zero that silently folds the outline flat.
 	//
@@ -108,7 +108,7 @@ func (d *Document) bind(compareToAuthored bool) []Problem {
 	// which has its own voice at the boundary: "a number is missing" and "a
 	// whole part is not in the shape" are different things to be told, and one
 	// wording for both makes the second read like the first.
-	profiles, _ := d.resolvedProfiles()
+	profiles, paths, _ := d.resolvedProfiles()
 
 	for i := range d.Parts {
 		p := &d.Parts[i]
@@ -118,6 +118,17 @@ func (d *Document) bind(compareToAuthored bool) []Problem {
 			for j := range p.Profile {
 				p.Profile[j].X = pts[j][0]
 				p.Profile[j].Y = pts[j][1]
+			}
+		}
+		// A sweep's PATH is bound for exactly the same reason its outline is:
+		// the renderer and the measurement path read a stored document with no
+		// parameter context, and a path coordinate they cannot read would become
+		// a zero that quietly moves the bend somewhere else.
+		if way, ok := paths[p.ID]; ok && len(way) == len(p.Path) {
+			for j := range p.Path {
+				p.Path[j].X = way[j][0]
+				p.Path[j].Y = way[j][1]
+				p.Path[j].Z = way[j][2]
 			}
 		}
 

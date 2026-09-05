@@ -178,6 +178,13 @@ func partTriangles(p Part, unit Unit, infer func(string, ...any)) ([]Triangle, *
 	case "revolve":
 		return revolved(p, infer), chordDeviation(revolveRadius(p), radialSegments, unit)
 
+	case "sweep":
+		// No deviation, and that is not an omission. A polygon carried along a
+		// polyline has no curved surface anywhere on it, so these triangles ARE
+		// the solid rather than an approximation of it — the one shape here that
+		// the kernel and the tessellator agree about exactly.
+		return swept(p, infer), nil
+
 	case "plane":
 		// A plane has no thickness and is not a solid. Exported as the two
 		// triangles the renderer draws, and named in the label as the one thing
@@ -635,6 +642,71 @@ func revolved(p Part, infer func(string, ...any)) []Triangle {
 			// The normal comes from the facet itself rather than from a formula
 			// per axis: the two axes have opposite handedness and a formula
 			// written for one is silently inverted for the other.
+			out = appendNonDegenerate(out, Triangle{A: a, B: b, C: c, Normal: faceNormal(a, b, c)})
+			out = appendNonDegenerate(out, Triangle{A: a, B: c, C: d, Normal: faceNormal(a, c, d)})
+		}
+	}
+	return out
+}
+
+// swept tessellates an outline carried along a path (see sweep.go).
+//
+// # Why this shares its geometry with the measurement path and the kernel
+//
+// Where each ring of points ends up is the whole of what a sweep IS, and it is
+// decided by sweptSections. This function turns rings into triangles and does
+// not decide anything else — the alternative is a viewport, an exporter and a
+// bounding box that each frame the section their own way, and a part that is
+// drawn one way, measured another and built a third.
+//
+// # Winding
+//
+// triangulate normalises the outline counter-clockwise, so the caps and the
+// facet order below are outward for the same reason the extrusion's are. The
+// facet normals are computed from the facets rather than from a formula, because
+// a path may point anywhere and a formula written for one direction is silently
+// inverted for another.
+func swept(p Part, infer func(string, ...any)) []Triangle {
+	pts := make([][2]float64, 0, len(p.Profile))
+	for _, pt := range p.Profile {
+		pts = append(pts, [2]float64{pt.X, pt.Y})
+	}
+	pts, tris, ok := triangulate(pts)
+	if !ok {
+		infer("%s: this outline could not be closed into a surface — it crosses itself or "+
+			"repeats a point — so it is drawn only as far as FORGE could read it.", p.Label())
+	}
+	if len(tris) == 0 {
+		return nil
+	}
+	rings, _, err := sweptSections(pts, pathPoints(p))
+	if err != nil {
+		// Drawn anyway when there is anything to draw, and named. A part that
+		// vanishes from a render reads as a design with a piece missing; the
+		// export path refuses the same document, and the banner says which.
+		infer("%s: %v. It is drawn as FORGE read it, and it is not a solid.", p.Label(), err)
+	}
+	if len(rings) < minPathPoints {
+		return nil
+	}
+	last := len(rings) - 1
+
+	out := make([]Triangle, 0, len(tris)*2+len(pts)*last*2)
+	// The two ends. The start cap faces back down the path and the end cap
+	// forward, so each faces away from the material between them.
+	startNormal := normalise(sub3(rings[0][0], rings[1][0]))
+	endNormal := normalise(sub3(rings[last][0], rings[last-1][0]))
+	for _, t := range tris {
+		out = appendNonDegenerate(out, Triangle{
+			A: rings[0][t[2]], B: rings[0][t[1]], C: rings[0][t[0]], Normal: startNormal})
+		out = appendNonDegenerate(out, Triangle{
+			A: rings[last][t[0]], B: rings[last][t[1]], C: rings[last][t[2]], Normal: endNormal})
+	}
+	for i := 0; i < last; i++ {
+		for k := range pts {
+			next := (k + 1) % len(pts)
+			a, b := rings[i][k], rings[i][next]
+			c, d := rings[i+1][next], rings[i+1][k]
 			out = appendNonDegenerate(out, Triangle{A: a, B: b, C: c, Normal: faceNormal(a, b, c)})
 			out = appendNonDegenerate(out, Triangle{A: a, B: c, C: d, Normal: faceNormal(a, c, d)})
 		}

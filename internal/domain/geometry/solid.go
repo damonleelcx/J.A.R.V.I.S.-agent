@@ -39,9 +39,31 @@ type Solid struct {
 	// to millimetres. Which keys are present depends on the shape and is the
 	// builder's contract.
 	Dims map[string]float64 `json:"dims"`
-	// Profile is an extrusion's or a revolve's outline in millimetres, in the
-	// part's own XY plane. Empty for every other shape.
+	// Profile is an extrusion's, a revolve's or a sweep's outline in
+	// millimetres, in the part's own XY plane. Empty for every other shape.
 	Profile [][2]float64 `json:"profile,omitempty"`
+	// Path is a sweep's polyline in millimetres, in the part's own frame. Empty
+	// otherwise.
+	Path [][3]float64 `json:"path,omitempty"`
+	// SectionFrame is where the outline's own x and y axes point when a sweep
+	// sets off, row-major, with the COLUMNS being the profile's x, the profile's
+	// y, and the path's first direction — the same convention as Matrix.
+	//
+	// # Why it travels rather than being derived
+	//
+	// A builder handed only a profile and a path has to decide which way up the
+	// section starts and how it is carried round each bend, and there are
+	// several defensible answers. Two builders deciding separately agree until
+	// one is edited, and the day they diverge the exported solid has its section
+	// rotated from the drawn one — visible on any outline that is not
+	// rotationally symmetric, and invisible on the round ones people test with.
+	//
+	// So it is decided once, in sweptSections, and sent. A POINTER because there
+	// is no harmless default: a zero matrix is a frame with no axes, and a shape
+	// that reads one would build something degenerate rather than obviously
+	// wrong. Nil says "this shape has no section", which is the truth for every
+	// shape but a sweep.
+	SectionFrame *[9]float64 `json:"section_frame,omitempty"`
 	// Axis is which way a revolve turns, "y" or "x". Empty otherwise.
 	Axis string `json:"axis,omitempty"`
 	// Matrix is the rotation, row-major, from RotationMatrix.
@@ -84,7 +106,7 @@ func Solids(d Document, unit Unit) ([]Solid, []string) {
 		inferred = append(inferred, fmt.Sprintf(format, args...))
 	}
 
-	profiles, profileProblems := d.resolvedProfiles()
+	profiles, paths, profileProblems := d.resolvedProfiles()
 	for _, problem := range profileProblems {
 		inferred = append(inferred, fmt.Sprintf("%s %s, so it is not in this file.",
 			problem.Name, problem.Detail))
@@ -94,6 +116,7 @@ func Solids(d Document, unit Unit) ([]Solid, []string) {
 	for _, p := range d.Parts {
 		dims := map[string]float64{}
 		var profile [][2]float64
+		var path [][3]float64
 		switch strings.ToLower(p.Shape) {
 		case "extrusion":
 			pts, ok := profiles[p.ID]
@@ -114,6 +137,16 @@ func Solids(d Document, unit Unit) ([]Solid, []string) {
 			// No dimension of its own: a revolve's size is entirely its outline
 			// and the axis it turns about. Asking for a depth as well would be
 			// a second way to say something the outline already says.
+		case "sweep":
+			pts, ok := profiles[p.ID]
+			way, hasPath := paths[p.ID]
+			if !ok || !hasPath {
+				continue
+			}
+			profile, path = pts, way
+			// No dimension either, for the same reason and more so: a sweep's
+			// size is its outline and the path it follows, and a "depth" beside
+			// them would be a third opinion about how far it goes.
 		case "box":
 			dims["width"] = sizeOr(p, "width", 1, unit, infer)
 			dims["height"] = sizeOr(p, "height", 1, unit, infer)
@@ -165,10 +198,36 @@ func Solids(d Document, unit Unit) ([]Solid, []string) {
 		for i, pt := range profile {
 			scaled[i] = [2]float64{pt[0] * toMM, pt[1] * toMM}
 		}
+		scaledPath := make([][3]float64, len(path))
+		for i, pt := range path {
+			scaledPath[i] = [3]float64{pt[0] * toMM, pt[1] * toMM, pt[2] * toMM}
+		}
+
+		// The section frame is computed from the CONVERTED outline and path, so
+		// that the one thing the kernel is told about orientation was worked out
+		// from the same numbers it is going to build with. It is a rotation and
+		// therefore unchanged by the conversion — computing it before would give
+		// the same answer, and would give it from numbers nothing else uses.
+		var frame *[9]float64
+		if len(scaledPath) > 0 {
+			if _, f, err := sweptSections(scaled, scaledPath); err == nil {
+				frame = &f
+			} else {
+				// resolvedProfiles refused every path that cannot be swept, so
+				// reaching this is the two of them disagreeing. Skipped rather
+				// than sent unframed: a sweep with no frame is a section with no
+				// orientation, and the kernel would build it somewhere arbitrary.
+				inferred = append(inferred, fmt.Sprintf(
+					"%s: this sweep could not be framed (%v), so it is not in this file.",
+					p.Label(), err))
+				continue
+			}
+		}
 
 		out = append(out, Solid{
 			ID: p.ID, Label: p.Label(), Shape: strings.ToLower(p.Shape), Dims: dims,
-			Profile: scaled, Axis: axisOf(p), Matrix: RotationMatrix(rot), Position: pos,
+			Profile: scaled, Path: scaledPath, SectionFrame: frame,
+			Axis: axisOf(p), Matrix: RotationMatrix(rot), Position: pos,
 		})
 	}
 	sort.SliceStable(inferred, func(i, j int) bool { return inferred[i] < inferred[j] })

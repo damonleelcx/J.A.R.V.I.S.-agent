@@ -134,8 +134,32 @@ test-asr: ## Speech fences against the REAL provider, both directions (costs a f
 drill: db-wait ## Run the recovery drills against live Postgres (PRD NFR-07)
 	FORGE_DATABASE_URL="$(DB_URL)" go run ./cmd/forgectl drill run
 
+.PHONY: drill-fences
+drill-fences: ## Break each sweep fence on purpose and check it goes red (edits source, then restores it)
+	@# Different question from `drill` above, which injects faults into a RUNNING
+	@# system and checks it recovers. This injects them into the SOURCE, one at a
+	@# time, and checks that the test claiming to hold each one actually fails.
+	@#
+	@# Why it is worth a target of its own: a test that has never failed is a
+	@# claim, not a fence. Two in this repository were written, reviewed and could
+	@# not fail — the shape dispatch (wave 18) and the sweep twist test (wave 19)
+	@# — and neither was found by reading the code.
+	@#
+	@# It edits files in place and restores them from a checksummed backup on the
+	@# way out, including on an interrupt, and says whether the tree came back
+	@# byte-identical. Do not run it beside another build: while a mutation is
+	@# applied, the tree on disk is the mutated one.
+	scripts/drill-fences.sh
+
 .PHONY: check
 check: fmt-check vet test-integration drill ## Everything CI runs on every commit
+	@# The fence drills run LAST and from the recipe rather than as a
+	@# prerequisite, because they edit the source while they run. As a
+	@# prerequisite, `make -j check` could run them beside the test suite, and a
+	@# test that read a half-mutated file would fail in a way indistinguishable
+	@# from a real defect. Prerequisites are all finished before a recipe starts,
+	@# so this is the one place they cannot overlap anything.
+	$(MAKE) drill-fences
 
 # ---------------------------------------------------------------------------
 # Release

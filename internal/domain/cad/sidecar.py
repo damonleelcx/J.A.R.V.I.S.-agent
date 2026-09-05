@@ -39,7 +39,7 @@ try:
     from build123d import (
         Box, Cylinder, Cone, Sphere, Rectangle, Plane, Location, Vector,
         Compound, Axis, Polyline, export_step, extrude, fillet, chamfer,
-        make_face, revolve,
+        make_face, revolve, sweep, Transition,
     )
 except Exception as exc:  # pragma: no cover - reported to the caller, not raised
     sys.stdout.write(json.dumps({
@@ -118,6 +118,36 @@ def _shape(solid):
         pts = solid["profile"]
         face = make_face(Polyline(*[(p[0], p[1], 0) for p in pts], close=True))
         return revolve(face, Axis.X if solid.get("axis") == "x" else Axis.Y, 360)
+    if kind == "sweep":
+        # The same outline, carried along a path instead of a straight line.
+        #
+        # Three things here are DECIDED IN GO and merely obeyed, because each of
+        # them has more than one defensible answer and two builders answering
+        # separately is how an exported solid ends up rotated from the drawn one:
+        #
+        #   - where the section starts and which way up it is. It arrives as
+        #     "section_frame", the same column convention as the placement
+        #     matrix, so nothing here has an opinion about how a sweep is framed.
+        #   - that the path is used as absolute coordinates in the part's own
+        #     frame. OCCT otherwise sweeps from wherever the section already is
+        #     and ignores where the path starts (measured 2026-09-05), so the
+        #     section is placed AT the path's first point.
+        #   - that corners are mitred. Transition.RIGHT is not a preference: on
+        #     an elbow whose correct volume is 5000 mm³, OCCT's default
+        #     TRANSFORMED returned 1600 and ROUND rounds the corner into a shape
+        #     the drawing did not describe. Measured 2026-09-05, build123d 0.11.1.
+        #
+        # Every path that cannot be swept — a repeated point, a reversal, a bend
+        # too tight for its own outline — is refused in Go, where the offending
+        # points can be named. OCCT refuses the first with "BRep_API: command not
+        # done", the second with an EMPTY message, and the third not at all.
+        pts, path = solid["profile"], solid["path"]
+        m = solid["section_frame"]
+        start = Plane(origin=Vector(*path[0]),
+                      x_dir=Vector(m[0], m[3], m[6]),
+                      z_dir=Vector(m[2], m[5], m[8]))
+        face = start * make_face(Polyline(*[(p[0], p[1], 0) for p in pts], close=True))
+        return sweep(face, Polyline(*[tuple(p) for p in path]), transition=Transition.RIGHT)
     if kind == "plane":
         # A face, not a solid, and deliberately so: a plane has no thickness and
         # will not print, machine, or hold a volume. It is exported because it is

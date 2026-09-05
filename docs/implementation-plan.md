@@ -2679,11 +2679,13 @@ first attempt.
 
 ### What is still NOT done
 
-- ~~**No revolves.**~~ **Done in wave 18.** Sweeps along a path are still absent.
+- ~~**No revolves.**~~ **Done in wave 18.**
+- ~~**No sweeps along a path.**~~ **Done in wave 19.**
 - **One loop per outline.** A hole in a profile is made by cutting a cylinder out
   of the part, not by drawing a second loop.
-- **No arcs.** An outline is straight segments between points; a rounded corner is
-  a fillet on the resulting solid.
+- **No arcs.** An outline is straight segments between points, and a path is
+  straight segments between points; a curve is several short ones, and a rounded
+  corner on the finished part is a fillet.
 
 ## Wave 18 — the turned part · **DONE**
 
@@ -2747,6 +2749,135 @@ anything a cone and a cut can express.
 end to end against the kernel, the renderer and the measurement path; what is not
 known is how often a model chooses it. That is a rate, and rates belong in the
 eval suite against a measured floor.
+
+## Wave 19 — the part that bends · **DONE**
+
+An outline could be swept along a straight line perpendicular to itself, or
+turned about an axis. Between them they cover the part with one cross-section all
+the way through, and the part that is turned. What neither covers is the part
+that BENDS — a pipe run, a handrail, a cable tray, a roll cage member, a wire
+form — so `sweep` joins them as the third thing a profile can become.
+
+It reuses everything again: the same outline, the same expression-driven
+coordinates, the same features on the result. The new field is `path`, an open
+line of at least two points with an `x`, a `y` and a `z` in the part's own frame.
+There is no `depth`: the path says how far it goes.
+
+**A sweep along a straight path up local Z is the extrusion**, facet for facet,
+and that is asserted rather than asserted-of. If a straight path produced a solid
+merely CLOSE to the extrusion — section rotated, caps elsewhere, winding reversed
+— this would be a second subtly different way to say the same thing, and the two
+would drift the first time either was edited.
+
+### Three decisions
+
+- **The outline's origin rides the path, and nothing is centred.** An extrusion
+  centres its depth, because depth is a size like a box's height. A path is
+  DRAWN, like an outline, and drawn things are used where they were drawn. The
+  consequence worth having: an outline drawn away from its origin sweeps at that
+  offset, which is how an eccentric section or a rail carried beside its own
+  centreline is described.
+- **Corners are mitred**, which is what a fabricated bend is. It has one property
+  worth having: the wedge cut from the inside of a bend exactly equals the wedge
+  added outside, so a swept solid whose outline is centred on its path encloses
+  `area × path length` EXACTLY, however many times it bends. That identity is
+  what the tests on all three implementations assert — arithmetic a reader can
+  check, the same reason the revolve figures come from Pappus.
+- **The section frame travels to the kernel** rather than being derived there.
+  Which way up the section starts and how it is carried round a bend both have
+  several defensible answers, and two builders deciding separately agree until
+  one is edited. It is computed once and sent as a matrix, the same bargain the
+  placement matrix already makes.
+
+### What the kernel spike settled, and what it cost to find out
+
+Measured 2026-09-05 against build123d 0.11.1, three things about OCCT that no
+amount of reading the API would have given:
+
+- **`Transition.RIGHT` is not a preference.** OCCT's default, `TRANSFORMED`,
+  returned **1600 mm³** for an elbow whose correct volume is 5000. `ROUND`
+  returned 4946 by rounding a corner nobody asked to have rounded.
+- **A section is swept in its own plane, wherever the path points.** A path
+  setting off along +X sweeps an XY-plane section FLAT — volume 0, no error. That
+  is why the frame is applied by placing the face before the sweep.
+- **OCCT ignores where the path sits.** A path from z=10 to z=30 swept a section
+  at z=0 into a solid spanning z=0..20. Placing the face at the path's first
+  point is what makes the coordinates mean what they say.
+
+### The fault OCCT does not catch
+
+A repeated path point comes back as `BRep_API: command not done`, which names
+nothing. A 180° reversal comes back with an **empty message**. Both are refused
+in Go, where the offending points can be named — the same reasoning as the
+revolve's axis crossing.
+
+The third one is different and is why there is a check nothing else here has:
+**a bend tighter than its own outline is wide is not refused by OCCT at all.** It
+returned a plausible solid of 14546 mm³ for a shape whose surface folds back
+through itself. So the fold is detected directly, and exactly — for every point
+of the outline, the ring must ADVANCE along each segment; one that goes backwards
+IS the fold — and the part is left out of the file with both path points named.
+
+### The drill found two fences that could not fail
+
+Sixteen mutations, one at a time, each naming the test that had to go red — now
+committed as `make drill-fences` (`scripts/drill-fences.sh`), and run last in
+`make check`. It edits the source in place, because there is no other way to find
+out whether the real test sees the change, and restores it from a checksummed
+backup on the way out — including on an interrupt. It reports three outcomes and
+not two: a fence that skipped is UNPROVEN rather than passed, since a skipped
+test prints `ok` and a drill that cannot tell those apart would report a fence
+that never ran as one that held.
+
+Two did not go red:
+
+- **The twist test asserted a property that could not fail.** It bent the path
+  once, in one plane — and re-framing each segment from scratch (the plausible
+  wrong implementation) AGREES with carrying the frame for a single bend. It
+  disagrees only when a second bend leaves the first's plane, because rotations
+  do not commute. Nothing else notices either: a rolled section has the same
+  area, so the volume is identical, the mitres still close, and a symmetric
+  outline has the same extents. Every test in the package stayed green. It now
+  asserts the property itself — the smallest rotation leaves the bend's own axis
+  alone, so a carried frame keeps its component along it — on a path whose two
+  bends are in different planes.
+- **The kernel test could not tell whether the frame was used.** Its path set off
+  up local Z, which is framed by the identity, so a kernel ignoring the frame
+  entirely built the right solid. Its path now sets off along +X.
+
+The other fourteen went red, including all four against the browser copy.
+
+There are no drills for the extrusion or the revolve fences. That is a gap, and
+it is stated in the script rather than left to be discovered: waves 17 and 18
+shipped without drills, and the dispatch fence they both rely on turned out to
+be vacuous.
+
+### The third implementation is now checked against the first
+
+`forge3d.js` has always been a second implementation of the tessellation, and
+what was shared with the Go one was the PROPERTY rather than the code: any
+correct triangulation covers the outline's area. That works for an extrusion,
+whose only convention is the outline, and for a revolve, whose only choice is an
+axis.
+
+It does not work for a sweep, which has three conventions and none of them
+changes the volume. A browser copy that rolled the section as it went would draw
+a rail with its flat face pointing somewhere nobody asked for, export a different
+solid, and pass every volume test on both sides.
+
+So the renderer's own builder is now run in **node** and compared with
+`geometry.Tessellate`, facet for facet, INCLUDING the normals — on a bent,
+out-of-plane path with an asymmetric section. They agree exactly, because a swept
+polygon has no curved surface anywhere on it and the two are the same polyhedron.
+It skips without node, the same bargain the kernel tests make with
+`FORGE_CAD_PYTHON`.
+
+### One thing found in passing
+
+`forge3d.js` exported a `supportedShapes` list that went stale the moment
+outlines arrived: `extrusion` and `revolve` were drawn correctly and named
+nowhere, so a list called "supported shapes" said the opposite of the truth about
+them. Nothing consumes it. It now names all three.
 
 ## Carried defects
 

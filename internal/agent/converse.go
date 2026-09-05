@@ -69,10 +69,11 @@ Reply with JSON only:
         "id": "stable-kebab-id",
         "name": "human name",
         "shape": "box" | "cylinder" | "cone" | "sphere" | "tube" | "plane" |
-                 "extrusion" | "revolve",
+                 "extrusion" | "revolve" | "sweep",
         "shape_note": "for \"extrusion\", size only needs \"depth\"",
         "size": {"width":1,"height":1,"depth":1,"radius":0.5,"radius_top":0.5},
         "profile": [{"x": 0, "y": 0, "x_from": "", "y_from": "plate_height"}],
+        "path": [{"x": 0, "y": 0, "z": 0, "z_from": "run_length"}],
         "axis": "y",
         "size_from": {"width": "plate_size", "height": "plate_thickness"},
         "position": [0,0,0],
@@ -206,6 +207,24 @@ About "prototype":
   It always turns a full circle. For a sector, revolve the whole thing and cut
   away what you do not want, the same way a hole is a cut rather than a kind of
   part.
+- "sweep" carries the same kind of outline along a PATH instead of a straight
+  line, which is where everything that BENDS comes from: a pipe run, a handrail,
+  a cable tray, a wire form, a tube routed around something. Give it a "profile"
+  and a "path" — an open line of at least two points, with "x", "y" and "z" in
+  the part's own frame. It needs no "depth": the path says how far it goes.
+  The outline's own origin RIDES the path and the outline starts square to the
+  first segment, so a path of two points straight up local Z is exactly an
+  extrusion. Draw the outline around (0, 0) when you want the path to run down
+  the middle of the part, which is almost always what a pipe or a rail means.
+  Nothing is centred: an extrusion centres its depth, but a path is drawn, and
+  where you draw it is where the part goes.
+  Corners are MITRED, like a fabricated bend. Two limits follow, and both are
+  refused rather than guessed at: a path cannot turn back through 180°, and a
+  bend cannot be tighter than the outline is wide — at a sharp corner the
+  section on the inside would fold back through itself, so put the points
+  further apart or draw a narrower outline.
+  There are no arcs: a curve is several short segments, and a rounded corner on
+  the finished part is a fillet.
 - "features" are what make an assembly a PART rather than a pile of solids.
   A HOLE is not a part — it is the absence of one. Put a cylinder where the hole
   goes, size and place it like any other part, and then "cut" it from the thing
