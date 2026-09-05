@@ -261,3 +261,59 @@ func TestValidate_ANonFeaturedPrototypeSaysNothingAboutFeatures(t *testing.T) {
 		t.Fatalf("a prototype with no features collected notes: %v", r.Prototype.NotVerified)
 	}
 }
+
+// An outline nothing can read means a whole PART is absent, and the render looks
+// like a design with a piece missing rather than like an error.
+func TestValidate_AnUnreadableOutlineIsSaidOutLoud(t *testing.T) {
+	r := &Reply{
+		Speech: "here",
+		Prototype: &Prototype{
+			Name: "angle", Units: "mm",
+			Parts: []geometry.Part{{ID: "a", Name: "Angle", Shape: "extrusion",
+				Profile: []geometry.Point{{X: 0, Y: 0}, {X: 10, Y: 0}},
+				Size:    map[string]float64{"depth": 20}}},
+			NotVerified: []string{"nothing checked"},
+		},
+	}
+	if err := r.validate(); err != nil {
+		t.Fatal(err)
+	}
+	if !notedAbout(r, "could not read one of this design's outlines") {
+		t.Fatalf("an unreadable outline was not reported: %v", r.Prototype.NotVerified)
+	}
+	if !notedAbout(r, "at least 3") {
+		t.Errorf("the note does not say what is wrong with it: %v", r.Prototype.NotVerified)
+	}
+}
+
+// An outline written as expressions becomes NUMBERS at the boundary, because
+// nothing downstream evaluates anything: the renderer, the tessellator and the
+// measurement path all read a stored document with no parameter context.
+func TestValidate_AnOutlineWrittenAsExpressionsBecomesCoordinates(t *testing.T) {
+	r := &Reply{
+		Speech: "here",
+		Prototype: &Prototype{
+			Name: "angle", Units: "mm",
+			Parameters: []geometry.Parameter{{Name: "leg", Value: 40, Unit: "mm"}},
+			Parts: []geometry.Part{{ID: "a", Name: "Angle", Shape: "extrusion",
+				Profile: []geometry.Point{
+					{X: 0, Y: 0}, {XFrom: "leg", Y: 0}, {XFrom: "leg", YFrom: "leg / 5"},
+					{X: 0, YFrom: "leg / 5"}},
+				Size: map[string]float64{"depth": 20}}},
+			NotVerified: []string{"nothing checked"},
+		},
+	}
+	if err := r.validate(); err != nil {
+		t.Fatal(err)
+	}
+	got := r.Prototype.Parts[0].Profile
+	if got[1].X != 40 || got[2].Y != 8 {
+		t.Fatalf("the outline still holds expressions: point 2 x = %v, point 3 y = %v — "+
+			"the renderer would fold it flat", got[1].X, got[2].Y)
+	}
+	// The expressions stay beside the numbers: the relationship is the thing
+	// recorded, and the coordinate is the snapshot of it.
+	if got[1].XFrom != "leg" {
+		t.Errorf("the expression was discarded, so the outline no longer follows anything")
+	}
+}

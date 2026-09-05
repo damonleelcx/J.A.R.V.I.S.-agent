@@ -647,3 +647,161 @@ func TestKernel_AnUnconvertibleUnitIsRefusedRatherThanGuessed(t *testing.T) {
 		t.Errorf("the refusal does not say what is wrong: %v", err)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Extrusions: the shape that is not a primitive (wave 17)
+// ---------------------------------------------------------------------------
+
+// lBracket is the ordinary cross-section that could not be described at all
+// before extrusions: concave, which is the case a triangle fan gets wrong and
+// the reason the tessellator ear-clips.
+func lBracket(depth float64) geometry.Document {
+	pts := [][2]float64{{0, 0}, {40, 0}, {40, 8}, {8, 8}, {8, 40}, {0, 40}}
+	profile := make([]geometry.Point, len(pts))
+	for i, p := range pts {
+		profile[i] = geometry.Point{X: p[0], Y: p[1]}
+	}
+	return geometry.Document{
+		Name: "angle", Units: "mm",
+		Parts: []geometry.Part{{ID: "angle", Name: "Angle", Shape: "extrusion",
+			Profile:  profile,
+			Size:     map[string]float64{"depth": depth},
+			Position: []float64{0, 0, 0}, Rotation: []float64{0, 0, 0}}},
+	}
+}
+
+func TestKernel_ExtrudesAConcaveOutline(t *testing.T) {
+	k := kernel(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	got, err := k.BuildDocument(ctx, lBracket(20), geometry.Millimetre, "step")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 40x8 flange plus 8x32 web = 576 mm², swept 20 mm.
+	if want := 576.0 * 20; math.Abs(got.Volume-want) > 0.01 {
+		t.Errorf("volume = %.4f mm³, want %.4f", got.Volume, want)
+	}
+	// Centred on the extrude axis, and NOT re-centred in the outline's own
+	// plane: the author drew the corner at the origin and it stays there.
+	want := [6]float64{0, 0, -10, 40, 40, 10}
+	for i := range want {
+		if math.Abs(got.Bounds[i]-want[i]) > 1e-6 {
+			t.Fatalf("bounds %v, want %v — the outline was re-centred, so every coordinate "+
+				"somebody wrote has moved", got.Bounds, want)
+		}
+	}
+	if !strings.HasPrefix(string(got.STEP), "ISO-10303-21;") {
+		t.Error("no STEP file for an extrusion")
+	}
+}
+
+// The outline follows the parameters, which is the whole point of writing it as
+// expressions rather than numbers.
+func TestKernel_AnOutlineFollowsItsParameters(t *testing.T) {
+	k := kernel(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	doc := geometry.Document{
+		Name: "angle", Units: "mm",
+		Parameters: []geometry.Parameter{
+			{Name: "leg", Value: 40, Unit: "mm", How: geometry.Chosen},
+			{Name: "thickness", Value: 8, Unit: "mm", How: geometry.Chosen},
+		},
+		Parts: []geometry.Part{{ID: "angle", Name: "Angle", Shape: "extrusion",
+			Profile: []geometry.Point{
+				{X: 0, Y: 0},
+				{XFrom: "leg", Y: 0},
+				{XFrom: "leg", YFrom: "thickness"},
+				{XFrom: "thickness", YFrom: "thickness"},
+				{XFrom: "thickness", YFrom: "leg"},
+				{X: 0, YFrom: "leg"},
+			},
+			Size:     map[string]float64{"depth": 20},
+			Position: []float64{0, 0, 0}, Rotation: []float64{0, 0, 0}}},
+	}
+
+	first, err := k.BuildDocument(ctx, doc, geometry.Millimetre, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := 576.0 * 20; math.Abs(first.Volume-want) > 0.01 {
+		t.Fatalf("volume = %.4f, want %.4f", first.Volume, want)
+	}
+
+	// Change one parameter, and the outline moves with it.
+	bigger, problems := doc.WithParameters(map[string]float64{"leg": 60})
+	for _, p := range problems {
+		if p.Severity == geometry.Error {
+			t.Fatalf("%s: %s", p.Name, p.Detail)
+		}
+	}
+	got, err := k.BuildDocument(ctx, *bigger, geometry.Millimetre, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 60x8 + 8x52 = 896 mm².
+	if want := 896.0 * 20; math.Abs(got.Volume-want) > 0.01 {
+		t.Errorf("volume = %.4f mm³, want %.4f — the outline did not follow the parameter",
+			got.Volume, want)
+	}
+	if math.Abs(got.Bounds[3]-60) > 1e-6 {
+		t.Errorf("the flange still reaches %.4f, want 60", got.Bounds[3])
+	}
+}
+
+// Features apply to an extrusion like any other part, which is what makes the
+// vocabulary compose rather than being two separate systems.
+func TestKernel_AnExtrusionTakesHolesAndFillets(t *testing.T) {
+	k := kernel(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	doc := lBracket(20)
+	// A bolt hole through the FLANGE, so the axis runs along Y — which is where
+	// a cylinder points here without any rotation at all.
+	//
+	// The first version of this rotated the bore 90 degrees about X, which put
+	// it along the extrude direction and through 20 mm of depth rather than
+	// through 8 mm of flange. The kernel returned the volume for that correctly
+	// and the assertion was the thing that was wrong.
+	doc.Parts = append(doc.Parts, geometry.Part{ID: "bore", Name: "Bore", Shape: "cylinder",
+		Size:     map[string]float64{"radius": 3, "height": 40},
+		Position: []float64{24, 4, 0}, Rotation: []float64{0, 0, 0}})
+	doc.Features = []geometry.Feature{{ID: "hole", Op: "cut", Of: "angle", With: []string{"bore"}}}
+
+	got, err := k.BuildDocument(ctx, doc, geometry.Millimetre, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.FeatureFailures) > 0 {
+		t.Fatalf("the cut was not applied to the extrusion: %v", got.FeatureFailures)
+	}
+	if got.Parts != 1 {
+		t.Errorf("%d parts, want one bracket with a hole in it", got.Parts)
+	}
+	// A ⌀6 bore through the 8 mm flange.
+	if want := 576.0*20 - math.Pi*9*8; math.Abs(got.Volume-want) > 0.01 {
+		t.Errorf("volume = %.4f mm³, want %.4f", got.Volume, want)
+	}
+}
+
+// An outline that crosses itself must not become a shape.
+func TestKernel_ASelfCrossingOutlineIsNotBuilt(t *testing.T) {
+	k := kernel(t)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
+	doc := lBracket(20)
+	doc.Parts[0].Profile = []geometry.Point{{X: 0, Y: 0}, {X: 10, Y: 10}, {X: 10, Y: 0}, {X: 0, Y: 10}}
+
+	_, err := k.BuildDocument(ctx, doc, geometry.Millimetre, "")
+	if err == nil {
+		t.Fatal("a bow-tie was built into a solid")
+	}
+	if !strings.Contains(err.Error(), "nothing to export") {
+		t.Logf("refusal: %v", err)
+	}
+}

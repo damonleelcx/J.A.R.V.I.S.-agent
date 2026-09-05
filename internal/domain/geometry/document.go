@@ -92,10 +92,14 @@ type Part struct {
 	// ever sees an expression.
 	SizeFrom     map[string]string `json:"size_from,omitempty"`
 	PositionFrom map[string]string `json:"position_from,omitempty"`
-	Rotation     []float64         `json:"rotation"`
-	Color        string            `json:"color"`
-	Opacity      float64           `json:"opacity"`
-	Note         string            `json:"note"`
+	// Profile is the closed outline of an extrusion, in the part's own XY
+	// plane, swept along local Z by Size["depth"] (see profile.go). Only read
+	// when Shape is "extrusion".
+	Profile  []Point   `json:"profile,omitempty"`
+	Rotation []float64 `json:"rotation"`
+	Color    string    `json:"color"`
+	Opacity  float64   `json:"opacity"`
+	Note     string    `json:"note"`
 	// Material is what this part is made of (PRD VIS-02). Optional, and a claim
 	// when present: naming a material is a statement everything downstream
 	// depends on, so it carries how it was arrived at. Nil means nobody said,

@@ -2553,9 +2553,8 @@ that changes what somebody does with the file.
   this interface already uses for "quoted from memory, not checked". A fence over
   `forge3d.js` holds that in place, because the realistic failure is somebody
   refactoring the loader and dropping a field nothing in Go refers to.
-- **No sketches, extrusions or revolves.** Everything starts from a primitive, so
-  a shape that is not a box, cylinder, cone, sphere or plane with material
-  removed cannot be described.
+- ~~**No sketches or extrusions.**~~ **Done in wave 17.** Revolves and sweeps are
+  still absent.
 - **No `max_fillet`.** A radius the geometry cannot take is refused by OCCT and
   reported; nothing suggests the largest one that would work.
 - **A tube's bore is still unmodelled** by the `tube` primitive — though a bore
@@ -2604,6 +2603,87 @@ different place: `WithParameters` had no caller until wave 11 added one, the
 parameter panel had none until wave 12, and export had none until now. The
 pattern is always the same — capability built, wired to an interface, and never
 connected to the thing a person touches.
+
+## Wave 17 — the shape that is not a primitive · **DONE**
+
+Every solid this system could describe started from a box, a cylinder, a cone, a
+sphere or a plane. That is enough for a plate with holes in it and nothing else:
+an L-bracket, a T-section, a channel, a gusset — the ordinary cross-sections most
+fabricated parts actually are — could not be said at all.
+
+A part can now be an **extrusion**: a closed outline of at least three points in
+the part's own XY plane, swept along local Z. It composes with everything else —
+the outline follows parameters through expressions, and cut, fuse and fillet
+apply to the result like any other part.
+
+### Where the outline lives, and the one deliberate inconsistency
+
+Profile coordinates are LOCAL and are **not** re-centred, so the part's position
+places the outline's origin rather than its centre — which is how every other
+shape here behaves.
+
+That is on purpose. A profile's coordinates are written by hand: somebody says
+the corner is at (0, 0) and the flange runs to (40, 0), and then positions a bolt
+hole against those numbers. Re-centring on the outline's own bounding box would
+move every one of them by an amount that depends on the outline's SHAPE — so
+adding a point to the far end of a flange would silently shift the holes.
+Centring is right for a box, whose dimensions are symmetric by construction. It
+is wrong for a drawing. The extrude direction IS centred, like a box's height.
+
+The cost is that extents could no longer be `position ± half`, so `halfExtent`
+became `localBox` returning two corners. Exact for both.
+
+### Ear clipping, in two languages, and what is actually shared
+
+The kernel needs no triangles. The viewport and the mesh exporters do, and
+neither can call a kernel — one is JavaScript in a browser and the other must
+work where no kernel is configured.
+
+A triangle fan is four lines and is WRONG for any concave outline. An L-bracket
+is concave by definition, and a fan across its inner corner draws triangles
+outside the part: the first shape anybody makes with this feature would be drawn
+wrong. So both implementations ear-clip.
+
+What is shared is the PROPERTY, not the code: **any correct triangulation of an
+outline covers exactly the outline's area**, so the two agree about the shape
+however they each cut it up. That is not true of curve tessellation, which is why
+the segment counts are fenced across the boundary and this is not. Both were run
+against the same six outlines and agree to 1e-6, including the clockwise case and
+the bow-tie refusal.
+
+### Four defects found while building it
+
+- **A triangle fan hidden inside the API.** `triangulate` normalised the winding
+  internally and returned indices into the CALLER's array, so the caps came out
+  normalised and the side walls — built by walking the caller's points — did not.
+  A clockwise L-bracket tessellated inside out, and the only clue was a negative
+  volume. It now returns the ordering it used, so the mistake is unavailable.
+- **Ear clipping "succeeds" on a bow-tie.** It consumes every vertex and produces
+  triangles covering twice the enclosed area. The termination guard caught the
+  case where no ear is found and said nothing about this one, so outlines are now
+  checked for self-intersection up front — the property itself rather than a
+  proxy for it.
+- **Two vacuous fences**, found by drilling: the millimetre conversion test used
+  a box and so never touched a profile, and no `Measure` test had an extrusion in
+  it. Both now have their own case.
+- **Two wrong assertions of mine**, both times against a kernel that was right: a
+  T-section's area is 1000 and not 850, and a bore rotated onto the extrude axis
+  passes through 20 mm of depth rather than 8 mm of flange.
+
+### What the live run produced
+
+Asked for a steel angle bracket with a bolt hole through each leg, qwen-plus
+produced a **6-point outline** 60 mm deep and two cut features, and the document
+built into one solid with 27 KB of STEP — an L-section with two bolt holes,
+first attempt.
+
+### What is still NOT done
+
+- **No revolves and no sweeps.** An outline can be extruded and nothing else.
+- **One loop per outline.** A hole in a profile is made by cutting a cylinder out
+  of the part, not by drawing a second loop.
+- **No arcs.** An outline is straight segments between points; a rounded corner is
+  a fillet on the resulting solid.
 
 ## Carried defects
 

@@ -252,6 +252,141 @@
    * So an unsupported shape is still drawn — a blank viewport helps nobody — but
    * it is flagged, and the workbench puts it in the provenance banner where the
    * viewer reads what this render does NOT establish. */
+  /* ---- extrusions -------------------------------------------------------
+   *
+   * A closed outline in the part's own XY plane, swept along local Z.
+   *
+   * # Why ear clipping and not a triangle fan
+   *
+   * A fan from the first vertex is four lines and is WRONG for any concave
+   * outline, which is most of the interesting ones — an L-bracket is concave by
+   * definition, and a fan across its inner corner draws triangles outside the
+   * part. The first shape anybody makes with this feature would be drawn wrong.
+   *
+   * # Why this is a second implementation
+   *
+   * internal/domain/geometry/triangulate.go does the same thing for the mesh
+   * exporters, which cannot run in a browser. The duplication is real and this
+   * codebase has recorded what two copies of one rule cost — so what is shared
+   * is the PROPERTY rather than the code: any correct triangulation of an
+   * outline covers exactly the outline's area, so the two agree about the SHAPE
+   * however they each cut it up. That is not true of curve tessellation, which
+   * is why the segment counts are fenced across the boundary and this is not.
+   */
+  function signedArea2D(pts) {
+    var a = 0;
+    for (var i = 0; i < pts.length; i++) {
+      var j = (i + 1) % pts.length;
+      a += pts[i][0] * pts[j][1] - pts[j][0] * pts[i][1];
+    }
+    return a / 2;
+  }
+
+  function cross2D(a, b, c) {
+    return (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]);
+  }
+
+  function pointInTriangle2D(p, a, b, c) {
+    var d1 = cross2D(a, b, p), d2 = cross2D(b, c, p), d3 = cross2D(c, a, p);
+    var neg = d1 < 0 || d2 < 0 || d3 < 0;
+    var pos = d1 > 0 || d2 > 0 || d3 > 0;
+    return !(neg && pos);
+  }
+
+  /* Returns { pts, tris } — the points in the order the triangles index into,
+   * which may be reversed. Returning them is not a convenience: keeping a
+   * separate copy is how the caps come out normalised and the side walls do
+   * not, which draws a clockwise outline inside out. */
+  function earClip(input) {
+    if (input.length < 3) return { pts: input, tris: [] };
+    var pts = input;
+    if (signedArea2D(pts) < 0) pts = input.slice().reverse();
+
+    var idx = [], i;
+    for (i = 0; i < pts.length; i++) idx.push(i);
+    var tris = [], guard = 0;
+
+    while (idx.length > 3) {
+      var clipped = false;
+      for (i = 0; i < idx.length; i++) {
+        var prev = idx[(i - 1 + idx.length) % idx.length];
+        var cur = idx[i];
+        var next = idx[(i + 1) % idx.length];
+        if (cross2D(pts[prev], pts[cur], pts[next]) <= 0) continue;
+        var clear = true;
+        for (var k = 0; k < idx.length && clear; k++) {
+          var o = idx[k];
+          if (o === prev || o === cur || o === next) continue;
+          if (pointInTriangle2D(pts[o], pts[prev], pts[cur], pts[next])) clear = false;
+        }
+        if (!clear) continue;
+        tris.push([prev, cur, next]);
+        idx.splice(i, 1);
+        clipped = true;
+        break;
+      }
+      /* A pass that removed nothing means the outline crosses itself. Stopping
+       * matters more here than anywhere else in this file: this runs in the
+       * browser's main thread, and a loop that never ends is a tab that never
+       * responds again. */
+      if (!clipped) { guard++; if (guard > 1) return { pts: pts, tris: tris }; }
+    }
+    if (idx.length === 3) tris.push([idx[0], idx[1], idx[2]]);
+    return { pts: pts, tris: tris };
+  }
+
+  function extrusionGeometry(profile, depth) {
+    var raw = (profile || []).map(function (p) { return [num(p.x, 0), num(p.y, 0)]; });
+    if (raw.length < 3) {
+      return {
+        geo: boxGeometry(1, 1, num(depth, 1)),
+        approximated: 'this outline has fewer than three points and encloses nothing, ' +
+                      'so it is drawn as a unit box'
+      };
+    }
+    var clipped = earClip(raw);
+    var pts = clipped.pts, tris = clipped.tris;
+    if (!tris.length) {
+      return {
+        geo: boxGeometry(1, 1, num(depth, 1)),
+        approximated: 'this outline could not be closed into a surface — it crosses itself ' +
+                      'or repeats a point — so it is drawn as a unit box'
+      };
+    }
+
+    var half = num(depth, 1) / 2;
+    var positions = [], normals = [], indices = [], n = 0;
+    function vert(x, y, z, nx, ny, nz) {
+      positions.push(x, y, z); normals.push(nx, ny, nz); indices.push(n++);
+    }
+
+    tris.forEach(function (t) {
+      vert(pts[t[0]][0], pts[t[0]][1], half, 0, 0, 1);
+      vert(pts[t[1]][0], pts[t[1]][1], half, 0, 0, 1);
+      vert(pts[t[2]][0], pts[t[2]][1], half, 0, 0, 1);
+      // Reversed, so the bottom cap faces away from the solid too.
+      vert(pts[t[2]][0], pts[t[2]][1], -half, 0, 0, -1);
+      vert(pts[t[1]][0], pts[t[1]][1], -half, 0, 0, -1);
+      vert(pts[t[0]][0], pts[t[0]][1], -half, 0, 0, -1);
+    });
+
+    for (var i = 0; i < pts.length; i++) {
+      var j = (i + 1) % pts.length;
+      var dx = pts[j][0] - pts[i][0], dy = pts[j][1] - pts[i][1];
+      var len = Math.sqrt(dx * dx + dy * dy) || 1;
+      // Outward for a counter-clockwise outline: on a square wound
+      // counter-clockwise the bottom edge runs +x and the outside is -y.
+      var nx = dy / len, ny = -dx / len;
+      vert(pts[i][0], pts[i][1], -half, nx, ny, 0);
+      vert(pts[j][0], pts[j][1], -half, nx, ny, 0);
+      vert(pts[j][0], pts[j][1], half, nx, ny, 0);
+      vert(pts[i][0], pts[i][1], -half, nx, ny, 0);
+      vert(pts[j][0], pts[j][1], half, nx, ny, 0);
+      vert(pts[i][0], pts[i][1], half, nx, ny, 0);
+    }
+    return { geo: { positions: positions, normals: normals, indices: indices } };
+  }
+
   function buildGeometry(part) {
     var s = part.size || {};
     switch (part.shape) {
@@ -260,6 +395,7 @@
       case 'cone':     return { geo: cylinderGeometry(num(s.radius,0.5), num(s.height,1), TESSELLATION.radial, 0) };
       case 'sphere':   return { geo: sphereGeometry(num(s.radius,0.5), TESSELLATION.sphereRadial) };
       case 'plane':    return { geo: planeGeometry(num(s.width,1), num(s.depth,1)) };
+      case 'extrusion': return extrusionGeometry(part.profile || [], num(s.depth, 1));
       case 'tube':
         /* A tube is drawn as its outer wall. The bore is not modelled, and that
          * is reported: an inner diameter that is not there is exactly the kind

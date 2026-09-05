@@ -361,12 +361,12 @@ func bounds(doc Document) (min, max [3]float64) {
 
 	for _, p := range doc.Parts {
 		pos := padTo3(p.Position)
-		half := halfExtent(p)
+		loLocal, hiLocal := localBox(p)
 		for i := 0; i < 3; i++ {
-			if lo := pos[i] - half[i]; lo < min[i] {
+			if lo := pos[i] + loLocal[i]; lo < min[i] {
 				min[i] = lo
 			}
-			if hi := pos[i] + half[i]; hi > max[i] {
+			if hi := pos[i] + hiLocal[i]; hi > max[i] {
 				max[i] = hi
 			}
 		}
@@ -381,7 +381,22 @@ func bounds(doc Document) (min, max [3]float64) {
 // so a derived overall dimension can read high. Correcting it means bounding the
 // tessellated triangles, which is the honest fix and a larger one. Until then
 // the note on every derived dimension says it measures the model.
-func halfExtent(p Part) [3]float64 {
+// localBox is a part's extent in its OWN frame, as a low corner and a high one.
+//
+// # Why not a half-extent
+//
+// This returned a single symmetric half-extent until extrusions existed, and the
+// caller did pos ± half. Every primitive is centred on its own position, so that
+// was exact.
+//
+// A profile is not. Its coordinates are written by hand and deliberately not
+// re-centred (profile.go), so an L-bracket drawn from (0,0) to (40,40) sits
+// entirely on the positive side of its own origin. A symmetric half-extent
+// describes that part as reaching 20 mm in the wrong direction, and Measure
+// would draw a dimension line against extents nothing has.
+//
+// Two corners cost one extra return value and are exact for both.
+func localBox(p Part) (min, max [3]float64) {
 	s := p.Size
 	get := func(k string, fallback float64) float64 {
 		if v, ok := s[k]; ok && v > 0 {
@@ -389,19 +404,54 @@ func halfExtent(p Part) [3]float64 {
 		}
 		return fallback
 	}
+	sym := func(h [3]float64) ([3]float64, [3]float64) {
+		return [3]float64{-h[0], -h[1], -h[2]}, h
+	}
 	switch strings.ToLower(p.Shape) {
 	case "sphere":
 		r := get("radius", 0.5)
-		return [3]float64{r, r, r}
+		return sym([3]float64{r, r, r})
 	case "cylinder", "cone":
 		r := math.Max(get("radius", 0.5), get("radius_top", 0))
 		h := get("height", 1) / 2
-		return [3]float64{r, h, r}
+		return sym([3]float64{r, h, r})
 	case "plane":
-		return [3]float64{get("width", 1) / 2, 0, get("depth", 1) / 2}
+		return sym([3]float64{get("width", 1) / 2, 0, get("depth", 1) / 2})
+	case "extrusion":
+		lo, hi, ok := profileExtent(p)
+		if !ok {
+			// An outline nothing could read contributes nothing rather than a
+			// default box: a made-up extent would be drawn as a dimension.
+			return [3]float64{}, [3]float64{}
+		}
+		d := get("depth", 1) / 2
+		return [3]float64{lo[0], lo[1], -d}, [3]float64{hi[0], hi[1], d}
 	default:
-		return [3]float64{get("width", 1) / 2, get("height", 1) / 2, get("depth", 1) / 2}
+		return sym([3]float64{get("width", 1) / 2, get("height", 1) / 2, get("depth", 1) / 2})
 	}
+}
+
+// profileExtent is an outline's own bounding rectangle, from the literal
+// coordinates.
+//
+// Expressions are NOT evaluated here: this is the measurement path, which runs
+// on a stored document without the parameter context, and a coordinate it cannot
+// read must not become a zero that silently shrinks the part. A profile written
+// entirely in expressions therefore contributes no measured extent, which is a
+// miss rather than a wrong number.
+func profileExtent(p Part) (min, max [2]float64, ok bool) {
+	min = [2]float64{math.Inf(1), math.Inf(1)}
+	max = [2]float64{math.Inf(-1), math.Inf(-1)}
+	for _, pt := range p.Profile {
+		if pt.XFrom != "" || pt.YFrom != "" {
+			return min, max, false
+		}
+		min[0] = math.Min(min[0], pt.X)
+		min[1] = math.Min(min[1], pt.Y)
+		max[0] = math.Max(max[0], pt.X)
+		max[1] = math.Max(max[1], pt.Y)
+	}
+	return min, max, len(p.Profile) >= minProfilePoints
 }
 
 // DrawableOverlays keeps the overlays that may be shown and reports what was

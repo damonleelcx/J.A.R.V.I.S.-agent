@@ -65,3 +65,35 @@ func TestSolids_LeavesMillimetresAlone(t *testing.T) {
 		t.Errorf("position x = %v, want 1", v)
 	}
 }
+
+// An EXTRUSION converts too. Its outline is a set of lengths like any other,
+// and a profile left in inches while the depth is converted produces a part
+// stretched by 25.4 in one direction and not the others.
+//
+// This needed its own case: the box fixture above has no profile at all, so a
+// drill that stopped converting outlines left every unit test green.
+func TestSolids_ConvertsAnOutlineToMillimetresToo(t *testing.T) {
+	doc := geometry.Document{
+		Name: "angle", Units: "in",
+		Parts: []geometry.Part{{ID: "a", Name: "Angle", Shape: "extrusion",
+			Profile: []geometry.Point{{X: 0, Y: 0}, {X: 2, Y: 0}, {X: 2, Y: 1}, {X: 0, Y: 1}},
+			Size:    map[string]float64{"depth": 1}}},
+	}
+	got, notes := geometry.Solids(doc, geometry.Inch)
+	if len(got) != 1 {
+		t.Fatalf("%d solids: %v", len(got), notes)
+	}
+	if n := len(got[0].Profile); n != 4 {
+		t.Fatalf("%d profile points survived", n)
+	}
+	// 2 in = 50.8 mm, 1 in = 25.4 mm.
+	for i, want := range [][2]float64{{0, 0}, {50.8, 0}, {50.8, 25.4}, {0, 25.4}} {
+		if p := got[0].Profile[i]; math.Abs(p[0]-want[0]) > 1e-9 || math.Abs(p[1]-want[1]) > 1e-9 {
+			t.Errorf("point %d = %v mm, want %v — the outline is still in inches while the "+
+				"depth is in millimetres", i+1, p, want)
+		}
+	}
+	if d := got[0].Dims["depth"]; math.Abs(d-25.4) > 1e-9 {
+		t.Errorf("depth = %v mm, want 25.4", d)
+	}
+}

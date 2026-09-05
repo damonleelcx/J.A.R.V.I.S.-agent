@@ -172,6 +172,9 @@ func partTriangles(p Part, unit Unit, infer func(string, ...any)) ([]Triangle, *
 			sizeOr(p, "height", 1, unit, infer),
 			sizeOr(p, "depth", 1, unit, infer)), nil
 
+	case "extrusion":
+		return extrusion(p, sizeOr(p, "depth", 1, unit, infer), infer), nil
+
 	case "plane":
 		// A plane has no thickness and is not a solid. Exported as the two
 		// triangles the renderer draws, and named in the label as the one thing
@@ -507,4 +510,64 @@ func normalise(v [3]float64) [3]float64 {
 		return [3]float64{0, 0, 0}
 	}
 	return [3]float64{v[0] / l, v[1] / l, v[2] / l}
+}
+
+// extrusion tessellates a profile swept along local Z, centred on it.
+//
+// # Why the caps are triangulated and the walls are not
+//
+// The walls are quads between consecutive points and need no triangulation at
+// all. The caps are the outline itself, which is where ear clipping earns its
+// place: a fan across an L-bracket's inner corner puts triangles outside the
+// part, and the exported file would be a different shape from the drawing.
+//
+// # Winding
+//
+// triangulate normalises the outline to counter-clockwise, so the +Z cap is used
+// as it comes and the -Z cap is reversed. The walls take their outward normal
+// from the edge direction, which is only well defined BECAUSE the winding was
+// normalised — an inside-out solid is a defect this repository has shipped once
+// already.
+func extrusion(p Part, depth float64, infer func(string, ...any)) []Triangle {
+	pts := make([][2]float64, 0, len(p.Profile))
+	for _, pt := range p.Profile {
+		pts = append(pts, [2]float64{pt.X, pt.Y})
+	}
+	pts, tris, ok := triangulate(pts)
+	if !ok {
+		// Reported and then drawn as far as it went. A part that vanishes from a
+		// render is read as a design with a piece missing; a partial one with a
+		// note beside it is read as what it is.
+		infer("%s: this outline could not be closed into a surface — it crosses itself or "+
+			"repeats a point — so it is drawn only as far as FORGE could read it.", p.Label())
+	}
+	if len(tris) == 0 {
+		return nil
+	}
+	half := depth / 2
+	at := func(i int, z float64) [3]float64 { return [3]float64{pts[i][0], pts[i][1], z} }
+
+	out := make([]Triangle, 0, len(tris)*2+len(pts)*2)
+	for _, t := range tris {
+		out = appendNonDegenerate(out, Triangle{
+			A: at(t[0], half), B: at(t[1], half), C: at(t[2], half),
+			Normal: [3]float64{0, 0, 1}})
+		// Reversed, so the bottom cap faces away from the solid too.
+		out = appendNonDegenerate(out, Triangle{
+			A: at(t[2], -half), B: at(t[1], -half), C: at(t[0], -half),
+			Normal: [3]float64{0, 0, -1}})
+	}
+	for i := range pts {
+		j := (i + 1) % len(pts)
+		dx, dy := pts[j][0]-pts[i][0], pts[j][1]-pts[i][1]
+		// Outward for a counter-clockwise outline. (dy, -dx) and not (-dy, dx):
+		// on a square wound counter-clockwise the bottom edge runs +x, and the
+		// outward direction is -y.
+		n := normalise([3]float64{dy, -dx, 0})
+		out = appendNonDegenerate(out, Triangle{
+			A: at(i, -half), B: at(j, -half), C: at(j, half), Normal: n})
+		out = appendNonDegenerate(out, Triangle{
+			A: at(i, -half), B: at(j, half), C: at(i, half), Normal: n})
+	}
+	return out
 }

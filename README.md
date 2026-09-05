@@ -224,9 +224,10 @@ export FORGE_CAD_PYTHON="$PWD/.cadvenv/bin/python"
 
 The kernel is a long-running sidecar because the costs are nothing alike:
 importing build123d takes ~2.5 s and building the part takes ~46 ms, so it is
-imported once and kept warm. It builds a PART, not a pile of solids: a document can cut holes, fuse bodies,
-fillet and chamfer, so the reference bracket exports as one solid with four
-bores. What it does not do is CHECK — there is still no solver and no
+imported once and kept warm. It builds a PART, not a pile of solids. A document can cut holes, fuse bodies,
+fillet and chamfer, and a part can be an **extrusion** — a closed outline swept
+along an axis — so an L-bracket, a T-section or a channel is describable and not
+just a box with material removed. What it does not do is CHECK — there is still no solver and no
 interference test here, and the export label says so, along with any feature
 OCCT refused.
 

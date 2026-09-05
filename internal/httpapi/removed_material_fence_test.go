@@ -98,3 +98,42 @@ func TestWorkbenchOffersWhateverTheDeploymentCanWrite(t *testing.T) {
 			"entirely or looks clickable")
 	}
 }
+
+// The viewport must draw an extrusion, and must not fan a concave outline.
+//
+// # What breaks without this
+//
+// An unknown shape falls back to a bounding box, so a missing extrusion case
+// draws every L-bracket as a rectangular block — a shape the design does not
+// have, with a note calling it approximate. And a triangle FAN across a concave
+// outline puts triangles outside the part, which is worse: no note, and a
+// picture that looks fine and is wrong.
+func TestRendererDrawsExtrusions(t *testing.T) {
+	src, err := assetFS.ReadFile("assets/forge3d.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(src)
+
+	for _, want := range []struct{ needle, why string }{
+		{"case 'extrusion'", "the renderer has no extrusion case, so every profile is drawn " +
+			"as a bounding box"},
+		{"earClip", "there is no ear clipping, so a concave outline is fanned and its " +
+			"triangles fall outside the part"},
+		{"pointInTriangle2D", "the ear test does not check for enclosed vertices, which is " +
+			"the half of ear clipping that makes it correct rather than a fan"},
+		{"signedArea2D", "the winding is not normalised, so a clockwise outline is drawn " +
+			"inside out"},
+	} {
+		if !strings.Contains(js, want.needle) {
+			t.Errorf("forge3d.js no longer contains %q: %s", want.needle, want.why)
+		}
+	}
+	// earClip must return the points it reordered. Keeping a separate copy is
+	// how the caps come out normalised and the side walls do not — the exact
+	// defect the Go implementation shipped and a test caught.
+	if !strings.Contains(js, "clipped.pts") {
+		t.Error("the caller does not use the ordering earClip returned, so the caps and the " +
+			"side walls can disagree about which way round the outline is")
+	}
+}

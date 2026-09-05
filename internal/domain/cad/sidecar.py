@@ -38,7 +38,8 @@ PROTOCOL = 1
 try:
     from build123d import (
         Box, Cylinder, Cone, Sphere, Rectangle, Plane, Location, Vector,
-        Compound, Axis, export_step, fillet, chamfer,
+        Compound, Axis, Polyline, export_step, extrude, fillet, chamfer,
+        make_face,
     )
 except Exception as exc:  # pragma: no cover - reported to the caller, not raised
     sys.stdout.write(json.dumps({
@@ -92,6 +93,19 @@ def _shape(solid):
             body = Cone(d["radius"], top, d["height"])
         # +Z to +Y.
         return Plane.XZ * body
+    if kind == "extrusion":
+        # A closed outline in the part's own XY plane, swept along local Z and
+        # CENTRED on it: amount is half the depth in both directions, so an
+        # extrusion behaves like a box's height and not like a face that grew in
+        # one direction only.
+        #
+        # The outline's own coordinates are used as given. They are deliberately
+        # not re-centred — see internal/domain/geometry/profile.py's Go
+        # counterpart for why — so the part's position places the outline's
+        # ORIGIN and a hole placed against a drawn corner stays against it.
+        pts = solid["profile"]
+        face = make_face(Polyline(*[(p[0], p[1], 0) for p in pts], close=True))
+        return extrude(face, amount=d["depth"] / 2.0, both=True)
     if kind == "plane":
         # A face, not a solid, and deliberately so: a plane has no thickness and
         # will not print, machine, or hold a volume. It is exported because it is

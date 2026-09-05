@@ -307,3 +307,14 @@ func featureNote(p geometry.Problem) string {
 	return fmt.Sprintf("FORGE could not apply one of this design's features, so it is not in "+
 		"the shape — %s %s.", p.Name, p.Detail)
 }
+
+// profileNote renders one unreadable outline for the reader.
+//
+// Its own voice again: a parameter problem means a number is missing, a feature
+// problem means an operation was not applied, and this means an entire PART is
+// absent from the shape. The render shows a design with a piece missing, which
+// looks like a design decision rather than like a failure.
+func profileNote(p geometry.Problem) string {
+	return fmt.Sprintf("FORGE could not read one of this design's outlines, so that part is "+
+		"not in the shape at all — %s %s.", p.Name, p.Detail)
+}

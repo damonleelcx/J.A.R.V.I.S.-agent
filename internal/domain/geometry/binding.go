@@ -95,9 +95,31 @@ func (d *Document) bind(compareToAuthored bool) []Problem {
 		return v.Number, ok
 	}
 
+	// Profile coordinates written as expressions become NUMBERS here, exactly as
+	// a bound size does, and for the same reason: nothing downstream evaluates
+	// anything. The renderer, the tessellator and the measurement path all read
+	// a stored document with no parameter context, and a coordinate they cannot
+	// read would become a zero that silently folds the outline flat.
+	//
+	// The expressions stay in the document beside the numbers. The relationship
+	// is the thing recorded; the coordinate is the snapshot of it.
+	//
+	// Only the COORDINATES are taken. The problems belong to ProfileProblems,
+	// which has its own voice at the boundary: "a number is missing" and "a
+	// whole part is not in the shape" are different things to be told, and one
+	// wording for both makes the second read like the first.
+	profiles, _ := d.resolvedProfiles()
+
 	for i := range d.Parts {
 		p := &d.Parts[i]
 		label := p.Label()
+
+		if pts, ok := profiles[p.ID]; ok && len(pts) == len(p.Profile) {
+			for j := range p.Profile {
+				p.Profile[j].X = pts[j][0]
+				p.Profile[j].Y = pts[j][1]
+			}
+		}
 
 		for _, key := range sortedKeys(p.SizeFrom) {
 			expr := p.SizeFrom[key]

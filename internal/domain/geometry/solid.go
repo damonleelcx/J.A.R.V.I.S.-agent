@@ -3,6 +3,7 @@ package geometry
 import (
 	"fmt"
 	"sort"
+	"strings"
 )
 
 // Solids: one part, reduced to what any builder needs.
@@ -38,6 +39,9 @@ type Solid struct {
 	// to millimetres. Which keys are present depends on the shape and is the
 	// builder's contract.
 	Dims map[string]float64 `json:"dims"`
+	// Profile is an extrusion's outline in millimetres, in the part's own XY
+	// plane. Empty for every other shape.
+	Profile [][2]float64 `json:"profile,omitempty"`
 	// Matrix is the rotation, row-major, from RotationMatrix.
 	Matrix [9]float64 `json:"matrix"`
 	// Position is the centre, in millimetres.
@@ -78,10 +82,27 @@ func Solids(d Document, unit Unit) ([]Solid, []string) {
 		inferred = append(inferred, fmt.Sprintf(format, args...))
 	}
 
+	profiles, profileProblems := d.resolvedProfiles()
+	for _, problem := range profileProblems {
+		inferred = append(inferred, fmt.Sprintf("%s %s, so it is not in this file.",
+			problem.Name, problem.Detail))
+	}
+
 	out := make([]Solid, 0, len(d.Parts))
 	for _, p := range d.Parts {
 		dims := map[string]float64{}
-		switch p.Shape {
+		var profile [][2]float64
+		switch strings.ToLower(p.Shape) {
+		case "extrusion":
+			pts, ok := profiles[p.ID]
+			if !ok {
+				// Reported above by resolvedProfiles. Skipped rather than
+				// approximated: an extrusion nobody can read is not a shape to
+				// guess at.
+				continue
+			}
+			profile = pts
+			dims["depth"] = sizeOr(p, "depth", 1, unit, infer)
 		case "box":
 			dims["width"] = sizeOr(p, "width", 1, unit, infer)
 			dims["height"] = sizeOr(p, "height", 1, unit, infer)
@@ -120,19 +141,23 @@ func Solids(d Document, unit Unit) ([]Solid, []string) {
 		rot := [3]float64{}
 		copy(rot[:], padTo3(p.Rotation))
 
-		// To millimetres. Every dimension here is a length and every position is
-		// a length, so one factor covers both; the rotation is an angle and is
-		// untouched.
+		// To millimetres. Every dimension here is a length, every position is a
+		// length and every profile coordinate is a length, so one factor covers
+		// all three; the rotation is an angle and is untouched.
 		for k, v := range dims {
 			dims[k] = v * toMM
 		}
 		for i := range pos {
 			pos[i] *= toMM
 		}
+		scaled := make([][2]float64, len(profile))
+		for i, pt := range profile {
+			scaled[i] = [2]float64{pt[0] * toMM, pt[1] * toMM}
+		}
 
 		out = append(out, Solid{
-			ID: p.ID, Label: p.Label(), Shape: p.Shape, Dims: dims,
-			Matrix: RotationMatrix(rot), Position: pos,
+			ID: p.ID, Label: p.Label(), Shape: strings.ToLower(p.Shape), Dims: dims,
+			Profile: scaled, Matrix: RotationMatrix(rot), Position: pos,
 		})
 	}
 	sort.SliceStable(inferred, func(i, j int) bool { return inferred[i] < inferred[j] })

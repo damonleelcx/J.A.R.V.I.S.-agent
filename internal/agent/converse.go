@@ -68,8 +68,10 @@ Reply with JSON only:
       {
         "id": "stable-kebab-id",
         "name": "human name",
-        "shape": "box" | "cylinder" | "cone" | "sphere" | "tube" | "plane",
+        "shape": "box" | "cylinder" | "cone" | "sphere" | "tube" | "plane" | "extrusion",
+        "shape_note": "for \"extrusion\", size only needs \"depth\"",
         "size": {"width":1,"height":1,"depth":1,"radius":0.5,"radius_top":0.5},
+        "profile": [{"x": 0, "y": 0, "x_from": "", "y_from": "plate_height"}],
         "size_from": {"width": "plate_size", "height": "plate_thickness"},
         "position": [0,0,0],
         "position_from": {"z": "plate_size / 4"},
@@ -177,6 +179,21 @@ About "prototype":
   constant pi, and sqrt, abs, min, max, floor, ceil and round. There is no sine
   or cosine here: half the world writes them in degrees and half in radians, so
   carry an already-resolved length as a parameter instead.
+- "extrusion" is the shape for anything that is not a box or a cylinder: an
+  L-bracket, a T-section, a channel, a gusset, a triangular plate. Give it a
+  "profile" — a closed outline of at least three points in the part's own XY
+  plane — and a "depth" in "size", and it is swept along the part's local Z.
+  The outline is closed for you; do not repeat the first point at the end.
+  The points are LOCAL coordinates and are NOT re-centred, so the part's position
+  places the outline's origin. That is on purpose: it means a hole you place
+  against a corner you drew stays against it. The depth IS centred, like a box's
+  height.
+  Prefer "x_from" and "y_from" with expressions over literal numbers, for the
+  same reason every other dimension does — an outline whose points do not follow
+  the parameters is a drawing that stops being true the first time somebody
+  changes one.
+  The outline must not cross itself, and a hole in it is NOT a second loop: draw
+  the outer shape and cut a cylinder out of it with a feature.
 - "features" are what make an assembly a PART rather than a pile of solids.
   A HOLE is not a part — it is the absence of one. Put a cylinder where the hole
   goes, size and place it like any other part, and then "cut" it from the thing
@@ -650,6 +667,13 @@ func (r *Reply) validate() error {
 		 * — which is the opposite of what a hole is — and says so here. A real
 		 * divergence between two things this product shows the same person,
 		 * stated for the same reason "Drawn approximately" is. */
+		/* An outline nothing could read is a part that is simply NOT THERE, and
+		 * the render looks like a design with a piece missing rather than like
+		 * an error. Its own voice, because "a number is missing" and "a whole
+		 * part is absent" are different things to be told. */
+		for _, problem := range r.Prototype.ProfileProblems() {
+			r.Prototype.NotVerified = append(r.Prototype.NotVerified, profileNote(problem))
+		}
 		if _, featureProblems := r.Prototype.Operations(); len(featureProblems) > 0 {
 			for _, problem := range featureProblems {
 				r.Prototype.NotVerified = append(r.Prototype.NotVerified, featureNote(problem))

@@ -1,6 +1,7 @@
 package geometry
 
 import (
+	"math"
 	"strings"
 	"testing"
 
@@ -287,5 +288,43 @@ func TestStoringAVariantRefusesAnInventedTolerance(t *testing.T) {
 	n.Document.Overlays[0].Tolerance = "±0.05"
 	if err := n.Validate(); err != nil {
 		t.Fatalf("a variant carrying a drawing's own tolerance was refused: %v", err)
+	}
+}
+
+// An extrusion's extent is its OUTLINE's, which is not symmetric about the
+// part's position.
+//
+// # The defect this holds
+//
+// Extents were computed as position ± a symmetric half-extent, which is exact
+// for every primitive because they are centred by construction. A profile is
+// deliberately NOT re-centred (profile.go), so an L-bracket drawn from (0,0) to
+// (40,40) sits entirely on the positive side of its own origin — and the
+// symmetric form described it as reaching 20 mm the wrong way, so Measure drew
+// a dimension line against extents nothing has.
+//
+// A drill disabled the extrusion case in localBox and every existing test
+// stayed green, because none of them had an extrusion in it.
+func TestMeasureUsesAnOutlinesOwnExtentAndNotASymmetricGuess(t *testing.T) {
+	doc := Document{
+		Name: "angle", Units: "mm",
+		Parts: []Part{{ID: "a", Shape: "extrusion",
+			Profile: []Point{{X: 0, Y: 0}, {X: 40, Y: 0}, {X: 40, Y: 8}, {X: 8, Y: 8},
+				{X: 8, Y: 40}, {X: 0, Y: 40}},
+			Size:     map[string]float64{"depth": 20},
+			Position: []float64{0, 0, 0}}},
+	}
+	got := Measure(doc, "mm")
+	if len(got) != 3 {
+		t.Fatalf("expected three extents, got %d", len(got))
+	}
+	// The outline spans 40 in x and 40 in y, and the depth 20 is centred.
+	want := map[int][2]float64{0: {0, 40}, 1: {0, 40}, 2: {-10, 10}}
+	for axis, w := range want {
+		o := got[axis]
+		if math.Abs(o.From[axis]-w[0]) > 1e-9 || math.Abs(o.To[axis]-w[1]) > 1e-9 {
+			t.Errorf("axis %d measured %v..%v, want %v..%v — a symmetric half-extent puts "+
+				"this part where it is not", axis, o.From[axis], o.To[axis], w[0], w[1])
+		}
 	}
 }

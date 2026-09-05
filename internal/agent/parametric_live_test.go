@@ -280,3 +280,75 @@ func TestLiveModelOutputBuildsInTheKernel(t *testing.T) {
 			"rather than voids — the contract is not landing")
 	}
 }
+
+// Can the model design with an OUTLINE?
+//
+// Extrusions are the first thing here that is not a primitive, and the contract
+// asks for a vocabulary — a closed list of points, in the part's own plane,
+// preferably as expressions — that no model has been asked for before. Whether
+// it lands is a question about the CONTRACT, and the only way to ask it is to
+// ask a model.
+//
+// What is asserted is that whatever comes back BUILDS. How often it reaches for
+// an extrusion is a rate, and rates belong in the eval suite against a measured
+// floor.
+func TestLiveModelDesignsWithAnOutline(t *testing.T) {
+	if os.Getenv("FORGE_LIVE_LLM_TESTS") == "" || os.Getenv("FORGE_LLM_API_KEY") == "" {
+		t.Skip("set FORGE_LLM_API_KEY and FORGE_LIVE_LLM_TESTS=1")
+	}
+	python := os.Getenv("FORGE_CAD_PYTHON")
+	if python == "" {
+		t.Skip("FORGE_CAD_PYTHON is unset; run `make cad-venv`")
+	}
+	log := logx.New(logx.Options{Level: slog.LevelError, Output: os.Stderr, Service: "live"})
+	client := llm.NewOpenAICompatible(config.LLMConfig{
+		BaseURL:        envOrDefault("FORGE_LLM_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+		APIKey:         os.Getenv("FORGE_LLM_API_KEY"),
+		Converse:       envOrDefault("FORGE_LLM_CONVERSE_MODEL", "qwen-plus"),
+		RequestTimeout: 3 * time.Minute, MaxRetries: 2,
+	}, log, clock.System{})
+
+	conv := agent.NewConversation(client, persona.DefaultCharacter())
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	// An L-section is the canonical case: it cannot be a box, and it is concave.
+	reply, err := conv.Respond(ctx, "", nil,
+		"Design a steel angle bracket — an L-shaped cross section, 40 mm on each leg, "+
+			"8 mm thick, 60 mm long — with a bolt hole through each leg.", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reply.Prototype == nil {
+		t.Fatal("no geometry for an explicitly physical request")
+	}
+
+	var outlines int
+	for _, p := range reply.Prototype.Parts {
+		if len(p.Profile) > 0 {
+			outlines++
+			t.Logf("outline on %q: %d points, depth %v", p.ID, len(p.Profile), p.Size["depth"])
+		}
+	}
+	for _, pr := range reply.Prototype.ProfileProblems() {
+		t.Logf("outline %s on %q: %s", pr.Severity, pr.Name, pr.Detail)
+	}
+	t.Logf("parts %d, outlines %d, features %d",
+		len(reply.Prototype.Parts), outlines, len(reply.Prototype.Features))
+
+	k := cad.New(python, log)
+	defer k.Close()
+	built, err := k.BuildDocument(ctx, *reply.Prototype, geometry.Millimetre, "step")
+	if err != nil {
+		t.Fatalf("the model's own document did not build: %v", err)
+	}
+	t.Logf("built %d part(s), volume %.1f mm³, %d bytes of STEP; failures=%v",
+		built.Parts, built.Volume, len(built.STEP), built.FeatureFailures)
+	if !bytes.HasPrefix(built.STEP, []byte("ISO-10303-21;")) {
+		t.Fatal("no STEP file from the model's own document")
+	}
+	if outlines == 0 {
+		t.Log("the model described an L-section without an outline, so the extrusion " +
+			"contract is not landing")
+	}
+}
