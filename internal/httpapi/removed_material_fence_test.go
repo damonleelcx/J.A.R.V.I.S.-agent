@@ -59,3 +59,42 @@ func TestRendererKnowsWhatMaterialIsBeingRemoved(t *testing.T) {
 			"go through it, or a ghosted part is sorted as opaque and erases what is behind it", n)
 	}
 }
+
+// The rail must offer whatever the DEPLOYMENT can write, not two hardcoded
+// formats.
+//
+// # What this caught
+//
+// The variant rail listed OBJ and STL as two literal buttons. So a deployment
+// with a CAD kernel configured could build a real B-Rep that no button ever
+// asked for: STEP was reachable from the API and from nowhere a person could
+// click. The whole of wave 14 had no producer in the product, which is the
+// failure this session has now hit three times in three different places.
+func TestWorkbenchOffersWhateverTheDeploymentCanWrite(t *testing.T) {
+	src, err := assetFS.ReadFile("assets/workbench.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(src)
+
+	if !strings.Contains(js, "/v1/geometry/formats") {
+		t.Error("the workbench never asks what this deployment can write, so a format that " +
+			"exists only when a kernel is configured can never be offered")
+	}
+	// The literal pair is what the bug looked like. Either of them written as a
+	// fixed data-format in the rail means the list is hardcoded again.
+	for _, dead := range []string{`data-format="obj"`, `data-format="stl"`} {
+		if strings.Contains(js, dead) {
+			t.Errorf("the rail still hardcodes %s; the export list has to come from the server", dead)
+		}
+	}
+	// An unavailable format is SHOWN, disabled, with the server's reason — a
+	// person who cannot find STEP concludes it was forgotten.
+	if !strings.Contains(js, "f.reason") {
+		t.Error("the rail drops the server's reason for an unavailable format")
+	}
+	if !strings.Contains(js, "disabled") {
+		t.Error("the rail has no disabled state, so an unavailable format is either missing " +
+			"entirely or looks clickable")
+	}
+}

@@ -915,6 +915,13 @@
   text-decoration: none; cursor: pointer;
 }
 .variant .acts a:hover, .variant .acts button:hover { color: var(--ink); border-color: var(--core-dim); }
+/* A format this deployment cannot write. Present on purpose — a person who
+ * cannot find STEP concludes it was forgotten — and visibly not a thing to
+ * click, with the server's own reason on hover. */
+.variant .acts button.unavail {
+  opacity: .45; cursor: not-allowed; border-style: dashed;
+}
+.variant .acts button.unavail:hover { color: var(--ink-dim); border-color: var(--edge-solid); }
 
 .variant-bar { display: flex; gap: 8px; align-items: center; margin: 10px 0 4px; flex-wrap: wrap; }
 .variant-bar .node { flex: none; }

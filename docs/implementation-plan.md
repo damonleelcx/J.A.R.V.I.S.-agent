@@ -2561,6 +2561,50 @@ that changes what somebody does with the file.
 - **A tube's bore is still unmodelled** by the `tube` primitive — though a bore
   is now expressible properly, as a cylinder cut from a cylinder.
 
+## Wave 16 — two defects found by asking whether it worked · **DONE**
+
+Both were in wave 14, both shipped, and neither was found by a test. They were
+found by asking "is the kernel actually working completely?" and checking the two
+things nobody had checked.
+
+### A 2 inch cube exported as a 2 mm cube
+
+A STEP file DECLARES its unit, and build123d writes `SI_UNIT(.MILLI.,.METRE.)`
+unconditionally. Documents in this system can be in mm, cm, m or in, and the
+numbers went through unconverted. So a bracket designed in inches arrived as a
+file confidently stating it was **25.4× smaller**, in a format everything
+downstream treats as exact.
+
+```
+declared: 2 in cube = 50.8 mm/side          volume back: 8.00   bounds: -1.00 .. 1.00
+STEP declares: SI_UNIT(.MILLI.,.METRE.)
+```
+
+`geometry.Solids` now converts every length to millimetres, and an unconvertible
+unit builds NOTHING rather than a file at a guessed scale — the same rule the
+rest of this codebase already applies to units, which the kernel had quietly
+stepped outside of.
+
+**Why no test caught it:** every fixture was already in millimetres. A suite that
+only ever speaks one unit cannot see a conversion that is missing.
+
+### The kernel had no producer in the product
+
+The variant rail listed OBJ and STL as two literal buttons. A deployment with a
+kernel configured could build a real B-Rep **that no button ever asked for** —
+STEP was reachable from the API and from nowhere a person could click.
+
+The rail now reads `GET /v1/geometry/formats` and renders one button per format
+the DEPLOYMENT can write, with the unavailable ones shown disabled carrying the
+server's own reason. Which formats exist is a property of the deployment, and
+that endpoint is the one place that knows it.
+
+**This is the third time in this session** the same failure has appeared in a
+different place: `WithParameters` had no caller until wave 11 added one, the
+parameter panel had none until wave 12, and export had none until now. The
+pattern is always the same — capability built, wired to an interface, and never
+connected to the thing a person touches.
+
 ## Carried defects
 
 Eight of the eleven carried here are closed. The three that remain are not

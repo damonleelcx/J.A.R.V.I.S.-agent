@@ -50,6 +50,15 @@
     projectID: null,      // where this conversation's variants are kept
     conversationID: null, // the record this conversation is being kept in
     variants: [],         // what has been proposed so far, newest first
+    /* What this deployment can actually WRITE, read from the server rather than
+     * hardcoded here (wave 16).
+     *
+     * The rail used to offer OBJ and STL as two literal buttons, so a deployment
+     * with a CAD kernel configured could produce a real B-Rep that no button
+     * asked for: STEP was reachable from the API and from nowhere a person
+     * could click. Which formats exist is a property of the DEPLOYMENT, and
+     * GET /v1/geometry/formats is the one place that knows it. */
+    formats: [],
     picked: [],           // version ids chosen for the side-by-side view
     recalled: [],         // standards figures FORGE quoted from memory this turn
     proposal: null,       // the ProposedGoal from the conversation
@@ -305,6 +314,7 @@
     state.projectID = id;
     loadRequirements();
     if (window.ForgeStage) window.ForgeStage.setProject(id);
+    loadFormats();
     fetch('/v1/geometry?project_id=' + encodeURIComponent(id))
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (b) {
@@ -396,8 +406,7 @@
         (v.parameters
           ? '<button type="button" data-params="' + esc(v.version_id) + '">Parameters</button>'
           : '') +
-        '<button type="button" data-export="' + esc(v.version_id) + '" data-format="obj">Export OBJ</button>' +
-        '<button type="button" data-export="' + esc(v.version_id) + '" data-format="stl">Export STL</button>' +
+        exportButtons(v.version_id) +
         '</div>' +
         '<div class="exportlabel hidden" data-label="' + esc(v.version_id) + '"></div>' +
         '<div class="params hidden" data-params-panel="' + esc(v.version_id) + '"></div>' +
@@ -467,6 +476,47 @@
       button.textContent = 'Adopt this one';
       addTurn('forge', err.message);
     });
+  }
+
+  /* What this deployment can write, and what it cannot.
+   *
+   * Read once. A failure is not fatal and not silent: the rail falls back to the
+   * mesh formats every build can write, so somebody can still get a file out of
+   * a page whose format list did not load. */
+  function loadFormats() {
+    fetch('/v1/geometry/formats')
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (b) {
+        if (!b || !b.formats) return;
+        state.formats = b.formats;
+        renderVariants();
+      })
+      .catch(function () { /* the fallback below is the answer */ });
+  }
+
+  /* One button per format this deployment can write, and a DISABLED one per
+   * format it cannot, carrying the server's own reason.
+   *
+   * Showing the unavailable ones is the point, and it is the same reasoning the
+   * endpoint itself records: a person who cannot find STEP concludes it was
+   * forgotten, and a model that cannot find it invents something. Both are
+   * answered by the format being present and saying why not. */
+  function exportButtons(versionID) {
+    var formats = state.formats.length ? state.formats
+      : [{ name: 'obj', available: true }, { name: 'stl', available: true }];
+    return formats.map(function (f) {
+      var label = 'Export ' + f.name.toUpperCase();
+      if (f.available) {
+        return '<button type="button" data-export="' + esc(versionID) +
+          '" data-format="' + esc(f.name) + '">' + esc(label) + '</button>';
+      }
+      /* Disabled, and the reason is the TITLE rather than a line in the rail:
+       * five refusals spelled out under every variant would push the variants
+       * themselves off the screen, which is how the one that matters stops
+       * being read. */
+      return '<button type="button" disabled class="unavail" title="' +
+        esc(f.reason || 'not available in this deployment') + '">' + esc(label) + '</button>';
+    }).join('');
   }
 
   /* ---- parameters, and re-deriving from them (waves 10, 11) ---------------

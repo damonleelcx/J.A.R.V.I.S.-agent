@@ -132,10 +132,12 @@ type Build struct {
 	// an assembly quietly missing a hole is wrong in a way nobody notices.
 	Skipped         []string
 	FeatureFailures []string
-	// Volume is the assembly's, in the cube of the document's declared unit.
-	// Zero for an assembly of faces, which have none.
+	// Volume is the assembly's, in CUBIC MILLIMETRES whatever the document
+	// declared — the kernel works in millimetres because that is what a STEP
+	// file states. Zero for an assembly of faces, which have none.
 	Volume float64
-	// Bounds is the assembly's extent: minX, minY, minZ, maxX, maxY, maxZ.
+	// Bounds is the assembly's extent in MILLIMETRES: minX, minY, minZ, maxX,
+	// maxY, maxZ.
 	//
 	// The only value here that can reveal a part built in the wrong
 	// ORIENTATION. Volume cannot — it is identical however a solid is turned —
@@ -182,6 +184,15 @@ func (k *Kernel) BuildDocument(ctx context.Context, doc geometry.Document, unit 
 	const op = "cad.Kernel.BuildDocument"
 	if !k.Available() {
 		return nil, Unavailable(op)
+	}
+	// The unit is checked HERE as well as at the HTTP door, because this is the
+	// last point before numbers become a file that declares its own scale. A
+	// caller that skipped the door must not be able to produce one silently.
+	if !unit.Known() {
+		return nil, errs.New(op, errs.CodeValidationFailed).
+			WithDetail("this assembly declares no unit FORGE can convert, and a STEP file states " +
+				"its own scale — writing one would put a guess about scale inside the file. " +
+				"Restate the assembly in mm, cm, m or in.")
 	}
 	solids, inferred := geometry.Solids(doc, unit)
 	if len(solids) == 0 {

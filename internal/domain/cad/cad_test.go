@@ -556,3 +556,94 @@ func TestKernel_AFeatureThatCannotBeAppliedIsNamed(t *testing.T) {
 		t.Errorf("%d parts, want the bracket and the ball", got.Parts)
 	}
 }
+
+// A document in inches exports at the right SCALE.
+//
+// # The defect this holds shut
+//
+// A STEP file declares its own unit, and build123d writes
+// SI_UNIT(.MILLI.,.METRE.) unconditionally. So a 2 inch cube sent through
+// unconverted produced a file saying it was 2 MILLIMETRES — confidently, in a
+// format everything downstream treats as exact. A factor of 25.4 in a
+// manufacturable artefact, silently.
+//
+// It was wrong from the first build of this kernel and no test asked, because
+// every fixture was already in millimetres. That is the shape of this bug: it
+// cannot be found by a suite that only ever speaks one unit.
+func TestKernel_ADocumentInInchesIsBuiltAtTheRightScale(t *testing.T) {
+	k := kernel(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	doc := geometry.Document{
+		Name: "cube", Units: "in",
+		Parts: []geometry.Part{{ID: "c", Name: "Cube", Shape: "box",
+			Size:     map[string]float64{"width": 2, "height": 2, "depth": 2},
+			Position: []float64{1, 0, 0}, Rotation: []float64{0, 0, 0}}},
+	}
+	got, err := k.BuildDocument(ctx, doc, geometry.Inch, "step")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// 2 in = 50.8 mm on a side.
+	if want := 50.8 * 50.8 * 50.8; math.Abs(got.Volume-want) > 0.01 {
+		t.Errorf("volume = %.2f mm³, want %.2f — the file states millimetres, so the "+
+			"numbers in it have to be millimetres", got.Volume, want)
+	}
+	// The POSITION converts too. A part an inch off the origin is 25.4 mm off it,
+	// and converting the sizes while leaving the placement alone would put a
+	// correctly-sized part in the wrong place.
+	if want := 25.4 - 25.4; math.Abs(got.Bounds[0]-want) > 1e-6 {
+		t.Errorf("minX = %.4f mm, want %.4f — the position was not converted", got.Bounds[0], want)
+	}
+	if want := 25.4 + 25.4; math.Abs(got.Bounds[3]-want) > 1e-6 {
+		t.Errorf("maxX = %.4f mm, want %.4f", got.Bounds[3], want)
+	}
+	// And the file really does say millimetres, so the numbers above are the
+	// ones a machine reads.
+	if !strings.Contains(string(got.STEP), "SI_UNIT(.MILLI.,.METRE.)") {
+		t.Error("the STEP file does not declare millimetres, so the conversion is against " +
+			"the wrong target")
+	}
+}
+
+// A metre document, to prove the factor is read from the unit and not hardcoded
+// for inches.
+func TestKernel_AMetreDocumentScalesToo(t *testing.T) {
+	k := kernel(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	doc := geometry.Document{
+		Name: "slab", Units: "m",
+		Parts: []geometry.Part{{ID: "s", Name: "Slab", Shape: "box",
+			Size:     map[string]float64{"width": 1, "height": 1, "depth": 1},
+			Position: []float64{0, 0, 0}, Rotation: []float64{0, 0, 0}}},
+	}
+	got, err := k.BuildDocument(ctx, doc, geometry.Metre, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := 1000.0 * 1000.0 * 1000.0; math.Abs(got.Volume-want) > 1 {
+		t.Errorf("volume = %.0f mm³, want %.0f (a 1 m cube)", got.Volume, want)
+	}
+}
+
+// A unit FORGE cannot convert must produce NOTHING rather than a file at a
+// guessed scale.
+func TestKernel_AnUnconvertibleUnitIsRefusedRatherThanGuessed(t *testing.T) {
+	k := kernel(t)
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
+	doc := geometry.Document{
+		Name: "thing", Units: "furlongs",
+		Parts: []geometry.Part{{ID: "c", Shape: "box",
+			Size: map[string]float64{"width": 2, "height": 2, "depth": 2}}},
+	}
+	if _, err := k.BuildDocument(ctx, doc, geometry.UnitUnspecified, "step"); err == nil {
+		t.Fatal("a file was produced for an assembly whose scale nobody stated")
+	} else if !strings.Contains(err.Error(), "scale") {
+		t.Errorf("the refusal does not say what is wrong: %v", err)
+	}
+}

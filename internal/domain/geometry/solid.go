@@ -26,26 +26,53 @@ import (
 // The kernel in particular never sees a Part: it receives numbers and a matrix,
 // which is all a kernel should need and nothing it could misinterpret.
 
-// Solid is a part with every dimension resolved and its placement precomputed.
+// Solid is a part with every dimension resolved, converted, and its placement
+// precomputed.
+//
+// EVERY LENGTH IS IN MILLIMETRES, whatever the document declared. See Solids.
 type Solid struct {
 	ID    string `json:"id"`
 	Label string `json:"label"`
 	Shape string `json:"shape"`
-	// Dims are the dimensions this shape reads, defaults already applied. Which
-	// keys are present depends on the shape and is the builder's contract.
+	// Dims are the dimensions this shape reads, defaults applied and converted
+	// to millimetres. Which keys are present depends on the shape and is the
+	// builder's contract.
 	Dims map[string]float64 `json:"dims"`
 	// Matrix is the rotation, row-major, from RotationMatrix.
 	Matrix [9]float64 `json:"matrix"`
-	// Position is the centre, in the document's declared unit.
+	// Position is the centre, in millimetres.
 	Position [3]float64 `json:"position"`
 }
 
-// Solids reduces every part, and reports every dimension it had to invent.
+// Solids reduces every part, converts it to millimetres, and reports every
+// dimension it had to invent.
+//
+// # Why it converts, and why that is not optional
+//
+// A STEP file DECLARES its unit, and build123d writes SI_UNIT(.MILLI.,.METRE.)
+// unconditionally. So a document in inches, sent through unconverted, produces a
+// file that says a 2 inch cube is 2 MILLIMETRES — confidently, in a format
+// everything downstream treats as exact. That is a factor of 25.4 in a
+// manufacturable artefact, and it is silent.
+//
+// Measured 2026-09-05: a 2 in cube came back with volume 8 and bounds ±1, in a
+// file declaring millimetres. It was wrong from the first build of the kernel
+// and no test asked, because every fixture was already in mm.
+//
+// Millimetres because that is this domain's base (units.go) and what the format
+// writes. An unconvertible unit returns NOTHING rather than guessing: a wrong
+// guess about scale is the difference between a bracket and a building, and the
+// callers refuse on the empty result.
 //
 // The inferences are the same sentences the mesh exporter records, and for the
 // same reason: a defaulted 1 is indistinguishable from a stated 1 once it is in
 // a file, and there is no provenance banner attached to a download.
 func Solids(d Document, unit Unit) ([]Solid, []string) {
+	toMM, convertible := unit.toMM()
+	if !convertible {
+		return nil, []string{"This assembly declares no unit FORGE can convert, so nothing " +
+			"could be built: a file that states a scale must state the right one."}
+	}
 	var inferred []string
 	infer := func(format string, args ...any) {
 		inferred = append(inferred, fmt.Sprintf(format, args...))
@@ -92,6 +119,16 @@ func Solids(d Document, unit Unit) ([]Solid, []string) {
 		copy(pos[:], padTo3(p.Position))
 		rot := [3]float64{}
 		copy(rot[:], padTo3(p.Rotation))
+
+		// To millimetres. Every dimension here is a length and every position is
+		// a length, so one factor covers both; the rotation is an angle and is
+		// untouched.
+		for k, v := range dims {
+			dims[k] = v * toMM
+		}
+		for i := range pos {
+			pos[i] *= toMM
+		}
 
 		out = append(out, Solid{
 			ID: p.ID, Label: p.Label(), Shape: p.Shape, Dims: dims,
