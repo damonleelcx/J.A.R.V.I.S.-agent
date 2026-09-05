@@ -211,8 +211,12 @@ DONE, not merely discussed. It is a proposal — nothing runs until they start i
 // apart from this backstop (internal/eval/scorers.go). Two copies of this
 // sentence would drift, and the drift would silently credit the backstop to the
 // model — the property would stop being measured with nothing reporting it.
-const NotVerifiedFallback = "Nothing here has been analysed or checked. There is no CAD kernel, " +
-	"solver, or interference check in this deployment — this is a shape, not a result."
+// Reworded in wave 14, when "there is no CAD kernel" stopped being true of every
+// deployment. What it must say is what is still true of ALL of them: a kernel
+// builds a solid and checks nothing about it, so the presence of one changes
+// nothing about this sentence except the part that was about to become false.
+const NotVerifiedFallback = "Nothing here has been analysed or checked. There is no solver " +
+	"and no interference check in this deployment — this is a shape, not a result."
 
 // Conversation is the workbench dialogue.
 //

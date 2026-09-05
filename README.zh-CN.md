@@ -116,10 +116,23 @@ PRD **VIS-04** 要求把多个变体并排放，并且每一张渲染图都要�
 **VIS-05** 要求网格预览，以及**在适配器允许的前提下**可编辑的参数化导出，并且要标注
 细分（tessellation）、推断（inference）和有损转换（lossy conversion）。
 
-这个构建里没有链接任何 CAD 内核，所以 STEP、IGES、KCL 是**声明并拒绝**的，带
-`CONNECTOR_UNAVAILABLE` 和原因，形状和那些不可用连接器完全一致。把它们干脆不列出来，
-才是在诱导别人把细分后的三角面写进一个 `.step` 文件里——而下游的一切都会把它当成
-精确实体来对待。
+**配置了 CAD 内核时，STEP 是真的。** 把 `FORGE_CAD_PYTHON` 指向一个装了
+[build123d](https://github.com/gumyr/build123d) 的 Python，导出路径就会通过
+OpenCASCADE 构建真正的 B-Rep（解析曲面，不是三角面片），几何体和视口里画的是同一份文档：
+
+```bash
+python3 -m venv .cadvenv && ./.cadvenv/bin/pip install build123d
+export FORGE_CAD_PYTHON="$PWD/.cadvenv/bin/python"
+```
+
+内核以常驻 sidecar 方式运行，因为两项开销完全不是一个量级：import build123d 约 2.5 秒，
+构建零件约 46 毫秒，所以只 import 一次并保持热态。它只负责**构建**，不负责**校验**——
+这里依然没有求解器、没有干涉检查，导出标签会写明这一点。
+
+**没有配置内核时，STEP 声明并拒绝**，这是默认状态。IGES 和 KCL 无论如何都拒绝——
+这个构建里没有任何东西会写这两种格式。拒绝都带 `CONNECTOR_UNAVAILABLE` 和一条理由，
+和那些不可用的连接器是同一个形状。把它们从列表里拿掉，才会招来有人把三角面片写进
+`.step` 文件——而下游的一切都会把它当成精确实体。
 
 OBJ 和 STL 是真的，并且每次导出都会说清代价，用数字而不是形容词：一个 ⌀22 mm 的
 圆柱在渲染器的 40 段细分下，会写成「导出的表面比所描述的表面最多向内偏 0.034 mm」。

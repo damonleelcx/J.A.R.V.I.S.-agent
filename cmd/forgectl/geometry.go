@@ -43,7 +43,7 @@ func geometryService(ctx context.Context, cfg *config.Config, log *logx.Logger) 
 func cmdGeometryFormats() error {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "FORMAT\tKIND\tAVAILABLE\tWHAT IT IS")
-	for _, f := range geometry.Formats() {
+	for _, f := range geometry.Formats(os.Getenv("FORGE_CAD_PYTHON") != "") {
 		available := "yes"
 		if !f.Available {
 			available = "NO"
@@ -53,7 +53,7 @@ func cmdGeometryFormats() error {
 	if err := w.Flush(); err != nil {
 		return err
 	}
-	for _, f := range geometry.Formats() {
+	for _, f := range geometry.Formats(os.Getenv("FORGE_CAD_PYTHON") != "") {
 		if f.Available {
 			continue
 		}

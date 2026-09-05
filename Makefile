@@ -23,6 +23,9 @@ LDFLAGS     := -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=
 # with another Postgres already on this machine.
 DB_CONTAINER := forge-pg
 DB_PORT      ?= 55840
+# The CAD kernel's interpreter. Not committed: it is 60+ MB of OpenCASCADE, and
+# a deployment without it refuses parametric export rather than faking it.
+CAD_VENV     ?= .cadvenv
 DB_USER      ?= forge
 DB_PASS      ?= forge_dev_pw
 DB_NAME      ?= forge
@@ -93,6 +96,29 @@ test-integration: db-wait ## Run all tests including those needing live Postgres
 test-cover: db-wait ## Run tests with coverage and print a summary
 	FORGE_TEST_DATABASE_URL="$(DB_URL)" go test -count=1 -coverprofile=coverage.out ./...
 	go tool cover -func=coverage.out | tail -20
+
+.PHONY: cad-venv
+cad-venv: ## Create the Python venv the CAD kernel runs in (PRD VIS-05)
+	@# Parametric export needs a real kernel. This builds the one the tests and
+	@# the server use, and prints the single line that switches it on.
+	@#
+	@# Not committed and not required: a deployment without it declares STEP and
+	@# refuses it, which is the default and a supported configuration.
+	python3 -m venv $(CAD_VENV)
+	$(CAD_VENV)/bin/pip install --quiet --upgrade pip
+	$(CAD_VENV)/bin/pip install --quiet build123d
+	@$(CAD_VENV)/bin/python -c "import build123d; print('build123d', build123d.__version__)"
+	@echo
+	@echo "export FORGE_CAD_PYTHON=$(abspath $(CAD_VENV))/bin/python"
+
+.PHONY: test-cad
+test-cad: ## Run the CAD kernel tests against the real kernel (needs `make cad-venv`)
+	@# These cannot be faked. Every property they check — that the solid is
+	@# valid, that its volume is right, that a cylinder points the way this
+	@# system draws it — is a property of OpenCASCADE and not of our code, and a
+	@# stub would be asserting that the test author knows what OCCT does.
+	@test -x $(CAD_VENV)/bin/python || { echo "no CAD venv: run \`make cad-venv\` first"; exit 1; }
+	FORGE_CAD_PYTHON="$(abspath $(CAD_VENV))/bin/python" go test -count=1 -v ./internal/domain/cad/
 
 .PHONY: drill
 test-asr: ## Speech fences against the REAL provider, both directions (costs a fraction of a cent)

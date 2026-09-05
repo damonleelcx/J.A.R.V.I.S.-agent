@@ -1316,7 +1316,11 @@
         }).join('') + '</ul></div>';
     }
     html += '<div style="margin-top:7px;opacity:.85">Proposed by ' + esc(p.model_note || 'FORGE') +
-            '. No CAD kernel, solver, or interference check exists in this deployment.</div>';
+            /* Says what is true of every deployment. A CAD kernel may now be
+             * configured (wave 14) and it still checks nothing: it builds a
+             * solid, and whether that solid is manufacturable, strong enough or
+             * free of interference is not a question anything here asks. */
+            '. No solver or interference check exists in this deployment.</div>';
     el.innerHTML = html;
     el.classList.remove('hidden');
   }

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/access"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/cad"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/geometry"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/identity"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/workspace"
@@ -38,6 +39,7 @@ type geoHarness struct {
 	owner   *identity.User
 	other   *identity.User
 	project string
+	cad     *cad.Kernel
 }
 
 func geometryHarness(t *testing.T) *geoHarness {
@@ -97,7 +99,14 @@ func geometryHarness(t *testing.T) *geoHarness {
 		}
 		return u
 	}
-	g := &geoHarness{h: NewGeometryHandlers(d), svc: geometry.NewService(pool, d.Clock, logx.Discard())}
+	// The CAD kernel, when this machine has one. Unset is the default and the
+	// tests below cover both: with a kernel STEP is written, without one it is
+	// refused with the sentence that fixes it.
+	d.CAD = cad.New(os.Getenv("FORGE_CAD_PYTHON"), logx.Discard())
+	t.Cleanup(d.CAD.Close)
+
+	g := &geoHarness{h: NewGeometryHandlers(d), svc: geometry.NewService(pool, d.Clock, logx.Discard()),
+		cad: d.CAD}
 	g.owner = mk("geo-owner@example.com")
 	g.other = mk("geo-intruder@example.com")
 	g.project = newProject(t, pool, d.Access, g.owner.ID, "P", now)
@@ -284,4 +293,113 @@ func TestAPI_RespecRefusesAnOverrideThatWouldChangeNothing(t *testing.T) {
 func withPath(r *http.Request, id string) *http.Request {
 	r.SetPathValue("id", id)
 	return r
+}
+
+// A parametric export, end to end: a stored variant becomes a real B-Rep on the
+// wire. This is the one path where every piece has to line up at once — the
+// document, the shared reduction in geometry.Solids, the sidecar, and the header
+// that tells a person what they are holding.
+func TestAPI_ExportsARealSTEPFileWhenAKernelIsConfigured(t *testing.T) {
+	g := geometryHarness(t)
+	if !g.cad.Available() {
+		t.Skip("FORGE_CAD_PYTHON is unset; skipping the parametric export path")
+	}
+	v := g.save(t)
+
+	rec := httptest.NewRecorder()
+	g.h.Export(rec, withPath(req(g.owner, "GET",
+		"/v1/geometry/"+v.VersionID+"/export?format=step", ""), v.VersionID))
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.HasPrefix(body, "ISO-10303-21;") {
+		t.Fatalf("this is not a STEP file: %.60q", body)
+	}
+	if !strings.Contains(body, "END-ISO-10303-21;") {
+		t.Error("the file is truncated")
+	}
+	// The header must not call a B-Rep tessellated. It is the only thing a
+	// person sees at the moment of download, and here it would be wrong in the
+	// direction that matters: a downstream tool is RIGHT to treat these surfaces
+	// as exact, and must still know nothing about the shape was checked.
+	label := rec.Header().Get("X-Forge-Export-Label")
+	if strings.Contains(label, "tessellated") && !strings.Contains(label, "not tessellated") {
+		t.Errorf("the label calls a B-Rep tessellated: %q", label)
+	}
+	if !strings.Contains(label, "has been analysed or checked") {
+		t.Errorf("the label does not say the shape is unchecked: %q", label)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "model/step" {
+		t.Errorf("content type %q", ct)
+	}
+	if cd := rec.Header().Get("Content-Disposition"); !strings.Contains(cd, ".step") {
+		t.Errorf("content disposition %q", cd)
+	}
+}
+
+// And the default configuration, which must never quietly become something else.
+func TestAPI_RefusesSTEPWithoutAKernel(t *testing.T) {
+	g := geometryHarness(t)
+	v := g.save(t)
+
+	// A handler wired exactly as a deployment with no FORGE_CAD_PYTHON.
+	noKernel := *g.h
+	rec := httptest.NewRecorder()
+	withoutCAD(&noKernel).Export(rec, withPath(req(g.owner, "GET",
+		"/v1/geometry/"+v.VersionID+"/export?format=step", ""), v.VersionID))
+
+	if rec.Code == http.StatusOK {
+		t.Fatal("a STEP file was produced with no kernel configured")
+	}
+	if !strings.Contains(rec.Body.String(), "FORGE_CAD_PYTHON") {
+		t.Errorf("the refusal does not say how to get one: %s", rec.Body.String())
+	}
+}
+
+// The formats list is what a person and a model both read to find out what this
+// deployment can write, so it has to follow the kernel rather than the build.
+func TestAPI_TheFormatsListFollowsTheKernel(t *testing.T) {
+	g := geometryHarness(t)
+
+	stepAvailable := func(h *GeometryHandlers) bool {
+		rec := httptest.NewRecorder()
+		h.Formats(rec, req(g.owner, "GET", "/v1/geometry/formats", ""))
+		var body struct {
+			Formats []struct {
+				Name      string `json:"name"`
+				Available bool   `json:"available"`
+				Reason    string `json:"reason"`
+			} `json:"formats"`
+		}
+		if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		for _, f := range body.Formats {
+			if f.Name == "step" {
+				if !f.Available && !strings.Contains(f.Reason, "FORGE_CAD_PYTHON") {
+					t.Errorf("step is unavailable and the reason does not say how to fix it: %q", f.Reason)
+				}
+				return f.Available
+			}
+		}
+		t.Fatal("step is not in the formats list at all; a person who cannot find it concludes " +
+			"it was forgotten and a model invents something")
+		return false
+	}
+
+	noKernel := *g.h
+	if stepAvailable(withoutCAD(&noKernel)) {
+		t.Error("step is advertised as available with no kernel configured")
+	}
+	if g.cad.Available() && !stepAvailable(g.h) {
+		t.Error("step is advertised as unavailable with a kernel configured")
+	}
+}
+
+// withoutCAD returns the handler as a deployment with no kernel would have it.
+func withoutCAD(h *GeometryHandlers) *GeometryHandlers {
+	h.deps.CAD = cad.New("", logx.Discard())
+	return h
 }

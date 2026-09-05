@@ -294,19 +294,38 @@ func padTo3(v []float64) []float64 {
 // which takes RADIANS. Mirrored term by term rather than rederived, because a
 // rotation convention that is merely equivalent-looking is one that rotates
 // some parts the other way.
-func rotate(v [3]float64, r [3]float64) [3]float64 {
+// RotationMatrix is this system's rotation convention, row-major.
+//
+// # Why it is exported, and why rotate now goes through it
+//
+// The convention lives in exactly one place. A CAD kernel placing the same part
+// has to agree with the renderer about what a rotation MEANS — the Euler order,
+// and that the angles are RADIANS and not degrees — and the only way to
+// guarantee that is for both to read the same nine numbers rather than each
+// implement the same paragraph of trigonometry. A kernel that disagreed would
+// export a part rotated somewhere other than where it was drawn, which is the
+// one failure a downloaded file cannot be labelled out of.
+//
+// Angles are radians, as they have always been here: nothing in this file has
+// ever converted from degrees, and a caller passing 90 gets 90 radians.
+func RotationMatrix(r [3]float64) [9]float64 {
 	cx, sx := math.Cos(r[0]), math.Sin(r[0])
 	cy, sy := math.Cos(r[1]), math.Sin(r[1])
 	cz, sz := math.Cos(r[2]), math.Sin(r[2])
 
-	m00, m01, m02 := cy*cz, -cy*sz, sy
-	m10, m11, m12 := sx*sy*cz+cx*sz, -sx*sy*sz+cx*cz, -sx*cy
-	m20, m21, m22 := -cx*sy*cz+sx*sz, cx*sy*sz+sx*cz, cx*cy
+	return [9]float64{
+		cy * cz, -cy * sz, sy,
+		sx*sy*cz + cx*sz, -sx*sy*sz + cx*cz, -sx * cy,
+		-cx*sy*cz + sx*sz, cx*sy*sz + sx*cz, cx * cy,
+	}
+}
 
+func rotate(v [3]float64, r [3]float64) [3]float64 {
+	m := RotationMatrix(r)
 	return [3]float64{
-		m00*v[0] + m01*v[1] + m02*v[2],
-		m10*v[0] + m11*v[1] + m12*v[2],
-		m20*v[0] + m21*v[1] + m22*v[2],
+		m[0]*v[0] + m[1]*v[1] + m[2]*v[2],
+		m[3]*v[0] + m[4]*v[1] + m[5]*v[2],
+		m[6]*v[0] + m[7]*v[1] + m[8]*v[2],
 	}
 }
 

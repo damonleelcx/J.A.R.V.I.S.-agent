@@ -12,6 +12,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/cad"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/identity"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/httpapi"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/llm"
@@ -122,11 +123,19 @@ func run() error {
 			"detail", "no FORGE_LLM_API_KEY: the workbench will load but cannot hold a conversation")
 	}
 
+	// The CAD kernel (PRD VIS-05). Nothing starts here: the process is created
+	// on the first parametric export, so a deployment that never asks for one
+	// never pays the 2.5 s import, and a deployment with no interpreter
+	// configured simply refuses and says how to configure one.
+	cadKernel := cad.New(cfg.CAD.Python, log)
+	defer cadKernel.Close()
+
 	handler := httpapi.NewRouter(httpapi.Deps{
 		Config:   cfg,
 		Pool:     pool,
 		Identity: identitySvc,
 		LLM:      modelClient,
+		CAD:      cadKernel,
 		Clock:    clk,
 		Log:      log,
 		Version:  version,

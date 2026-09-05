@@ -2243,8 +2243,7 @@ was aimed at. Whether it moves the figure rate is unmeasured.
   dimension can now name an expression, the boundary evaluates it, and
   `POST /v1/geometry/{id}/respec` re-derives a whole variant from a changed
   parameter.
-- **Parametric export stays refused** (VIS-05). No kernel is wired in. The spike
-  proves one CAN be; this wave did not do it.
+- ~~**Parametric export stays refused** (VIS-05).~~ **Done in wave 14.**
 - **A recalled figure written as a bare constant in `derived` is still
   invisible to the provenance check.** It is reported as a fixed number with no
   unit and no source, which is true and is not the same as being checked. Two of
@@ -2327,7 +2326,7 @@ this system examines one.
 ### What is NOT done
 
 - ~~**No UI.**~~ **Done in wave 12.**
-- **Parametric export still refused** (VIS-05). Unchanged.
+- ~~**Parametric export still refused** (VIS-05).~~ **Done in wave 14.**
 - ~~**Nothing checks a relationship.**~~ **Partly done in wave 13** — the
   measurable case is covered; see there for what still is not.
 - **Rotation is unbindable**, by decision.
@@ -2407,6 +2406,92 @@ Two narrowings, both from things that went wrong while building it:
 - **Anything that is not a distance between two positions.** An angle, a ratio,
   a wall thickness derived wrongly — none of these have a measurable result to
   compare against a published figure.
+
+## Wave 14 — the kernel · **DONE**
+
+`docs/spikes/2026-09-05-parametric-cad-kernel/` proved a CAD kernel could run
+here — build123d on OpenCASCADE, a valid 37-face B-Rep in **46 ms**, real
+ISO-10303-21 out — against the 2026-09-02 Zoo spike's estimate, which had been
+measuring an agent thinking rather than a kernel working. Wave 14 wires one in.
+
+**What it is.** `internal/domain/cad` is a long-running Python sidecar. The costs
+are nothing alike — importing build123d takes 2.5 s and building the part takes
+46 ms — so it is imported once and kept warm. Measured here at **0.9 ms** for the
+second build, which is faster than the network hop that asked for it.
+
+`POST`-nothing: the same `GET /v1/geometry/{id}/export?format=step` that used to
+refuse now returns a real B-Rep, with a fence asserting the file contains
+`CYLINDRICAL_SURFACE` and no `TRIANGULATED_FACE_SET`.
+
+**Absent by default, and absent loudly.** `FORGE_CAD_PYTHON` is unset unless a
+deployment sets it, and without it STEP is declared and refused exactly as
+before — the same discipline as the vision model. The formats list follows the
+deployment rather than the build. IGES and KCL stay refused either way, because
+nothing here writes them and marking one available because a neighbour became so
+is how a capability list starts lying.
+
+### One convention, not two
+
+The kernel and the renderer have to agree about what a rotation MEANS (the Euler
+order, and that the angles are RADIANS), which dimension each shape reads, and
+what a missing one defaults to. Implemented twice, those agree until somebody
+edits one.
+
+So `geometry.RotationMatrix` and `geometry.Solids` are now the single source of
+both, the sidecar receives numbers and a matrix and decides nothing, and the
+fence is `TestKernel_PlacesAPartWhereTheRendererDrawsIt`: the same document is
+tessellated by mesh.go and built by the kernel, and their extents must match to
+1e-6.
+
+### Three fences that were vacuous, found by drilling them
+
+- **Orientation was not asserted at all.** Removing the sidecar's axis correction
+  — so every cylinder pointed along +Z where this system draws them along +Y —
+  left every test green. Volume is identical however a solid is turned, and the
+  STEP file still contained a cylindrical surface. Fixed by having the sidecar
+  report the assembly's extent, which is the only value in the reply that can
+  show a part is turned wrongly.
+- **The restart test did not test the restart.** It called `Close`, which resets
+  the kernel's own state, so the next build simply started a fresh process and
+  the retry never ran. Removing the retry outright left it green. The crash path
+  now has an internal test that kills the process without telling the kernel.
+- **Rows versus columns survived a single-axis rotation.** Reading the matrix's
+  rows applies the inverse, and for one axis and a symmetric part that differs
+  only in sign — same bounding box. The fence now uses a COMPOUND rotation and a
+  box with three different dimensions.
+
+### A pre-existing defect this uncovered
+
+`CONNECTOR_UNAVAILABLE` is a 501, and `WriteError` withheld `detail` for every
+5xx. So every "this deployment cannot do that" refusal in the product arrived as
+the registry's generic line: the vision model's `FORGE_LLM_VISION_MODEL`
+sentence, the old STEP refusal's reason, all of it. The whole
+unavailable-connector discipline said what was missing everywhere **except in the
+reply to the person who asked for it.**
+
+Narrowed rather than removed: that one code's detail passes through, because it
+does not report a failure — it reports a capability that is declared and absent
+here, its text names configuration rather than internal structure, and the same
+sentence is already served unauthenticated by `GET /v1/geometry/formats`.
+
+### What is NOT done
+
+- **The kernel builds; it does not check.** No interference test, no stress
+  analysis, no manufacturability review. VIS-06's banner says so and is now
+  worded to stay true whether or not a kernel is configured.
+- **No booleans.** A Document has no cut, fillet or union, so an assembly is a
+  COMPOUND of primitives — not fused, because fusing would merge parts that touch
+  and erase a seam nothing claimed was welded. The spike's own bracket used a
+  fillet and four subtracted holes; expressing that needs schema this does not
+  have.
+- **A tube's bore is still not modelled**, because `Part.Size` has no inner
+  radius to model it from. The mesh path substitutes a cylinder and so does this,
+  and the label says so.
+- **A zero-radius part builds a solid of volume 0** rather than being refused —
+  measured against build123d 0.11.1, which accepts it. It is in the file and
+  invisible. The mesh path behaves identically.
+- **One request at a time.** A pool would be a wrong answer to a question nobody
+  has asked.
 
 ## Carried defects
 
@@ -2579,7 +2664,8 @@ oversights and are stated with what each would actually take.
   **What would settle it:** always run with `--json`, never through a pipe. A
   second full run would give a second sample; it would not recover the lost one.
 
-- **No real CAD, FEA or SPICE backend, by decision.** Packs now declare which
+- **No real FEA or SPICE backend, by decision — and a real CAD one since wave
+  14.** Packs now declare which
   adapters their domain needs and every one is `CONNECTOR_UNAVAILABLE`. Wiring a
   real one was considered and rejected against this repository's own completed
   research: `docs/spikes/2026-09-02-zoo-text-to-cad` concludes "do not integrate

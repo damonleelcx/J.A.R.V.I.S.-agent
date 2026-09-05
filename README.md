@@ -207,14 +207,30 @@ turns, the row says it was matched **by name, not by identity**: nothing in this
 system keeps a part id stable across turns, so that pairing is a guess and is
 labelled as one.
 
-### Mesh export is real; parametric export is refused
+### Mesh export is real; parametric export needs a kernel
 
 **VIS-05** asks for mesh preview and, *where adapters permit*, editable
 parametric export — labelling tessellation, inference and lossy conversion.
 
-No CAD kernel is linked into this build, so STEP, IGES and KCL are **declared and
-refused** with `CONNECTOR_UNAVAILABLE` and a reason, the same shape as the
-unavailable connectors. Leaving them out is what invites somebody to write
+**STEP is real when a CAD kernel is configured.** Point `FORGE_CAD_PYTHON` at a
+Python with [build123d](https://github.com/gumyr/build123d) installed and the
+export path builds a genuine B-Rep through OpenCASCADE — analytic surfaces, not
+triangles — from the same document the viewport draws:
+
+```bash
+python3 -m venv .cadvenv && ./.cadvenv/bin/pip install build123d
+export FORGE_CAD_PYTHON="$PWD/.cadvenv/bin/python"
+```
+
+The kernel is a long-running sidecar because the costs are nothing alike:
+importing build123d takes ~2.5 s and building the part takes ~46 ms, so it is
+imported once and kept warm. It builds; it does not check. There is still no
+solver and no interference test here, and the export label says so.
+
+**Without one, STEP is declared and refused**, and that is the default. IGES and
+KCL are refused either way — nothing in this build writes them. Refusals carry
+`CONNECTOR_UNAVAILABLE` and a reason, the same shape as the unavailable
+connectors. Leaving them out of the list is what invites somebody to write
 tessellated facets into a `.step` file, which everything downstream would then
 treat as an exact solid.
 

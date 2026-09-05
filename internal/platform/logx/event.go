@@ -208,12 +208,20 @@ const (
 	// from an earlier document rather than proposed, and distinct from Adopted
 	// because the shape changed.
 	EventGeometryRespecified Event = "forge.geometry.respecified"
+
+	// The CAD kernel (wave 14). A separate area from geometry because it is a
+	// separate SUBSYSTEM: a process that can be absent, can die, and whose
+	// absence is a supported configuration rather than a fault.
+	EventCADStarted   Event = "forge.cad.started"
+	EventCADRestarted Event = "forge.cad.restarted"
+	EventCADRefused   Event = "forge.cad.refused"
 )
 
 func init() {
 	allEvents = append(allEvents,
 		EventGeometrySaved, EventGeometryExported, EventGeometryRefused, EventGeometryCompared,
 		EventGeometryAdopted, EventGeometryRespecified,
+		EventCADStarted, EventCADRestarted, EventCADRefused,
 	)
 }
 

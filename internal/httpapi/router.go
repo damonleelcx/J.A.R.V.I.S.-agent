@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/access"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/cad"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/identity"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/llm"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/clock"
@@ -26,7 +27,12 @@ type Deps struct {
 	// LLM backs the workbench conversation. Nil is legal: the API and the
 	// operations console work without a model, and the workbench says so rather
 	// than failing to load.
-	LLM   llm.Client
+	LLM llm.Client
+	// CAD is the parametric kernel (wave 14). Nil is legal and is the DEFAULT:
+	// a deployment without one refuses STEP with the sentence that fixes it,
+	// exactly as it did when no kernel existed at all. Every call goes through
+	// Kernel's own nil-safe methods, so nothing here has to check.
+	CAD   *cad.Kernel
 	Clock clock.Clock
 	Log   *logx.Logger
 	// Version and Commit are reported by the health endpoint so an operator can
