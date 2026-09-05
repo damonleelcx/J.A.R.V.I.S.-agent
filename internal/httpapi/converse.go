@@ -544,6 +544,7 @@ func (h *ConverseHandlers) keepGeometry(r *http.Request, req converseRequest, pr
 		Name: v.Name, Generator: v.Generator,
 		Units: string(v.Units), UnitsNote: v.UnitsNote(),
 		Parts: len(v.Document.Parts), Assumptions: len(v.Assumptions()),
+		Parameters: len(v.Document.Parameters),
 	}
 }
 

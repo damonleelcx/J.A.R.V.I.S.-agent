@@ -631,6 +631,49 @@
 .recalled .rc-w { font-size: 11px; color: var(--ink-dim); }
 .recalled .rc-f { margin-top: 7px; font-size: 11.5px; color: var(--ink-dim); }
 
+/* The parameter panel (waves 10, 11).
+ *
+ * Set inside a variant row rather than in a modal: the numbers belong to THAT
+ * variant, and a dialog floating over the rail loses which one it is editing the
+ * moment a second variant appears. */
+.variant .params {
+  margin-top: 8px; padding: 8px 10px;
+  border: 1px solid var(--edge-solid); border-radius: 6px;
+  background: rgba(255, 255, 255, .02);
+  font-size: 12px;
+}
+.variant .params.hidden { display: none; }
+.params .p-h {
+  font-size: 10px; letter-spacing: .08em; text-transform: uppercase;
+  font-weight: 700; color: var(--ink-dim); margin: 4px 0 5px;
+}
+.params .p-t { width: 100%; border-collapse: collapse; }
+.params .p-t td { padding: 2px 6px 2px 0; vertical-align: top; }
+.params .p-n { font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace); }
+.params .p-t input {
+  width: 8em; padding: 2px 5px;
+  background: var(--bg); color: var(--ink);
+  border: 1px solid var(--edge-solid); border-radius: 4px;
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace); font-size: 12px;
+}
+.params .p-u { color: var(--ink-dim); width: 3em; }
+.params .p-w { color: var(--ink-dim); font-size: 11px; }
+/* A recalled figure carries the same gold the provenance banner uses, so the
+ * label means the same thing in both places. */
+.params .p-rec { color: var(--gold); font-weight: 700; }
+.params .p-e {
+  font-family: var(--mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  color: var(--ink-dim);
+}
+.params .p-y { font-family: inherit; font-size: 11px; opacity: .8; margin-top: 1px; }
+.params .p-a { margin-top: 8px; display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.params .p-msg { margin-top: 6px; font-size: 11.5px; color: var(--ink-dim); }
+/* Caveats are the one thing here that must not read as decoration: they say what
+ * re-deriving surfaced that the original never showed. */
+.params .p-cav { color: #e6cd8f; }
+.params .p-cav ul { margin: 4px 0 0; padding-left: 18px; }
+.params .p-cav li { margin-bottom: 3px; }
+
 /* The epistemic ledger. Deliberately quieter than the recalled-figures block:
  * it is a standing record rather than a warning, and styling every turn's
  * ledger as an alarm would make the actual alarm invisible. */
