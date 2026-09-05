@@ -75,6 +75,7 @@ Reply with JSON only:
         "profile": [{"x": 0, "y": 0, "radius": 0, "x_from": "", "y_from": "plate_height"}],
         "holes": [[{"x": 0, "y": 0, "radius": 0}]],
         "path": [{"x": 0, "y": 0, "z": 0, "radius": 0, "z_from": "run_length"}],
+        "path_closed": false,
         "axis": "y",
         "size_from": {"width": "plate_size", "height": "plate_thickness"},
         "position": [0,0,0],
@@ -230,6 +231,15 @@ About "prototype":
   A bend is a "radius" on the path point that turns — see below. Without one the
   corner is MITRED, like a welded elbow rather than a bent tube, which is a
   different part and a different way of making it.
+  "path_closed": true makes the path a LOOP — a ring, a hoop, a frame, a gasket,
+  a roll bar. The last point joins the first, there are no ends and no caps, and
+  the seam is a corner like any other, so it may have a bend radius too. Do not
+  repeat the first point at the end; say "path_closed" instead.
+  A closed path has to bring its section back to itself, and one that leaves a
+  plane generally does not: carried round a loop the section comes back ROTATED,
+  and the two ends would meet at an angle. A loop drawn in one plane always
+  works. A three-dimensional one usually does not, and is refused with the angle
+  named — so keep a loop flat unless you have a reason not to.
 - "holes" are closed loops INSIDE the outline: the section's own voids, which
   follow it wherever it goes. Each is a list of points like the outline, in the
   same plane, and they may have corner radii too.

@@ -249,7 +249,7 @@ drill "the sweep case is gone from partTriangles" internal/domain/geometry/mesh.
   ./internal/domain/geometry 'TestTessellate_ReachesTheOutlineShapes'
 
 drill "corners are not mitred (the section stays perpendicular)" internal/domain/geometry/sweep.go \
-  's = s.replace("\t\tbisector[j] = normalise(add3(tangent[j-1], tangent[j]))", "\t\tbisector[j] = tangent[j-1]", 1)' \
+  's = s.replace("bisector[j] = normalise(add3(tangent[(j-1+segments)%segments], tangent[j%segments]))", "bisector[j] = tangent[(j-1+segments)%segments]", 1)' \
   ./internal/domain/geometry 'TestSwept_EnclosesAreaTimesPathLength'
 
 drill "the section is re-framed each segment instead of carried" internal/domain/geometry/sweep.go \
@@ -261,11 +261,11 @@ drill "the section is ROLLED as it is carried" internal/domain/geometry/sweep.go
   ./internal/domain/geometry 'TestSectionFrames_CarryTheSectionWithoutRollingIt|TestSwept_KeepsTheSectionSquareThroughABend'
 
 drill "the fold check is gone" internal/domain/geometry/sweep.go \
-  's = s.replace("if dot3(sub3(rings[l][i+1][k], rings[l][i][k]), tangent[i]) <= 1e-9 {", "if false {", 1)' \
+  's = s.replace("if dot3(sub3(rings[l][(i+1)%n][k], rings[l][i][k]), tangent[i]) <= 1e-9 {", "if false {", 1)' \
   ./internal/domain/geometry 'TestSweptSections_RefusesThePathsThatAreNotSolids|TestProfileProblems_RefusesWhatASweepCannotBe'
 
 drill "a reversal is no longer refused" internal/domain/geometry/sweep.go \
-  's = s.replace("\t\tif length3(add3(tangent[i-1], tangent[i])) < 1e-9 {", "\t\tif false {", 1)' \
+  's = s.replace("if length3(add3(tangent[(i-1+segments)%segments], tangent[i])) < 1e-9 {", "if false {", 1)' \
   ./internal/domain/geometry 'TestSweptSections_RefusesThePathsThatAreNotSolids'
 
 echo
@@ -292,6 +292,32 @@ drill "the kernel builds the outline and ignores its holes" internal/domain/cad/
 
 drill "the renderer draws the outline and ignores its holes" internal/httpapi/assets/forge3d.js \
   "s = s.replace('var bores = holeOutlines(holes);\n    var way = flattenDrawing', 'var bores = [];\n    var way = flattenDrawing', 1)" \
+  ./internal/httpapi 'TestRendererSweepsTheSameSolidAsTheExporter'
+
+echo
+echo "Closed paths"
+drill "a closed path is swept as an open one" internal/domain/geometry/curve.go \
+  's = s.replace("out := polyline{Closed: p.PathClosed}", "out := polyline{}", 1)' \
+  ./internal/domain/geometry 'TestSwept_AClosedPathEnclosesAreaTimesItsPerimeter'
+
+drill "the seam gets caps like an open path" internal/domain/geometry/mesh.go \
+  's = s.replace("\tif !p.PathClosed {\n\t\tstartNormal", "\tif true {\n\t\tstartNormal", 1)' \
+  ./internal/domain/geometry 'TestSwept_AClosedPathEnclosesAreaTimesItsPerimeter'
+
+drill "the walls stop at the last vertex instead of wrapping" internal/domain/geometry/mesh.go \
+  's = s.replace("\tsegments := last\n\tif p.PathClosed {\n\t\tsegments = vertices\n\t}", "\tsegments := last", 1)' \
+  ./internal/domain/geometry 'TestSwept_AClosedPathEnclosesAreaTimesItsPerimeter'
+
+drill "the frame is not checked for closing round the loop" internal/domain/geometry/sweep.go \
+  's = s.replace("\t\tif err := framesClose(tangent, axisX, axisY); err != nil {", "\t\tif err := error(nil); err != nil {", 1)' \
+  ./internal/domain/geometry 'TestSwept_AClosedPathMustBringItsSectionBack'
+
+drill "a closed run starts where its seam arc begins" internal/domain/geometry/curve.go \
+  's = s.replace("\tcurve := Curve{Start: exit(0), Closed: closed}", "\tcurve := Curve{Start: entry(0), Closed: closed}", 1)' \
+  ./internal/domain/cad 'TestKernel_AClosedPathSweepsARing'
+
+drill "the renderer keeps its own seam" internal/httpapi/assets/forge3d.js \
+  "s = s.replace('if (closed && seam > 1 && out.length) {', 'if (false) {', 1)" \
   ./internal/httpapi 'TestRendererSweepsTheSameSolidAsTheExporter'
 
 echo

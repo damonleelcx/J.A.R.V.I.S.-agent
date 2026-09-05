@@ -130,7 +130,7 @@ func (d *Document) resolvedProfiles() (map[string]outline, map[string]polyline, 
 	for _, p := range d.Parts {
 		shape := strings.ToLower(strings.TrimSpace(p.Shape))
 		usesOutline := outlineShapes[shape]
-		if !usesOutline && len(p.Profile) == 0 && len(p.Path) == 0 && len(p.Holes) == 0 {
+		if !usesOutline && len(p.Profile) == 0 && len(p.Path) == 0 && len(p.Holes) == 0 && !p.PathClosed {
 			continue
 		}
 		label := p.Label()
@@ -156,7 +156,7 @@ func (d *Document) resolvedProfiles() (map[string]outline, map[string]polyline, 
 				"path only when it is \"sweep\"", carries, p.Shape)
 			continue
 		}
-		if shape != "sweep" && len(p.Path) > 0 {
+		if shape != "sweep" && (len(p.Path) > 0 || p.PathClosed) {
 			// Same reasoning one line up, from the other side: a path on an
 			// extrusion is somebody who meant a sweep, and building the
 			// extrusion would quietly throw the path away.
@@ -172,6 +172,14 @@ func (d *Document) resolvedProfiles() (map[string]outline, map[string]polyline, 
 		if shape == "sweep" && len(p.Path) < minPathPoints {
 			add(label, "is a sweep with a path of %d point(s); a path needs at least %d, "+
 				"because one point is a place and not a direction", len(p.Path), minPathPoints)
+			continue
+		}
+		if shape == "sweep" && p.PathClosed && len(p.Path) < minClosedPathPoints {
+			// Two points closed is a line there and a line back, which sweeps
+			// the section through itself and encloses nothing.
+			add(label, "is a sweep round a closed path of %d points; a loop needs at least "+
+				"%d, because two points closed is a line drawn twice",
+				len(p.Path), minClosedPathPoints)
 			continue
 		}
 		if _, known := revolveAxes[strings.ToLower(strings.TrimSpace(p.Axis))]; !known && shape == "revolve" {
@@ -317,7 +325,7 @@ func (d *Document) resolvedProfiles() (map[string]outline, map[string]polyline, 
 			if bad {
 				continue
 			}
-			route := polyline{Points: way, Radii: bends}
+			route := polyline{Points: way, Radii: bends, Closed: p.PathClosed}
 			if err := route.validate("path"); err != nil {
 				add(label, "%v", err)
 				continue
@@ -338,7 +346,7 @@ func (d *Document) resolvedProfiles() (map[string]outline, map[string]polyline, 
 				add(label, "%v", perr)
 				continue
 			}
-			if _, _, err := sweptSections(append([][][2]float64{flatOuter}, flatHoles...), flatPath); err != nil {
+			if _, _, err := sweptSections(append([][][2]float64{flatOuter}, flatHoles...), flatPath, p.PathClosed); err != nil {
 				add(label, "%v", err)
 				continue
 			}

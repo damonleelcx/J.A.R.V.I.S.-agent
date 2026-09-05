@@ -558,9 +558,14 @@
           Math.abs(back[2]-p[2]) < 1e-12) return;
       out.push(p);
     }
+    var seam = 0;   /* how many points the first corner contributed */
     for (i = 0; i < n; i++) {
       var c = corners[i];
-      if (!c) { push(at(i)); continue; }
+      if (!c) {
+        push(at(i));
+        if (i === 0) seam = out.length;
+        continue;
+      }
       var steps = Math.max(1, Math.ceil(TESSELLATION.radial * c.angle / (2 * Math.PI)));
       var spoke = sub(c.from, c.centre);
       for (var k = 0; k <= steps; k++) {
@@ -570,11 +575,22 @@
         push(add(c.centre, add(add(mul(spoke, ct), mul(crs(c.axis, spoke), st)),
                                mul(c.axis, dot(c.axis, spoke) * (1 - ct)))));
       }
+      if (i === 0) seam = out.length;
     }
     if (closed && out.length > 1) {
       var a = out[0], b = out[out.length - 1];
       if (Math.abs(a[0]-b[0]) < 1e-12 && Math.abs(a[1]-b[1]) < 1e-12 &&
           Math.abs(a[2]-b[2]) < 1e-12) out.pop();
+    }
+    /* A CLOSED run starts where its first corner ENDS. Beginning part-way along
+     * the seam's arc puts the first direction on a CHORD of that arc, while the
+     * kernel's curve has the true tangent there — 4.5° apart at this fineness
+     * for a right angle, which tilts the whole solid. Rotating costs nothing: a
+     * closed run has no first point, only a place we chose to start writing it
+     * down. See internal/domain/geometry/curve.go. */
+    if (closed && seam > 1 && out.length) {
+      var k2 = (seam - 1) % out.length;
+      out = out.slice(k2).concat(out.slice(0, k2));
     }
     return out;
   }
@@ -763,7 +779,7 @@
    * segments by the smallest rotation that takes one direction to the next, so
    * it does not twist as the path bends.
    */
-  function sweepSections(loops, path) {
+  function sweepSections(loops, path, closed) {
     function sub(a, b) { return [a[0]-b[0], a[1]-b[1], a[2]-b[2]]; }
     function add(a, b) { return [a[0]+b[0], a[1]+b[1], a[2]+b[2]]; }
     function mul(a, s) { return [a[0]*s, a[1]*s, a[2]*s]; }
@@ -792,19 +808,24 @@
     }
 
     if (!loops.length || loops[0].length < 3 || path.length < 2) return null;
-    var i, j, k, segments = path.length - 1, tangent = [];
+    var n = path.length;
+    var i, j, k, segments = closed ? n : n - 1, tangent = [];
     for (i = 0; i < segments; i++) {
-      var d = sub(path[i+1], path[i]);
+      var d = sub(path[(i+1) % n], path[i]);
       if (len(d) < 1e-12) return null;   /* a zero-length segment */
       tangent.push(unit(d));
     }
-    var bisector = [tangent[0]];
-    for (j = 1; j < path.length - 1; j++) {
-      var sum = add(tangent[j-1], tangent[j]);
+    /* A CLOSED path has a bisector at every vertex, the seam included: it is a
+     * corner like any other, joining the last segment to the first. An open one
+     * has ends, where the section sits square to the path. */
+    var bisector = [];
+    for (j = 0; j < n; j++) {
+      if (!closed && j === 0) { bisector.push(tangent[0]); continue; }
+      if (!closed && j === n - 1) { bisector.push(tangent[segments-1]); continue; }
+      var sum = add(tangent[(j-1+segments) % segments], tangent[j % segments]);
       if (len(sum) < 1e-9) return null;  /* the path doubles back */
       bisector.push(unit(sum));
     }
-    bisector.push(tangent[segments-1]);
 
     /* The frame at the first segment is the smallest rotation from +Z, so a
      * path straight up local Z leaves the outline exactly as drawn and the
@@ -816,6 +837,14 @@
       axisX.push(turn(axisX[i-1]));
       axisY.push(turn(axisY[i-1]));
     }
+    /* Round a loop the carried frame must come back to ITSELF, and generally it
+     * does not: carrying a frame round a closed curve rotates it by the area its
+     * tangents enclose on the sphere. Go refuses those documents and names the
+     * angle; here there is nothing honest to draw. */
+    if (closed) {
+      var backTo = rotation(tangent[segments-1], tangent[0])(axisX[segments-1]);
+      if (Math.abs(Math.atan2(dot(backTo, axisY[0]), dot(backTo, axisX[0]))) > 1e-6) return null;
+    }
 
     /* EVERY loop is carried by the same frames — the outline and the holes in
      * it — because they are one section. A bore carried by frames of its own
@@ -823,8 +852,9 @@
     var all = [];
     for (var l = 0; l < loops.length; l++) {
       var rings = [];
-      for (j = 0; j < path.length; j++) {
-        var into = j > 0 ? j - 1 : 0, t = tangent[into], m = bisector[j];
+      for (j = 0; j < n; j++) {
+        var into = j > 0 ? j - 1 : (closed ? segments - 1 : 0);
+        var t = tangent[into], m = bisector[j];
         var denom = dot(t, m), ring = [];
         for (k = 0; k < loops[l].length; k++) {
           /* On the perpendicular section at the vertex, then slid ALONG the
@@ -842,10 +872,10 @@
     return all;
   }
 
-  function sweepGeometry(profile, path, holes) {
+  function sweepGeometry(profile, path, holes, closed) {
     var raw = outlinePoints(profile);
     var bores = holeOutlines(holes);
-    var way = flattenDrawing(path || [], false);
+    var way = flattenDrawing(path || [], !!closed);
     if (!raw || !bores || !way) {
       return {
         geo: boxGeometry(1, 1, 1),
@@ -864,7 +894,7 @@
     /* The merged ring is carried along the path as loop ZERO, so the caps come
      * from the rings like everything else rather than from a second
      * transformation that could disagree with them. */
-    var rings = sec.tris.length ? sweepSections([sec.merged].concat(sec.loops), way) : null;
+    var rings = sec.tris.length ? sweepSections([sec.merged].concat(sec.loops), way, !!closed) : null;
     if (!rings) {
       return {
         geo: boxGeometry(1, 1, 1),
@@ -890,27 +920,35 @@
       });
     }
 
-    var caps = rings[0], walls = rings.slice(1), last = caps.length - 1;
+    var caps = rings[0], walls = rings.slice(1);
+    var vertices = caps.length, last = vertices - 1;
     /* The two ends, each facing away from the material between them. Taken from
      * where one outline point MOVED between the first two rings, which is
-     * parallel to the segment however the mitre tilted the ring. */
+     * parallel to the segment however the mitre tilted the ring.
+     *
+     * A CLOSED path has no ends: the surface closes on itself at the seam, and a
+     * cap there would be a disc standing in the middle of the material. */
     function direction(from, to) {
       var v = [to[0]-from[0], to[1]-from[1], to[2]-from[2]];
       var l = Math.sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2]) || 1;
       return [v[0]/l, v[1]/l, v[2]/l];
     }
-    var startN = direction(caps[1][0], caps[0][0]);
-    var endN = direction(caps[last-1][0], caps[last][0]);
-    sec.tris.forEach(function (t) {
-      tri(caps[0][t[2]], caps[0][t[1]], caps[0][t[0]], startN);
-      tri(caps[last][t[0]], caps[last][t[1]], caps[last][t[2]], endN);
-    });
+    if (!closed) {
+      var startN = direction(caps[1][0], caps[0][0]);
+      var endN = direction(caps[last-1][0], caps[last][0]);
+      sec.tris.forEach(function (t) {
+        tri(caps[0][t[2]], caps[0][t[1]], caps[0][t[0]], startN);
+        tri(caps[last][t[0]], caps[last][t[1]], caps[last][t[2]], endN);
+      });
+    }
+    var segments = closed ? vertices : last;
     for (var l = 0; l < sec.loops.length; l++) {
       var loop = sec.loops[l], ring = walls[l];
-      for (var i = 0; i < last; i++) {
+      for (var i = 0; i < segments; i++) {
+        var onward = (i + 1) % vertices;
         for (var k = 0; k < loop.length; k++) {
           var j2 = (k + 1) % loop.length;
-          var a = ring[i][k], b = ring[i][j2], c = ring[i+1][j2], d = ring[i+1][k];
+          var a = ring[i][k], b = ring[i][j2], c = ring[onward][j2], d = ring[onward][k];
           tri(a, b, c);
           tri(a, c, d);
         }
@@ -929,7 +967,7 @@
       case 'plane':    return { geo: planeGeometry(num(s.width,1), num(s.depth,1)) };
       case 'extrusion': return extrusionGeometry(part.profile || [], num(s.depth, 1), part.holes);
       case 'revolve':   return revolveGeometry(part.profile || [], part.axis, part.holes);
-      case 'sweep':     return sweepGeometry(part.profile || [], part.path || [], part.holes);
+      case 'sweep':     return sweepGeometry(part.profile || [], part.path || [], part.holes, part.path_closed);
       case 'tube':
         /* A tube is drawn as its outer wall. The bore is not modelled, and that
          * is reported: an inner diameter that is not there is exactly the kind

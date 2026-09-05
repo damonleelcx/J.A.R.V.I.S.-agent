@@ -1482,3 +1482,91 @@ func TestKernel_AHollowSectionComposesWithRadiiAndBends(t *testing.T) {
 			got.Volume, want, wall, length)
 	}
 }
+
+// A closed path sweeps a ring, with no ends and no caps.
+//
+// # The arithmetic, and what a wrong answer would mean
+//
+// Every vertex of a closed path is a mitre joint, the seam included, so the
+// identity survives: area × the whole perimeter. A figure near zero would mean
+// the seam did not meet; one that is too large would mean caps were built at a
+// seam that has no ends to cap.
+//
+// The rounded case is the two features composing: a bend radius at every corner
+// of a closed loop, which is what a real formed ring is. Its centreline is four
+// straights of 30 plus a full circle of radius 15 — the four quarter-turns add up
+// to one — so 120 + 2π·15.
+func TestKernel_AClosedPathSweepsARing(t *testing.T) {
+	k := kernel(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	square := [][2]float64{{-5, -5}, {5, -5}, {5, 5}, {-5, 5}}
+	ring := [][3]float64{{0, 0, 0}, {60, 0, 0}, {60, 60, 0}, {0, 60, 0}}
+
+	for _, tc := range []struct {
+		name   string
+		radius float64
+		want   float64
+	}{
+		{"mitred corners", 0, 100 * 240},
+		{"a bend radius at every corner", 15, 100 * (120 + 2*math.Pi*15)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			doc := sweepDoc(square, ring)
+			doc.Parts[0].PathClosed = true
+			if tc.radius > 0 {
+				for i := range doc.Parts[0].Path {
+					doc.Parts[0].Path[i].Radius = tc.radius
+				}
+			}
+			got, err := k.BuildDocument(ctx, doc, geometry.Millimetre, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if math.Abs(got.Volume-tc.want) > 0.01 {
+				t.Errorf("volume = %.4f mm³, want %.4f", got.Volume, tc.want)
+			}
+			// A ring is hollow in the middle: it spans the whole loop and the
+			// section's half-width either side of it.
+			if math.Abs(got.Bounds[0]+5) > 1e-6 || math.Abs(got.Bounds[3]-65) > 1e-6 {
+				t.Errorf("x spans %v..%v, want -5..65", got.Bounds[0], got.Bounds[3])
+			}
+		})
+	}
+}
+
+// The viewport and the kernel agree about a closed sweep, exactly.
+//
+// The seam is the one place a closed sweep can differ from an open one, and it
+// is where two implementations would differ if either got the wrap-around wrong:
+// a missing pair of walls, or a cap built where there is no end. Neither shows
+// in a silhouette, and a missing seam wall shows in the VOLUME as a collapse
+// rather than as a small error — which is what makes this worth asserting as
+// equality rather than as a tolerance.
+func TestKernel_AClosedSweepIsTheOneTheRendererDrew(t *testing.T) {
+	k := kernel(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	doc := sweepDoc([][2]float64{{-2, -6}, {6, -6}, {6, -2}, {2, -2}, {2, 6}, {-2, 6}},
+		[][3]float64{{0, 0, 0}, {60, 0, 0}, {60, 60, 0}, {0, 60, 0}})
+	doc.Parts[0].PathClosed = true
+
+	got, err := k.BuildDocument(ctx, doc, geometry.Millimetre, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mesh := geometry.Tessellate(doc, geometry.Millimetre)
+	var drawn float64
+	for _, tr := range mesh.Triangles() {
+		drawn += (tr.A[0]*(tr.B[1]*tr.C[2]-tr.C[1]*tr.B[2]) -
+			tr.A[1]*(tr.B[0]*tr.C[2]-tr.C[0]*tr.B[2]) +
+			tr.A[2]*(tr.B[0]*tr.C[1]-tr.C[0]*tr.B[1])) / 6
+	}
+	if math.Abs(got.Volume-drawn) > 1e-6*math.Max(1, drawn) {
+		t.Errorf("the kernel built %.6f mm³ and the viewport drew %.6f — nothing here is "+
+			"curved, so these are the same polyhedron or one of them has its seam wrong",
+			got.Volume, drawn)
+	}
+}

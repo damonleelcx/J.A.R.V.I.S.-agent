@@ -219,7 +219,10 @@ func flattenSection(outer polyline, holes []polyline, unit Unit) (
 }
 
 func partPath(p Part) polyline {
-	var out polyline
+	// Closed travels with the path, because it changes what the path IS: the
+	// first and last points of a closed one are corners like any other, and may
+	// carry a bend radius, while an open path's are ends and may not.
+	out := polyline{Closed: p.PathClosed}
 	for _, pt := range p.Path {
 		out.Points = append(out.Points, [3]float64{pt.X, pt.Y, pt.Z})
 		out.Radii = append(out.Radii, pt.Radius)
@@ -373,9 +376,13 @@ func flattenCurve(pts [][3]float64, radii []float64, closed bool, what string) (
 		}
 		flat = append(flat, p)
 	}
+	seam := 0 // how many points the first corner contributed
 	for _, c := range corners {
 		if c.sharp {
 			push(pts[c.index])
+			if c.index == 0 {
+				seam = len(flat)
+			}
 			continue
 		}
 		n := arcSegments(c.angle)
@@ -387,6 +394,9 @@ func flattenCurve(pts [][3]float64, radii []float64, closed bool, what string) (
 			t := c.angle * float64(k) / float64(n)
 			push(add3(c.centre, rotateAbout(sub3(c.from, c.centre), c.axis, t)))
 		}
+		if c.index == 0 {
+			seam = len(flat)
+		}
 		if deviationOf(c.radius, c.angle, n) > deviationOf(worstRadius, worstAngle, segments) {
 			worstRadius, worstAngle, segments = c.radius, c.angle, n
 		}
@@ -394,6 +404,31 @@ func flattenCurve(pts [][3]float64, radii []float64, closed bool, what string) (
 	// A closed drawing can also meet itself at the seam, for the same reason.
 	if closed && len(flat) > 1 && same(flat[0], flat[len(flat)-1]) {
 		flat = flat[:len(flat)-1]
+	}
+
+	// A CLOSED drawing starts where its first corner ENDS, not where it begins.
+	//
+	// # Why, and what goes wrong otherwise
+	//
+	// A closed path's first point is a corner like any other, so it may be
+	// rounded — and then the flattened run begins part-way along an arc, where
+	// the direction of travel is a CHORD of that arc rather than the straight the
+	// arc is tangent to. The exact curve the kernel builds has the true tangent
+	// there. The two disagree by half a chord's turn, which for a right angle at
+	// this fineness is 4.5°, and the section frame computed from one and applied
+	// to the other tilts the whole solid.
+	//
+	// Measured 2026-09-05: a 60×60 ring with R15 corners came back from the
+	// kernel at 21358.7 mm³ against an arithmetic 21424.8, spanning −5.36..65.36
+	// where a 10-wide section can only reach −5..65.
+	//
+	// Rotating the ring to start at the END of that arc costs nothing — a closed
+	// run has no first point, only a place we chose to start writing it down —
+	// and puts both representations on the straight that follows, where they
+	// agree exactly.
+	if closed && seam > 1 && len(flat) > 0 {
+		k := (seam - 1) % len(flat)
+		flat = append(append([][3]float64{}, flat[k:]...), flat[:k]...)
 	}
 	return flat, worstRadius, worstAngle, segments, nil
 }
@@ -428,10 +463,11 @@ func exactCurve(pts [][3]float64, radii []float64, closed bool, what string) (Cu
 		return CurveEdge{To: corners[i].to, Via: &via}
 	}
 
-	curve := Curve{Start: entry(0), Closed: closed}
-	if !corners[0].sharp {
-		curve.Edges = append(curve.Edges, arc(0))
-	}
+	// A closed run starts where its first corner ENDS — see flattenCurve for
+	// why, and for the 0.3% of volume it costs to start anywhere else. An open
+	// run's first vertex is always sharp (a radius there is refused), so its
+	// entry and its exit are the same point and this reads the same either way.
+	curve := Curve{Start: exit(0), Closed: closed}
 	for i := 0; i+1 < len(pts); i++ {
 		// The straight between two corners. It VANISHES when the two arcs meet
 		// exactly, which is not a degenerate case to guard against but the whole
@@ -444,8 +480,14 @@ func exactCurve(pts [][3]float64, radii []float64, closed bool, what string) (Cu
 			curve.Edges = append(curve.Edges, arc(i+1))
 		}
 	}
-	if closed && !same(exit(len(pts)-1), curve.Start) {
-		curve.Edges = append(curve.Edges, CurveEdge{To: curve.Start})
+	if closed {
+		if !same(exit(len(pts)-1), entry(0)) {
+			curve.Edges = append(curve.Edges, CurveEdge{To: entry(0)})
+		}
+		// The seam's own arc closes the run, ending back at Start.
+		if !corners[0].sharp {
+			curve.Edges = append(curve.Edges, arc(0))
+		}
 	}
 	return curve, nil
 }

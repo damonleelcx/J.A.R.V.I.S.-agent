@@ -2683,6 +2683,7 @@ first attempt.
 - ~~**No sweeps along a path.**~~ **Done in wave 19.**
 - ~~**No arcs.**~~ **Done in wave 20**, as a corner radius.
 - ~~**One loop per outline.**~~ **Done in wave 21.**
+- ~~**No closed paths.**~~ **Done in wave 22.**
 
 ## Wave 18 — the turned part · **DONE**
 
@@ -3027,6 +3028,67 @@ drill run.
 
 `drill()` now REFUSES to touch a file it has no backup of, so the list being out
 of date is a loud stop rather than a permanent edit to the working tree.
+
+## Wave 22 — a path that comes back · **DONE**
+
+A sweep's path was open: it had a start, an end, and a cap on each. A ring, a
+hoop, a frame, a gasket, a roll bar have none of those. `"path_closed": true`
+joins the last point to the first — no ends, no caps, and the seam is a corner
+like any other, so it may carry a bend radius too.
+
+A flag rather than repeating the first point at the end, because an outline here
+is closed IMPLICITLY and repeating its first point is an error. One idea should
+not have two spellings depending on which list it is in.
+
+### The thing that nearly shipped as "free"
+
+A closed sweep carries its section round the loop with a rotation-minimising
+frame. **That frame does not generally come back to itself.** Carrying a frame
+round a closed curve rotates it by the area its tangents enclose on the sphere,
+and the section arrives at the seam turned by that angle — so the two ends meet
+at an angle and what it encloses is not a solid.
+
+The first three loops tried all came back at **0.000°**: a planar square, a
+square with one corner lifted, a zigzag ring. They were symmetric enough for the
+rotation to cancel, and it looked like a proof that closed paths were free. The
+control that settled it is the octant — +X, +Y, +Z, back to +X — which must give
+exactly 90 and does. Measured over **2000 random closed polylines: every single
+one came back rotated**, by up to 179.8°.
+
+So the closure is CHECKED, and a loop that does not close is refused with the
+angle named — "it returns rotated by 9.8°" rather than "it does not close",
+because a tenth of a degree is worth chasing and ten degrees is a different
+drawing. Planar loops always close, in any plane, and the tests say so.
+
+It could instead be FIXED, by spreading the residual twist along the path so the
+seam meets. That is what some CAD does, and it means the section is twisted the
+whole way round by an angle nobody asked for — invisible on a round tube and a
+helical rail on anything else. Refusing says what is wrong and leaves the shape
+to the person who drew it.
+
+### Where a closed run starts, and the 0.3% it costs to get wrong
+
+A closed path's first point is a corner, so it may be rounded — and then the
+flattened run begins PART-WAY ALONG an arc, where the direction of travel is a
+chord rather than the straight the arc is tangent to. The exact curve the kernel
+builds has the true tangent there. The two disagree by half a chord's turn: 4.5°
+at this fineness for a right angle.
+
+Measured 2026-09-05: a 60×60 ring with R15 corners came back from the kernel at
+**21358.7 mm³ against an arithmetic 21424.8**, spanning −5.36..65.36 where a
+10-wide section can only reach −5..65. The whole solid was tilted by the section
+frame being square to a chord.
+
+Both representations now start where the seam's arc ENDS, on the straight that
+follows, where they agree exactly. Rotating costs nothing — a closed run has no
+first point, only a place we chose to start writing it down.
+
+### And two drills that could not fail, both for the same reason
+
+Every closed-path fixture had a SQUARE first corner. So the drill that disabled
+the browser's seam rule, and the one that stopped the path being marked closed
+before flattening, both passed: with a sharp seam there is no arc to start in the
+middle of. Both fixtures now round every corner including the first.
 
 ## Carried defects
 

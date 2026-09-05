@@ -710,7 +710,7 @@ func swept(p Part, unit Unit, infer func(string, ...any)) ([]Triangle, *Deviatio
 	// transformation that could disagree with them. At the two ends the mitre is
 	// the identity, so its ring is exactly the section as drawn.
 	loops := append([][][2]float64{sec.Merged}, sec.Loops...)
-	rings, _, err := sweptSections(loops, flatPath)
+	rings, _, err := sweptSections(loops, flatPath, p.PathClosed)
 	if err != nil {
 		// Drawn anyway when there is anything to draw, and named. A part that
 		// vanishes from a render reads as a design with a piece missing; the
@@ -721,26 +721,35 @@ func swept(p Part, unit Unit, infer func(string, ...any)) ([]Triangle, *Deviatio
 		return nil, nil
 	}
 	caps, walls := rings[0], rings[1:]
-	last := len(caps) - 1
+	vertices := len(caps)
+	last := vertices - 1
 
-	out := make([]Triangle, 0, len(sec.Tris)*2+len(sec.Merged)*last*2)
-	// The two ends. The start cap faces back down the path and the end cap
-	// forward, so each faces away from the material between them.
-	startNormal := normalise(sub3(caps[0][0], caps[1][0]))
-	endNormal := normalise(sub3(caps[last][0], caps[last-1][0]))
-	for _, t := range sec.Tris {
-		out = appendNonDegenerate(out, Triangle{
-			A: caps[0][t[2]], B: caps[0][t[1]], C: caps[0][t[0]], Normal: startNormal})
-		out = appendNonDegenerate(out, Triangle{
-			A: caps[last][t[0]], B: caps[last][t[1]], C: caps[last][t[2]], Normal: endNormal})
+	out := make([]Triangle, 0, len(sec.Tris)*2+len(sec.Merged)*vertices*2)
+	// The two ends — unless there are none. A CLOSED path has no ends: the
+	// surface closes on itself at the seam, and a cap there would be a disc
+	// standing in the middle of the material.
+	if !p.PathClosed {
+		startNormal := normalise(sub3(caps[0][0], caps[1][0]))
+		endNormal := normalise(sub3(caps[last][0], caps[last-1][0]))
+		for _, t := range sec.Tris {
+			out = appendNonDegenerate(out, Triangle{
+				A: caps[0][t[2]], B: caps[0][t[1]], C: caps[0][t[0]], Normal: startNormal})
+			out = appendNonDegenerate(out, Triangle{
+				A: caps[last][t[0]], B: caps[last][t[1]], C: caps[last][t[2]], Normal: endNormal})
+		}
+	}
+	segments := last
+	if p.PathClosed {
+		segments = vertices
 	}
 	for l, loop := range sec.Loops {
 		ring := walls[l]
-		for i := 0; i < last; i++ {
+		for i := 0; i < segments; i++ {
 			for k := range loop {
 				next := (k + 1) % len(loop)
+				onward := (i + 1) % vertices
 				a, b := ring[i][k], ring[i][next]
-				c, d := ring[i+1][next], ring[i+1][k]
+				c, d := ring[onward][next], ring[onward][k]
 				out = appendNonDegenerate(out, Triangle{A: a, B: b, C: c, Normal: faceNormal(a, b, c)})
 				out = appendNonDegenerate(out, Triangle{A: a, B: c, C: d, Normal: faceNormal(a, c, d)})
 			}

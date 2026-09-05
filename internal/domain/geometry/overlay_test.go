@@ -430,3 +430,34 @@ func TestMeasureFindsTheMaterialAndNotTheRoundedOffCorner(t *testing.T) {
 			"dimension line is 7 mm past the end of the part", x, want)
 	}
 }
+
+// A closed sweep is measured round the whole loop, including the mitre at the
+// seam.
+//
+// The seam is where a closed path differs from an open one, and where an
+// implementation that stopped at the last point rather than wrapping round would
+// report a part that stops short of itself.
+func TestMeasureGoesAllTheWayRoundAClosedPath(t *testing.T) {
+	doc := Document{
+		Name: "ring", Units: "mm",
+		Parts: []Part{{ID: "s", Shape: "sweep",
+			Profile:    []Point{{X: -5, Y: -5}, {X: 5, Y: -5}, {X: 5, Y: 5}, {X: -5, Y: 5}},
+			Path:       []Point{{}, {X: 60}, {X: 60, Y: 60}, {Y: 60}},
+			PathClosed: true, Position: []float64{0, 0, 0}}},
+	}
+	got := Measure(doc, "mm")
+	if len(got) != 3 {
+		t.Fatalf("expected three extents, got %d", len(got))
+	}
+	// The loop runs 0..60 in x and y, and the section reaches 5 either side of
+	// it. z is the section's own 10.
+	want := map[int][2]float64{0: {-5, 65}, 1: {-5, 65}, 2: {-5, 5}}
+	for axis, w := range want {
+		o := got[axis]
+		if math.Abs(o.From[axis]-w[0]) > 1e-9 || math.Abs(o.To[axis]-w[1]) > 1e-9 {
+			t.Errorf("axis %d measured %v..%v, want %v..%v — a loop that was not closed "+
+				"stops short of itself at the seam",
+				axis, o.From[axis], o.To[axis], w[0], w[1])
+		}
+	}
+}

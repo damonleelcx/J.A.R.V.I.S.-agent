@@ -125,6 +125,19 @@ type Part struct {
 	// A sweep needs no "depth": the path says how far, in three dimensions,
 	// which is the whole reason it is not an extrusion.
 	Path []Point `json:"path,omitempty"`
+	// PathClosed says the path returns to where it started: a ring, a loop, a
+	// frame. The last point joins the first, and the sweep has no ends — so no
+	// caps, and the seam is a corner like any other.
+	//
+	// A flag rather than repeating the first point at the end, because an
+	// outline here is closed IMPLICITLY and repeating its first point is an
+	// error. One idea should not have two spellings depending on which list it
+	// is in.
+	//
+	// Not every closed path can be swept. See sweep.go: the section is carried
+	// round by a rotation-minimising frame, and round a loop that leaves a plane
+	// that frame generally does NOT come back to itself.
+	PathClosed bool `json:"path_closed,omitempty"`
 	// Axis is which way a "revolve" turns: "y" (the default, and up) or "x".
 	Axis     string    `json:"axis,omitempty"`
 	Rotation []float64 `json:"rotation"`

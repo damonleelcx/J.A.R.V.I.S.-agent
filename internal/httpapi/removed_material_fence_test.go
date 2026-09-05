@@ -219,18 +219,31 @@ func TestRendererSweepsTheSameSolidAsTheExporter(t *testing.T) {
 	bore := [][]geometry.Point{{{X: -5, Y: -5}, {X: 5, Y: -5}, {X: 5, Y: 5, Radius: 2},
 		{X: -5, Y: 5}}}
 
+	// And closed. The seam is the one place a closed sweep can differ from an
+	// open one, and it is where both implementations have to agree about two
+	// things at once: that there are no caps, and that a rounded seam starts
+	// where its arc ENDS rather than where it begins.
+	// Every corner rounded INCLUDING THE FIRST, which is the seam. A ring whose
+	// first point is sharp does not exercise the rule that a closed run starts
+	// where its seam arc ends — a drill on 2026-09-05 disabled that rule in the
+	// browser and this test stayed green because the fixture's seam was square.
+	ring := []geometry.Point{{Radius: 15}, {X: 60, Radius: 15},
+		{X: 60, Y: 60, Radius: 15}, {Y: 60, Radius: 15}}
+
 	for _, tc := range []struct {
 		name    string
 		profile []geometry.Point
 		holes   [][]geometry.Point
 		path    []geometry.Point
+		closed  bool
 	}{
-		{"sharp corners", profile, nil, path},
-		{"rounded corners and bend radii", roundedProfile, nil, bentPath},
-		{"a hollow section", hollow, bore, bentPath},
+		{"sharp corners", profile, nil, path, false},
+		{"rounded corners and bend radii", roundedProfile, nil, bentPath, false},
+		{"a hollow section", hollow, bore, bentPath, false},
+		{"a closed ring with a rounded seam", hollow, bore, ring, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			compareSweptFacets(t, node, dir, asset, tc.profile, tc.holes, tc.path)
+			compareSweptFacets(t, node, dir, asset, tc.profile, tc.holes, tc.path, tc.closed)
 		})
 	}
 }
@@ -238,7 +251,7 @@ func TestRendererSweepsTheSameSolidAsTheExporter(t *testing.T) {
 // compareSweptFacets runs the renderer's own builder in node and checks its
 // facets against the ones geometry.Tessellate produces for the same document.
 func compareSweptFacets(t *testing.T, node, dir, asset string, profile []geometry.Point,
-	holes [][]geometry.Point, path []geometry.Point) {
+	holes [][]geometry.Point, path []geometry.Point, closed bool) {
 	t.Helper()
 	harness := filepath.Join(dir, "run.js")
 	script := `
@@ -249,14 +262,15 @@ func compareSweptFacets(t *testing.T, node, dir, asset string, profile []geometr
       vm.createContext(sandbox);
       vm.runInContext(fs.readFileSync(process.argv[2], 'utf8'), sandbox);
       const part = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
-      const built = sandbox.window.Forge3D.geometry.sweep(part.profile, part.path, part.holes);
+      const built = sandbox.window.Forge3D.geometry.sweep(part.profile, part.path, part.holes, part.path_closed);
       if (built.approximated) { console.error(built.approximated); process.exit(2); }
       process.stdout.write(JSON.stringify({p: built.geo.positions, n: built.geo.normals}));
     `
 	if err := os.WriteFile(harness, []byte(script), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	partJSON, err := json.Marshal(map[string]any{"profile": profile, "holes": holes, "path": path})
+	partJSON, err := json.Marshal(map[string]any{"profile": profile, "holes": holes,
+		"path": path, "path_closed": closed})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -288,7 +302,8 @@ func compareSweptFacets(t *testing.T, node, dir, asset string, profile []geometr
 	}
 
 	doc := geometry.Document{Name: "rail", Units: "mm",
-		Parts: []geometry.Part{{ID: "s", Shape: "sweep", Profile: profile, Holes: holes, Path: path}}}
+		Parts: []geometry.Part{{ID: "s", Shape: "sweep", Profile: profile, Holes: holes,
+			Path: path, PathClosed: closed}}}
 	exported := geometry.Tessellate(doc, geometry.Millimetre).Triangles()
 
 	// Compared as a SET of facets, NUMERICALLY.

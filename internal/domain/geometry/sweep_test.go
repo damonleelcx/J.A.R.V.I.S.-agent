@@ -232,7 +232,7 @@ func TestSweptSections_RefusesThePathsThatAreNotSolids(t *testing.T) {
 			[][3]float64{{0, 0, 0}, {0, 0, 3}, {20, 0, 3}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, _, err := sweptSections([][][2]float64{square}, tc.path)
+			_, _, err := sweptSections([][][2]float64{square}, tc.path, false)
 			if err == nil {
 				t.Fatalf("this path was swept without complaint, and what it produces is not a solid")
 			}
@@ -253,12 +253,12 @@ func TestSweptSections_RefusesThePathsThatAreNotSolids(t *testing.T) {
 func TestSweptSections_ReturnsWhatCanStillBeDrawn(t *testing.T) {
 	square := [][2]float64{{-5, -5}, {5, -5}, {5, 5}, {-5, 5}}
 
-	rings, _, err := sweptSections([][][2]float64{square}, [][3]float64{{0, 0, 0}, {0, 0, 3}, {20, 0, 3}})
+	rings, _, err := sweptSections([][][2]float64{square}, [][3]float64{{0, 0, 0}, {0, 0, 3}, {20, 0, 3}}, false)
 	if err == nil || rings == nil {
 		t.Errorf("a fold came back as rings=%v err=%v; it has good rings that happen to "+
 			"overlap, and drawing them beats a part that disappears", rings != nil, err)
 	}
-	rings, _, err = sweptSections([][][2]float64{square}, [][3]float64{{0, 0, 0}, {0, 0, 20}, {0, 0, 5}})
+	rings, _, err = sweptSections([][][2]float64{square}, [][3]float64{{0, 0, 0}, {0, 0, 20}, {0, 0, 5}}, false)
 	if err == nil || rings != nil {
 		t.Errorf("a reversal came back as rings=%v err=%v; there is no frame at that point, "+
 			"so there is nothing honest to draw", rings != nil, err)
@@ -278,7 +278,7 @@ func TestSweptSections_FramesTheSectionSquareToThePath(t *testing.T) {
 	for _, dir := range [][3]float64{
 		{0, 0, 20}, {20, 0, 0}, {0, 20, 0}, {0, 0, -20}, {0, -20, 0}, {7, -3, 12},
 	} {
-		_, frame, err := sweptSections([][][2]float64{square}, [][3]float64{{0, 0, 0}, dir})
+		_, frame, err := sweptSections([][][2]float64{square}, [][3]float64{{0, 0, 0}, dir}, false)
 		if err != nil {
 			t.Fatalf("a straight path along %v: %v", dir, err)
 		}
@@ -331,7 +331,7 @@ func TestSweptSections_FramesTheSectionSquareToThePath(t *testing.T) {
 func TestSectionFrames_CarryTheSectionWithoutRollingIt(t *testing.T) {
 	// Up, then along x, then along y: the second bend leaves the first's plane.
 	path := [][3]float64{{0, 0, 0}, {0, 0, 30}, {40, 0, 30}, {40, 25, 30}}
-	tangent, axisX, axisY, err := sectionFrames(path)
+	tangent, axisX, axisY, err := sectionFrames(path, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -385,7 +385,7 @@ func TestSectionFrames_CarryTheSectionWithoutRollingIt(t *testing.T) {
 // that bend — must come through it untouched.
 func TestSwept_KeepsTheSectionSquareThroughABend(t *testing.T) {
 	profile := [][2]float64{{-1, -6}, {1, -6}, {1, 6}, {-1, 6}}
-	rings, _, err := sweptSections([][][2]float64{profile}, [][3]float64{{0, 0, 0}, {0, 0, 20}, {30, 0, 20}})
+	rings, _, err := sweptSections([][][2]float64{profile}, [][3]float64{{0, 0, 0}, {0, 0, 20}, {30, 0, 20}}, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -507,5 +507,125 @@ func TestBind_ResolvesAPathsExpressions(t *testing.T) {
 				"is read downstream as a zero, which moves the bend to the origin",
 				i+1, p.X, p.Y, p.Z, want)
 		}
+	}
+}
+
+// A closed path has no ends: the sweep meets itself at the seam.
+//
+// # Why the same identity still does the checking
+//
+// Every vertex of a closed path is a mitre joint, the seam included, so the
+// wedge cut from the inside of each corner is still exactly balanced by the one
+// added outside. The volume is area × the whole perimeter — and because there
+// are no caps, a surface that did not actually close at the seam would leave a
+// hole, and the divergence theorem returns something else entirely.
+func TestSwept_AClosedPathEnclosesAreaTimesItsPerimeter(t *testing.T) {
+	square := points([2]float64{-5, -5}, [2]float64{5, -5}, [2]float64{5, 5}, [2]float64{-5, 5})
+	for _, tc := range []struct {
+		name string
+		path []Point
+		want float64
+		// rounded says the path has an arc in it, so these triangles are a
+		// chord approximation rather than the solid itself and come out just
+		// under. Nothing else here is approximate: a mitred path is a polyhedron
+		// and its volume is exact.
+		rounded bool
+	}{
+		{"a square ring", way([3]float64{0, 0, 0}, [3]float64{60, 0, 0},
+			[3]float64{60, 60, 0}, [3]float64{0, 60, 0}), 100 * 240, false},
+		// Planar but not in a world plane: the rule is that the frame comes back
+		// to itself, and every planar loop does, whichever plane it is in.
+		{"a ring tilted out of the world planes", way([3]float64{0, 0, 0},
+			[3]float64{60, 0, 60}, [3]float64{60, 60, 60}, [3]float64{0, 60, 0}),
+			100 * (2*math.Sqrt(7200) + 120), false},
+		{"a triangle", way([3]float64{0, 0, 0}, [3]float64{60, 0, 0}, [3]float64{30, 50, 0}),
+			100 * (60 + 2*math.Sqrt(900+2500)), false},
+		// Every corner rounded, the SEAM INCLUDED. A closed path's first point is
+		// a corner like any other, and rounding it is where the run has to start
+		// at the END of that arc rather than at its beginning — four straights of
+		// 30 and four quarter-turns, which between them make one whole circle.
+		{"a ring rounded at every corner including the seam",
+			[]Point{{Radius: 15}, {X: 60, Radius: 15}, {X: 60, Y: 60, Radius: 15},
+				{Y: 60, Radius: 15}}, 100 * (120 + 2*math.Pi*15), true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			part := Part{ID: "s", Shape: "sweep", Profile: square,
+				Path: tc.path, PathClosed: true}
+			tris, _ := swept(part, Millimetre, func(string, ...any) {})
+			if len(tris) == 0 {
+				t.Fatal("nothing was drawn at all")
+			}
+			vol := enclosedVolume(tris)
+			low, high := tc.want-1e-6, tc.want+1e-6
+			if tc.rounded {
+				// Inscribed, so under — and the direction matters as much as the
+				// size. A ring drawn LARGER than the solid it stands for would
+				// mean the chords are outside the arcs, and somebody machining
+				// to the exported file would be cutting into material the
+				// picture said was there.
+				low, high = tc.want*0.999, tc.want+1e-6
+			}
+			if vol < low || vol > high {
+				t.Errorf("the ring encloses %.6f, want %.6f (within %.6f..%.6f). A figure "+
+					"near zero means the seam did not meet and the surface is open; caps at "+
+					"the seam would show as too much", vol, tc.want, low, high)
+			}
+		})
+	}
+}
+
+// A closed path whose section does not come back to itself is refused, and told
+// by how much.
+//
+// # Why this is the one that had to be measured rather than reasoned about
+//
+// A rotation-minimising frame carried round a closed curve returns rotated by
+// the area its tangents enclose on the sphere. The first three loops tried —
+// a planar square, a square with one corner lifted, a zigzag ring — ALL came
+// back at 0.000°, which looked like a proof that closed paths were free.
+//
+// They were symmetric enough for the rotation to cancel. Measured over 2000
+// random closed polylines on 2026-09-05: every single one came back rotated, by
+// up to 179.8°. The control that settled it is the octant — +X, +Y, +Z, back to
+// +X — which must give exactly 90 and does.
+func TestSwept_AClosedPathMustBringItsSectionBack(t *testing.T) {
+	small := points([2]float64{-2, -2}, [2]float64{2, -2}, [2]float64{2, 2}, [2]float64{-2, 2})
+	doc := Document{Name: "loop", Units: "mm",
+		Parts: []Part{{ID: "s", Name: "Loop", Shape: "sweep", Profile: small,
+			// A saddle: no two of its bends share a plane.
+			Path: way([3]float64{0, 0, 0}, [3]float64{50, 10, 30}, [3]float64{80, 60, -10},
+				[3]float64{30, 90, 25}, [3]float64{-20, 40, 5}),
+			PathClosed: true}}}
+
+	problems := doc.ProfileProblems()
+	if len(problems) == 0 {
+		t.Fatal("a loop whose section comes back rotated was accepted; the two ends of the " +
+			"sweep meet at an angle and what it encloses is not a solid")
+	}
+	detail := problems[0].Detail
+	if !strings.Contains(detail, "does not come back to itself") {
+		t.Errorf("the refusal does not say what the rule is: %q", detail)
+	}
+	// The ANGLE, because "it does not close" leaves a reader with nothing to do.
+	// A tenth of a degree would be worth chasing; ten degrees is a different
+	// drawing.
+	if !strings.Contains(detail, "9.8°") {
+		t.Errorf("the refusal does not name how far out it is: %q", detail)
+	}
+	if solids, _ := Solids(doc, Millimetre); len(solids) != 0 {
+		t.Errorf("%d solids were built from a loop that does not close", len(solids))
+	}
+}
+
+// Two points closed is a line drawn there and back.
+func TestSwept_AClosedPathNeedsThreePoints(t *testing.T) {
+	doc := Document{Name: "loop", Units: "mm",
+		Parts: []Part{{ID: "s", Name: "Loop", Shape: "sweep",
+			Profile:    points([2]float64{-2, -2}, [2]float64{2, -2}, [2]float64{2, 2}, [2]float64{-2, 2}),
+			Path:       way([3]float64{0, 0, 0}, [3]float64{40, 0, 0}),
+			PathClosed: true}}}
+	problems := doc.ProfileProblems()
+	if len(problems) == 0 || !strings.Contains(problems[0].Detail, "a line drawn twice") {
+		t.Errorf("a two-point loop was accepted or badly explained: %+v", problems)
 	}
 }

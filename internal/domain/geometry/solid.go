@@ -246,7 +246,7 @@ func Solids(d Document, unit Unit) ([]Solid, []string) {
 			case perr != nil:
 				failed = perr.Error()
 			default:
-				if _, f, err := sweptSections([][][2]float64{flat2D(flatOutline)}, flatPath); err == nil {
+				if _, f, err := sweptSections([][][2]float64{flat2D(flatOutline)}, flatPath, p.PathClosed); err == nil {
 					frame = &f
 				} else {
 					failed = err.Error()

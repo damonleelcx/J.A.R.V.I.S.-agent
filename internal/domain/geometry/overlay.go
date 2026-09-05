@@ -451,7 +451,7 @@ func localBox(p Part) (min, max [3]float64) {
 		if !ok {
 			return [3]float64{}, [3]float64{}
 		}
-		rings, _, err := sweptSections([][][2]float64{pts}, way)
+		rings, _, err := sweptSections([][][2]float64{pts}, way, p.PathClosed)
 		if rings == nil {
 			// A path that cannot be swept has no extent to measure. Nothing,
 			// rather than a guess: see profileExtent.
