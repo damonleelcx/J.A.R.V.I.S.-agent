@@ -299,9 +299,16 @@ func (d *Document) Resolve() Resolution {
 			// that reads nothing is a FIXED NUMBER in a field whose entire
 			// purpose is to hold a relationship — which is precisely what broke
 			// the spike's sweep: rib_length sat at 52 mm while plate_size moved.
-			add(Warning, name, "expression %q reads no parameter, so it is a fixed "+
-				"number wearing a relationship's clothes; it will not follow when "+
-				"anything else changes", dv.Expression)
+			// The remedy, not a prediction of breakage. "It will not follow
+			// when anything else changes" is what this used to say, and on a
+			// live run it fired twice on `motor_centre_x = 0` — a centre at the
+			// origin that is CORRECT not to follow anything. Resolve cannot
+			// tell a value that is legitimately constant from one that should
+			// have been a relationship, so it states the one thing that is true
+			// either way and says where the number belongs instead.
+			add(Warning, name, "expression %q names no parameter, so it is a fixed number "+
+				"rather than a relationship; it belongs in the parameters list, where it "+
+				"can carry a unit and say where it came from", dv.Expression)
 		}
 		declared[name] = "derived"
 		queue = append(queue, pending{name: name, expr: dv.Expression, node: node, refs: free})

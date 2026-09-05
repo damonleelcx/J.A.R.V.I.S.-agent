@@ -70,7 +70,9 @@ Reply with JSON only:
         "name": "human name",
         "shape": "box" | "cylinder" | "cone" | "sphere" | "tube" | "plane",
         "size": {"width":1,"height":1,"depth":1,"radius":0.5,"radius_top":0.5},
+        "size_from": {"width": "plate_size", "height": "plate_thickness"},
         "position": [0,0,0],
+        "position_from": {"z": "plate_size / 4"},
         "rotation": [0,0,0],
         "color": "#b8bcc4",
         "opacity": 1.0,
@@ -153,6 +155,16 @@ About "prototype":
   anything: it is a fixed number and belongs in "parameters", which is the only
   list that carries a unit and a source. A recalled standard figure put here
   instead arrives with neither, and nothing can check it.
+- "size_from" and "position_from" are what make the parameters real. Each key
+  names an expression over your parameters, and FORGE evaluates it and draws the
+  result — so a plate whose width IS plate_size should say that, rather than
+  repeat the number. Bind every dimension that follows from a parameter; a
+  thickness you simply chose and that follows nothing needs no entry.
+  "position_from" keys are "x", "y" and "z", and Y is up.
+  Fill in "size" and "position" as well, with the values as they stand now. They
+  are what gets drawn if an expression cannot be read, and FORGE tells the reader
+  when your number and your own expression disagree — so a rib bound to
+  plate_size - 2 * fillet_radius on a 60 mm plate should say 54, not 52.
   An expression may use + - * / ^, brackets, the other parameter names, the
   constant pi, and sqrt, abs, min, max, floor, ceil and round. There is no sine
   or cosine here: half the world writes them in degrees and half in radians, so
@@ -552,26 +564,6 @@ func (r *Reply) validate() error {
 		if note := geometry.StatesNotVerified(r.Prototype.States); note != "" {
 			r.Prototype.NotVerified = append(r.Prototype.NotVerified, note)
 		}
-		/* The parametric model, checked (2026-09-05 phase).
-		 *
-		 * A document can now carry parameters and the expressions that must
-		 * follow when they change, and those expressions can be wrong in ways
-		 * the geometry does not show: a name that is never declared, a cycle, a
-		 * value in millimetres subtracted from one in inches, or — the failure
-		 * the kernel spike actually found — a "derived" value that reads nothing
-		 * and is therefore a fixed number that will not follow anything.
-		 *
-		 * None of that changes a single pixel of the render, which is exactly
-		 * why it has to be said. The person is looking at a shape that appears
-		 * fine and is deciding whether it survives a change.
-		 *
-		 * Appended to NotVerified rather than logged, for the same reason as the
-		 * dropped tolerances and the unconvertible unit above: it is the one
-		 * place the reader is already looking. */
-		for _, problem := range r.Prototype.Resolve().Problems {
-			r.Prototype.NotVerified = append(r.Prototype.NotVerified,
-				parameterNote(problem))
-		}
 		// PRD VIS-06 as an invariant rather than an instruction: geometry
 		// without a statement of what it does not establish is exactly the
 		// render that gets mistaken for an analysis.
@@ -595,6 +587,26 @@ func (r *Reply) validate() error {
 			if p.Color == "" {
 				p.Color = "#b8bcc4"
 			}
+		}
+		/* The parametric model, resolved and APPLIED (waves 10 and 11).
+		 *
+		 * Bind evaluates the document's expressions and writes the results into
+		 * the numbers the renderer reads, so a part whose width follows
+		 * plate_size actually follows it. It returns everything Resolve would
+		 * have reported plus anything wrong with the bindings themselves, which
+		 * is why there is one call here and not two.
+		 *
+		 * It runs LAST in this block because it needs what the loop above
+		 * guarantees: every part has an id (Bind names parts by their label) and
+		 * a three-element position to write an axis into.
+		 *
+		 * None of what it reports changes a pixel — a document whose parameters
+		 * do not resolve renders exactly like one whose parameters do — which is
+		 * precisely why it has to be said. Appended to NotVerified for the same
+		 * reason as the dropped tolerances and the unconvertible unit above: it
+		 * is the one place the reader is already looking. */
+		for _, problem := range r.Prototype.Bind() {
+			r.Prototype.NotVerified = append(r.Prototype.NotVerified, parameterNote(problem))
 		}
 	}
 	return nil

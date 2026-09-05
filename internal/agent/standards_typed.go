@@ -204,9 +204,9 @@ func trimTo(s string, n int) string {
 // how one of them was arrived at will not hold up. Printing both the same way
 // would make the first look survivable.
 func parameterNote(p geometry.Problem) string {
-	lead := "FORGE could not resolve this design's parameters"
+	lead := "FORGE could not resolve part of this design's parametric model"
 	if p.Severity == geometry.Warning {
-		lead = "This design's parameters resolve, with a caveat"
+		lead = "This design's parametric model resolves, with a caveat"
 	}
 	if p.Name != "" {
 		return fmt.Sprintf("%s — %s %s.", lead, p.Name, p.Detail)

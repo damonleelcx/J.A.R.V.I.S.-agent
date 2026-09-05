@@ -471,3 +471,91 @@ func orEmptyInts(v []int) []int {
 	}
 	return v
 }
+
+type respecRequest struct {
+	// Parameters is name → new value. Only names the document declares as
+	// parameters are accepted; a derived value is computed and cannot be set.
+	Parameters map[string]float64 `json:"parameters"`
+}
+
+// Respec handles POST /v1/geometry/{id}/respec.
+//
+// # What it is for
+//
+// "Show me this bracket with an 80 mm plate." Every expression that depends on
+// the changed parameter is re-evaluated and every bound dimension follows, so
+// the result is a different SHAPE rather than the same shape relabelled. It is
+// the operation the 2026-09-05 kernel spike ran by hand nine times, and the one
+// that separated a design that survives a change from one that does not.
+//
+// # Why it returns a new version and not an edited one
+//
+// The result keeps the source's name, lands on the same artifact path, and
+// becomes the next version — so the two can be put side by side (PRD VIS-04) and
+// the original stays exactly what the model produced. Nothing is accepted by
+// creating it; it still has to be ruled on, the same as an adopted variant.
+//
+// # Why the caveats come back in the response
+//
+// Re-deriving can surface things the original never showed: a rib that now
+// overhangs, an expression that divides by a parameter somebody set to zero.
+// They are returned rather than logged because the person is looking at the
+// result right now and it is the only moment the answer is useful.
+func (h *GeometryHandlers) Respec(w http.ResponseWriter, r *http.Request) {
+	user, _ := UserFrom(r.Context())
+
+	var req respecRequest
+	if err := DecodeJSON(w, r, &req); err != nil {
+		WriteError(w, r, h.deps.Log, err)
+		return
+	}
+	v, err := h.svc.Find(r.Context(), r.PathValue("id"))
+	if err != nil {
+		if errs.Is(err, errs.CodeNotFound) {
+			WriteError(w, r, h.deps.Log, errs.New("httpapi.Respec", errs.CodeNotFound).
+				WithDetail("no geometry variant %s", r.PathValue("id")))
+			return
+		}
+		WriteError(w, r, h.deps.Log, err)
+		return
+	}
+	// The same shape as Adopt: a caller who may not read this project is told
+	// the variant does not exist, rather than that it exists and is not theirs.
+	if err := h.deps.requirePermission(r, v.ProjectID, user.ID, access.PermContentWrite); err != nil {
+		if errs.Is(err, errs.CodeNotFound) {
+			WriteError(w, r, h.deps.Log, errs.New("httpapi.Respec", errs.CodeNotFound).
+				WithDetail("no geometry variant %s", r.PathValue("id")))
+			return
+		}
+		WriteError(w, r, h.deps.Log, err)
+		return
+	}
+
+	next, problems, err := h.svc.Respec(r.Context(), v.VersionID, user.ID, req.Parameters)
+	if err != nil {
+		WriteError(w, r, h.deps.Log, err)
+		return
+	}
+	WriteJSON(w, http.StatusCreated, map[string]any{
+		"variant": toVariantDTO(*next),
+		"caveats": problemDTOs(problems),
+		"note": "This is a NEW version, computed from v" + strconv.Itoa(v.Version) +
+			" by changing the parameters given and re-evaluating everything that depends on them. " +
+			"No model was asked and nothing here was checked. Accept or reject it with " +
+			"POST /v1/workspace/versions/" + next.VersionID + "/disposition.",
+	})
+}
+
+// problemDTOs renders resolution caveats for a reader.
+//
+// Never nil: JSON encodes a nil slice as null and an empty one as [], and every
+// consumer would then need its own opinion about which means "nothing wrong".
+func problemDTOs(in []geometry.Problem) []map[string]any {
+	out := make([]map[string]any, 0, len(in))
+	for _, p := range in {
+		out = append(out, map[string]any{
+			"severity": string(p.Severity), "name": p.Name, "detail": p.Detail,
+		})
+	}
+	return out
+}

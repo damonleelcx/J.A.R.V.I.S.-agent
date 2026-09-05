@@ -2239,10 +2239,10 @@ was aimed at. Whether it moves the figure rate is unmeasured.
 
 ### What is NOT done, and is not pretended to be
 
-- **Parameters do not drive the geometry.** `Part.Size` is still the authored
-  number. Resolve reports what the parameters say; nothing rewrites a part from
-  them. That binding is the next wave's work and is the thing that makes a
-  document actually parametric rather than annotated.
+- ~~**Parameters do not drive the geometry.**~~ **Done in wave 11.** A part
+  dimension can now name an expression, the boundary evaluates it, and
+  `POST /v1/geometry/{id}/respec` re-derives a whole variant from a changed
+  parameter.
 - **Parametric export stays refused** (VIS-05). No kernel is wired in. The spike
   proves one CAN be; this wave did not do it.
 - **A recalled figure written as a bare constant in `derived` is still
@@ -2254,6 +2254,84 @@ was aimed at. Whether it moves the figure rate is unmeasured.
 - **No measured floor for a "the parametric model resolves" scorer.** One live
   run is not a rate. Adding a scorer with a chosen floor would break this suite's
   own rule that floors are measured.
+
+## Wave 11 — the parameters drive the shape · **DONE**
+
+**Why.** Wave 10 left the worst of the three available positions: a document that
+DESCRIBED a relationship while the geometry ignored it. A reader seeing named
+parameters beside a shape reasonably concludes that changing one would move it,
+and nothing did.
+
+**What was built.**
+
+- `Part.SizeFrom` and `Part.PositionFrom` — a dimension names an expression over
+  the document's parameters. `Bind` evaluates them into `Size` and `Position` at
+  the conversation boundary, so `mesh.go`, `compare.go`, `overlay.go` and the
+  exporter are untouched: by the time they see a Part it is plain floats, exactly
+  as before.
+- `Document.WithParameters` — the payoff. Hand it `plate_size = 80` and every
+  derived value and every bound dimension is recomputed. It is the operation the
+  2026-09-05 spike performed by hand nine times.
+- `Service.Respec` and `POST /v1/geometry/{id}/respec` — the producer, so this is
+  reachable from the product rather than only from a conversation turn. It
+  appends a version of the SAME artifact, which is what makes the before and
+  after comparable side by side (VIS-04) and leaves the original exactly as the
+  model produced it.
+
+**Three decisions worth naming.**
+
+- **The expression wins when it disagrees with the stated number**, because the
+  expression is the relationship and the number is a snapshot of it. Never
+  silently: agreement says nothing, disagreement is reported.
+- **Rotation cannot be bound.** Every parametric part in the spike drives sizes
+  and positions and not one drives an angle. A binding nobody has needed is one
+  that gets designed wrong.
+- **An override naming a derived value is refused**, not ignored. It would be
+  recomputed from its expression a moment later, producing a version identical to
+  the old one — which reads as success and is not.
+
+### The defect the live run found, which was again mine
+
+The first live respec of a seven-part bracket produced **eight warnings**, every
+one of the form *"states width = 60 but its own expression works out to 90"* —
+after `plate_size` had been set to 90 on purpose. The stated numbers are stale BY
+CONSTRUCTION once a parameter moves. The disagreement check is meaningful only on
+a document as the model produced it, so `WithParameters` no longer performs it,
+and a fence holds that shut.
+
+A second, smaller version of the same mistake: the warning for a bare constant in
+`derived` used to end *"it will not follow when anything else changes"*, and
+fired twice on `motor_centre_x = 0` — a centre at the origin that is CORRECT not
+to follow anything. It now states the remedy instead of predicting breakage.
+
+### What the model actually produced
+
+Two live runs against the shipping contract. The second bound **7 of 7 parts and
+36 dimensions**, and changing `plate_size` re-derived the geometry.
+
+And it produced, in the run before it, a clean example of the hazard the spike
+named third and nothing here checks:
+
+```
+nema17_face_size = 42.3 mm            how=standard      ← the figure is CORRECT
+motor_mount_x    = nema17_face_size / 2 - mount_hole_offset
+holes positioned at (±motor_mount_x, ±motor_mount_x)    ← a 42.3 mm square
+```
+
+NEMA 17's bolt pattern is 31 mm square. The recalled figure is right, the
+relationship built on it is wrong, and the result is four holes at the frame
+corners. **A wrong number can be checked against a published figure; a wrong
+RELATIONSHIP produces plausible numbers from correct inputs**, and no part of
+this system examines one.
+
+### What is NOT done
+
+- **No UI.** The endpoint exists and nothing in the workbench calls it. A person
+  cannot yet turn a knob; a client can.
+- **Parametric export still refused** (VIS-05). Unchanged.
+- **Nothing checks a relationship**, per the example above. Detecting it would
+  mean knowing what a design is FOR, which is a different kind of system.
+- **Rotation is unbindable**, by decision.
 
 ## Carried defects
 

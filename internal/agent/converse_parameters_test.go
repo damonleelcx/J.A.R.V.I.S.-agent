@@ -87,7 +87,7 @@ func TestValidate_AFixedNumberInADerivedFieldIsSaidOutLoud(t *testing.T) {
 	if !notedAbout(r, "with a caveat") {
 		t.Fatalf("a caveat was not raised: %v", r.Prototype.NotVerified)
 	}
-	if !notedAbout(r, "will not follow when anything else changes") {
+	if !notedAbout(r, "it belongs in the parameters list") {
 		t.Errorf("the note does not say what is actually wrong: %v", r.Prototype.NotVerified)
 	}
 }
@@ -122,5 +122,79 @@ func TestValidate_ANonParametricPrototypeIsUntouched(t *testing.T) {
 	}
 	if got := len(r.Prototype.NotVerified); got != 1 {
 		t.Fatalf("a non-parametric prototype collected notes: %v", r.Prototype.NotVerified)
+	}
+}
+
+// Wave 11: the binding is APPLIED at the boundary, not merely described.
+//
+// This is the difference the whole wave is about. Before it, a part carrying
+// size_from rendered at whatever number the model typed, and a reader looking at
+// named parameters beside a shape would reasonably conclude that changing one
+// would move it. Nothing downstream reads an expression, so if the boundary does
+// not evaluate it, nothing ever does.
+func TestValidate_ABoundDimensionIsResolvedIntoWhatTheRendererReads(t *testing.T) {
+	r := &Reply{
+		Speech: "here",
+		Prototype: &Prototype{
+			Name: "bracket", Units: "mm",
+			Parameters: []geometry.Parameter{
+				{Name: "plate_size", Value: 80, Unit: "mm", How: geometry.Chosen},
+				{Name: "fillet_radius", Value: 3, Unit: "mm", How: geometry.Chosen},
+			},
+			Derived: []geometry.Derived{
+				{Name: "rib_length", Expression: "plate_size - 2 * fillet_radius"},
+			},
+			Parts: []geometry.Part{{
+				ID: "rib", Shape: "box",
+				// The number the model typed is stale: it belongs to a 60 mm plate.
+				Size:         map[string]float64{"width": 54, "height": 12, "depth": 6},
+				SizeFrom:     map[string]string{"width": "rib_length"},
+				Position:     []float64{0, 0, 0},
+				PositionFrom: map[string]string{"z": "plate_size / 4"},
+			}},
+			NotVerified: []string{"nothing checked"},
+		},
+	}
+	if err := r.validate(); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.Prototype.Parts[0].Size["width"]; got != 74 {
+		t.Fatalf("width = %g, want 74 — the expression must reach Size, which is the only "+
+			"thing the mesh, the comparison and the exporter ever read", got)
+	}
+	if got := r.Prototype.Parts[0].Position[2]; got != 20 {
+		t.Errorf("position z = %g, want 20", got)
+	}
+	if !notedAbout(r, "with a caveat") {
+		t.Errorf("the stale 54 contradicted the expression and nothing said so: %v",
+			r.Prototype.NotVerified)
+	}
+}
+
+// A part whose binding cannot be read must still render. The number the model
+// typed is the best available answer, and a blanked dimension is a part that
+// vanished from the viewport.
+func TestValidate_ABrokenBindingStillRendersAndSaysSo(t *testing.T) {
+	r := &Reply{
+		Speech: "here",
+		Prototype: &Prototype{
+			Name: "bracket", Units: "mm",
+			Parameters: []geometry.Parameter{{Name: "plate_size", Value: 80, Unit: "mm"}},
+			Parts: []geometry.Part{{
+				ID: "rib", Shape: "box",
+				Size:     map[string]float64{"width": 54},
+				SizeFrom: map[string]string{"width": "plaet_size"},
+			}},
+			NotVerified: []string{"nothing checked"},
+		},
+	}
+	if err := r.validate(); err != nil {
+		t.Fatal(err)
+	}
+	if got := r.Prototype.Parts[0].Size["width"]; got != 54 {
+		t.Fatalf("width = %g; a failed binding must keep the authored number", got)
+	}
+	if !notedAbout(r, "could not resolve") {
+		t.Errorf("the broken binding was not reported: %v", r.Prototype.NotVerified)
 	}
 }

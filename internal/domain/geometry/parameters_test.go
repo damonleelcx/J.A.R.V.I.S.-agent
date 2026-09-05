@@ -65,7 +65,7 @@ func TestResolve_ADerivedValueThatReadsNothingIsAFixedNumber(t *testing.T) {
 	if v := res.Values["rib_length_fixed"]; v.Number != 52 {
 		t.Fatalf("rib_length_fixed = %g, want 52", v.Number)
 	}
-	if !hasProblem(res, geometry.Warning, "rib_length_fixed", "reads no parameter") {
+	if !hasProblem(res, geometry.Warning, "rib_length_fixed", "names no parameter") {
 		t.Errorf("a derived value reading no parameter was not called out: %+v", res.Problems)
 	}
 }

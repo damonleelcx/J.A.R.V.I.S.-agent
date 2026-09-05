@@ -222,6 +222,7 @@ func NewRouter(d Deps) http.Handler {
 	// signs nothing off. The sign-off is the separate act on the version this
 	// creates, through the disposition endpoint above.
 	mux.Handle("POST /v1/geometry/{id}/adopt", authed(geo.Adopt))
+	mux.Handle("POST /v1/geometry/{id}/respec", authed(geo.Respec))
 	mux.Handle("GET /v1/geometry/{id}/export", authed(geo.Export))
 	mux.Handle("GET /v1/geometry/{id}/export/label", authed(geo.ExportLabel))
 

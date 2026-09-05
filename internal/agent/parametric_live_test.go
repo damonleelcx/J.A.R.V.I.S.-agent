@@ -3,8 +3,11 @@ package agent_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
 	"os"
+	"sort"
+	"strings"
 	"testing"
 	"time"
 
@@ -75,9 +78,11 @@ func TestLiveParametricContract(t *testing.T) {
 	dump, _ := json.MarshalIndent(struct {
 		Parameters  any `json:"parameters"`
 		Derived     any `json:"derived"`
+		Parts       any `json:"parts"`
 		Recalled    any `json:"recalled"`
 		NotVerified any `json:"not_verified"`
-	}{reply.Prototype.Parameters, reply.Prototype.Derived, reply.Recalled, reply.Prototype.NotVerified}, "", "  ")
+	}{reply.Prototype.Parameters, reply.Prototype.Derived, reply.Prototype.Parts,
+		reply.Recalled, reply.Prototype.NotVerified}, "", "  ")
 	t.Logf("live parametric reply from %s:\n%s", reply.Model, dump)
 
 	if len(reply.Prototype.Parameters) == 0 {
@@ -133,6 +138,64 @@ func TestLiveParametricContract(t *testing.T) {
 		t.Error("not one derived expression references a parameter. Named values alone are " +
 			"the half that does NOT survive a change: the 2026-09-05 sweep broke on exactly this")
 	}
+
+	// --- wave 11: are the parameters BOUND to the geometry? ---
+	//
+	// This is the producer check for the binding layer. size_from and
+	// position_from are the only things that make a parameter move a shape;
+	// without them the document describes a relationship the geometry does not
+	// obey, which is the state wave 11 exists to end.
+	var boundParts, boundDims int
+	for _, part := range reply.Prototype.Parts {
+		n := len(part.SizeFrom) + len(part.PositionFrom)
+		if n > 0 {
+			boundParts++
+			boundDims += n
+		}
+	}
+	t.Logf("bindings: %d of %d parts bind %d dimensions in total",
+		boundParts, len(reply.Prototype.Parts), boundDims)
+	if boundDims == 0 {
+		t.Error("not one dimension is bound to a parameter, so nothing the model emitted would " +
+			"move if a parameter changed — the binding layer has no producer in the shipping prompt")
+	}
+
+	// And the payoff, exercised on what the model actually produced: change a
+	// parameter and see whether the geometry follows. Any parameter will do —
+	// what is being tested is that SOMETHING moves.
+	if len(reply.Prototype.Parameters) > 0 && boundDims > 0 {
+		knob := reply.Prototype.Parameters[0].Name
+		before := sizeSnapshot(reply.Prototype)
+		next, problems := reply.Prototype.WithParameters(
+			map[string]float64{knob: reply.Prototype.Parameters[0].Value * 1.5})
+		for _, p := range problems {
+			t.Logf("respec %s on %q: %s", p.Severity, p.Name, p.Detail)
+		}
+		if next != nil && sizeSnapshot(next) == before {
+			t.Logf("changing %q by 50%% moved no dimension; it may simply drive nothing", knob)
+		} else {
+			t.Logf("changing %q by 50%% re-derived the geometry", knob)
+		}
+	}
+}
+
+// sizeSnapshot renders every part's sizes and positions, so a change anywhere is
+// one string comparison.
+func sizeSnapshot(d *agent.Prototype) string {
+	var b strings.Builder
+	for _, p := range d.Parts {
+		keys := make([]string, 0, len(p.Size))
+		for k := range p.Size {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		fmt.Fprintf(&b, "%s|", p.ID)
+		for _, k := range keys {
+			fmt.Fprintf(&b, "%s=%g,", k, p.Size[k])
+		}
+		fmt.Fprintf(&b, "pos=%v;", p.Position)
+	}
+	return b.String()
 }
 
 func envOrDefault(key, fallback string) string {
