@@ -5,8 +5,10 @@ import (
 	"strings"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/access"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/pack"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/errs"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/logx"
+	"time"
 )
 
 // Who is in a project, over HTTP (PRD SEC-02, AGT-03).
@@ -241,6 +243,80 @@ func (h *MemberHandlers) Remove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	h.List(w, r)
+}
+
+// Mine handles GET /v1/projects — the projects the caller is a member of.
+//
+// # Why this needs no permission check
+//
+// Every other project endpoint asks "may this person do X here" and has to be
+// told which project. This one asks "which projects am I in", and the answer is
+// scoped by construction: access.Service.Projects reads the caller's own
+// membership rows and can return nothing else. A requirePermission call would
+// need a project id it does not have, and adding one would be theatre.
+//
+// # Why the order is fixed here
+//
+// Projects returns a map, and a map ranges in a different order every call. A
+// list that reshuffled itself between two refreshes would make somebody think
+// something had changed. Sorted by name, then id, so the order is stable and the
+// tie-break is deterministic when two projects share a name.
+func (h *MemberHandlers) Mine(w http.ResponseWriter, r *http.Request) {
+	const op = "httpapi.MyProjects"
+
+	user, _ := UserFrom(r.Context())
+	if h.deps.Access == nil {
+		WriteError(w, r, h.deps.Log, errs.New(op, errs.CodeForbidden).
+			WithDetail("no access control is configured in this deployment, so no membership "+
+				"can be read"))
+		return
+	}
+	roles, err := h.deps.Access.Projects(r.Context(), user.ID)
+	if err != nil {
+		WriteError(w, r, h.deps.Log, err)
+		return
+	}
+	out := make([]map[string]any, 0, len(roles))
+	if len(roles) > 0 {
+		ids := make([]string, 0, len(roles))
+		for id := range roles {
+			ids = append(ids, id)
+		}
+		rows, err := h.deps.Pool.Query(r.Context(),
+			`select id, name, pack, updated_at from forge_projects
+			  where id = any($1) order by name, id`, ids)
+		if err != nil {
+			WriteError(w, r, h.deps.Log, errs.Wrap(op, errs.CodeDatabaseUnavail, err))
+			return
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var id, name, packName string
+			var updated time.Time
+			if err := rows.Scan(&id, &name, &packName, &updated); err != nil {
+				continue
+			}
+			entry := map[string]any{
+				"id": id, "name": name, "role": string(roles[id]),
+				"pack": packName, "updated_at": updated,
+			}
+			// The industry as a person picked it, and the ceiling in force. A list
+			// of names tells somebody where their work is; the domain tells them
+			// what each one is FOR, which is the question a switcher is asked.
+			if def, known := pack.Lookup(packName); known {
+				entry["industry"] = def.Industry
+				entry["ceiling"] = string(def.MaxTier)
+			} else {
+				// Said rather than omitted: a project whose domain this build does
+				// not recognise selects no rules, and a blank would read as one
+				// that simply had not been given a domain.
+				entry["industry"] = ""
+				entry["unrecognised_pack"] = true
+			}
+			out = append(out, entry)
+		}
+	}
+	WriteJSON(w, http.StatusOK, map[string]any{"projects": out, "count": len(out)})
 }
 
 // roleCatalogue publishes the four roles and what each may do.

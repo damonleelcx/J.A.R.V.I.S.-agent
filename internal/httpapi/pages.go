@@ -914,6 +914,11 @@ const pageTemplates = `
 
 <div id="main" class="layout">
   <div>
+    <!-- Where your work is. Membership is the single authorisation path in this
+         build, so "which projects am I in, and as what" was previously a
+         question only a terminal could answer — and it is the first question
+         somebody opening this page has. -->
+    <div class="card"><h2>Your projects</h2><div id="projects"><div class="spin">Loading…</div></div></div>
     <div class="card"><h2>Waiting for you</h2><div id="approvals"><div class="spin">Loading…</div></div></div>
     <div class="card"><h2>Goals</h2><div id="goals"><div class="spin">Loading…</div></div></div>
   </div>

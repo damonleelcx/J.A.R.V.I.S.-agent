@@ -572,6 +572,12 @@ and owner-only, where sign-up is neither. The authority check runs *before* the
 address is resolved, so the endpoint cannot be used as an account-existence
 oracle by anyone with a lesser role.
 
+`GET /v1/projects` lists the ones you are in, with your role and each one's
+domain — scoped by construction rather than by a permission check, since it reads
+the caller's own membership rows and can return nothing else. The console shows
+them, because "which projects am I in, and as what" is the first question
+somebody opening that page has.
+
 ### A ceiling can rise, and it says out loud that nothing was verified
 
 The r1 limit above was correct and it was a dead end: a deployment that genuinely

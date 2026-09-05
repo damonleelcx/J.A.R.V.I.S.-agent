@@ -255,3 +255,134 @@ func TestMembersHTTP_TheRoleCatalogueComesFromTheServer(t *testing.T) {
 		}
 	}
 }
+
+// The projects a person is in, and nothing else.
+//
+// # The fence that matters
+//
+// This endpoint takes no project id, so there is no permission check to get
+// wrong — it is scoped by construction. Which makes the scoping itself the
+// thing worth holding: if it ever stopped reading the CALLER's rows and started
+// listing what exists, every project in the deployment would be disclosed to
+// every account, and no authorisation test would fail because none is involved.
+func TestMyProjects_ListsOnlyWhatTheCallerIsIn(t *testing.T) {
+	h := workspaceHarness(t)
+	ctx := context.Background()
+
+	mine, err := h.svc.EnsureProject(ctx, h.pool, "", h.owner.ID, "Bridge study", "Civil engineering")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A project the OTHER user owns and the caller is not in.
+	theirs, err := h.svc.EnsureProject(ctx, h.pool, "", h.other.ID, "Not yours", "Architecture")
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	seen := myProjects(t, h, h.owner)
+	if !seen[mine] {
+		t.Errorf("a project the caller owns is missing from their own list: %v", seen)
+	}
+	if seen[theirs] {
+		t.Fatal("a project the caller is NOT a member of appeared in their list.\n" +
+			"This endpoint has no permission check because it is scoped by construction; " +
+			"if the scoping goes, nothing else is standing there")
+	}
+	// h.project comes from the harness and the owner is a member of it.
+	if !seen[h.project] {
+		t.Errorf("the harness project is missing: %v", seen)
+	}
+}
+
+// Each row says what the project is FOR, not only what it is called.
+//
+// A switcher is asked "which of these is the one I want", and four names answer
+// that badly. The domain and the ceiling are what distinguish them.
+func TestMyProjects_EachRowCarriesItsDomain(t *testing.T) {
+	h := workspaceHarness(t)
+	ctx := context.Background()
+
+	id, err := h.svc.EnsureProject(ctx, h.pool, "", h.owner.ID, "Bridge study", "Civil engineering")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, row := range myProjectRows(t, h, h.owner) {
+		if row["id"] != id {
+			continue
+		}
+		if row["industry"] != "Civil engineering" {
+			t.Errorf("industry = %v", row["industry"])
+		}
+		if row["ceiling"] != "r1" {
+			t.Errorf("ceiling = %v", row["ceiling"])
+		}
+		if row["role"] != "owner" {
+			t.Errorf("role = %v; a person needs to know what they may do in each", row["role"])
+		}
+		if s, _ := row["name"].(string); s == "" {
+			t.Error("the row has no name, so the list is a column of ids")
+		}
+		return
+	}
+	t.Fatalf("the project was not in the list at all")
+}
+
+// The order is stable between calls.
+//
+// Projects returns a MAP, and a map ranges differently every time. A list that
+// reshuffled itself between two refreshes would make somebody believe something
+// had changed when nothing had.
+func TestMyProjects_TheOrderDoesNotMoveOnItsOwn(t *testing.T) {
+	h := workspaceHarness(t)
+	ctx := context.Background()
+
+	for _, name := range []string{"Cee", "Aay", "Bee", "Dee"} {
+		if _, err := h.svc.EnsureProject(ctx, h.pool, "", h.owner.ID, name, "Other"); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var first []string
+	for i := 0; i < 4; i++ {
+		var order []string
+		for _, row := range myProjectRows(t, h, h.owner) {
+			order = append(order, row["id"].(string))
+		}
+		if i == 0 {
+			first = order
+			continue
+		}
+		if strings.Join(order, ",") != strings.Join(first, ",") {
+			t.Fatalf("the order changed between calls:\n%v\n%v", first, order)
+		}
+	}
+	if len(first) < 4 {
+		t.Fatalf("expected at least four projects, got %d", len(first))
+	}
+}
+
+func myProjectRows(t *testing.T, h *wsHarness, as *identity.User) []map[string]any {
+	t.Helper()
+	r := httptest.NewRequest("GET", "/v1/projects", nil)
+	r = r.WithContext(context.WithValue(context.Background(), ctxKeyUser, as))
+	rec := httptest.NewRecorder()
+	NewMemberHandlers(h.h.deps).Mine(rec, r)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /v1/projects returned %d: %s", rec.Code, rec.Body.String())
+	}
+	var body struct {
+		Projects []map[string]any `json:"projects"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatal(err)
+	}
+	return body.Projects
+}
+
+func myProjects(t *testing.T, h *wsHarness, as *identity.User) map[string]bool {
+	t.Helper()
+	seen := map[string]bool{}
+	for _, row := range myProjectRows(t, h, as) {
+		seen[row["id"].(string)] = true
+	}
+	return seen
+}

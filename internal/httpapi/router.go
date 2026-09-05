@@ -170,6 +170,9 @@ func NewRouter(d Deps) http.Handler {
 	// and refuse to strand a project by removing its last owner, and a second
 	// copy of either rule is a second answer to the same question.
 	members := NewMemberHandlers(d)
+	// Scoped by construction rather than by a permission check: it reads the
+	// caller's own membership rows and can return nothing else.
+	mux.Handle("GET /v1/projects", authed(members.Mine))
 	mux.Handle("GET /v1/projects/{id}/members", authed(members.List))
 	mux.Handle("POST /v1/projects/{id}/members", authed(members.Add))
 	mux.Handle("PUT /v1/projects/{id}/members/{user_id}", authed(members.SetRole))
