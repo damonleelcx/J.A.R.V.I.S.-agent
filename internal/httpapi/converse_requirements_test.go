@@ -88,7 +88,14 @@ func TestRequirementTextIsReadFromTheGraphNotTheRequest(t *testing.T) {
 	}
 
 	h := &ConverseHandlers{deps: w.h.deps, workspace: w.svc}
-	r := httptest.NewRequest("POST", "/v1/converse", nil).WithContext(ctx)
+	// With the owner in the context, because requirementsFor now checks that the
+	// caller may read the project before it reads it — and the production route
+	// is authed(), so a request without a user is a shape this call never has.
+	// Passing one here is making the test represent the real call, not relaxing
+	// the check: TestRequirementsAreNotReadableAcrossAProjectBoundary asserts
+	// what happens when the user is somebody who may NOT read it.
+	r := httptest.NewRequest("POST", "/v1/converse", nil).
+		WithContext(context.WithValue(ctx, ctxKeyUser, w.owner))
 
 	message, used := h.requirementsFor(r, w.project, []string{req.ID}, "Model the bracket to meet that.")
 

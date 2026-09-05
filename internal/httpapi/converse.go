@@ -154,7 +154,15 @@ func (h *ConverseHandlers) requirementsFor(r *http.Request, projectID string,
 	//
 	// Read rather than write: this injects text, it does not change the project.
 	// A viewer may legitimately build a turn from a requirement they can see.
-	user, _ := UserFrom(r.Context())
+	// UserFrom returns NIL when the context carries no user, and this function is
+	// reachable without one — directly in tests today, and from anywhere a future
+	// route forgets the authed() wrapper. An absent user is treated as an absent
+	// permission, which is the only safe reading of it; dereferencing here would
+	// turn a missing gate into a crash and hide which of the two it was.
+	user, ok := UserFrom(r.Context())
+	if !ok || user == nil {
+		return message, nil
+	}
 	if err := h.deps.requirePermission(r, projectID, user.ID, access.PermProjectRead); err != nil {
 		h.deps.Log.WarnWith(r.Context(), logx.EventWorkspaceUnreadable, err,
 			"project_id", projectID, "user_id", user.ID,
