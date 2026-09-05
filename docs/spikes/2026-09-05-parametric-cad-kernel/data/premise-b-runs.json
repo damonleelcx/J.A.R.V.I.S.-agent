@@ -1,0 +1,532 @@
+[
+  {
+    "run": 1,
+    "seconds": 21.4,
+    "n_parameters": 8,
+    "n_derived": 6,
+    "n_features": 7,
+    "all_have_units": true,
+    "standards_are_sourced": true,
+    "nema_31mm_present": false,
+    "derived_names": [
+      "mount_hole_x_offset",
+      "mount_hole_y_offset",
+      "rib_length",
+      "rib_position_x",
+      "rib_position_y1",
+      "rib_position_y2"
+    ],
+    "raw": {
+      "parameters": [
+        {
+          "name": "plate_width",
+          "value": 60.0,
+          "unit": "mm",
+          "how": "chosen",
+          "source": ""
+        },
+        {
+          "name": "plate_height",
+          "value": 70.0,
+          "unit": "mm",
+          "how": "chosen",
+          "source": ""
+        },
+        {
+          "name": "plate_thickness",
+          "value": 6.0,
+          "unit": "mm",
+          "how": "standard",
+          "source": "common CNC aluminum bracket thickness"
+        },
+        {
+          "name": "motor_mount_hole_diameter",
+          "value": 3.2,
+          "unit": "mm",
+          "how": "standard",
+          "source": "M3 screw clearance hole (ISO 273)"
+        },
+        {
+          "name": "motor_mount_hole_spacing",
+          "value": 42.3,
+          "unit": "mm",
+          "how": "standard",
+          "source": "NEMA 17 standard mounting pattern (42.3 mm diagonal, square pitch = 30 mm)"
+        },
+        {
+          "name": "edge_margin",
+          "value": 5.0,
+          "unit": "mm",
+          "how": "chosen",
+          "source": ""
+        },
+        {
+          "name": "rib_thickness",
+          "value": 4.0,
+          "unit": "mm",
+          "how": "chosen",
+          "source": ""
+        },
+        {
+          "name": "rib_height",
+          "value": 12.0,
+          "unit": "mm",
+          "how": "chosen",
+          "source": ""
+        }
+      ],
+      "derived": [
+        {
+          "name": "mount_hole_x_offset",
+          "expression": "(motor_mount_hole_spacing / sqrt(2)) / 2",
+          "why": "centers NEMA 17 square pattern on plate assuming diagonal alignment and symmetric placement"
+        },
+        {
+          "name": "mount_hole_y_offset",
+          "expression": "mount_hole_x_offset",
+          "why": "maintains square symmetry of motor mount holes"
+        },
+        {
+          "name": "rib_length",
+          "expression": "plate_height - 2 * edge_margin",
+          "why": "ensures ribs span full active height without overhanging the plate when plate_height changes"
+        },
+        {
+          "name": "rib_position_x",
+          "expression": "plate_width / 2",
+          "why": "centers ribs along width axis regardless of plate_width changes"
+        },
+        {
+          "name": "rib_position_y1",
+          "expression": "edge_margin + rib_height / 2",
+          "why": "places first rib near bottom edge while maintaining consistent offset from edge"
+        },
+        {
+          "name": "rib_position_y2",
+          "expression": "plate_height - edge_margin - rib_height / 2",
+          "why": "places second rib near top edge while maintaining consistent offset from edge"
+        }
+      ],
+      "features": [
+        {
+          "id": "base-plate",
+          "op": "extrude",
+          "of": "rectangle(plate_width, plate_height)",
+          "uses": [
+            "plate_width",
+            "plate_height",
+            "plate_thickness"
+          ]
+        },
+        {
+          "id": "motor-mount-hole-1",
+          "op": "hole",
+          "of": "base-plate",
+          "uses": [
+            "motor_mount_hole_diameter",
+            "mount_hole_x_offset",
+            "mount_hole_y_offset",
+            "plate_thickness"
+          ]
+        },
+        {
+          "id": "motor-mount-hole-2",
+          "op": "hole",
+          "of": "base-plate",
+          "uses": [
+            "motor_mount_hole_diameter",
+            "mount_hole_x_offset",
+            "mount_hole_y_offset",
+            "plate_thickness"
+          ]
+        },
+        {
+          "id": "motor-mount-hole-3",
+          "op": "hole",
+          "of": "base-plate",
+          "uses": [
+            "motor_mount_hole_diameter",
+            "mount_hole_x_offset",
+            "mount_hole_y_offset",
+            "plate_thickness"
+          ]
+        },
+        {
+          "id": "motor-mount-hole-4",
+          "op": "hole",
+          "of": "base-plate",
+          "uses": [
+            "motor_mount_hole_diameter",
+            "mount_hole_x_offset",
+            "mount_hole_y_offset",
+            "plate_thickness"
+          ]
+        },
+        {
+          "id": "rib-1",
+          "op": "extrude",
+          "of": "rectangle(rib_thickness, rib_length)",
+          "uses": [
+            "rib_thickness",
+            "rib_length",
+            "rib_position_x",
+            "rib_position_y1",
+            "plate_thickness"
+          ]
+        },
+        {
+          "id": "rib-2",
+          "op": "extrude",
+          "of": "rectangle(rib_thickness, rib_length)",
+          "uses": [
+            "rib_thickness",
+            "rib_length",
+            "rib_position_x",
+            "rib_position_y2",
+            "plate_thickness"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "run": 2,
+    "seconds": 16.1,
+    "n_parameters": 8,
+    "n_derived": 4,
+    "n_features": 5,
+    "all_have_units": true,
+    "standards_are_sourced": true,
+    "nema_31mm_present": false,
+    "derived_names": [
+      "mount_hole_x_offset",
+      "mount_hole_y_offset",
+      "rib_length_x",
+      "rib_length_y"
+    ],
+    "raw": {
+      "parameters": [
+        {
+          "name": "plate_width",
+          "value": 80.0,
+          "unit": "mm",
+          "how": "chosen",
+          "source": ""
+        },
+        {
+          "name": "plate_height",
+          "value": 60.0,
+          "unit": "mm",
+          "how": "chosen",
+          "source": ""
+        },
+        {
+          "name": "plate_thickness",
+          "value": 6.0,
+          "unit": "mm",
+          "how": "standard",
+          "source": "common CNC aluminum bracket thickness"
+        },
+        {
+          "name": "motor_mount_hole_diameter",
+          "value": 3.2,
+          "unit": "mm",
+          "how": "standard",
+          "source": "M3 screw clearance hole (ISO 273)"
+        },
+        {
+          "name": "motor_mount_hole_spacing",
+          "value": 42.3,
+          "unit": "mm",
+          "how": "standard",
+          "source": "NEMA 17 standard mounting pattern (42.3 mm diagonal center-to-center)"
+        },
+        {
+          "name": "edge_margin",
+          "value": 5.0,
+          "unit": "mm",
+          "how": "chosen",
+          "source": ""
+        },
+        {
+          "name": "rib_thickness",
+          "value": 4.0,
+          "unit": "mm",
+          "how": "chosen",
+          "source": ""
+        },
+        {
+          "name": "rib_height",
+          "value": 12.0,
+          "unit": "mm",
+          "how": "chosen",
+          "source": ""
+        }
+      ],
+      "derived": [
+        {
+          "name": "mount_hole_x_offset",
+          "expression": "(motor_mount_hole_spacing / sqrt(2)) / 2",
+          "why": "places holes at corners of a square rotated 45\u00b0, centered on plate"
+        },
+        {
+          "name": "mount_hole_y_offset",
+          "expression": "mount_hole_x_offset",
+          "why": "symmetric NEMA 17 square pattern"
+        },
+        {
+          "name": "rib_length_x",
+          "expression": "plate_width - 2 * edge_margin",
+          "why": "rib spans full usable width between margins"
+        },
+        {
+          "name": "rib_length_y",
+          "expression": "plate_height - 2 * edge_margin",
+          "why": "rib spans full usable height between margins"
+        }
+      ],
+      "features": [
+        {
+          "id": "base-plate",
+          "op": "extrude",
+          "of": "rectangle(plate_width, plate_height)",
+          "uses": [
+            "plate_width",
+            "plate_height",
+            "plate_thickness"
+          ]
+        },
+        {
+          "id": "motor-mount-holes",
+          "op": "hole",
+          "of": "four circles at \u00b1mount_hole_x_offset, \u00b1mount_hole_y_offset",
+          "uses": [
+            "motor_mount_hole_diameter",
+            "mount_hole_x_offset",
+            "mount_hole_y_offset"
+          ]
+        },
+        {
+          "id": "rib-x",
+          "op": "extrude",
+          "of": "rectangle(rib_length_x, rib_thickness)",
+          "uses": [
+            "rib_length_x",
+            "rib_thickness",
+            "rib_height"
+          ]
+        },
+        {
+          "id": "rib-y",
+          "op": "extrude",
+          "of": "rectangle(rib_thickness, rib_length_y)",
+          "uses": [
+            "rib_length_y",
+            "rib_thickness",
+            "rib_height"
+          ]
+        },
+        {
+          "id": "edge-fillets",
+          "op": "fillet",
+          "of": "all four outer corners of base plate",
+          "uses": [
+            "edge_margin"
+          ]
+        }
+      ]
+    }
+  },
+  {
+    "run": 3,
+    "seconds": 21.6,
+    "n_parameters": 8,
+    "n_derived": 5,
+    "n_features": 7,
+    "all_have_units": true,
+    "standards_are_sourced": true,
+    "nema_31mm_present": false,
+    "derived_names": [
+      "mount_hole_x_offset",
+      "mount_hole_y_offset",
+      "rib_length",
+      "rib_position_x",
+      "rib_position_y"
+    ],
+    "raw": {
+      "parameters": [
+        {
+          "name": "plate_width",
+          "value": 60.0,
+          "unit": "mm",
+          "how": "chosen",
+          "source": ""
+        },
+        {
+          "name": "plate_height",
+          "value": 70.0,
+          "unit": "mm",
+          "how": "chosen",
+          "source": ""
+        },
+        {
+          "name": "plate_thickness",
+          "value": 6.0,
+          "unit": "mm",
+          "how": "standard",
+          "source": "common motor mount plate thickness for NEMA 17"
+        },
+        {
+          "name": "motor_mount_hole_diameter",
+          "value": 3.2,
+          "unit": "mm",
+          "how": "standard",
+          "source": "NEMA 17 standard mounting hole size (M3 clearance)"
+        },
+        {
+          "name": "motor_mount_hole_spacing",
+          "value": 47.1,
+          "unit": "mm",
+          "how": "standard",
+          "source": "NEMA 17 standard mounting pattern diagonal (47.1 mm between opposite holes)"
+        },
+        {
+          "name": "edge_margin",
+          "value": 5.0,
+          "unit": "mm",
+          "how": "chosen",
+          "source": ""
+        },
+        {
+          "name": "rib_thickness",
+          "value": 4.0,
+          "unit": "mm",
+          "how": "chosen",
+          "source": ""
+        },
+        {
+          "name": "rib_height",
+          "value": 12.0,
+          "unit": "mm",
+          "how": "chosen",
+          "source": ""
+        }
+      ],
+      "derived": [
+        {
+          "name": "mount_hole_x_offset",
+          "expression": "(motor_mount_hole_spacing / sqrt(2)) / 2",
+          "why": "centers the NEMA 17 square mounting pattern on the plate by computing half-diagonal offset from center"
+        },
+        {
+          "name": "mount_hole_y_offset",
+          "expression": "mount_hole_x_offset",
+          "why": "NEMA 17 mounting pattern is square, so x and y offsets are equal"
+        },
+        {
+          "name": "rib_length",
+          "expression": "plate_height - 2 * edge_margin",
+          "why": "ensures ribs span full usable height of plate without overhanging"
+        },
+        {
+          "name": "rib_position_x",
+          "expression": "plate_width / 2",
+          "why": "places ribs symmetrically along central vertical axis of plate"
+        },
+        {
+          "name": "rib_position_y",
+          "expression": "plate_height / 2",
+          "why": "centers rib origin vertically to allow symmetric placement of two ribs"
+        }
+      ],
+      "features": [
+        {
+          "id": "plate-base",
+          "op": "extrude",
+          "of": "rectangle with width=plate_width and height=plate_height",
+          "uses": [
+            "plate_width",
+            "plate_height",
+            "plate_thickness"
+          ]
+        },
+        {
+          "id": "motor-hole-tl",
+          "op": "hole",
+          "of": "top-left motor mount hole",
+          "uses": [
+            "motor_mount_hole_diameter",
+            "mount_hole_x_offset",
+            "mount_hole_y_offset",
+            "plate_width",
+            "plate_height",
+            "edge_margin"
+          ]
+        },
+        {
+          "id": "motor-hole-tr",
+          "op": "hole",
+          "of": "top-right motor mount hole",
+          "uses": [
+            "motor_mount_hole_diameter",
+            "mount_hole_x_offset",
+            "mount_hole_y_offset",
+            "plate_width",
+            "plate_height",
+            "edge_margin"
+          ]
+        },
+        {
+          "id": "motor-hole-bl",
+          "op": "hole",
+          "of": "bottom-left motor mount hole",
+          "uses": [
+            "motor_mount_hole_diameter",
+            "mount_hole_x_offset",
+            "mount_hole_y_offset",
+            "plate_width",
+            "plate_height",
+            "edge_margin"
+          ]
+        },
+        {
+          "id": "motor-hole-br",
+          "op": "hole",
+          "of": "bottom-right motor mount hole",
+          "uses": [
+            "motor_mount_hole_diameter",
+            "mount_hole_x_offset",
+            "mount_hole_y_offset",
+            "plate_width",
+            "plate_height",
+            "edge_margin"
+          ]
+        },
+        {
+          "id": "rib-1",
+          "op": "extrude",
+          "of": "first stiffening rib profile (rectangle: rib_thickness \u00d7 rib_length)",
+          "uses": [
+            "rib_thickness",
+            "rib_length",
+            "rib_position_x",
+            "rib_position_y",
+            "plate_thickness"
+          ]
+        },
+        {
+          "id": "rib-2",
+          "op": "extrude",
+          "of": "second stiffening rib profile (rotated 90\u00b0 relative to first)",
+          "uses": [
+            "rib_thickness",
+            "rib_length",
+            "rib_position_x",
+            "rib_position_y",
+            "plate_thickness"
+          ]
+        }
+      ]
+    }
+  }
+]

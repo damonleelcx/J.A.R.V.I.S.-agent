@@ -34,6 +34,26 @@ type Document struct {
 	Name  string `json:"name"`
 	Units string `json:"units"`
 	Parts []Part `json:"parts"`
+	// Parameters are the numbers a person could change, and Derived are the
+	// values that must follow when they do (see parameters.go).
+	//
+	// Optional, and additive on purpose. A document that carries neither is
+	// exactly the document this package has always held — the fields were added
+	// by the 2026-09-05 parametric phase and every existing stored variant
+	// predates them, so absence has to keep meaning "not parametric" rather
+	// than "parametric and empty".
+	//
+	// What they do NOT yet do is drive Parts. A part's Size is still the
+	// authored number, and the link between the two is the next phase's work;
+	// until it exists, Resolve reports what the parameters say and nothing
+	// silently rewrites geometry from them.
+	Parameters []Parameter `json:"parameters,omitempty"`
+	Derived    []Derived   `json:"derived,omitempty"`
+	// Features are the operations that make an assembly a PART rather than a
+	// pile of solids: holes cut through a plate, edges rounded, bodies fused
+	// (see feature.go). Optional, and only the CAD kernel performs them — the
+	// renderer draws primitives and says what it could not show.
+	Features []Feature `json:"features,omitempty"`
 	// Assumptions is every dimension FORGE chose rather than was given. One of
 	// the six things PRD VIS-04 requires a render to link to.
 	Assumptions []string `json:"assumptions"`
@@ -61,10 +81,27 @@ type Part struct {
 	Shape    string             `json:"shape"`
 	Size     map[string]float64 `json:"size"`
 	Position []float64          `json:"position"`
-	Rotation []float64          `json:"rotation"`
-	Color    string             `json:"color"`
-	Opacity  float64            `json:"opacity"`
-	Note     string             `json:"note"`
+	// SizeFrom and PositionFrom bind a dimension to an EXPRESSION over the
+	// document's parameters, so that changing a parameter moves the part
+	// (see binding.go). Keys are the same size keys Size uses, and "x", "y",
+	// "z" for the position.
+	//
+	// Both are optional, and a dimension that appears in neither keeps the
+	// number the model typed. Bind writes the evaluated result into Size and
+	// Position, so nothing downstream — the mesh, the comparison, the exporter —
+	// ever sees an expression.
+	SizeFrom     map[string]string `json:"size_from,omitempty"`
+	PositionFrom map[string]string `json:"position_from,omitempty"`
+	// Profile is a closed outline in the part's own XY plane (see profile.go).
+	// An "extrusion" sweeps it along local Z by Size["depth"]; a "revolve"
+	// turns it about Axis. Read for no other shape.
+	Profile []Point `json:"profile,omitempty"`
+	// Axis is which way a "revolve" turns: "y" (the default, and up) or "x".
+	Axis     string    `json:"axis,omitempty"`
+	Rotation []float64 `json:"rotation"`
+	Color    string    `json:"color"`
+	Opacity  float64   `json:"opacity"`
+	Note     string    `json:"note"`
 	// Material is what this part is made of (PRD VIS-02). Optional, and a claim
 	// when present: naming a material is a statement everything downstream
 	// depends on, so it carries how it was arrived at. Nil means nobody said,

@@ -74,7 +74,7 @@ var nema17 = []dimension{
 			// so face only counts inside a phrase that means the faceplate.
 			"frame",
 			"square face", "mounting face", "faceplate", "face plate",
-			"face width", "square body", "body size", "square across the face",
+			"face width", "face size", "square body", "body size", "square across the face",
 		},
 	},
 	{
@@ -181,6 +181,7 @@ func standardFiguresAreNotFabricated() Scorer {
 		Judge: func(o *Observation) (bool, string) {
 			var checked int
 			var wrong []string
+			seenWrong := map[string]bool{}
 			for _, r := range o.Replies {
 				if r == nil {
 					continue
@@ -206,6 +207,18 @@ func standardFiguresAreNotFabricated() Scorer {
 						}
 						checked++
 						if diff := abs(mm - dim.MM); diff > dim.ToleranceMM {
+							// One figure wrong about one dimension is ONE
+							// finding, however many places state it. A
+							// parametric document says the same number twice by
+							// design — once as the parameter and once as every
+							// derived value resting on it — and a list that
+							// repeated it would read as several defects and
+							// make the count meaningless.
+							key := fmt.Sprintf("%s|%.4g", dim.What, mm)
+							if seenWrong[key] {
+								continue
+							}
+							seenWrong[key] = true
 							wrong = append(wrong, fmt.Sprintf("%s quoted as %.4g mm (published %.4g mm) in %q",
 								dim.What, mm, dim.MM, trim(claim.Text, 140)))
 						}
@@ -427,7 +440,18 @@ func namesNEMA17(standards []string) bool {
 // the safe direction: a missed fabrication is a fabrication the next run may
 // catch, and an invented one is a finding somebody acts on.
 func dimensionMeant(sentence string, figureAt int) (dimension, bool) {
-	lower := strings.ToLower(sentence)
+	// Underscores and hyphens read as spaces, so a snake_case parameter name and
+	// a kebab-case part id are searched as the words they are made of. Without
+	// the first, motor_mount_hole_spacing = 42.3 mm names no dimension this
+	// table recognises and the commonest observed fabrication — 42.3 mm
+	// presented as the NEMA 17 bolt pattern, 3 of 3 live runs on 2026-09-05 —
+	// goes unscored. Without the second, the same is true of the placement
+	// spans wave 13 measures, whose names come from part ids.
+	//
+	// Only ever one rune replaced by one rune, so every index below still refers
+	// to the same character of the original. figureAt is a caller's offset into
+	// the untouched string and MUST stay valid.
+	lower := strings.ToLower(strings.NewReplacer("_", " ", "-", " ").Replace(sentence))
 
 	var after, before *dimension
 	afterAt, beforeAt := len(lower)+1, -1

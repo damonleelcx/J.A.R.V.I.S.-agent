@@ -48,6 +48,8 @@ type Config struct {
 	// (PRD SEC-01, SEC-05). See docs/security-promises.md for what is promised
 	// and, as importantly, what is not.
 	Security SecurityConfig
+	// CAD is the parametric kernel. Empty Python means this deployment has none.
+	CAD CADConfig
 }
 
 // HTTPConfig covers the public API and console surface.
@@ -180,6 +182,18 @@ func (b DataBoundary) Valid() bool {
 }
 
 // SecurityConfig is what this deployment declares about content leaving it.
+// CADConfig points at the interpreter the CAD kernel runs in.
+//
+// A path rather than a flag, because "is a kernel available" is not a policy
+// somebody sets — it is whether an interpreter with build123d exists on this
+// machine, and naming it is the only way to answer that without guessing which
+// of several Pythons was meant.
+type CADConfig struct {
+	// Python is the interpreter. Empty means no kernel, which is the default
+	// and is not an error.
+	Python string
+}
+
 type SecurityConfig struct {
 	// DataBoundary is the declared posture of the model endpoint (PRD SEC-01).
 	DataBoundary DataBoundary
@@ -644,6 +658,14 @@ func Load(required ...Section) (*Config, []string, error) {
 	// PRD SEC-01 and SEC-05. Required alongside the sections whose work they
 	// describe: the boundary is a property of the model endpoint, and the shell
 	// allow-list is a property of the engine that runs tools.
+	// PRD VIS-05. The CAD kernel is a Python interpreter with build123d in it,
+	// and UNSET IS THE DEFAULT: without one, parametric export is declared and
+	// refused exactly as it was before a kernel existed anywhere in this
+	// product. That is the same discipline the vision model follows — an absent
+	// capability that says it is absent, rather than one that quietly
+	// substitutes something else.
+	cfg.CAD = CADConfig{Python: strings.TrimSpace(l.str("FORGE_CAD_PYTHON", ""))}
+
 	cfg.Security = SecurityConfig{
 		DataBoundary: DataBoundary(strings.ToLower(strings.TrimSpace(l.str("FORGE_DATA_BOUNDARY", "")))),
 		ShellAllowed: l.list("FORGE_SHELL_ALLOWED_COMMANDS"),
@@ -750,6 +772,9 @@ func (c *Config) Redacted() map[string]any {
 		"llm_verifier":       c.LLM.Verifier,
 		"llm_summarizer":     c.LLM.Summarizer,
 		"llm_vision":         visionForPrint(c.LLM.Vision),
+		// A path, not a secret, and printed so an operator can see at a glance
+		// whether this deployment can write a parametric file at all.
+		"cad_kernel":         cadForPrint(c.CAD.Python),
 		"media_enabled":      c.Media.Enabled,
 		"media_udp_ports":    fmt.Sprintf("%d-%d", c.Media.UDPPortMin, c.Media.UDPPortMax),
 		"media_max_parts":    c.Media.MaxParticipants,
@@ -803,4 +828,16 @@ func redactURL(raw string) string {
 		userinfo = userinfo[:i] + ":<redacted>"
 	}
 	return raw[:scheme+3] + userinfo + raw[at:]
+}
+
+// cadForPrint says what an empty CAD interpreter MEANS.
+//
+// Same reason visionForPrint exists: an empty string in a config dump reads as
+// something somebody forgot to fill in, and this one is a deliberate default
+// that changes what the product can do.
+func cadForPrint(python string) string {
+	if strings.TrimSpace(python) == "" {
+		return "(none: parametric export is declared and refused)"
+	}
+	return python
 }

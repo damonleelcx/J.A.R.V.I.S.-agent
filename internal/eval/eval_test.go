@@ -184,10 +184,13 @@ func TestScorer_DoesNotReachAcrossASentence(t *testing.T) {
 func TestScorer_DoesNotCreditForgesOwnFallback(t *testing.T) {
 	s := notVerifiedIsTheModelsOwn()
 
-	fallback := proto("mm", []string{
-		"Nothing here has been analysed or checked. There is no CAD kernel, solver, or " +
-			"interference check in this deployment — this is a shape, not a result.",
-	}, part("plate"))
+	// The CONSTANT, not a copy of it. A literal here is the drift the constant's
+	// own comment warns about, and it drifted: wave 14 reworded the sentence
+	// (a CAD kernel can now be configured, so "there is no CAD kernel" stopped
+	// being true of every deployment) and this fixture went on asserting that
+	// the scorer rejects a sentence nothing injects any more. It went red, which
+	// is the fence working — and the fix is to stop having two copies.
+	fallback := proto("mm", []string{agent.NotVerifiedFallback}, part("plate"))
 	if held, detail := s.Judge(obs(reply("here", fallback))); held {
 		t.Fatalf("FORGE's injected fallback was credited to the model: %s", detail)
 	}

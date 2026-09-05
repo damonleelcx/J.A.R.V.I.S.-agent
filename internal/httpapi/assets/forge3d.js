@@ -252,6 +252,209 @@
    * So an unsupported shape is still drawn — a blank viewport helps nobody — but
    * it is flagged, and the workbench puts it in the provenance banner where the
    * viewer reads what this render does NOT establish. */
+  /* ---- extrusions -------------------------------------------------------
+   *
+   * A closed outline in the part's own XY plane, swept along local Z.
+   *
+   * # Why ear clipping and not a triangle fan
+   *
+   * A fan from the first vertex is four lines and is WRONG for any concave
+   * outline, which is most of the interesting ones — an L-bracket is concave by
+   * definition, and a fan across its inner corner draws triangles outside the
+   * part. The first shape anybody makes with this feature would be drawn wrong.
+   *
+   * # Why this is a second implementation
+   *
+   * internal/domain/geometry/triangulate.go does the same thing for the mesh
+   * exporters, which cannot run in a browser. The duplication is real and this
+   * codebase has recorded what two copies of one rule cost — so what is shared
+   * is the PROPERTY rather than the code: any correct triangulation of an
+   * outline covers exactly the outline's area, so the two agree about the SHAPE
+   * however they each cut it up. That is not true of curve tessellation, which
+   * is why the segment counts are fenced across the boundary and this is not.
+   */
+  function signedArea2D(pts) {
+    var a = 0;
+    for (var i = 0; i < pts.length; i++) {
+      var j = (i + 1) % pts.length;
+      a += pts[i][0] * pts[j][1] - pts[j][0] * pts[i][1];
+    }
+    return a / 2;
+  }
+
+  function cross2D(a, b, c) {
+    return (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]);
+  }
+
+  function pointInTriangle2D(p, a, b, c) {
+    var d1 = cross2D(a, b, p), d2 = cross2D(b, c, p), d3 = cross2D(c, a, p);
+    var neg = d1 < 0 || d2 < 0 || d3 < 0;
+    var pos = d1 > 0 || d2 > 0 || d3 > 0;
+    return !(neg && pos);
+  }
+
+  /* Returns { pts, tris } — the points in the order the triangles index into,
+   * which may be reversed. Returning them is not a convenience: keeping a
+   * separate copy is how the caps come out normalised and the side walls do
+   * not, which draws a clockwise outline inside out. */
+  function earClip(input) {
+    if (input.length < 3) return { pts: input, tris: [] };
+    var pts = input;
+    if (signedArea2D(pts) < 0) pts = input.slice().reverse();
+
+    var idx = [], i;
+    for (i = 0; i < pts.length; i++) idx.push(i);
+    var tris = [], guard = 0;
+
+    while (idx.length > 3) {
+      var clipped = false;
+      for (i = 0; i < idx.length; i++) {
+        var prev = idx[(i - 1 + idx.length) % idx.length];
+        var cur = idx[i];
+        var next = idx[(i + 1) % idx.length];
+        if (cross2D(pts[prev], pts[cur], pts[next]) <= 0) continue;
+        var clear = true;
+        for (var k = 0; k < idx.length && clear; k++) {
+          var o = idx[k];
+          if (o === prev || o === cur || o === next) continue;
+          if (pointInTriangle2D(pts[o], pts[prev], pts[cur], pts[next])) clear = false;
+        }
+        if (!clear) continue;
+        tris.push([prev, cur, next]);
+        idx.splice(i, 1);
+        clipped = true;
+        break;
+      }
+      /* A pass that removed nothing means the outline crosses itself. Stopping
+       * matters more here than anywhere else in this file: this runs in the
+       * browser's main thread, and a loop that never ends is a tab that never
+       * responds again. */
+      if (!clipped) { guard++; if (guard > 1) return { pts: pts, tris: tris }; }
+    }
+    if (idx.length === 3) tris.push([idx[0], idx[1], idx[2]]);
+    return { pts: pts, tris: tris };
+  }
+
+  function extrusionGeometry(profile, depth) {
+    var raw = (profile || []).map(function (p) { return [num(p.x, 0), num(p.y, 0)]; });
+    if (raw.length < 3) {
+      return {
+        geo: boxGeometry(1, 1, num(depth, 1)),
+        approximated: 'this outline has fewer than three points and encloses nothing, ' +
+                      'so it is drawn as a unit box'
+      };
+    }
+    var clipped = earClip(raw);
+    var pts = clipped.pts, tris = clipped.tris;
+    if (!tris.length) {
+      return {
+        geo: boxGeometry(1, 1, num(depth, 1)),
+        approximated: 'this outline could not be closed into a surface — it crosses itself ' +
+                      'or repeats a point — so it is drawn as a unit box'
+      };
+    }
+
+    var half = num(depth, 1) / 2;
+    var positions = [], normals = [], indices = [], n = 0;
+    function vert(x, y, z, nx, ny, nz) {
+      positions.push(x, y, z); normals.push(nx, ny, nz); indices.push(n++);
+    }
+
+    tris.forEach(function (t) {
+      vert(pts[t[0]][0], pts[t[0]][1], half, 0, 0, 1);
+      vert(pts[t[1]][0], pts[t[1]][1], half, 0, 0, 1);
+      vert(pts[t[2]][0], pts[t[2]][1], half, 0, 0, 1);
+      // Reversed, so the bottom cap faces away from the solid too.
+      vert(pts[t[2]][0], pts[t[2]][1], -half, 0, 0, -1);
+      vert(pts[t[1]][0], pts[t[1]][1], -half, 0, 0, -1);
+      vert(pts[t[0]][0], pts[t[0]][1], -half, 0, 0, -1);
+    });
+
+    for (var i = 0; i < pts.length; i++) {
+      var j = (i + 1) % pts.length;
+      var dx = pts[j][0] - pts[i][0], dy = pts[j][1] - pts[i][1];
+      var len = Math.sqrt(dx * dx + dy * dy) || 1;
+      // Outward for a counter-clockwise outline: on a square wound
+      // counter-clockwise the bottom edge runs +x and the outside is -y.
+      var nx = dy / len, ny = -dx / len;
+      vert(pts[i][0], pts[i][1], -half, nx, ny, 0);
+      vert(pts[j][0], pts[j][1], -half, nx, ny, 0);
+      vert(pts[j][0], pts[j][1], half, nx, ny, 0);
+      vert(pts[i][0], pts[i][1], -half, nx, ny, 0);
+      vert(pts[j][0], pts[j][1], half, nx, ny, 0);
+      vert(pts[i][0], pts[i][1], half, nx, ny, 0);
+    }
+    return { geo: { positions: positions, normals: normals, indices: indices } };
+  }
+
+  /* An outline turned a full circle about its own axis.
+   *
+   * # Why there is no triangulation here
+   *
+   * An extrusion needs its caps triangulated. A full revolve has none — the
+   * surface closes on itself — so every facet is a quad between two adjacent
+   * outline points at two adjacent angles. The winding still matters, because it
+   * decides which way those quads face.
+   *
+   * TESSELLATION.radial is the same count a cylinder uses, so a revolved boss
+   * and a cylinder beside it are drawn to the same fineness, and the exported
+   * mesh is the surface that was on screen.
+   */
+  function revolveGeometry(profile, axis) {
+    var raw = (profile || []).map(function (p) { return [num(p.x, 0), num(p.y, 0)]; });
+    if (raw.length < 3) {
+      return {
+        geo: boxGeometry(1, 1, 1),
+        approximated: 'this outline has fewer than three points and encloses nothing, ' +
+                      'so it is drawn as a unit box'
+      };
+    }
+    /* The same normalisation the extrusion does, for the same reason: the facet
+     * winding below is only outward for a counter-clockwise outline. */
+    var pts = signedArea2D(raw) < 0 ? raw.slice().reverse() : raw;
+    var aboutX = String(axis || '').toLowerCase() === 'x';
+    var seg = TESSELLATION.radial;
+
+    function at(i, t) {
+      if (aboutX) {
+        var rx = pts[i][1];
+        return [pts[i][0], rx * Math.cos(t), rx * Math.sin(t)];
+      }
+      var r = pts[i][0];
+      return [r * Math.cos(t), pts[i][1], r * Math.sin(t)];
+    }
+    /* The normal comes from the facet itself rather than from a formula per
+     * axis: the two axes have opposite handedness, and a formula written for one
+     * is silently inverted for the other. */
+    function normalOf(a, b, c) {
+      var ux = b[0]-a[0], uy = b[1]-a[1], uz = b[2]-a[2];
+      var vx = c[0]-a[0], vy = c[1]-a[1], vz = c[2]-a[2];
+      var nx = uy*vz - uz*vy, ny = uz*vx - ux*vz, nz = ux*vy - uy*vx;
+      var len = Math.sqrt(nx*nx + ny*ny + nz*nz) || 1;
+      return [nx/len, ny/len, nz/len];
+    }
+
+    var positions = [], normals = [], indices = [], n = 0;
+    function tri(a, b, c) {
+      var nn = normalOf(a, b, c);
+      [a, b, c].forEach(function (v) {
+        positions.push(v[0], v[1], v[2]);
+        normals.push(nn[0], nn[1], nn[2]);
+        indices.push(n++);
+      });
+    }
+    for (var k = 0; k < seg; k++) {
+      var t0 = k / seg * 2 * Math.PI, t1 = (k + 1) / seg * 2 * Math.PI;
+      for (var i = 0; i < pts.length; i++) {
+        var j = (i + 1) % pts.length;
+        var a = at(i, t0), b = at(j, t0), c = at(j, t1), d = at(i, t1);
+        tri(a, b, c);
+        tri(a, c, d);
+      }
+    }
+    return { geo: { positions: positions, normals: normals, indices: indices } };
+  }
+
   function buildGeometry(part) {
     var s = part.size || {};
     switch (part.shape) {
@@ -260,6 +463,8 @@
       case 'cone':     return { geo: cylinderGeometry(num(s.radius,0.5), num(s.height,1), TESSELLATION.radial, 0) };
       case 'sphere':   return { geo: sphereGeometry(num(s.radius,0.5), TESSELLATION.sphereRadial) };
       case 'plane':    return { geo: planeGeometry(num(s.width,1), num(s.depth,1)) };
+      case 'extrusion': return extrusionGeometry(part.profile || [], num(s.depth, 1));
+      case 'revolve':   return revolveGeometry(part.profile || [], part.axis);
       case 'tube':
         /* A tube is drawn as its outer wall. The bore is not modelled, and that
          * is reported: an inner diameter that is not there is exactly the kind
@@ -390,6 +595,17 @@
   }
 
   /* ---- the studio ------------------------------------------------------- */
+
+  /* How material being removed is drawn.
+   *
+   * Faint enough to read as absence rather than as a translucent SOLID — a
+   * housing somebody made see-through is a real part and must not look like
+   * this — and visible enough that a person can tell where the hole will be. The
+   * colour is the warning gold this interface already uses for "quoted from
+   * memory, not checked", because both mean the same thing to a reader: what you
+   * are looking at is not the whole story. */
+  var REMOVED_ALPHA = 0.22;
+  var REMOVED_COLOUR = '#e6cd8f';
 
   function Studio(canvas, opts) {
     opts = opts || {};
@@ -534,6 +750,25 @@
 
     this.spec = spec || { parts: [] };
     this.approximations = [];
+
+    /* Parts that are material being REMOVED, not material that is there.
+     *
+     * A cut feature names a part as the tool that makes a hole, and the CAD
+     * kernel consumes it: the exported solid has a void where it was. This
+     * renderer has no boolean operations and cannot make that void, so without
+     * this the four bolt holes of a bracket are drawn as four solid posts
+     * standing on the plate — the exact opposite of what they are.
+     *
+     * It cannot be fixed by drawing the hole. It CAN be stopped from reading as
+     * a post: a tool is drawn as a ghost, and the provenance banner says which
+     * shape the exported file has. Same stance as "Drawn approximately" — say
+     * what was done instead of hiding it. */
+    var removed = {};
+    (this.spec.features || []).forEach(function (f) {
+      if (!f || String(f.op).toLowerCase() !== 'cut') return;
+      (f.with || []).forEach(function (id) { removed[id] = true; });
+    });
+
     this.parts = (this.spec.parts || []).map(function (part) {
       var built = buildGeometry(part);
       var geo = built.geo;
@@ -549,7 +784,11 @@
         spec: part,
         buffers: buffers,
         count: geo.indices.length,
-        centre: part.position || [0, 0, 0]
+        centre: part.position || [0, 0, 0],
+        // Held on the WRAPPER and never written into spec: the document on
+        // screen has to stay the document that was stored, so a presentation
+        // decision must not become a value the model appears to have stated.
+        removed: !!removed[part.id]
       };
     });
 
@@ -678,11 +917,17 @@
     gl.uniform1f(loc.secAt, this.section.at);
 
     var self = this;
+    /* One function, read by both the sort and the draw. Two copies would
+     * eventually disagree, and a part sorted as opaque and drawn translucent is
+     * a part that erases whatever is behind it. */
+    var alphaOf = function (p) {
+      return p.removed ? REMOVED_ALPHA : num(p.spec.opacity, 1) * self.transparency;
+    };
     // Opaque first, then transparent back-to-front, so a translucent housing
     // does not erase what is inside it.
     var order = this.parts.slice().sort(function (a, b) {
-      var oa = num(a.spec.opacity, 1) * self.transparency;
-      var ob = num(b.spec.opacity, 1) * self.transparency;
+      var oa = alphaOf(a);
+      var ob = alphaOf(b);
       if ((oa >= 1) !== (ob >= 1)) return oa >= 1 ? -1 : 1;
       var da = length3(sub(eye, a.spec.position || [0,0,0]));
       var db = length3(sub(eye, b.spec.position || [0,0,0]));
@@ -714,8 +959,8 @@
                              scaling(s.scale || [1,1,1])));
       gl.uniformMatrix4fv(loc.model, false, model);
       gl.uniformMatrix3fv(loc.nmat, false, normalMatrix(model));
-      gl.uniform3fv(loc.color, hexToRGB(s.color || '#b8bcc4'));
-      gl.uniform1f(loc.opacity, num(s.opacity, 1) * self.transparency);
+      gl.uniform3fv(loc.color, hexToRGB(part.removed ? REMOVED_COLOUR : (s.color || '#b8bcc4')));
+      gl.uniform1f(loc.opacity, alphaOf(part));
       gl.uniform1f(loc.highlight, self.selected === s.id ? 1 : 0);
       /* The finish, as the document declared it. Not looked up from the material
        * NAME: that table would have to exist here and in Go, and this codebase

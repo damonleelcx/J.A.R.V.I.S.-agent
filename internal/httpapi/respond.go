@@ -75,8 +75,23 @@ func WriteError(w http.ResponseWriter, r *http.Request, log *logx.Logger, err er
 	// when a link expired. It is included for client errors, where it helps the
 	// caller fix their request, and withheld for server errors, where it can
 	// carry internal structure a caller has no business seeing.
+	//
+	// CONNECTOR_UNAVAILABLE is the one exception, and it is a difference in KIND
+	// rather than a softening of the rule. That code does not report a failure:
+	// it reports that a capability is declared and has no backend HERE, and its
+	// detail is the sentence saying which setting turns it on. It is written for
+	// the reader, it names configuration rather than internal structure, and the
+	// same text is already served unauthenticated by GET /v1/geometry/formats.
+	//
+	// Withholding it made every "this deployment cannot do that" refusal in the
+	// product arrive as the registry's generic line — the vision model's
+	// FORGE_LLM_VISION_MODEL sentence, the CAD kernel's FORGE_CAD_PYTHON one —
+	// so the whole unavailable-connector discipline said what was missing
+	// everywhere except in the reply to the person who asked for it. Found by
+	// TestAPI_RefusesSTEPWithoutAKernel on 2026-09-05.
 	var fe *errs.Error
-	if errors.As(err, &fe) && fe.Detail != "" && def.HTTPStatus < 500 {
+	if errors.As(err, &fe) && fe.Detail != "" &&
+		(def.HTTPStatus < 500 || def.Code == errs.CodeConnectorUnavailable) {
 		body.Details = map[string]any{"detail": fe.Detail}
 	}
 

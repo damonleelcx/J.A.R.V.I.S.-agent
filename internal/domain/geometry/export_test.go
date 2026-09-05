@@ -35,7 +35,7 @@ func bracket() *Variant {
 // out is what invites a mesh to be written with a .step extension.
 func TestExport_ParametricFormatsAreDeclaredAndRefused(t *testing.T) {
 	var parametric int
-	for _, f := range Formats() {
+	for _, f := range Formats(false) {
 		if f.Kind != KindParametric {
 			continue
 		}
@@ -62,7 +62,7 @@ func TestExport_ParametricFormatsAreDeclaredAndRefused(t *testing.T) {
 // Every format the build says it can write must have a writer. A format listed
 // as available with no writer would answer a download with an empty file.
 func TestExport_EveryAvailableFormatWrites(t *testing.T) {
-	for _, f := range Formats() {
+	for _, f := range Formats(false) {
 		if !f.Available {
 			continue
 		}

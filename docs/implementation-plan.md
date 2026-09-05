@@ -2164,6 +2164,590 @@ final byte passes a naive test and leaves exactly half the real cases broken.
 
 ---
 
+## Wave 10 — the parametric document · **DONE**
+
+**Why now.** `docs/spikes/2026-09-05-parametric-cad-kernel/` asked two questions
+the 2026-09-02 Zoo spike never did: can a real CAD kernel run here at all
+(**yes** — build123d on OpenCASCADE, a valid B-Rep in **46 ms**), and can our
+model drive one (**structure yes, figures no**). The second answer is what this
+wave is about.
+
+The spike swept a bracket through nine parameter changes. Eight held. The one
+that broke had `rib_length` as an independent 52 mm while `plate_size` moved: the
+ribs overhung the plate and the kernel refused the fillet. Deriving it held the
+same model across a 3.4× size range.
+
+> Naming a parameter is not enough. What survives a change is the RELATIONSHIP
+> being the thing recorded.
+
+**What was built.**
+
+- `geometry.Parameter` and `geometry.Derived` on the document, with `Resolve`
+  evaluating the expressions, ordering them by dependency, and reporting what
+  does not resolve. A value that cannot be computed is ABSENT, never zero — a
+  silent 0 turns a broken document into a plausible one.
+- `expression.go`: a closed grammar over the document's own names. No general
+  evaluator: these strings arrive from a model, over the network, into something
+  that is also persisted and replayed. Trigonometry is deliberately absent —
+  degrees and radians agree only at zero, and the wrong one produces a plausible
+  number rather than an error.
+- `standards_typed.go`: the honesty machinery, extended from prose into the
+  typed fields, **and along the dependency edges**. A figure derived from a
+  recalled parameter is exactly as unchecked as the parameter, so the claim
+  travels with it. That is how a number the model never stated becomes
+  attributable to the standard it came from.
+- Resolution problems reach the reader through `NotVerified`, the same door the
+  dropped tolerances and the unconvertible unit already use.
+
+### The defect the live run found, which was mine
+
+Three runs against the real contract, not the spike's probe prompt.
+
+The first two produced parameters and derived values — and put the NEMA figures
+(`42.3`, `31.0`, `3.2`) in `derived` as **bare constants**, where there is no
+`how` and no `source` and nothing can check them. Three of four derived values in
+each run, including a correctly-recalled `31.0` that therefore reached the reader
+unchecked.
+
+The spike's own probe never did this — 0 bare constants and 3 `how: "standard"`
+parameters across all three of its runs — so this was the contract's doing, not
+the model's. The difference was one clause. The probe stated a sufficient
+condition, *"every number a person could change is a PARAMETER with a unit"*; I
+had written a definition:
+
+> "parameters" are the numbers somebody could change
+
+A NEMA 17 bolt pitch is not something anybody can change, so the definition
+excludes it and the sufficient condition does not. The model read mine correctly
+and used the only other bucket. **A rule written as a category test gets applied
+as one**, and the category excluded exactly the values the provenance system
+exists for.
+
+Reframed as "EVERY fixed number this design rests on… a recalled figure is a
+parameter too, with `how: standard`", the next run produced:
+
+```
+nema17_face_size   = 42.3 mm   how=standard  source="NEMA ICS 16-2001"
+nema17_bolt_circle = 31   mm   how=standard  source="NEMA ICS 16-2001"
+```
+
+That is the first correct NEMA 17 bolt figure in this investigation, and it
+**does not overturn the spike's 0/3**: one run is not a rate, the two prompts
+differ in many ways besides that clause, and the probe put its figures in the
+right field and still got them wrong. The reframe fixed the placement defect it
+was aimed at. Whether it moves the figure rate is unmeasured.
+
+### What is NOT done, and is not pretended to be
+
+- ~~**Parameters do not drive the geometry.**~~ **Done in wave 11.** A part
+  dimension can now name an expression, the boundary evaluates it, and
+  `POST /v1/geometry/{id}/respec` re-derives a whole variant from a changed
+  parameter.
+- ~~**Parametric export stays refused** (VIS-05).~~ **Done in wave 14.**
+- **A recalled figure written as a bare constant in `derived` is still
+  invisible to the provenance check.** It is reported as a fixed number with no
+  unit and no source, which is true and is not the same as being checked. Two of
+  three derived values in the last live run were still this. Attributing them
+  would mean guessing which standard an unlabelled number came from, which is the
+  failure `standards.go` was written to avoid.
+- **No measured floor for a "the parametric model resolves" scorer.** One live
+  run is not a rate. Adding a scorer with a chosen floor would break this suite's
+  own rule that floors are measured.
+
+## Wave 11 — the parameters drive the shape · **DONE**
+
+**Why.** Wave 10 left the worst of the three available positions: a document that
+DESCRIBED a relationship while the geometry ignored it. A reader seeing named
+parameters beside a shape reasonably concludes that changing one would move it,
+and nothing did.
+
+**What was built.**
+
+- `Part.SizeFrom` and `Part.PositionFrom` — a dimension names an expression over
+  the document's parameters. `Bind` evaluates them into `Size` and `Position` at
+  the conversation boundary, so `mesh.go`, `compare.go`, `overlay.go` and the
+  exporter are untouched: by the time they see a Part it is plain floats, exactly
+  as before.
+- `Document.WithParameters` — the payoff. Hand it `plate_size = 80` and every
+  derived value and every bound dimension is recomputed. It is the operation the
+  2026-09-05 spike performed by hand nine times.
+- `Service.Respec` and `POST /v1/geometry/{id}/respec` — the producer, so this is
+  reachable from the product rather than only from a conversation turn. It
+  appends a version of the SAME artifact, which is what makes the before and
+  after comparable side by side (VIS-04) and leaves the original exactly as the
+  model produced it.
+
+**Three decisions worth naming.**
+
+- **The expression wins when it disagrees with the stated number**, because the
+  expression is the relationship and the number is a snapshot of it. Never
+  silently: agreement says nothing, disagreement is reported.
+- **Rotation cannot be bound.** Every parametric part in the spike drives sizes
+  and positions and not one drives an angle. A binding nobody has needed is one
+  that gets designed wrong.
+- **An override naming a derived value is refused**, not ignored. It would be
+  recomputed from its expression a moment later, producing a version identical to
+  the old one — which reads as success and is not.
+
+### The defect the live run found, which was again mine
+
+The first live respec of a seven-part bracket produced **eight warnings**, every
+one of the form *"states width = 60 but its own expression works out to 90"* —
+after `plate_size` had been set to 90 on purpose. The stated numbers are stale BY
+CONSTRUCTION once a parameter moves. The disagreement check is meaningful only on
+a document as the model produced it, so `WithParameters` no longer performs it,
+and a fence holds that shut.
+
+A second, smaller version of the same mistake: the warning for a bare constant in
+`derived` used to end *"it will not follow when anything else changes"*, and
+fired twice on `motor_centre_x = 0` — a centre at the origin that is CORRECT not
+to follow anything. It now states the remedy instead of predicting breakage.
+
+### What the model actually produced
+
+Two live runs against the shipping contract. The second bound **7 of 7 parts and
+36 dimensions**, and changing `plate_size` re-derived the geometry.
+
+And it produced, in the run before it, a clean example of the hazard the spike
+named third and nothing here checks:
+
+```
+nema17_face_size = 42.3 mm            how=standard      ← the figure is CORRECT
+motor_mount_x    = nema17_face_size / 2 - mount_hole_offset
+holes positioned at (±motor_mount_x, ±motor_mount_x)    ← a 42.3 mm square
+```
+
+NEMA 17's bolt pattern is 31 mm square. The recalled figure is right, the
+relationship built on it is wrong, and the result is four holes at the frame
+corners. **A wrong number can be checked against a published figure; a wrong
+RELATIONSHIP produces plausible numbers from correct inputs**, and no part of
+this system examines one.
+
+### What is NOT done
+
+- ~~**No UI.**~~ **Done in wave 12.**
+- ~~**Parametric export still refused** (VIS-05).~~ **Done in wave 14.**
+- ~~**Nothing checks a relationship.**~~ **Partly done in wave 13** — the
+  measurable case is covered; see there for what still is not.
+- **Rotation is unbindable**, by decision.
+
+## Wave 12 — a person can turn the knob · **DONE**
+
+Waves 10 and 11 built the whole re-derivation path and no surface in the product
+could reach it. The variant rail now says how many parameters a design has and
+offers them: each is an editable number with its unit, the derived values sit
+beneath as EXPRESSIONS rather than controls, and Re-derive posts only what
+actually changed.
+
+Three things worth keeping.
+
+- **Derived values are shown, not editable.** Setting one changes nothing —
+  it is recomputed from its expression a moment later — so offering it would read
+  as working. What the panel shows instead is the relationship, which is the
+  thing a person needs in order to decide which parameter to change.
+- **Only the CHANGED parameters are sent.** Sending all of them would rewrite
+  each one's provenance to "chosen", including recalled figures nobody touched.
+- **A recalled figure is marked AT THE CONTROL**, not only in the provenance
+  banner further up the page. This is where somebody changes one.
+
+**Found while writing it:** `workbench.css` referenced `var(--line)`, a custom
+property this codebase has never defined, with no fallback — so the declaration
+was dropped and the panel would have had no border. Every custom property the
+stylesheet reads is now audited.
+
+The geometry HTTP surface had **no tests at all**. It has four now, against real
+Postgres, covering the exact response shape the panel dereferences by name: a
+renamed field breaks the browser and nothing else, and nothing else would notice.
+
+## Wave 13 — the relationship, not the figure · **DONE**
+
+Wave 11's live run produced a document in which every figure was correct and the
+part could not be bolted to the motor:
+
+```
+nema17_face_size = 42.3 mm   how=standard   ← correct: NEMA 17's frame IS 42.3
+motor_mount_x    = nema17_face_size / 2
+holes at (±motor_mount_x, ±motor_mount_x)   ← a 42.3 mm square
+```
+
+NEMA 17's bolt pattern is 31 mm square. No check of the INPUTS can find this.
+
+`Document.Spans` measures what the placements actually describe, and the honesty
+machinery scores that instead. The result catches the defect above and accepts
+the same document built from `nema17_bolt_circle`.
+
+### Why this is not the guessing standards.go refuses
+
+The grouping is read from the BINDINGS, never from the geometry. Parts whose
+position on one axis is computed from the same parameters are related because the
+document says so — nothing here decides that four cylinders near each other must
+be a bolt pattern. What names the group is the parts' own shared id, and if that
+id says nothing the dimension table recognises, the figure is **not scored**
+rather than guessed at.
+
+Two narrowings, both from things that went wrong while building it:
+
+- **Exactly two distinct positions, or nothing.** With two, the extent between
+  them is unambiguously the spacing. With three in a row it is some multiple of
+  the pitch and nothing here knows which.
+- **"mount hole" was added to the dimension table and reverted.** It matched
+  `mount_hole_x_OFFSET`, which is half a pitch, and scoring that against the
+  published 31 mm is exactly the fabricated finding this suite's own fences
+  exist to catch — and they caught it, immediately.
+
+### What is still NOT checked
+
+- **A relationship whose result nothing can name.** `motor_mount_x` on its own
+  names no dimension, and if the parts it places are called something the table
+  does not recognise, the span goes unreported. Under-reporting is the safe
+  direction and this takes it.
+- **A relationship with no binding.** Holes at hardcoded coordinates describe no
+  pattern to measure. Wave 13 checks what is bound.
+- **Anything that is not a distance between two positions.** An angle, a ratio,
+  a wall thickness derived wrongly — none of these have a measurable result to
+  compare against a published figure.
+
+## Wave 14 — the kernel · **DONE**
+
+`docs/spikes/2026-09-05-parametric-cad-kernel/` proved a CAD kernel could run
+here — build123d on OpenCASCADE, a valid 37-face B-Rep in **46 ms**, real
+ISO-10303-21 out — against the 2026-09-02 Zoo spike's estimate, which had been
+measuring an agent thinking rather than a kernel working. Wave 14 wires one in.
+
+**What it is.** `internal/domain/cad` is a long-running Python sidecar. The costs
+are nothing alike — importing build123d takes 2.5 s and building the part takes
+46 ms — so it is imported once and kept warm. Measured here at **0.9 ms** for the
+second build, which is faster than the network hop that asked for it.
+
+`POST`-nothing: the same `GET /v1/geometry/{id}/export?format=step` that used to
+refuse now returns a real B-Rep, with a fence asserting the file contains
+`CYLINDRICAL_SURFACE` and no `TRIANGULATED_FACE_SET`.
+
+**Absent by default, and absent loudly.** `FORGE_CAD_PYTHON` is unset unless a
+deployment sets it, and without it STEP is declared and refused exactly as
+before — the same discipline as the vision model. The formats list follows the
+deployment rather than the build. IGES and KCL stay refused either way, because
+nothing here writes them and marking one available because a neighbour became so
+is how a capability list starts lying.
+
+### One convention, not two
+
+The kernel and the renderer have to agree about what a rotation MEANS (the Euler
+order, and that the angles are RADIANS), which dimension each shape reads, and
+what a missing one defaults to. Implemented twice, those agree until somebody
+edits one.
+
+So `geometry.RotationMatrix` and `geometry.Solids` are now the single source of
+both, the sidecar receives numbers and a matrix and decides nothing, and the
+fence is `TestKernel_PlacesAPartWhereTheRendererDrawsIt`: the same document is
+tessellated by mesh.go and built by the kernel, and their extents must match to
+1e-6.
+
+### Three fences that were vacuous, found by drilling them
+
+- **Orientation was not asserted at all.** Removing the sidecar's axis correction
+  — so every cylinder pointed along +Z where this system draws them along +Y —
+  left every test green. Volume is identical however a solid is turned, and the
+  STEP file still contained a cylindrical surface. Fixed by having the sidecar
+  report the assembly's extent, which is the only value in the reply that can
+  show a part is turned wrongly.
+- **The restart test did not test the restart.** It called `Close`, which resets
+  the kernel's own state, so the next build simply started a fresh process and
+  the retry never ran. Removing the retry outright left it green. The crash path
+  now has an internal test that kills the process without telling the kernel.
+- **Rows versus columns survived a single-axis rotation.** Reading the matrix's
+  rows applies the inverse, and for one axis and a symmetric part that differs
+  only in sign — same bounding box. The fence now uses a COMPOUND rotation and a
+  box with three different dimensions.
+
+### A pre-existing defect this uncovered
+
+`CONNECTOR_UNAVAILABLE` is a 501, and `WriteError` withheld `detail` for every
+5xx. So every "this deployment cannot do that" refusal in the product arrived as
+the registry's generic line: the vision model's `FORGE_LLM_VISION_MODEL`
+sentence, the old STEP refusal's reason, all of it. The whole
+unavailable-connector discipline said what was missing everywhere **except in the
+reply to the person who asked for it.**
+
+Narrowed rather than removed: that one code's detail passes through, because it
+does not report a failure — it reports a capability that is declared and absent
+here, its text names configuration rather than internal structure, and the same
+sentence is already served unauthenticated by `GET /v1/geometry/formats`.
+
+### What is NOT done
+
+- **The kernel builds; it does not check.** No interference test, no stress
+  analysis, no manufacturability review. VIS-06's banner says so and is now
+  worded to stay true whether or not a kernel is configured.
+- ~~**No booleans.**~~ **Done in wave 15.**
+- **A tube's bore is still not modelled**, because `Part.Size` has no inner
+  radius to model it from. The mesh path substitutes a cylinder and so does this,
+  and the label says so.
+- **A zero-radius part builds a solid of volume 0** rather than being refused —
+  measured against build123d 0.11.1, which accepts it. It is in the file and
+  invisible. The mesh path behaves identically.
+- **One request at a time.** A pool would be a wrong answer to a question nobody
+  has asked.
+
+## Wave 15 — a hole is not a part · **DONE**
+
+Wave 14 gave this deployment a real kernel and then asked it to build a bag of
+primitives. Every solid it produced was a box sitting next to a cylinder — a
+genuine B-Rep, and not a thing anybody machines. The spike's own reference
+bracket needs two operations the vocabulary could not express: four holes
+subtracted through a plate, and a fillet.
+
+**A hole is not a part. It is the ABSENCE of one**, and a document that can only
+add material describes a bracket with no way to bolt it to anything.
+
+**What was built.** `Document.Features` — `cut`, `fuse`, `fillet`, `chamfer` —
+validated in Go and performed by the kernel. The reference bracket now builds as
+ONE solid with four bores, at exactly `60×6×60 − 4πr²t`.
+
+### Three decisions
+
+- **A hole is an existing part used as a TOOL.** The obvious design gives a hole
+  its own vocabulary — position, diameter, depth, axis — and was rejected: that
+  is a second way to say "a cylinder somewhere", and the two drift the day
+  somebody adds a size key to one of them. A cut names parts that already exist
+  and are already bound to parameters, so a hole that follows `plate_size` does
+  so with no new machinery at all. The tool is CONSUMED, or the hole would be
+  filled by the thing that made it.
+- **Edges are selected by a RULE and never by an index**, per the spike: *"an
+  index would silently select a different edge the moment a parameter changed."*
+  There is nowhere in the schema to write a number, and a fence asserts that
+  `"3"`, `"first"` and `"edge-2"` are all refused.
+- **A feature that does not check out is DROPPED, not approximated.** An assembly
+  missing a hole is wrong in a way a reader is told about; one where the hole
+  landed somewhere else is wrong in a way nobody notices.
+
+### The divergence this creates, and why it is stated rather than fixed
+
+The renderer draws primitives and has no boolean operations, so a part used to
+cut a hole appears as a small solid **standing in** the plate rather than as a
+void **through** it. The exported B-Rep has the hole; the viewport does not.
+
+That is two things this product shows the same person, and `FeatureNotes` says so
+in the banner — the same stance as "Drawn approximately". Teaching the
+tessellator to do booleans costs a CSG engine in JavaScript, which is the kernel
+this product just stopped pretending it could do without.
+
+### What the live run found
+
+Asked for a bracket with four clearance holes and a rounded edge, qwen-plus
+emitted **5 features, 5 valid** on the first attempt — four cuts and a fillet —
+and the document built as one part with 36 KB of real STEP.
+
+OCCT refused the fillet: 5 mm on a 6 mm plate. Correctly, and it exposed the
+worst gap in wave 14's export path. **A bracket whose fillet was refused looks
+like a bracket, downloads like a bracket, and has square corners where the design
+says rounded** — and the download label said nothing. Dropped features now come
+FIRST in that header, because a header is read left to right and this is the half
+that changes what somebody does with the file.
+
+### What is still NOT done
+
+- **The renderer still cannot draw a hole**, and cannot without a CSG engine in
+  JavaScript. What it no longer does is draw one as a solid POST, which is the
+  opposite of a hole: a cut tool renders as a faint ghost in the warning gold
+  this interface already uses for "quoted from memory, not checked". A fence over
+  `forge3d.js` holds that in place, because the realistic failure is somebody
+  refactoring the loader and dropping a field nothing in Go refers to.
+- ~~**No sketches or extrusions.**~~ **Done in wave 17.** Revolves and sweeps are
+  still absent.
+- **No `max_fillet`.** A radius the geometry cannot take is refused by OCCT and
+  reported; nothing suggests the largest one that would work.
+- **A tube's bore is still unmodelled** by the `tube` primitive — though a bore
+  is now expressible properly, as a cylinder cut from a cylinder.
+
+## Wave 16 — two defects found by asking whether it worked · **DONE**
+
+Both were in wave 14, both shipped, and neither was found by a test. They were
+found by asking "is the kernel actually working completely?" and checking the two
+things nobody had checked.
+
+### A 2 inch cube exported as a 2 mm cube
+
+A STEP file DECLARES its unit, and build123d writes `SI_UNIT(.MILLI.,.METRE.)`
+unconditionally. Documents in this system can be in mm, cm, m or in, and the
+numbers went through unconverted. So a bracket designed in inches arrived as a
+file confidently stating it was **25.4× smaller**, in a format everything
+downstream treats as exact.
+
+```
+declared: 2 in cube = 50.8 mm/side          volume back: 8.00   bounds: -1.00 .. 1.00
+STEP declares: SI_UNIT(.MILLI.,.METRE.)
+```
+
+`geometry.Solids` now converts every length to millimetres, and an unconvertible
+unit builds NOTHING rather than a file at a guessed scale — the same rule the
+rest of this codebase already applies to units, which the kernel had quietly
+stepped outside of.
+
+**Why no test caught it:** every fixture was already in millimetres. A suite that
+only ever speaks one unit cannot see a conversion that is missing.
+
+### The kernel had no producer in the product
+
+The variant rail listed OBJ and STL as two literal buttons. A deployment with a
+kernel configured could build a real B-Rep **that no button ever asked for** —
+STEP was reachable from the API and from nowhere a person could click.
+
+The rail now reads `GET /v1/geometry/formats` and renders one button per format
+the DEPLOYMENT can write, with the unavailable ones shown disabled carrying the
+server's own reason. Which formats exist is a property of the deployment, and
+that endpoint is the one place that knows it.
+
+**This is the third time in this session** the same failure has appeared in a
+different place: `WithParameters` had no caller until wave 11 added one, the
+parameter panel had none until wave 12, and export had none until now. The
+pattern is always the same — capability built, wired to an interface, and never
+connected to the thing a person touches.
+
+## Wave 17 — the shape that is not a primitive · **DONE**
+
+Every solid this system could describe started from a box, a cylinder, a cone, a
+sphere or a plane. That is enough for a plate with holes in it and nothing else:
+an L-bracket, a T-section, a channel, a gusset — the ordinary cross-sections most
+fabricated parts actually are — could not be said at all.
+
+A part can now be an **extrusion**: a closed outline of at least three points in
+the part's own XY plane, swept along local Z. It composes with everything else —
+the outline follows parameters through expressions, and cut, fuse and fillet
+apply to the result like any other part.
+
+### Where the outline lives, and the one deliberate inconsistency
+
+Profile coordinates are LOCAL and are **not** re-centred, so the part's position
+places the outline's origin rather than its centre — which is how every other
+shape here behaves.
+
+That is on purpose. A profile's coordinates are written by hand: somebody says
+the corner is at (0, 0) and the flange runs to (40, 0), and then positions a bolt
+hole against those numbers. Re-centring on the outline's own bounding box would
+move every one of them by an amount that depends on the outline's SHAPE — so
+adding a point to the far end of a flange would silently shift the holes.
+Centring is right for a box, whose dimensions are symmetric by construction. It
+is wrong for a drawing. The extrude direction IS centred, like a box's height.
+
+The cost is that extents could no longer be `position ± half`, so `halfExtent`
+became `localBox` returning two corners. Exact for both.
+
+### Ear clipping, in two languages, and what is actually shared
+
+The kernel needs no triangles. The viewport and the mesh exporters do, and
+neither can call a kernel — one is JavaScript in a browser and the other must
+work where no kernel is configured.
+
+A triangle fan is four lines and is WRONG for any concave outline. An L-bracket
+is concave by definition, and a fan across its inner corner draws triangles
+outside the part: the first shape anybody makes with this feature would be drawn
+wrong. So both implementations ear-clip.
+
+What is shared is the PROPERTY, not the code: **any correct triangulation of an
+outline covers exactly the outline's area**, so the two agree about the shape
+however they each cut it up. That is not true of curve tessellation, which is why
+the segment counts are fenced across the boundary and this is not. Both were run
+against the same six outlines and agree to 1e-6, including the clockwise case and
+the bow-tie refusal.
+
+### Four defects found while building it
+
+- **A triangle fan hidden inside the API.** `triangulate` normalised the winding
+  internally and returned indices into the CALLER's array, so the caps came out
+  normalised and the side walls — built by walking the caller's points — did not.
+  A clockwise L-bracket tessellated inside out, and the only clue was a negative
+  volume. It now returns the ordering it used, so the mistake is unavailable.
+- **Ear clipping "succeeds" on a bow-tie.** It consumes every vertex and produces
+  triangles covering twice the enclosed area. The termination guard caught the
+  case where no ear is found and said nothing about this one, so outlines are now
+  checked for self-intersection up front — the property itself rather than a
+  proxy for it.
+- **Two vacuous fences**, found by drilling: the millimetre conversion test used
+  a box and so never touched a profile, and no `Measure` test had an extrusion in
+  it. Both now have their own case.
+- **Two wrong assertions of mine**, both times against a kernel that was right: a
+  T-section's area is 1000 and not 850, and a bore rotated onto the extrude axis
+  passes through 20 mm of depth rather than 8 mm of flange.
+
+### What the live run produced
+
+Asked for a steel angle bracket with a bolt hole through each leg, qwen-plus
+produced a **6-point outline** 60 mm deep and two cut features, and the document
+built into one solid with 27 KB of STEP — an L-section with two bolt holes,
+first attempt.
+
+### What is still NOT done
+
+- ~~**No revolves.**~~ **Done in wave 18.** Sweeps along a path are still absent.
+- **One loop per outline.** A hole in a profile is made by cutting a cylinder out
+  of the part, not by drawing a second loop.
+- **No arcs.** An outline is straight segments between points; a rounded corner is
+  a fillet on the resulting solid.
+
+## Wave 18 — the turned part · **DONE**
+
+An outline could be extruded and nothing else. Turning one about an axis is where
+every turned part comes from — a shaft, a boss, a flange, a pulley, a dome — so
+`revolve` joins `extrusion` as the second thing a profile can become.
+
+It reuses everything: the same outline, the same expression-driven coordinates,
+the same features on the result. The only new field is `axis`, which is `"y"` (up,
+the default) or `"x"` — the two axes IN the outline's own plane, because turning
+it about Z would sweep it out of that plane and produce a shape nobody means.
+
+### Two decisions
+
+- **Full circle only.** A sector is a revolve with something cut out of it, which
+  needs no vocabulary of its own — the same reasoning that makes a hole a cut
+  rather than a kind of part. Partial revolves would also make the measured
+  extents wrong unless computed specially, since the swept bound depends on the
+  angle.
+- **Every point on one side of the axis.** Touching is fine and usual — a dome's
+  outline meets the axis at its apex — but points on both sides sweep through
+  each other. OCCT refuses that with `BRep_API: command not done`, which names
+  nothing, so it is caught earlier where BOTH offending points can be named. One
+  is arbitrary: the fault is that two of them disagree.
+
+### Three fences that were vacuous, and one comment that was false
+
+- **The shape DISPATCH was untested**, for revolves and for extrusions both. The
+  unit tests called `extrusion()` and `revolved()` directly, so removing the case
+  from `partTriangles` left them green while every outline was silently drawn and
+  exported as a bounding box. There is now a test that goes through `Tessellate`.
+- **`Measure` had no extrusion or revolve case**, so `localBox` could be disabled
+  without a red test.
+- **A comment claimed a measurement that never happened.** A V-belt pulley failed
+  to parse, truncation was the first suspicion, and `converseMaxTokens` was
+  raised from 6000 with a comment saying the reply "ran past 6000 tokens and was
+  cut off". Three further runs came back at about 1300 tokens with
+  `finish_reason: "stop"` — the reply was simply malformed, intermittently. The
+  headroom is worth having and the comment now says it is a **precaution**, not a
+  measurement. In a codebase built around not fabricating figures, that one was
+  about to go into a code comment.
+
+### What came out of that investigation instead
+
+A reply the model could not finish, or finished badly, used to be printed to the
+person AS SPEECH — so a failed parse showed them `{ "speech": "Here's a V-belt
+pulley..."` and several hundred characters of machinery. `unreadableReply` now
+says which of the two happened, because a person who was cut off can ask for less
+and a person whose reply was garbled can only ask again. Speaking genuine PROSE
+is kept: that is the case the fallback exists for.
+
+### What the live runs found
+
+Asked for a stepped bush and then for a vee-groove pulley, qwen-plus described
+both with **primitives and cuts rather than a revolve**, and both BUILT — the
+pulley into one solid with 108 KB of STEP. Reaching for the simpler vocabulary
+when it suffices is the right instinct, and a revolve is not obligatory for
+anything a cone and a cut can express.
+
+**So whether the revolve contract lands is unmeasured.** The capability is proven
+end to end against the kernel, the renderer and the measurement path; what is not
+known is how often a model chooses it. That is a rate, and rates belong in the
+eval suite against a measured floor.
+
 ## Carried defects
 
 Eight of the eleven carried here are closed. The three that remain are not
@@ -2335,7 +2919,8 @@ oversights and are stated with what each would actually take.
   **What would settle it:** always run with `--json`, never through a pipe. A
   second full run would give a second sample; it would not recover the lost one.
 
-- **No real CAD, FEA or SPICE backend, by decision.** Packs now declare which
+- **No real FEA or SPICE backend, by decision — and a real CAD one since wave
+  14.** Packs now declare which
   adapters their domain needs and every one is `CONNECTOR_UNAVAILABLE`. Wiring a
   real one was considered and rejected against this repository's own completed
   research: `docs/spikes/2026-09-02-zoo-text-to-cad` concludes "do not integrate
@@ -2344,6 +2929,15 @@ oversights and are stated with what each would actually take.
   websocket a browser cannot open, a stateful project mirror and a 56 MB CLI to
   export. **What it would take:** the spike is the estimate. Revisit when the
   product needs a manufacturable artefact rather than a shape to talk about.
+
+  **Amended 2026-09-05.** That conclusion was about integrating *Zoo*, and it
+  stands. It is no longer the whole answer about a CAD kernel:
+  `docs/spikes/2026-09-05-parametric-cad-kernel/` installed build123d on
+  OpenCASCADE here and built a valid 37-face B-Rep, exporting real ISO-10303-21
+  STEP, in **46 ms** — against the 180 s the Zoo spike measured, which was the
+  agent thinking rather than the kernel working. The latency argument for keeping
+  a build out of a conversational turn is therefore **wrong**, and only the 2.5 s
+  import cost is real. What is still undone is the wiring, not the feasibility.
 
 - **The industry IS now inferred — as a suggestion.** The planner returns what
   domain it made of a goal on the reply it was already producing, and Intake

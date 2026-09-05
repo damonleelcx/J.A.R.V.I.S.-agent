@@ -52,6 +52,12 @@ import (
 // unnamed source ("a typical stepper flange is 42 mm") is not caught, and the
 // banner does not say it is. Partial coverage that says so beats total coverage
 // that is asserted.
+//
+// Prose is only half of it. A parametric document states where a number came
+// from in a typed field, and derived figures descend from those parameters
+// without ever being stated at all — both are read by standards_typed.go, which
+// feeds into the same FindStandardsClaims below so there is ONE list of recalled
+// claims rather than two banners that can disagree.
 
 // StandardsClaim is one FRAGMENT of a reply that referred to a published
 // standard.
@@ -80,6 +86,16 @@ type StandardsClaim struct {
 	// Text is the fragment itself, so the pairing is done by a reader looking at
 	// the sentence rather than by this file guessing at it.
 	Text string `json:"text"`
+	// Via is how the claim reached the reply when it did NOT come from prose:
+	// the source a parameter cited, or the expression a derived figure was
+	// computed from and the parameters it rests on. Empty for a prose claim.
+	//
+	// Separate from Text on purpose. Text is scanned positionally — the eval
+	// suite finds a figure and looks for a dimension name near it — so anything
+	// added to it can create a pairing nobody asserted. Provenance belongs to
+	// the reader, not to the scanner, so it travels in its own field.
+	// See standards_typed.go.
+	Via string `json:"via,omitempty"`
 }
 
 // standardsFamilies enumerates the reference systems worth catching.
@@ -210,6 +226,10 @@ func FindStandardsClaims(r *Reply) []StandardsClaim {
 				out = append(out, claimsIn(frag, "part note")...)
 			}
 		}
+		// The typed fields. A parametric document states its provenance in a
+		// FIELD rather than a sentence, and a detector that read only prose
+		// would go quiet exactly when the claims became easier to believe.
+		out = append(out, typedClaims(r.Prototype)...)
 	}
 
 	out = dedupeClaims(out)

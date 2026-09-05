@@ -50,6 +50,15 @@
     projectID: null,      // where this conversation's variants are kept
     conversationID: null, // the record this conversation is being kept in
     variants: [],         // what has been proposed so far, newest first
+    /* What this deployment can actually WRITE, read from the server rather than
+     * hardcoded here (wave 16).
+     *
+     * The rail used to offer OBJ and STL as two literal buttons, so a deployment
+     * with a CAD kernel configured could produce a real B-Rep that no button
+     * asked for: STEP was reachable from the API and from nowhere a person
+     * could click. Which formats exist is a property of the DEPLOYMENT, and
+     * GET /v1/geometry/formats is the one place that knows it. */
+    formats: [],
     picked: [],           // version ids chosen for the side-by-side view
     recalled: [],         // standards figures FORGE quoted from memory this turn
     proposal: null,       // the ProposedGoal from the conversation
@@ -90,10 +99,18 @@
     var assumptions = (typeof v.assumptions === 'number')
       ? v.assumptions
       : ((v.assumptions && v.assumptions.length) || 0);
+    /* Wave 11. The rail needs to know whether a variant can be re-derived at
+     * all: a button that opens an empty panel is worse than no button. Counted
+     * from whichever shape arrived — the event sends a number, the list sends
+     * the document — exactly as parts and assumptions are. */
+    var parameters = (typeof v.parameters === 'number')
+      ? v.parameters
+      : ((v.document && v.document.parameters) ? v.document.parameters.length : 0);
     return {
       version_id: v.version_id, path: v.path, version: v.version,
       name: v.name, units: v.units, units_note: v.units_note,
       generator: v.generator, parts: parts, assumptions: assumptions,
+      parameters: parameters,
       verification: v.verification || 'unverified',
       disposition: v.disposition || 'pending'
     };
@@ -297,6 +314,7 @@
     state.projectID = id;
     loadRequirements();
     if (window.ForgeStage) window.ForgeStage.setProject(id);
+    loadFormats();
     fetch('/v1/geometry?project_id=' + encodeURIComponent(id))
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (b) {
@@ -369,7 +387,9 @@
         (picked ? ' checked' : '') + '><span></span></label>' +
         '<span class="nm"><b>' + esc(v.name) + '</b> v' + v.version +
         '<div class="meta">' + v.parts + ' part(s) · ' + units +
-        ' · ' + v.assumptions + ' assumption(s)<br>proposed by ' + esc(v.generator) +
+        ' · ' + v.assumptions + ' assumption(s)' +
+        (v.parameters ? ' · ' + v.parameters + ' parameter(s)' : '') +
+        '<br>proposed by ' + esc(v.generator) +
         ' · ' + esc(v.verification) + ', ' +
         (v.disposition === 'pending' ? 'nobody has ruled on it' : esc(v.disposition)) + '</div>' +
         '<div class="acts">' +
@@ -380,10 +400,16 @@
         (v.disposition === 'superseded'
           ? '<button type="button" data-adopt="' + esc(v.version_id) + '">Adopt this one</button>'
           : '') +
-        '<button type="button" data-export="' + esc(v.version_id) + '" data-format="obj">Export OBJ</button>' +
-        '<button type="button" data-export="' + esc(v.version_id) + '" data-format="stl">Export STL</button>' +
+        /* Offered only where there is something to turn. Waves 10 and 11 built
+         * the whole re-derivation path and nothing in the product could reach
+         * it, so a client could change a dimension and a person could not. */
+        (v.parameters
+          ? '<button type="button" data-params="' + esc(v.version_id) + '">Parameters</button>'
+          : '') +
+        exportButtons(v.version_id) +
         '</div>' +
         '<div class="exportlabel hidden" data-label="' + esc(v.version_id) + '"></div>' +
+        '<div class="params hidden" data-params-panel="' + esc(v.version_id) + '"></div>' +
         '</span></div>';
     }).join('');
 
@@ -400,6 +426,9 @@
     });
     Array.prototype.forEach.call(el.querySelectorAll('[data-adopt]'), function (b) {
       b.addEventListener('click', function () { adoptVariant(b.getAttribute('data-adopt'), b); });
+    });
+    Array.prototype.forEach.call(el.querySelectorAll('[data-params]'), function (b) {
+      b.addEventListener('click', function () { toggleParameters(b.getAttribute('data-params')); });
     });
     Array.prototype.forEach.call(el.querySelectorAll('[data-export]'), function (b) {
       b.addEventListener('click', function () {
@@ -446,6 +475,215 @@
       button.disabled = false;
       button.textContent = 'Adopt this one';
       addTurn('forge', err.message);
+    });
+  }
+
+  /* What this deployment can write, and what it cannot.
+   *
+   * Read once. A failure is not fatal and not silent: the rail falls back to the
+   * mesh formats every build can write, so somebody can still get a file out of
+   * a page whose format list did not load. */
+  function loadFormats() {
+    fetch('/v1/geometry/formats')
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (b) {
+        if (!b || !b.formats) return;
+        state.formats = b.formats;
+        renderVariants();
+      })
+      .catch(function () { /* the fallback below is the answer */ });
+  }
+
+  /* One button per format this deployment can write, and a DISABLED one per
+   * format it cannot, carrying the server's own reason.
+   *
+   * Showing the unavailable ones is the point, and it is the same reasoning the
+   * endpoint itself records: a person who cannot find STEP concludes it was
+   * forgotten, and a model that cannot find it invents something. Both are
+   * answered by the format being present and saying why not. */
+  function exportButtons(versionID) {
+    var formats = state.formats.length ? state.formats
+      : [{ name: 'obj', available: true }, { name: 'stl', available: true }];
+    return formats.map(function (f) {
+      var label = 'Export ' + f.name.toUpperCase();
+      if (f.available) {
+        return '<button type="button" data-export="' + esc(versionID) +
+          '" data-format="' + esc(f.name) + '">' + esc(label) + '</button>';
+      }
+      /* Disabled, and the reason is the TITLE rather than a line in the rail:
+       * five refusals spelled out under every variant would push the variants
+       * themselves off the screen, which is how the one that matters stops
+       * being read. */
+      return '<button type="button" disabled class="unavail" title="' +
+        esc(f.reason || 'not available in this deployment') + '">' + esc(label) + '</button>';
+    }).join('');
+  }
+
+  /* ---- parameters, and re-deriving from them (waves 10, 11) ---------------
+   *
+   * # What this is
+   *
+   * A parametric document carries the numbers a design rests on and the
+   * expressions that must follow when they change. Until this panel existed,
+   * that was true and unreachable: the API could re-derive a variant and no
+   * surface in the product could ask it to. A person looking at named
+   * parameters beside a shape would reasonably expect to be able to turn one.
+   *
+   * # Why the derived values are shown and not editable
+   *
+   * A derived value is computed from its expression a moment later, so "setting"
+   * one changes nothing and reads as though it worked — the server refuses it
+   * for that reason and the panel does not offer it. What it shows instead is
+   * the RELATIONSHIP, because that is the thing a person needs in order to
+   * decide which parameter to change.
+   *
+   * # Why a recalled figure is marked here too
+   *
+   * The provenance banner says which standards a reply leaned on. This panel is
+   * where somebody CHANGES one, and a figure quoted from a standard is exactly
+   * the one where typing over it matters — so the label travels to the control
+   * rather than living only in the banner they scrolled past. */
+  function toggleParameters(versionID) {
+    var box = document.querySelector('[data-params-panel="' + versionID + '"]');
+    if (!box) return;
+    if (!box.classList.contains('hidden')) {
+      box.classList.add('hidden');
+      box.innerHTML = '';
+      return;
+    }
+    box.classList.remove('hidden');
+    box.textContent = 'Reading the parameters…';
+
+    fetch('/v1/geometry/' + encodeURIComponent(versionID))
+      .then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (b) {
+          if (!r.ok) {
+            var e = (b && b.error) || {};
+            throw new Error(e.message || ('Could not read the parameters (' + r.status + ')'));
+          }
+          return b;
+        });
+      })
+      .then(function (b) { renderParameters(box, versionID, (b.variant || {}).document || {}); })
+      .catch(function (err) { box.textContent = err.message; });
+  }
+
+  function renderParameters(box, versionID, doc) {
+    var params = doc.parameters || [];
+    var derived = doc.derived || [];
+    if (!params.length) {
+      box.textContent = 'This variant has no parameters, so there is nothing to re-derive it from.';
+      return;
+    }
+
+    var html = '<div class="p-h">Change a number, and everything that follows it is recomputed</div>';
+    html += '<table class="p-t"><tbody>';
+    params.forEach(function (p) {
+      /* A figure quoted from a standard is marked AT THE CONTROL. Typing over
+       * one is legitimate and the server records it as the person's own choice
+       * rather than the standard's — which is why they are told first. */
+      var recalled = p.how === 'standard';
+      html += '<tr>' +
+        '<td class="p-n">' + esc(p.name) + '</td>' +
+        '<td><input type="number" step="any" data-param="' + esc(p.name) + '" value="' +
+          esc(String(p.value)) + '"></td>' +
+        '<td class="p-u">' + esc(p.unit || '') + '</td>' +
+        '<td class="p-w">' + (recalled
+          ? '<span class="p-rec">recalled</span> ' + esc(p.source || 'no source given')
+          : 'chosen') + '</td>' +
+        '</tr>';
+    });
+    html += '</tbody></table>';
+
+    if (derived.length) {
+      html += '<div class="p-h">Follows from those</div><table class="p-t"><tbody>';
+      derived.forEach(function (d) {
+        html += '<tr><td class="p-n">' + esc(d.name) + '</td>' +
+          '<td class="p-e" colspan="3">= ' + esc(d.expression) +
+          (d.why ? '<div class="p-y">' + esc(d.why) + '</div>' : '') + '</td></tr>';
+      });
+      html += '</tbody></table>';
+    }
+
+    html += '<div class="p-a"><button type="button" data-respec="' + esc(versionID) + '">' +
+      'Re-derive</button><span class="hint">Creates a new version beside this one. ' +
+      'Nothing is accepted by making it.</span></div>' +
+      '<div class="p-msg"></div>';
+
+    box.innerHTML = html;
+
+    /* The ORIGINAL values, captured now, so only what somebody actually changed
+     * is sent. Sending every parameter would rewrite each one's provenance to
+     * "chosen" — including the recalled figures nobody touched, which is the
+     * laundering the provenance labels exist to prevent. */
+    var original = {};
+    params.forEach(function (p) { original[p.name] = p.value; });
+
+    box.querySelector('[data-respec]').addEventListener('click', function (btn) {
+      respecVariant(box, versionID, original, btn.target);
+    });
+  }
+
+  function respecVariant(box, versionID, original, button) {
+    var changed = {};
+    Array.prototype.forEach.call(box.querySelectorAll('[data-param]'), function (input) {
+      var name = input.getAttribute('data-param');
+      var v = parseFloat(input.value);
+      if (isNaN(v)) return;
+      if (v !== original[name]) changed[name] = v;
+    });
+    var msg = box.querySelector('.p-msg');
+    if (!Object.keys(changed).length) {
+      /* Refused here rather than at the server, because the server's refusal is
+       * correct and unhelpful: the person is looking at the numbers and the
+       * useful answer is "you have not changed one yet". */
+      msg.textContent = 'Nothing has been changed yet, so this would produce an identical copy.';
+      return;
+    }
+    button.disabled = true;
+    button.textContent = 'Re-deriving…';
+    msg.textContent = '';
+
+    fetch('/v1/geometry/' + encodeURIComponent(versionID) + '/respec', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ parameters: changed })
+    }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (b) {
+        if (!r.ok) {
+          var e = (b && b.error) || {};
+          throw new Error((e.message || ('Could not re-derive (' + r.status + ')')) +
+                          (e.remedy ? ' — ' + e.remedy : ''));
+        }
+        return b;
+      });
+    }).then(function (b) {
+      /* Re-read rather than patch. Appending a version supersedes the previous
+       * one, so more than one row changed and the server is the only thing that
+       * knows which — the same reason adopting re-reads. */
+      restoreVariants();
+      var names = Object.keys(changed).map(function (k) { return k + ' = ' + changed[k]; });
+      addTurn('forge', 'Re-derived ' + esc(b.variant.name) + ' as v' + b.variant.version +
+        ' with ' + esc(names.join(', ')) + '. No model was asked and nothing here was checked.');
+      /* Caveats are shown where the person is looking, not only in the turn.
+       * Re-deriving can surface what the original never showed — a rib that now
+       * overhangs, an expression that divides by a parameter set to zero — and
+       * this is the moment that answer is useful. */
+      var caveats = b.caveats || [];
+      if (caveats.length) {
+        msg.innerHTML = '<div class="p-cav"><b>Worth knowing about the result:</b><ul>' +
+          caveats.map(function (c) {
+            return '<li>' + (c.name ? '<b>' + esc(c.name) + '</b> — ' : '') + esc(c.detail) + '</li>';
+          }).join('') + '</ul></div>';
+      } else {
+        msg.textContent = 'Re-derived as v' + b.variant.version + '.';
+      }
+      button.disabled = false;
+      button.textContent = 'Re-derive';
+    }).catch(function (err) {
+      button.disabled = false;
+      button.textContent = 'Re-derive';
+      msg.textContent = err.message;
     });
   }
 
@@ -1128,7 +1366,11 @@
         }).join('') + '</ul></div>';
     }
     html += '<div style="margin-top:7px;opacity:.85">Proposed by ' + esc(p.model_note || 'FORGE') +
-            '. No CAD kernel, solver, or interference check exists in this deployment.</div>';
+            /* Says what is true of every deployment. A CAD kernel may now be
+             * configured (wave 14) and it still checks nothing: it builds a
+             * solid, and whether that solid is manufacturable, strong enough or
+             * free of interference is not a question anything here asks. */
+            '. No solver or interference check exists in this deployment.</div>';
     el.innerHTML = html;
     el.classList.remove('hidden');
   }
@@ -1442,12 +1684,24 @@
       '<div class="rc-h">Quoted from memory · not checked</div>' +
       claims.map(function (c) {
         var figs = figuresOf(c);
+        var via = c.Via || c.via || '';
         return '<div class="rc-i"><b>' + esc(standardsOf(c).join(' · ')) + '</b>' +
           (figs.length ? ' — ' + esc(figs.join(', ')) : ' — conformance claimed, no figure given') +
           // The sentence, verbatim. The figures are listed against the SENTENCE
           // and never paired with an individual standard, so the reader does the
           // pairing by reading it — see the note on StandardsClaim.
-          '<div class="rc-q">“' + esc(c.Text || c.text) + '”</div>' +
+          //
+          // A claim from a typed field is NOT a sentence, so it is not dressed as
+          // a quotation: "motor_mount_hole_spacing = 42.3 mm" in speech marks
+          // reads as something FORGE said, and it never said it.
+          (via
+            ? '<div class="rc-q rc-field">' + esc(c.Text || c.text) + '</div>'
+            : '<div class="rc-q">“' + esc(c.Text || c.text) + '”</div>') +
+          // Where a derived figure CAME FROM is the whole question a reader has
+          // about it: 14.955 mm is stated nowhere and descends from a quoted
+          // standard through an expression. Without this line the panel shows a
+          // number with a standard's name beside it and no way to see the link.
+          (via ? '<div class="rc-v">' + esc(via) + '</div>' : '') +
           '<div class="rc-w">in the ' + esc(c.Where || c.where) + '</div></div>';
       }).join('') +
       '<div class="rc-f">There is no standards reference in this deployment. ' +

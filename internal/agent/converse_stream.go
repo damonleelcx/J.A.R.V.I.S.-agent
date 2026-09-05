@@ -99,6 +99,13 @@ type VariantSaved struct {
 	// banner beside the render; repeating it in the rail would push the variant
 	// list off the screen on the second proposal.
 	Assumptions int `json:"assumptions"`
+	// Parameters is the COUNT of numbers this design can be re-derived from
+	// (wave 11), for the same reason Assumptions is a count.
+	//
+	// The rail needs it to decide whether to offer the controls at all: a button
+	// that opens an empty panel is worse than no button, and the rail has no
+	// other way to know a variant is parametric.
+	Parameters int `json:"parameters"`
 	// NotKept says why this geometry was not stored. Empty when it was.
 	NotKept string `json:"not_kept,omitempty"`
 }
@@ -198,7 +205,7 @@ func (c *Conversation) RespondStream(
 		Role:      role,
 		Messages:  messages,
 		JSONMode:  true,
-		MaxTokens: 6000,
+		MaxTokens: converseMaxTokens,
 	}, func(chunk llm.Chunk) error {
 		if chunk.Delta != "" {
 			if !started {

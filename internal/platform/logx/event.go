@@ -203,12 +203,25 @@ const (
 	// rule on it. Logged because "we went back to v1" is a decision, and a
 	// decision that leaves no trace is one nobody can ask about later.
 	EventGeometryAdopted Event = "forge.geometry.adopted"
+	// EventGeometryRespecified is a variant re-derived with different parameter
+	// values (wave 11). Distinct from Saved because the geometry was COMPUTED
+	// from an earlier document rather than proposed, and distinct from Adopted
+	// because the shape changed.
+	EventGeometryRespecified Event = "forge.geometry.respecified"
+
+	// The CAD kernel (wave 14). A separate area from geometry because it is a
+	// separate SUBSYSTEM: a process that can be absent, can die, and whose
+	// absence is a supported configuration rather than a fault.
+	EventCADStarted   Event = "forge.cad.started"
+	EventCADRestarted Event = "forge.cad.restarted"
+	EventCADRefused   Event = "forge.cad.refused"
 )
 
 func init() {
 	allEvents = append(allEvents,
 		EventGeometrySaved, EventGeometryExported, EventGeometryRefused, EventGeometryCompared,
-		EventGeometryAdopted,
+		EventGeometryAdopted, EventGeometryRespecified,
+		EventCADStarted, EventCADRestarted, EventCADRefused,
 	)
 }
 
