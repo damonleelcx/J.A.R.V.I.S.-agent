@@ -2164,6 +2164,97 @@ final byte passes a naive test and leaves exactly half the real cases broken.
 
 ---
 
+## Wave 10 — the parametric document · **DONE**
+
+**Why now.** `docs/spikes/2026-09-05-parametric-cad-kernel/` asked two questions
+the 2026-09-02 Zoo spike never did: can a real CAD kernel run here at all
+(**yes** — build123d on OpenCASCADE, a valid B-Rep in **46 ms**), and can our
+model drive one (**structure yes, figures no**). The second answer is what this
+wave is about.
+
+The spike swept a bracket through nine parameter changes. Eight held. The one
+that broke had `rib_length` as an independent 52 mm while `plate_size` moved: the
+ribs overhung the plate and the kernel refused the fillet. Deriving it held the
+same model across a 3.4× size range.
+
+> Naming a parameter is not enough. What survives a change is the RELATIONSHIP
+> being the thing recorded.
+
+**What was built.**
+
+- `geometry.Parameter` and `geometry.Derived` on the document, with `Resolve`
+  evaluating the expressions, ordering them by dependency, and reporting what
+  does not resolve. A value that cannot be computed is ABSENT, never zero — a
+  silent 0 turns a broken document into a plausible one.
+- `expression.go`: a closed grammar over the document's own names. No general
+  evaluator: these strings arrive from a model, over the network, into something
+  that is also persisted and replayed. Trigonometry is deliberately absent —
+  degrees and radians agree only at zero, and the wrong one produces a plausible
+  number rather than an error.
+- `standards_typed.go`: the honesty machinery, extended from prose into the
+  typed fields, **and along the dependency edges**. A figure derived from a
+  recalled parameter is exactly as unchecked as the parameter, so the claim
+  travels with it. That is how a number the model never stated becomes
+  attributable to the standard it came from.
+- Resolution problems reach the reader through `NotVerified`, the same door the
+  dropped tolerances and the unconvertible unit already use.
+
+### The defect the live run found, which was mine
+
+Three runs against the real contract, not the spike's probe prompt.
+
+The first two produced parameters and derived values — and put the NEMA figures
+(`42.3`, `31.0`, `3.2`) in `derived` as **bare constants**, where there is no
+`how` and no `source` and nothing can check them. Three of four derived values in
+each run, including a correctly-recalled `31.0` that therefore reached the reader
+unchecked.
+
+The spike's own probe never did this — 0 bare constants and 3 `how: "standard"`
+parameters across all three of its runs — so this was the contract's doing, not
+the model's. The difference was one clause. The probe stated a sufficient
+condition, *"every number a person could change is a PARAMETER with a unit"*; I
+had written a definition:
+
+> "parameters" are the numbers somebody could change
+
+A NEMA 17 bolt pitch is not something anybody can change, so the definition
+excludes it and the sufficient condition does not. The model read mine correctly
+and used the only other bucket. **A rule written as a category test gets applied
+as one**, and the category excluded exactly the values the provenance system
+exists for.
+
+Reframed as "EVERY fixed number this design rests on… a recalled figure is a
+parameter too, with `how: standard`", the next run produced:
+
+```
+nema17_face_size   = 42.3 mm   how=standard  source="NEMA ICS 16-2001"
+nema17_bolt_circle = 31   mm   how=standard  source="NEMA ICS 16-2001"
+```
+
+That is the first correct NEMA 17 bolt figure in this investigation, and it
+**does not overturn the spike's 0/3**: one run is not a rate, the two prompts
+differ in many ways besides that clause, and the probe put its figures in the
+right field and still got them wrong. The reframe fixed the placement defect it
+was aimed at. Whether it moves the figure rate is unmeasured.
+
+### What is NOT done, and is not pretended to be
+
+- **Parameters do not drive the geometry.** `Part.Size` is still the authored
+  number. Resolve reports what the parameters say; nothing rewrites a part from
+  them. That binding is the next wave's work and is the thing that makes a
+  document actually parametric rather than annotated.
+- **Parametric export stays refused** (VIS-05). No kernel is wired in. The spike
+  proves one CAN be; this wave did not do it.
+- **A recalled figure written as a bare constant in `derived` is still
+  invisible to the provenance check.** It is reported as a fixed number with no
+  unit and no source, which is true and is not the same as being checked. Two of
+  three derived values in the last live run were still this. Attributing them
+  would mean guessing which standard an unlabelled number came from, which is the
+  failure `standards.go` was written to avoid.
+- **No measured floor for a "the parametric model resolves" scorer.** One live
+  run is not a rate. Adding a scorer with a chosen floor would break this suite's
+  own rule that floors are measured.
+
 ## Carried defects
 
 Eight of the eleven carried here are closed. The three that remain are not
@@ -2344,6 +2435,15 @@ oversights and are stated with what each would actually take.
   websocket a browser cannot open, a stateful project mirror and a 56 MB CLI to
   export. **What it would take:** the spike is the estimate. Revisit when the
   product needs a manufacturable artefact rather than a shape to talk about.
+
+  **Amended 2026-09-05.** That conclusion was about integrating *Zoo*, and it
+  stands. It is no longer the whole answer about a CAD kernel:
+  `docs/spikes/2026-09-05-parametric-cad-kernel/` installed build123d on
+  OpenCASCADE here and built a valid 37-face B-Rep, exporting real ISO-10303-21
+  STEP, in **46 ms** — against the 180 s the Zoo spike measured, which was the
+  agent thinking rather than the kernel working. The latency argument for keeping
+  a build out of a conversational turn is therefore **wrong**, and only the 2.5 s
+  import cost is real. What is still undone is the wiring, not the feasibility.
 
 - **The industry IS now inferred — as a suggestion.** The planner returns what
   domain it made of a goal on the reply it was already producing, and Intake

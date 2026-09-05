@@ -55,6 +55,15 @@ Reply with JSON only:
   "prototype": null or {
     "name": "what this is",
     "units": "mm" | "cm" | "m",
+    "parameters": [
+      {"name": "snake_case_name", "value": 60.0, "unit": "mm",
+       "how": "chosen" | "standard",
+       "source": "which published figure, when how is \"standard\"; otherwise \"\""}
+    ],
+    "derived": [
+      {"name": "snake_case_name", "expression": "plate_size - 2 * edge_margin",
+       "why": "what relationship this keeps true when the other parameters change"}
+    ],
     "parts": [
       {
         "id": "stable-kebab-id",
@@ -119,10 +128,35 @@ About "prototype":
 - A figure from a PUBLISHED STANDARD is not an assumption and does not belong in
   that list. "NEMA 17 is 42.3mm across the face" is a claim about the world, and
   you are recalling it, not reading it — there is no reference source in this
-  deployment and nothing here can check you. Name the standard, say plainly that
-  the figure is from memory, and prefer not to quote a number at all unless it
-  changes what you would build. A wrong figure attached to a real standard is
-  more dangerous than no figure, because it is specific enough to be acted on.
+  deployment and nothing here can check you. Quote one only when it changes what
+  you would build; otherwise do not quote a number at all. When you do, put it in
+  "parameters" with "how": "standard" and name the source, because that is the
+  one place it can be labelled as recalled and read back against the published
+  figure. A wrong figure attached to a real standard is more dangerous than no
+  figure, because it is specific enough to be acted on — and a wrong one sitting
+  in a typed field beside a citation is more dangerous still, because it looks
+  like provenance.
+- "parameters" are EVERY fixed number this design rests on, each with a unit —
+  both the ones somebody could change and the ones nobody can. A dimension you
+  picked is a parameter with "how": "chosen". A figure you are recalling from a
+  standard is a parameter too, with "how": "standard" and the source named; it
+  goes here even though nobody may change it, because "how" is what tells the
+  two apart and this is the only list that has it. Both lists are OPTIONAL —
+  leave them out when the shape is not really parametric.
+- "derived" is for anything whose correct value DEPENDS on another parameter.
+  Write the relationship, never the number it currently works out to. A rib
+  whose length does not follow the plate it sits on will hang off the edge the
+  moment the plate shrinks, and that is the commonest way a model that looked
+  right stops being buildable.
+  EVERY expression here must name at least one parameter. A bare number in
+  "derived" — "42.3", "31.0" — is always wrong, because nothing about it follows
+  anything: it is a fixed number and belongs in "parameters", which is the only
+  list that carries a unit and a source. A recalled standard figure put here
+  instead arrives with neither, and nothing can check it.
+  An expression may use + - * / ^, brackets, the other parameter names, the
+  constant pi, and sqrt, abs, min, max, floor, ceil and round. There is no sine
+  or cosine here: half the world writes them in degrees and half in radians, so
+  carry an already-resolved length as a parameter instead.
 - "material" is a CLAIM about what a part is made of, not a rendering hint.
   Cost, weight, whether it can be welded and whether it survives the load all
   follow from it. If they told you, label it "observed" and quote them; if you
@@ -517,6 +551,26 @@ func (r *Reply) validate() error {
 		}
 		if note := geometry.StatesNotVerified(r.Prototype.States); note != "" {
 			r.Prototype.NotVerified = append(r.Prototype.NotVerified, note)
+		}
+		/* The parametric model, checked (2026-09-05 phase).
+		 *
+		 * A document can now carry parameters and the expressions that must
+		 * follow when they change, and those expressions can be wrong in ways
+		 * the geometry does not show: a name that is never declared, a cycle, a
+		 * value in millimetres subtracted from one in inches, or — the failure
+		 * the kernel spike actually found — a "derived" value that reads nothing
+		 * and is therefore a fixed number that will not follow anything.
+		 *
+		 * None of that changes a single pixel of the render, which is exactly
+		 * why it has to be said. The person is looking at a shape that appears
+		 * fine and is deciding whether it survives a change.
+		 *
+		 * Appended to NotVerified rather than logged, for the same reason as the
+		 * dropped tolerances and the unconvertible unit above: it is the one
+		 * place the reader is already looking. */
+		for _, problem := range r.Prototype.Resolve().Problems {
+			r.Prototype.NotVerified = append(r.Prototype.NotVerified,
+				parameterNote(problem))
 		}
 		// PRD VIS-06 as an invariant rather than an instruction: geometry
 		// without a statement of what it does not establish is exactly the

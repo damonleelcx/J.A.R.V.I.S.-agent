@@ -149,6 +149,61 @@ Concretely, `internal/agent/standards.go` and the
 would need to read parameter values and — the harder half — evaluate derived
 expressions to see what figure a model actually ends up with.
 
+## What Phase 1 did with this, and what it changed here
+
+Built as Wave 10 (`docs/implementation-plan.md`): `parameters` and `derived` on
+the document, an expression evaluator, and the honesty machinery extended from
+prose into the typed fields **and along the dependency edges** — a figure derived
+from a recalled parameter is exactly as unchecked as the parameter it rests on.
+
+Three live runs against the SHIPPING contract — which is longer than
+`premise_b.py`'s probe prompt and asks for six other things at the same time —
+found a failure this spike did not, and it was introduced by the contract rather
+than by the model.
+
+The first two runs put the NEMA figures (`42.3`, `31.0`, `3.2`) in `derived` as
+**bare constants**, 3 of 4 derived values each time. A bare constant there has no
+`how` and no `source`, so it reaches the reader without passing the provenance
+check at all — including a correctly-recalled `31.0`.
+
+**The probe never did this: 0 bare constants and 3 `how: "standard"` parameters
+in all three runs.** The difference was one clause. The probe stated a sufficient
+condition:
+
+> Every number a person could change is a PARAMETER with a unit.
+
+The shipping contract stated a definition:
+
+> "parameters" are the numbers somebody could change
+
+A NEMA 17 bolt pitch is not something anybody can change, so the second wording
+excludes it and the first does not. The model read the definition correctly and
+used the only other bucket. **A rule written as a category test gets applied as
+one**, and the category excluded exactly the values the provenance system exists
+for.
+
+Reframed as *"EVERY fixed number this design rests on… a recalled figure is a
+parameter too, with `how: standard`"*, the next run produced:
+
+```
+nema17_face_size   = 42.3 mm   how=standard  source="NEMA ICS 16-2001"
+nema17_bolt_circle = 31   mm   how=standard  source="NEMA ICS 16-2001"
+```
+
+That is the first correct NEMA 17 bolt figure in this investigation. **It does
+not overturn the 0/3 above.** One run is not a rate, the prompts differ in many
+ways besides that clause, and the probe's own runs put the figures in the right
+field and still got them wrong. What can be said is that the reframe fixed the
+placement defect it was aimed at; whether it moves the figure rate needs runs
+nobody has done.
+
+Two of three derived values in that run were still bare constants (`3.2`, the M3
+clearance), so the placement problem is reduced rather than closed.
+
+The spike's other two conclusions stand unchanged: structure arrives reliably,
+and a wrong figure in a typed field with a citation beside it is more convincing
+than the prose version, not less.
+
 ## Related
 
 - `docs/spikes/2026-09-02-zoo-text-to-cad/` — the NEMA 17 reference figures and

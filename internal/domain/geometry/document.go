@@ -34,6 +34,21 @@ type Document struct {
 	Name  string `json:"name"`
 	Units string `json:"units"`
 	Parts []Part `json:"parts"`
+	// Parameters are the numbers a person could change, and Derived are the
+	// values that must follow when they do (see parameters.go).
+	//
+	// Optional, and additive on purpose. A document that carries neither is
+	// exactly the document this package has always held — the fields were added
+	// by the 2026-09-05 parametric phase and every existing stored variant
+	// predates them, so absence has to keep meaning "not parametric" rather
+	// than "parametric and empty".
+	//
+	// What they do NOT yet do is drive Parts. A part's Size is still the
+	// authored number, and the link between the two is the next phase's work;
+	// until it exists, Resolve reports what the parameters say and nothing
+	// silently rewrites geometry from them.
+	Parameters []Parameter `json:"parameters,omitempty"`
+	Derived    []Derived   `json:"derived,omitempty"`
 	// Assumptions is every dimension FORGE chose rather than was given. One of
 	// the six things PRD VIS-04 requires a render to link to.
 	Assumptions []string `json:"assumptions"`

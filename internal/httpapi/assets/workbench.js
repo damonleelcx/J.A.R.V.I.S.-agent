@@ -1442,12 +1442,24 @@
       '<div class="rc-h">Quoted from memory · not checked</div>' +
       claims.map(function (c) {
         var figs = figuresOf(c);
+        var via = c.Via || c.via || '';
         return '<div class="rc-i"><b>' + esc(standardsOf(c).join(' · ')) + '</b>' +
           (figs.length ? ' — ' + esc(figs.join(', ')) : ' — conformance claimed, no figure given') +
           // The sentence, verbatim. The figures are listed against the SENTENCE
           // and never paired with an individual standard, so the reader does the
           // pairing by reading it — see the note on StandardsClaim.
-          '<div class="rc-q">“' + esc(c.Text || c.text) + '”</div>' +
+          //
+          // A claim from a typed field is NOT a sentence, so it is not dressed as
+          // a quotation: "motor_mount_hole_spacing = 42.3 mm" in speech marks
+          // reads as something FORGE said, and it never said it.
+          (via
+            ? '<div class="rc-q rc-field">' + esc(c.Text || c.text) + '</div>'
+            : '<div class="rc-q">“' + esc(c.Text || c.text) + '”</div>') +
+          // Where a derived figure CAME FROM is the whole question a reader has
+          // about it: 14.955 mm is stated nowhere and descends from a quoted
+          // standard through an expression. Without this line the panel shows a
+          // number with a standard's name beside it and no way to see the link.
+          (via ? '<div class="rc-v">' + esc(via) + '</div>' : '') +
           '<div class="rc-w">in the ' + esc(c.Where || c.where) + '</div></div>';
       }).join('') +
       '<div class="rc-f">There is no standards reference in this deployment. ' +
