@@ -391,6 +391,17 @@
 
   /* ---- the studio ------------------------------------------------------- */
 
+  /* How material being removed is drawn.
+   *
+   * Faint enough to read as absence rather than as a translucent SOLID — a
+   * housing somebody made see-through is a real part and must not look like
+   * this — and visible enough that a person can tell where the hole will be. The
+   * colour is the warning gold this interface already uses for "quoted from
+   * memory, not checked", because both mean the same thing to a reader: what you
+   * are looking at is not the whole story. */
+  var REMOVED_ALPHA = 0.22;
+  var REMOVED_COLOUR = '#e6cd8f';
+
   function Studio(canvas, opts) {
     opts = opts || {};
     this.canvas = canvas;
@@ -534,6 +545,25 @@
 
     this.spec = spec || { parts: [] };
     this.approximations = [];
+
+    /* Parts that are material being REMOVED, not material that is there.
+     *
+     * A cut feature names a part as the tool that makes a hole, and the CAD
+     * kernel consumes it: the exported solid has a void where it was. This
+     * renderer has no boolean operations and cannot make that void, so without
+     * this the four bolt holes of a bracket are drawn as four solid posts
+     * standing on the plate — the exact opposite of what they are.
+     *
+     * It cannot be fixed by drawing the hole. It CAN be stopped from reading as
+     * a post: a tool is drawn as a ghost, and the provenance banner says which
+     * shape the exported file has. Same stance as "Drawn approximately" — say
+     * what was done instead of hiding it. */
+    var removed = {};
+    (this.spec.features || []).forEach(function (f) {
+      if (!f || String(f.op).toLowerCase() !== 'cut') return;
+      (f.with || []).forEach(function (id) { removed[id] = true; });
+    });
+
     this.parts = (this.spec.parts || []).map(function (part) {
       var built = buildGeometry(part);
       var geo = built.geo;
@@ -549,7 +579,11 @@
         spec: part,
         buffers: buffers,
         count: geo.indices.length,
-        centre: part.position || [0, 0, 0]
+        centre: part.position || [0, 0, 0],
+        // Held on the WRAPPER and never written into spec: the document on
+        // screen has to stay the document that was stored, so a presentation
+        // decision must not become a value the model appears to have stated.
+        removed: !!removed[part.id]
       };
     });
 
@@ -678,11 +712,17 @@
     gl.uniform1f(loc.secAt, this.section.at);
 
     var self = this;
+    /* One function, read by both the sort and the draw. Two copies would
+     * eventually disagree, and a part sorted as opaque and drawn translucent is
+     * a part that erases whatever is behind it. */
+    var alphaOf = function (p) {
+      return p.removed ? REMOVED_ALPHA : num(p.spec.opacity, 1) * self.transparency;
+    };
     // Opaque first, then transparent back-to-front, so a translucent housing
     // does not erase what is inside it.
     var order = this.parts.slice().sort(function (a, b) {
-      var oa = num(a.spec.opacity, 1) * self.transparency;
-      var ob = num(b.spec.opacity, 1) * self.transparency;
+      var oa = alphaOf(a);
+      var ob = alphaOf(b);
       if ((oa >= 1) !== (ob >= 1)) return oa >= 1 ? -1 : 1;
       var da = length3(sub(eye, a.spec.position || [0,0,0]));
       var db = length3(sub(eye, b.spec.position || [0,0,0]));
@@ -714,8 +754,8 @@
                              scaling(s.scale || [1,1,1])));
       gl.uniformMatrix4fv(loc.model, false, model);
       gl.uniformMatrix3fv(loc.nmat, false, normalMatrix(model));
-      gl.uniform3fv(loc.color, hexToRGB(s.color || '#b8bcc4'));
-      gl.uniform1f(loc.opacity, num(s.opacity, 1) * self.transparency);
+      gl.uniform3fv(loc.color, hexToRGB(part.removed ? REMOVED_COLOUR : (s.color || '#b8bcc4')));
+      gl.uniform1f(loc.opacity, alphaOf(part));
       gl.uniform1f(loc.highlight, self.selected === s.id ? 1 : 0);
       /* The finish, as the document declared it. Not looked up from the material
        * NAME: that table would have to exist here and in Go, and this codebase

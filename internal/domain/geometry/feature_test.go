@@ -149,7 +149,7 @@ func TestFeatureNotes_SayWhatTheScreenCannotShow(t *testing.T) {
 		{ID: "round", Op: "fillet", Of: "plate", RadiusFrom: "fillet_radius", Edges: "vertical"},
 	}
 	notes := strings.Join(d.FeatureNotes(), " ")
-	if !strings.Contains(notes, "cannot show a hole") {
+	if !strings.Contains(notes, "cannot cut a hole") {
 		t.Errorf("nothing says the viewport cannot draw the cut: %q", notes)
 	}
 	if !strings.Contains(notes, "Hole") || !strings.Contains(notes, "Plate") {

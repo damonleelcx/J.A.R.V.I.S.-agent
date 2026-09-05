@@ -2547,7 +2547,12 @@ that changes what somebody does with the file.
 
 ### What is still NOT done
 
-- **The renderer still cannot draw a hole.** Stated, not fixed.
+- **The renderer still cannot draw a hole**, and cannot without a CSG engine in
+  JavaScript. What it no longer does is draw one as a solid POST, which is the
+  opposite of a hole: a cut tool renders as a faint ghost in the warning gold
+  this interface already uses for "quoted from memory, not checked". A fence over
+  `forge3d.js` holds that in place, because the realistic failure is somebody
+  refactoring the loader and dropping a field nothing in Go refers to.
 - **No sketches, extrusions or revolves.** Everything starts from a primitive, so
   a shape that is not a box, cylinder, cone, sphere or plane with material
   removed cannot be described.

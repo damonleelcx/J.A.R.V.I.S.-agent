@@ -264,9 +264,12 @@ func (d *Document) ConsumedParts() map[string]bool {
 //
 // # Why this exists rather than a fix
 //
-// The renderer draws primitives and has no boolean operations, so a part used to
-// cut a hole appears as a small solid standing in the plate rather than as a void
-// through it. The exported B-Rep has the hole; the viewport does not.
+// The renderer has no boolean operations, so it cannot make the void. It CAN
+// stop the tool from reading as a solid post standing on the plate, which is the
+// exact opposite of what it is: forge3d.js draws a cut tool as a faint ghost in
+// the same warning gold this interface uses for "quoted from memory, not
+// checked", because both mean the same thing to a reader. The exported B-Rep
+// still has the hole and the viewport still does not.
 //
 // That is a real divergence between two things this product shows the same
 // person, and the rule here has never been to hide one — it is the same stance
@@ -301,9 +304,9 @@ func (d *Document) FeatureNotes() []string {
 	var out []string
 	if len(cuts) > 0 {
 		sort.Strings(cuts)
-		out = append(out, "The viewport draws solid primitives and cannot show a hole: "+
-			strings.Join(cuts, "; ")+" is cut in the exported solid and drawn as a part standing "+
-			"in it on screen. The exported file is the one with the hole.")
+		out = append(out, "The viewport cannot cut a hole, so material being removed is drawn "+
+			"as a faint gold ghost rather than as a void: "+strings.Join(cuts, "; ")+". "+
+			"The exported file is the one with the hole in it.")
 	}
 	if len(fuses) > 0 {
 		sort.Strings(fuses)

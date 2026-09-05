@@ -645,12 +645,11 @@ func (r *Reply) validate() error {
 		 * approximated, so the reader has to be told which — an assembly missing
 		 * a hole somebody asked for is not something the render will show.
 		 *
-		 * And the viewport draws primitives with no boolean operations, so a
-		 * part used to cut a hole appears standing IN the plate rather than as a
-		 * void through it. That is a real divergence between two things this
-		 * product shows the same person, and it is stated for the same reason
-		 * "Drawn approximately" is: the system says what it did instead of
-		 * hiding it. */
+		 * And the viewport has no boolean operations, so it cannot make the
+		 * void. It draws the tool as a faint ghost rather than as a solid post
+		 * — which is the opposite of what a hole is — and says so here. A real
+		 * divergence between two things this product shows the same person,
+		 * stated for the same reason "Drawn approximately" is. */
 		if _, featureProblems := r.Prototype.Operations(); len(featureProblems) > 0 {
 			for _, problem := range featureProblems {
 				r.Prototype.NotVerified = append(r.Prototype.NotVerified, featureNote(problem))

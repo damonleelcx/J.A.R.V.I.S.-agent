@@ -245,7 +245,7 @@ func TestValidate_TheViewportsDisagreementWithTheFileIsStated(t *testing.T) {
 	if err := r.validate(); err != nil {
 		t.Fatal(err)
 	}
-	if !notedAbout(r, "cannot show a hole") {
+	if !notedAbout(r, "cannot cut a hole") {
 		t.Fatalf("the divergence between the render and the file was not stated: %v",
 			r.Prototype.NotVerified)
 	}
