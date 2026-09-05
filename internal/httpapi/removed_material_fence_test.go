@@ -4,9 +4,11 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 
@@ -199,6 +201,33 @@ func TestRendererSweepsTheSameSolidAsTheExporter(t *testing.T) {
 		{X: 2, Y: -2}, {X: 2, Y: 6}, {X: -2, Y: 6}}
 	path := []geometry.Point{{}, {Z: 30}, {X: 40, Z: 30}, {X: 40, Y: 25, Z: 30}}
 
+	// The same thing with radii on it. Corner arithmetic is a second place the
+	// two implementations can disagree, and it disagrees SILENTLY: a corner
+	// rounded to a different radius, or an arc stepped the other way round, is
+	// still a closed solid of almost the right volume.
+	roundedProfile := []geometry.Point{{X: -2, Y: -6}, {X: 6, Y: -6, Radius: 1.5},
+		{X: 6, Y: -2, Radius: 1}, {X: 2, Y: -2}, {X: 2, Y: 6, Radius: 1}, {X: -2, Y: 6}}
+	bentPath := []geometry.Point{{}, {Z: 30, Radius: 12}, {X: 40, Z: 30, Radius: 8},
+		{X: 40, Y: 25, Z: 30}}
+
+	for _, tc := range []struct {
+		name    string
+		profile []geometry.Point
+		path    []geometry.Point
+	}{
+		{"sharp corners", profile, path},
+		{"rounded corners and bend radii", roundedProfile, bentPath},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			compareSweptFacets(t, node, dir, asset, tc.profile, tc.path)
+		})
+	}
+}
+
+// compareSweptFacets runs the renderer's own builder in node and checks its
+// facets against the ones geometry.Tessellate produces for the same document.
+func compareSweptFacets(t *testing.T, node, dir, asset string, profile, path []geometry.Point) {
+	t.Helper()
 	harness := filepath.Join(dir, "run.js")
 	script := `
       // The asset is browser code and attaches itself to a global. Nothing else
@@ -250,56 +279,185 @@ func TestRendererSweepsTheSameSolidAsTheExporter(t *testing.T) {
 		Parts: []geometry.Part{{ID: "s", Shape: "sweep", Profile: profile, Path: path}}}
 	exported := geometry.Tessellate(doc, geometry.Millimetre).Triangles()
 
-	// Compared as a SET of facets. The order each builder emits its caps and
-	// walls in is not a property of the solid, but every corner and every
-	// winding is.
+	// Compared as a SET of facets, NUMERICALLY.
 	//
-	// The NORMAL is part of the key, and not decoration. This renderer is handed
-	// each normal explicitly and draws with back-face culling off, so a facet
-	// lit from the wrong side looks like a shading bug rather than like a solid
-	// that is inside out — and the exported file, built from the same winding,
-	// would be the one that is actually wrong. Comparing positions alone would
-	// let the two agree about the shape and disagree about which side of it is
-	// material.
-	key := func(a, b, c, n [3]float64) string {
-		corner := [3][3]float64{a, b, c}
-		first := 0
-		for i := 1; i < 3; i++ {
-			if fmt.Sprint(corner[i]) < fmt.Sprint(corner[first]) {
-				first = i
-			}
-		}
-		// Negative zero is folded away: the two arrive at the same normal by
-		// different arithmetic and differ in the sign of zero on axes the facet
-		// does not face at all.
-		flatten := func(v [3]float64) [3]float64 { return [3]float64{v[0] + 0, v[1] + 0, v[2] + 0} }
-		return fmt.Sprintf("%.6v/%.6v/%.6v n%.5v", flatten(corner[first]),
-			flatten(corner[(first+1)%3]), flatten(corner[(first+2)%3]), flatten(n))
-	}
-	drawn := map[string]int{}
+	// The order each builder emits its caps and walls in is not a property of the
+	// solid, so the facets are canonicalised and sorted rather than zipped. And
+	// the comparison is a tolerance rather than an equality, because the two
+	// arrive at the same facet by different arithmetic: measured 2026-09-05, a
+	// wall whose normal is exactly (0, 1, 0) in Go came back as
+	// (-4.12e-16, 1, 0) from the browser, and one vertex that is exactly 46 there
+	// is 45.999999999999993 here. Neither is a disagreement about the shape.
+	//
+	// The NORMAL is compared and not just the positions. This renderer is handed
+	// each normal explicitly and draws with back-face culling off, so a facet lit
+	// from the wrong side looks like a shading bug rather than like a solid that
+	// is inside out — while the exported file, built from the same winding, would
+	// be the one that is actually wrong.
+	drawnFacets := make([][12]float64, 0, len(flat)/9)
 	for i := 0; i < len(flat); i += 9 {
-		// Every vertex of a facet carries the same normal here; the first is the
-		// facet's.
-		drawn[key([3]float64{flat[i], flat[i+1], flat[i+2]},
+		drawnFacets = append(drawnFacets, canonicalFacet(
+			[3]float64{flat[i], flat[i+1], flat[i+2]},
 			[3]float64{flat[i+3], flat[i+4], flat[i+5]},
 			[3]float64{flat[i+6], flat[i+7], flat[i+8]},
-			[3]float64{drawnGeo.N[i], drawnGeo.N[i+1], drawnGeo.N[i+2]})]++
+			[3]float64{drawnGeo.N[i], drawnGeo.N[i+1], drawnGeo.N[i+2]}))
 	}
-	if len(exported) != len(flat)/9 {
-		t.Errorf("the exporter built %d facets and the renderer drew %d", len(exported), len(flat)/9)
-	}
+	builtFacets := make([][12]float64, 0, len(exported))
 	for _, tr := range exported {
-		k := key(tr.A, tr.B, tr.C, tr.Normal)
-		if drawn[k] == 0 {
-			t.Fatalf("the exporter built the facet %s and the renderer did not draw it — the "+
-				"two disagree about where this sweep's material is, so the file and the "+
-				"picture are different shapes", k)
-		}
-		drawn[k]--
+		builtFacets = append(builtFacets, canonicalFacet(tr.A, tr.B, tr.C, tr.Normal))
 	}
-	for k, n := range drawn {
-		if n > 0 {
-			t.Fatalf("the renderer drew %d of the facet %s that the exporter did not build", n, k)
+	if len(builtFacets) != len(drawnFacets) {
+		t.Fatalf("the exporter built %d facets and the renderer drew %d",
+			len(builtFacets), len(drawnFacets))
+	}
+	sortFacets(builtFacets)
+	sortFacets(drawnFacets)
+
+	// Facets that match exactly are consumed. What is allowed to be left over is
+	// the CAPS, and only the caps.
+	//
+	// # Why anything is allowed to differ at all
+	//
+	// The walls are determined: a ring per path point, a quad per outline edge,
+	// no choices. Every convention worth guarding — the section frame, the
+	// mitre, whether the section rolls, which side is material — lives there, and
+	// those must match to the last bit.
+	//
+	// The caps are ear-clipped, and TWO CORRECT EAR CLIPPINGS OF ONE OUTLINE ARE
+	// NOT THE SAME TRIANGLES. That is the property this codebase deliberately
+	// shares instead of the code. It never came up before arcs because both
+	// sides made identical decisions from identical arithmetic; a rounded corner
+	// puts forty nearly-collinear points on the outline, where an ear test turns
+	// on a cross product of about 1e-16 and the two sides can legitimately part
+	// company. Measured 2026-09-05.
+	//
+	// So the leftovers must be two triangulations of the SAME REGION: the same
+	// vertices, the same total area, and few enough of them to be caps.
+	leftBuilt, leftDrawn := consumeMatching(builtFacets, drawnFacets)
+	if len(leftBuilt) != len(leftDrawn) {
+		t.Fatalf("%d facets of the exporter's and %d of the renderer's have no counterpart",
+			len(leftBuilt), len(leftDrawn))
+	}
+	if len(leftBuilt) == 0 {
+		return
+	}
+	if len(leftBuilt)*4 > len(builtFacets) {
+		t.Fatalf("%d of %d facets differ — far more than the caps, so this is not two ear "+
+			"clippings of one outline but two different solids",
+			len(leftBuilt), len(builtFacets))
+	}
+	if a, b := facetArea(leftBuilt), facetArea(leftDrawn); math.Abs(a-b) > 1e-6*math.Max(1, a) {
+		t.Errorf("the facets that differ cover %.9f on the exporter and %.9f on the renderer; "+
+			"any correct triangulation of an outline covers exactly the outline", a, b)
+	}
+	if a, b := facetVertices(leftBuilt), facetVertices(leftDrawn); !sameVertexSet(a, b) {
+		t.Errorf("the facets that differ are drawn between different points (%d and %d "+
+			"distinct), so they are not two triangulations of one outline", len(a), len(b))
+	}
+}
+
+// consumeMatching pairs off facets that agree within tolerance and returns what
+// is left on each side.
+func consumeMatching(built, drawn [][12]float64) (leftBuilt, leftDrawn [][12]float64) {
+	used := make([]bool, len(drawn))
+	for _, b := range built {
+		found := false
+		for j, d := range drawn {
+			if used[j] {
+				continue
+			}
+			same := true
+			for k := 0; k < 12 && same; k++ {
+				same = math.Abs(b[k]-d[k]) <= 1e-9
+			}
+			if same {
+				used[j], found = true, true
+				break
+			}
+		}
+		if !found {
+			leftBuilt = append(leftBuilt, b)
 		}
 	}
+	for j, d := range drawn {
+		if !used[j] {
+			leftDrawn = append(leftDrawn, d)
+		}
+	}
+	return leftBuilt, leftDrawn
+}
+
+func facetArea(f [][12]float64) float64 {
+	var total float64
+	for _, v := range f {
+		u := [3]float64{v[3] - v[0], v[4] - v[1], v[5] - v[2]}
+		w := [3]float64{v[6] - v[0], v[7] - v[1], v[8] - v[2]}
+		c := [3]float64{u[1]*w[2] - u[2]*w[1], u[2]*w[0] - u[0]*w[2], u[0]*w[1] - u[1]*w[0]}
+		total += math.Sqrt(c[0]*c[0]+c[1]*c[1]+c[2]*c[2]) / 2
+	}
+	return total
+}
+
+func facetVertices(f [][12]float64) map[string]bool {
+	out := map[string]bool{}
+	for _, v := range f {
+		for i := 0; i < 3; i++ {
+			out[fmt.Sprintf("%.6f,%.6f,%.6f", v[i*3], v[i*3+1], v[i*3+2])] = true
+		}
+	}
+	return out
+}
+
+func sameVertexSet(a, b map[string]bool) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	for k := range a {
+		if !b[k] {
+			return false
+		}
+	}
+	return true
+}
+
+// canonicalFacet is a facet written from a fixed starting vertex, so the same
+// triangle written from a different corner reads the same.
+//
+// Rotating preserves the winding, so a facet turned inside out still differs —
+// which is the half of this that matters.
+func canonicalFacet(a, b, c, n [3]float64) [12]float64 {
+	corner := [3][3]float64{a, b, c}
+	first := 0
+	for i := 1; i < 3; i++ {
+		if less3(corner[i], corner[first]) {
+			first = i
+		}
+	}
+	var out [12]float64
+	for i := 0; i < 3; i++ {
+		v := corner[(first+i)%3]
+		out[i*3], out[i*3+1], out[i*3+2] = v[0], v[1], v[2]
+	}
+	out[9], out[10], out[11] = n[0], n[1], n[2]
+	return out
+}
+
+func less3(a, b [3]float64) bool {
+	for i := 0; i < 3; i++ {
+		if a[i] != b[i] {
+			return a[i] < b[i]
+		}
+	}
+	return false
+}
+
+func sortFacets(f [][12]float64) {
+	sort.Slice(f, func(i, j int) bool {
+		for k := 0; k < 12; k++ {
+			if f[i][k] != f[j][k] {
+				return f[i][k] < f[j][k]
+			}
+		}
+		return false
+	})
 }

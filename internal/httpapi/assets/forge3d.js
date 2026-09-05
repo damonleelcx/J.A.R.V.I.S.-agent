@@ -340,8 +340,112 @@
     return { pts: pts, tris: tris };
   }
 
+  /* ---- corner radii ------------------------------------------------------
+   *
+   * A point may carry a `radius`, which rounds the corner there: an arc of that
+   * radius, tangent to both edges meeting at it. The same field on an outline
+   * point and on a path point, because it is the same idea — and on a path it is
+   * the BEND RADIUS, the number a tube bender is set to.
+   *
+   * # Why this is flattened here and not sent as a curve
+   *
+   * internal/domain/geometry/curve.go works out the same corners and hands the
+   * CAD kernel the TRUE arcs, so an exported bend is a real cylindrical surface.
+   * This is a renderer: it draws triangles, so it turns each arc into chords at
+   * the same count a cylinder gets, and the workbench reports the deviation the
+   * Go side computed. Same bargain every curved shape here already makes.
+   *
+   * Returns null when the corners cannot be resolved — radii that overlap each
+   * other, a radius where there is no corner. Go refuses those documents before
+   * they are ever drawn, so reaching null means the two disagree, and drawing a
+   * labelled box beats drawing a lie.
+   */
+  function flattenDrawing(points, closed) {
+    var n = points.length;
+    if (n < 2) return null;
+    function at(i) {
+      var p = points[((i % n) + n) % n];
+      return [num(p.x, 0), num(p.y, 0), num(p.z, 0)];
+    }
+    function sub(a, b) { return [a[0]-b[0], a[1]-b[1], a[2]-b[2]]; }
+    function add(a, b) { return [a[0]+b[0], a[1]+b[1], a[2]+b[2]]; }
+    function mul(a, s) { return [a[0]*s, a[1]*s, a[2]*s]; }
+    function dot(a, b) { return a[0]*b[0] + a[1]*b[1] + a[2]*b[2]; }
+    function crs(a, b) {
+      return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
+    }
+    function len(a) { return Math.sqrt(dot(a, a)); }
+    function unit(a) { var l = len(a); return l ? mul(a, 1/l) : [0,0,0]; }
+
+    var TOL = 1e-9, corners = [], i;
+    for (i = 0; i < n; i++) {
+      var r = num(points[i].radius, 0);
+      var interior = closed || (i > 0 && i < n - 1);
+      if (!(r > 0) || !interior) { corners.push(null); continue; }
+      var dIn = sub(at(i), at(i-1)), dOut = sub(at(i+1), at(i));
+      if (len(dIn) < TOL || len(dOut) < TOL) return null;
+      dIn = unit(dIn); dOut = unit(dOut);
+      var axis = crs(dIn, dOut), sin = len(axis), cos = dot(dIn, dOut);
+      if (sin < TOL) return null;               /* in line, or a reversal */
+      var angle = Math.atan2(sin, cos);
+      var cut = r * Math.tan(angle / 2);
+      var from = add(at(i), mul(dIn, -cut));
+      var centre = add(at(i), mul(unit(sub(dOut, dIn)), r / Math.cos(angle / 2)));
+      corners.push({ cut: cut, from: from, centre: centre, angle: angle,
+                     axis: mul(axis, 1/sin) });
+    }
+    /* Two corners on one edge must leave room for each other. */
+    var last = closed ? n - 1 : n - 2;
+    for (i = 0; i <= last; i++) {
+      var j = (i + 1) % n;
+      var need = (corners[i] ? corners[i].cut : 0) + (corners[j] ? corners[j].cut : 0);
+      if (need > len(sub(at(j), at(i))) + TOL) return null;
+    }
+
+    var out = [];
+    function push(p) {
+      var back = out[out.length - 1];
+      if (back && Math.abs(back[0]-p[0]) < 1e-12 && Math.abs(back[1]-p[1]) < 1e-12 &&
+          Math.abs(back[2]-p[2]) < 1e-12) return;
+      out.push(p);
+    }
+    for (i = 0; i < n; i++) {
+      var c = corners[i];
+      if (!c) { push(at(i)); continue; }
+      var steps = Math.max(1, Math.ceil(TESSELLATION.radial * c.angle / (2 * Math.PI)));
+      var spoke = sub(c.from, c.centre);
+      for (var k = 0; k <= steps; k++) {
+        var t = c.angle * k / steps;
+        var ct = Math.cos(t), st = Math.sin(t);
+        /* Rodrigues about the corner's own axis. */
+        push(add(c.centre, add(add(mul(spoke, ct), mul(crs(c.axis, spoke), st)),
+                               mul(c.axis, dot(c.axis, spoke) * (1 - ct)))));
+      }
+    }
+    if (closed && out.length > 1) {
+      var a = out[0], b = out[out.length - 1];
+      if (Math.abs(a[0]-b[0]) < 1e-12 && Math.abs(a[1]-b[1]) < 1e-12 &&
+          Math.abs(a[2]-b[2]) < 1e-12) out.pop();
+    }
+    return out;
+  }
+
+  /* The outline, flattened, in its own two dimensions. */
+  function outlinePoints(profile) {
+    var flat = flattenDrawing(profile || [], true);
+    if (!flat) return null;
+    return flat.map(function (p) { return [p[0], p[1]]; });
+  }
+
   function extrusionGeometry(profile, depth) {
-    var raw = (profile || []).map(function (p) { return [num(p.x, 0), num(p.y, 0)]; });
+    var raw = outlinePoints(profile);
+    if (!raw) {
+      return {
+        geo: boxGeometry(1, 1, num(depth, 1)),
+        approximated: 'the corner radii on this outline could not be resolved, so it is ' +
+                      'drawn as a unit box'
+      };
+    }
     if (raw.length < 3) {
       return {
         geo: boxGeometry(1, 1, num(depth, 1)),
@@ -406,7 +510,14 @@
    * mesh is the surface that was on screen.
    */
   function revolveGeometry(profile, axis) {
-    var raw = (profile || []).map(function (p) { return [num(p.x, 0), num(p.y, 0)]; });
+    var raw = outlinePoints(profile);
+    if (!raw) {
+      return {
+        geo: boxGeometry(1, 1, 1),
+        approximated: 'the corner radii on this outline could not be resolved, so it is ' +
+                      'drawn as a unit box'
+      };
+    }
     if (raw.length < 3) {
       return {
         geo: boxGeometry(1, 1, 1),
@@ -553,8 +664,15 @@
   }
 
   function sweepGeometry(profile, path) {
-    var raw = (profile || []).map(function (p) { return [num(p.x, 0), num(p.y, 0)]; });
-    var way = (path || []).map(function (p) { return [num(p.x, 0), num(p.y, 0), num(p.z, 0)]; });
+    var raw = outlinePoints(profile);
+    var way = flattenDrawing(path || [], false);
+    if (!raw || !way) {
+      return {
+        geo: boxGeometry(1, 1, 1),
+        approximated: 'the corner radii on this outline or the bend radii on its path could ' +
+                      'not be resolved, so it is drawn as a unit box'
+      };
+    }
     if (raw.length < 3 || way.length < 2) {
       return {
         geo: boxGeometry(1, 1, 1),

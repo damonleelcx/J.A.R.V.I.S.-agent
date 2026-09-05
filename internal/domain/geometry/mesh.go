@@ -173,17 +173,21 @@ func partTriangles(p Part, unit Unit, infer func(string, ...any)) ([]Triangle, *
 			sizeOr(p, "depth", 1, unit, infer)), nil
 
 	case "extrusion":
-		return extrusion(p, sizeOr(p, "depth", 1, unit, infer), infer), nil
+		return extrusion(p, sizeOr(p, "depth", 1, unit, infer), unit, infer)
 
 	case "revolve":
-		return revolved(p, infer), chordDeviation(revolveRadius(p), radialSegments, unit)
+		tris, dev := revolved(p, unit, infer)
+		// Faceted twice over when the outline has rounded corners: once round
+		// the turn and once round each corner. The worse of the two is what the
+		// file actually is.
+		return tris, worseDeviation(dev, chordDeviation(revolveRadius(p), radialSegments, unit))
 
 	case "sweep":
-		// No deviation, and that is not an omission. A polygon carried along a
-		// polyline has no curved surface anywhere on it, so these triangles ARE
-		// the solid rather than an approximation of it — the one shape here that
-		// the kernel and the tessellator agree about exactly.
-		return swept(p, infer), nil
+		// A sweep with no rounded corner has NO deviation, and that is not an
+		// omission: a polygon carried along a polyline has no curved surface
+		// anywhere on it, so the triangles ARE the solid. A bend radius is the
+		// one thing that makes a sweep an approximation.
+		return swept(p, unit, infer)
 
 	case "plane":
 		// A plane has no thickness and is not a solid. Exported as the two
@@ -538,11 +542,16 @@ func normalise(v [3]float64) [3]float64 {
 // from the edge direction, which is only well defined BECAUSE the winding was
 // normalised — an inside-out solid is a defect this repository has shipped once
 // already.
-func extrusion(p Part, depth float64, infer func(string, ...any)) []Triangle {
-	pts := make([][2]float64, 0, len(p.Profile))
-	for _, pt := range p.Profile {
-		pts = append(pts, [2]float64{pt.X, pt.Y})
+func extrusion(p Part, depth float64, unit Unit, infer func(string, ...any)) ([]Triangle, *Deviation) {
+	flat, dev, err := partOutline(p).flatten("outline", unit)
+	if err != nil {
+		// Reported and then not drawn. A drawing whose corners cannot be
+		// resolved has no points to fall back to — unlike a self-crossing one,
+		// which at least has the points it was given.
+		infer("%s: %v, so it is not drawn.", p.Label(), err)
+		return nil, nil
 	}
+	pts := flat2D(flat)
 	pts, tris, ok := triangulate(pts)
 	if !ok {
 		// Reported and then drawn as far as it went. A part that vanishes from a
@@ -552,7 +561,7 @@ func extrusion(p Part, depth float64, infer func(string, ...any)) []Triangle {
 			"repeats a point — so it is drawn only as far as FORGE could read it.", p.Label())
 	}
 	if len(tris) == 0 {
-		return nil
+		return nil, nil
 	}
 	half := depth / 2
 	at := func(i int, z float64) [3]float64 { return [3]float64{pts[i][0], pts[i][1], z} }
@@ -579,7 +588,7 @@ func extrusion(p Part, depth float64, infer func(string, ...any)) []Triangle {
 		out = appendNonDegenerate(out, Triangle{
 			A: at(i, -half), B: at(j, half), C: at(i, half), Normal: n})
 	}
-	return out
+	return out, dev
 }
 
 // revolved tessellates an outline turned a full circle about its own axis.
@@ -595,13 +604,15 @@ func extrusion(p Part, depth float64, infer func(string, ...any)) []Triangle {
 // cylinder beside it are tessellated to the same fineness — and the exported
 // file is the surface that was on screen, which is what the tessellation fence
 // exists to keep true.
-func revolved(p Part, infer func(string, ...any)) []Triangle {
-	pts := make([][2]float64, 0, len(p.Profile))
-	for _, pt := range p.Profile {
-		pts = append(pts, [2]float64{pt.X, pt.Y})
+func revolved(p Part, unit Unit, infer func(string, ...any)) ([]Triangle, *Deviation) {
+	flat, dev, err := partOutline(p).flatten("outline", unit)
+	if err != nil {
+		infer("%s: %v, so it is not drawn.", p.Label(), err)
+		return nil, nil
 	}
+	pts := flat2D(flat)
 	if len(pts) < minProfilePoints {
-		return nil
+		return nil, nil
 	}
 	// The same normalisation the extrusion uses, and for the same reason: the
 	// facet winding below is only outward for a counter-clockwise outline, and
@@ -646,7 +657,7 @@ func revolved(p Part, infer func(string, ...any)) []Triangle {
 			out = appendNonDegenerate(out, Triangle{A: a, B: c, C: d, Normal: faceNormal(a, c, d)})
 		}
 	}
-	return out
+	return out, dev
 }
 
 // swept tessellates an outline carried along a path (see sweep.go).
@@ -666,20 +677,24 @@ func revolved(p Part, infer func(string, ...any)) []Triangle {
 // facet normals are computed from the facets rather than from a formula, because
 // a path may point anywhere and a formula written for one direction is silently
 // inverted for another.
-func swept(p Part, infer func(string, ...any)) []Triangle {
-	pts := make([][2]float64, 0, len(p.Profile))
-	for _, pt := range p.Profile {
-		pts = append(pts, [2]float64{pt.X, pt.Y})
+func swept(p Part, unit Unit, infer func(string, ...any)) ([]Triangle, *Deviation) {
+	flatOutline, outlineDev, oerr := partOutline(p).flatten("outline", unit)
+	flatPath, pathDev, perr := partPath(p).flatten("path", unit)
+	if err := firstOf(oerr, perr); err != nil {
+		infer("%s: %v, so it is not drawn.", p.Label(), err)
+		return nil, nil
 	}
+	dev := worseDeviation(outlineDev, pathDev)
+	pts := flat2D(flatOutline)
 	pts, tris, ok := triangulate(pts)
 	if !ok {
 		infer("%s: this outline could not be closed into a surface — it crosses itself or "+
 			"repeats a point — so it is drawn only as far as FORGE could read it.", p.Label())
 	}
 	if len(tris) == 0 {
-		return nil
+		return nil, nil
 	}
-	rings, _, err := sweptSections(pts, pathPoints(p))
+	rings, _, err := sweptSections(pts, flatPath)
 	if err != nil {
 		// Drawn anyway when there is anything to draw, and named. A part that
 		// vanishes from a render reads as a design with a piece missing; the
@@ -687,7 +702,7 @@ func swept(p Part, infer func(string, ...any)) []Triangle {
 		infer("%s: %v. It is drawn as FORGE read it, and it is not a solid.", p.Label(), err)
 	}
 	if len(rings) < minPathPoints {
-		return nil
+		return nil, nil
 	}
 	last := len(rings) - 1
 
@@ -711,18 +726,27 @@ func swept(p Part, infer func(string, ...any)) []Triangle {
 			out = appendNonDegenerate(out, Triangle{A: a, B: c, C: d, Normal: faceNormal(a, c, d)})
 		}
 	}
-	return out
+	return out, dev
 }
 
 // revolveRadius is the largest radius the outline sweeps, which is what decides
 // how far the tessellated surface departs from the true one.
 func revolveRadius(p Part) float64 {
+	// The FLATTENED outline, because a rounded corner can be the outermost thing
+	// on it — the crown of a bead, the outer edge of a rounded flange — and the
+	// vertex it was rounded from sits further out than any material does.
+	// Measuring the vertex would overstate the deviation, which is the safe
+	// direction but is still a number that is not true of the file.
+	flat, _, err := partOutline(p).flatten("outline", Millimetre)
+	if err != nil {
+		return 0
+	}
 	aboutX := RevolveAxis(p) == "x"
 	var r float64
-	for _, pt := range p.Profile {
-		v := pt.X
+	for _, pt := range flat {
+		v := pt[0]
 		if aboutX {
-			v = pt.Y
+			v = pt[1]
 		}
 		r = math.Max(r, math.Abs(v))
 	}

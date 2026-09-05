@@ -39,12 +39,16 @@ type Solid struct {
 	// to millimetres. Which keys are present depends on the shape and is the
 	// builder's contract.
 	Dims map[string]float64 `json:"dims"`
-	// Profile is an extrusion's, a revolve's or a sweep's outline in
-	// millimetres, in the part's own XY plane. Empty for every other shape.
-	Profile [][2]float64 `json:"profile,omitempty"`
-	// Path is a sweep's polyline in millimetres, in the part's own frame. Empty
-	// otherwise.
-	Path [][3]float64 `json:"path,omitempty"`
+	// Outline is an extrusion's, a revolve's or a sweep's drawing in
+	// millimetres, in the part's own XY plane (z is zero). Nil for every other
+	// shape.
+	//
+	// A Curve rather than a list of points because a drawing can have ARCS in it
+	// (curve.go), and points cannot say so. Sending points would make every
+	// rounded corner a flat facet in the exported STEP.
+	Outline *Curve `json:"outline,omitempty"`
+	// Path is a sweep's, in millimetres, in the part's own frame. Nil otherwise.
+	Path *Curve `json:"path,omitempty"`
 	// SectionFrame is where the outline's own x and y axes point when a sweep
 	// sets off, row-major, with the COLUMNS being the profile's x, the profile's
 	// y, and the path's first direction — the same convention as Matrix.
@@ -115,8 +119,7 @@ func Solids(d Document, unit Unit) ([]Solid, []string) {
 	out := make([]Solid, 0, len(d.Parts))
 	for _, p := range d.Parts {
 		dims := map[string]float64{}
-		var profile [][2]float64
-		var path [][3]float64
+		var outline, route *polyline
 		switch strings.ToLower(p.Shape) {
 		case "extrusion":
 			pts, ok := profiles[p.ID]
@@ -126,14 +129,14 @@ func Solids(d Document, unit Unit) ([]Solid, []string) {
 				// guess at.
 				continue
 			}
-			profile = pts
+			outline = &pts
 			dims["depth"] = sizeOr(p, "depth", 1, unit, infer)
 		case "revolve":
 			pts, ok := profiles[p.ID]
 			if !ok {
 				continue
 			}
-			profile = pts
+			outline = &pts
 			// No dimension of its own: a revolve's size is entirely its outline
 			// and the axis it turns about. Asking for a depth as well would be
 			// a second way to say something the outline already says.
@@ -143,7 +146,7 @@ func Solids(d Document, unit Unit) ([]Solid, []string) {
 			if !ok || !hasPath {
 				continue
 			}
-			profile, path = pts, way
+			outline, route = &pts, &way
 			// No dimension either, for the same reason and more so: a sweep's
 			// size is its outline and the path it follows, and a "depth" beside
 			// them would be a third opinion about how far it goes.
@@ -186,47 +189,72 @@ func Solids(d Document, unit Unit) ([]Solid, []string) {
 		copy(rot[:], padTo3(p.Rotation))
 
 		// To millimetres. Every dimension here is a length, every position is a
-		// length and every profile coordinate is a length, so one factor covers
-		// all three; the rotation is an angle and is untouched.
+		// length and every drawn coordinate is a length — including a corner
+		// radius — so one factor covers them all; the rotation is an angle and
+		// is untouched.
 		for k, v := range dims {
 			dims[k] = v * toMM
 		}
 		for i := range pos {
 			pos[i] *= toMM
 		}
-		scaled := make([][2]float64, len(profile))
-		for i, pt := range profile {
-			scaled[i] = [2]float64{pt[0] * toMM, pt[1] * toMM}
+		// The kernel is given the drawing with its ARCS INTACT, so that a
+		// rounded corner comes out of OCCT as a real cylindrical surface. The
+		// tessellators flatten instead, and say what that cost — see curve.go.
+		var outlineCurve, pathCurve *Curve
+		failed := ""
+		if outline != nil {
+			c, err := outline.scaled(toMM).exact("outline")
+			if err != nil {
+				failed = err.Error()
+			}
+			outlineCurve = &c
 		}
-		scaledPath := make([][3]float64, len(path))
-		for i, pt := range path {
-			scaledPath[i] = [3]float64{pt[0] * toMM, pt[1] * toMM, pt[2] * toMM}
+		if route != nil && failed == "" {
+			c, err := route.scaled(toMM).exact("path")
+			if err != nil {
+				failed = err.Error()
+			}
+			pathCurve = &c
 		}
 
-		// The section frame is computed from the CONVERTED outline and path, so
-		// that the one thing the kernel is told about orientation was worked out
-		// from the same numbers it is going to build with. It is a rotation and
-		// therefore unchanged by the conversion — computing it before would give
-		// the same answer, and would give it from numbers nothing else uses.
+		// The section frame is computed from the CONVERTED and FLATTENED drawing,
+		// so that the one thing the kernel is told about orientation was worked
+		// out from the same numbers it is going to build with. It is a rotation
+		// and unchanged by the conversion; flattening does not move the first
+		// segment, because a rounded corner starts partway ALONG its edges and
+		// leaves their directions alone.
 		var frame *[9]float64
-		if len(scaledPath) > 0 {
-			if _, f, err := sweptSections(scaled, scaledPath); err == nil {
-				frame = &f
-			} else {
-				// resolvedProfiles refused every path that cannot be swept, so
-				// reaching this is the two of them disagreeing. Skipped rather
-				// than sent unframed: a sweep with no frame is a section with no
-				// orientation, and the kernel would build it somewhere arbitrary.
-				inferred = append(inferred, fmt.Sprintf(
-					"%s: this sweep could not be framed (%v), so it is not in this file.",
-					p.Label(), err))
-				continue
+		if route != nil && failed == "" {
+			flatOutline, _, oerr := outline.scaled(toMM).flatten("outline", Millimetre)
+			flatPath, _, perr := route.scaled(toMM).flatten("path", Millimetre)
+			switch {
+			case oerr != nil:
+				failed = oerr.Error()
+			case perr != nil:
+				failed = perr.Error()
+			default:
+				if _, f, err := sweptSections(flat2D(flatOutline), flatPath); err == nil {
+					frame = &f
+				} else {
+					failed = err.Error()
+				}
 			}
+		}
+		if failed != "" {
+			// resolvedProfiles refused every drawing that cannot be built, so
+			// reaching this is the two of them disagreeing. Skipped rather than
+			// sent half-resolved: a sweep with no frame is a section with no
+			// orientation, and the kernel would build it somewhere arbitrary.
+			inferred = append(inferred, fmt.Sprintf(
+				"%s: this shape could not be resolved (%s), so it is not in this file.",
+				p.Label(), failed))
+			continue
 		}
 
 		out = append(out, Solid{
 			ID: p.ID, Label: p.Label(), Shape: strings.ToLower(p.Shape), Dims: dims,
-			Profile: scaled, Path: scaledPath, SectionFrame: frame,
+			Outline: outlineCurve, Path: pathCurve, SectionFrame: frame,
 			Axis: axisOf(p), Matrix: RotationMatrix(rot), Position: pos,
 		})
 	}

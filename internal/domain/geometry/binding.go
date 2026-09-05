@@ -114,21 +114,23 @@ func (d *Document) bind(compareToAuthored bool) []Problem {
 		p := &d.Parts[i]
 		label := p.Label()
 
-		if pts, ok := profiles[p.ID]; ok && len(pts) == len(p.Profile) {
+		if outline, ok := profiles[p.ID]; ok && len(outline.Points) == len(p.Profile) {
 			for j := range p.Profile {
-				p.Profile[j].X = pts[j][0]
-				p.Profile[j].Y = pts[j][1]
+				p.Profile[j].X = outline.Points[j][0]
+				p.Profile[j].Y = outline.Points[j][1]
+				p.Profile[j].Radius = outline.Radii[j]
 			}
 		}
 		// A sweep's PATH is bound for exactly the same reason its outline is:
 		// the renderer and the measurement path read a stored document with no
 		// parameter context, and a path coordinate they cannot read would become
 		// a zero that quietly moves the bend somewhere else.
-		if way, ok := paths[p.ID]; ok && len(way) == len(p.Path) {
+		if route, ok := paths[p.ID]; ok && len(route.Points) == len(p.Path) {
 			for j := range p.Path {
-				p.Path[j].X = way[j][0]
-				p.Path[j].Y = way[j][1]
-				p.Path[j].Z = way[j][2]
+				p.Path[j].X = route.Points[j][0]
+				p.Path[j].Y = route.Points[j][1]
+				p.Path[j].Z = route.Points[j][2]
+				p.Path[j].Radius = route.Radii[j]
 			}
 		}
 

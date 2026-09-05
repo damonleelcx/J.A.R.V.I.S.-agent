@@ -56,10 +56,18 @@ type Point struct {
 	// that is not confined to a plane. An outline carrying one is refused rather
 	// than flattened: a z somebody typed is a z they meant, and silently
 	// dropping it draws a different shape from the one they described.
-	Z     float64 `json:"z,omitempty"`
-	XFrom string  `json:"x_from,omitempty"`
-	YFrom string  `json:"y_from,omitempty"`
-	ZFrom string  `json:"z_from,omitempty"`
+	Z float64 `json:"z,omitempty"`
+	// Radius rounds this corner: an arc of this radius, tangent to both edges
+	// meeting here (see curve.go). Zero, and absent, mean a sharp corner.
+	//
+	// The same field on an outline point and on a path point, because it is the
+	// same idea in both — and on a path it is the BEND RADIUS, which is the
+	// number a tube bender is set to rather than a decoration.
+	Radius     float64 `json:"radius,omitempty"`
+	XFrom      string  `json:"x_from,omitempty"`
+	YFrom      string  `json:"y_from,omitempty"`
+	ZFrom      string  `json:"z_from,omitempty"`
+	RadiusFrom string  `json:"radius_from,omitempty"`
 }
 
 // revolveAxes is the closed set of axes an outline may be turned about.
@@ -95,7 +103,7 @@ var outlineShapes = map[string]bool{"extrusion": true, "revolve": true, "sweep":
 // sweep with an unreadable path is exactly as absent from the file as one with
 // an unreadable outline, and a caller that had to ask twice would eventually ask
 // once.
-func (d *Document) resolvedProfiles() (map[string][][2]float64, map[string][][3]float64, []Problem) {
+func (d *Document) resolvedProfiles() (map[string]polyline, map[string]polyline, []Problem) {
 	if d == nil {
 		return nil, nil, nil
 	}
@@ -105,8 +113,8 @@ func (d *Document) resolvedProfiles() (map[string][][2]float64, map[string][][3]
 		return v.Number, ok
 	}
 
-	out := map[string][][2]float64{}
-	paths := map[string][][3]float64{}
+	out := map[string]polyline{}
+	paths := map[string]polyline{}
 	var problems []Problem
 	add := func(name, format string, args ...any) {
 		problems = append(problems, Problem{Severity: Error, Name: name,
@@ -158,6 +166,7 @@ func (d *Document) resolvedProfiles() (map[string][][2]float64, map[string][][3]
 		}
 
 		pts := make([][2]float64, 0, len(p.Profile))
+		radii := make([]float64, 0, len(p.Profile))
 		bad := false
 		for i, pt := range p.Profile {
 			if pt.Z != 0 || strings.TrimSpace(pt.ZFrom) != "" {
@@ -181,7 +190,14 @@ func (d *Document) resolvedProfiles() (map[string][][2]float64, map[string][][3]
 				bad = true
 				break
 			}
+			r, err := coordinate(pt.Radius, pt.RadiusFrom, lookup)
+			if err != nil {
+				add(label, "point %d: corner radius %v", i+1, err)
+				bad = true
+				break
+			}
 			pts = append(pts, [2]float64{x, y})
+			radii = append(radii, r)
 		}
 		if bad {
 			continue
@@ -224,20 +240,56 @@ func (d *Document) resolvedProfiles() (map[string][][2]float64, map[string][][3]
 				continue
 			}
 		}
+		outline := polyline{Points: lift3D(pts), Radii: radii, Closed: true}
+		// The corner radii are checked against the outline they are drawn on: a
+		// radius is only wrong in relation to the edges either side of it, so
+		// this cannot be done a point at a time.
+		if err := outline.validate("outline"); err != nil {
+			add(label, "%v", err)
+			continue
+		}
+
 		if shape == "sweep" {
 			way := make([][3]float64, 0, len(p.Path))
+			bends := make([]float64, 0, len(p.Path))
 			for i, pt := range p.Path {
 				x, xerr := coordinate(pt.X, pt.XFrom, lookup)
 				y, yerr := coordinate(pt.Y, pt.YFrom, lookup)
 				z, zerr := coordinate(pt.Z, pt.ZFrom, lookup)
-				if err := firstOf(xerr, yerr, zerr); err != nil {
+				r, rerr := coordinate(pt.Radius, pt.RadiusFrom, lookup)
+				if err := firstOf(xerr, yerr, zerr, rerr); err != nil {
 					add(label, "path point %d: %v", i+1, err)
 					bad = true
 					break
 				}
 				way = append(way, [3]float64{x, y, z})
+				bends = append(bends, r)
 			}
 			if bad {
+				continue
+			}
+			// A repeated point, checked on what was WRITTEN rather than on what
+			// flattening produced. Flattening drops consecutive duplicates on
+			// purpose — two arcs that meet exactly, at the end of a slot, each
+			// produce the point where they touch — so a duplicate somebody typed
+			// would be swallowed by that and never reported. It is almost always
+			// a copied line they forgot to edit, and it is named the same way a
+			// repeated outline point is.
+			for i := 0; i+1 < len(way); i++ {
+				if same(way[i], way[i+1]) {
+					add(label, "path points %d and %d are the same (%g, %g, %g); a path "+
+						"cannot have a segment of zero length",
+						i+1, i+2, way[i][0], way[i][1], way[i][2])
+					bad = true
+					break
+				}
+			}
+			if bad {
+				continue
+			}
+			route := polyline{Points: way, Radii: bends}
+			if err := route.validate("path"); err != nil {
+				add(label, "%v", err)
 				continue
 			}
 			// Built here, and the result thrown away, because every fault a path
@@ -246,13 +298,24 @@ func (d *Document) resolvedProfiles() (map[string][][2]float64, map[string][][3]
 			// rather than drawn partially, because this is the path the kernel
 			// reads — and the one fault OCCT does not catch, a fold, comes back
 			// from it as a plausible solid with the wrong volume.
-			if _, _, err := sweptSections(pts, way); err != nil {
+			//
+			// Checked on the FLATTENED forms, which is where the fault would
+			// actually show: a bend radius smaller than the outline is wide
+			// folds the inside of the bend through itself, and on the flattened
+			// path that is exactly a ring that fails to advance.
+			flatOutline, _, oerr := outline.flatten("outline", Millimetre)
+			flatPath, _, perr := route.flatten("path", Millimetre)
+			if err := firstOf(oerr, perr); err != nil {
 				add(label, "%v", err)
 				continue
 			}
-			paths[p.ID] = way
+			if _, _, err := sweptSections(flat2D(flatOutline), flatPath); err != nil {
+				add(label, "%v", err)
+				continue
+			}
+			paths[p.ID] = route
 		}
-		out[p.ID] = pts
+		out[p.ID] = outline
 	}
 	sortProblems(problems)
 	return out, paths, problems

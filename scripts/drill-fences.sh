@@ -67,6 +67,7 @@ case "${1:-}" in
 esac
 
 FILES=(
+  internal/domain/geometry/curve.go
   internal/domain/geometry/sweep.go
   internal/domain/geometry/mesh.go
   internal/domain/geometry/overlay.go
@@ -178,13 +179,51 @@ if [ "$MODE" != "list" ]; then
 fi
 
 # ---------------------------------------------------------------------------
-# The sweep fences.
+# The sweep and corner-radius fences.
 #
-# There are no drills here for the extrusion or the revolve. That is a GAP and
-# not a judgement that they are safe: waves 17 and 18 shipped without drills, and
-# the dispatch fence they both rely on was found vacuous afterwards.
+# There are no drills here for the extrusion or the revolve themselves. That is a
+# GAP and not a judgement that they are safe: waves 17 and 18 shipped without
+# drills, and the dispatch fence they both rely on was found vacuous afterwards.
 # ---------------------------------------------------------------------------
 
+echo "Corner radii"
+drill "corner radii are ignored entirely" internal/domain/geometry/curve.go \
+  's = s.replace("\t\tif r == 0 {\n\t\t\tcontinue\n\t\t}", "\t\tif true {\n\t\t\tcontinue\n\t\t}", 1)' \
+  ./internal/domain/geometry 'TestFlattenCurve|TestMeasureFindsTheMaterialAndNotTheRoundedOffCorner'
+
+drill "the arc starts the wrong distance back along its edges" internal/domain/geometry/curve.go \
+  's = s.replace("cut := r * math.Tan(angle/2)", "cut := r * math.Sin(angle/2)", 1)' \
+  ./internal/domain/geometry 'TestFlattenCurve_ARoundedCornerRemovesWhatArithmeticSays'
+
+drill "the arc centre is set back the wrong distance" internal/domain/geometry/curve.go \
+  's = s.replace("scale3(bisector, r/math.Cos(angle/2))", "scale3(bisector, r/math.Sin(angle/2))", 1)' \
+  ./internal/domain/geometry 'TestFlattenCurve'
+
+drill "two radii on one edge are no longer checked against each other" internal/domain/geometry/curve.go \
+  's = s.replace("if need > span+arcTolerance {", "if false {", 1)' \
+  ./internal/domain/geometry 'TestRoundedCorners_RefusesWhatCannotBeRounded'
+
+drill "flattening does not report what it cost" internal/domain/geometry/curve.go \
+  's = s.replace("\tif d <= 0 {\n\t\treturn nil\n\t}", "\tif true {\n\t\treturn nil\n\t}", 1)' \
+  ./internal/domain/cad 'TestKernel_AroundABendTheViewportIsInsideTheSolidBySomethingWeCanState'
+
+drill "the kernel is sent chords instead of arcs" internal/domain/geometry/curve.go \
+  's = s.replace("return CurveEdge{To: corners[i].to, Via: &via}", "_ = via\n\t\treturn CurveEdge{To: corners[i].to}", 1)' \
+  ./internal/domain/cad 'TestKernel_ARoundedCornerIsARealArc'
+
+drill "the measurement path measures the drawn vertex" internal/domain/geometry/overlay.go \
+  's = s.replace("flat, _, err := partOutline(p).flatten(\"outline\", Millimetre)\n\tif err != nil {\n\t\treturn min, max, false\n\t}", "flat := partOutline(p).Points\n\tif false {\n\t\treturn min, max, false\n\t}", 1)' \
+  ./internal/domain/geometry 'TestMeasureFindsTheMaterialAndNotTheRoundedOffCorner'
+
+drill "the renderer steps its arcs at a different fineness" internal/httpapi/assets/forge3d.js \
+  "s = s.replace('Math.ceil(TESSELLATION.radial * c.angle / (2 * Math.PI))', 'Math.ceil(TESSELLATION.radial * c.angle / (3 * Math.PI))', 1)" \
+  ./internal/httpapi 'TestRendererSweepsTheSameSolidAsTheExporter'
+
+drill "the kernel builds a straight line where an arc was sent" internal/domain/cad/sidecar.py \
+  "s = s.replace('edges.append(ThreePointArc(at, Vector(*via), to))', 'edges.append(Line(at, to))', 1)" \
+  ./internal/domain/cad 'TestKernel_ARoundedCornerIsARealArc'
+
+echo
 echo "The Go tessellator"
 drill "the sweep case is gone from partTriangles" internal/domain/geometry/mesh.go \
   's = s.replace("\tcase \"sweep\":\n", "\tcase \"sweep-disabled\":\n", 1)' \
@@ -222,9 +261,13 @@ drill "the sweep case is gone from Solids" internal/domain/geometry/solid.go \
   's = s.replace("\t\tcase \"sweep\":\n", "\t\tcase \"sweep-disabled\":\n", 1)' \
   ./internal/domain/geometry 'TestSolids_ConvertsASweepsPathAndFramesItsSection'
 
-drill "the path is left in the document's own unit" internal/domain/geometry/solid.go \
-  's = s.replace("scaledPath[i] = [3]float64{pt[0] * toMM, pt[1] * toMM, pt[2] * toMM}", "scaledPath[i] = [3]float64{pt[0], pt[1], pt[2]}", 1)' \
-  ./internal/domain/geometry 'TestSolids_ConvertsASweepsPathAndFramesItsSection'
+drill "the drawing is left in the document's own unit" internal/domain/geometry/curve.go \
+  's = s.replace("out.Points[i] = scale3(pt, toMM)", "out.Points[i] = pt", 1)' \
+  ./internal/domain/geometry 'TestSolids_Converts'
+
+drill "a corner radius is left in the document's own unit" internal/domain/geometry/curve.go \
+  's = s.replace("out.Radii[i] = r * toMM", "out.Radii[i] = r", 1)' \
+  ./internal/domain/geometry 'TestSolids_ConvertsACornerRadiusToo'
 
 drill "the section frame does not travel to the kernel" internal/domain/geometry/solid.go \
   's = s.replace("\t\t\t\tframe = &f", "\t\t\t\t_ = f", 1)' \

@@ -474,50 +474,63 @@ func localBox(p Part) (min, max [3]float64) {
 	}
 }
 
-// profileExtent is an outline's own bounding rectangle, from the literal
-// coordinates.
-//
-// Expressions are NOT evaluated here: this is the measurement path, which runs
-// on a stored document without the parameter context, and a coordinate it cannot
-// read must not become a zero that silently shrinks the part. A profile written
-// entirely in expressions therefore contributes no measured extent, which is a
-// miss rather than a wrong number.
-// literalSweep is a sweep's outline and path as plain coordinates.
-//
-// Expressions are NOT evaluated, for the same reason profileExtent does not
-// evaluate them: this runs on a stored document with no parameter context, and a
-// coordinate it cannot read must not become a zero that moves a bend. A sweep
-// written in expressions therefore contributes no measured extent — a miss
-// rather than a wrong number.
+// profileExtent is an outline's own bounding rectangle.
+// literalSweep is a sweep's outline and path, flattened, in plain coordinates.
 func literalSweep(p Part) (profile [][2]float64, path [][3]float64, ok bool) {
-	for _, pt := range p.Profile {
-		if pt.XFrom != "" || pt.YFrom != "" {
-			return nil, nil, false
-		}
-		profile = append(profile, [2]float64{pt.X, pt.Y})
+	if !drawnInNumbers(p.Profile) || !drawnInNumbers(p.Path) {
+		return nil, nil, false
 	}
-	for _, pt := range p.Path {
-		if pt.XFrom != "" || pt.YFrom != "" || pt.ZFrom != "" {
-			return nil, nil, false
-		}
-		path = append(path, [3]float64{pt.X, pt.Y, pt.Z})
+	// Flattened, because a bend radius moves material off the vertex it rounds:
+	// a mitred corner reaches past the path and a rounded one does not, and the
+	// difference is exactly the material that is or is not in the part.
+	flatOutline, _, oerr := partOutline(p).flatten("outline", Millimetre)
+	flatPath, _, perr := partPath(p).flatten("path", Millimetre)
+	if oerr != nil || perr != nil {
+		return nil, nil, false
 	}
-	return profile, path, len(profile) >= minProfilePoints && len(path) >= minPathPoints
+	if len(flatOutline) < minProfilePoints || len(flatPath) < minPathPoints {
+		return nil, nil, false
+	}
+	return flat2D(flatOutline), flatPath, true
+}
+
+// drawnInNumbers reports whether every coordinate and radius is a number rather
+// than an expression.
+//
+// Expressions are NOT evaluated on the measurement path: it runs on a stored
+// document with no parameter context, and a coordinate it cannot read must not
+// become a zero that silently shrinks the part. Bind has already written the
+// numbers in for every document that came through it; one that did not
+// contributes no measured extent, which is a miss rather than a wrong number.
+func drawnInNumbers(pts []Point) bool {
+	for _, pt := range pts {
+		if pt.XFrom != "" || pt.YFrom != "" || pt.ZFrom != "" || pt.RadiusFrom != "" {
+			return false
+		}
+	}
+	return true
 }
 
 func profileExtent(p Part) (min, max [2]float64, ok bool) {
 	min = [2]float64{math.Inf(1), math.Inf(1)}
 	max = [2]float64{math.Inf(-1), math.Inf(-1)}
-	for _, pt := range p.Profile {
-		if pt.XFrom != "" || pt.YFrom != "" {
-			return min, max, false
-		}
-		min[0] = math.Min(min[0], pt.X)
-		min[1] = math.Min(min[1], pt.Y)
-		max[0] = math.Max(max[0], pt.X)
-		max[1] = math.Max(max[1], pt.Y)
+	if !drawnInNumbers(p.Profile) {
+		return min, max, false
 	}
-	return min, max, len(p.Profile) >= minProfilePoints
+	// The FLATTENED outline. A rounded corner is inside the corner it replaced,
+	// so measuring the drawn vertices would report a plate bigger than the plate
+	// — by the radius, on every side that has one.
+	flat, _, err := partOutline(p).flatten("outline", Millimetre)
+	if err != nil {
+		return min, max, false
+	}
+	for _, pt := range flat {
+		min[0] = math.Min(min[0], pt[0])
+		min[1] = math.Min(min[1], pt[1])
+		max[0] = math.Max(max[0], pt[0])
+		max[1] = math.Max(max[1], pt[1])
+	}
+	return min, max, len(flat) >= minProfilePoints
 }
 
 // DrawableOverlays keeps the overlays that may be shown and reports what was

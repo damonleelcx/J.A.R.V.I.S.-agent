@@ -111,7 +111,7 @@ func TestExtrusion_IsAClosedSolidOfTheRightVolume(t *testing.T) {
 			}
 			part := Part{ID: "e", Shape: "extrusion", Profile: profile,
 				Size: map[string]float64{"depth": 20}}
-			tris := extrusion(part, 20, func(string, ...any) {})
+			tris, _ := extrusion(part, 20, Millimetre, func(string, ...any) {})
 
 			var vol float64
 			for _, tr := range tris {
@@ -165,7 +165,7 @@ func TestRevolved_IsAClosedSolidOfTheRightVolume(t *testing.T) {
 				profile[i] = Point{X: p[0], Y: p[1]}
 			}
 			part := Part{ID: "r", Shape: "revolve", Profile: profile, Axis: tc.axis}
-			tris := revolved(part, func(string, ...any) {})
+			tris, _ := revolved(part, Millimetre, func(string, ...any) {})
 
 			var vol float64
 			for _, tr := range tris {

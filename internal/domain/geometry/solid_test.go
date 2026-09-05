@@ -83,15 +83,19 @@ func TestSolids_ConvertsAnOutlineToMillimetresToo(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("%d solids: %v", len(got), notes)
 	}
-	if n := len(got[0].Profile); n != 4 {
-		t.Fatalf("%d profile points survived", n)
+	corners := curveCorners(t, got[0].Outline)
+	if n := len(corners); n != 4 {
+		t.Fatalf("%d outline points survived: %v", n, corners)
 	}
 	// 2 in = 50.8 mm, 1 in = 25.4 mm.
-	for i, want := range [][2]float64{{0, 0}, {50.8, 0}, {50.8, 25.4}, {0, 25.4}} {
-		if p := got[0].Profile[i]; math.Abs(p[0]-want[0]) > 1e-9 || math.Abs(p[1]-want[1]) > 1e-9 {
+	for i, want := range [][3]float64{{0, 0, 0}, {50.8, 0, 0}, {50.8, 25.4, 0}, {0, 25.4, 0}} {
+		if p := corners[i]; math.Abs(p[0]-want[0]) > 1e-9 || math.Abs(p[1]-want[1]) > 1e-9 {
 			t.Errorf("point %d = %v mm, want %v — the outline is still in inches while the "+
 				"depth is in millimetres", i+1, p, want)
 		}
+	}
+	if !got[0].Outline.Closed {
+		t.Error("the outline was sent to the kernel as an open run of edges")
 	}
 	if d := got[0].Dims["depth"]; math.Abs(d-25.4) > 1e-9 {
 		t.Errorf("depth = %v mm, want 25.4", d)
@@ -124,8 +128,12 @@ func TestSolids_ConvertsASweepsPathAndFramesItsSection(t *testing.T) {
 		t.Fatalf("%d solids: %v", len(got), notes)
 	}
 	// 2 in = 50.8 mm, 3 in = 76.2 mm.
+	corners := curveCorners(t, got[0].Path)
 	for i, want := range [][3]float64{{0, 0, 0}, {0, 0, 50.8}, {76.2, 0, 50.8}} {
-		p := got[0].Path[i]
+		if i >= len(corners) {
+			t.Fatalf("the path came back with %d points: %v", len(corners), corners)
+		}
+		p := corners[i]
 		for axis := 0; axis < 3; axis++ {
 			if math.Abs(p[axis]-want[axis]) > 1e-9 {
 				t.Errorf("path point %d = %v mm, want %v — the path is still in inches while "+
@@ -133,6 +141,9 @@ func TestSolids_ConvertsASweepsPathAndFramesItsSection(t *testing.T) {
 					i+1, p, want)
 			}
 		}
+	}
+	if got[0].Path.Closed {
+		t.Error("an open path was sent to the kernel as a closed one")
 	}
 	if got[0].SectionFrame == nil {
 		t.Fatal("the sweep carries no section frame, so the kernel has to decide which way up " +
@@ -152,5 +163,75 @@ func TestSolids_ConvertsASweepsPathAndFramesItsSection(t *testing.T) {
 	if plain[0].SectionFrame != nil {
 		t.Errorf("a box arrived carrying a section frame (%v); a zero or invented frame is a "+
 			"convention nothing asked for", *plain[0].SectionFrame)
+	}
+}
+
+// curveCorners is where a drawing goes: its start, then the end of every edge,
+// with the closing edge back to the start dropped.
+//
+// Written out in the test rather than exported from the package because it is
+// only ever useful for LOOKING at a curve, and a helper that walks the kernel's
+// wire format would invite production code to walk it too.
+func curveCorners(t *testing.T, c *geometry.Curve) [][3]float64 {
+	t.Helper()
+	if c == nil {
+		t.Fatal("no curve at all: the shape was sent to the kernel with nothing to build from")
+	}
+	out := [][3]float64{c.Start}
+	for _, e := range c.Edges {
+		out = append(out, e.To)
+	}
+	if c.Closed && len(out) > 1 && out[len(out)-1] == c.Start {
+		out = out[:len(out)-1]
+	}
+	return out
+}
+
+// A CORNER RADIUS converts to millimetres like every other length.
+//
+// # Why it needs a case of its own
+//
+// The conversion tests above have no radius in them, so a drill that stopped
+// converting radii left every one of them green. The failure it hides is
+// specific and bad: an outline correctly scaled to millimetres, with a corner
+// rounded to a radius still in inches — a 0.25 in radius applied as 0.25 mm, so
+// the corner is 25.4 times sharper than the drawing says. On a part meant to be
+// bent, that is the difference between a radius the material tolerates and one
+// that cracks it.
+//
+// Asserted through where the arc STARTS, because that is what a wrong radius
+// moves: a right-angled corner's arc begins r back from the vertex, so a 0.25 in
+// radius on a 2 in edge starts at 50.8 − 6.35 = 44.45 mm and an unconverted one
+// starts at 50.55.
+func TestSolids_ConvertsACornerRadiusToo(t *testing.T) {
+	doc := geometry.Document{
+		Name: "plate", Units: "in",
+		Parts: []geometry.Part{{ID: "p", Name: "Plate", Shape: "extrusion",
+			Profile: []geometry.Point{{X: 0, Y: 0}, {X: 2, Y: 0, Radius: 0.25},
+				{X: 2, Y: 1}, {X: 0, Y: 1}},
+			Size: map[string]float64{"depth": 1}}},
+	}
+	got, notes := geometry.Solids(doc, geometry.Inch)
+	if len(got) != 1 {
+		t.Fatalf("%d solids: %v", len(got), notes)
+	}
+	edges := got[0].Outline.Edges
+	if len(edges) < 2 || edges[1].Via == nil {
+		t.Fatalf("the rounded corner did not come through as an arc: %+v", edges)
+	}
+	// 2 in = 50.8 mm, 0.25 in = 6.35 mm.
+	if x := edges[0].To[0]; math.Abs(x-44.45) > 1e-9 {
+		t.Errorf("the arc starts at x = %v mm, want 44.45. At 50.55 the radius is still in "+
+			"inches while the outline is in millimetres, and the corner is 25.4 times "+
+			"sharper than it was drawn", x)
+	}
+	// And the point naming the arc is a radius from its centre, which for this
+	// corner is (44.45, 6.35).
+	centre := [3]float64{44.45, 6.35, 0}
+	via := *edges[1].Via
+	d := math.Sqrt(math.Pow(via[0]-centre[0], 2) + math.Pow(via[1]-centre[1], 2))
+	if math.Abs(d-6.35) > 1e-9 {
+		t.Errorf("the point sent to name the arc is %v from its centre, want the converted "+
+			"radius 6.35", d)
 	}
 }

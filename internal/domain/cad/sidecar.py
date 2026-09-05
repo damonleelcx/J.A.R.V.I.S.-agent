@@ -39,7 +39,7 @@ try:
     from build123d import (
         Box, Cylinder, Cone, Sphere, Rectangle, Plane, Location, Vector,
         Compound, Axis, Polyline, export_step, extrude, fillet, chamfer,
-        make_face, revolve, sweep, Transition,
+        make_face, revolve, sweep, Transition, Line, ThreePointArc, Wire,
     )
 except Exception as exc:  # pragma: no cover - reported to the caller, not raised
     sys.stdout.write(json.dumps({
@@ -48,6 +48,36 @@ except Exception as exc:  # pragma: no cover - reported to the caller, not raise
     }) + "\n")
     sys.stdout.flush()
     sys.exit(1)
+
+
+def _wire(curve):
+    """One outline or path, exactly as FORGE resolved it.
+
+    An edge is a straight line, or — when it carries "via" — a circular arc
+    through that point. THREE POINTS and not a radius, because a radius plus two
+    endpoints does not determine an arc in three dimensions: it determines one
+    per plane through the chord, and build123d's RadiusArc picked a different
+    plane from the one intended (measured 2026-09-05; the swept solid missed its
+    own volume by 5% with the section visibly distorted). Three points fix the
+    plane, so there is nothing left to guess.
+
+    Corner radii are worked out in Go — where the corner, its neighbours and the
+    refusals all live — and arrive here already turned into arcs. Nothing in this
+    file decides where a rounded corner goes.
+    """
+    at = Vector(*curve["start"])
+    edges = []
+    for e in curve.get("edges") or []:
+        to = Vector(*e["to"])
+        via = e.get("via")
+        if via is None:
+            edges.append(Line(at, to))
+        else:
+            edges.append(ThreePointArc(at, Vector(*via), to))
+        at = to
+    if not edges:
+        raise ValueError("a drawing with no edges cannot be built")
+    return Wire(edges)
 
 
 def _placement(solid):
@@ -100,11 +130,10 @@ def _shape(solid):
         # one direction only.
         #
         # The outline's own coordinates are used as given. They are deliberately
-        # not re-centred — see internal/domain/geometry/profile.py's Go
-        # counterpart for why — so the part's position places the outline's
-        # ORIGIN and a hole placed against a drawn corner stays against it.
-        pts = solid["profile"]
-        face = make_face(Polyline(*[(p[0], p[1], 0) for p in pts], close=True))
+        # not re-centred — see internal/domain/geometry/profile.go for why — so
+        # the part's position places the outline's ORIGIN and a hole placed
+        # against a drawn corner stays against it.
+        face = make_face(_wire(solid["outline"]))
         return extrude(face, amount=d["depth"] / 2.0, both=True)
     if kind == "revolve":
         # The outline turned a full circle about its own axis. Every point is on
@@ -115,8 +144,7 @@ def _shape(solid):
         # A full turn only. A sector is a revolve with something cut out of it,
         # which needs no vocabulary of its own — the same reasoning that makes a
         # hole a cut rather than a new kind of part.
-        pts = solid["profile"]
-        face = make_face(Polyline(*[(p[0], p[1], 0) for p in pts], close=True))
+        face = make_face(_wire(solid["outline"]))
         return revolve(face, Axis.X if solid.get("axis") == "x" else Axis.Y, 360)
     if kind == "sweep":
         # The same outline, carried along a path instead of a straight line.
@@ -141,13 +169,13 @@ def _shape(solid):
         # too tight for its own outline — is refused in Go, where the offending
         # points can be named. OCCT refuses the first with "BRep_API: command not
         # done", the second with an EMPTY message, and the third not at all.
-        pts, path = solid["profile"], solid["path"]
+        path = solid["path"]
         m = solid["section_frame"]
-        start = Plane(origin=Vector(*path[0]),
+        start = Plane(origin=Vector(*path["start"]),
                       x_dir=Vector(m[0], m[3], m[6]),
                       z_dir=Vector(m[2], m[5], m[8]))
-        face = start * make_face(Polyline(*[(p[0], p[1], 0) for p in pts], close=True))
-        return sweep(face, Polyline(*[tuple(p) for p in path]), transition=Transition.RIGHT)
+        face = start * make_face(_wire(solid["outline"]))
+        return sweep(face, _wire(path), transition=Transition.RIGHT)
     if kind == "plane":
         # A face, not a solid, and deliberately so: a plane has no thickness and
         # will not print, machine, or hold a volume. It is exported because it is

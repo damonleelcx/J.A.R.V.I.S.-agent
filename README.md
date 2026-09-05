@@ -228,7 +228,10 @@ imported once and kept warm. It builds a PART, not a pile of solids. A document 
 fillet and chamfer, and a part can be an **extrusion**, a **revolve** or a
 **sweep** — a closed outline swept along an axis, turned about one, or carried
 along a path — so an L-bracket, a turned boss or a bent pipe run is describable
-and not just a box with material removed. What it does not do is CHECK — there is still no solver and no
+and not just a box with material removed. Any corner of an outline or a path can
+carry a **radius**, which is a rounded corner on a plate and a real bend radius
+on a tube; the kernel builds it as a true arc, and the viewport flattens it and
+says by how much. What it does not do is CHECK — there is still no solver and no
 interference test here, and the export label says so, along with any feature
 OCCT refused.
 

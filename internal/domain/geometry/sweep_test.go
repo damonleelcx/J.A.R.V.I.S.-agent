@@ -55,10 +55,10 @@ func TestSwept_AStraightPathUpZIsExactlyTheExtrusion(t *testing.T) {
 	outline := points([2]float64{0, 0}, [2]float64{40, 0}, [2]float64{40, 8},
 		[2]float64{8, 8}, [2]float64{8, 40}, [2]float64{0, 40})
 
-	extruded := extrusion(Part{ID: "e", Shape: "extrusion", Profile: outline,
-		Size: map[string]float64{"depth": 20}}, 20, func(string, ...any) {})
-	sweptTris := swept(Part{ID: "s", Shape: "sweep", Profile: outline,
-		Path: way([3]float64{0, 0, -10}, [3]float64{0, 0, 10})}, func(string, ...any) {})
+	extruded, _ := extrusion(Part{ID: "e", Shape: "extrusion", Profile: outline,
+		Size: map[string]float64{"depth": 20}}, 20, Millimetre, func(string, ...any) {})
+	sweptTris, _ := swept(Part{ID: "s", Shape: "sweep", Profile: outline,
+		Path: way([3]float64{0, 0, -10}, [3]float64{0, 0, 10})}, Millimetre, func(string, ...any) {})
 
 	if len(sweptTris) != len(extruded) {
 		t.Fatalf("the sweep has %d triangles and the extrusion %d; a straight path is an "+
@@ -156,7 +156,8 @@ func TestSwept_EnclosesAreaTimesPathLength(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			part := Part{ID: "s", Shape: "sweep", Profile: square, Path: tc.path}
-			vol := enclosedVolume(swept(part, func(string, ...any) {}))
+			tris, _ := swept(part, Millimetre, func(string, ...any) {})
+			vol := enclosedVolume(tris)
 			if math.Abs(vol-tc.want) > 1e-6 {
 				t.Errorf("the swept solid encloses %.6f, want %.6f — a negative figure means "+
 					"the winding is inside out, a short one means the mitre is eating material "+
@@ -185,7 +186,7 @@ func TestSwept_AnOutlineOffItsPathStillClosesTheSolid(t *testing.T) {
 	part := Part{ID: "s", Shape: "sweep",
 		Profile: points([2]float64{20, 20}, [2]float64{30, 20}, [2]float64{30, 26}, [2]float64{20, 26}),
 		Path:    way([3]float64{0, 0, 0}, [3]float64{0, 0, 40}, [3]float64{60, 0, 40})}
-	tris := swept(part, func(string, ...any) {})
+	tris, _ := swept(part, Millimetre, func(string, ...any) {})
 	here := enclosedVolume(tris)
 
 	moved := make([]Triangle, len(tris))

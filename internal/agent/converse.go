@@ -72,8 +72,8 @@ Reply with JSON only:
                  "extrusion" | "revolve" | "sweep",
         "shape_note": "for \"extrusion\", size only needs \"depth\"",
         "size": {"width":1,"height":1,"depth":1,"radius":0.5,"radius_top":0.5},
-        "profile": [{"x": 0, "y": 0, "x_from": "", "y_from": "plate_height"}],
-        "path": [{"x": 0, "y": 0, "z": 0, "z_from": "run_length"}],
+        "profile": [{"x": 0, "y": 0, "radius": 0, "x_from": "", "y_from": "plate_height"}],
+        "path": [{"x": 0, "y": 0, "z": 0, "radius": 0, "z_from": "run_length"}],
         "axis": "y",
         "size_from": {"width": "plate_size", "height": "plate_thickness"},
         "position": [0,0,0],
@@ -207,6 +207,8 @@ About "prototype":
   It always turns a full circle. For a sector, revolve the whole thing and cut
   away what you do not want, the same way a hole is a cut rather than a kind of
   part.
+  A bead, a rounded rim or a filleted shoulder on a turned part is a "radius" on
+  the outline point, because it goes all the way round with the outline.
 - "sweep" carries the same kind of outline along a PATH instead of a straight
   line, which is where everything that BENDS comes from: a pipe run, a handrail,
   a cable tray, a wire form, a tube routed around something. Give it a "profile"
@@ -223,8 +225,30 @@ About "prototype":
   bend cannot be tighter than the outline is wide — at a sharp corner the
   section on the inside would fold back through itself, so put the points
   further apart or draw a narrower outline.
-  There are no arcs: a curve is several short segments, and a rounded corner on
-  the finished part is a fillet.
+  A bend is a "radius" on the path point that turns — see below. Without one the
+  corner is MITRED, like a welded elbow rather than a bent tube, which is a
+  different part and a different way of making it.
+- "radius" on a point ROUNDS THAT CORNER: an arc of that radius, tangent to both
+  edges meeting there. It works the same way on an outline point and on a path
+  point, and on a path it is the BEND RADIUS — the number a tube bender is set
+  to, and the thing that decides whether a tube survives being bent at all. Give
+  a bent pipe or a formed bracket one; a sharp corner on something that is
+  actually bent is a drawing of a part nobody can make.
+  Use "radius_from" with an expression wherever the radius follows a parameter,
+  for the same reason every other dimension does.
+  Two radii on one edge must fit: each eats r × tan(half the turn) of the edge
+  either side of it, so two big radii on a short edge are refused rather than
+  guessed at. A radius where the edges are in line, or where a path starts or
+  ends, is refused too — there is no corner there to round.
+  A SLOT is a rectangle whose radius is half its width on all four corners: the
+  arcs at each end meet and the straight between them disappears. A stadium, a
+  racetrack, a rounded gusset and a D-section are all the same one number.
+  This overlaps "fillet", and the difference is real: a radius is part of the
+  DRAWING, so it follows the section round every bend of a sweep and all the way
+  round a revolve; a fillet is an operation on the finished solid, chosen by
+  rule. Prefer the radius when the shape simply has it.
+  What it cannot say is an arc that does NOT meet its neighbours smoothly — a
+  crescent, a lens, a bulged edge. There is no vocabulary for those here.
 - "features" are what make an assembly a PART rather than a pile of solids.
   A HOLE is not a part — it is the absence of one. Put a cylinder where the hole
   goes, size and place it like any other part, and then "cut" it from the thing

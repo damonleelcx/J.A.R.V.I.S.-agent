@@ -397,3 +397,36 @@ func TestMeasureFollowsASweptPathAndItsMitre(t *testing.T) {
 		}
 	}
 }
+
+// A rounded corner is measured where the MATERIAL is, not where the corner used
+// to be.
+//
+// # Why a sharp point and not a rounded rectangle
+//
+// Rounding the corners of a rectangle changes nothing about its extents — the
+// arcs are inside the corners they replace, and the part still measures 40 by
+// 40. So a rounded rectangle cannot tell a correct measurement from one taken
+// off the drawn vertices.
+//
+// An ACUTE corner can. Rounding the 45° point of this triangle with R5 pulls it
+// back by r·tan(67.5°) = 5(1+√2) = 12.071, so the part reaches x = 32.929 and
+// not the x = 40 somebody wrote down. Measuring the vertex would draw a
+// dimension line 7 mm past the end of the part, and print a number to go with it.
+func TestMeasureFindsTheMaterialAndNotTheRoundedOffCorner(t *testing.T) {
+	doc := Document{
+		Name: "gusset", Units: "mm",
+		Parts: []Part{{ID: "g", Shape: "extrusion",
+			Profile: []Point{{X: 0, Y: 0}, {X: 40, Y: 0, Radius: 5}, {X: 0, Y: 40}},
+			Size:    map[string]float64{"depth": 6}, Position: []float64{0, 0, 0}}},
+	}
+	got := Measure(doc, "mm")
+	if len(got) != 3 {
+		t.Fatalf("expected three extents, got %d", len(got))
+	}
+	want := 45 - 5*(1+math.Sqrt2)
+	if x := got[0].To[0]; math.Abs(x-want) > 1e-6 {
+		t.Errorf("the part is measured to x = %.6f; the rounded point reaches %.6f. A figure "+
+			"of 40 means the drawn vertex was measured rather than the material, and the "+
+			"dimension line is 7 mm past the end of the part", x, want)
+	}
+}

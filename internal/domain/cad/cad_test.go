@@ -1207,3 +1207,187 @@ func TestKernel_ASweepTakesAHole(t *testing.T) {
 			got.Volume, want)
 	}
 }
+
+// A rounded corner comes out of the kernel as a REAL ARC, not as facets.
+//
+// # Why that is the whole point of sending curves rather than points
+//
+// The tessellators flatten an arc into chords, because they draw triangles. If
+// the kernel were sent the same chords, a rounded corner would arrive in the
+// exported STEP as a forty-sided prism — a mesh wearing a solid model's
+// extension, which this repository refuses to write anywhere else and would have
+// no business writing here.
+//
+// So the volume is checked against arithmetic a reader can do — each rounded
+// right angle removes r² and puts back πr²/4, so a w×h plate loses (4−π)r² — and
+// the FILE is checked for the surface that proves it was not faked.
+func TestKernel_ARoundedCornerIsARealArc(t *testing.T) {
+	k := kernel(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	doc := geometry.Document{
+		Name: "plate", Units: "mm",
+		Parts: []geometry.Part{{ID: "p", Name: "Plate", Shape: "extrusion",
+			Profile: []geometry.Point{
+				{X: 0, Y: 0, Radius: 10}, {X: 40, Y: 0, Radius: 10},
+				{X: 40, Y: 40, Radius: 10}, {X: 0, Y: 40, Radius: 10}},
+			Size:     map[string]float64{"depth": 5},
+			Position: []float64{0, 0, 0}, Rotation: []float64{0, 0, 0}}},
+	}
+	got, err := k.BuildDocument(ctx, doc, geometry.Millimetre, "step")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := (1600 - (4-math.Pi)*100) * 5; math.Abs(got.Volume-want) > 0.01 {
+		t.Errorf("volume = %.4f mm³, want %.4f — a rounded corner removes r² and puts back "+
+			"a quarter circle, and this is four of them", got.Volume, want)
+	}
+	body := string(got.STEP)
+	if !strings.Contains(body, "CYLINDRICAL_SURFACE") {
+		t.Error("the rounded corners are not analytic cylinders — the kernel was sent chords " +
+			"rather than arcs, and every radius in this file is a many-sided prism")
+	}
+	if strings.Contains(body, "TRIANGULATED_FACE_SET") {
+		t.Error("the file contains facets — this is a mesh wearing a STEP extension")
+	}
+	// The plate still measures 40 across: rounding takes material off the
+	// corners and must not shrink the part.
+	if math.Abs(got.Bounds[0]) > 1e-6 || math.Abs(got.Bounds[3]-40) > 1e-6 {
+		t.Errorf("x spans %v..%v, want 0..40", got.Bounds[0], got.Bounds[3])
+	}
+}
+
+// A slot: the radius is half the width, so the two arcs at each end meet and the
+// straight between them vanishes entirely.
+//
+// # Why this case and not another rounded rectangle
+//
+// It is the one where an off-by-anything in the corner arithmetic produces a
+// zero-length edge, and OCCT refuses those outright rather than tolerating them.
+// A kernel that built this is a kernel that got the tangent points exactly
+// right. The area is also arrived at two independent ways — 40×20 − (4−π)·10²,
+// and a 20×20 rectangle plus a full circle of radius 10 — which agree at
+// 714.159.
+func TestKernel_ASlotIsTwoArcsThatMeet(t *testing.T) {
+	k := kernel(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	doc := geometry.Document{
+		Name: "slot", Units: "mm",
+		Parts: []geometry.Part{{ID: "s", Name: "Slot", Shape: "extrusion",
+			Profile: []geometry.Point{
+				{X: 0, Y: 0, Radius: 10}, {X: 40, Y: 0, Radius: 10},
+				{X: 40, Y: 20, Radius: 10}, {X: 0, Y: 20, Radius: 10}},
+			Size:     map[string]float64{"depth": 6},
+			Position: []float64{0, 0, 0}, Rotation: []float64{0, 0, 0}}},
+	}
+	got, err := k.BuildDocument(ctx, doc, geometry.Millimetre, "")
+	if err != nil {
+		t.Fatalf("a slot did not build — the two arcs at each end almost certainly left a "+
+			"zero-length edge between them: %v", err)
+	}
+	if want := (20*20 + math.Pi*100) * 6; math.Abs(got.Volume-want) > 0.01 {
+		t.Errorf("volume = %.4f mm³, want %.4f (a 20×20 rectangle plus a ⌀20 circle, 6 thick)",
+			got.Volume, want)
+	}
+}
+
+// A bend radius on a path is a real bend, and it measures what a bender would
+// set.
+//
+// # The arithmetic
+//
+// Rounding a right-angled corner of the path with radius r shortens each leg by
+// r and replaces the corner with a quarter circle of length πr/2. Pappus does
+// the rest: a section whose centroid rides the path sweeps area × the distance
+// the centroid travels, arcs included. So a 10×10 bar up 40, round R12, and out
+// 30 encloses 100 × (28 + 18.8496 + 18).
+//
+// This is also the case that separates a real bend from a mitre: a mitred corner
+// is 100 × 70 = 7000, and this is 6484.96. Nothing subtle would tell them apart
+// on a screen; the numbers do.
+func TestKernel_ABendRadiusIsARealBend(t *testing.T) {
+	k := kernel(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	doc := sweepDoc([][2]float64{{-5, -5}, {5, -5}, {5, 5}, {-5, 5}},
+		[][3]float64{{0, 0, 0}, {0, 0, 40}, {30, 0, 40}})
+	doc.Parts[0].Path[1].Radius = 12
+
+	got, err := k.BuildDocument(ctx, doc, geometry.Millimetre, "step")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := 100 * (28 + math.Pi*12/2 + 18)
+	if math.Abs(got.Volume-want) > 0.01 {
+		mitred := 100.0 * 70
+		t.Errorf("volume = %.4f mm³, want %.4f. A MITRED corner would be %.4f — if that is "+
+			"what came back, the bend radius was dropped somewhere between the document and "+
+			"the kernel", got.Volume, want, mitred)
+	}
+	if !strings.Contains(string(got.STEP), "TOROIDAL_SURFACE") &&
+		!strings.Contains(string(got.STEP), "CYLINDRICAL_SURFACE") {
+		t.Error("the bend is not a swept analytic surface, so the exported elbow is faceted")
+	}
+}
+
+// With a bend radius, the kernel and the viewport no longer agree exactly — and
+// they agree to within the number FORGE reports for that.
+//
+// # Why this is a separate test from the exact one
+//
+// TestKernel_ASweptSolidIsTheOneTheRendererDrew asserts EQUALITY, and that is
+// still true and still worth holding: a sweep with sharp corners is a
+// polyhedron, and both build the same one. An arc is the only thing that makes a
+// sweep an approximation, and once there is one the honest claim changes shape —
+// from "the same solid" to "inside it, by no more than we said".
+//
+// The direction matters as much as the size. Chords are INSIDE the arc, so the
+// drawn solid must be smaller than the built one. A drawn solid that came out
+// LARGER would mean the deviation is being reported in the wrong direction, and
+// somebody machining to the exported file would be cutting into material the
+// picture said was there.
+func TestKernel_AroundABendTheViewportIsInsideTheSolidBySomethingWeCanState(t *testing.T) {
+	k := kernel(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	doc := sweepDoc([][2]float64{{-5, -5}, {5, -5}, {5, 5}, {-5, 5}},
+		[][3]float64{{0, 0, 0}, {0, 0, 40}, {30, 0, 40}})
+	doc.Parts[0].Path[1].Radius = 12
+
+	got, err := k.BuildDocument(ctx, doc, geometry.Millimetre, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	mesh := geometry.Tessellate(doc, geometry.Millimetre)
+	var drawn float64
+	for _, tr := range mesh.Triangles() {
+		drawn += (tr.A[0]*(tr.B[1]*tr.C[2]-tr.C[1]*tr.B[2]) -
+			tr.A[1]*(tr.B[0]*tr.C[2]-tr.C[0]*tr.B[2]) +
+			tr.A[2]*(tr.B[0]*tr.C[1]-tr.C[0]*tr.B[1])) / 6
+	}
+	if drawn > got.Volume {
+		t.Errorf("the viewport drew %.6f and the kernel built %.6f — the drawn solid is "+
+			"BIGGER, so the chords are outside the arc and the deviation is reported the "+
+			"wrong way round", drawn, got.Volume)
+	}
+	if len(mesh.Deviations) != 1 {
+		t.Fatalf("%d deviations reported for a part with a bend radius in it; a person is "+
+			"told nothing about what the flattening cost", len(mesh.Deviations))
+	}
+	// The shortfall is bounded by the deviation over the swept surface. A loose
+	// bound on purpose: what is asserted is that the gap is EXPLAINED by the
+	// number reported, not that it equals some other formula.
+	dev := mesh.Deviations[0].Max.Value()
+	if dev <= 0 {
+		t.Fatal("the reported deviation is zero for a shape that is demonstrably faceted")
+	}
+	if shortfall := got.Volume - drawn; shortfall > dev*got.Volume {
+		t.Errorf("the viewport is %.6f mm³ short of the built solid, which the reported "+
+			"deviation of %.6f mm does not account for", shortfall, dev)
+	}
+}

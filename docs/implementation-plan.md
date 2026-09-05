@@ -2681,11 +2681,9 @@ first attempt.
 
 - ~~**No revolves.**~~ **Done in wave 18.**
 - ~~**No sweeps along a path.**~~ **Done in wave 19.**
+- ~~**No arcs.**~~ **Done in wave 20**, as a corner radius.
 - **One loop per outline.** A hole in a profile is made by cutting a cylinder out
   of the part, not by drawing a second loop.
-- **No arcs.** An outline is straight segments between points, and a path is
-  straight segments between points; a curve is several short ones, and a rounded
-  corner on the finished part is a fillet.
 
 ## Wave 18 — the turned part · **DONE**
 
@@ -2878,6 +2876,100 @@ It skips without node, the same bargain the kernel tests make with
 outlines arrived: `extrusion` and `revolve` were drawn correctly and named
 nowhere, so a list called "supported shapes" said the opposite of the truth about
 them. Nothing consumes it. It now names all three.
+
+## Wave 20 — the drawing gets a radius · **DONE**
+
+An outline and a path were both straight lines between points. Everything people
+actually make is full of radii: a plate has rounded corners, a slot ends in a
+semicircle, and a bent tube has a BEND RADIUS — not a decoration but the number
+the bender is set to, and the thing that decides whether the tube survives being
+bent at all.
+
+A point may now carry a `radius`, which rounds that corner: an arc of that
+radius, tangent to both edges meeting there. The same field on an outline point
+and on a path point, because it is the same idea in both.
+
+### Why a corner radius and not an arc segment
+
+The obvious contract is "this edge is an arc of radius r". **A radius and two
+endpoints do not determine an arc in three dimensions** — they determine one per
+plane through the chord. Measured 2026-09-05: build123d's `RadiusArc`, given two
+points in the XZ plane, returned an arc leaning out of that plane entirely
+(tangent `(0.267, 0.535, 0.802)` where `(0, 0, 1)` was wanted), the path it built
+was not tangent to the line before it, and the sweep along it missed its own
+volume by 5% with the section visibly distorted. Nothing was wrong with OCCT. The
+request was ambiguous and it answered a different question.
+
+A corner radius is not ambiguous: "round this corner with R25" names one arc,
+tangent to both edges, in the plane those edges already define. It is also the
+number a person actually has, and it covers more than it sounds — **a slot is a
+rectangle whose radius is half its width**, where the two arcs at each end meet
+and the straight between them vanishes. Stadiums, racetracks, D-sections and
+rounded gussets are all the same one number.
+
+What it cannot say is an arc that does NOT meet its neighbours smoothly: a
+crescent, a lens, a bulged edge. Those need a vocabulary with a plane in it.
+
+### It overlaps `fillet`, and the overlap is named rather than tidied away
+
+`fillet` already rounds edges of the built solid, and on an extrusion
+`edges: "vertical"` rounds the outline's corners all the way through. For that
+one case there are now two ways to say the same thing, and the difference is
+real: a corner radius is part of the DRAWING, so it follows the section round
+every bend of a sweep and all the way round a revolve, while a fillet is an
+operation on the finished solid chosen by rule — and there is no rule that names
+one corner of an outline.
+
+### The arc is built twice, at two fidelities, on purpose
+
+- **The kernel gets the true arc**, as three points on it, so a rounded corner
+  exports as a real `CYLINDRICAL_SURFACE` rather than a forty-sided prism. Three
+  points fix the plane, so the ambiguity above cannot come back. This required a
+  new shape on the Go→kernel wire: a `Curve` — a start and a run of edges, each a
+  line or an arc — which replaced the list of points for outlines AND paths, so
+  the kernel now has ONE wire builder instead of three inline ones.
+- **The tessellators flatten it** into chords at the same count a cylinder gets,
+  and report the deviation, in the assembly's own units. That is the bargain
+  every curved shape here already makes.
+
+So a sweep with sharp corners is still exactly the same polyhedron in the kernel
+and in the viewport; a sweep with a bend radius is the viewport INSIDE the built
+solid by no more than the number stated on the export.
+
+### What the drills found this time
+
+Twenty-six mutations. Two stayed green, and both were the same mistake in
+different clothes — **a test whose case could not tell the right answer from the
+wrong one**:
+
+- **Every rounded-corner test used a right angle.** The arc centre is set back
+  `r/cos(θ/2)`; swapping that for `r/sin(θ/2)` is a NO-OP at 90°, because
+  `sin 45° = cos 45°`. Every test in the file was a rectangle or a slot, so the
+  swap passed everything. There is now an obtuse case — the 135° turn round the
+  sharp point of a gusset — and it fails immediately.
+- **Nothing tested that a corner radius is converted to millimetres.** The
+  existing conversion tests had no radius in them. The hidden failure is
+  specific: an outline correctly scaled, with its corner rounded to a radius
+  still in inches — 25.4 times sharper than drawn, which on a part meant to be
+  bent is the difference between a radius the material tolerates and one that
+  cracks it.
+
+### And one place the browser copy is now allowed to differ
+
+The renderer/exporter fence compared facets one for one. With arcs it went red on
+a CAP: **two correct ear clippings of one outline are not the same triangles.**
+That is the property this codebase deliberately shares instead of the code, and
+it never came up before because both sides made identical decisions from
+identical arithmetic. A rounded corner puts forty nearly-collinear points on an
+outline, where an ear test turns on a cross product of about 1e-16 and the two
+can legitimately part company.
+
+So the fence now consumes the facets that match — the WALLS, where every
+convention worth guarding lives, still match to the last bit — and requires what
+is left to be two triangulations of the same region: same vertices, same total
+area, few enough to be caps. It also compares NORMALS numerically rather than as
+text, after a wall whose normal is exactly `(0, 1, 0)` in Go came back as
+`(-4.12e-16, 1, 0)` from the browser.
 
 ## Carried defects
 
