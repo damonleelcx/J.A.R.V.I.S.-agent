@@ -4,6 +4,7 @@ import (
 	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"regexp"
 	"strings"
 	"testing"
@@ -386,4 +387,92 @@ func TestEveryDiagramColumnHasANodeColour(t *testing.T) {
 // cannot continue a class name.
 func definesClass(sheet, name string) bool {
 	return regexp.MustCompile(`\.` + regexp.QuoteMeta(name) + `(?:[^\w-]|$)`).MatchString(sheet)
+}
+
+// Switching project drops the conversation key, and does so before anything
+// restores from it.
+//
+// # Why this is fenced in the SOURCE rather than by driving a browser
+//
+// The behaviour lives entirely in the workbench script, and the property that
+// matters is an ORDERING: the switch has to be applied before restoreVariants
+// and restoreConversation read what it changed, or a switch would be layered
+// over the previous project's state instead of replacing it.
+//
+// # Why the conversation must not follow
+//
+// A conversation's variants accumulate IN A PROJECT (PRD VIS-04). Carrying one
+// across a switch would put its history under rules it was not conducted under
+// and its variants in a project they do not belong to — the transcript would
+// straddle two rule sets and the rail would mix work from both. The old
+// conversation is not deleted: only the KEY is forgotten, so it stays in its own
+// project and comes back by going back there.
+func TestSwitchingProjectStartsAFreshConversation(t *testing.T) {
+	src, err := os.ReadFile("assets/workbench.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(src)
+
+	if !strings.Contains(js, "function switchProjectFromURL") {
+		t.Fatal("the workbench has no way to be pointed at a project, so the console's " +
+			"links go nowhere useful")
+	}
+	// The switch forgets the conversation. Asserted on the CALL rather than on a
+	// comment, because a comment saying it does is not it doing it.
+	switchBody := between(js, "function switchProjectFromURL", "function restoreVariants")
+	if !strings.Contains(switchBody, "forgetConversationKey()") {
+		t.Error("a project switch does not start a fresh conversation.\n" +
+			"Carrying one across puts its history under rules it was not conducted under, " +
+			"and its variants in a project they do not belong to")
+	}
+	if strings.Contains(switchBody, "deleteConversation") || strings.Contains(switchBody, "DELETE") {
+		t.Error("a project switch DELETES the old conversation. It only has to stop being " +
+			"reopened here — the record belongs to the project it happened in")
+	}
+
+	// And it runs before anything reads what it changed.
+	iSwitch := strings.Index(js, "safely('switch'")
+	iVariants := strings.Index(js, "safely('variants'")
+	iConv := strings.Index(js, "safely('conversation'")
+	if iSwitch < 0 || iVariants < 0 || iConv < 0 {
+		t.Fatalf("boot steps missing: switch=%d variants=%d conversation=%d",
+			iSwitch, iVariants, iConv)
+	}
+	if iSwitch > iVariants || iSwitch > iConv {
+		t.Error("the project switch runs AFTER the panels restore, so it is applied over " +
+			"the previous project's state rather than replacing it")
+	}
+}
+
+// between returns the source between two markers, for asserting on one function.
+func between(s, from, to string) string {
+	i := strings.Index(s, from)
+	if i < 0 {
+		return ""
+	}
+	j := strings.Index(s[i:], to)
+	if j < 0 {
+		return s[i:]
+	}
+	return s[i : i+j]
+}
+
+// The console links each project to the workbench.
+//
+// The other half of the switcher: a receiving end nothing points at is a
+// feature only somebody hand-editing a URL can reach.
+func TestTheConsoleLinksProjectsToTheWorkbench(t *testing.T) {
+	src, err := os.ReadFile("assets/console.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(src)
+	if !strings.Contains(js, "/workbench?project=") {
+		t.Fatal("the console's project list does not link to the workbench, so the switch " +
+			"is reachable only by typing a URL")
+	}
+	if !strings.Contains(js, "encodeURIComponent(p.id)") {
+		t.Error("the project id is not encoded into the link")
+	}
 }

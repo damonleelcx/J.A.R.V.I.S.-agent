@@ -250,6 +250,46 @@
     });
   }
 
+  /* # Switching project (?project=<id>)
+   *
+   * The console lists the projects somebody is in and links each one here. This
+   * is the receiving end.
+   *
+   * # Why the conversation does NOT come with you
+   *
+   * A conversation's variants accumulate IN A PROJECT (PRD VIS-04). Carrying one
+   * across a switch would put its history under rules it was not conducted
+   * under and its variants in a project they do not belong to — the transcript
+   * would straddle two rule sets and the rail would mix work from both. So the
+   * switch starts a fresh conversation, and the previous one stays exactly where
+   * it was: still in its own project, still restorable by going back to it.
+   *
+   * The parameter is stripped from the URL afterwards so a refresh does not
+   * re-switch — and, more to the point, so a link somebody copies out of their
+   * address bar carries the project rather than a one-shot instruction to
+   * abandon whatever conversation the recipient was in.
+   */
+  function switchProjectFromURL() {
+    var wanted = null;
+    try {
+      wanted = new URLSearchParams(window.location.search).get('project');
+    } catch (e) { return; }
+    if (!wanted) return;
+
+    var current = null;
+    try { current = window.localStorage.getItem(PROJECT_KEY); } catch (e) { /* not fatal */ }
+    if (wanted !== current) {
+      /* A different project means a different conversation. Forgetting the KEY
+       * rather than deleting the record: the old conversation is untouched and
+       * remains in its project — this only stops it being reopened here. */
+      forgetConversationKey();
+      try { window.localStorage.setItem(PROJECT_KEY, wanted); } catch (e) { /* not fatal */ }
+    }
+    try {
+      window.history.replaceState({}, '', window.location.pathname);
+    } catch (e) { /* an address bar that keeps the parameter is not worth failing over */ }
+  }
+
   function restoreVariants() {
     var id = null;
     try { id = window.localStorage.getItem(PROJECT_KEY); } catch (e) { return; }
@@ -2173,6 +2213,10 @@
         $('stage-empty').classList.remove('hidden');
       }
     });
+    /* BEFORE anything reads the stored project or conversation, so a switch is
+     * in force by the time the panels restore rather than being applied over
+     * the top of the previous project's state. */
+    safely('switch', switchProjectFromURL);
     safely('industry', startIndustry);
     safely('voice', initVoice);
     safely('controls', initControls);

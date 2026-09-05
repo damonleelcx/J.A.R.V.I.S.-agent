@@ -154,9 +154,12 @@
       } else if (p.industry) {
         bits.push(esc(p.industry) + ' · ceiling ' + esc(p.ceiling));
       }
-      return '<div class="goal">' +
+      /* A link, not a button with a handler. It navigates, the address is
+       * visible on hover, and it opens in a new tab the way a person expects a
+       * link to — none of which a scripted click gives for free. */
+      return '<a class="goal" href="/workbench?project=' + encodeURIComponent(p.id) + '">' +
         '<div><div class="t">' + esc(p.name) + '</div>' +
-        '<div class="m">' + bits.join(' · ') + '</div></div></div>';
+        '<div class="m">' + bits.join(' · ') + '</div></div></a>';
     }).join('');
   }
 

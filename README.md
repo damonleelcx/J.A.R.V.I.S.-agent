@@ -576,7 +576,14 @@ oracle by anyone with a lesser role.
 domain — scoped by construction rather than by a permission check, since it reads
 the caller's own membership rows and can return nothing else. The console shows
 them, because "which projects am I in, and as what" is the first question
-somebody opening that page has.
+somebody opening that page has, and **each row links through to the workbench**
+for that project.
+
+Switching **starts a fresh conversation**. A conversation's variants accumulate
+*in a project* (VIS-04), so carrying one across would put its history under rules
+it was not conducted under and its variants in a project they do not belong to.
+The previous conversation is not deleted — only forgotten *here* — so it stays in
+its own project and comes back by going back to it.
 
 ### A ceiling can rise, and it says out loud that nothing was verified
 
