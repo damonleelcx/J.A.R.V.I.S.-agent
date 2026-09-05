@@ -894,10 +894,54 @@
    * requirements nobody wrote rather than as no project yet. */
   var BUILDABLE_KINDS = { requirement: true, constraint: true };
 
+  /* # Being bound to a project you are not on
+   *
+   * ?project= puts the workbench on a project, and nothing stops somebody
+   * editing that id by hand. Every endpoint authorises, so nothing leaks — but
+   * what the person GOT was a workbench whose panels were all empty, and an
+   * empty panel reads as "nothing here yet" rather than "you cannot see this".
+   * A surface that answers the wrong question silently is the failure this
+   * codebase treats as worse than an error.
+   *
+   * The graph fetch is the check: it is the first project-scoped call the
+   * workbench makes, it already authorises, and a refusal there means every
+   * other panel is about to be refused too. No extra request for a state that
+   * should never happen.
+   *
+   * 404 rather than 403 for a non-member is deliberate in access.Service — it
+   * refuses to confirm the project exists — so the two are reported the same
+   * way here on purpose. Saying "no such project, or not yours" is the whole
+   * truth this build is willing to tell, and pretending to know which would
+   * undo that decision at the last step.
+   */
+  function denyProject(status) {
+    var el = $('project-denied');
+    if (!el) return;
+    state.projectDenied = true;
+    el.classList.remove('hidden');
+    el.innerHTML = '<strong>This project is not one of yours.</strong><br>' +
+      'Nothing on this page will load' +
+      (status === 403 ? ', because your role here does not allow reading it' :
+        ' — either it does not exist, or you are not a member') + '.<br><br>' +
+      '<a href="/console">Your projects</a> · ' +
+      '<button class="btn-sm" id="project-unbind">Work without a project</button>';
+    var unbind = document.getElementById('project-unbind');
+    if (unbind) unbind.addEventListener('click', function () {
+      /* Offered rather than done automatically. Clearing it silently would send
+       * somebody who mistyped an id into a workbench that looks fine, with no
+       * sign that the project they asked for was refused. */
+      try { window.localStorage.removeItem(PROJECT_KEY); } catch (e) { /* not fatal */ }
+      window.location.href = '/workbench';
+    });
+  }
+
   function loadRequirements() {
     if (!state.projectID) return;
     fetch('/v1/workspace/graph?project_id=' + encodeURIComponent(state.projectID))
-      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (r) {
+        if (r.status === 403 || r.status === 404) { denyProject(r.status); return null; }
+        return r.ok ? r.json() : null;
+      })
       .then(function (g) {
         if (!g) return;
         state.requirements = (g.nodes || []).filter(function (n) { return BUILDABLE_KINDS[n.kind]; });

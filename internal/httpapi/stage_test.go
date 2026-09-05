@@ -476,3 +476,63 @@ func TestTheConsoleLinksProjectsToTheWorkbench(t *testing.T) {
 		t.Error("the project id is not encoded into the link")
 	}
 }
+
+// A workbench bound to somebody else's project SAYS SO.
+//
+// # The failure this closes
+//
+// ?project= puts the workbench on a project and nothing stops somebody editing
+// that id by hand. Every endpoint authorises, so nothing leaked — but what the
+// person got was a workbench whose panels were all empty, and an empty panel
+// reads as "nothing here yet" rather than "you cannot see this". A surface that
+// answers the wrong question silently is worse than one that errors.
+//
+// # Why the graph fetch is the check
+//
+// It is the first project-scoped call the workbench makes and it already
+// authorises, so a refusal there means every other panel is about to be refused
+// too. Checking separately would add a request for a state that should not
+// happen, and two checks that could disagree.
+func TestAWorkbenchBoundToSomebodyElsesProjectSaysSo(t *testing.T) {
+	src, err := os.ReadFile("assets/workbench.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := string(src)
+
+	if !strings.Contains(js, "function denyProject") {
+		t.Fatal("nothing reports a refused project, so the workbench renders empty panels " +
+			"and lets them read as 'nothing here yet'")
+	}
+	// The graph fetch must DISTINGUISH a refusal from an ordinary miss. The
+	// surrounding code swallows failures on purpose — losing a panel beats
+	// breaking the page — and that is exactly what made this invisible.
+	load := between(js, "function loadRequirements", "function renderRequirements")
+	if !strings.Contains(load, "denyProject") {
+		t.Error("loadRequirements does not report a refusal; it falls into the same silent " +
+			"path an ordinary read failure takes, which is what hid this")
+	}
+	for _, status := range []string{"403", "404"} {
+		if !strings.Contains(load, status) {
+			t.Errorf("loadRequirements does not recognise a %s, so one of the two ways a "+
+				"project can be refused stays silent", status)
+		}
+	}
+
+	// A way out. A message with no action leaves somebody stuck on a page that
+	// will never load, with a stored project id that breaks every future visit.
+	deny := between(js, "function denyProject", "function loadRequirements")
+	if !strings.Contains(deny, "/console") {
+		t.Error("the refusal offers no way back to the projects the person IS on")
+	}
+	if !strings.Contains(deny, "removeItem(PROJECT_KEY)") {
+		t.Error("the refusal offers no way to unbind, so the stored id breaks every reload")
+	}
+	// And it must not unbind BY ITSELF: clearing silently would send somebody who
+	// mistyped an id into a workbench that looks fine, with no sign of a refusal.
+	if strings.Contains(between(js, "function loadRequirements", "function renderRequirements"),
+		"removeItem(PROJECT_KEY)") {
+		t.Error("the refusal path clears the project automatically; somebody who mistyped " +
+			"an id would land in a working workbench with no sign anything was refused")
+	}
+}

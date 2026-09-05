@@ -721,6 +721,11 @@ const pageTemplates = `
          sends its ID; the server reads the requirement's own words out of the
          project graph and writes them into the turn, so what the model sees is
          what the requirement says rather than what a client pasted. -->
+    <!-- Bound to a project the person is not on. Loud and first, because every
+         panel below it will be empty and an empty panel reads as "nothing here
+         yet" rather than "you cannot see this". -->
+    <div id="project-denied" class="note bad hidden" role="alert"></div>
+
     <div class="h hidden" id="reqs-head">Build from</div>
     <div id="reqs" class="hidden"></div>
 
