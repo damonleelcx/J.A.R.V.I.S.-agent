@@ -224,8 +224,15 @@ export FORGE_CAD_PYTHON="$PWD/.cadvenv/bin/python"
 
 The kernel is a long-running sidecar because the costs are nothing alike:
 importing build123d takes ~2.5 s and building the part takes ~46 ms, so it is
-imported once and kept warm. It builds; it does not check. There is still no
-solver and no interference test here, and the export label says so.
+imported once and kept warm. It builds a PART, not a pile of solids: a document can cut holes, fuse bodies,
+fillet and chamfer, so the reference bracket exports as one solid with four
+bores. What it does not do is CHECK — there is still no solver and no
+interference test here, and the export label says so, along with any feature
+OCCT refused.
+
+The viewport draws primitives and has no booleans, so a cut hole is drawn as a
+part standing in the plate. The exported file is the one with the hole, and the
+banner says which is which.
 
 **Without one, STEP is declared and refused**, and that is the default. IGES and
 KCL are refused either way — nothing in this build writes them. Refusals carry

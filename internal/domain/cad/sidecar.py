@@ -38,7 +38,7 @@ PROTOCOL = 1
 try:
     from build123d import (
         Box, Cylinder, Cone, Sphere, Rectangle, Plane, Location, Vector,
-        Compound, export_step,
+        Compound, Axis, export_step, fillet, chamfer,
     )
 except Exception as exc:  # pragma: no cover - reported to the caller, not raised
     sys.stdout.write(json.dumps({
@@ -100,12 +100,64 @@ def _shape(solid):
     raise ValueError("unsupported shape %r" % kind)
 
 
+def _edges(shape, rule):
+    """Which edges a fillet or chamfer touches, by RULE and never by index.
+
+    An index selects a different edge the moment a parameter changes, which is
+    the failure mode that makes naive parametric scripts break on their second
+    run (docs/spikes/2026-09-05-parametric-cad-kernel/). Y is up in this system,
+    so "vertical" is the Y axis.
+
+    The names are validated in Go against the same closed table; an unknown one
+    never reaches here.
+    """
+    edges = shape.edges()
+    if rule == "vertical":
+        return edges.filter_by(Axis.Y)
+    if rule == "horizontal":
+        return edges.filter_by(Axis.X) + edges.filter_by(Axis.Z)
+    if rule == "top":
+        return edges.group_by(Axis.Y)[-1]
+    if rule == "bottom":
+        return edges.group_by(Axis.Y)[0]
+    return edges
+
+
+def _apply(op, shapes):
+    """One operation, in place in the shapes dict.
+
+    Order is the document's. A feature reads what the features before it left
+    behind, which is what makes "cut the holes, then round what is left" mean
+    something different from the other way round.
+    """
+    target = shapes[op["of"]]
+    kind = op["op"]
+
+    if kind in ("cut", "fuse"):
+        for tool_id in op.get("with") or []:
+            tool = shapes[tool_id]
+            target = (target - tool) if kind == "cut" else (target + tool)
+        shapes[op["of"]] = target
+        return
+
+    selected = _edges(target, op.get("edges") or "all")
+    if not selected:
+        # Nothing to round is not a failure: a rule can legitimately select no
+        # edge (a sphere has none vertical). Reported so a person is not left
+        # wondering why the fillet they asked for is not there.
+        raise ValueError("the %s selected no %s edges" % (kind, op.get("edges") or "all"))
+    if kind == "fillet":
+        shapes[op["of"]] = fillet(selected, radius=op["radius"])
+    else:
+        shapes[op["of"]] = chamfer(selected, length=op["radius"])
+
+
 def _build(request):
     solids = request.get("solids") or []
     if not solids:
         return {"ok": False, "error": "no parts to build"}
 
-    built, names, skipped = [], [], []
+    built, names, ids, skipped = [], [], [], []
     for s in solids:
         try:
             shape = _shape(s)
@@ -123,9 +175,45 @@ def _build(request):
             continue
         built.append(_placement(s) * shape)
         names.append(s.get("label") or s.get("id"))
+        ids.append(s.get("id"))
 
     if not built:
         return {"ok": False, "error": "no part could be built", "skipped": skipped}
+
+    # --- features -----------------------------------------------------------
+    #
+    # Applied to the placed solids, in the document's order. A tool is CONSUMED:
+    # it does not also appear as a solid of its own, or the hole would be filled
+    # by the thing that made it.
+    shapes = dict(zip(ids, built))
+    consumed, failed = set(), []
+    for op in request.get("operations") or []:
+        missing = [n for n in [op["of"]] + list(op.get("with") or []) if n not in shapes]
+        if missing:
+            # A feature naming a part that could not be built. Reported rather
+            # than skipped silently: the assembly is missing an operation
+            # somebody asked for.
+            failed.append("%s: %s could not be built, so this was not applied"
+                          % (op["id"], ", ".join(missing)))
+            continue
+        try:
+            _apply(op, shapes)
+        except Exception as exc:
+            reason = str(exc).strip() or type(exc).__name__
+            failed.append("%s: %s" % (op["id"], reason))
+            continue
+        consumed.update(op.get("with") or [])
+
+    kept, kept_names = [], []
+    for part_id, name in zip(ids, names):
+        if part_id in consumed:
+            continue
+        kept.append(shapes[part_id])
+        kept_names.append(name)
+    if not kept:
+        return {"ok": False, "error": "every part was consumed as a tool, leaving nothing to export",
+                "skipped": skipped, "features_failed": failed}
+    built, names = kept, kept_names
 
     # A compound, not a fused union. Fusing would MERGE parts that touch, and a
     # bracket and the plate it sits on would come back as one body with the seam
@@ -148,6 +236,7 @@ def _build(request):
         "bounds": [float(box.min.X), float(box.min.Y), float(box.min.Z),
                    float(box.max.X), float(box.max.Y), float(box.max.Z)],
         "skipped": skipped,
+        "features_failed": failed,
     }
 
     fmt = request.get("format")

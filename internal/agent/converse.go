@@ -91,6 +91,14 @@ Reply with JSON only:
         "note": "what this state is for"
       }
     ],
+    "features": [
+      {"id": "stable-kebab-id", "op": "cut" | "fuse" | "fillet" | "chamfer",
+       "of": "part-id this applies to",
+       "with": ["part-ids used as the tool, for cut and fuse"],
+       "radius": 3.0, "radius_from": "fillet_radius",
+       "edges": "all" | "vertical" | "horizontal" | "top" | "bottom",
+       "note": "what this is for"}
+    ],
     "assumptions": ["anything you chose that they did not specify"],
     "not_verified": ["what this render does NOT establish"],
     "overlays": [
@@ -169,6 +177,25 @@ About "prototype":
   constant pi, and sqrt, abs, min, max, floor, ceil and round. There is no sine
   or cosine here: half the world writes them in degrees and half in radians, so
   carry an already-resolved length as a parameter instead.
+- "features" are what make an assembly a PART rather than a pile of solids.
+  A HOLE is not a part — it is the absence of one. Put a cylinder where the hole
+  goes, size and place it like any other part, and then "cut" it from the thing
+  it passes through. The cylinder is CONSUMED: it becomes the void, and does not
+  also appear as a solid.
+  "fuse" welds parts into one body. Say it only when they really are one piece;
+  two parts touching are two parts, and fusing them is a claim about how the
+  thing is made.
+  "fillet" rounds edges and "chamfer" cuts them off. Both take a size — prefer
+  "radius_from" with an expression, for the same reason every other dimension
+  does — and choose edges by RULE: "vertical" is the up axis, "top" and "bottom"
+  are the highest and lowest edges, "all" is everything. There is deliberately no
+  way to name an edge by number, because an index picks a different edge as soon
+  as a parameter changes.
+  Features apply IN ORDER, so cutting the holes and then rounding what is left is
+  a different part from rounding first.
+  Only the CAD kernel performs these. The viewport draws solid primitives, so a
+  cut hole is drawn as a part standing in the plate and the reader is told so —
+  do not work around that by leaving the hole out.
 - "material" is a CLAIM about what a part is made of, not a rendering hint.
   Cost, weight, whether it can be welded and whether it survives the load all
   follow from it. If they told you, label it "observed" and quote them; if you
@@ -612,6 +639,24 @@ func (r *Reply) validate() error {
 		for _, problem := range r.Prototype.Bind() {
 			r.Prototype.NotVerified = append(r.Prototype.NotVerified, parameterNote(problem))
 		}
+		/* Features, and the one place the picture and the file disagree.
+		 *
+		 * A feature that does not check out is dropped by the kernel rather than
+		 * approximated, so the reader has to be told which — an assembly missing
+		 * a hole somebody asked for is not something the render will show.
+		 *
+		 * And the viewport draws primitives with no boolean operations, so a
+		 * part used to cut a hole appears standing IN the plate rather than as a
+		 * void through it. That is a real divergence between two things this
+		 * product shows the same person, and it is stated for the same reason
+		 * "Drawn approximately" is: the system says what it did instead of
+		 * hiding it. */
+		if _, featureProblems := r.Prototype.Operations(); len(featureProblems) > 0 {
+			for _, problem := range featureProblems {
+				r.Prototype.NotVerified = append(r.Prototype.NotVerified, featureNote(problem))
+			}
+		}
+		r.Prototype.NotVerified = append(r.Prototype.NotVerified, r.Prototype.FeatureNotes()...)
 	}
 	return nil
 }

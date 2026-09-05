@@ -1,6 +1,7 @@
 package agent_test
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -12,6 +13,8 @@ import (
 	"time"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/agent"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/cad"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/geometry"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/llm"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/persona"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/clock"
@@ -78,11 +81,12 @@ func TestLiveParametricContract(t *testing.T) {
 	dump, _ := json.MarshalIndent(struct {
 		Parameters  any `json:"parameters"`
 		Derived     any `json:"derived"`
+		Features    any `json:"features"`
 		Parts       any `json:"parts"`
 		Recalled    any `json:"recalled"`
 		NotVerified any `json:"not_verified"`
-	}{reply.Prototype.Parameters, reply.Prototype.Derived, reply.Prototype.Parts,
-		reply.Recalled, reply.Prototype.NotVerified}, "", "  ")
+	}{reply.Prototype.Parameters, reply.Prototype.Derived, reply.Prototype.Features,
+		reply.Prototype.Parts, reply.Recalled, reply.Prototype.NotVerified}, "", "  ")
 	t.Logf("live parametric reply from %s:\n%s", reply.Model, dump)
 
 	if len(reply.Prototype.Parameters) == 0 {
@@ -203,4 +207,76 @@ func envOrDefault(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+// The whole chain, on the model's own output: ask for a part that needs holes,
+// and build what comes back with a real CAD kernel.
+//
+// # Why this is the test that matters
+//
+// Everything else is fenced with documents written by hand. Those prove the
+// kernel does what it is told; they cannot prove the MODEL tells it anything
+// buildable. A contract the model half-follows produces a document that
+// validates, renders, and turns into a solid brick with the mounting holes
+// missing — and every unit test in this repository would stay green.
+//
+// Skipped without both a model and a kernel.
+func TestLiveModelOutputBuildsInTheKernel(t *testing.T) {
+	if os.Getenv("FORGE_LIVE_LLM_TESTS") == "" || os.Getenv("FORGE_LLM_API_KEY") == "" {
+		t.Skip("set FORGE_LLM_API_KEY and FORGE_LIVE_LLM_TESTS=1")
+	}
+	python := os.Getenv("FORGE_CAD_PYTHON")
+	if python == "" {
+		t.Skip("FORGE_CAD_PYTHON is unset; run `make cad-venv`")
+	}
+	log := logx.New(logx.Options{Level: slog.LevelError, Output: os.Stderr, Service: "live"})
+	client := llm.NewOpenAICompatible(config.LLMConfig{
+		BaseURL:        envOrDefault("FORGE_LLM_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+		APIKey:         os.Getenv("FORGE_LLM_API_KEY"),
+		Converse:       envOrDefault("FORGE_LLM_CONVERSE_MODEL", "qwen-plus"),
+		RequestTimeout: 3 * time.Minute, MaxRetries: 2,
+	}, log, clock.System{})
+
+	conv := agent.NewConversation(client, persona.DefaultCharacter())
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	reply, err := conv.Respond(ctx, "", nil,
+		"Design a flat aluminium bracket that bolts a NEMA 17 stepper motor to a surface. "+
+			"It needs four clearance holes through the plate for the motor screws and a "+
+			"rounded outer edge.", "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reply.Prototype == nil {
+		t.Fatal("no geometry for an explicitly physical request")
+	}
+	dump, _ := json.MarshalIndent(reply.Prototype.Features, "", "  ")
+	t.Logf("features from %s:\n%s", reply.Model, dump)
+
+	ops, problems := reply.Prototype.Operations()
+	for _, p := range problems {
+		t.Logf("feature %s on %q: %s", p.Severity, p.Name, p.Detail)
+	}
+	t.Logf("features: %d emitted, %d valid", len(reply.Prototype.Features), len(ops))
+
+	k := cad.New(python, log)
+	defer k.Close()
+	built, err := k.BuildDocument(ctx, *reply.Prototype, geometry.Millimetre, "step")
+	if err != nil {
+		t.Fatalf("the model's own document did not build: %v", err)
+	}
+	t.Logf("built %d part(s), volume %.1f mm³, %d bytes of STEP; skipped=%v failures=%v",
+		built.Parts, built.Volume, len(built.STEP), built.Skipped, built.FeatureFailures)
+
+	if len(built.STEP) == 0 || !bytes.HasPrefix(built.STEP, []byte("ISO-10303-21;")) {
+		t.Fatal("no STEP file came back from the model's own document")
+	}
+	// Counted and reported rather than asserted: how OFTEN a model uses a
+	// feature is a rate, and rates belong in the eval suite against a measured
+	// floor. What is asserted is that whatever it produced BUILDS.
+	if len(reply.Prototype.Features) == 0 {
+		t.Log("the model emitted no features, so the holes are separate solids " +
+			"rather than voids — the contract is not landing")
+	}
 }

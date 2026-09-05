@@ -403,3 +403,49 @@ func withoutCAD(h *GeometryHandlers) *GeometryHandlers {
 	h.deps.CAD = cad.New("", logx.Discard())
 	return h
 }
+
+// A feature the kernel refused must be in the download label.
+//
+// This is the most dangerous thing the kernel can produce: a bracket whose
+// fillet OCCT would not build looks like a bracket, downloads like a bracket,
+// and has square corners where the design says rounded. Observed live on
+// 2026-09-05 — a model asked for a 5 mm fillet on a 6 mm plate and the kernel
+// said no, correctly, and the person holding the file had no way to know.
+func TestAPI_ADroppedFeatureIsInTheDownloadLabel(t *testing.T) {
+	g := geometryHarness(t)
+	if !g.cad.Available() {
+		t.Skip("FORGE_CAD_PYTHON is unset")
+	}
+	v, err := g.svc.Save(context.Background(), geometry.NewVariant{
+		ProjectID: g.project, InitiatorID: g.owner.ID,
+		Agent: workspace.AgentConverse, Generator: "test",
+		Inputs: map[string]any{"message": "a bracket"},
+		Document: geometry.Document{
+			Name: "overfilleted", Units: "mm",
+			Parts: []geometry.Part{{ID: "plate", Name: "Plate", Shape: "box",
+				Size:     map[string]float64{"width": 60, "height": 6, "depth": 60},
+				Position: []float64{0, 0, 0}, Rotation: []float64{0, 0, 0}}},
+			// 5 mm on a 6 mm plate: OCCT refuses, exactly as it did live.
+			Features:    []geometry.Feature{{ID: "round-edges", Op: "fillet", Of: "plate", Radius: 5, Edges: "all"}},
+			Assumptions: []string{"chosen"}, NotVerified: []string{"nothing checked"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	g.h.Export(rec, withPath(req(g.owner, "GET",
+		"/v1/geometry/"+v.VersionID+"/export?format=step", ""), v.VersionID))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status %d: %s", rec.Code, rec.Body.String())
+	}
+	label := rec.Header().Get("X-Forge-Export-Label")
+	if !strings.Contains(label, "could NOT be applied") {
+		t.Fatalf("the refused fillet is not in the label, so the file says nothing about "+
+			"having square corners where the design said rounded: %q", label)
+	}
+	if !strings.Contains(label, "round-edges") {
+		t.Errorf("the label does not name the feature: %q", label)
+	}
+}

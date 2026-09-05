@@ -3,6 +3,7 @@ package cad_test
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"math"
 	"os"
 	"strings"
@@ -363,5 +364,195 @@ func TestKernel_PlacesAPartWhereTheRendererDrawsIt(t *testing.T) {
 				"An exported file that puts a part somewhere other than where it was drawn "+
 				"cannot be labelled out of it.", got.Bounds, want)
 		}
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Features: the operations that make an assembly a PART (wave 15)
+// ---------------------------------------------------------------------------
+
+// bracket is the 2026-09-05 spike's reference part, expressed in this
+// vocabulary: a plate with four holes through it and a rounded edge.
+//
+// It is the part that motivated the whole investigation, and until features
+// existed this system could not describe it — only a plate with four small
+// cylinders standing on top.
+func bracket() geometry.Document {
+	const plate, thick, pitch, holeR = 60.0, 6.0, 31.0, 1.75
+	doc := geometry.Document{
+		Name: "NEMA 17 bracket", Units: "mm",
+		Parameters: []geometry.Parameter{
+			{Name: "plate_size", Value: plate, Unit: "mm", How: geometry.Chosen},
+			{Name: "fillet_radius", Value: 3, Unit: "mm", How: geometry.Chosen},
+		},
+		Parts: []geometry.Part{
+			{ID: "plate", Name: "Plate", Shape: "box",
+				Size:     map[string]float64{"width": plate, "height": thick, "depth": plate},
+				Position: []float64{0, 0, 0}, Rotation: []float64{0, 0, 0}},
+		},
+	}
+	for i, xz := range [][2]float64{{-1, -1}, {1, -1}, {-1, 1}, {1, 1}} {
+		doc.Parts = append(doc.Parts, geometry.Part{
+			ID: fmt.Sprintf("hole-%d", i), Name: fmt.Sprintf("Hole %d", i), Shape: "cylinder",
+			Size:     map[string]float64{"radius": holeR, "height": thick * 4},
+			Position: []float64{xz[0] * pitch / 2, 0, xz[1] * pitch / 2},
+			Rotation: []float64{0, 0, 0},
+		})
+	}
+	doc.Features = []geometry.Feature{
+		{ID: "bolt-holes", Op: "cut", Of: "plate",
+			With: []string{"hole-0", "hole-1", "hole-2", "hole-3"}},
+		{ID: "rounded-corners", Op: "fillet", Of: "plate",
+			RadiusFrom: "fillet_radius", Edges: "vertical"},
+	}
+	return doc
+}
+
+// The headline: a hole is a VOID, and the material it removed is gone.
+func TestKernel_CutsAHoleAndRemovesTheMaterial(t *testing.T) {
+	k := kernel(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	doc := bracket()
+	doc.Features = doc.Features[:1] // the cut alone, so the arithmetic is exact
+
+	got, err := k.BuildDocument(ctx, doc, geometry.Millimetre, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// One part. Four tools consumed — a plate with four holes in it is one part,
+	// not five, and if the tools survived the holes would be filled by the
+	// things that made them.
+	if got.Parts != 1 {
+		t.Errorf("the file has %d parts, want 1: the cutting tools were not consumed", got.Parts)
+	}
+	// 60x6x60 minus four ⌀3.5 bores through 6 mm.
+	want := 60*6*60 - 4*math.Pi*1.75*1.75*6
+	if math.Abs(got.Volume-want) > 0.01 {
+		t.Errorf("volume = %.4f mm³, want %.4f — the material was not removed", got.Volume, want)
+	}
+}
+
+// Features apply IN ORDER, and the order changes the part.
+func TestKernel_AFilletRoundsWhatIsLeft(t *testing.T) {
+	k := kernel(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	cutOnly := bracket()
+	cutOnly.Features = cutOnly.Features[:1]
+	a, err := k.BuildDocument(ctx, cutOnly, geometry.Millimetre, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	b, err := k.BuildDocument(ctx, bracket(), geometry.Millimetre, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(b.FeatureFailures) > 0 {
+		t.Fatalf("the fillet was not applied: %v", b.FeatureFailures)
+	}
+	// Rounding four corners of a 60 mm plate removes material: (1 - π/4) r² per
+	// corner, through the thickness. Small, and it must be there.
+	removed := a.Volume - b.Volume
+	want := 4 * (1 - math.Pi/4) * 9 * 6
+	if math.Abs(removed-want) > 0.01 {
+		t.Errorf("the fillet removed %.4f mm³, want %.4f", removed, want)
+	}
+	// The plate is still 60 mm across: a fillet rounds corners, it does not
+	// shrink the part.
+	if math.Abs((b.Bounds[3]-b.Bounds[0])-60) > 1e-6 {
+		t.Errorf("the plate is now %.4f mm across", b.Bounds[3]-b.Bounds[0])
+	}
+}
+
+// A real STEP file of a part with holes in it — which is the point of all of it.
+func TestKernel_ExportsAPartWithHolesAsOneSolid(t *testing.T) {
+	k := kernel(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	got, err := k.BuildDocument(ctx, bracket(), geometry.Millimetre, "step")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(got.STEP)
+	if !strings.HasPrefix(body, "ISO-10303-21;") || !strings.Contains(body, "END-ISO-10303-21;") {
+		t.Fatal("not a complete STEP file")
+	}
+	// The bores are analytic cylinders in the solid, not four separate bodies.
+	if !strings.Contains(body, "CYLINDRICAL_SURFACE") {
+		t.Error("no cylindrical surface: the holes are not in the file")
+	}
+	if got.Parts != 1 {
+		t.Errorf("%d parts in the file, want one bracket", got.Parts)
+	}
+}
+
+// Fusing says two parts are ONE body. It must actually weld them.
+func TestKernel_FuseMakesOneBody(t *testing.T) {
+	k := kernel(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	doc := geometry.Document{
+		Name: "tee", Units: "mm",
+		Parts: []geometry.Part{
+			{ID: "web", Name: "Web", Shape: "box",
+				Size:     map[string]float64{"width": 40, "height": 6, "depth": 20},
+				Position: []float64{0, 0, 0}, Rotation: []float64{0, 0, 0}},
+			{ID: "rib", Name: "Rib", Shape: "box",
+				Size:     map[string]float64{"width": 6, "height": 20, "depth": 20},
+				Position: []float64{0, 10, 0}, Rotation: []float64{0, 0, 0}},
+		},
+		Features: []geometry.Feature{{ID: "weld", Op: "fuse", Of: "web", With: []string{"rib"}}},
+	}
+	got, err := k.BuildDocument(ctx, doc, geometry.Millimetre, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Parts != 1 {
+		t.Fatalf("%d parts, want one fused body", got.Parts)
+	}
+	// The two OVERLAP: the web spans y −3..3 and the rib y 0..20, so they share
+	// 6 x 3 x 20 mm³. A fuse is a union and must not count that twice — which is
+	// the property that distinguishes it from adding two numbers, and the reason
+	// this fixture deliberately overlaps rather than touching face to face.
+	//
+	// (The first version of this test asserted the plain sum, 7200. The kernel
+	// answered 6840 and was right.)
+	const overlap = 6 * 3 * 20
+	want := float64(40*6*20 + 6*20*20 - overlap)
+	if math.Abs(got.Volume-want) > 0.01 {
+		t.Errorf("volume = %.4f, want %.0f — the shared material was counted twice, "+
+			"so this is a sum and not a union", got.Volume, want)
+	}
+}
+
+// A feature that cannot be applied must be NAMED. An assembly quietly missing
+// the hole somebody asked for is wrong in a way nobody notices.
+func TestKernel_AFeatureThatCannotBeAppliedIsNamed(t *testing.T) {
+	k := kernel(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	doc := bracket()
+	// A sphere has no vertical edges, so this rule selects nothing.
+	doc.Parts = append(doc.Parts, geometry.Part{ID: "ball", Name: "Ball", Shape: "sphere",
+		Size: map[string]float64{"radius": 5}, Position: []float64{0, 40, 0}})
+	doc.Features = append(doc.Features, geometry.Feature{
+		ID: "impossible", Op: "fillet", Of: "ball", Radius: 1, Edges: "vertical"})
+
+	got, err := k.BuildDocument(ctx, doc, geometry.Millimetre, "")
+	if err != nil {
+		t.Fatalf("one impossible feature lost the whole assembly: %v", err)
+	}
+	if len(got.FeatureFailures) != 1 || !strings.Contains(got.FeatureFailures[0], "impossible") {
+		t.Fatalf("the feature that could not be applied was not named: %v", got.FeatureFailures)
+	}
+	// And the rest of the part is still there.
+	if got.Parts != 2 {
+		t.Errorf("%d parts, want the bracket and the ball", got.Parts)
 	}
 }

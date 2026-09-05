@@ -198,3 +198,66 @@ func TestValidate_ABrokenBindingStillRendersAndSaysSo(t *testing.T) {
 		t.Errorf("the broken binding was not reported: %v", r.Prototype.NotVerified)
 	}
 }
+
+// Wave 15: a feature that could not be applied, and the one place the picture
+// and the file disagree, both reach the reader.
+func TestValidate_AFeatureThatCannotBeAppliedIsSaidOutLoud(t *testing.T) {
+	r := &Reply{
+		Speech: "here",
+		Prototype: &Prototype{
+			Name: "bracket", Units: "mm",
+			Parts: []geometry.Part{
+				{ID: "plate", Name: "Plate", Shape: "box",
+					Size: map[string]float64{"width": 60, "height": 6, "depth": 60}},
+			},
+			Features:    []geometry.Feature{{ID: "bore", Op: "cut", Of: "plate", With: []string{"ghost"}}},
+			NotVerified: []string{"nothing checked"},
+		},
+	}
+	if err := r.validate(); err != nil {
+		t.Fatal(err)
+	}
+	if !notedAbout(r, "could not apply one of this design's features") {
+		t.Fatalf("a dropped feature was not reported: %v", r.Prototype.NotVerified)
+	}
+	if !notedAbout(r, "ghost") {
+		t.Errorf("the note does not name what was missing: %v", r.Prototype.NotVerified)
+	}
+}
+
+// The render shows a cylinder standing in a plate; the exported file has a hole
+// through it. Two things this product shows the same person, and it says so.
+func TestValidate_TheViewportsDisagreementWithTheFileIsStated(t *testing.T) {
+	r := &Reply{
+		Speech: "here",
+		Prototype: &Prototype{
+			Name: "bracket", Units: "mm",
+			Parts: []geometry.Part{
+				{ID: "plate", Name: "Plate", Shape: "box",
+					Size: map[string]float64{"width": 60, "height": 6, "depth": 60}},
+				{ID: "hole", Name: "Hole", Shape: "cylinder",
+					Size: map[string]float64{"radius": 2, "height": 20}},
+			},
+			Features:    []geometry.Feature{{ID: "bore", Op: "cut", Of: "plate", With: []string{"hole"}}},
+			NotVerified: []string{"nothing checked"},
+		},
+	}
+	if err := r.validate(); err != nil {
+		t.Fatal(err)
+	}
+	if !notedAbout(r, "cannot show a hole") {
+		t.Fatalf("the divergence between the render and the file was not stated: %v",
+			r.Prototype.NotVerified)
+	}
+}
+
+// And a document with no features collects nothing.
+func TestValidate_ANonFeaturedPrototypeSaysNothingAboutFeatures(t *testing.T) {
+	r := withParams(nil, nil)
+	if err := r.validate(); err != nil {
+		t.Fatal(err)
+	}
+	if got := len(r.Prototype.NotVerified); got != 1 {
+		t.Fatalf("a prototype with no features collected notes: %v", r.Prototype.NotVerified)
+	}
+}

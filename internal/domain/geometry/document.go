@@ -49,6 +49,11 @@ type Document struct {
 	// silently rewrites geometry from them.
 	Parameters []Parameter `json:"parameters,omitempty"`
 	Derived    []Derived   `json:"derived,omitempty"`
+	// Features are the operations that make an assembly a PART rather than a
+	// pile of solids: holes cut through a plate, edges rounded, bodies fused
+	// (see feature.go). Optional, and only the CAD kernel performs them — the
+	// renderer draws primitives and says what it could not show.
+	Features []Feature `json:"features,omitempty"`
 	// Assumptions is every dimension FORGE chose rather than was given. One of
 	// the six things PRD VIS-04 requires a render to link to.
 	Assumptions []string `json:"assumptions"`

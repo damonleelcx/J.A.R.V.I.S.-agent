@@ -2479,11 +2479,7 @@ sentence is already served unauthenticated by `GET /v1/geometry/formats`.
 - **The kernel builds; it does not check.** No interference test, no stress
   analysis, no manufacturability review. VIS-06's banner says so and is now
   worded to stay true whether or not a kernel is configured.
-- **No booleans.** A Document has no cut, fillet or union, so an assembly is a
-  COMPOUND of primitives — not fused, because fusing would merge parts that touch
-  and erase a seam nothing claimed was welded. The spike's own bracket used a
-  fillet and four subtracted holes; expressing that needs schema this does not
-  have.
+- ~~**No booleans.**~~ **Done in wave 15.**
 - **A tube's bore is still not modelled**, because `Part.Size` has no inner
   radius to model it from. The mesh path substitutes a cylinder and so does this,
   and the label says so.
@@ -2492,6 +2488,73 @@ sentence is already served unauthenticated by `GET /v1/geometry/formats`.
   invisible. The mesh path behaves identically.
 - **One request at a time.** A pool would be a wrong answer to a question nobody
   has asked.
+
+## Wave 15 — a hole is not a part · **DONE**
+
+Wave 14 gave this deployment a real kernel and then asked it to build a bag of
+primitives. Every solid it produced was a box sitting next to a cylinder — a
+genuine B-Rep, and not a thing anybody machines. The spike's own reference
+bracket needs two operations the vocabulary could not express: four holes
+subtracted through a plate, and a fillet.
+
+**A hole is not a part. It is the ABSENCE of one**, and a document that can only
+add material describes a bracket with no way to bolt it to anything.
+
+**What was built.** `Document.Features` — `cut`, `fuse`, `fillet`, `chamfer` —
+validated in Go and performed by the kernel. The reference bracket now builds as
+ONE solid with four bores, at exactly `60×6×60 − 4πr²t`.
+
+### Three decisions
+
+- **A hole is an existing part used as a TOOL.** The obvious design gives a hole
+  its own vocabulary — position, diameter, depth, axis — and was rejected: that
+  is a second way to say "a cylinder somewhere", and the two drift the day
+  somebody adds a size key to one of them. A cut names parts that already exist
+  and are already bound to parameters, so a hole that follows `plate_size` does
+  so with no new machinery at all. The tool is CONSUMED, or the hole would be
+  filled by the thing that made it.
+- **Edges are selected by a RULE and never by an index**, per the spike: *"an
+  index would silently select a different edge the moment a parameter changed."*
+  There is nowhere in the schema to write a number, and a fence asserts that
+  `"3"`, `"first"` and `"edge-2"` are all refused.
+- **A feature that does not check out is DROPPED, not approximated.** An assembly
+  missing a hole is wrong in a way a reader is told about; one where the hole
+  landed somewhere else is wrong in a way nobody notices.
+
+### The divergence this creates, and why it is stated rather than fixed
+
+The renderer draws primitives and has no boolean operations, so a part used to
+cut a hole appears as a small solid **standing in** the plate rather than as a
+void **through** it. The exported B-Rep has the hole; the viewport does not.
+
+That is two things this product shows the same person, and `FeatureNotes` says so
+in the banner — the same stance as "Drawn approximately". Teaching the
+tessellator to do booleans costs a CSG engine in JavaScript, which is the kernel
+this product just stopped pretending it could do without.
+
+### What the live run found
+
+Asked for a bracket with four clearance holes and a rounded edge, qwen-plus
+emitted **5 features, 5 valid** on the first attempt — four cuts and a fillet —
+and the document built as one part with 36 KB of real STEP.
+
+OCCT refused the fillet: 5 mm on a 6 mm plate. Correctly, and it exposed the
+worst gap in wave 14's export path. **A bracket whose fillet was refused looks
+like a bracket, downloads like a bracket, and has square corners where the design
+says rounded** — and the download label said nothing. Dropped features now come
+FIRST in that header, because a header is read left to right and this is the half
+that changes what somebody does with the file.
+
+### What is still NOT done
+
+- **The renderer still cannot draw a hole.** Stated, not fixed.
+- **No sketches, extrusions or revolves.** Everything starts from a primitive, so
+  a shape that is not a box, cylinder, cone, sphere or plane with material
+  removed cannot be described.
+- **No `max_fillet`.** A radius the geometry cannot take is refused by OCCT and
+  reported; nothing suggests the largest one that would work.
+- **A tube's bore is still unmodelled** by the `tube` primitive — though a bore
+  is now expressible properly, as a cylinder cut from a cylinder.
 
 ## Carried defects
 

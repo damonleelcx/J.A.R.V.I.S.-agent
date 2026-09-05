@@ -432,6 +432,17 @@ func (h *GeometryHandlers) exportParametric(w http.ResponseWriter, r *http.Reque
 	label := fmt.Sprintf("unverified proposal; B-Rep, not tessellated; nothing about this shape "+
 		"has been analysed or checked; full label at /v1/geometry/%s/export/label?format=step",
 		v.VersionID)
+	// What is NOT in the file goes FIRST, because a header is read left to right
+	// and this is the half that changes what somebody does with it.
+	//
+	// A dropped feature is the dangerous one: a bracket whose fillet OCCT
+	// refused looks like a bracket, downloads like a bracket, and has square
+	// corners where the design said rounded. Observed live on 2026-09-05, where
+	// a model asked for a 5 mm fillet on a 6 mm plate and the kernel said no.
+	if n := len(built.FeatureFailures); n > 0 {
+		label = fmt.Sprintf("%d feature(s) could NOT be applied, so this shape is not what the "+
+			"design describes (%s); ", n, strings.Join(built.FeatureFailures, "; ")) + label
+	}
 	if len(built.Skipped) > 0 {
 		label = fmt.Sprintf("%d part(s) could not be built and are NOT in this file; ", len(built.Skipped)) + label
 	}

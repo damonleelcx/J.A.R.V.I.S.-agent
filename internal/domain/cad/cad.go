@@ -124,9 +124,14 @@ func Unavailable(op string) error {
 
 // Build is what the kernel made.
 type Build struct {
-	// Parts is how many solids were placed, Skipped names any that could not be.
-	Parts   int
-	Skipped []string
+	// Parts is how many solids the file contains — after tools are consumed, so
+	// a plate with four holes cut in it is ONE part and not five.
+	Parts int
+	// Skipped names the parts that could not be built, and FeatureFailures the
+	// operations that could not be applied. Both are named rather than dropped:
+	// an assembly quietly missing a hole is wrong in a way nobody notices.
+	Skipped         []string
+	FeatureFailures []string
 	// Volume is the assembly's, in the cube of the document's declared unit.
 	// Zero for an assembly of faces, which have none.
 	Volume float64
@@ -147,20 +152,22 @@ type Build struct {
 }
 
 type request struct {
-	Solids []geometry.Solid `json:"solids"`
-	Format string           `json:"format,omitempty"`
+	Solids     []geometry.Solid     `json:"solids"`
+	Operations []geometry.Operation `json:"operations,omitempty"`
+	Format     string               `json:"format,omitempty"`
 }
 
 type reply struct {
-	OK      bool       `json:"ok"`
-	Ready   bool       `json:"ready"`
-	Error   string     `json:"error,omitempty"`
-	Trace   string     `json:"trace,omitempty"`
-	Parts   int        `json:"parts"`
-	Volume  float64    `json:"volume"`
-	Bounds  [6]float64 `json:"bounds"`
-	Skipped []string   `json:"skipped,omitempty"`
-	STEP    string     `json:"step,omitempty"`
+	OK             bool       `json:"ok"`
+	Ready          bool       `json:"ready"`
+	Error          string     `json:"error,omitempty"`
+	Trace          string     `json:"trace,omitempty"`
+	Parts          int        `json:"parts"`
+	Volume         float64    `json:"volume"`
+	Bounds         [6]float64 `json:"bounds"`
+	Skipped        []string   `json:"skipped,omitempty"`
+	FeaturesFailed []string   `json:"features_failed,omitempty"`
+	STEP           string     `json:"step,omitempty"`
 }
 
 // BuildDocument builds a document and, when format is "step", exports it.
@@ -181,11 +188,21 @@ func (k *Kernel) BuildDocument(ctx context.Context, doc geometry.Document, unit 
 		return nil, errs.New(op, errs.CodeValidationFailed).
 			WithDetail("this assembly has no parts FORGE can build, so there is nothing to export")
 	}
+	// Features are validated in Go so the kernel receives operations whose names
+	// all resolve and whose radii are numbers. One that does not check out is
+	// DROPPED rather than approximated, and the problem travels with the build:
+	// an assembly missing a hole is wrong in a way a reader is told about, and
+	// one where the hole landed somewhere else is wrong in a way nobody sees.
+	operations, featureProblems := doc.Operations()
+	for _, p := range featureProblems {
+		inferred = append(inferred, fmt.Sprintf("%s %s.", p.Name, p.Detail))
+	}
 
 	k.mu.Lock()
 	defer k.mu.Unlock()
 
-	res, err := k.roundTrip(ctx, request{Solids: solids, Format: format})
+	req := request{Solids: solids, Operations: operations, Format: format}
+	res, err := k.roundTrip(ctx, req)
 	if err != nil {
 		// One retry, and exactly one. The overwhelmingly likely cause of an I/O
 		// failure is a process that died between requests — a machine asleep, an
@@ -193,7 +210,7 @@ func (k *Kernel) BuildDocument(ctx context.Context, doc geometry.Document, unit 
 		// would turn a kernel that crashes on a particular document into a loop.
 		k.stopLocked()
 		k.log.Warn(ctx, logx.EventCADRestarted, "detail", err.Error())
-		res, err = k.roundTrip(ctx, request{Solids: solids, Format: format})
+		res, err = k.roundTrip(ctx, req)
 		if err != nil {
 			return nil, errs.Wrap(op, errs.CodeConnectorUnavailable, err).
 				WithDetail("the CAD kernel did not answer, and restarting it did not help")
@@ -212,7 +229,7 @@ func (k *Kernel) BuildDocument(ctx context.Context, doc geometry.Document, unit 
 	}
 
 	out := &Build{Parts: res.Parts, Volume: res.Volume, Bounds: res.Bounds,
-		Skipped: res.Skipped, Inferred: inferred}
+		Skipped: res.Skipped, FeatureFailures: res.FeaturesFailed, Inferred: inferred}
 	if res.STEP != "" {
 		decoded, err := base64.StdEncoding.DecodeString(res.STEP)
 		if err != nil {

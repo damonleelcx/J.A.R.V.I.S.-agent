@@ -296,3 +296,14 @@ func commonPartLabel(ids []string) string {
 	}
 	return prefix
 }
+
+// featureNote renders one rejected feature for the reader.
+//
+// A separate voice from parameterNote because it says something different: not
+// "a number is missing" but "an operation you asked for is NOT in this
+// assembly". The render looks the same either way, which is exactly why it has
+// to be said.
+func featureNote(p geometry.Problem) string {
+	return fmt.Sprintf("FORGE could not apply one of this design's features, so it is not in "+
+		"the shape — %s %s.", p.Name, p.Detail)
+}
