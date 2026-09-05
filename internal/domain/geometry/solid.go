@@ -39,9 +39,11 @@ type Solid struct {
 	// to millimetres. Which keys are present depends on the shape and is the
 	// builder's contract.
 	Dims map[string]float64 `json:"dims"`
-	// Profile is an extrusion's outline in millimetres, in the part's own XY
-	// plane. Empty for every other shape.
+	// Profile is an extrusion's or a revolve's outline in millimetres, in the
+	// part's own XY plane. Empty for every other shape.
 	Profile [][2]float64 `json:"profile,omitempty"`
+	// Axis is which way a revolve turns, "y" or "x". Empty otherwise.
+	Axis string `json:"axis,omitempty"`
 	// Matrix is the rotation, row-major, from RotationMatrix.
 	Matrix [9]float64 `json:"matrix"`
 	// Position is the centre, in millimetres.
@@ -97,12 +99,21 @@ func Solids(d Document, unit Unit) ([]Solid, []string) {
 			pts, ok := profiles[p.ID]
 			if !ok {
 				// Reported above by resolvedProfiles. Skipped rather than
-				// approximated: an extrusion nobody can read is not a shape to
+				// approximated: an outline nobody can read is not a shape to
 				// guess at.
 				continue
 			}
 			profile = pts
 			dims["depth"] = sizeOr(p, "depth", 1, unit, infer)
+		case "revolve":
+			pts, ok := profiles[p.ID]
+			if !ok {
+				continue
+			}
+			profile = pts
+			// No dimension of its own: a revolve's size is entirely its outline
+			// and the axis it turns about. Asking for a depth as well would be
+			// a second way to say something the outline already says.
 		case "box":
 			dims["width"] = sizeOr(p, "width", 1, unit, infer)
 			dims["height"] = sizeOr(p, "height", 1, unit, infer)
@@ -157,9 +168,18 @@ func Solids(d Document, unit Unit) ([]Solid, []string) {
 
 		out = append(out, Solid{
 			ID: p.ID, Label: p.Label(), Shape: strings.ToLower(p.Shape), Dims: dims,
-			Profile: scaled, Matrix: RotationMatrix(rot), Position: pos,
+			Profile: scaled, Axis: axisOf(p), Matrix: RotationMatrix(rot), Position: pos,
 		})
 	}
 	sort.SliceStable(inferred, func(i, j int) bool { return inferred[i] < inferred[j] })
 	return out, inferred
+}
+
+// axisOf names a revolve's axis and nothing else's, so a box does not arrive at
+// the kernel carrying an axis it has no use for.
+func axisOf(p Part) string {
+	if strings.EqualFold(strings.TrimSpace(p.Shape), "revolve") {
+		return RevolveAxis(p)
+	}
+	return ""
 }

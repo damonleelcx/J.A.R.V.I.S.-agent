@@ -6,7 +6,7 @@ import (
 	"strings"
 )
 
-// Profiles: the shape that is not a primitive.
+// Profiles: the shapes that are not primitives.
 //
 // # What was missing
 //
@@ -15,10 +15,13 @@ import (
 // else: an L-bracket, a T-section, a channel, a gusset — the ordinary
 // cross-sections most fabricated parts actually are — could not be said at all.
 //
-// An extrusion is a closed 2D outline swept along an axis. It is the operation
-// almost every real part begins with, and it is what makes the difference
-// between "primitives with material removed" and a vocabulary somebody can
-// design in.
+// An outline is a closed 2D shape, and there are two things worth doing with
+// one. EXTRUDING it sweeps it along an axis, which is where most fabricated
+// parts begin. REVOLVING it turns it about an axis, which is where every turned
+// one does: a shaft, a boss, a flange, a pulley, a dome, a nozzle.
+//
+// Between them they are the difference between "primitives with material
+// removed" and a vocabulary somebody can design in.
 //
 // # Where the outline lives, and why it is NOT re-centred
 //
@@ -51,6 +54,16 @@ type Point struct {
 	YFrom string  `json:"y_from,omitempty"`
 }
 
+// revolveAxes is the closed set of axes an outline may be turned about.
+//
+// Only X and Y, because the outline lies in the XY plane and those are the two
+// axes IN it. Turning it about Z would sweep it out of its own plane, which
+// produces a shape nobody means by "revolve".
+//
+// Y is the default because Y is up here, and a turned part standing on its axis
+// is what somebody pictures.
+var revolveAxes = map[string]string{"": "y", "y": "y", "x": "x"}
+
 // minProfilePoints is three, because two points enclose no area and one is not
 // an outline. A "profile" with fewer is not a degenerate shape to be drawn
 // thinly — it is a document that means nothing, and it is refused.
@@ -78,22 +91,28 @@ func (d *Document) resolvedProfiles() (map[string][][2]float64, []Problem) {
 	}
 
 	for _, p := range d.Parts {
-		isExtrusion := strings.EqualFold(p.Shape, "extrusion")
-		if !isExtrusion && len(p.Profile) == 0 {
+		shape := strings.ToLower(strings.TrimSpace(p.Shape))
+		usesOutline := shape == "extrusion" || shape == "revolve"
+		if !usesOutline && len(p.Profile) == 0 {
 			continue
 		}
 		label := p.Label()
-		if !isExtrusion {
+		if !usesOutline {
 			// A profile on a box is not a box with a profile: it is somebody
 			// meaning one thing and writing another, and guessing which would
 			// put a shape in the file that nobody asked for.
-			add(label, "carries a profile but its shape is %q; an outline is only extruded "+
-				"when the shape is \"extrusion\"", p.Shape)
+			add(label, "carries a profile but its shape is %q; an outline is only used "+
+				"when the shape is \"extrusion\" or \"revolve\"", p.Shape)
 			continue
 		}
 		if len(p.Profile) < minProfilePoints {
-			add(label, "is an extrusion with %d point(s); an outline needs at least %d to "+
-				"enclose anything", len(p.Profile), minProfilePoints)
+			add(label, "is an %s with %d point(s); an outline needs at least %d to "+
+				"enclose anything", shape, len(p.Profile), minProfilePoints)
+			continue
+		}
+		if _, known := revolveAxes[strings.ToLower(strings.TrimSpace(p.Axis))]; !known && shape == "revolve" {
+			add(label, "turns about %q, which is not an axis of its own outline; a revolve "+
+				"turns about \"y\" (the default) or \"x\"", p.Axis)
 			continue
 		}
 
@@ -138,6 +157,22 @@ func (d *Document) resolvedProfiles() (map[string][][2]float64, []Problem) {
 			add(label, "crosses itself, so it does not enclose a single region; check the "+
 				"order of the points")
 			continue
+		}
+		if shape == "revolve" {
+			// An outline that crosses its own axis sweeps through itself, and
+			// what comes out is not a solid. OCCT refuses it with "BRep_API:
+			// command not done", which names nothing a person can act on — so
+			// it is caught here, where the axis and the offending coordinate can
+			// both be named.
+			axis := revolveAxes[strings.ToLower(strings.TrimSpace(p.Axis))]
+			if first, second, crosses := crossesAxis(pts, axis); crosses {
+				other := map[string]string{"y": "x", "x": "y"}[axis]
+				add(label, "is revolved about %s, so every point must be on one side of that "+
+					"axis — point %d has %s = %g and point %d has %s = %g. An outline with "+
+					"points on both sides sweeps through itself",
+					axis, first.index+1, other, first.value, second.index+1, other, second.value)
+				continue
+			}
 		}
 		out[p.ID] = pts
 	}
@@ -200,4 +235,56 @@ func signedArea(pts [][2]float64) float64 {
 		a += pts[i][0]*pts[j][1] - pts[j][0]*pts[i][1]
 	}
 	return a / 2
+}
+
+// crossesAxis reports the first point on the wrong side of a revolve's axis.
+//
+// Touching is allowed and common: a dome's outline meets the axis at its apex,
+// and a cone's at its point. What is refused is an outline with points on BOTH
+// sides, which sweeps through itself.
+//
+// The sign is taken from the first point that is off the axis, so an outline
+// drawn entirely in negative x is legal — it is the same shape, mirrored.
+type axisPoint struct {
+	index int
+	value float64
+}
+
+func crossesAxis(pts [][2]float64, axis string) (first, second axisPoint, crosses bool) {
+	coord := func(p [2]float64) float64 {
+		if axis == "x" {
+			return p[1] // turning about X: the radius is y
+		}
+		return p[0] // turning about Y: the radius is x
+	}
+	// BOTH offending points are returned, because naming one is arbitrary: the
+	// fault is not that a particular coordinate is negative, it is that two of
+	// them disagree. "Point 2 has x = 10" reads as an accusation against a point
+	// that may be perfectly correct — it is the pair that is wrong.
+	for i, p := range pts {
+		v := coord(p)
+		if math.Abs(v) < 1e-12 {
+			continue // on the axis, which is allowed and usual
+		}
+		if first == (axisPoint{}) && i >= 0 {
+			first = axisPoint{index: i, value: v}
+			continue
+		}
+		if (v > 0) != (first.value > 0) {
+			return first, axisPoint{index: i, value: v}, true
+		}
+	}
+	return axisPoint{}, axisPoint{}, false
+}
+
+// RevolveAxis resolves a part's revolve axis to "y" or "x".
+//
+// One reader for the table, so the tessellator, the kernel bridge and the
+// measurement path cannot each have their own opinion about what an empty axis
+// means.
+func RevolveAxis(p Part) string {
+	if a, ok := revolveAxes[strings.ToLower(strings.TrimSpace(p.Axis))]; ok {
+		return a
+	}
+	return "y"
 }

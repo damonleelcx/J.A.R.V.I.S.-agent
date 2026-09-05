@@ -805,3 +805,136 @@ func TestKernel_ASelfCrossingOutlineIsNotBuilt(t *testing.T) {
 		t.Logf("refusal: %v", err)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Revolves: the turned part (wave 18)
+// ---------------------------------------------------------------------------
+
+func revolveDoc(pts [][2]float64, axis string) geometry.Document {
+	profile := make([]geometry.Point, len(pts))
+	for i, p := range pts {
+		profile[i] = geometry.Point{X: p[0], Y: p[1]}
+	}
+	return geometry.Document{
+		Name: "turned", Units: "mm",
+		Parts: []geometry.Part{{ID: "t", Name: "Turned", Shape: "revolve",
+			Profile: profile, Axis: axis,
+			Position: []float64{0, 0, 0}, Rotation: []float64{0, 0, 0}}},
+	}
+}
+
+// The figures come from Pappus, so the expectations are arithmetic somebody can
+// check rather than numbers observed once.
+func TestKernel_RevolvesAnOutline(t *testing.T) {
+	k := kernel(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	for _, tc := range []struct {
+		name string
+		pts  [][2]float64
+		axis string
+		want float64
+	}{
+		{"a ring about Y", [][2]float64{{10, 0}, {20, 0}, {20, 5}, {10, 5}}, "y",
+			math.Pi * (400 - 100) * 5},
+		{"a ring about X", [][2]float64{{0, 10}, {5, 10}, {5, 20}, {0, 20}}, "x",
+			math.Pi * (400 - 100) * 5},
+		// The outline TOUCHES the axis, which is the usual case for a dome or a
+		// point and the one where a swept facet collapses to nothing.
+		{"a cone", [][2]float64{{0, 0}, {10, 0}, {0, 20}}, "y", math.Pi * 100 * 20 / 3},
+		// Wound the other way. The kernel must not care.
+		{"a clockwise ring", [][2]float64{{10, 5}, {20, 5}, {20, 0}, {10, 0}}, "y",
+			math.Pi * (400 - 100) * 5},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := k.BuildDocument(ctx, revolveDoc(tc.pts, tc.axis), geometry.Millimetre, "")
+			if err != nil {
+				t.Fatal(err)
+			}
+			// A real B-Rep, so the surface is exact rather than tessellated.
+			if math.Abs(got.Volume-tc.want) > 0.01 {
+				t.Errorf("volume = %.4f mm³, want %.4f", got.Volume, tc.want)
+			}
+		})
+	}
+}
+
+// A revolved solid exports as a real B-Rep with analytic surfaces, which is the
+// whole reason for turning it in the kernel rather than sweeping facets.
+func TestKernel_ARevolveExportsAnalyticSurfaces(t *testing.T) {
+	k := kernel(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	got, err := k.BuildDocument(ctx,
+		revolveDoc([][2]float64{{10, 0}, {20, 0}, {20, 5}, {10, 5}}, "y"),
+		geometry.Millimetre, "step")
+	if err != nil {
+		t.Fatal(err)
+	}
+	body := string(got.STEP)
+	if !strings.Contains(body, "CYLINDRICAL_SURFACE") {
+		t.Error("the turned walls are not analytic cylinders")
+	}
+	if strings.Contains(body, "TRIANGULATED_FACE_SET") {
+		t.Error("the file contains facets — this is a mesh wearing a STEP extension")
+	}
+	// The extent is the full swept circle, not the outline's own reach.
+	if math.Abs(got.Bounds[0]+20) > 1e-6 || math.Abs(got.Bounds[3]-20) > 1e-6 {
+		t.Errorf("x spans %v..%v, want -20..20 — the outline was not swept all the way round",
+			got.Bounds[0], got.Bounds[3])
+	}
+}
+
+// An outline that crosses its own axis sweeps through itself. OCCT refuses it
+// with "BRep_API: command not done", which names nothing — so it is caught
+// earlier, where the axis and the offending coordinate can both be named.
+func TestKernel_AnOutlineCrossingItsAxisIsRefusedWithAReason(t *testing.T) {
+	doc := revolveDoc([][2]float64{{-5, 0}, {10, 0}, {10, 5}, {-5, 5}}, "y")
+
+	problems := doc.ProfileProblems()
+	if len(problems) == 0 {
+		t.Fatal("an outline crossing its axis was accepted")
+	}
+	detail := problems[0].Detail
+	if !strings.Contains(detail, "one side of that axis") {
+		t.Errorf("the refusal does not say what the rule is: %q", detail)
+	}
+	// BOTH points, because naming one is arbitrary: the fault is that two of
+	// them disagree, and "point 2 has x = 10" reads as an accusation against a
+	// point that may be perfectly correct.
+	if !strings.Contains(detail, "-5") || !strings.Contains(detail, "10") {
+		t.Errorf("the refusal does not name both sides of the axis: %q", detail)
+	}
+	// And nothing is built from it.
+	solids, _ := geometry.Solids(doc, geometry.Millimetre)
+	if len(solids) != 0 {
+		t.Errorf("%d solids were built from an outline that is not a solid", len(solids))
+	}
+}
+
+// Features apply to a revolve like anything else, which is what keeps this one
+// vocabulary rather than three.
+func TestKernel_ARevolveTakesAHole(t *testing.T) {
+	k := kernel(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	// A disc, 40 across and 6 thick, with a 10 mm bore through the middle.
+	doc := revolveDoc([][2]float64{{0, 0}, {20, 0}, {20, 6}, {0, 6}}, "y")
+	doc.Parts = append(doc.Parts, geometry.Part{ID: "bore", Name: "Bore", Shape: "cylinder",
+		Size: map[string]float64{"radius": 5, "height": 40}, Position: []float64{0, 3, 0}})
+	doc.Features = []geometry.Feature{{ID: "bore-it", Op: "cut", Of: "t", With: []string{"bore"}}}
+
+	got, err := k.BuildDocument(ctx, doc, geometry.Millimetre, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got.FeatureFailures) > 0 {
+		t.Fatalf("the cut was not applied to the revolve: %v", got.FeatureFailures)
+	}
+	if want := math.Pi * (400 - 25) * 6; math.Abs(got.Volume-want) > 0.01 {
+		t.Errorf("volume = %.4f mm³, want %.4f", got.Volume, want)
+	}
+}

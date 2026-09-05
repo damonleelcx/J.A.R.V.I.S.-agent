@@ -328,3 +328,31 @@ func TestMeasureUsesAnOutlinesOwnExtentAndNotASymmetricGuess(t *testing.T) {
 		}
 	}
 }
+
+// A revolve's extent is the full swept circle, which reaches where the outline
+// itself never goes.
+//
+// An outline from x=10 to x=20 turned about Y produces a ring spanning -20..20
+// in both x and z. Measuring the outline's own reach would report a part 10 mm
+// from the axis at its nearest, when there is material 20 mm the other side of
+// it.
+func TestMeasureSweepsARevolveAllTheWayRound(t *testing.T) {
+	doc := Document{
+		Name: "ring", Units: "mm",
+		Parts: []Part{{ID: "r", Shape: "revolve", Axis: "y",
+			Profile:  []Point{{X: 10, Y: 0}, {X: 20, Y: 0}, {X: 20, Y: 5}, {X: 10, Y: 5}},
+			Position: []float64{0, 0, 0}}},
+	}
+	got := Measure(doc, "mm")
+	if len(got) != 3 {
+		t.Fatalf("expected three extents, got %d", len(got))
+	}
+	want := map[int][2]float64{0: {-20, 20}, 1: {0, 5}, 2: {-20, 20}}
+	for axis, w := range want {
+		o := got[axis]
+		if math.Abs(o.From[axis]-w[0]) > 1e-9 || math.Abs(o.To[axis]-w[1]) > 1e-9 {
+			t.Errorf("axis %d measured %v..%v, want %v..%v — the outline was not swept",
+				axis, o.From[axis], o.To[axis], w[0], w[1])
+		}
+	}
+}

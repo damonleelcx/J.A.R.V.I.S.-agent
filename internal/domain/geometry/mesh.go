@@ -175,6 +175,9 @@ func partTriangles(p Part, unit Unit, infer func(string, ...any)) ([]Triangle, *
 	case "extrusion":
 		return extrusion(p, sizeOr(p, "depth", 1, unit, infer), infer), nil
 
+	case "revolve":
+		return revolved(p, infer), chordDeviation(revolveRadius(p), radialSegments, unit)
+
 	case "plane":
 		// A plane has no thickness and is not a solid. Exported as the two
 		// triangles the renderer draws, and named in the label as the one thing
@@ -570,4 +573,96 @@ func extrusion(p Part, depth float64, infer func(string, ...any)) []Triangle {
 			A: at(i, -half), B: at(j, half), C: at(i, half), Normal: n})
 	}
 	return out
+}
+
+// revolved tessellates an outline turned a full circle about its own axis.
+//
+// # Why there is no triangulation here
+//
+// An extrusion needs its caps triangulated. A full revolve has none: the surface
+// closes on itself, and every facet is a quad between two adjacent outline
+// points at two adjacent angles. The outline's winding still matters, because it
+// decides which way those quads face.
+//
+// The segment count is the renderer's own radial count, so a revolved boss and a
+// cylinder beside it are tessellated to the same fineness — and the exported
+// file is the surface that was on screen, which is what the tessellation fence
+// exists to keep true.
+func revolved(p Part, infer func(string, ...any)) []Triangle {
+	pts := make([][2]float64, 0, len(p.Profile))
+	for _, pt := range p.Profile {
+		pts = append(pts, [2]float64{pt.X, pt.Y})
+	}
+	if len(pts) < minProfilePoints {
+		return nil
+	}
+	// The same normalisation the extrusion uses, and for the same reason: the
+	// facet winding below is only outward for a counter-clockwise outline, and
+	// an inside-out solid is a defect this repository has shipped once.
+	if signedArea(pts) < 0 {
+		flipped := make([][2]float64, len(pts))
+		for i := range pts {
+			flipped[i] = pts[len(pts)-1-i]
+		}
+		pts = flipped
+	}
+	if selfIntersects(pts) {
+		infer("%s: this outline crosses itself, so the shape it would sweep is not a solid; "+
+			"it is drawn as FORGE read it.", p.Label())
+	}
+
+	aboutX := RevolveAxis(p) == "x"
+	// at maps an outline point and an angle to a point on the swept surface.
+	// Turning about Y, the outline's x is the radius and its y stays; turning
+	// about X, the other way round.
+	at := func(i int, t float64) [3]float64 {
+		if aboutX {
+			r := pts[i][1]
+			return [3]float64{pts[i][0], r * math.Cos(t), r * math.Sin(t)}
+		}
+		r := pts[i][0]
+		return [3]float64{r * math.Cos(t), pts[i][1], r * math.Sin(t)}
+	}
+
+	out := make([]Triangle, 0, len(pts)*radialSegments*2)
+	for seg := 0; seg < radialSegments; seg++ {
+		t0 := float64(seg) / float64(radialSegments) * 2 * math.Pi
+		t1 := float64(seg+1) / float64(radialSegments) * 2 * math.Pi
+		for i := range pts {
+			j := (i + 1) % len(pts)
+			a, b := at(i, t0), at(j, t0)
+			c, d := at(j, t1), at(i, t1)
+			// The normal comes from the facet itself rather than from a formula
+			// per axis: the two axes have opposite handedness and a formula
+			// written for one is silently inverted for the other.
+			out = appendNonDegenerate(out, Triangle{A: a, B: b, C: c, Normal: faceNormal(a, b, c)})
+			out = appendNonDegenerate(out, Triangle{A: a, B: c, C: d, Normal: faceNormal(a, c, d)})
+		}
+	}
+	return out
+}
+
+// revolveRadius is the largest radius the outline sweeps, which is what decides
+// how far the tessellated surface departs from the true one.
+func revolveRadius(p Part) float64 {
+	aboutX := RevolveAxis(p) == "x"
+	var r float64
+	for _, pt := range p.Profile {
+		v := pt.X
+		if aboutX {
+			v = pt.Y
+		}
+		r = math.Max(r, math.Abs(v))
+	}
+	return r
+}
+
+func faceNormal(a, b, c [3]float64) [3]float64 {
+	u := [3]float64{b[0] - a[0], b[1] - a[1], b[2] - a[2]}
+	v := [3]float64{c[0] - a[0], c[1] - a[1], c[2] - a[2]}
+	return normalise([3]float64{
+		u[1]*v[2] - u[2]*v[1],
+		u[2]*v[0] - u[0]*v[2],
+		u[0]*v[1] - u[1]*v[0],
+	})
 }

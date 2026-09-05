@@ -426,6 +426,20 @@ func localBox(p Part) (min, max [3]float64) {
 		}
 		d := get("depth", 1) / 2
 		return [3]float64{lo[0], lo[1], -d}, [3]float64{hi[0], hi[1], d}
+	case "revolve":
+		lo, hi, ok := profileExtent(p)
+		if !ok {
+			return [3]float64{}, [3]float64{}
+		}
+		// Turning sweeps the outline's RADIUS all the way round, so the two
+		// axes perpendicular to the turn reach the largest radius in both
+		// directions — including where the outline itself never goes.
+		if RevolveAxis(p) == "x" {
+			r := math.Max(math.Abs(lo[1]), math.Abs(hi[1]))
+			return [3]float64{lo[0], -r, -r}, [3]float64{hi[0], r, r}
+		}
+		r := math.Max(math.Abs(lo[0]), math.Abs(hi[0]))
+		return [3]float64{-r, lo[1], -r}, [3]float64{r, hi[1], r}
 	default:
 		return sym([3]float64{get("width", 1) / 2, get("height", 1) / 2, get("depth", 1) / 2})
 	}

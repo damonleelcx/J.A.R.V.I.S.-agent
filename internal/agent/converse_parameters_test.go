@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/geometry"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/llm"
 )
 
 // Fences over Reply.validate for the parametric document (2026-09-05 phase).
@@ -315,5 +316,58 @@ func TestValidate_AnOutlineWrittenAsExpressionsBecomesCoordinates(t *testing.T) 
 	// recorded, and the coordinate is the snapshot of it.
 	if got[1].XFrom != "leg" {
 		t.Errorf("the expression was discarded, so the outline no longer follows anything")
+	}
+}
+
+// A reply the model could not finish must SAY it was cut off.
+//
+// # The defect this holds
+//
+// Observed live on 2026-09-05: asked for a V-belt pulley, qwen-plus returned a
+// reply that failed to parse, and the fallback printed the raw half-written JSON
+// as SPEECH — so what reached the person was `{ "speech": "Here's a V-belt
+// pulley..."` and several hundred characters of machinery.
+//
+// Truncation was the first suspicion and it was wrong: three further runs came
+// back whole with finish_reason "stop". The reply was simply malformed. Both
+// causes produce the same useless output, which is why this covers both and why
+// the truncated case says something different from the malformed one — a person
+// who was cut off can ask for less, and a person whose reply was garbled can
+// only ask again.
+func TestUnreadableReply_SaysWhatHappened(t *testing.T) {
+	truncated := unreadableReply(&llm.Response{
+		Content:      `{"speech":"Here's a V-belt pulley matching your specs`,
+		FinishReason: "length",
+	})
+	if strings.Contains(truncated, `{"speech"`) {
+		t.Errorf("the raw JSON was shown to the reader: %q", truncated)
+	}
+	if !strings.Contains(truncated, "cut off") {
+		t.Errorf("a truncated reply does not say it was cut off: %q", truncated)
+	}
+
+	// Malformed but complete: still machinery, still not spoken.
+	broken := unreadableReply(&llm.Response{Content: `{"speech": oops}`, FinishReason: "stop"})
+	if strings.Contains(broken, "oops") {
+		t.Errorf("a malformed object was shown to the reader: %q", broken)
+	}
+
+	// Genuine prose IS spoken. This is the case the fallback exists for, and
+	// losing it would mean a conversation dying on a formatting slip.
+	prose := "I can do that, but I need to know which belt section it takes."
+	if got := unreadableReply(&llm.Response{Content: prose, FinishReason: "stop"}); got != prose {
+		t.Errorf("prose was swallowed: %q", got)
+	}
+}
+
+// The budget has to be big enough for the documents the contract now asks for.
+func TestConverseMaxTokens_HasRoomForAParametricDocument(t *testing.T) {
+	// 6000 was the figure while a prototype was a bag of primitives. Nobody has
+	// observed a reply overrunning it since the contract grew — the headroom is
+	// a precaution, and this holds it against being quietly removed rather than
+	// claiming it fixed something.
+	if converseMaxTokens <= 6000 {
+		t.Fatalf("converseMaxTokens is %d; a parametric document with outlines and features "+
+			"was measured overrunning 6000 and losing the whole reply", converseMaxTokens)
 	}
 }

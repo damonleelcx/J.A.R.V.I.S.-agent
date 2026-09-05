@@ -2679,11 +2679,74 @@ first attempt.
 
 ### What is still NOT done
 
-- **No revolves and no sweeps.** An outline can be extruded and nothing else.
+- ~~**No revolves.**~~ **Done in wave 18.** Sweeps along a path are still absent.
 - **One loop per outline.** A hole in a profile is made by cutting a cylinder out
   of the part, not by drawing a second loop.
 - **No arcs.** An outline is straight segments between points; a rounded corner is
   a fillet on the resulting solid.
+
+## Wave 18 — the turned part · **DONE**
+
+An outline could be extruded and nothing else. Turning one about an axis is where
+every turned part comes from — a shaft, a boss, a flange, a pulley, a dome — so
+`revolve` joins `extrusion` as the second thing a profile can become.
+
+It reuses everything: the same outline, the same expression-driven coordinates,
+the same features on the result. The only new field is `axis`, which is `"y"` (up,
+the default) or `"x"` — the two axes IN the outline's own plane, because turning
+it about Z would sweep it out of that plane and produce a shape nobody means.
+
+### Two decisions
+
+- **Full circle only.** A sector is a revolve with something cut out of it, which
+  needs no vocabulary of its own — the same reasoning that makes a hole a cut
+  rather than a kind of part. Partial revolves would also make the measured
+  extents wrong unless computed specially, since the swept bound depends on the
+  angle.
+- **Every point on one side of the axis.** Touching is fine and usual — a dome's
+  outline meets the axis at its apex — but points on both sides sweep through
+  each other. OCCT refuses that with `BRep_API: command not done`, which names
+  nothing, so it is caught earlier where BOTH offending points can be named. One
+  is arbitrary: the fault is that two of them disagree.
+
+### Three fences that were vacuous, and one comment that was false
+
+- **The shape DISPATCH was untested**, for revolves and for extrusions both. The
+  unit tests called `extrusion()` and `revolved()` directly, so removing the case
+  from `partTriangles` left them green while every outline was silently drawn and
+  exported as a bounding box. There is now a test that goes through `Tessellate`.
+- **`Measure` had no extrusion or revolve case**, so `localBox` could be disabled
+  without a red test.
+- **A comment claimed a measurement that never happened.** A V-belt pulley failed
+  to parse, truncation was the first suspicion, and `converseMaxTokens` was
+  raised from 6000 with a comment saying the reply "ran past 6000 tokens and was
+  cut off". Three further runs came back at about 1300 tokens with
+  `finish_reason: "stop"` — the reply was simply malformed, intermittently. The
+  headroom is worth having and the comment now says it is a **precaution**, not a
+  measurement. In a codebase built around not fabricating figures, that one was
+  about to go into a code comment.
+
+### What came out of that investigation instead
+
+A reply the model could not finish, or finished badly, used to be printed to the
+person AS SPEECH — so a failed parse showed them `{ "speech": "Here's a V-belt
+pulley..."` and several hundred characters of machinery. `unreadableReply` now
+says which of the two happened, because a person who was cut off can ask for less
+and a person whose reply was garbled can only ask again. Speaking genuine PROSE
+is kept: that is the case the fallback exists for.
+
+### What the live runs found
+
+Asked for a stepped bush and then for a vee-groove pulley, qwen-plus described
+both with **primitives and cuts rather than a revolve**, and both BUILT — the
+pulley into one solid with 108 KB of STEP. Reaching for the simpler vocabulary
+when it suffices is the right instinct, and a revolve is not obligatory for
+anything a cone and a cut can express.
+
+**So whether the revolve contract lands is unmeasured.** The capability is proven
+end to end against the kernel, the renderer and the measurement path; what is not
+known is how often a model chooses it. That is a rate, and rates belong in the
+eval suite against a measured floor.
 
 ## Carried defects
 

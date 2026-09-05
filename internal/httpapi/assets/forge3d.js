@@ -387,6 +387,74 @@
     return { geo: { positions: positions, normals: normals, indices: indices } };
   }
 
+  /* An outline turned a full circle about its own axis.
+   *
+   * # Why there is no triangulation here
+   *
+   * An extrusion needs its caps triangulated. A full revolve has none — the
+   * surface closes on itself — so every facet is a quad between two adjacent
+   * outline points at two adjacent angles. The winding still matters, because it
+   * decides which way those quads face.
+   *
+   * TESSELLATION.radial is the same count a cylinder uses, so a revolved boss
+   * and a cylinder beside it are drawn to the same fineness, and the exported
+   * mesh is the surface that was on screen.
+   */
+  function revolveGeometry(profile, axis) {
+    var raw = (profile || []).map(function (p) { return [num(p.x, 0), num(p.y, 0)]; });
+    if (raw.length < 3) {
+      return {
+        geo: boxGeometry(1, 1, 1),
+        approximated: 'this outline has fewer than three points and encloses nothing, ' +
+                      'so it is drawn as a unit box'
+      };
+    }
+    /* The same normalisation the extrusion does, for the same reason: the facet
+     * winding below is only outward for a counter-clockwise outline. */
+    var pts = signedArea2D(raw) < 0 ? raw.slice().reverse() : raw;
+    var aboutX = String(axis || '').toLowerCase() === 'x';
+    var seg = TESSELLATION.radial;
+
+    function at(i, t) {
+      if (aboutX) {
+        var rx = pts[i][1];
+        return [pts[i][0], rx * Math.cos(t), rx * Math.sin(t)];
+      }
+      var r = pts[i][0];
+      return [r * Math.cos(t), pts[i][1], r * Math.sin(t)];
+    }
+    /* The normal comes from the facet itself rather than from a formula per
+     * axis: the two axes have opposite handedness, and a formula written for one
+     * is silently inverted for the other. */
+    function normalOf(a, b, c) {
+      var ux = b[0]-a[0], uy = b[1]-a[1], uz = b[2]-a[2];
+      var vx = c[0]-a[0], vy = c[1]-a[1], vz = c[2]-a[2];
+      var nx = uy*vz - uz*vy, ny = uz*vx - ux*vz, nz = ux*vy - uy*vx;
+      var len = Math.sqrt(nx*nx + ny*ny + nz*nz) || 1;
+      return [nx/len, ny/len, nz/len];
+    }
+
+    var positions = [], normals = [], indices = [], n = 0;
+    function tri(a, b, c) {
+      var nn = normalOf(a, b, c);
+      [a, b, c].forEach(function (v) {
+        positions.push(v[0], v[1], v[2]);
+        normals.push(nn[0], nn[1], nn[2]);
+        indices.push(n++);
+      });
+    }
+    for (var k = 0; k < seg; k++) {
+      var t0 = k / seg * 2 * Math.PI, t1 = (k + 1) / seg * 2 * Math.PI;
+      for (var i = 0; i < pts.length; i++) {
+        var j = (i + 1) % pts.length;
+        var a = at(i, t0), b = at(j, t0), c = at(j, t1), d = at(i, t1);
+        tri(a, b, c);
+        tri(a, c, d);
+      }
+    }
+    return { geo: { positions: positions, normals: normals, indices: indices } };
+  }
+
   function buildGeometry(part) {
     var s = part.size || {};
     switch (part.shape) {
@@ -396,6 +464,7 @@
       case 'sphere':   return { geo: sphereGeometry(num(s.radius,0.5), TESSELLATION.sphereRadial) };
       case 'plane':    return { geo: planeGeometry(num(s.width,1), num(s.depth,1)) };
       case 'extrusion': return extrusionGeometry(part.profile || [], num(s.depth, 1));
+      case 'revolve':   return revolveGeometry(part.profile || [], part.axis);
       case 'tube':
         /* A tube is drawn as its outer wall. The bore is not modelled, and that
          * is reported: an inner diameter that is not there is exactly the kind

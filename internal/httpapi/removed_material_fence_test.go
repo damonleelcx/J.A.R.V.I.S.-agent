@@ -99,7 +99,7 @@ func TestWorkbenchOffersWhateverTheDeploymentCanWrite(t *testing.T) {
 	}
 }
 
-// The viewport must draw an extrusion, and must not fan a concave outline.
+// The viewport must draw the outline shapes, and must not fan a concave one.
 //
 // # What breaks without this
 //
@@ -108,7 +108,7 @@ func TestWorkbenchOffersWhateverTheDeploymentCanWrite(t *testing.T) {
 // have, with a note calling it approximate. And a triangle FAN across a concave
 // outline puts triangles outside the part, which is worse: no note, and a
 // picture that looks fine and is wrong.
-func TestRendererDrawsExtrusions(t *testing.T) {
+func TestRendererDrawsOutlineShapes(t *testing.T) {
 	src, err := assetFS.ReadFile("assets/forge3d.js")
 	if err != nil {
 		t.Fatal(err)
@@ -124,6 +124,9 @@ func TestRendererDrawsExtrusions(t *testing.T) {
 			"the half of ear clipping that makes it correct rather than a fan"},
 		{"signedArea2D", "the winding is not normalised, so a clockwise outline is drawn " +
 			"inside out"},
+		{"case 'revolve'", "the renderer has no revolve case, so every turned part — a shaft, " +
+			"a boss, a dome — is drawn as a bounding box"},
+		{"revolveGeometry", "there is no revolve builder at all"},
 	} {
 		if !strings.Contains(js, want.needle) {
 			t.Errorf("forge3d.js no longer contains %q: %s", want.needle, want.why)

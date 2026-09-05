@@ -92,10 +92,12 @@ type Part struct {
 	// ever sees an expression.
 	SizeFrom     map[string]string `json:"size_from,omitempty"`
 	PositionFrom map[string]string `json:"position_from,omitempty"`
-	// Profile is the closed outline of an extrusion, in the part's own XY
-	// plane, swept along local Z by Size["depth"] (see profile.go). Only read
-	// when Shape is "extrusion".
-	Profile  []Point   `json:"profile,omitempty"`
+	// Profile is a closed outline in the part's own XY plane (see profile.go).
+	// An "extrusion" sweeps it along local Z by Size["depth"]; a "revolve"
+	// turns it about Axis. Read for no other shape.
+	Profile []Point `json:"profile,omitempty"`
+	// Axis is which way a "revolve" turns: "y" (the default, and up) or "x".
+	Axis     string    `json:"axis,omitempty"`
 	Rotation []float64 `json:"rotation"`
 	Color    string    `json:"color"`
 	Opacity  float64   `json:"opacity"`

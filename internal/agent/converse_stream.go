@@ -205,7 +205,7 @@ func (c *Conversation) RespondStream(
 		Role:      role,
 		Messages:  messages,
 		JSONMode:  true,
-		MaxTokens: 6000,
+		MaxTokens: converseMaxTokens,
 	}, func(chunk llm.Chunk) error {
 		if chunk.Delta != "" {
 			if !started {

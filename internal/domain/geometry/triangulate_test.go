@@ -128,3 +128,101 @@ func TestExtrusion_IsAClosedSolidOfTheRightVolume(t *testing.T) {
 		})
 	}
 }
+
+// A revolved outline is a closed solid of the right volume, about either axis.
+//
+// Volume by the divergence theorem again, which is what makes this worth more
+// than counting facets: it is zero for a surface with a hole in it and negative
+// for one turned inside out, so the caps, the winding and the sweep are all
+// asserted at once.
+//
+// The figures come from Pappus, so the expectation is arithmetic somebody can
+// check rather than a number this test observed once.
+func TestRevolved_IsAClosedSolidOfTheRightVolume(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		pts  [][2]float64
+		axis string
+		want float64
+	}{
+		// An annulus: a rectangle from r=10 to r=20, 5 tall.
+		{"a ring about Y", [][2]float64{{10, 0}, {20, 0}, {20, 5}, {10, 5}}, "y",
+			math.Pi * (400 - 100) * 5},
+		{"a ring about X", [][2]float64{{0, 10}, {5, 10}, {5, 20}, {0, 20}}, "x",
+			math.Pi * (400 - 100) * 5},
+		// A cone, whose outline TOUCHES the axis — the common case for a dome or
+		// a point, and the one where facets collapse to nothing.
+		{"a cone about Y", [][2]float64{{0, 0}, {10, 0}, {0, 20}}, "y",
+			math.Pi * 100 * 20 / 3},
+		// Wound the other way: the winding must be normalised or the solid comes
+		// out inside out and the volume negative.
+		{"a clockwise ring", [][2]float64{{10, 5}, {20, 5}, {20, 0}, {10, 0}}, "y",
+			math.Pi * (400 - 100) * 5},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			profile := make([]Point, len(tc.pts))
+			for i, p := range tc.pts {
+				profile[i] = Point{X: p[0], Y: p[1]}
+			}
+			part := Part{ID: "r", Shape: "revolve", Profile: profile, Axis: tc.axis}
+			tris := revolved(part, func(string, ...any) {})
+
+			var vol float64
+			for _, tr := range tris {
+				vol += (tr.A[0]*(tr.B[1]*tr.C[2]-tr.C[1]*tr.B[2]) -
+					tr.A[1]*(tr.B[0]*tr.C[2]-tr.C[0]*tr.B[2]) +
+					tr.A[2]*(tr.B[0]*tr.C[1]-tr.C[0]*tr.B[1])) / 6
+			}
+			// Tessellated, so it is inscribed in the true surface and slightly
+			// under. At 40 segments the shortfall is about 0.4%.
+			if vol < tc.want*0.99 || vol > tc.want {
+				t.Errorf("the tessellated solid encloses %.3f, want just under %.3f — a "+
+					"negative figure means the winding is inside out, and a wildly wrong "+
+					"one means the surface is not closed", vol, tc.want)
+			}
+		})
+	}
+}
+
+// The outline shapes are WIRED IN, reached through Tessellate the way the mesh
+// exporters reach them.
+//
+// # Why this is separate from the two tests above
+//
+// Those call extrusion() and revolved() directly, so they prove the geometry is
+// right and say nothing about whether partTriangles ever calls them. A drill
+// removed the "revolve" case from the dispatch and both stayed green: the
+// functions were still correct, and no document could reach them. An unknown
+// shape falls back to a bounding box, so the failure is a part silently drawn
+// and exported as a block.
+func TestTessellate_ReachesTheOutlineShapes(t *testing.T) {
+	square := []Point{{X: 0, Y: 0}, {X: 10, Y: 0}, {X: 10, Y: 10}, {X: 0, Y: 10}}
+	ring := []Point{{X: 10, Y: 0}, {X: 20, Y: 0}, {X: 20, Y: 5}, {X: 10, Y: 5}}
+
+	for _, tc := range []struct {
+		name string
+		part Part
+		want float64
+	}{
+		{"an extrusion", Part{ID: "e", Shape: "extrusion", Profile: square,
+			Size: map[string]float64{"depth": 20}}, 100 * 20},
+		{"a revolve", Part{ID: "r", Shape: "revolve", Axis: "y", Profile: ring},
+			math.Pi * (400 - 100) * 5},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mesh := Tessellate(Document{Name: "d", Units: "mm", Parts: []Part{tc.part}}, Millimetre)
+			var vol float64
+			for _, tr := range mesh.Triangles() {
+				vol += (tr.A[0]*(tr.B[1]*tr.C[2]-tr.C[1]*tr.B[2]) -
+					tr.A[1]*(tr.B[0]*tr.C[2]-tr.C[0]*tr.B[2]) +
+					tr.A[2]*(tr.B[0]*tr.C[1]-tr.C[0]*tr.B[1])) / 6
+			}
+			// A bounding-box fallback would enclose a different volume entirely,
+			// which is exactly what a missing dispatch case produces.
+			if vol < tc.want*0.98 || vol > tc.want*1.001 {
+				t.Errorf("Tessellate produced a solid of %.3f, want about %.3f — the shape "+
+					"is not reaching its builder and is being drawn as a box", vol, tc.want)
+			}
+		})
+	}
+}

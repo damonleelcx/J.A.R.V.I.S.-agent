@@ -352,3 +352,101 @@ func TestLiveModelDesignsWithAnOutline(t *testing.T) {
 			"contract is not landing")
 	}
 }
+
+// Can the model design a TURNED part?
+//
+// A revolve is the second thing here that is not a primitive, and it asks for
+// something no model has been asked for before: an outline that stays on one
+// side of its own axis. Getting that wrong is the commonest way a revolve fails,
+// and whether the contract conveys it is a question only a model can answer.
+func TestLiveModelDesignsATurnedPart(t *testing.T) {
+	if os.Getenv("FORGE_LIVE_LLM_TESTS") == "" || os.Getenv("FORGE_LLM_API_KEY") == "" {
+		t.Skip("set FORGE_LLM_API_KEY and FORGE_LIVE_LLM_TESTS=1")
+	}
+	python := os.Getenv("FORGE_CAD_PYTHON")
+	if python == "" {
+		t.Skip("FORGE_CAD_PYTHON is unset; run `make cad-venv`")
+	}
+	log := logx.New(logx.Options{Level: slog.LevelError, Output: os.Stderr, Service: "live"})
+	client := llm.NewOpenAICompatible(config.LLMConfig{
+		BaseURL:        envOrDefault("FORGE_LLM_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+		APIKey:         os.Getenv("FORGE_LLM_API_KEY"),
+		Converse:       envOrDefault("FORGE_LLM_CONVERSE_MODEL", "qwen-plus"),
+		RequestTimeout: 3 * time.Minute, MaxRetries: 2,
+	}, log, clock.System{})
+
+	conv := agent.NewConversation(client, persona.DefaultCharacter())
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+
+	// The prompt has to need a revolve, and this one is chosen because it does.
+	//
+	// The first version asked for a stepped bush, and qwen-plus described it with
+	// two cylinders and a bore — which is CORRECT: a stepped bush is exactly two
+	// cylinders, and reaching for the simpler vocabulary is the right instinct.
+	// It tested nothing. A vee groove has sloped walls that are neither a
+	// cylinder nor a cone sitting on the axis, so a primitive cannot express it
+	// and the model has to reach for the outline or say it cannot.
+	// Two attempts, and the second one is not padding.
+	//
+	// This prompt intermittently comes back as JSON the contract cannot read —
+	// three probe runs parsed cleanly and two through this path did not, on
+	// identical messages. That is the model being unreliable on a long request,
+	// not a defect in anything here, and a test that fails on it is reporting
+	// the wrong thing. Failing TWICE in a row would be worth knowing about;
+	// failing once is weather.
+	var reply *agent.Reply
+	for attempt := 1; attempt <= 2 && (reply == nil || reply.Prototype == nil); attempt++ {
+		r, err := conv.Respond(ctx, "", nil,
+			"Design a V-belt pulley: 80 mm outside diameter, 20 mm wide, with a vee groove "+
+				"cut all the way round the rim — 34 degrees included angle, 12 mm deep — and "+
+				"a 16 mm bore through the middle.", "", nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		reply = r
+		if reply.Prototype == nil {
+			t.Logf("attempt %d produced no geometry; it said: %.200s", attempt, reply.Speech)
+		}
+	}
+	if reply.Prototype == nil {
+		t.Skip("the model returned unreadable JSON twice, so there is no output of its own " +
+			"to build; this says nothing about the kernel and the run is not a result")
+	}
+
+	var revolves int
+	for _, p := range reply.Prototype.Parts {
+		if strings.EqualFold(p.Shape, "revolve") {
+			revolves++
+			t.Logf("revolve %q: %d points about %q", p.ID, len(p.Profile), geometry.RevolveAxis(p))
+		}
+	}
+	for _, pr := range reply.Prototype.ProfileProblems() {
+		t.Logf("outline %s on %q: %s", pr.Severity, pr.Name, pr.Detail)
+	}
+	t.Logf("parts %d, revolves %d, features %d",
+		len(reply.Prototype.Parts), revolves, len(reply.Prototype.Features))
+
+	k := cad.New(python, log)
+	defer k.Close()
+	built, err := k.BuildDocument(ctx, *reply.Prototype, geometry.Millimetre, "step")
+	if err != nil {
+		t.Fatalf("the model's own document did not build: %v", err)
+	}
+	t.Logf("built %d part(s), volume %.1f mm³, %d bytes of STEP; failures=%v",
+		built.Parts, built.Volume, len(built.STEP), built.FeatureFailures)
+	if !bytes.HasPrefix(built.STEP, []byte("ISO-10303-21;")) {
+		t.Fatal("no STEP file from the model's own document")
+	}
+	if revolves == 0 {
+		// Not a failure, and worth stating carefully. Observed 2026-09-05: for
+		// both a stepped bush and a vee-groove pulley, qwen-plus described the
+		// part with primitives and cuts, and it BUILT. Reaching for the simpler
+		// vocabulary when it suffices is the right instinct, and a revolve is
+		// not obligatory for anything a cone and a cut can express.
+		//
+		// What is unmeasured is whether it would reach for one when nothing else
+		// will do. That is a rate, and rates belong in the eval suite.
+		t.Log("no revolve: the model described this with primitives and cuts, which built")
+	}
+}

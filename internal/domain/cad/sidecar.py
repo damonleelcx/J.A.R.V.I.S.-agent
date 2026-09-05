@@ -39,7 +39,7 @@ try:
     from build123d import (
         Box, Cylinder, Cone, Sphere, Rectangle, Plane, Location, Vector,
         Compound, Axis, Polyline, export_step, extrude, fillet, chamfer,
-        make_face,
+        make_face, revolve,
     )
 except Exception as exc:  # pragma: no cover - reported to the caller, not raised
     sys.stdout.write(json.dumps({
@@ -106,6 +106,18 @@ def _shape(solid):
         pts = solid["profile"]
         face = make_face(Polyline(*[(p[0], p[1], 0) for p in pts], close=True))
         return extrude(face, amount=d["depth"] / 2.0, both=True)
+    if kind == "revolve":
+        # The outline turned a full circle about its own axis. Every point is on
+        # one side of that axis — checked in Go, where the offending coordinate
+        # can be named; OCCT refuses the crossing case with "BRep_API: command
+        # not done", which tells a reader nothing.
+        #
+        # A full turn only. A sector is a revolve with something cut out of it,
+        # which needs no vocabulary of its own — the same reasoning that makes a
+        # hole a cut rather than a new kind of part.
+        pts = solid["profile"]
+        face = make_face(Polyline(*[(p[0], p[1], 0) for p in pts], close=True))
+        return revolve(face, Axis.X if solid.get("axis") == "x" else Axis.Y, 360)
     if kind == "plane":
         # A face, not a solid, and deliberately so: a plane has no thickness and
         # will not print, machine, or hold a volume. It is exported because it is

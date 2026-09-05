@@ -68,10 +68,12 @@ Reply with JSON only:
       {
         "id": "stable-kebab-id",
         "name": "human name",
-        "shape": "box" | "cylinder" | "cone" | "sphere" | "tube" | "plane" | "extrusion",
+        "shape": "box" | "cylinder" | "cone" | "sphere" | "tube" | "plane" |
+                 "extrusion" | "revolve",
         "shape_note": "for \"extrusion\", size only needs \"depth\"",
         "size": {"width":1,"height":1,"depth":1,"radius":0.5,"radius_top":0.5},
         "profile": [{"x": 0, "y": 0, "x_from": "", "y_from": "plate_height"}],
+        "axis": "y",
         "size_from": {"width": "plate_size", "height": "plate_thickness"},
         "position": [0,0,0],
         "position_from": {"z": "plate_size / 4"},
@@ -194,6 +196,16 @@ About "prototype":
   changes one.
   The outline must not cross itself, and a hole in it is NOT a second loop: draw
   the outer shape and cut a cylinder out of it with a feature.
+- "revolve" turns the same kind of outline about an axis instead of sweeping it:
+  a shaft, a boss, a flange, a pulley, a dome, a nozzle. Give it a "profile" and
+  an "axis" of "y" (up, the default) or "x". It needs no "depth" — a revolve's
+  size is entirely its outline.
+  Every point must be on ONE SIDE of that axis. Touching it is fine and usual —
+  a dome's outline meets the axis at its apex — but an outline with points on
+  both sides sweeps through itself and is not a solid.
+  It always turns a full circle. For a sector, revolve the whole thing and cut
+  away what you do not want, the same way a hole is a cut rather than a kind of
+  part.
 - "features" are what make an assembly a PART rather than a pile of solids.
   A HOLE is not a part — it is the absence of one. Put a cylinder where the hole
   goes, size and place it like any other part, and then "cut" it from the thing
@@ -502,7 +514,7 @@ func (c *Conversation) Respond(ctx context.Context, projectID string, history []
 		Role:      role,
 		Messages:  messages,
 		JSONMode:  true,
-		MaxTokens: 6000,
+		MaxTokens: converseMaxTokens,
 	})
 	if err != nil {
 		return nil, err
@@ -510,10 +522,7 @@ func (c *Conversation) Respond(ctx context.Context, projectID string, history []
 
 	var reply Reply
 	if err := json.Unmarshal([]byte(extractJSON(resp.Content)), &reply); err != nil {
-		// Rather than fail the turn, fall back to speaking the raw text. A
-		// conversation that dies on a formatting slip is worse than one that
-		// occasionally speaks something unstructured — the person is mid-sentence.
-		reply = Reply{Speech: strings.TrimSpace(resp.Content)}
+		reply = Reply{Speech: unreadableReply(resp)}
 		if reply.Speech == "" {
 			return nil, errs.Wrap(op, errs.CodeExternalProtocol, err).
 				WithDetail("the model returned neither usable JSON nor any text")
@@ -703,4 +712,51 @@ type turnStartKey struct{}
 // from the moment the person finished speaking rather than from the model call.
 func WithTurnStart(ctx context.Context, at time.Time) context.Context {
 	return context.WithValue(ctx, turnStartKey{}, at)
+}
+
+// converseMaxTokens bounds one conversational reply.
+//
+// # Why it is not 6000 any more, stated honestly
+//
+// It was 6000 while a prototype was a bag of primitives. The contract has since
+// grown by five things a document can carry — parameters, derived expressions,
+// bound dimensions, outlines and features — and each lengthens the reply for
+// exactly the designs that need them most.
+//
+// This is a PRECAUTION and not a measurement. A V-belt pulley failed to parse on
+// 2026-09-05 and truncation was the first suspicion; three further runs came
+// back at about 1300 tokens with finish_reason "stop", so the cap was not what
+// broke it — that reply was simply malformed, intermittently. Raising the
+// headroom is still worth having, because the cost is nothing and the failure it
+// would cause is the loss of a whole document, but nobody has seen that failure
+// and this comment must not claim otherwise.
+//
+// What DID come out of that investigation is unreadableReply below, which is the
+// real fix for what the person saw.
+const converseMaxTokens = 16000
+
+// unreadableReply is what to say when the model's JSON could not be read.
+//
+// # Why the raw text is not always spoken
+//
+// Falling back to speaking the raw content is right when the model answered in
+// PROSE — a conversation that dies on a formatting slip is worse than one that
+// occasionally speaks something unstructured, and the person is mid-sentence.
+//
+// It is wrong when the content is a half-written JSON object. That is not
+// "something unstructured", it is the machinery, and printing it tells the
+// reader nothing except that something broke in a way nobody will describe. A
+// truncated reply is the commonest cause and it has a name, so it gets said.
+func unreadableReply(resp *llm.Response) string {
+	raw := strings.TrimSpace(resp.Content)
+	if resp.Truncated() {
+		return "That answer was cut off before it finished — the design was longer than one " +
+			"reply can hold. Ask for it in pieces, or for fewer parts at a time, and it will " +
+			"come back whole."
+	}
+	if strings.HasPrefix(raw, "{") || strings.HasPrefix(raw, "[") {
+		return "That reply came back in a shape FORGE could not read, so nothing of it is " +
+			"shown rather than showing you the machinery. Asking again usually settles it."
+	}
+	return raw
 }
