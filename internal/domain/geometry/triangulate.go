@@ -1,6 +1,9 @@
 package geometry
 
-import "math"
+import (
+	"math"
+	"sort"
+)
 
 // Triangulating an outline, for everything that is not the CAD kernel.
 //
@@ -22,13 +25,21 @@ import "math"
 // Ear clipping is O(n²) and this is fine: an outline somebody typed has a
 // handful of points, not a thousand.
 //
+// # Holes
+//
+// An outline may have loops inside it (document.go: Holes). Ear clipping cannot
+// see them — it walks ONE ring of vertices — so each hole is spliced into the
+// outer loop first, by a BRIDGE: a segment from a hole vertex to a visible outer
+// vertex, traversed out and back, which turns a ring-with-holes into one ring
+// that happens to touch itself along the bridge. That is the standard treatment
+// and it is exact: no area is added or lost, because the bridge is traversed in
+// both directions and encloses nothing.
+//
 // # What it does NOT handle
 //
-// Holes in the outline (an outline inside another) and self-intersecting
-// outlines. Neither can be expressed: a profile is ONE closed loop, and a hole
-// is made by cutting a part rather than by drawing a second loop. A
-// self-intersecting outline is refused by the kernel and produces a partial
-// triangulation here, reported by the caller rather than silently drawn.
+// Self-intersecting outlines, and holes that cross the outline or each other.
+// Those are refused before they get here (profile.go), where the offending loop
+// can be named.
 
 // triangulate returns the outline's triangles as index triples.
 //
@@ -53,16 +64,8 @@ func triangulate(in [][2]float64) (pts [][2]float64, tris [][3]int, ok bool) {
 	if n < minProfilePoints {
 		return in, nil, false
 	}
-	pts = in
-	if signedArea(pts) < 0 {
-		pts = make([][2]float64, n)
-		for i := range in {
-			pts[i] = in[n-1-i]
-		}
-	}
+	pts = counterClockwise(in)
 
-	// Work on an index list so the caller's points keep their identity, and so
-	// the winding fix costs one reversed slice rather than a copy of the data.
 	// Refused up front, because ear clipping cannot reliably detect it.
 	//
 	// A self-intersecting outline can have all of its vertices consumed and
@@ -73,7 +76,22 @@ func triangulate(in [][2]float64) (pts [][2]float64, tris [][3]int, ok bool) {
 	if selfIntersects(pts) {
 		return pts, nil, false
 	}
+	tris, ok = earClip(pts)
+	return pts, tris, ok
+}
 
+// earClip is the clipping loop alone, with nothing checked.
+//
+// Separate from triangulate because a BRIDGED polygon — an outline with its
+// holes spliced in — touches itself along every bridge and so fails
+// selfIntersects by construction. The loops it was built from were each checked
+// before the splice, which is where the check belongs and where a bad loop can
+// be named.
+func earClip(pts [][2]float64) (tris [][3]int, ok bool) {
+	n := len(pts)
+	if n < minProfilePoints {
+		return nil, false
+	}
 	idx := make([]int, n)
 	for i := range idx {
 		idx[i] = i
@@ -99,14 +117,277 @@ func triangulate(in [][2]float64) (pts [][2]float64, tris [][3]int, ok bool) {
 		if !clipped {
 			guard++
 			if guard > 1 {
-				return pts, tris, false
+				return tris, false
 			}
 		}
 	}
 	if len(idx) == 3 {
 		tris = append(tris, [3]int{idx[0], idx[1], idx[2]})
 	}
-	return pts, tris, true
+	return tris, true
+}
+
+// triangulateLoops triangulates an outline with holes in it.
+//
+// Returns the merged point list the triangles index into — the outer loop with
+// every hole spliced in — normalised so the outline is counter-clockwise and
+// every hole runs the other way. That winding is not a convention chosen here
+// for tidiness: it is what makes the SAME wall-normal formula produce an
+// outward normal on the outline and an inward one on a bore, without either
+// caller knowing which loop it is walking.
+func triangulateLoops(outer [][2]float64, holes [][][2]float64) section {
+	loops := sectionLoops(outer, holes)
+	if len(holes) == 0 {
+		pts, tris, ok := triangulate(outer)
+		return section{Merged: pts, Tris: tris, Loops: [][][2]float64{pts}, OK: ok}
+	}
+	out := section{Loops: loops, Merged: loops[0]}
+	for _, loop := range loops {
+		if len(loop) < minProfilePoints || selfIntersects(loop) {
+			return out
+		}
+	}
+	merged, ok := mergeHoles(loops[0], loops[1:])
+	if !ok {
+		return out
+	}
+	out.Merged = merged
+	out.Tris, out.OK = earClip(merged)
+	return out
+}
+
+// section is an outline and its holes, ready to be built into a solid.
+//
+// # Why the merged list and the loops are BOTH kept
+//
+// The caps are triangles over the merged ring, bridges and all. The walls are
+// not: a wall along a bridge would be a quad of zero width, drawn twice, facing
+// both ways. So the walls walk the loops separately, and the two lists are
+// different views of the same section rather than one standing in for the other.
+type section struct {
+	// Merged is the outline with every hole spliced in. Tris index into it.
+	Merged [][2]float64
+	Tris   [][3]int
+	// Loops is the outline first, then each hole, each wound so that the same
+	// wall-normal formula points out of the material on all of them.
+	Loops [][][2]float64
+	OK    bool
+}
+
+// sectionLoops winds an outline counter-clockwise and every hole the other way.
+//
+// That opposition is what makes a bore's walls face the right way for free: the
+// outward normal formula, applied to a loop running backwards, points INTO the
+// hole, which is out of the material. Neither the extrusion nor the sweep has to
+// know which loop it is walking.
+func sectionLoops(outer [][2]float64, holes [][][2]float64) [][][2]float64 {
+	loops := make([][][2]float64, 0, len(holes)+1)
+	loops = append(loops, counterClockwise(outer))
+	for _, h := range holes {
+		loops = append(loops, clockwise(h))
+	}
+	return loops
+}
+
+// counterClockwise and clockwise return the loop wound the stated way, reversing
+// a copy when it is not.
+func counterClockwise(loop [][2]float64) [][2]float64 {
+	if signedArea(loop) >= 0 {
+		return loop
+	}
+	return reversed(loop)
+}
+
+func clockwise(loop [][2]float64) [][2]float64 {
+	if signedArea(loop) <= 0 {
+		return loop
+	}
+	return reversed(loop)
+}
+
+func reversed(loop [][2]float64) [][2]float64 {
+	out := make([][2]float64, len(loop))
+	for i := range loop {
+		out[i] = loop[len(loop)-1-i]
+	}
+	return out
+}
+
+// mergeHoles splices every hole into the outer loop, one bridge at a time.
+//
+// # How a bridge is chosen
+//
+// Every (hole vertex, outer vertex) pair is a candidate, tried shortest first.
+// The one that is taken is the first that stays inside the material: it may not
+// properly cross any edge of what has been merged so far or of any hole still to
+// come, and its midpoint must be inside the outline and outside every hole.
+//
+// Shortest first is not an optimisation. A long bridge is far more likely to
+// graze another loop, and the shortest valid one is also the least visible in
+// the triangulation it produces.
+//
+// # Why every remaining hole is checked and not just the merged polygon
+//
+// A bridge to a hole that has not been spliced yet would cut straight across it,
+// and the polygon would only stop being simple three splices later — where the
+// failure is a triangulation that quietly covers the wrong region rather than an
+// error anyone can trace back.
+func mergeHoles(outer [][2]float64, holes [][][2]float64) ([][2]float64, bool) {
+	merged := append([][2]float64{}, outer...)
+	remaining := append([][][2]float64{}, holes...)
+
+	for len(remaining) > 0 {
+		// Rightmost hole first: the classical order, and the one that keeps a
+		// bridge from having to reach across a hole that is still in the way.
+		best := 0
+		for i, h := range remaining {
+			if rightmostX(h) > rightmostX(remaining[best]) {
+				best = i
+			}
+		}
+		hole := remaining[best]
+		remaining = append(remaining[:best:best], remaining[best+1:]...)
+
+		spliced, ok := bridgeInto(merged, hole, remaining)
+		if !ok {
+			return nil, false
+		}
+		merged = spliced
+	}
+	return merged, true
+}
+
+func rightmostX(loop [][2]float64) float64 {
+	x := math.Inf(-1)
+	for _, p := range loop {
+		x = math.Max(x, p[0])
+	}
+	return x
+}
+
+type bridgeCandidate struct {
+	outer, hole int
+	length      float64
+}
+
+func bridgeInto(merged, hole [][2]float64, pending [][][2]float64) ([][2]float64, bool) {
+	candidates := make([]bridgeCandidate, 0, len(merged)*len(hole))
+	for i := range merged {
+		for j := range hole {
+			d := [2]float64{hole[j][0] - merged[i][0], hole[j][1] - merged[i][1]}
+			candidates = append(candidates, bridgeCandidate{i, j, d[0]*d[0] + d[1]*d[1]})
+		}
+	}
+	sort.Slice(candidates, func(a, b int) bool {
+		return candidates[a].length < candidates[b].length
+	})
+
+	for _, c := range candidates {
+		a, b := merged[c.outer], hole[c.hole]
+		if a == b {
+			continue
+		}
+		if blocksBridge(a, b, merged) || blocksBridge(a, b, hole) {
+			continue
+		}
+		blocked := false
+		for _, other := range pending {
+			if blocksBridge(a, b, other) {
+				blocked = true
+				break
+			}
+		}
+		if blocked {
+			continue
+		}
+		mid := [2]float64{(a[0] + b[0]) / 2, (a[1] + b[1]) / 2}
+		if !insideLoop(mid, merged) || insideLoop(mid, hole) {
+			continue
+		}
+		inPending := false
+		for _, other := range pending {
+			if insideLoop(mid, other) {
+				inPending = true
+				break
+			}
+		}
+		if inPending {
+			continue
+		}
+
+		// Out along the bridge, all the way round the hole, and back. The two
+		// bridge vertices appear twice each, which is the whole trick: the ring
+		// touches itself along a segment of zero width and encloses exactly what
+		// it did before.
+		out := make([][2]float64, 0, len(merged)+len(hole)+2)
+		out = append(out, merged[:c.outer+1]...)
+		out = append(out, hole[c.hole:]...)
+		out = append(out, hole[:c.hole+1]...)
+		out = append(out, merged[c.outer:]...)
+		return out, true
+	}
+	return nil, false
+}
+
+// blocksBridge reports whether any edge of loop properly crosses the segment.
+//
+// Sharing an ENDPOINT does not count: a bridge runs from a vertex of one loop to
+// a vertex of another, so the edges either side of both ends touch it by
+// construction. What counts is a crossing anywhere else, including a vertex
+// lying part-way along the bridge — that is a bridge running through a corner,
+// which produces a polygon that is not simple.
+func blocksBridge(a, b [2]float64, loop [][2]float64) bool {
+	for i := range loop {
+		p, q := loop[i], loop[(i+1)%len(loop)]
+		if p == a || p == b || q == a || q == b {
+			// Still refused if the shared endpoint means the edge lies ALONG the
+			// bridge rather than merely touching it at a point.
+			if cross(a, b, p) == 0 && cross(a, b, q) == 0 {
+				return true
+			}
+			continue
+		}
+		if segmentsProperlyCross(a, b, p, q) {
+			return true
+		}
+	}
+	return false
+}
+
+func segmentsProperlyCross(p1, p2, p3, p4 [2]float64) bool {
+	d1, d2 := cross(p3, p4, p1), cross(p3, p4, p2)
+	d3, d4 := cross(p1, p2, p3), cross(p1, p2, p4)
+	if ((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) &&
+		((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0)) {
+		return true
+	}
+	// An endpoint of one lying part-way along the other. Touching AT an endpoint
+	// is allowed; touching in the middle is a crossing.
+	return (d1 == 0 && strictlyBetween(p3, p4, p1)) || (d2 == 0 && strictlyBetween(p3, p4, p2)) ||
+		(d3 == 0 && strictlyBetween(p1, p2, p3)) || (d4 == 0 && strictlyBetween(p1, p2, p4))
+}
+
+func strictlyBetween(a, b, p [2]float64) bool {
+	if p == a || p == b {
+		return false
+	}
+	return onSegment(a, b, p)
+}
+
+// insideLoop is the even-odd ray test: how many times a ray from p crosses the
+// loop. Odd means inside.
+func insideLoop(p [2]float64, loop [][2]float64) bool {
+	in := false
+	for i := range loop {
+		a, b := loop[i], loop[(i+1)%len(loop)]
+		if (a[1] > p[1]) != (b[1] > p[1]) {
+			x := a[0] + (p[1]-a[1])/(b[1]-a[1])*(b[0]-a[0])
+			if x > p[0] {
+				in = !in
+			}
+		}
+	}
+	return in
 }
 
 // isEar reports whether the corner at cur can be cut off.
@@ -122,6 +403,14 @@ func isEar(pts [][2]float64, idx []int, prev, cur, next int) bool {
 	}
 	for _, other := range idx {
 		if other == prev || other == cur || other == next {
+			continue
+		}
+		// A bridge puts TWO vertices at the same coordinates, and the boundary
+		// counts as inside — so without this, the duplicate of a bridge endpoint
+		// blocks every ear that touches it and clipping stalls on any outline
+		// with a hole in it. Skipped by POSITION rather than by index, because
+		// which index is the duplicate is not knowable from here.
+		if pts[other] == a || pts[other] == b || pts[other] == c {
 			continue
 		}
 		if pointInTriangle(pts[other], a, b, c) {

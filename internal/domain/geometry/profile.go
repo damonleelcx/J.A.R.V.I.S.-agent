@@ -103,7 +103,13 @@ var outlineShapes = map[string]bool{"extrusion": true, "revolve": true, "sweep":
 // sweep with an unreadable path is exactly as absent from the file as one with
 // an unreadable outline, and a caller that had to ask twice would eventually ask
 // once.
-func (d *Document) resolvedProfiles() (map[string]polyline, map[string]polyline, []Problem) {
+// outline is a resolved section: the loop around it, and the loops inside it.
+type outline struct {
+	Outer polyline
+	Holes []polyline
+}
+
+func (d *Document) resolvedProfiles() (map[string]outline, map[string]polyline, []Problem) {
 	if d == nil {
 		return nil, nil, nil
 	}
@@ -113,7 +119,7 @@ func (d *Document) resolvedProfiles() (map[string]polyline, map[string]polyline,
 		return v.Number, ok
 	}
 
-	out := map[string]polyline{}
+	out := map[string]outline{}
 	paths := map[string]polyline{}
 	var problems []Problem
 	add := func(name, format string, args ...any) {
@@ -124,7 +130,7 @@ func (d *Document) resolvedProfiles() (map[string]polyline, map[string]polyline,
 	for _, p := range d.Parts {
 		shape := strings.ToLower(strings.TrimSpace(p.Shape))
 		usesOutline := outlineShapes[shape]
-		if !usesOutline && len(p.Profile) == 0 && len(p.Path) == 0 {
+		if !usesOutline && len(p.Profile) == 0 && len(p.Path) == 0 && len(p.Holes) == 0 {
 			continue
 		}
 		label := p.Label()
@@ -132,13 +138,22 @@ func (d *Document) resolvedProfiles() (map[string]polyline, map[string]polyline,
 			// A profile on a box is not a box with a profile: it is somebody
 			// meaning one thing and writing another, and guessing which would
 			// put a shape in the file that nobody asked for.
+			//
+			// Holes are named here too. A box carrying holes and nothing else
+			// used to fall through this check and be built as a plain box —
+			// found by a test on 2026-09-05, and the failure is a part exported
+			// solid with its voids silently dropped.
 			carries := "an outline"
-			if len(p.Profile) == 0 {
+			switch {
+			case len(p.Profile) > 0:
+			case len(p.Holes) > 0:
+				carries = "holes"
+			default:
 				carries = "a path"
 			}
-			add(label, "carries %s but its shape is %q; an outline is only used when the "+
-				"shape is \"extrusion\", \"revolve\" or \"sweep\", and a path only when it "+
-				"is \"sweep\"", carries, p.Shape)
+			add(label, "carries %s but its shape is %q; an outline and the holes in it are "+
+				"only used when the shape is \"extrusion\", \"revolve\" or \"sweep\", and a "+
+				"path only when it is \"sweep\"", carries, p.Shape)
 			continue
 		}
 		if shape != "sweep" && len(p.Path) > 0 {
@@ -240,12 +255,27 @@ func (d *Document) resolvedProfiles() (map[string]polyline, map[string]polyline,
 				continue
 			}
 		}
-		outline := polyline{Points: lift3D(pts), Radii: radii, Closed: true}
+		outer := polyline{Points: lift3D(pts), Radii: radii, Closed: true}
 		// The corner radii are checked against the outline they are drawn on: a
 		// radius is only wrong in relation to the edges either side of it, so
 		// this cannot be done a point at a time.
-		if err := outline.validate("outline"); err != nil {
+		if err := outer.validate("outline"); err != nil {
 			add(label, "%v", err)
+			continue
+		}
+
+		holes, holeProblem := d.resolvedHoles(p, lookup)
+		if holeProblem != "" {
+			add(label, "%s", holeProblem)
+			continue
+		}
+		flatOuter, flatHoles, _, ferr := flattenSection(outer, holes, Millimetre)
+		if ferr != nil {
+			add(label, "%v", ferr)
+			continue
+		}
+		if problem := holesFit(flatOuter, flatHoles); problem != "" {
+			add(label, "%s", problem)
 			continue
 		}
 
@@ -303,19 +333,18 @@ func (d *Document) resolvedProfiles() (map[string]polyline, map[string]polyline,
 			// actually show: a bend radius smaller than the outline is wide
 			// folds the inside of the bend through itself, and on the flattened
 			// path that is exactly a ring that fails to advance.
-			flatOutline, _, oerr := outline.flatten("outline", Millimetre)
 			flatPath, _, perr := route.flatten("path", Millimetre)
-			if err := firstOf(oerr, perr); err != nil {
-				add(label, "%v", err)
+			if perr != nil {
+				add(label, "%v", perr)
 				continue
 			}
-			if _, _, err := sweptSections(flat2D(flatOutline), flatPath); err != nil {
+			if _, _, err := sweptSections(append([][][2]float64{flatOuter}, flatHoles...), flatPath); err != nil {
 				add(label, "%v", err)
 				continue
 			}
 			paths[p.ID] = route
 		}
-		out[p.ID] = outline
+		out[p.ID] = outline{Outer: outer, Holes: holes}
 	}
 	sortProblems(problems)
 	return out, paths, problems
@@ -441,4 +470,108 @@ func RevolveAxis(p Part) string {
 		return a
 	}
 	return "y"
+}
+
+// resolvedHoles evaluates the loops inside an outline, and says what is wrong
+// with them.
+//
+// Returns a problem STRING rather than appending, because a hole is only ever
+// reported against the part that carries it — there is nothing else a reader
+// could act on — and a hole that cannot be read takes the whole part out of the
+// file rather than leaving a solid one with its bore missing.
+func (d *Document) resolvedHoles(p Part, lookup func(string) (float64, bool)) ([]polyline, string) {
+	out := make([]polyline, 0, len(p.Holes))
+	for n, hole := range p.Holes {
+		if len(hole) < minProfilePoints {
+			return nil, fmt.Sprintf("hole %d has %d point(s); a hole needs at least %d to "+
+				"enclose anything", n+1, len(hole), minProfilePoints)
+		}
+		pts := make([][2]float64, 0, len(hole))
+		radii := make([]float64, 0, len(hole))
+		for i, pt := range hole {
+			if pt.Z != 0 || strings.TrimSpace(pt.ZFrom) != "" {
+				return nil, fmt.Sprintf("hole %d point %d carries a z; a hole lies in the "+
+					"outline's own plane", n+1, i+1)
+			}
+			x, xerr := coordinate(pt.X, pt.XFrom, lookup)
+			y, yerr := coordinate(pt.Y, pt.YFrom, lookup)
+			r, rerr := coordinate(pt.Radius, pt.RadiusFrom, lookup)
+			if err := firstOf(xerr, yerr, rerr); err != nil {
+				return nil, fmt.Sprintf("hole %d point %d: %v", n+1, i+1, err)
+			}
+			pts = append(pts, [2]float64{x, y})
+			radii = append(radii, r)
+		}
+		if i, j, dup := duplicatePoint(pts); dup {
+			return nil, fmt.Sprintf("hole %d has points %d and %d the same (%g, %g); a loop "+
+				"cannot have an edge of zero length", n+1, i+1, j+1, pts[i][0], pts[i][1])
+		}
+		if math.Abs(signedArea(pts)) < 1e-9 {
+			return nil, fmt.Sprintf("hole %d encloses no area; its points are all on one line", n+1)
+		}
+		if selfIntersects(pts) {
+			return nil, fmt.Sprintf("hole %d crosses itself, so it does not enclose a single "+
+				"region; check the order of its points", n+1)
+		}
+		loop := polyline{Points: lift3D(pts), Radii: radii, Closed: true}
+		if err := loop.validate(fmt.Sprintf("hole %d", n+1)); err != nil {
+			return nil, err.Error()
+		}
+		out = append(out, loop)
+	}
+	return out, ""
+}
+
+// holesFit checks that every hole is really a hole: inside the outline, and not
+// running into another one.
+//
+// # Why this is checked here and not left to OCCT
+//
+// A face whose inner wire pokes out of its outer wire is not a face. OCCT will
+// either refuse it — with a message that names no loop and no point — or, worse,
+// build something: the tessellator's bridge algorithm cannot find a valid bridge
+// and gives up, so the viewport draws a partial shape while the kernel exports a
+// whole one, and nothing says they differ.
+//
+// Checked on the FLATTENED loops, because a corner radius moves the boundary. A
+// hole that fits inside the drawn corners of an outline may not fit inside the
+// rounded ones, and it is the rounded ones that are the part.
+func holesFit(outer [][2]float64, holes [][][2]float64) string {
+	for i, hole := range holes {
+		for k, pt := range hole {
+			if !insideLoop(pt, outer) {
+				return fmt.Sprintf("hole %d is not inside the outline — its point %d is at "+
+					"(%g, %g), which is outside. A hole is a loop WITHIN the outline; a "+
+					"shape cut from the edge is part of the outline itself",
+					i+1, k+1, pt[0], pt[1])
+			}
+		}
+		if loopsCross(hole, outer) {
+			return fmt.Sprintf("hole %d crosses the outline, so what is left is not a single "+
+				"region", i+1)
+		}
+		for j := i + 1; j < len(holes); j++ {
+			if loopsCross(hole, holes[j]) {
+				return fmt.Sprintf("holes %d and %d cross each other; two holes that overlap "+
+					"are one hole, and it has to be drawn as one loop", i+1, j+1)
+			}
+			if insideLoop(hole[0], holes[j]) || insideLoop(holes[j][0], hole) {
+				return fmt.Sprintf("hole %d is inside hole %d. An island in a hole is a "+
+					"second outline, and there is no vocabulary for one here", i+1, j+1)
+			}
+		}
+	}
+	return ""
+}
+
+func loopsCross(a, b [][2]float64) bool {
+	for i := range a {
+		p, q := a[i], a[(i+1)%len(a)]
+		for j := range b {
+			if segmentsCross(p, q, b[j], b[(j+1)%len(b)]) {
+				return true
+			}
+		}
+	}
+	return false
 }

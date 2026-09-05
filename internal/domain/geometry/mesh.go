@@ -543,7 +543,7 @@ func normalise(v [3]float64) [3]float64 {
 // normalised — an inside-out solid is a defect this repository has shipped once
 // already.
 func extrusion(p Part, depth float64, unit Unit, infer func(string, ...any)) ([]Triangle, *Deviation) {
-	flat, dev, err := partOutline(p).flatten("outline", unit)
+	outer, holes, dev, err := flattenSection(partOutline(p), partHoles(p), unit)
 	if err != nil {
 		// Reported and then not drawn. A drawing whose corners cannot be
 		// resolved has no points to fall back to — unlike a self-crossing one,
@@ -551,23 +551,24 @@ func extrusion(p Part, depth float64, unit Unit, infer func(string, ...any)) ([]
 		infer("%s: %v, so it is not drawn.", p.Label(), err)
 		return nil, nil
 	}
-	pts := flat2D(flat)
-	pts, tris, ok := triangulate(pts)
-	if !ok {
+	sec := triangulateLoops(outer, holes)
+	if !sec.OK {
 		// Reported and then drawn as far as it went. A part that vanishes from a
 		// render is read as a design with a piece missing; a partial one with a
 		// note beside it is read as what it is.
-		infer("%s: this outline could not be closed into a surface — it crosses itself or "+
-			"repeats a point — so it is drawn only as far as FORGE could read it.", p.Label())
+		infer("%s: this outline could not be closed into a surface — it crosses itself, "+
+			"repeats a point, or has a hole that will not fit inside it — so it is drawn "+
+			"only as far as FORGE could read it.", p.Label())
 	}
-	if len(tris) == 0 {
+	if len(sec.Tris) == 0 {
 		return nil, nil
 	}
 	half := depth / 2
+	pts := sec.Merged
 	at := func(i int, z float64) [3]float64 { return [3]float64{pts[i][0], pts[i][1], z} }
 
-	out := make([]Triangle, 0, len(tris)*2+len(pts)*2)
-	for _, t := range tris {
+	out := make([]Triangle, 0, len(sec.Tris)*2+len(pts)*2)
+	for _, t := range sec.Tris {
 		out = appendNonDegenerate(out, Triangle{
 			A: at(t[0], half), B: at(t[1], half), C: at(t[2], half),
 			Normal: [3]float64{0, 0, 1}})
@@ -576,17 +577,25 @@ func extrusion(p Part, depth float64, unit Unit, infer func(string, ...any)) ([]
 			A: at(t[2], -half), B: at(t[1], -half), C: at(t[0], -half),
 			Normal: [3]float64{0, 0, -1}})
 	}
-	for i := range pts {
-		j := (i + 1) % len(pts)
-		dx, dy := pts[j][0]-pts[i][0], pts[j][1]-pts[i][1]
-		// Outward for a counter-clockwise outline. (dy, -dx) and not (-dy, dx):
-		// on a square wound counter-clockwise the bottom edge runs +x, and the
-		// outward direction is -y.
-		n := normalise([3]float64{dy, -dx, 0})
-		out = appendNonDegenerate(out, Triangle{
-			A: at(i, -half), B: at(j, -half), C: at(j, half), Normal: n})
-		out = appendNonDegenerate(out, Triangle{
-			A: at(i, -half), B: at(j, half), C: at(i, half), Normal: n})
+	// The walls, loop by loop rather than over the merged ring: a wall along a
+	// bridge would be a quad of zero width, drawn twice and facing both ways.
+	for _, loop := range sec.Loops {
+		for i := range loop {
+			j := (i + 1) % len(loop)
+			dx, dy := loop[j][0]-loop[i][0], loop[j][1]-loop[i][1]
+			// Outward for a counter-clockwise outline. (dy, -dx) and not
+			// (-dy, dx): on a square wound counter-clockwise the bottom edge
+			// runs +x, and the outward direction is -y. A HOLE is wound the
+			// other way, so the same formula points into the hole — which is out
+			// of the material, which is what outward means there.
+			n := normalise([3]float64{dy, -dx, 0})
+			a := [3]float64{loop[i][0], loop[i][1], -half}
+			b := [3]float64{loop[j][0], loop[j][1], -half}
+			c := [3]float64{loop[j][0], loop[j][1], half}
+			d := [3]float64{loop[i][0], loop[i][1], half}
+			out = appendNonDegenerate(out, Triangle{A: a, B: b, C: c, Normal: n})
+			out = appendNonDegenerate(out, Triangle{A: a, B: c, C: d, Normal: n})
+		}
 	}
 	return out, dev
 }
@@ -605,35 +614,31 @@ func extrusion(p Part, depth float64, unit Unit, infer func(string, ...any)) ([]
 // file is the surface that was on screen, which is what the tessellation fence
 // exists to keep true.
 func revolved(p Part, unit Unit, infer func(string, ...any)) ([]Triangle, *Deviation) {
-	flat, dev, err := partOutline(p).flatten("outline", unit)
+	outer, holes, dev, err := flattenSection(partOutline(p), partHoles(p), unit)
 	if err != nil {
 		infer("%s: %v, so it is not drawn.", p.Label(), err)
 		return nil, nil
 	}
-	pts := flat2D(flat)
-	if len(pts) < minProfilePoints {
+	if len(outer) < minProfilePoints {
 		return nil, nil
 	}
-	// The same normalisation the extrusion uses, and for the same reason: the
-	// facet winding below is only outward for a counter-clockwise outline, and
-	// an inside-out solid is a defect this repository has shipped once.
-	if signedArea(pts) < 0 {
-		flipped := make([][2]float64, len(pts))
-		for i := range pts {
-			flipped[i] = pts[len(pts)-1-i]
+	// Normalised the same way the extrusion does, and for the same reason: the
+	// facet winding below is only outward for a counter-clockwise outline, and an
+	// inside-out solid is a defect this repository has shipped once.
+	loops := sectionLoops(outer, holes)
+	for _, loop := range loops {
+		if selfIntersects(loop) {
+			infer("%s: this outline crosses itself, so the shape it would sweep is not a "+
+				"solid; it is drawn as FORGE read it.", p.Label())
+			break
 		}
-		pts = flipped
-	}
-	if selfIntersects(pts) {
-		infer("%s: this outline crosses itself, so the shape it would sweep is not a solid; "+
-			"it is drawn as FORGE read it.", p.Label())
 	}
 
 	aboutX := RevolveAxis(p) == "x"
 	// at maps an outline point and an angle to a point on the swept surface.
 	// Turning about Y, the outline's x is the radius and its y stays; turning
 	// about X, the other way round.
-	at := func(i int, t float64) [3]float64 {
+	at := func(pts [][2]float64, i int, t float64) [3]float64 {
 		if aboutX {
 			r := pts[i][1]
 			return [3]float64{pts[i][0], r * math.Cos(t), r * math.Sin(t)}
@@ -642,19 +647,24 @@ func revolved(p Part, unit Unit, infer func(string, ...any)) ([]Triangle, *Devia
 		return [3]float64{r * math.Cos(t), pts[i][1], r * math.Sin(t)}
 	}
 
-	out := make([]Triangle, 0, len(pts)*radialSegments*2)
+	out := make([]Triangle, 0, len(outer)*radialSegments*2)
 	for seg := 0; seg < radialSegments; seg++ {
 		t0 := float64(seg) / float64(radialSegments) * 2 * math.Pi
 		t1 := float64(seg+1) / float64(radialSegments) * 2 * math.Pi
-		for i := range pts {
-			j := (i + 1) % len(pts)
-			a, b := at(i, t0), at(j, t0)
-			c, d := at(j, t1), at(i, t1)
-			// The normal comes from the facet itself rather than from a formula
-			// per axis: the two axes have opposite handedness and a formula
-			// written for one is silently inverted for the other.
-			out = appendNonDegenerate(out, Triangle{A: a, B: b, C: c, Normal: faceNormal(a, b, c)})
-			out = appendNonDegenerate(out, Triangle{A: a, B: c, C: d, Normal: faceNormal(a, c, d)})
+		// Every loop is turned: the outline sweeps the outside of the part and a
+		// hole sweeps a surface inside it, wound the other way so its facets face
+		// into the void.
+		for _, pts := range loops {
+			for i := range pts {
+				j := (i + 1) % len(pts)
+				a, b := at(pts, i, t0), at(pts, j, t0)
+				c, d := at(pts, j, t1), at(pts, i, t1)
+				// The normal comes from the facet itself rather than from a
+				// formula per axis: the two axes have opposite handedness and a
+				// formula written for one is silently inverted for the other.
+				out = appendNonDegenerate(out, Triangle{A: a, B: b, C: c, Normal: faceNormal(a, b, c)})
+				out = appendNonDegenerate(out, Triangle{A: a, B: c, C: d, Normal: faceNormal(a, c, d)})
+			}
 		}
 	}
 	return out, dev
@@ -678,52 +688,62 @@ func revolved(p Part, unit Unit, infer func(string, ...any)) ([]Triangle, *Devia
 // a path may point anywhere and a formula written for one direction is silently
 // inverted for another.
 func swept(p Part, unit Unit, infer func(string, ...any)) ([]Triangle, *Deviation) {
-	flatOutline, outlineDev, oerr := partOutline(p).flatten("outline", unit)
+	outer, holes, sectionDev, oerr := flattenSection(partOutline(p), partHoles(p), unit)
 	flatPath, pathDev, perr := partPath(p).flatten("path", unit)
 	if err := firstOf(oerr, perr); err != nil {
 		infer("%s: %v, so it is not drawn.", p.Label(), err)
 		return nil, nil
 	}
-	dev := worseDeviation(outlineDev, pathDev)
-	pts := flat2D(flatOutline)
-	pts, tris, ok := triangulate(pts)
-	if !ok {
-		infer("%s: this outline could not be closed into a surface — it crosses itself or "+
-			"repeats a point — so it is drawn only as far as FORGE could read it.", p.Label())
+	dev := worseDeviation(sectionDev, pathDev)
+	sec := triangulateLoops(outer, holes)
+	if !sec.OK {
+		infer("%s: this outline could not be closed into a surface — it crosses itself, "+
+			"repeats a point, or has a hole that will not fit inside it — so it is drawn "+
+			"only as far as FORGE could read it.", p.Label())
 	}
-	if len(tris) == 0 {
+	if len(sec.Tris) == 0 {
 		return nil, nil
 	}
-	rings, _, err := sweptSections(pts, flatPath)
+
+	// The merged ring is carried along the path as loop ZERO, so the caps can be
+	// built from the rings like everything else rather than from a second
+	// transformation that could disagree with them. At the two ends the mitre is
+	// the identity, so its ring is exactly the section as drawn.
+	loops := append([][][2]float64{sec.Merged}, sec.Loops...)
+	rings, _, err := sweptSections(loops, flatPath)
 	if err != nil {
 		// Drawn anyway when there is anything to draw, and named. A part that
 		// vanishes from a render reads as a design with a piece missing; the
 		// export path refuses the same document, and the banner says which.
 		infer("%s: %v. It is drawn as FORGE read it, and it is not a solid.", p.Label(), err)
 	}
-	if len(rings) < minPathPoints {
+	if len(rings) == 0 || len(rings[0]) < minPathPoints {
 		return nil, nil
 	}
-	last := len(rings) - 1
+	caps, walls := rings[0], rings[1:]
+	last := len(caps) - 1
 
-	out := make([]Triangle, 0, len(tris)*2+len(pts)*last*2)
+	out := make([]Triangle, 0, len(sec.Tris)*2+len(sec.Merged)*last*2)
 	// The two ends. The start cap faces back down the path and the end cap
 	// forward, so each faces away from the material between them.
-	startNormal := normalise(sub3(rings[0][0], rings[1][0]))
-	endNormal := normalise(sub3(rings[last][0], rings[last-1][0]))
-	for _, t := range tris {
+	startNormal := normalise(sub3(caps[0][0], caps[1][0]))
+	endNormal := normalise(sub3(caps[last][0], caps[last-1][0]))
+	for _, t := range sec.Tris {
 		out = appendNonDegenerate(out, Triangle{
-			A: rings[0][t[2]], B: rings[0][t[1]], C: rings[0][t[0]], Normal: startNormal})
+			A: caps[0][t[2]], B: caps[0][t[1]], C: caps[0][t[0]], Normal: startNormal})
 		out = appendNonDegenerate(out, Triangle{
-			A: rings[last][t[0]], B: rings[last][t[1]], C: rings[last][t[2]], Normal: endNormal})
+			A: caps[last][t[0]], B: caps[last][t[1]], C: caps[last][t[2]], Normal: endNormal})
 	}
-	for i := 0; i < last; i++ {
-		for k := range pts {
-			next := (k + 1) % len(pts)
-			a, b := rings[i][k], rings[i][next]
-			c, d := rings[i+1][next], rings[i+1][k]
-			out = appendNonDegenerate(out, Triangle{A: a, B: b, C: c, Normal: faceNormal(a, b, c)})
-			out = appendNonDegenerate(out, Triangle{A: a, B: c, C: d, Normal: faceNormal(a, c, d)})
+	for l, loop := range sec.Loops {
+		ring := walls[l]
+		for i := 0; i < last; i++ {
+			for k := range loop {
+				next := (k + 1) % len(loop)
+				a, b := ring[i][k], ring[i][next]
+				c, d := ring[i+1][next], ring[i+1][k]
+				out = appendNonDegenerate(out, Triangle{A: a, B: b, C: c, Normal: faceNormal(a, b, c)})
+				out = appendNonDegenerate(out, Triangle{A: a, B: c, C: d, Normal: faceNormal(a, c, d)})
+			}
 		}
 	}
 	return out, dev

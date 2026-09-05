@@ -232,7 +232,7 @@ func TestSweptSections_RefusesThePathsThatAreNotSolids(t *testing.T) {
 			[][3]float64{{0, 0, 0}, {0, 0, 3}, {20, 0, 3}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, _, err := sweptSections(square, tc.path)
+			_, _, err := sweptSections([][][2]float64{square}, tc.path)
 			if err == nil {
 				t.Fatalf("this path was swept without complaint, and what it produces is not a solid")
 			}
@@ -253,12 +253,12 @@ func TestSweptSections_RefusesThePathsThatAreNotSolids(t *testing.T) {
 func TestSweptSections_ReturnsWhatCanStillBeDrawn(t *testing.T) {
 	square := [][2]float64{{-5, -5}, {5, -5}, {5, 5}, {-5, 5}}
 
-	rings, _, err := sweptSections(square, [][3]float64{{0, 0, 0}, {0, 0, 3}, {20, 0, 3}})
+	rings, _, err := sweptSections([][][2]float64{square}, [][3]float64{{0, 0, 0}, {0, 0, 3}, {20, 0, 3}})
 	if err == nil || rings == nil {
 		t.Errorf("a fold came back as rings=%v err=%v; it has good rings that happen to "+
 			"overlap, and drawing them beats a part that disappears", rings != nil, err)
 	}
-	rings, _, err = sweptSections(square, [][3]float64{{0, 0, 0}, {0, 0, 20}, {0, 0, 5}})
+	rings, _, err = sweptSections([][][2]float64{square}, [][3]float64{{0, 0, 0}, {0, 0, 20}, {0, 0, 5}})
 	if err == nil || rings != nil {
 		t.Errorf("a reversal came back as rings=%v err=%v; there is no frame at that point, "+
 			"so there is nothing honest to draw", rings != nil, err)
@@ -278,7 +278,7 @@ func TestSweptSections_FramesTheSectionSquareToThePath(t *testing.T) {
 	for _, dir := range [][3]float64{
 		{0, 0, 20}, {20, 0, 0}, {0, 20, 0}, {0, 0, -20}, {0, -20, 0}, {7, -3, 12},
 	} {
-		_, frame, err := sweptSections(square, [][3]float64{{0, 0, 0}, dir})
+		_, frame, err := sweptSections([][][2]float64{square}, [][3]float64{{0, 0, 0}, dir})
 		if err != nil {
 			t.Fatalf("a straight path along %v: %v", dir, err)
 		}
@@ -385,11 +385,12 @@ func TestSectionFrames_CarryTheSectionWithoutRollingIt(t *testing.T) {
 // that bend — must come through it untouched.
 func TestSwept_KeepsTheSectionSquareThroughABend(t *testing.T) {
 	profile := [][2]float64{{-1, -6}, {1, -6}, {1, 6}, {-1, 6}}
-	rings, _, err := sweptSections(profile, [][3]float64{{0, 0, 0}, {0, 0, 20}, {30, 0, 20}})
+	rings, _, err := sweptSections([][][2]float64{profile}, [][3]float64{{0, 0, 0}, {0, 0, 20}, {30, 0, 20}})
 	if err != nil {
 		t.Fatal(err)
 	}
-	last := rings[len(rings)-1]
+	outerRings := rings[0]
+	last := outerRings[len(outerRings)-1]
 	for k, p := range profile {
 		if got := last[k][1]; math.Abs(got-p[1]) > 1e-9 {
 			t.Errorf("outline point %d was drawn at y = %v and ends the path at y = %v",

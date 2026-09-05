@@ -66,11 +66,20 @@ case "${1:-}" in
   *) echo "unknown argument: $1" >&2; exit 2 ;;
 esac
 
+# Every file any drill below touches. A drill naming a file that is NOT here
+# would mutate it and never put it back — the restore and the final checksum both
+# work from this list. It has happened: on 2026-09-05 a drill against profile.go
+# was added without adding the file, and it left the working tree with the
+# mutation still in it while the script reported the tree byte-identical, which
+# it truthfully was about everything it knew about. The guard in drill() now
+# refuses rather than trusting this list to be kept up to date by hand.
 FILES=(
   internal/domain/geometry/curve.go
+  internal/domain/geometry/triangulate.go
   internal/domain/geometry/sweep.go
   internal/domain/geometry/mesh.go
   internal/domain/geometry/overlay.go
+  internal/domain/geometry/profile.go
   internal/domain/geometry/solid.go
   internal/httpapi/assets/forge3d.js
   internal/domain/cad/sidecar.py
@@ -99,6 +108,16 @@ drill() {
 
   if [ "$MODE" = "list" ]; then
     printf '  %-52s %s\n' "$name" "$regex"
+    return
+  fi
+
+  # A file with no backup cannot be put back, so it is never touched. This is
+  # the structural half of the note on FILES above: the list being wrong is now a
+  # refusal to run rather than a permanent edit.
+  if [ "$MODE" != "list" ] && [ ! -f "$BACKUP/$(basename "$file")" ]; then
+    echo "  ⛔ NOT BACKED UP — $name"
+    echo "        $file is not in FILES, so this drill would edit it and leave it edited."
+    MOVED=$((MOVED + 1))
     return
   fi
 
@@ -242,12 +261,38 @@ drill "the section is ROLLED as it is carried" internal/domain/geometry/sweep.go
   ./internal/domain/geometry 'TestSectionFrames_CarryTheSectionWithoutRollingIt|TestSwept_KeepsTheSectionSquareThroughABend'
 
 drill "the fold check is gone" internal/domain/geometry/sweep.go \
-  's = s.replace("\t\t\tif dot3(sub3(rings[i+1][k], rings[i][k]), tangent[i]) <= 1e-9 {", "\t\t\tif false {", 1)' \
+  's = s.replace("if dot3(sub3(rings[l][i+1][k], rings[l][i][k]), tangent[i]) <= 1e-9 {", "if false {", 1)' \
   ./internal/domain/geometry 'TestSweptSections_RefusesThePathsThatAreNotSolids|TestProfileProblems_RefusesWhatASweepCannotBe'
 
 drill "a reversal is no longer refused" internal/domain/geometry/sweep.go \
   's = s.replace("\t\tif length3(add3(tangent[i-1], tangent[i])) < 1e-9 {", "\t\tif false {", 1)' \
   ./internal/domain/geometry 'TestSweptSections_RefusesThePathsThatAreNotSolids'
+
+echo
+echo "Holes in an outline"
+drill "holes are dropped from the section entirely" internal/domain/geometry/curve.go \
+  's = s.replace("\tfor i, hole := range holes {", "\tfor i, hole := range holes[:0] {", 1)' \
+  ./internal/domain/geometry 'TestExtrusion_AHoleTakesMaterialOut|TestSwept_ABentTubeIsHollowAllTheWayRound'
+
+drill "a hole is wound the same way as the outline" internal/domain/geometry/triangulate.go \
+  's = s.replace("loops = append(loops, clockwise(h))", "loops = append(loops, counterClockwise(h))", 1)' \
+  ./internal/domain/geometry 'TestExtrusion_AHoleTakesMaterialOut'
+
+drill "the walls are built over the merged ring, bridges and all" internal/domain/geometry/mesh.go \
+  's = s.replace("\tfor _, loop := range sec.Loops {\n\t\tfor i := range loop {", "\tfor _, loop := range [][][2]float64{sec.Merged} {\n\t\tfor i := range loop {", 1)' \
+  ./internal/domain/geometry 'TestExtrusion_AHoleTakesMaterialOut'
+
+drill "a hole is not checked against the outline it sits in" internal/domain/geometry/profile.go \
+  's = s.replace("if problem := holesFit(flatOuter, flatHoles); problem != \"\" {", "if problem := \"\"; problem != \"\" {", 1)' \
+  ./internal/domain/geometry 'TestProfileProblems_RefusesHolesThatAreNotHoles|TestProfileProblems_AHoleMustFitTheROUNDEDOutline'
+
+drill "the kernel builds the outline and ignores its holes" internal/domain/cad/sidecar.py \
+  "s = s.replace('return Face(outer, [_wire(h) for h in holes])', 'return make_face(outer)', 1)" \
+  ./internal/domain/cad 'TestKernel_ABentTubeIsHollowRoundTheCorner'
+
+drill "the renderer draws the outline and ignores its holes" internal/httpapi/assets/forge3d.js \
+  "s = s.replace('var bores = holeOutlines(holes);\n    var way = flattenDrawing', 'var bores = [];\n    var way = flattenDrawing', 1)" \
+  ./internal/httpapi 'TestRendererSweepsTheSameSolidAsTheExporter'
 
 echo
 echo "The measurement path"

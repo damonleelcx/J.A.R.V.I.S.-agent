@@ -1391,3 +1391,94 @@ func TestKernel_AroundABendTheViewportIsInsideTheSolidBySomethingWeCanState(t *t
 			"deviation of %.6f mm does not account for", shortfall, dev)
 	}
 }
+
+// The case holes exist for: a bent tube whose bore follows the path.
+//
+// # Why a cut cannot do this, and why that is the whole argument
+//
+// "A hole is not a part — it is the absence of one" is still right, and a bolt
+// hole through a plate is still a cylinder cut out of it. That rule was written
+// when the only outline shape was an extrusion, where the two are
+// interchangeable.
+//
+// They are not interchangeable here. The bore of a bent tube turns the corner
+// with the tube. It is not a cylinder, and it is not any other shape the feature
+// vocabulary can place in space — it is whatever the path is, offset inward. So
+// it has to be part of the SECTION.
+//
+// The mitre identity does the checking, on the wall's area rather than the
+// outline's: 256 mm² carried 70 mm. The outline's own 400 mm² would give 28000,
+// which is a solid bar with no bore at all.
+func TestKernel_ABentTubeIsHollowRoundTheCorner(t *testing.T) {
+	k := kernel(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	doc := sweepDoc([][2]float64{{-10, -10}, {10, -10}, {10, 10}, {-10, 10}},
+		[][3]float64{{0, 0, 0}, {0, 0, 40}, {30, 0, 40}})
+	doc.Parts[0].Holes = [][]geometry.Point{{
+		{X: -6, Y: -6}, {X: 6, Y: -6}, {X: 6, Y: 6}, {X: -6, Y: 6}}}
+
+	got, err := k.BuildDocument(ctx, doc, geometry.Millimetre, "step")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := float64(400-144) * 70; math.Abs(got.Volume-want) > 0.01 {
+		t.Errorf("volume = %.4f mm³, want %.4f. %.0f would mean the bore was dropped and "+
+			"the tube exported solid", got.Volume, want, 400.0*70)
+	}
+	if !bytes.HasPrefix(got.STEP, []byte("ISO-10303-21;")) {
+		t.Fatal("no STEP came back")
+	}
+}
+
+// A hollow section survives the rest of the vocabulary: rounded corners on both
+// loops, a bend radius, and a feature applied afterwards.
+//
+// # Why all of it at once
+//
+// Each of these was built and tested on its own. What this asks is whether they
+// COMPOSE — whether the bore is rounded by its own radii and carried round a
+// real bend while a cut is taken out of the result — because the failure mode of
+// three features that each work alone is a document that uses two of them.
+//
+// The volume is arithmetic again. The wall is a 20×20 square with R4 corners,
+// less a 12×12 bore with R2 corners; the path is 40 up, R10 bend, 30 out.
+func TestKernel_AHollowSectionComposesWithRadiiAndBends(t *testing.T) {
+	k := kernel(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	round := func(pts [][2]float64, r float64) []geometry.Point {
+		out := make([]geometry.Point, len(pts))
+		for i, p := range pts {
+			out[i] = geometry.Point{X: p[0], Y: p[1], Radius: r}
+		}
+		return out
+	}
+	doc := geometry.Document{
+		Name: "tube", Units: "mm",
+		Parts: []geometry.Part{{ID: "t", Name: "Tube", Shape: "sweep",
+			Profile: round([][2]float64{{-10, -10}, {10, -10}, {10, 10}, {-10, 10}}, 4),
+			Holes: [][]geometry.Point{
+				round([][2]float64{{-6, -6}, {6, -6}, {6, 6}, {-6, 6}}, 2)},
+			// The bend radius is 25 and NOT 10. A section reaching 10 mm inward
+			// round a 10 mm bend puts the inside of the bend at radius zero: the
+			// surface folds through itself, and FORGE refuses the document before the
+			// kernel ever sees it. That is the fold check meeting real geometry, and
+			// it is also the real rule — a bender needs a radius bigger than the tube.
+			Path:     []geometry.Point{{}, {Z: 40, Radius: 25}, {X: 30, Z: 40}},
+			Position: []float64{0, 0, 0}, Rotation: []float64{0, 0, 0}}},
+	}
+	got, err := k.BuildDocument(ctx, doc, geometry.Millimetre, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Each rounded right angle removes (4−π)r²/4; four of them remove (4−π)r².
+	wall := (400 - (4-math.Pi)*16) - (144 - (4-math.Pi)*4)
+	length := 15 + math.Pi*25/2 + 5
+	if want := wall * length; math.Abs(got.Volume-want) > 0.5 {
+		t.Errorf("volume = %.4f mm³, want %.4f — a wall of %.4f mm² carried %.4f mm",
+			got.Volume, want, wall, length)
+	}
+}

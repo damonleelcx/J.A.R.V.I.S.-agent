@@ -451,7 +451,7 @@ func localBox(p Part) (min, max [3]float64) {
 		if !ok {
 			return [3]float64{}, [3]float64{}
 		}
-		rings, _, err := sweptSections(pts, way)
+		rings, _, err := sweptSections([][][2]float64{pts}, way)
 		if rings == nil {
 			// A path that cannot be swept has no extent to measure. Nothing,
 			// rather than a guess: see profileExtent.
@@ -460,7 +460,10 @@ func localBox(p Part) (min, max [3]float64) {
 		}
 		min = [3]float64{math.Inf(1), math.Inf(1), math.Inf(1)}
 		max = [3]float64{math.Inf(-1), math.Inf(-1), math.Inf(-1)}
-		for _, ring := range rings {
+		// Only the OUTLINE is measured, not the holes in it: a bore is inside the
+		// wall around it by construction, so it can only ever shrink an extent
+		// that the outline has already set.
+		for _, ring := range rings[0] {
 			for _, pt := range ring {
 				for axis := 0; axis < 3; axis++ {
 					min[axis] = math.Min(min[axis], pt[axis])

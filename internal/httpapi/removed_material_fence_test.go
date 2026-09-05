@@ -210,23 +210,35 @@ func TestRendererSweepsTheSameSolidAsTheExporter(t *testing.T) {
 	bentPath := []geometry.Point{{}, {Z: 30, Radius: 12}, {X: 40, Z: 30, Radius: 8},
 		{X: 40, Y: 25, Z: 30}}
 
+	// And hollow. A hole adds INNER WALLS that have to face into the void, and a
+	// bridge that splices the hole into the outline for triangulation — two more
+	// places the two implementations can part company, and neither changes the
+	// silhouette.
+	hollow := []geometry.Point{{X: -10, Y: -10}, {X: 10, Y: -10, Radius: 3},
+		{X: 10, Y: 10}, {X: -10, Y: 10}}
+	bore := [][]geometry.Point{{{X: -5, Y: -5}, {X: 5, Y: -5}, {X: 5, Y: 5, Radius: 2},
+		{X: -5, Y: 5}}}
+
 	for _, tc := range []struct {
 		name    string
 		profile []geometry.Point
+		holes   [][]geometry.Point
 		path    []geometry.Point
 	}{
-		{"sharp corners", profile, path},
-		{"rounded corners and bend radii", roundedProfile, bentPath},
+		{"sharp corners", profile, nil, path},
+		{"rounded corners and bend radii", roundedProfile, nil, bentPath},
+		{"a hollow section", hollow, bore, bentPath},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			compareSweptFacets(t, node, dir, asset, tc.profile, tc.path)
+			compareSweptFacets(t, node, dir, asset, tc.profile, tc.holes, tc.path)
 		})
 	}
 }
 
 // compareSweptFacets runs the renderer's own builder in node and checks its
 // facets against the ones geometry.Tessellate produces for the same document.
-func compareSweptFacets(t *testing.T, node, dir, asset string, profile, path []geometry.Point) {
+func compareSweptFacets(t *testing.T, node, dir, asset string, profile []geometry.Point,
+	holes [][]geometry.Point, path []geometry.Point) {
 	t.Helper()
 	harness := filepath.Join(dir, "run.js")
 	script := `
@@ -237,14 +249,14 @@ func compareSweptFacets(t *testing.T, node, dir, asset string, profile, path []g
       vm.createContext(sandbox);
       vm.runInContext(fs.readFileSync(process.argv[2], 'utf8'), sandbox);
       const part = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
-      const built = sandbox.window.Forge3D.geometry.sweep(part.profile, part.path);
+      const built = sandbox.window.Forge3D.geometry.sweep(part.profile, part.path, part.holes);
       if (built.approximated) { console.error(built.approximated); process.exit(2); }
       process.stdout.write(JSON.stringify({p: built.geo.positions, n: built.geo.normals}));
     `
 	if err := os.WriteFile(harness, []byte(script), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	partJSON, err := json.Marshal(map[string]any{"profile": profile, "path": path})
+	partJSON, err := json.Marshal(map[string]any{"profile": profile, "holes": holes, "path": path})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -276,7 +288,7 @@ func compareSweptFacets(t *testing.T, node, dir, asset string, profile, path []g
 	}
 
 	doc := geometry.Document{Name: "rail", Units: "mm",
-		Parts: []geometry.Part{{ID: "s", Shape: "sweep", Profile: profile, Path: path}}}
+		Parts: []geometry.Part{{ID: "s", Shape: "sweep", Profile: profile, Holes: holes, Path: path}}}
 	exported := geometry.Tessellate(doc, geometry.Millimetre).Triangles()
 
 	// Compared as a SET of facets, NUMERICALLY.

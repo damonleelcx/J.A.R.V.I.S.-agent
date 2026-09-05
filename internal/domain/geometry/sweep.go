@@ -79,13 +79,16 @@ const minPathPoints = 2
 // the same convention RotationMatrix uses, so the kernel can place the face with
 // it and does not have to hold a second opinion about how a sweep is framed.
 //
+// loops[0] is the outline and the rest are the holes in it, all carried by the
+// SAME frames, so rings is indexed [loop][path vertex][point].
+//
 // rings may be returned ALONGSIDE an error. The two faults are not alike: a path
 // that doubles back or repeats a point has no frame at all and nothing can be
-// drawn, but a path that bends too tightly for its own outline has perfectly
+// drawn, but a path that bends too tightly for its own section has perfectly
 // good rings that happen to fold through each other, and drawing that with a
 // note beside it beats a part that silently vanishes from the render.
-func sweptSections(profile [][2]float64, path [][3]float64) (rings [][][3]float64, frame [9]float64, err error) {
-	if len(profile) < minProfilePoints || len(path) < minPathPoints {
+func sweptSections(loops [][][2]float64, path [][3]float64) (rings [][][][3]float64, frame [9]float64, err error) {
+	if len(loops) == 0 || len(loops[0]) < minProfilePoints || len(path) < minPathPoints {
 		return nil, frame, fmt.Errorf("needs an outline of at least %d points and a path of at least %d",
 			minProfilePoints, minPathPoints)
 	}
@@ -110,43 +113,55 @@ func sweptSections(profile [][2]float64, path [][3]float64) (rings [][][3]float6
 		axisX[0][2], axisY[0][2], tangent[0][2],
 	}
 
-	// Each ring is the outline placed on the perpendicular section at the
-	// vertex, then slid ALONG the segment until it meets the bisector plane.
-	// Sliding rather than projecting is what makes it a mitre: every point stays
-	// on the line the sweep actually carries it along, so the incoming face and
-	// the outgoing face meet edge to edge.
-	rings = make([][][3]float64, len(path))
-	for j := range path {
-		in := j - 1 // the segment arriving at this vertex; the first has none
-		if in < 0 {
-			in = 0
+	// Each ring is the loop placed on the perpendicular section at the vertex,
+	// then slid ALONG the segment until it meets the bisector plane. Sliding
+	// rather than projecting is what makes it a mitre: every point stays on the
+	// line the sweep actually carries it along, so the incoming face and the
+	// outgoing face meet edge to edge.
+	//
+	// EVERY loop is carried by the same frames — the outline and the holes in it
+	// — because they are one section. A bore carried by frames of its own would
+	// drift out of the wall around it as the path bends, and the wall thickness
+	// would vary for no reason anyone could see in the drawing.
+	rings = make([][][][3]float64, len(loops))
+	for l, loop := range loops {
+		rings[l] = make([][][3]float64, len(path))
+		for j := range path {
+			in := j - 1 // the segment arriving at this vertex; the first has none
+			if in < 0 {
+				in = 0
+			}
+			t, m := tangent[in], bisector[j]
+			denom := dot3(t, m) // > 0: a reversal was refused above
+			ring := make([][3]float64, len(loop))
+			for k, p := range loop {
+				base := add3(path[j], add3(scale3(axisX[in], p[0]), scale3(axisY[in], p[1])))
+				ring[k] = add3(base, scale3(t, dot3(sub3(path[j], base), m)/denom))
+			}
+			rings[l][j] = ring
 		}
-		t, m := tangent[in], bisector[j]
-		denom := dot3(t, m) // > 0: a reversal was refused above
-		ring := make([][3]float64, len(profile))
-		for k, p := range profile {
-			base := add3(path[j], add3(scale3(axisX[in], p[0]), scale3(axisY[in], p[1])))
-			ring[k] = add3(base, scale3(t, dot3(sub3(path[j], base), m)/denom))
-		}
-		rings[j] = ring
 	}
 
-	// A bend tighter than the outline is wide folds the surface back through
+	// A bend tighter than the section is wide folds the surface back through
 	// itself. OCCT does NOT refuse this — measured 2026-09-05, it returned a
 	// solid of 14546 mm³ for a shape that should have been about half that — so
 	// unlike every other fault here there is no kernel error to fall back on,
 	// and a silent wrong volume is the worst outcome available.
 	//
-	// The test is exact and needs no trigonometry: for every point of the
-	// outline, the ring must ADVANCE along each segment. One that goes backwards
-	// is the fold itself.
-	for i := 0; i < segments; i++ {
-		for k := range profile {
-			if dot3(sub3(rings[i+1][k], rings[i][k]), tangent[i]) <= 1e-9 {
-				return rings, frame, fmt.Errorf("bends too tightly between path points %d and %d "+
-					"for an outline this wide: the surface folds back through itself there, so "+
-					"what it sweeps is not a solid. Move those points further apart, or draw the "+
-					"outline closer to the path it follows", i+1, i+2)
+	// The test is exact and needs no trigonometry: for every point of every loop,
+	// the ring must ADVANCE along each segment. One that goes backwards is the
+	// fold itself. Checked on the holes too: a bore near the inside of a bend
+	// folds before the outline around it does.
+	for l, loop := range loops {
+		for i := 0; i < segments; i++ {
+			for k := range loop {
+				if dot3(sub3(rings[l][i+1][k], rings[l][i][k]), tangent[i]) <= 1e-9 {
+					return rings, frame, fmt.Errorf("bends too tightly between path points %d "+
+						"and %d for a section this wide: the surface folds back through itself "+
+						"there, so what it sweeps is not a solid. Move those points further "+
+						"apart, use a larger bend radius, or draw the section closer to the "+
+						"path it follows", i+1, i+2)
+				}
 			}
 		}
 	}

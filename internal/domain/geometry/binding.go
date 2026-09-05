@@ -114,11 +114,12 @@ func (d *Document) bind(compareToAuthored bool) []Problem {
 		p := &d.Parts[i]
 		label := p.Label()
 
-		if outline, ok := profiles[p.ID]; ok && len(outline.Points) == len(p.Profile) {
-			for j := range p.Profile {
-				p.Profile[j].X = outline.Points[j][0]
-				p.Profile[j].Y = outline.Points[j][1]
-				p.Profile[j].Radius = outline.Radii[j]
+		if section, ok := profiles[p.ID]; ok {
+			writeBack(p.Profile, section.Outer)
+			for j := range p.Holes {
+				if j < len(section.Holes) {
+					writeBack(p.Holes[j], section.Holes[j])
+				}
 			}
 		}
 		// A sweep's PATH is bound for exactly the same reason its outline is:
@@ -515,4 +516,20 @@ func (d *Document) Spans() []Span {
 		})
 	}
 	return out
+}
+
+// writeBack copies a resolved loop's numbers into the document's own points.
+//
+// Guarded on length rather than assumed: resolvedProfiles returns nothing at all
+// for a part it refused, and a part that resolved has exactly as many points as
+// it was given.
+func writeBack(into []Point, from polyline) {
+	if len(into) != len(from.Points) {
+		return
+	}
+	for j := range into {
+		into[j].X = from.Points[j][0]
+		into[j].Y = from.Points[j][1]
+		into[j].Radius = from.Radii[j]
+	}
 }

@@ -97,6 +97,27 @@ type Part struct {
 	// turns it about Axis; a "sweep" carries it along Path. Read for no other
 	// shape.
 	Profile []Point `json:"profile,omitempty"`
+	// Holes are closed loops INSIDE Profile: the section's own voids, which
+	// follow it wherever it goes (see triangulate.go).
+	//
+	// # Why this exists when a hole is already a cut
+	//
+	// "A hole is not a part — it is the absence of one" is still true, and a bolt
+	// hole through a plate is still a cylinder cut out of it with a feature. That
+	// rule was written when the only outline shape was an extrusion, where the
+	// two are interchangeable.
+	//
+	// They are NOT interchangeable for a sweep. You cannot cut a bent bore with a
+	// cylinder: the bore follows the path round every corner, and nothing in the
+	// feature vocabulary can describe a tool that does that. A hollow tube that
+	// bends — which is most tube — is expressible only as a section with a hole
+	// in it. The same goes for a revolved part whose void is a groove all the way
+	// round, and for an extruded box section.
+	//
+	// So the rule narrows rather than reverses: a hole in the SECTION is a loop,
+	// and a hole through the SOLID is a cut. The first follows the drawing; the
+	// second is placed in space.
+	Holes [][]Point `json:"holes,omitempty"`
 	// Path is the OPEN polyline a "sweep" carries its profile along, in the
 	// part's own local frame and read for no other shape (see sweep.go). Its
 	// points are the one place a Point's Z means anything.

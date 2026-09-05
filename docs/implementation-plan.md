@@ -2682,8 +2682,7 @@ first attempt.
 - ~~**No revolves.**~~ **Done in wave 18.**
 - ~~**No sweeps along a path.**~~ **Done in wave 19.**
 - ~~**No arcs.**~~ **Done in wave 20**, as a corner radius.
-- **One loop per outline.** A hole in a profile is made by cutting a cylinder out
-  of the part, not by drawing a second loop.
+- ~~**One loop per outline.**~~ **Done in wave 21.**
 
 ## Wave 18 — the turned part · **DONE**
 
@@ -2970,6 +2969,64 @@ is left to be two triangulations of the same region: same vertices, same total
 area, few enough to be caps. It also compares NORMALS numerically rather than as
 text, after a wall whose normal is exactly `(0, 1, 0)` in Go came back as
 `(-4.12e-16, 1, 0)` from the browser.
+
+## Wave 21 — a hole in the section · **DONE**
+
+An outline was one closed loop, and a hole in a part was made by cutting a
+cylinder out of it with a feature. That rule was written down, defended, and is
+**narrowed rather than reversed** here.
+
+It was right when the only outline shape was an extrusion, where a loop and a cut
+are interchangeable. **They are not interchangeable for a sweep: you cannot cut a
+bent bore with a cylinder.** The bore of a bent tube turns the corner with the
+tube; it is not a cylinder and not any other shape the feature vocabulary can
+place in space. A hollow tube that bends — which is most tube — is expressible
+only as a section with a hole in it. So:
+
+- a hole in the **section** is a loop, and follows the drawing wherever it goes;
+- a hole through the **solid** is a cut, and is placed in space.
+
+A bolt hole through a plate is still the second one, and the contract says so.
+
+### What it took
+
+- **Ear clipping cannot see a hole**, so each one is spliced into the outline by
+  a BRIDGE — a segment to a visible outer vertex, walked out and back — which
+  turns a ring-with-holes into one ring that touches itself. Exact: the bridge is
+  traversed in both directions and encloses nothing. Twice, in Go and in the
+  browser, held together by the facet-for-facet fence.
+- **The winding does the work.** The outline is normalised counter-clockwise and
+  every hole the other way, which makes ONE wall-normal formula point out of the
+  material on both — nothing has to know which loop it is walking.
+- **A hole is checked against the FLATTENED outline.** A hole tucked into the
+  corner of a plate can sit inside the drawn rectangle and poke out through the
+  rounded one, and it is the rounded one that is the part.
+- **Every loop is carried by the same frames** along a sweep's path. A bore
+  carried by frames of its own would drift out of the wall around it as the path
+  bends, and the wall thickness would vary for no reason visible in the drawing.
+
+### Two things the drills found
+
+- **A wall built over the merged ring passes every volume test.** The bridge is
+  walked twice in opposite directions, so a flat fin standing inside the solid
+  along it contributes EXACTLY ZERO volume. Every figure stays correct. The tests
+  now assert the SURFACE AREA as well — two caps plus the depth times every
+  loop's perimeter — which is the thing a fin does change.
+- **A box carrying holes and nothing else was silently ignored.** The check that
+  refuses an outline on a primitive looked at the profile and the path and not at
+  the holes, so the part fell through and was built as a plain box with its voids
+  dropped.
+
+### And a defect in the drill script itself
+
+A drill was added against `profile.go` without adding that file to the list the
+script backs up. The mutation was applied, never restored, and the script
+reported the tree byte-identical — which was true of every file it knew about.
+It was caught by the test suite two commands later, having survived a full
+drill run.
+
+`drill()` now REFUSES to touch a file it has no backup of, so the list being out
+of date is a loud stop rather than a permanent edit to the working tree.
 
 ## Carried defects
 

@@ -73,6 +73,7 @@ Reply with JSON only:
         "shape_note": "for \"extrusion\", size only needs \"depth\"",
         "size": {"width":1,"height":1,"depth":1,"radius":0.5,"radius_top":0.5},
         "profile": [{"x": 0, "y": 0, "radius": 0, "x_from": "", "y_from": "plate_height"}],
+        "holes": [[{"x": 0, "y": 0, "radius": 0}]],
         "path": [{"x": 0, "y": 0, "z": 0, "radius": 0, "z_from": "run_length"}],
         "axis": "y",
         "size_from": {"width": "plate_size", "height": "plate_thickness"},
@@ -195,8 +196,9 @@ About "prototype":
   same reason every other dimension does — an outline whose points do not follow
   the parameters is a drawing that stops being true the first time somebody
   changes one.
-  The outline must not cross itself, and a hole in it is NOT a second loop: draw
-  the outer shape and cut a cylinder out of it with a feature.
+  The outline must not cross itself. A void that runs all the way through in the
+  same shape — a box section, a tube — is a "holes" loop; a drilled hole is a
+  cut feature. See both below.
 - "revolve" turns the same kind of outline about an axis instead of sweeping it:
   a shaft, a boss, a flange, a pulley, a dome, a nozzle. Give it a "profile" and
   an "axis" of "y" (up, the default) or "x". It needs no "depth" — a revolve's
@@ -228,6 +230,17 @@ About "prototype":
   A bend is a "radius" on the path point that turns — see below. Without one the
   corner is MITRED, like a welded elbow rather than a bent tube, which is a
   different part and a different way of making it.
+- "holes" are closed loops INSIDE the outline: the section's own voids, which
+  follow it wherever it goes. Each is a list of points like the outline, in the
+  same plane, and they may have corner radii too.
+  A HOLE IN THE SECTION AND A HOLE THROUGH THE SOLID ARE DIFFERENT THINGS.
+  A bolt hole through a plate is still a cylinder you place in space and "cut"
+  with a feature — that is what a drill does, and it is the right way to say it.
+  Use "holes" when the void follows the drawing: the bore of a tube that BENDS
+  (which no cylinder can cut, because it turns the corner with the tube), a box
+  section, a hollow extrusion, a groove that goes all the way round a revolve.
+  Each hole must be wholly inside the outline and must not touch another one.
+  Two overlapping holes are one hole, and have to be drawn as one loop.
 - "radius" on a point ROUNDS THAT CORNER: an arc of that radius, tangent to both
   edges meeting there. It works the same way on an outline point and on a path
   point, and on a path it is the BEND RADIUS — the number a tube bender is set

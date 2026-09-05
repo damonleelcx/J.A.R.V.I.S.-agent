@@ -298,6 +298,148 @@
     return !(neg && pos);
   }
 
+  function samePoint2D(a, b) {
+    return Math.abs(a[0]-b[0]) < 1e-12 && Math.abs(a[1]-b[1]) < 1e-12;
+  }
+
+  /* ---- holes in an outline ----------------------------------------------
+   *
+   * Ear clipping walks ONE ring of vertices and cannot see a loop inside
+   * another, so each hole is spliced into the outer loop by a BRIDGE: a segment
+   * to a visible outer vertex, traversed out and back, which turns a
+   * ring-with-holes into one ring that touches itself along the bridge. Exact:
+   * the bridge is walked both ways and encloses nothing.
+   *
+   * The same algorithm as internal/domain/geometry/triangulate.go, and the same
+   * winding rule — the outline counter-clockwise, every hole the other way —
+   * which is what makes one wall-normal formula point out of the material on
+   * both. TestRendererSweepsTheSameSolidAsTheExporter holds the two together.
+   */
+  function insideLoop2D(p, loop) {
+    var inside = false;
+    for (var i = 0; i < loop.length; i++) {
+      var a = loop[i], b = loop[(i + 1) % loop.length];
+      if ((a[1] > p[1]) !== (b[1] > p[1])) {
+        var x = a[0] + (p[1] - a[1]) / (b[1] - a[1]) * (b[0] - a[0]);
+        if (x > p[0]) inside = !inside;
+      }
+    }
+    return inside;
+  }
+
+  function onSegment2D(a, b, p) {
+    return Math.min(a[0], b[0]) <= p[0] && p[0] <= Math.max(a[0], b[0]) &&
+           Math.min(a[1], b[1]) <= p[1] && p[1] <= Math.max(a[1], b[1]);
+  }
+
+  function strictlyBetween2D(a, b, p) {
+    if (samePoint2D(p, a) || samePoint2D(p, b)) return false;
+    return onSegment2D(a, b, p);
+  }
+
+  function properlyCross2D(p1, p2, p3, p4) {
+    var d1 = cross2D(p3, p4, p1), d2 = cross2D(p3, p4, p2);
+    var d3 = cross2D(p1, p2, p3), d4 = cross2D(p1, p2, p4);
+    if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) &&
+        ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))) return true;
+    return (d1 === 0 && strictlyBetween2D(p3, p4, p1)) ||
+           (d2 === 0 && strictlyBetween2D(p3, p4, p2)) ||
+           (d3 === 0 && strictlyBetween2D(p1, p2, p3)) ||
+           (d4 === 0 && strictlyBetween2D(p1, p2, p4));
+  }
+
+  function blocksBridge2D(a, b, loop) {
+    for (var i = 0; i < loop.length; i++) {
+      var p = loop[i], q = loop[(i + 1) % loop.length];
+      if (samePoint2D(p, a) || samePoint2D(p, b) || samePoint2D(q, a) || samePoint2D(q, b)) {
+        /* Touching AT a shared endpoint is how a bridge always meets its own
+         * loops. An edge lying ALONG the bridge is not. */
+        if (cross2D(a, b, p) === 0 && cross2D(a, b, q) === 0) return true;
+        continue;
+      }
+      if (properlyCross2D(a, b, p, q)) return true;
+    }
+    return false;
+  }
+
+  function bridgeInto(merged, hole, pending) {
+    var candidates = [], i, j;
+    for (i = 0; i < merged.length; i++) {
+      for (j = 0; j < hole.length; j++) {
+        var dx = hole[j][0] - merged[i][0], dy = hole[j][1] - merged[i][1];
+        candidates.push({ o: i, h: j, d: dx*dx + dy*dy });
+      }
+    }
+    candidates.sort(function (x, y) { return x.d - y.d; });
+
+    for (var c = 0; c < candidates.length; c++) {
+      var a = merged[candidates[c].o], b = hole[candidates[c].h];
+      if (samePoint2D(a, b)) continue;
+      if (blocksBridge2D(a, b, merged) || blocksBridge2D(a, b, hole)) continue;
+      var blocked = false, k;
+      for (k = 0; k < pending.length && !blocked; k++) {
+        if (blocksBridge2D(a, b, pending[k])) blocked = true;
+      }
+      if (blocked) continue;
+      var mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+      if (!insideLoop2D(mid, merged) || insideLoop2D(mid, hole)) continue;
+      for (k = 0; k < pending.length && !blocked; k++) {
+        if (insideLoop2D(mid, pending[k])) blocked = true;
+      }
+      if (blocked) continue;
+
+      /* Out along the bridge, round the hole, and back. Both bridge vertices
+       * appear twice, which is the trick: the ring touches itself along a
+       * segment of zero width and encloses exactly what it did before. */
+      return merged.slice(0, candidates[c].o + 1)
+        .concat(hole.slice(candidates[c].h))
+        .concat(hole.slice(0, candidates[c].h + 1))
+        .concat(merged.slice(candidates[c].o));
+    }
+    return null;
+  }
+
+  function rightmostX2D(loop) {
+    var x = -Infinity;
+    for (var i = 0; i < loop.length; i++) x = Math.max(x, loop[i][0]);
+    return x;
+  }
+
+  /* The outline first, counter-clockwise, then every hole the other way. */
+  function sectionLoops2D(outer, holes) {
+    var loops = [signedArea2D(outer) >= 0 ? outer : outer.slice().reverse()];
+    (holes || []).forEach(function (h) {
+      loops.push(signedArea2D(h) <= 0 ? h : h.slice().reverse());
+    });
+    return loops;
+  }
+
+  /* { merged, tris, loops } — the caps index into merged, the walls walk loops. */
+  function triangulateSection(outer, holes) {
+    var loops = sectionLoops2D(outer, holes || []);
+    if (!holes || !holes.length) {
+      var clipped = earClip(outer);
+      return { merged: clipped.pts, tris: clipped.tris, loops: [clipped.pts] };
+    }
+    var merged = loops[0].slice(), remaining = loops.slice(1);
+    while (remaining.length) {
+      var best = 0, i;
+      for (i = 1; i < remaining.length; i++) {
+        if (rightmostX2D(remaining[i]) > rightmostX2D(remaining[best])) best = i;
+      }
+      var hole = remaining[best];
+      remaining = remaining.slice(0, best).concat(remaining.slice(best + 1));
+      var spliced = bridgeInto(merged, hole, remaining);
+      if (!spliced) return { merged: loops[0], tris: [], loops: loops };
+      merged = spliced;
+    }
+    /* earClip returns the points its triangles index INTO — it may reorder them
+     * — so the merged ring comes back from it rather than being kept separately.
+     * That is the same trap the caps-and-walls bug came from. */
+    var done = earClip(merged);
+    return { merged: done.pts, tris: done.tris, loops: loops };
+  }
+
   /* Returns { pts, tris } — the points in the order the triangles index into,
    * which may be reversed. Returning them is not a convenience: keeping a
    * separate copy is how the caps come out normalised and the side walls do
@@ -322,6 +464,13 @@
         for (var k = 0; k < idx.length && clear; k++) {
           var o = idx[k];
           if (o === prev || o === cur || o === next) continue;
+          /* A bridge puts TWO vertices at the same coordinates, and the boundary
+           * counts as inside — so without this, the duplicate of a bridge
+           * endpoint blocks every ear that touches it and clipping stalls on any
+           * outline with a hole in it. Skipped by POSITION, because which index
+           * is the duplicate is not knowable from here. */
+          if (samePoint2D(pts[o], pts[prev]) || samePoint2D(pts[o], pts[cur]) ||
+              samePoint2D(pts[o], pts[next])) continue;
           if (pointInTriangle2D(pts[o], pts[prev], pts[cur], pts[next])) clear = false;
         }
         if (!clear) continue;
@@ -437,9 +586,10 @@
     return flat.map(function (p) { return [p[0], p[1]]; });
   }
 
-  function extrusionGeometry(profile, depth) {
+  function extrusionGeometry(profile, depth, holes) {
     var raw = outlinePoints(profile);
-    if (!raw) {
+    var bores = holeOutlines(holes);
+    if (!raw || !bores) {
       return {
         geo: boxGeometry(1, 1, num(depth, 1)),
         approximated: 'the corner radii on this outline could not be resolved, so it is ' +
@@ -453,23 +603,23 @@
                       'so it is drawn as a unit box'
       };
     }
-    var clipped = earClip(raw);
-    var pts = clipped.pts, tris = clipped.tris;
-    if (!tris.length) {
+    var sec = triangulateSection(raw, bores);
+    if (!sec.tris.length) {
       return {
         geo: boxGeometry(1, 1, num(depth, 1)),
-        approximated: 'this outline could not be closed into a surface — it crosses itself ' +
-                      'or repeats a point — so it is drawn as a unit box'
+        approximated: 'this outline could not be closed into a surface — it crosses itself, ' +
+                      'repeats a point, or has a hole that will not fit inside it — so it ' +
+                      'is drawn as a unit box'
       };
     }
 
-    var half = num(depth, 1) / 2;
+    var pts = sec.merged, half = num(depth, 1) / 2;
     var positions = [], normals = [], indices = [], n = 0;
     function vert(x, y, z, nx, ny, nz) {
       positions.push(x, y, z); normals.push(nx, ny, nz); indices.push(n++);
     }
 
-    tris.forEach(function (t) {
+    sec.tris.forEach(function (t) {
       vert(pts[t[0]][0], pts[t[0]][1], half, 0, 0, 1);
       vert(pts[t[1]][0], pts[t[1]][1], half, 0, 0, 1);
       vert(pts[t[2]][0], pts[t[2]][1], half, 0, 0, 1);
@@ -479,21 +629,38 @@
       vert(pts[t[0]][0], pts[t[0]][1], -half, 0, 0, -1);
     });
 
-    for (var i = 0; i < pts.length; i++) {
-      var j = (i + 1) % pts.length;
-      var dx = pts[j][0] - pts[i][0], dy = pts[j][1] - pts[i][1];
-      var len = Math.sqrt(dx * dx + dy * dy) || 1;
-      // Outward for a counter-clockwise outline: on a square wound
-      // counter-clockwise the bottom edge runs +x and the outside is -y.
-      var nx = dy / len, ny = -dx / len;
-      vert(pts[i][0], pts[i][1], -half, nx, ny, 0);
-      vert(pts[j][0], pts[j][1], -half, nx, ny, 0);
-      vert(pts[j][0], pts[j][1], half, nx, ny, 0);
-      vert(pts[i][0], pts[i][1], -half, nx, ny, 0);
-      vert(pts[j][0], pts[j][1], half, nx, ny, 0);
-      vert(pts[i][0], pts[i][1], half, nx, ny, 0);
-    }
+    /* The walls, loop by loop rather than over the merged ring: a wall along a
+     * bridge would be a quad of zero width, drawn twice and facing both ways. */
+    sec.loops.forEach(function (loop) {
+      for (var i = 0; i < loop.length; i++) {
+        var j = (i + 1) % loop.length;
+        var dx = loop[j][0] - loop[i][0], dy = loop[j][1] - loop[i][1];
+        var len = Math.sqrt(dx * dx + dy * dy) || 1;
+        /* Outward for a counter-clockwise outline: on a square wound
+         * counter-clockwise the bottom edge runs +x and the outside is -y. A
+         * HOLE runs the other way, so the same formula points into the hole,
+         * which is out of the material. */
+        var nx = dy / len, ny = -dx / len;
+        vert(loop[i][0], loop[i][1], -half, nx, ny, 0);
+        vert(loop[j][0], loop[j][1], -half, nx, ny, 0);
+        vert(loop[j][0], loop[j][1], half, nx, ny, 0);
+        vert(loop[i][0], loop[i][1], -half, nx, ny, 0);
+        vert(loop[j][0], loop[j][1], half, nx, ny, 0);
+        vert(loop[i][0], loop[i][1], half, nx, ny, 0);
+      }
+    });
     return { geo: { positions: positions, normals: normals, indices: indices } };
+  }
+
+  /* Every hole of an outline, flattened. null when any of them cannot be. */
+  function holeOutlines(holes) {
+    var out = [];
+    for (var i = 0; i < (holes || []).length; i++) {
+      var flat = outlinePoints(holes[i]);
+      if (!flat) return null;
+      out.push(flat);
+    }
+    return out;
   }
 
   /* An outline turned a full circle about its own axis.
@@ -509,9 +676,10 @@
    * and a cylinder beside it are drawn to the same fineness, and the exported
    * mesh is the surface that was on screen.
    */
-  function revolveGeometry(profile, axis) {
+  function revolveGeometry(profile, axis, holes) {
     var raw = outlinePoints(profile);
-    if (!raw) {
+    var bores = holeOutlines(holes);
+    if (!raw || !bores) {
       return {
         geo: boxGeometry(1, 1, 1),
         approximated: 'the corner radii on this outline could not be resolved, so it is ' +
@@ -526,12 +694,13 @@
       };
     }
     /* The same normalisation the extrusion does, for the same reason: the facet
-     * winding below is only outward for a counter-clockwise outline. */
-    var pts = signedArea2D(raw) < 0 ? raw.slice().reverse() : raw;
+     * winding below is only outward for a counter-clockwise outline — and a
+     * hole, wound the other way, turns into a surface facing into the void. */
+    var loops = sectionLoops2D(raw, bores);
     var aboutX = String(axis || '').toLowerCase() === 'x';
     var seg = TESSELLATION.radial;
 
-    function at(i, t) {
+    function at(pts, i, t) {
       if (aboutX) {
         var rx = pts[i][1];
         return [pts[i][0], rx * Math.cos(t), rx * Math.sin(t)];
@@ -561,11 +730,14 @@
     }
     for (var k = 0; k < seg; k++) {
       var t0 = k / seg * 2 * Math.PI, t1 = (k + 1) / seg * 2 * Math.PI;
-      for (var i = 0; i < pts.length; i++) {
-        var j = (i + 1) % pts.length;
-        var a = at(i, t0), b = at(j, t0), c = at(j, t1), d = at(i, t1);
-        tri(a, b, c);
-        tri(a, c, d);
+      for (var l = 0; l < loops.length; l++) {
+        var pts = loops[l];
+        for (var i = 0; i < pts.length; i++) {
+          var j = (i + 1) % pts.length;
+          var a = at(pts, i, t0), b = at(pts, j, t0), c = at(pts, j, t1), d = at(pts, i, t1);
+          tri(a, b, c);
+          tri(a, c, d);
+        }
       }
     }
     return { geo: { positions: positions, normals: normals, indices: indices } };
@@ -591,7 +763,7 @@
    * segments by the smallest rotation that takes one direction to the next, so
    * it does not twist as the path bends.
    */
-  function sweepSections(profile, path) {
+  function sweepSections(loops, path) {
     function sub(a, b) { return [a[0]-b[0], a[1]-b[1], a[2]-b[2]]; }
     function add(a, b) { return [a[0]+b[0], a[1]+b[1], a[2]+b[2]]; }
     function mul(a, s) { return [a[0]*s, a[1]*s, a[2]*s]; }
@@ -619,7 +791,7 @@
       };
     }
 
-    if (profile.length < 3 || path.length < 2) return null;
+    if (!loops.length || loops[0].length < 3 || path.length < 2) return null;
     var i, j, k, segments = path.length - 1, tangent = [];
     for (i = 0; i < segments; i++) {
       var d = sub(path[i+1], path[i]);
@@ -645,28 +817,36 @@
       axisY.push(turn(axisY[i-1]));
     }
 
-    var rings = [];
-    for (j = 0; j < path.length; j++) {
-      var into = j > 0 ? j - 1 : 0, t = tangent[into], m = bisector[j];
-      var denom = dot(t, m), ring = [];
-      for (k = 0; k < profile.length; k++) {
-        /* On the perpendicular section at the vertex, then slid ALONG the
-         * segment onto the bisector plane. Sliding rather than projecting is
-         * what makes it a mitre: each point stays on the line the sweep carries
-         * it along, so the two faces meet edge to edge. */
-        var base = add(path[j], add(mul(axisX[into], profile[k][0]),
-                                    mul(axisY[into], profile[k][1])));
-        ring.push(add(base, mul(t, dot(sub(path[j], base), m) / denom)));
+    /* EVERY loop is carried by the same frames — the outline and the holes in
+     * it — because they are one section. A bore carried by frames of its own
+     * would drift out of the wall around it as the path bends. */
+    var all = [];
+    for (var l = 0; l < loops.length; l++) {
+      var rings = [];
+      for (j = 0; j < path.length; j++) {
+        var into = j > 0 ? j - 1 : 0, t = tangent[into], m = bisector[j];
+        var denom = dot(t, m), ring = [];
+        for (k = 0; k < loops[l].length; k++) {
+          /* On the perpendicular section at the vertex, then slid ALONG the
+           * segment onto the bisector plane. Sliding rather than projecting is
+           * what makes it a mitre: each point stays on the line the sweep
+           * carries it along, so the two faces meet edge to edge. */
+          var base = add(path[j], add(mul(axisX[into], loops[l][k][0]),
+                                      mul(axisY[into], loops[l][k][1])));
+          ring.push(add(base, mul(t, dot(sub(path[j], base), m) / denom)));
+        }
+        rings.push(ring);
       }
-      rings.push(ring);
+      all.push(rings);
     }
-    return rings;
+    return all;
   }
 
-  function sweepGeometry(profile, path) {
+  function sweepGeometry(profile, path, holes) {
     var raw = outlinePoints(profile);
+    var bores = holeOutlines(holes);
     var way = flattenDrawing(path || [], false);
-    if (!raw || !way) {
+    if (!raw || !bores || !way) {
       return {
         geo: boxGeometry(1, 1, 1),
         approximated: 'the corner radii on this outline or the bend radii on its path could ' +
@@ -680,9 +860,11 @@
                       'least two, so it is drawn as a unit box'
       };
     }
-    var clipped = earClip(raw);
-    var pts = clipped.pts, tris = clipped.tris;
-    var rings = tris.length ? sweepSections(pts, way) : null;
+    var sec = triangulateSection(raw, bores);
+    /* The merged ring is carried along the path as loop ZERO, so the caps come
+     * from the rings like everything else rather than from a second
+     * transformation that could disagree with them. */
+    var rings = sec.tris.length ? sweepSections([sec.merged].concat(sec.loops), way) : null;
     if (!rings) {
       return {
         geo: boxGeometry(1, 1, 1),
@@ -708,7 +890,7 @@
       });
     }
 
-    var last = rings.length - 1;
+    var caps = rings[0], walls = rings.slice(1), last = caps.length - 1;
     /* The two ends, each facing away from the material between them. Taken from
      * where one outline point MOVED between the first two rings, which is
      * parallel to the segment however the mitre tilted the ring. */
@@ -717,18 +899,21 @@
       var l = Math.sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2]) || 1;
       return [v[0]/l, v[1]/l, v[2]/l];
     }
-    var startN = direction(rings[1][0], rings[0][0]);
-    var endN = direction(rings[last-1][0], rings[last][0]);
-    tris.forEach(function (t) {
-      tri(rings[0][t[2]], rings[0][t[1]], rings[0][t[0]], startN);
-      tri(rings[last][t[0]], rings[last][t[1]], rings[last][t[2]], endN);
+    var startN = direction(caps[1][0], caps[0][0]);
+    var endN = direction(caps[last-1][0], caps[last][0]);
+    sec.tris.forEach(function (t) {
+      tri(caps[0][t[2]], caps[0][t[1]], caps[0][t[0]], startN);
+      tri(caps[last][t[0]], caps[last][t[1]], caps[last][t[2]], endN);
     });
-    for (var i = 0; i < last; i++) {
-      for (var k = 0; k < pts.length; k++) {
-        var j2 = (k + 1) % pts.length;
-        var a = rings[i][k], b = rings[i][j2], c = rings[i+1][j2], d = rings[i+1][k];
-        tri(a, b, c);
-        tri(a, c, d);
+    for (var l = 0; l < sec.loops.length; l++) {
+      var loop = sec.loops[l], ring = walls[l];
+      for (var i = 0; i < last; i++) {
+        for (var k = 0; k < loop.length; k++) {
+          var j2 = (k + 1) % loop.length;
+          var a = ring[i][k], b = ring[i][j2], c = ring[i+1][j2], d = ring[i+1][k];
+          tri(a, b, c);
+          tri(a, c, d);
+        }
       }
     }
     return { geo: { positions: positions, normals: normals, indices: indices } };
@@ -742,9 +927,9 @@
       case 'cone':     return { geo: cylinderGeometry(num(s.radius,0.5), num(s.height,1), TESSELLATION.radial, 0) };
       case 'sphere':   return { geo: sphereGeometry(num(s.radius,0.5), TESSELLATION.sphereRadial) };
       case 'plane':    return { geo: planeGeometry(num(s.width,1), num(s.depth,1)) };
-      case 'extrusion': return extrusionGeometry(part.profile || [], num(s.depth, 1));
-      case 'revolve':   return revolveGeometry(part.profile || [], part.axis);
-      case 'sweep':     return sweepGeometry(part.profile || [], part.path || []);
+      case 'extrusion': return extrusionGeometry(part.profile || [], num(s.depth, 1), part.holes);
+      case 'revolve':   return revolveGeometry(part.profile || [], part.axis, part.holes);
+      case 'sweep':     return sweepGeometry(part.profile || [], part.path || [], part.holes);
       case 'tube':
         /* A tube is drawn as its outer wall. The bore is not modelled, and that
          * is reported: an inner diameter that is not there is exactly the kind

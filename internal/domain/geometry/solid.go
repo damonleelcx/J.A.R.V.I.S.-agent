@@ -47,6 +47,9 @@ type Solid struct {
 	// (curve.go), and points cannot say so. Sending points would make every
 	// rounded corner a flat facet in the exported STEP.
 	Outline *Curve `json:"outline,omitempty"`
+	// Holes are the loops inside Outline, in millimetres. Empty when there are
+	// none, which is the common case.
+	Holes []Curve `json:"holes,omitempty"`
 	// Path is a sweep's, in millimetres, in the part's own frame. Nil otherwise.
 	Path *Curve `json:"path,omitempty"`
 	// SectionFrame is where the outline's own x and y axes point when a sweep
@@ -119,7 +122,8 @@ func Solids(d Document, unit Unit) ([]Solid, []string) {
 	out := make([]Solid, 0, len(d.Parts))
 	for _, p := range d.Parts {
 		dims := map[string]float64{}
-		var outline, route *polyline
+		var section *outline
+		var route *polyline
 		switch strings.ToLower(p.Shape) {
 		case "extrusion":
 			pts, ok := profiles[p.ID]
@@ -129,14 +133,14 @@ func Solids(d Document, unit Unit) ([]Solid, []string) {
 				// guess at.
 				continue
 			}
-			outline = &pts
+			section = &pts
 			dims["depth"] = sizeOr(p, "depth", 1, unit, infer)
 		case "revolve":
 			pts, ok := profiles[p.ID]
 			if !ok {
 				continue
 			}
-			outline = &pts
+			section = &pts
 			// No dimension of its own: a revolve's size is entirely its outline
 			// and the axis it turns about. Asking for a depth as well would be
 			// a second way to say something the outline already says.
@@ -146,7 +150,7 @@ func Solids(d Document, unit Unit) ([]Solid, []string) {
 			if !ok || !hasPath {
 				continue
 			}
-			outline, route = &pts, &way
+			section, route = &pts, &way
 			// No dimension either, for the same reason and more so: a sweep's
 			// size is its outline and the path it follows, and a "depth" beside
 			// them would be a third opinion about how far it goes.
@@ -202,13 +206,21 @@ func Solids(d Document, unit Unit) ([]Solid, []string) {
 		// rounded corner comes out of OCCT as a real cylindrical surface. The
 		// tessellators flatten instead, and say what that cost — see curve.go.
 		var outlineCurve, pathCurve *Curve
+		var holeCurves []Curve
 		failed := ""
-		if outline != nil {
-			c, err := outline.scaled(toMM).exact("outline")
+		if section != nil {
+			c, err := section.Outer.scaled(toMM).exact("outline")
 			if err != nil {
 				failed = err.Error()
 			}
 			outlineCurve = &c
+			for i, hole := range section.Holes {
+				h, err := hole.scaled(toMM).exact(fmt.Sprintf("hole %d", i+1))
+				if err != nil && failed == "" {
+					failed = err.Error()
+				}
+				holeCurves = append(holeCurves, h)
+			}
 		}
 		if route != nil && failed == "" {
 			c, err := route.scaled(toMM).exact("path")
@@ -226,7 +238,7 @@ func Solids(d Document, unit Unit) ([]Solid, []string) {
 		// leaves their directions alone.
 		var frame *[9]float64
 		if route != nil && failed == "" {
-			flatOutline, _, oerr := outline.scaled(toMM).flatten("outline", Millimetre)
+			flatOutline, _, oerr := section.Outer.scaled(toMM).flatten("outline", Millimetre)
 			flatPath, _, perr := route.scaled(toMM).flatten("path", Millimetre)
 			switch {
 			case oerr != nil:
@@ -234,7 +246,7 @@ func Solids(d Document, unit Unit) ([]Solid, []string) {
 			case perr != nil:
 				failed = perr.Error()
 			default:
-				if _, f, err := sweptSections(flat2D(flatOutline), flatPath); err == nil {
+				if _, f, err := sweptSections([][][2]float64{flat2D(flatOutline)}, flatPath); err == nil {
 					frame = &f
 				} else {
 					failed = err.Error()
@@ -254,7 +266,7 @@ func Solids(d Document, unit Unit) ([]Solid, []string) {
 
 		out = append(out, Solid{
 			ID: p.ID, Label: p.Label(), Shape: strings.ToLower(p.Shape), Dims: dims,
-			Outline: outlineCurve, Path: pathCurve, SectionFrame: frame,
+			Outline: outlineCurve, Holes: holeCurves, Path: pathCurve, SectionFrame: frame,
 			Axis: axisOf(p), Matrix: RotationMatrix(rot), Position: pos,
 		})
 	}

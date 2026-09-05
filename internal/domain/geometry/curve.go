@@ -183,6 +183,41 @@ func partOutline(p Part) polyline {
 	return out
 }
 
+// partHoles reads the loops inside a part's outline.
+func partHoles(p Part) []polyline {
+	out := make([]polyline, 0, len(p.Holes))
+	for _, hole := range p.Holes {
+		loop := polyline{Closed: true}
+		for _, pt := range hole {
+			loop.Points = append(loop.Points, [3]float64{pt.X, pt.Y, 0})
+			loop.Radii = append(loop.Radii, pt.Radius)
+		}
+		out = append(out, loop)
+	}
+	return out
+}
+
+// flattenSection flattens an outline and its holes together, and reports the
+// worst approximation among them.
+func flattenSection(outer polyline, holes []polyline, unit Unit) (
+	flatOuter [][2]float64, flatHoles [][][2]float64, dev *Deviation, err error) {
+
+	pts, dev, err := outer.flatten("outline", unit)
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	flatOuter = flat2D(pts)
+	for i, hole := range holes {
+		flat, hdev, herr := hole.flatten(fmt.Sprintf("hole %d", i+1), unit)
+		if herr != nil {
+			return nil, nil, nil, herr
+		}
+		flatHoles = append(flatHoles, flat2D(flat))
+		dev = worseDeviation(dev, hdev)
+	}
+	return flatOuter, flatHoles, dev, nil
+}
+
 func partPath(p Part) polyline {
 	var out polyline
 	for _, pt := range p.Path {

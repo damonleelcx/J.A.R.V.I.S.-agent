@@ -39,7 +39,7 @@ try:
     from build123d import (
         Box, Cylinder, Cone, Sphere, Rectangle, Plane, Location, Vector,
         Compound, Axis, Polyline, export_step, extrude, fillet, chamfer,
-        make_face, revolve, sweep, Transition, Line, ThreePointArc, Wire,
+        make_face, revolve, sweep, Transition, Line, ThreePointArc, Wire, Face,
     )
 except Exception as exc:  # pragma: no cover - reported to the caller, not raised
     sys.stdout.write(json.dumps({
@@ -78,6 +78,21 @@ def _wire(curve):
     if not edges:
         raise ValueError("a drawing with no edges cannot be built")
     return Wire(edges)
+
+
+def _face(solid):
+    """The section: the outline, with the loops inside it taken out of it.
+
+    A hole in the SECTION and a hole through the SOLID are different things and
+    both exist. A bolt hole through a plate is a cylinder cut out with a feature,
+    placed in space. A bore that follows a bent tube round every corner cannot be
+    cut by any tool this vocabulary can describe, and is a loop in the drawing.
+    """
+    outer = _wire(solid["outline"])
+    holes = solid.get("holes") or []
+    if not holes:
+        return make_face(outer)
+    return Face(outer, [_wire(h) for h in holes])
 
 
 def _placement(solid):
@@ -133,8 +148,7 @@ def _shape(solid):
         # not re-centred — see internal/domain/geometry/profile.go for why — so
         # the part's position places the outline's ORIGIN and a hole placed
         # against a drawn corner stays against it.
-        face = make_face(_wire(solid["outline"]))
-        return extrude(face, amount=d["depth"] / 2.0, both=True)
+        return extrude(_face(solid), amount=d["depth"] / 2.0, both=True)
     if kind == "revolve":
         # The outline turned a full circle about its own axis. Every point is on
         # one side of that axis — checked in Go, where the offending coordinate
@@ -144,8 +158,7 @@ def _shape(solid):
         # A full turn only. A sector is a revolve with something cut out of it,
         # which needs no vocabulary of its own — the same reasoning that makes a
         # hole a cut rather than a new kind of part.
-        face = make_face(_wire(solid["outline"]))
-        return revolve(face, Axis.X if solid.get("axis") == "x" else Axis.Y, 360)
+        return revolve(_face(solid), Axis.X if solid.get("axis") == "x" else Axis.Y, 360)
     if kind == "sweep":
         # The same outline, carried along a path instead of a straight line.
         #
@@ -174,8 +187,7 @@ def _shape(solid):
         start = Plane(origin=Vector(*path["start"]),
                       x_dir=Vector(m[0], m[3], m[6]),
                       z_dir=Vector(m[2], m[5], m[8]))
-        face = start * make_face(_wire(solid["outline"]))
-        return sweep(face, _wire(path), transition=Transition.RIGHT)
+        return sweep(start * _face(solid), _wire(path), transition=Transition.RIGHT)
     if kind == "plane":
         # A face, not a solid, and deliberately so: a plane has no thickness and
         # will not print, machine, or hold a volume. It is exported because it is

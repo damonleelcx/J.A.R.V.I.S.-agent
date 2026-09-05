@@ -231,7 +231,10 @@ along a path — so an L-bracket, a turned boss or a bent pipe run is describabl
 and not just a box with material removed. Any corner of an outline or a path can
 carry a **radius**, which is a rounded corner on a plate and a real bend radius
 on a tube; the kernel builds it as a true arc, and the viewport flattens it and
-says by how much. What it does not do is CHECK — there is still no solver and no
+says by how much. An outline can have **holes** in it — the section's own voids,
+which follow it wherever it goes, so a bent tube is hollow round the corner.
+A drilled hole is still a cut feature; a bore that turns a corner cannot be, and
+that is the difference between the two. What it does not do is CHECK — there is still no solver and no
 interference test here, and the export label says so, along with any feature
 OCCT refused.
 
