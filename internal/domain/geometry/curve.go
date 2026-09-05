@@ -130,11 +130,11 @@ func (p polyline) flatten(what string, unit Unit) ([][3]float64, *Deviation, err
 	return flat, arcDeviation(radius, angle, segments, unit), nil
 }
 
-// validate is the corner arithmetic run for its refusals alone, for the callers
-// that have to say what is wrong before anything is built.
-func (p polyline) validate(what string) error {
-	_, err := roundedCorners(p.Points, p.Radii, p.Closed, what)
-	return err
+// validate is the corner arithmetic run for what it has to SAY: what is wrong,
+// and what was given and could not mean anything.
+func (p polyline) validate(what string) ([]string, error) {
+	_, ignored, err := roundedCorners(p.Points, p.Radii, p.Closed, what)
+	return ignored, err
 }
 
 // exact is the drawing the CAD kernel builds, arcs and all.
@@ -169,16 +169,80 @@ func (p polyline) scaled(toMM float64) polyline {
 	return out
 }
 
+// withoutClosingDuplicate drops a loop's redundant closing point.
+//
+// # Why a repeated first point is read rather than refused
+//
+// Every polygon format a model has read — GeoJSON, WKT, shapefiles — closes a
+// ring by repeating its first point. This contract asks the opposite ("the
+// outline is closed for you; do not repeat the first point at the end") and a
+// model reaches for what it knows anyway: measured 2026-09-05 over 24 eval runs,
+// SIX of the seven drawings FORGE refused outright were this and nothing else.
+//
+// It has exactly one reading. A closed loop that returns to its own first point
+// has a final edge of zero length, which is never a shape — so the repeated
+// point is redundant, and dropping it is the only way to read the drawing as
+// anything at all. Refusing cost the whole part.
+//
+// # Why the RADIUS moves with it
+//
+// The repeated point often carries the corner radius while the original does
+// not: the model writes the corner once as a destination and once as a corner.
+// Dropping the point and leaving the radius behind would mitre a corner somebody
+// asked to be bent — a different part, made a different way, and silently. So
+// the radius is carried to the point that stays.
+//
+// conflict reports the one case with no single reading: both points carrying a
+// radius, and the two disagreeing. One corner cannot have two radii.
+func withoutClosingDuplicate(pts [][3]float64, radii []float64) (
+	outPts [][3]float64, outRadii []float64, dropped, conflict bool) {
+
+	n := len(pts)
+	if n < 2 || !same(pts[0], pts[n-1]) {
+		return pts, radii, false, false
+	}
+	outPts = pts[:n-1]
+	outRadii = append([]float64{}, radii[:n-1]...)
+	closing := 0.0
+	if n-1 < len(radii) {
+		closing = radii[n-1]
+	}
+	switch {
+	case closing == 0:
+	case len(outRadii) == 0:
+	case outRadii[0] == 0:
+		outRadii[0] = closing
+	case outRadii[0] != closing:
+		return pts, radii, false, true
+	}
+	return outPts, outRadii, true, false
+}
+
 // partOutline and partPath read a part's drawing out of a stored document.
 //
 // Literal coordinates, because Bind has already written every expression's value
 // here and nothing downstream evaluates anything — see binding.go. A caller that
 // evaluated them again would be a second opinion about what the document says.
 func partOutline(p Part) polyline {
-	out := polyline{Closed: true}
-	for _, pt := range p.Profile {
-		out.Points = append(out.Points, [3]float64{pt.X, pt.Y, 0})
+	return readLoop(p.Profile, true)
+}
+
+// readLoop turns a document's points into a polyline, dropping a redundant
+// closing point on the way in.
+//
+// Done HERE and not only at the document boundary, because every reader has to
+// agree about what the drawing is: the tessellator, the measurement path and the
+// kernel each build from this, and one of them keeping a zero-length edge the
+// others dropped is the renderer and the exported file disagreeing about the
+// shape.
+func readLoop(pts []Point, closed bool) polyline {
+	out := polyline{Closed: closed}
+	for _, pt := range pts {
+		out.Points = append(out.Points, [3]float64{pt.X, pt.Y, pt.Z})
 		out.Radii = append(out.Radii, pt.Radius)
+	}
+	if closed {
+		out.Points, out.Radii, _, _ = withoutClosingDuplicate(out.Points, out.Radii)
 	}
 	return out
 }
@@ -187,12 +251,7 @@ func partOutline(p Part) polyline {
 func partHoles(p Part) []polyline {
 	out := make([]polyline, 0, len(p.Holes))
 	for _, hole := range p.Holes {
-		loop := polyline{Closed: true}
-		for _, pt := range hole {
-			loop.Points = append(loop.Points, [3]float64{pt.X, pt.Y, 0})
-			loop.Radii = append(loop.Radii, pt.Radius)
-		}
-		out = append(out, loop)
+		out = append(out, readLoop(hole, true))
 	}
 	return out
 }
@@ -221,13 +280,10 @@ func flattenSection(outer polyline, holes []polyline, unit Unit) (
 func partPath(p Part) polyline {
 	// Closed travels with the path, because it changes what the path IS: the
 	// first and last points of a closed one are corners like any other, and may
-	// carry a bend radius, while an open path's are ends and may not.
-	out := polyline{Closed: p.PathClosed}
-	for _, pt := range p.Path {
-		out.Points = append(out.Points, [3]float64{pt.X, pt.Y, pt.Z})
-		out.Radii = append(out.Radii, pt.Radius)
-	}
-	return out
+	// carry a bend radius, while an open path's are ends and may not. It also
+	// decides whether a repeated final point is a closing convention or a
+	// zero-length segment somebody meant.
+	return readLoop(p.Path, p.PathClosed)
 }
 
 // worseDeviation is whichever of two approximations departs further from the
@@ -268,12 +324,33 @@ type corner struct {
 //
 // closed says whether the run comes back to its first point, which decides
 // whether the first and last vertices are CORNERS at all — an open path ends at
-// them, and an end is not a corner. A radius on one is refused rather than
-// ignored, because a number somebody wrote and nothing read is the failure this
-// codebase keeps naming.
-func roundedCorners(pts [][3]float64, radii []float64, closed bool, what string) ([]corner, error) {
+// them, and an end is not a corner.
+//
+// # Why an INERT radius is ignored and a bad one is refused
+//
+// ignored names every radius that was given and describes no corner: one on the
+// end of an open path, and one on a point its neighbours run straight through.
+// Neither is ambiguous — there is no corner there, so the number changes nothing
+// — and neither is silent: the caller turns each into a warning the reader sees.
+//
+// Refusing them cost the whole part, twice, for a number that means nothing.
+// Measured 2026-09-05: qwen-plus put a radius on every path point of a correct
+// bent tube in two live runs of six, and on a point its path ran straight
+// through in an eval run. All three were buildable drawings that vanished.
+//
+// What is still refused is a radius that cannot be READ as anything: a negative
+// one, one on a point sitting on top of its neighbour, one on a reversal, and
+// two that need more edge than there is between them.
+func roundedCorners(pts [][3]float64, radii []float64, closed bool, what string) (
+	[]corner, []string, error) {
+
 	n := len(pts)
 	out := make([]corner, n)
+	var ignored []string
+	inert := func(i int, why string) {
+		ignored = append(ignored, fmt.Sprintf("has a corner radius on %s point %d, %s, so it "+
+			"was ignored", what, i+1, why))
+	}
 	for i := range pts {
 		out[i] = corner{index: i, sharp: true}
 		r := 0.0
@@ -285,18 +362,18 @@ func roundedCorners(pts [][3]float64, radii []float64, closed bool, what string)
 			continue
 		}
 		if r < 0 {
-			return nil, fmt.Errorf("%s point %d has a corner radius of %g; a radius is a "+
+			return nil, ignored, fmt.Errorf("%s point %d has a corner radius of %g; a radius is a "+
 				"distance and cannot be negative", what, i+1, r)
 		}
 		if !interior {
-			return nil, fmt.Errorf("%s point %d has a corner radius, but it is where the path "+
-				"starts or ends rather than a corner; there is nothing there to round", what, i+1)
+			inert(i, "which is where the run starts or ends rather than a corner")
+			continue
 		}
 
 		prev, next := pts[(i-1+n)%n], pts[(i+1)%n]
 		in, out2 := sub3(pts[i], prev), sub3(next, pts[i])
 		if length3(in) < arcTolerance || length3(out2) < arcTolerance {
-			return nil, fmt.Errorf("%s point %d has a corner radius but sits on top of its "+
+			return nil, ignored, fmt.Errorf("%s point %d has a corner radius but sits on top of its "+
 				"neighbour, so there is no corner to round", what, i+1)
 		}
 		dIn, dOut := normalise(in), normalise(out2)
@@ -306,10 +383,10 @@ func roundedCorners(pts [][3]float64, radii []float64, closed bool, what string)
 		cos := dot3(dIn, dOut)
 		if sin < arcTolerance {
 			if cos > 0 {
-				return nil, fmt.Errorf("%s point %d has a corner radius but the edges either "+
-					"side of it are in line, so it is not a corner", what, i+1)
+				inert(i, "where the edges either side of it are in line")
+				continue
 			}
-			return nil, fmt.Errorf("%s point %d turns back through 180°, which no radius can "+
+			return nil, ignored, fmt.Errorf("%s point %d turns back through 180°, which no radius can "+
 				"round: the arc would have to close on itself", what, i+1)
 		}
 		angle := math.Atan2(sin, cos) // the turn, in (0, π)
@@ -345,12 +422,12 @@ func roundedCorners(pts [][3]float64, radii []float64, closed bool, what string)
 		span := length3(sub3(pts[j], pts[i]))
 		need := out[i].cut + out[j].cut
 		if need > span+arcTolerance {
-			return nil, fmt.Errorf("the corner radii at %s points %d and %d need %.4g of the "+
+			return nil, ignored, fmt.Errorf("the corner radii at %s points %d and %d need %.4g of the "+
 				"%.4g between them, so the two arcs would overlap; use smaller radii, or move "+
 				"the points further apart", what, i+1, j+1, need, span)
 		}
 	}
-	return out, nil
+	return out, ignored, nil
 }
 
 // flattenCurve turns a drawing into the polyline the tessellators draw.
@@ -362,7 +439,7 @@ func roundedCorners(pts [][3]float64, radii []float64, closed bool, what string)
 func flattenCurve(pts [][3]float64, radii []float64, closed bool, what string) (
 	flat [][3]float64, worstRadius, worstAngle float64, segments int, err error) {
 
-	corners, err := roundedCorners(pts, radii, closed, what)
+	corners, _, err := roundedCorners(pts, radii, closed, what)
 	if err != nil {
 		return nil, 0, 0, 0, err
 	}
@@ -442,7 +519,7 @@ func flattenCurve(pts [][3]float64, radii []float64, closed bool, what string) (
 // special case per combination of (first/last, sharp/rounded, open/closed), and
 // the version of this function that had them got one wrong.
 func exactCurve(pts [][3]float64, radii []float64, closed bool, what string) (Curve, error) {
-	corners, err := roundedCorners(pts, radii, closed, what)
+	corners, _, err := roundedCorners(pts, radii, closed, what)
 	if err != nil {
 		return Curve{}, err
 	}

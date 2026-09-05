@@ -1570,3 +1570,69 @@ func TestKernel_AClosedSweepIsTheOneTheRendererDrew(t *testing.T) {
 			got.Volume, drawn)
 	}
 }
+
+// The two drawings the eval suite lost, built.
+//
+// # Why these exact documents
+//
+// Both are transcribed from what qwen-plus actually returned on 2026-09-05, and
+// both were refused outright — the part simply absent from the file. Six of the
+// seven refusals across 24 eval runs were the first pattern.
+//
+// A test that only checked they no longer error would miss the thing that
+// matters about the second: the repeated closing point CARRIED the bend radius
+// while the original did not, so reading the point away and leaving the radius
+// behind would build a loop with a mitred corner where one was asked to be bent.
+// Same volume to within a fraction, same silhouette, different part. So the
+// volume is checked against the arithmetic for a loop that really is bent.
+func TestKernel_TheDrawingsTheEvalSuiteLostNowBuild(t *testing.T) {
+	k := kernel(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	t.Run("an outline that repeats its first point", func(t *testing.T) {
+		// A pulley's vee groove, closed the way every polygon format closes a
+		// ring. Pappus: a triangle of area 28.8 mm² whose centroid sits at
+		// x = 38.4 sweeps 2π · 38.4 · 28.8.
+		doc := geometry.Document{
+			Name: "groove", Units: "mm",
+			Parts: []geometry.Part{{ID: "g", Name: "Groove", Shape: "revolve", Axis: "y",
+				Profile: []geometry.Point{{X: 40, Y: -10}, {X: 40, Y: -22},
+					{X: 35.2, Y: -22}, {X: 40, Y: -10}},
+				Position: []float64{0, 0, 0}, Rotation: []float64{0, 0, 0}}},
+		}
+		got, err := k.BuildDocument(ctx, doc, geometry.Millimetre, "")
+		if err != nil {
+			t.Fatalf("a drawing closed the way GeoJSON closes one was refused: %v", err)
+		}
+		if want := 2 * math.Pi * 38.4 * 28.8; math.Abs(got.Volume-want) > 0.01 {
+			t.Errorf("volume = %.4f mm³, want %.4f", got.Volume, want)
+		}
+	})
+
+	t.Run("a closed path whose repeated point carries the radius", func(t *testing.T) {
+		doc := geometry.Document{
+			Name: "handle", Units: "mm",
+			Parts: []geometry.Part{{ID: "h", Name: "Handle", Shape: "sweep",
+				Profile: []geometry.Point{{X: -4, Y: -4}, {X: 4, Y: -4}, {X: 4, Y: 4}, {X: -4, Y: 4}},
+				Path: []geometry.Point{{}, {X: 240, Radius: 20}, {X: 240, Y: 90, Radius: 20},
+					{Y: 90, Radius: 20}, {Radius: 20}},
+				PathClosed: true,
+				Position:   []float64{0, 0, 0}, Rotation: []float64{0, 0, 0}}},
+		}
+		got, err := k.BuildDocument(ctx, doc, geometry.Millimetre, "")
+		if err != nil {
+			t.Fatalf("a closed loop closed the way every polygon format closes one was "+
+				"refused: %v", err)
+		}
+		// 64 mm² carried round: two sides of 200, two of 50, and four quarter
+		// turns of R20, which between them make one whole circle.
+		want := 64 * (400 + 100 + 2*math.Pi*20)
+		if math.Abs(got.Volume-want) > 0.5 {
+			mitred := 64.0 * (2*240 + 2*90)
+			t.Errorf("volume = %.4f mm³, want %.4f. A loop with MITRED corners is %.4f — if "+
+				"that is what came back, the radius on the repeated closing point was dropped "+
+				"with the point", got.Volume, want, mitred)
+		}
+	})
+}

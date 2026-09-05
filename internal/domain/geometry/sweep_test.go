@@ -686,3 +686,125 @@ func TestSwept_ARadiusOnAnEndIsIgnoredRatherThanFatal(t *testing.T) {
 		}
 	}
 }
+
+// The closing convention, at the document boundary: read, said out loud, and
+// the part is built.
+//
+// # What this is
+//
+// Every polygon format a model has read — GeoJSON, WKT, shapefiles — closes a
+// ring by repeating its first point. This contract asks the opposite, and the
+// model reaches for what it knows: measured 2026-09-05 over 24 eval runs, SIX of
+// the seven drawings FORGE refused outright were this and nothing else.
+//
+// It has exactly one reading — a final edge of zero length is never a shape — so
+// the repeated point is dropped and the reader is told. What is NOT relaxed is a
+// duplicate anywhere else: that is a copied line somebody forgot to edit, it has
+// no single reading, and it stays refused.
+func TestProfileProblems_ALoopMayCloseItselfTheWayEveryPolygonFormatDoes(t *testing.T) {
+	square := points([2]float64{-4, -4}, [2]float64{4, -4}, [2]float64{4, 4}, [2]float64{-4, 4})
+
+	for _, tc := range []struct {
+		name  string
+		part  Part
+		wants string // the warning, or "" when the part must be refused
+		built bool
+	}{
+		{"an outline that repeats its first point",
+			Part{ID: "p", Name: "Plate", Shape: "extrusion",
+				Profile: points([2]float64{0, 0}, [2]float64{40, 0}, [2]float64{40, 20},
+					[2]float64{0, 0}),
+				Size: map[string]float64{"depth": 5}},
+			"closes its outline by repeating its first point", true},
+
+		{"a hole that repeats its first point",
+			Part{ID: "p", Name: "Plate", Shape: "extrusion",
+				Profile: points([2]float64{0, 0}, [2]float64{40, 0}, [2]float64{40, 40},
+					[2]float64{0, 40}),
+				Holes: [][]Point{points([2]float64{10, 10}, [2]float64{30, 10},
+					[2]float64{30, 30}, [2]float64{10, 10})},
+				Size: map[string]float64{"depth": 5}},
+			"closes hole 1 by repeating its first point", true},
+
+		{"a closed path that repeats its first point",
+			Part{ID: "s", Name: "Hoop", Shape: "sweep", Profile: square,
+				Path:       []Point{{}, {X: 240}, {X: 240, Y: 90}, {Y: 90}, {}},
+				PathClosed: true},
+			"closes its path by repeating its first point", true},
+
+		// The line that is NOT crossed: a duplicate anywhere else is a copied
+		// line somebody forgot to edit, and it has no single reading.
+		{"a duplicate in the middle of an outline", Part{ID: "p", Name: "Plate",
+			Shape: "extrusion",
+			Profile: points([2]float64{0, 0}, [2]float64{40, 0}, [2]float64{40, 0},
+				[2]float64{40, 20}),
+			Size: map[string]float64{"depth": 5}}, "", false},
+
+		// Dropping the closing point can leave too little to be a shape, and
+		// then it is refused for THAT rather than passing silently.
+		{"a triangle that is really a line", Part{ID: "p", Name: "Plate",
+			Shape:   "extrusion",
+			Profile: points([2]float64{0, 0}, [2]float64{40, 0}, [2]float64{0, 0}),
+			Size:    map[string]float64{"depth": 5}}, "", false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			doc := Document{Name: "d", Units: "mm", Parts: []Part{tc.part}}
+			problems := doc.ProfileProblems()
+			solids, _ := Solids(doc, Millimetre)
+
+			if built := len(solids) == 1; built != tc.built {
+				t.Fatalf("built = %v, want %v (problems: %+v)", built, tc.built, problems)
+			}
+			if tc.wants == "" {
+				if len(problems) == 0 {
+					t.Fatal("the part was dropped and nothing said why")
+				}
+				if problems[0].Severity != Error {
+					t.Errorf("a refusal was reported as %s", problems[0].Severity)
+				}
+				return
+			}
+			if len(problems) != 1 {
+				t.Fatalf("expected one note, got %d: %+v", len(problems), problems)
+			}
+			if problems[0].Severity != Warning {
+				t.Errorf("dropping a redundant point was reported as %s, which reads as a part "+
+					"that is not in the file", problems[0].Severity)
+			}
+			if !strings.Contains(problems[0].Detail, tc.wants) {
+				t.Errorf("the note does not say what was read: %q", problems[0].Detail)
+			}
+		})
+	}
+}
+
+// The exact drawing the eval runs lost: a closed loop whose repeated closing
+// point carries the bend radius.
+//
+// It has to build, and the corner the radius was written on has to actually be
+// BENT — a part that builds with four mitred corners where a bend radius was
+// asked for is the silent wrong answer this fix exists to avoid.
+func TestSolids_TheClosingPointsRadiusSurvivesIntoTheBuild(t *testing.T) {
+	doc := Document{Name: "handle", Units: "mm",
+		Parts: []Part{{ID: "s", Name: "Handle", Shape: "sweep",
+			Profile: points([2]float64{-4, -4}, [2]float64{4, -4}, [2]float64{4, 4}, [2]float64{-4, 4}),
+			Path: []Point{{}, {X: 240, Radius: 20}, {X: 240, Y: 90, Radius: 20},
+				{Y: 90, Radius: 20}, {Radius: 20}},
+			PathClosed: true}}}
+
+	solids, notes := Solids(doc, Millimetre)
+	if len(solids) != 1 {
+		t.Fatalf("%d solids: %v", len(solids), notes)
+	}
+	arcs := 0
+	for _, e := range solids[0].Path.Edges {
+		if e.Via != nil {
+			arcs++
+		}
+	}
+	if arcs != 4 {
+		t.Errorf("%d bends in a four-cornered loop whose every corner carries R20. The radius on "+
+			"the repeated closing point was dropped with the point, so that corner is mitred "+
+			"where it was asked to be bent", arcs)
+	}
+}

@@ -241,6 +241,13 @@ func TestRendererSweepsTheSameSolidAsTheExporter(t *testing.T) {
 		{"rounded corners and bend radii", roundedProfile, nil, bentPath, false},
 		{"a hollow section", hollow, bore, bentPath, false},
 		{"a closed ring with a rounded seam", hollow, bore, ring, true},
+		// The closing convention, drawn: the loop repeats its first point and
+		// that repeated point carries the radius. Both sides have to drop the
+		// point AND carry the radius, or the picture is mitred where the file is
+		// bent — same volume, same silhouette, different part.
+		{"a ring closed the way every polygon format closes one", hollow, bore,
+			[]geometry.Point{{}, {X: 60, Radius: 15}, {X: 60, Y: 60, Radius: 15},
+				{Y: 60, Radius: 15}, {Radius: 15}}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			compareSweptFacets(t, node, dir, asset, tc.profile, tc.holes, tc.path, tc.closed)

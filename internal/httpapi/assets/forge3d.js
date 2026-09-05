@@ -510,6 +510,26 @@
    * labelled box beats drawing a lie.
    */
   function flattenDrawing(points, closed) {
+    /* A loop that closes itself by repeating its first point is READ, not
+     * refused: every polygon format a model has read closes a ring that way, and
+     * a final edge of zero length is never a shape, so the repeated point is
+     * redundant. The RADIUS moves with it — the repeated point often carries the
+     * corner radius while the original does not, and leaving it behind would
+     * mitre a corner somebody asked to be bent.
+     *
+     * internal/domain/geometry/curve.go does the same on the way to the kernel.
+     * The two must agree or the picture and the file are different shapes. */
+    points = (points || []).slice();
+    if (closed && points.length > 1) {
+      var a0 = points[0], z0 = points[points.length - 1];
+      if (Math.abs(num(a0.x,0)-num(z0.x,0)) < 1e-12 && Math.abs(num(a0.y,0)-num(z0.y,0)) < 1e-12 &&
+          Math.abs(num(a0.z,0)-num(z0.z,0)) < 1e-12) {
+        points.pop();
+        if (!num(a0.radius, 0) && num(z0.radius, 0)) {
+          points[0] = { x: num(a0.x,0), y: num(a0.y,0), z: num(a0.z,0), radius: num(z0.radius,0) };
+        }
+      }
+    }
     var n = points.length;
     if (n < 2) return null;
     function at(i) {
@@ -535,7 +555,14 @@
       if (len(dIn) < TOL || len(dOut) < TOL) return null;
       dIn = unit(dIn); dOut = unit(dOut);
       var axis = crs(dIn, dOut), sin = len(axis), cos = dot(dIn, dOut);
-      if (sin < TOL) return null;               /* in line, or a reversal */
+      if (sin < TOL) {
+        /* In line: there is no corner here, so the radius names nothing and is
+         * IGNORED — the same reading Go takes, which reports it as a warning and
+         * still builds the part. A reversal is a different matter: no radius can
+         * round it, and there is nothing honest to draw. */
+        if (cos > 0) { corners.push(null); continue; }
+        return null;
+      }
       var angle = Math.atan2(sin, cos);
       var cut = r * Math.tan(angle / 2);
       var from = add(at(i), mul(dIn, -cut));

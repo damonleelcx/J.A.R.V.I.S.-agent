@@ -666,37 +666,41 @@ func dedupe(in []string) []string {
 //
 // It is TRACKED, and the reason is a finding rather than a shrug. Measured at 17
 // of 24 against qwen-plus (2026-09-05, four cases over six runs each), and SIX of
-// the seven refusals are one thing:
+// the seven refusals were one thing:
 //
 //	A LOOP THAT REPEATS ITS FIRST POINT TO CLOSE ITSELF.
 //
 // It is the GeoJSON and WKT convention, and every polygon format a model has
 // read. This contract asks the opposite — "the outline is closed for you; do not
-// repeat the first point at the end" — and the model reaches for what it knows.
-// It appeared on outlines and on closed paths alike, sometimes with a corner
-// radius attached to the repeated point, which is why some of them are reported
-// as a radius on a point that "sits on top of its neighbour".
+// repeat the first point at the end" — and the model reached for what it knew.
+// The seventh was a `radius` on a path point whose neighbours were IN LINE: no
+// corner there, so the number changed nothing.
 //
-// The seventh is a `radius` on a path point whose neighbours are IN LINE: no
-// corner there, so the number changes nothing — the same shape of inertness that
-// wave 22 stopped being fatal at a path's end, one point along.
+// Both are now READ rather than refused (curve.go), and the redrawn measurement
+// is 13 of 14 — with one caveat that matters. The provider account stopped
+// accepting requests part-way through the re-run, so ten of the twenty-four runs
+// never happened, and the case where the closing convention appeared most often
+// is among the ones that did not. What IS established is that the drawings
+// themselves build: the two documents the suite lost are transcribed into
+// TestKernel_TheDrawingsTheEvalSuiteLostNowBuild and come back with the right
+// volume.
 //
-// Every one of those has exactly one reading, and the repeated point is
-// redundant rather than meaningful. Whether to read them that way is a DECISION,
-// and a floor over this rate would measure whether that decision has been taken
-// rather than whether the model draws buildable parts. So the number is reported
-// and the decision is named, which is what this package does with a rate it
-// cannot yet stand behind.
+// The one refusal that survived is neither pattern — an outline crossing its own
+// revolve axis, which is a drawing that is genuinely not a shape.
+//
+// It stays TRACKED. Fourteen runs is fourteen runs, the case that would move the
+// number most is unmeasured, and a floor set from a partial re-measurement is the
+// target-dressed-as-an-observation this package is arranged against.
 func outlinesResolveIntoShapes() Scorer {
 	return Scorer{
 		Name:    "an outline the model draws resolves into a shape",
 		Asserts: "no part is dropped from the build because its outline, holes or path could not be read",
 		Tracked: true,
-		FloorWhy: "TRACKED at 17 of 24 against qwen-plus (2026-09-05). SIX of the seven refusals are one " +
-			"thing — a loop repeating its first point to close itself, which is the convention every " +
-			"polygon format uses and this contract asks against — and a floor over that rate would " +
-			"measure whether that reading has been adopted rather than whether the model draws " +
-			"buildable parts.",
+		FloorWhy: "TRACKED at 17 of 24 against qwen-plus (2026-09-05), where six of the seven refusals " +
+			"were a loop repeating its first point to close itself. Both that and an inert radius are " +
+			"now read rather than refused; the re-measurement is 13 of 14 and INCOMPLETE — the provider " +
+			"account stopped accepting requests part-way, and the case that would move the number most " +
+			"is among the runs that never happened.",
 		Judge: func(o *Observation) (bool, string) {
 			var drawn, readable int
 			var refusals []string

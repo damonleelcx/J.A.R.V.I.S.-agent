@@ -294,18 +294,50 @@ drill "the renderer draws the outline and ignores its holes" internal/httpapi/as
   "s = s.replace('var bores = holeOutlines(holes);\n    var way = flattenDrawing', 'var bores = [];\n    var way = flattenDrawing', 1)" \
   ./internal/httpapi 'TestRendererSweepsTheSameSolidAsTheExporter'
 
-drill "an inert radius on a path's end is fatal again" internal/domain/geometry/profile.go \
-  's = s.replace("\t\t\t\t\tbends[i] = 0", "\t\t\t\t\t_ = i", 1)' \
-  ./internal/domain/geometry 'TestSwept_ARadiusOnAnEndIsIgnoredRatherThanFatal'
+drill "an inert radius on a run's END is fatal again" internal/domain/geometry/curve.go \
+  's = s.replace("inert(i, \"which is where the run starts or ends rather than a corner\")\n\t\t\tcontinue", "return nil, ignored, fmt.Errorf(\"no corner at an end\")", 1)' \
+  ./internal/domain/geometry 'TestSwept_ARadiusOnAnEndIsIgnoredRatherThanFatal|TestRoundedCorners_IgnoresARadiusThatNamesNoCorner'
 
 drill "the export calls a part absent when it is present" internal/domain/geometry/solid.go \
   's = s.replace("\t\tif problem.Severity == Error {", "\t\tif true {", 1)' \
   ./internal/domain/geometry 'TestSwept_ARadiusOnAnEndIsIgnoredRatherThanFatal'
 
+drill "a loop's repeated closing point is fatal again" internal/domain/geometry/curve.go \
+  's = s.replace("\tif n < 2 || !same(pts[0], pts[n-1]) {", "\tif true {", 1)' \
+  ./internal/domain/geometry 'TestProfileProblems_ALoopMayCloseItselfTheWayEveryPolygonFormatDoes'
+
+drill "the closing point's radius is dropped with the point" internal/domain/geometry/curve.go \
+  's = s.replace("\t\toutRadii[0] = closing", "\t\t_ = closing", 1)' \
+  ./internal/domain/geometry 'TestSolids_TheClosingPointsRadiusSurvivesIntoTheBuild|TestWithoutClosingDuplicate'
+
+drill "two different radii on one corner are merged silently" internal/domain/geometry/curve.go \
+  's = s.replace("\tcase outRadii[0] != closing:\n\t\treturn pts, radii, false, true", "\tcase false:\n\t\treturn pts, radii, false, true", 1)' \
+  ./internal/domain/geometry 'TestWithoutClosingDuplicate'
+
+drill "a duplicate ANYWHERE is read as a closing convention" internal/domain/geometry/curve.go \
+  's = s.replace("!same(pts[0], pts[n-1])", "false", 1)' \
+  ./internal/domain/geometry 'TestProfileProblems_ALoopMayCloseItselfTheWayEveryPolygonFormatDoes'
+
+drill "an inert radius is fatal again" internal/domain/geometry/curve.go \
+  's = s.replace("\t\t\t\tinert(i, \"where the edges either side of it are in line\")\n\t\t\t\tcontinue", "\t\t\t\treturn nil, ignored, fmt.Errorf(\"in line\")", 1)' \
+  ./internal/domain/geometry 'TestRoundedCorners_IgnoresARadiusThatNamesNoCorner'
+
+drill "an ignored radius is ignored SILENTLY" internal/domain/geometry/curve.go \
+  's = s.replace("\t\tignored = append(ignored, fmt.Sprintf(", "\t\t_ = fmt.Sprintf(", 1)' \
+  ./internal/domain/geometry 'TestRoundedCorners_IgnoresARadiusThatNamesNoCorner|TestSwept_ARadiusOnAnEndIsIgnoredRatherThanFatal'
+
+drill "the renderer keeps a loop's repeated closing point" internal/httpapi/assets/forge3d.js \
+  "s = s.replace('        points.pop();', '        void 0;', 1)" \
+  ./internal/httpapi 'TestRendererSweepsTheSameSolidAsTheExporter'
+
+drill "the renderer drops the closing point's radius" internal/httpapi/assets/forge3d.js \
+  "s = s.replace('        if (!num(a0.radius, 0) && num(z0.radius, 0)) {', '        if (false) {', 1)" \
+  ./internal/httpapi 'TestRendererSweepsTheSameSolidAsTheExporter'
+
 echo
 echo "Closed paths"
 drill "a closed path is swept as an open one" internal/domain/geometry/curve.go \
-  's = s.replace("out := polyline{Closed: p.PathClosed}", "out := polyline{}", 1)' \
+  's = s.replace("return readLoop(p.Path, p.PathClosed)", "return readLoop(p.Path, false)", 1)' \
   ./internal/domain/geometry 'TestSwept_AClosedPathEnclosesAreaTimesItsPerimeter'
 
 drill "the seam gets caps like an open path" internal/domain/geometry/mesh.go \

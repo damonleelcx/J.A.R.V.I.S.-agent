@@ -3181,6 +3181,61 @@ not been taken** — so the scorer reports the rate rather than flooring it. A f
 here would measure whether the decision had been made, not whether the model
 draws buildable parts.
 
+## Wave 24 — reading what the model actually writes · **DONE**
+
+The eval suite's first run found that **17 of 24 drawings resolved**, and that
+six of the seven refusals were one thing. Both fixes are now in, and both are the
+same idea: *a drawing that says something inert should not cost the whole part.*
+
+### A loop may close itself the way every polygon format closes one
+
+Every format a model has read — GeoJSON, WKT, shapefiles — closes a ring by
+repeating its first point. This contract asks the opposite, and the model reaches
+for what it knows. It has exactly one reading: a closed loop returning to its own
+first point has a final edge of zero length, which is never a shape, so the
+repeated point is redundant. It is dropped, on outlines, holes and closed paths
+alike, and the reader is told.
+
+**The radius moves with it.** The repeated point often carries the corner radius
+while the original does not — the model writes the corner once as a destination
+and once as a corner. Dropping the point and leaving the radius behind would
+MITRE a corner somebody asked to be bent: same silhouette, volume within a
+fraction, different part, made a different way, silently. Two copies carrying
+DIFFERENT radii is the one case with no single reading, and is refused.
+
+What is not relaxed is a duplicate anywhere else. That is a copied line somebody
+forgot to edit, it has no single reading, and it stays refused.
+
+### An inert radius is ignored, not fatal
+
+A radius on a point whose neighbours run straight through names no corner, so it
+changes nothing. It is now a warning and the part is built — the same treatment
+wave 22 gave a radius on a path's END, and the two are now ONE mechanism in
+`roundedCorners` rather than two spellings of one rule in two files.
+
+Still refused: a negative radius, one on a point sitting on its neighbour, one on
+a reversal, and two that need more edge than there is between them. Those cannot
+be read as anything.
+
+### What the re-measurement says, and what it does not
+
+**13 of 14, and incomplete.** The provider account stopped accepting requests
+part-way through the re-run — first `Arrearage` (overdue payment), then
+`Model not exist` — so ten of the twenty-four runs never happened, and
+`draws-a-closed-loop`, the case where the closing convention appeared most often,
+is among them. The scorer stays TRACKED: a floor set from a partial
+re-measurement is exactly the target-dressed-as-an-observation this suite is
+arranged against.
+
+What IS established without a model: both drawings the suite lost are transcribed
+into `TestKernel_TheDrawingsTheEvalSuiteLostNowBuild` and come back from OCCT
+with the right volume — including the one whose repeated closing point carried
+the bend radius, checked against the arithmetic for a loop that really is bent
+rather than mitred.
+
+The one refusal that survived is neither pattern: an outline crossing its own
+revolve axis, which is a drawing that genuinely is not a shape.
+
 ## Carried defects
 
 Eight of the eleven carried here are closed. The three that remain are not

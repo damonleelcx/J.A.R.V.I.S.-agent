@@ -126,6 +126,15 @@ func (d *Document) resolvedProfiles() (map[string]outline, map[string]polyline, 
 		problems = append(problems, Problem{Severity: Error, Name: name,
 			Detail: fmt.Sprintf(format, args...)})
 	}
+	// A WARNING is something in the drawing that could not mean anything and was
+	// ignored. The part is still built from what still says what it is — the same
+	// bargain a box carrying a profile has always had — and Solids says so
+	// without claiming the part is missing.
+	note := func(name string, details ...string) {
+		for _, d := range details {
+			problems = append(problems, Problem{Severity: Warning, Name: name, Detail: d})
+		}
+	}
 
 	for _, p := range d.Parts {
 		shape := strings.ToLower(strings.TrimSpace(p.Shape))
@@ -226,6 +235,27 @@ func (d *Document) resolvedProfiles() (map[string]outline, map[string]polyline, 
 			continue
 		}
 
+		// A loop that closes itself by repeating its first point is READ, not
+		// refused: see withoutClosingDuplicate. Done before the duplicate check
+		// below, which is the one that would otherwise refuse it.
+		lifted, radii, dropped, conflict := withoutClosingDuplicate(lift3D(pts), radii)
+		if conflict {
+			add(label, "closes by repeating its first point, and the two copies carry "+
+				"different corner radii; one corner cannot have two")
+			continue
+		}
+		if dropped {
+			note(label, "closes its outline by repeating its first point. The outline is "+
+				"closed already, so the repeated point was dropped")
+			pts = flat2D(lifted)
+		}
+		if len(pts) < minProfilePoints {
+			add(label, "is an %s with %d point(s) once its repeated closing point is dropped; "+
+				"an outline needs at least %d to enclose anything",
+				shape, len(pts), minProfilePoints)
+			continue
+		}
+
 		// A repeated point is a zero-length edge, which OCCT refuses and which
 		// is almost always a copied line somebody forgot to edit. Named, with
 		// the index, because in a list of eight coordinate pairs "one of these
@@ -267,12 +297,15 @@ func (d *Document) resolvedProfiles() (map[string]outline, map[string]polyline, 
 		// The corner radii are checked against the outline they are drawn on: a
 		// radius is only wrong in relation to the edges either side of it, so
 		// this cannot be done a point at a time.
-		if err := outer.validate("outline"); err != nil {
+		ignored, err := outer.validate("outline")
+		note(label, ignored...)
+		if err != nil {
 			add(label, "%v", err)
 			continue
 		}
 
-		holes, holeProblem := d.resolvedHoles(p, lookup)
+		holes, holeNotes, holeProblem := d.resolvedHoles(p, lookup)
+		note(label, holeNotes...)
 		if holeProblem != "" {
 			add(label, "%s", holeProblem)
 			continue
@@ -325,39 +358,35 @@ func (d *Document) resolvedProfiles() (map[string]outline, map[string]polyline, 
 			if bad {
 				continue
 			}
-			// A bend radius on an END of an open path is IGNORED rather than
-			// refused, and said so.
-			//
-			// # Why this one is not a refusal when the others are
-			//
-			// There is no corner at an end, so the number changes nothing. Unlike
-			// a z on an outline point — which could be a coordinate in the wrong
-			// column or a sweep whose path was never written, and has no single
-			// reading — this has exactly one: there is nothing there to round.
-			//
-			// Refusing cost the whole part. Measured over five live runs on
-			// 2026-09-05: qwen-plus filled in a radius on EVERY path point,
-			// ends included, in two of them — and both times a correct, buildable
-			// bent tube vanished from the file because of an inert number on a
-			// point with no corner. That is the same bargain a box carrying a
-			// profile already gets: the extra is reported, and the part is built
-			// from what still says what it is.
-			if !p.PathClosed {
-				for _, i := range []int{0, len(bends) - 1} {
-					if bends[i] == 0 {
-						continue
-					}
-					problems = append(problems, Problem{Severity: Warning, Name: label,
-						Detail: fmt.Sprintf("has a corner radius on path point %d, which is "+
-							"where the path %s rather than a corner; there is nothing there "+
-							"to round, so it was ignored",
-							i+1, map[bool]string{true: "starts", false: "ends"}[i == 0])})
-					bends[i] = 0
+			// A loop closed by repeating its first point is READ, and its radius
+			// comes with it: the repeated point often carries the corner radius
+			// while the original does not, and leaving it behind would mitre a
+			// corner somebody asked to be bent. See withoutClosingDuplicate.
+			if p.PathClosed {
+				cleaned, radii, dropped, conflict := withoutClosingDuplicate(way, bends)
+				if conflict {
+					add(label, "closes its path by repeating its first point, and the two "+
+						"copies carry different bend radii; one corner cannot have two")
+					continue
+				}
+				if dropped {
+					note(label, "closes its path by repeating its first point. A closed path "+
+						"joins its last point to its first already, so the repeated point "+
+						"was dropped")
+					way, bends = cleaned, radii
+				}
+				if len(way) < minClosedPathPoints {
+					add(label, "is a sweep round a closed path of %d points once its repeated "+
+						"closing point is dropped; a loop needs at least %d",
+						len(way), minClosedPathPoints)
+					continue
 				}
 			}
 			route := polyline{Points: way, Radii: bends, Closed: p.PathClosed}
-			if err := route.validate("path"); err != nil {
-				add(label, "%v", err)
+			ignoredBends, berr := route.validate("path")
+			note(label, ignoredBends...)
+			if berr != nil {
+				add(label, "%v", berr)
 				continue
 			}
 			// Built here, and the result thrown away, because every fault a path
@@ -517,47 +546,67 @@ func RevolveAxis(p Part) string {
 // reported against the part that carries it — there is nothing else a reader
 // could act on — and a hole that cannot be read takes the whole part out of the
 // file rather than leaving a solid one with its bore missing.
-func (d *Document) resolvedHoles(p Part, lookup func(string) (float64, bool)) ([]polyline, string) {
+func (d *Document) resolvedHoles(p Part, lookup func(string) (float64, bool)) ([]polyline, []string, string) {
 	out := make([]polyline, 0, len(p.Holes))
+	var notes []string
 	for n, hole := range p.Holes {
 		if len(hole) < minProfilePoints {
-			return nil, fmt.Sprintf("hole %d has %d point(s); a hole needs at least %d to "+
+			return nil, notes, fmt.Sprintf("hole %d has %d point(s); a hole needs at least %d to "+
 				"enclose anything", n+1, len(hole), minProfilePoints)
 		}
 		pts := make([][2]float64, 0, len(hole))
 		radii := make([]float64, 0, len(hole))
 		for i, pt := range hole {
 			if pt.Z != 0 || strings.TrimSpace(pt.ZFrom) != "" {
-				return nil, fmt.Sprintf("hole %d point %d carries a z; a hole lies in the "+
+				return nil, notes, fmt.Sprintf("hole %d point %d carries a z; a hole lies in the "+
 					"outline's own plane", n+1, i+1)
 			}
 			x, xerr := coordinate(pt.X, pt.XFrom, lookup)
 			y, yerr := coordinate(pt.Y, pt.YFrom, lookup)
 			r, rerr := coordinate(pt.Radius, pt.RadiusFrom, lookup)
 			if err := firstOf(xerr, yerr, rerr); err != nil {
-				return nil, fmt.Sprintf("hole %d point %d: %v", n+1, i+1, err)
+				return nil, notes, fmt.Sprintf("hole %d point %d: %v", n+1, i+1, err)
 			}
 			pts = append(pts, [2]float64{x, y})
 			radii = append(radii, r)
 		}
+		// A hole closed by repeating its first point is read the same way an
+		// outline's is, and for the same reason.
+		lifted, cleaned, dropped, conflict := withoutClosingDuplicate(lift3D(pts), radii)
+		if conflict {
+			return nil, notes, fmt.Sprintf("hole %d closes by repeating its first point, and "+
+				"the two copies carry different corner radii; one corner cannot have two", n+1)
+		}
+		if dropped {
+			notes = append(notes, fmt.Sprintf("closes hole %d by repeating its first point. A "+
+				"hole is a closed loop already, so the repeated point was dropped", n+1))
+			pts, radii = flat2D(lifted), cleaned
+		}
+		if len(pts) < minProfilePoints {
+			return nil, notes, fmt.Sprintf("hole %d has %d point(s) once its repeated closing "+
+				"point is dropped; a hole needs at least %d to enclose anything",
+				n+1, len(pts), minProfilePoints)
+		}
 		if i, j, dup := duplicatePoint(pts); dup {
-			return nil, fmt.Sprintf("hole %d has points %d and %d the same (%g, %g); a loop "+
+			return nil, notes, fmt.Sprintf("hole %d has points %d and %d the same (%g, %g); a loop "+
 				"cannot have an edge of zero length", n+1, i+1, j+1, pts[i][0], pts[i][1])
 		}
 		if math.Abs(signedArea(pts)) < 1e-9 {
-			return nil, fmt.Sprintf("hole %d encloses no area; its points are all on one line", n+1)
+			return nil, notes, fmt.Sprintf("hole %d encloses no area; its points are all on one line", n+1)
 		}
 		if selfIntersects(pts) {
-			return nil, fmt.Sprintf("hole %d crosses itself, so it does not enclose a single "+
+			return nil, notes, fmt.Sprintf("hole %d crosses itself, so it does not enclose a single "+
 				"region; check the order of its points", n+1)
 		}
 		loop := polyline{Points: lift3D(pts), Radii: radii, Closed: true}
-		if err := loop.validate(fmt.Sprintf("hole %d", n+1)); err != nil {
-			return nil, err.Error()
+		ignored, err := loop.validate(fmt.Sprintf("hole %d", n+1))
+		notes = append(notes, ignored...)
+		if err != nil {
+			return nil, notes, err.Error()
 		}
 		out = append(out, loop)
 	}
-	return out, ""
+	return out, notes, ""
 }
 
 // holesFit checks that every hole is really a hole: inside the outline, and not
