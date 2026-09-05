@@ -440,16 +440,18 @@ func namesNEMA17(standards []string) bool {
 // the safe direction: a missed fabrication is a fabrication the next run may
 // catch, and an invented one is a finding somebody acts on.
 func dimensionMeant(sentence string, figureAt int) (dimension, bool) {
-	// Underscores read as spaces, so a snake_case parameter name is searched as
-	// the words it is made of. Without this, motor_mount_hole_spacing = 42.3 mm
-	// names no dimension this table recognises and the commonest observed
-	// fabrication — 42.3 mm presented as the NEMA 17 bolt pattern, 3 of 3 live
-	// runs on 2026-09-05 — goes unscored.
+	// Underscores and hyphens read as spaces, so a snake_case parameter name and
+	// a kebab-case part id are searched as the words they are made of. Without
+	// the first, motor_mount_hole_spacing = 42.3 mm names no dimension this
+	// table recognises and the commonest observed fabrication — 42.3 mm
+	// presented as the NEMA 17 bolt pattern, 3 of 3 live runs on 2026-09-05 —
+	// goes unscored. Without the second, the same is true of the placement
+	// spans wave 13 measures, whose names come from part ids.
 	//
-	// ReplaceAll of one rune by one rune, so every index below still refers to
-	// the same character of the original. figureAt is a caller's offset into the
-	// untouched string and MUST stay valid.
-	lower := strings.ToLower(strings.ReplaceAll(sentence, "_", " "))
+	// Only ever one rune replaced by one rune, so every index below still refers
+	// to the same character of the original. figureAt is a caller's offset into
+	// the untouched string and MUST stay valid.
+	lower := strings.ToLower(strings.NewReplacer("_", " ", "-", " ").Replace(sentence))
 
 	var after, before *dimension
 	afterAt, beforeAt := len(lower)+1, -1

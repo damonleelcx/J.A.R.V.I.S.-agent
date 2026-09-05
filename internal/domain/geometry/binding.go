@@ -353,3 +353,131 @@ func sortedFloatKeys(m map[string]float64) []string {
 	sort.Strings(out)
 	return out
 }
+
+// Span is the distance between parts placed by expressions resting on the same
+// parameters.
+//
+// # Why this exists, and what it is NOT
+//
+// The 2026-09-05 spike's third conclusion was that expressions are a new place
+// for errors to hide: a wrong NUMBER can be checked against a published figure,
+// and a wrong RELATIONSHIP produces plausible numbers from correct inputs. Wave
+// 11's live run produced the textbook case:
+//
+//	nema17_face_size = 42.3 mm          how=standard   ← the figure is CORRECT
+//	motor_mount_x    = nema17_face_size / 2
+//	four holes at (±motor_mount_x, ±motor_mount_x)
+//
+// Every figure there checks out. The holes land on a 42.3 mm square, and NEMA
+// 17's bolt pattern is 31 mm square, so the part cannot be bolted to the motor.
+// Checking the inputs will never find this; only the RESULT will.
+//
+// The grouping is read from the BINDINGS and never from the geometry. Parts
+// whose position on one axis is computed from the same parameters are related
+// because the document says so — not because something here decided that four
+// cylinders near each other must be a bolt pattern. That distinction is the
+// whole reason this is safe to act on: guessing what a group of parts IS would
+// be the fabricated-finding failure standards.go exists to avoid, and this does
+// not guess.
+//
+// It reports a measurement. Whether the measurement is WRONG is not decided
+// here: that needs to know which published dimension it should be compared
+// against, which is the honesty machinery's job and not the domain's.
+type Span struct {
+	// Axis is "x", "y" or "z".
+	Axis string
+	// Parts are the ids taking part, sorted.
+	Parts []string
+	// Extent is the distance between the outermost two, in Unit.
+	Extent float64
+	Unit   string
+	// Depends is every parameter the placement rests on, sorted. Provenance
+	// travels along these, exactly as it does for a derived value.
+	Depends []string
+}
+
+// Spans returns every pattern the document's position bindings describe.
+//
+// A group needs at least two parts at DIFFERENT positions: one part is not a
+// pattern, and several parts at the same coordinate span nothing.
+func (d *Document) Spans() []Span {
+	if d == nil || len(d.Parts) == 0 {
+		return nil
+	}
+	res := d.Resolve()
+	lookup := func(n string) (float64, bool) {
+		v, ok := res.Values[n]
+		return v.Number, ok
+	}
+
+	type placed struct {
+		part    string
+		value   float64
+		depends []string
+	}
+	// Keyed by axis and by the parameters the placement rests on, so parts
+	// positioned from unrelated parameters are never compared.
+	groups := map[string][]placed{}
+	order := []string{}
+
+	for _, axis := range []string{"x", "y", "z"} {
+		for _, p := range d.Parts {
+			expr, bound := p.PositionFrom[axis]
+			if !bound {
+				continue
+			}
+			node, err := parseExpression(expr)
+			if err != nil {
+				continue
+			}
+			value, err := node.Eval(lookup)
+			if err != nil || math.IsNaN(value) || math.IsInf(value, 0) {
+				continue
+			}
+			depends := dependenciesOf(node.References(), res.Values)
+			if len(depends) == 0 {
+				continue
+			}
+			key := axis + "|" + strings.Join(depends, ",")
+			if _, seen := groups[key]; !seen {
+				order = append(order, key)
+			}
+			groups[key] = append(groups[key], placed{part: p.ID, value: value, depends: depends})
+		}
+	}
+
+	var out []Span
+	for _, key := range order {
+		members := groups[key]
+		if len(members) < 2 {
+			continue
+		}
+		lo, hi := members[0].value, members[0].value
+		ids := make([]string, 0, len(members))
+		distinct := map[float64]bool{}
+		for _, m := range members {
+			lo = math.Min(lo, m.value)
+			hi = math.Max(hi, m.value)
+			distinct[m.value] = true
+			ids = append(ids, m.part)
+		}
+		// EXACTLY two distinct positions, and no more.
+		//
+		// With two, the extent between them is unambiguously the spacing — the
+		// four holes of a bolt pattern sit at ±x, which is two positions on each
+		// axis. With three or more in a row the extent is some multiple of the
+		// pitch and nothing here knows which, so calling it a spacing would be
+		// arithmetic invented to fill a gap. Those are left unreported: a missed
+		// finding is recoverable and an invented one is acted on.
+		if len(distinct) != 2 || hi-lo <= 0 {
+			continue
+		}
+		sort.Strings(ids)
+		unit, _ := inheritedUnit(members[0].depends, res.Values)
+		out = append(out, Span{
+			Axis: strings.SplitN(key, "|", 2)[0], Parts: ids,
+			Extent: hi - lo, Unit: unit, Depends: members[0].depends,
+		})
+	}
+	return out
+}

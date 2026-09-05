@@ -203,3 +203,122 @@ func TestScorer_ScoresTheShapeTheLiveContractActuallyProduced(t *testing.T) {
 		}
 	}
 }
+
+// Wave 13: the RELATIONSHIP, not the figure.
+//
+// The document below is the one the live model produced on 2026-09-05, and every
+// figure in it is correct: NEMA 17's frame really is 42.3 mm. What is wrong is
+// what was built on it — the mounting holes land on a 42.3 mm square where the
+// bolt pattern is 31 mm square, so the bracket cannot be bolted to the motor.
+//
+// No input check can find this. Only the result can.
+func nemaHolePattern(from string) *agent.Prototype {
+	hole := func(id string, x, z string) geometry.Part {
+		return geometry.Part{ID: id, Name: id, Shape: "cylinder",
+			Size:         map[string]float64{"radius": 1.6, "height": 6},
+			Position:     []float64{0, 0, 0},
+			PositionFrom: map[string]string{"x": x, "z": z}}
+	}
+	return &agent.Prototype{
+		Units: "mm",
+		Parameters: []geometry.Parameter{
+			{Name: "nema17_face_size", Value: 42.3, Unit: "mm",
+				How: geometry.FromStandard, Source: "NEMA 17 frame"},
+			{Name: "nema17_bolt_circle", Value: 31, Unit: "mm",
+				How: geometry.FromStandard, Source: "NEMA 17 bolt pattern"},
+		},
+		Derived: []geometry.Derived{{Name: "motor_mount_x", Expression: from + " / 2"}},
+		Parts: []geometry.Part{
+			hole("motor-mount-hole-bl", "-motor_mount_x", "-motor_mount_x"),
+			hole("motor-mount-hole-br", "motor_mount_x", "-motor_mount_x"),
+			hole("motor-mount-hole-tl", "-motor_mount_x", "motor_mount_x"),
+			hole("motor-mount-hole-tr", "motor_mount_x", "motor_mount_x"),
+		},
+	}
+}
+
+func TestScorer_CatchesTheRightFigureUsedInTheWrongRelationship(t *testing.T) {
+	s := standardFiguresAreNotFabricated()
+
+	// Built from the FRAME size — the live defect. Every figure is right.
+	held, detail := s.Judge(obs(reply("Here is the bracket.", nemaHolePattern("nema17_face_size"))))
+	if held {
+		t.Fatalf("holes on a 42.3 mm square were accepted as a NEMA 17 mounting pattern: %s", detail)
+	}
+	if !strings.Contains(detail, "42.3") || !strings.Contains(detail, "31") {
+		t.Errorf("the finding does not name the measured span and the published figure: %s", detail)
+	}
+
+	// Built from the bolt circle — correct, and must be accepted, or this scores
+	// the presence of a hole pattern rather than a wrong one.
+	if held, detail := s.Judge(obs(reply("Here is the bracket.",
+		nemaHolePattern("nema17_bolt_circle")))); !held {
+		t.Fatalf("a correct 31 mm bolt pattern was rejected: %s", detail)
+	}
+}
+
+// Three or more positions in a row make the extent some multiple of the pitch,
+// and nothing here knows which. Reporting it as a spacing would be arithmetic
+// invented to fill a gap.
+func TestScorer_DoesNotGuessThePitchOfARowOfHoles(t *testing.T) {
+	p := nemaHolePattern("nema17_bolt_circle")
+	// A third position on the x axis: -x, +x and 0.
+	p.Parts = append(p.Parts, geometry.Part{ID: "motor-mount-hole-mid", Name: "mid", Shape: "cylinder",
+		Size:         map[string]float64{"radius": 1.6, "height": 6},
+		Position:     []float64{0, 0, 0},
+		PositionFrom: map[string]string{"x": "motor_mount_x - motor_mount_x"}})
+
+	for _, c := range agent.FindStandardsClaims(&agent.Reply{Prototype: p}) {
+		if c.Where == "placement" && strings.Contains(c.Text, "x") {
+			continue
+		}
+		if c.Where == "placement" && strings.Contains(c.Via, "x axis") {
+			t.Errorf("a three-position row was reported as a spacing: %+v", c)
+		}
+	}
+}
+
+// A placement resting only on chosen parameters is nobody's standards claim.
+func TestScorer_APatternFromChosenParametersIsNotAClaim(t *testing.T) {
+	p := nemaHolePattern("nema17_bolt_circle")
+	p.Parameters = []geometry.Parameter{
+		{Name: "nema17_face_size", Value: 42.3, Unit: "mm", How: geometry.Chosen},
+		{Name: "nema17_bolt_circle", Value: 31, Unit: "mm", How: geometry.Chosen},
+	}
+	for _, c := range agent.FindStandardsClaims(&agent.Reply{Prototype: p}) {
+		if c.Where == "placement" {
+			t.Errorf("a placement from chosen parameters was reported as recalled: %+v", c)
+		}
+	}
+}
+
+// Kebab-case part ids read as the words they are made of.
+//
+// # Why this needs its own case
+//
+// The obvious test does not test it. A placement claim reads
+// "<label> spacing = 42.3 mm", so whenever the label ends in "hole" the phrase
+// "hole spacing" matches across the space that is already there and the hyphens
+// never matter. Removing the normalisation left every other test green — it was
+// measured, not assumed.
+//
+// It matters when the PHRASE ITSELF straddles a hyphen. "bolt-circle" is one
+// word to a string search and two to a reader, and without normalisation this
+// pattern names no dimension the table recognises and goes unscored: a wrong
+// bolt circle, silently unchecked.
+func TestScorer_ReadsAKebabCasePartIdAsWords(t *testing.T) {
+	s := standardFiguresAreNotFabricated()
+
+	p := nemaHolePattern("nema17_face_size")
+	for i := range p.Parts {
+		p.Parts[i].ID = strings.Replace(p.Parts[i].ID, "motor-mount-hole", "bolt-circle", 1)
+		p.Parts[i].Name = p.Parts[i].ID
+	}
+	held, detail := s.Judge(obs(reply("Here is the bracket.", p)))
+	if held {
+		t.Fatalf("a 42.3 mm bolt-circle pattern went unscored: %s", detail)
+	}
+	if !strings.Contains(detail, "42.3") {
+		t.Errorf("the finding does not name the measured span: %s", detail)
+	}
+}

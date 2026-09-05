@@ -2326,12 +2326,87 @@ this system examines one.
 
 ### What is NOT done
 
-- **No UI.** The endpoint exists and nothing in the workbench calls it. A person
-  cannot yet turn a knob; a client can.
+- ~~**No UI.**~~ **Done in wave 12.**
 - **Parametric export still refused** (VIS-05). Unchanged.
-- **Nothing checks a relationship**, per the example above. Detecting it would
-  mean knowing what a design is FOR, which is a different kind of system.
+- ~~**Nothing checks a relationship.**~~ **Partly done in wave 13** — the
+  measurable case is covered; see there for what still is not.
 - **Rotation is unbindable**, by decision.
+
+## Wave 12 — a person can turn the knob · **DONE**
+
+Waves 10 and 11 built the whole re-derivation path and no surface in the product
+could reach it. The variant rail now says how many parameters a design has and
+offers them: each is an editable number with its unit, the derived values sit
+beneath as EXPRESSIONS rather than controls, and Re-derive posts only what
+actually changed.
+
+Three things worth keeping.
+
+- **Derived values are shown, not editable.** Setting one changes nothing —
+  it is recomputed from its expression a moment later — so offering it would read
+  as working. What the panel shows instead is the relationship, which is the
+  thing a person needs in order to decide which parameter to change.
+- **Only the CHANGED parameters are sent.** Sending all of them would rewrite
+  each one's provenance to "chosen", including recalled figures nobody touched.
+- **A recalled figure is marked AT THE CONTROL**, not only in the provenance
+  banner further up the page. This is where somebody changes one.
+
+**Found while writing it:** `workbench.css` referenced `var(--line)`, a custom
+property this codebase has never defined, with no fallback — so the declaration
+was dropped and the panel would have had no border. Every custom property the
+stylesheet reads is now audited.
+
+The geometry HTTP surface had **no tests at all**. It has four now, against real
+Postgres, covering the exact response shape the panel dereferences by name: a
+renamed field breaks the browser and nothing else, and nothing else would notice.
+
+## Wave 13 — the relationship, not the figure · **DONE**
+
+Wave 11's live run produced a document in which every figure was correct and the
+part could not be bolted to the motor:
+
+```
+nema17_face_size = 42.3 mm   how=standard   ← correct: NEMA 17's frame IS 42.3
+motor_mount_x    = nema17_face_size / 2
+holes at (±motor_mount_x, ±motor_mount_x)   ← a 42.3 mm square
+```
+
+NEMA 17's bolt pattern is 31 mm square. No check of the INPUTS can find this.
+
+`Document.Spans` measures what the placements actually describe, and the honesty
+machinery scores that instead. The result catches the defect above and accepts
+the same document built from `nema17_bolt_circle`.
+
+### Why this is not the guessing standards.go refuses
+
+The grouping is read from the BINDINGS, never from the geometry. Parts whose
+position on one axis is computed from the same parameters are related because the
+document says so — nothing here decides that four cylinders near each other must
+be a bolt pattern. What names the group is the parts' own shared id, and if that
+id says nothing the dimension table recognises, the figure is **not scored**
+rather than guessed at.
+
+Two narrowings, both from things that went wrong while building it:
+
+- **Exactly two distinct positions, or nothing.** With two, the extent between
+  them is unambiguously the spacing. With three in a row it is some multiple of
+  the pitch and nothing here knows which.
+- **"mount hole" was added to the dimension table and reverted.** It matched
+  `mount_hole_x_OFFSET`, which is half a pitch, and scoring that against the
+  published 31 mm is exactly the fabricated finding this suite's own fences
+  exist to catch — and they caught it, immediately.
+
+### What is still NOT checked
+
+- **A relationship whose result nothing can name.** `motor_mount_x` on its own
+  names no dimension, and if the parts it places are called something the table
+  does not recognise, the span goes unreported. Under-reporting is the safe
+  direction and this takes it.
+- **A relationship with no binding.** Holes at hardcoded coordinates describe no
+  pattern to measure. Wave 13 checks what is bound.
+- **Anything that is not a distance between two positions.** An angle, a ratio,
+  a wall thickness derived wrongly — none of these have a measurable result to
+  compare against a published figure.
 
 ## Carried defects
 

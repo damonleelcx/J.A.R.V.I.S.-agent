@@ -112,6 +112,58 @@ func typedClaims(doc *geometry.Document) []StandardsClaim {
 		})
 	}
 
+	// Patterns: what the placement actually MEASURES (wave 13).
+	//
+	// A figure can be right and the relationship built on it wrong, and only the
+	// result shows it. The live run of 2026-09-05 recalled 42.3 mm correctly as
+	// the NEMA 17 frame and then placed four mounting holes on a 42.3 mm square,
+	// where the bolt pattern is 31 mm. Every input checked out; the part cannot
+	// be bolted to the motor.
+	//
+	// The parts are grouped by their BINDINGS — Spans reads which placements rest
+	// on the same parameters — so nothing here decides that a group of parts is a
+	// bolt pattern. What names it is the parts' own shared id, and if that id
+	// says nothing a dimension table recognises, the figure goes unscored rather
+	// than guessed at. Under-reporting is the safe direction, and it is the same
+	// direction the rest of this file takes.
+	for _, span := range doc.Spans() {
+		var refs []string
+		for _, dep := range span.Depends {
+			p, ok := byName[dep]
+			if !ok || p.How != geometry.FromStandard {
+				continue
+			}
+			refs = append(refs, standardRefsFor(p)...)
+		}
+		if len(refs) == 0 {
+			continue
+		}
+		label := commonPartLabel(span.Parts)
+		if label == "" {
+			// Nothing shared to call it. A span nobody can name cannot be
+			// attributed to a dimension, and the parameters underneath it are
+			// already reported above — so this would be a second copy of a
+			// figure with no new information in it.
+			continue
+		}
+		figure := figureText(geometry.Value{Number: span.Extent, Unit: span.Unit})
+		out = append(out, StandardsClaim{
+			Standards: dedupeFold(refs),
+			Figures:   []string{figure},
+			Where:     "placement",
+			// "spacing" rather than "span" because Spans reports only groups
+			// at exactly two distinct positions, where the extent between them
+			// IS the spacing — and because the dimension table already knows
+			// that word. Adding a new phrase for this instead ("mount hole")
+			// was tried and reverted: it matched mount_hole_x_OFFSET too, which
+			// is half a pitch, and scoring that against the published 31 mm is
+			// the fabricated finding this file's own fences exist to catch.
+			Text: fmt.Sprintf("%s spacing = %s", label, figure),
+			Via: fmt.Sprintf("measured across %d parts placed on the %s axis from %s",
+				len(span.Parts), span.Axis, strings.Join(span.Depends, ", ")),
+		})
+	}
+
 	// Derived values, in the order they resolve, so the chain reads forwards.
 	for _, name := range res.Order {
 		v, ok := res.Values[name]
@@ -212,4 +264,35 @@ func parameterNote(p geometry.Problem) string {
 		return fmt.Sprintf("%s — %s %s.", lead, p.Name, p.Detail)
 	}
 	return fmt.Sprintf("%s — %s.", lead, p.Detail)
+}
+
+// commonPartLabel is the name a group of parts shares, or "" when they share
+// nothing worth calling them.
+//
+// Taken from the parts' own ids rather than composed here. "motor-mount-hole-bl"
+// and "motor-mount-hole-tr" are called "motor-mount-hole" because that is what
+// their author called them; inventing a name for a group would be deciding what
+// the group IS, which is the one thing this file must not do.
+//
+// A prefix is only used when it survives being trimmed back to a separator, so
+// "rib-left" and "rib-right" give "rib" and never "rib-l".
+func commonPartLabel(ids []string) string {
+	if len(ids) < 2 {
+		return ""
+	}
+	prefix := ids[0]
+	for _, id := range ids[1:] {
+		n := 0
+		for n < len(prefix) && n < len(id) && prefix[n] == id[n] {
+			n++
+		}
+		prefix = prefix[:n]
+	}
+	prefix = strings.TrimRight(prefix, "-_ ")
+	// Two characters is not a name. Below that the "shared" prefix is an
+	// accident of spelling rather than something the author meant.
+	if len(prefix) < 3 {
+		return ""
+	}
+	return prefix
 }
