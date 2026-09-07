@@ -18,6 +18,25 @@ spec:
         # Named by the postgres and mail NetworkPolicies in the heros namespace.
         app.kubernetes.io/part-of: forge
     spec:
+      # hostNetwork so the media plane can bind its WebRTC UDP range.
+      #
+      # k8s has no workable way to publish 200 UDP ports: hostPort is per-port,
+      # and NodePort's range does not contain them. An SFU needs the ports it
+      # advertises in ICE candidates to be the ports the world can reach, so the
+      # pod takes the node's network namespace.
+      #
+      # ⚠️ dnsPolicy MUST be ClusterFirstWithHostNet. The default ClusterFirst
+      # resolves against the HOST's resolver once the pod is on host network,
+      # and every cluster name it depends on — postgres.heros.svc.cluster.local,
+      # and mail.heros-agent.space via hostAliases — stops resolving. The pod
+      # starts and then cannot reach its database.
+      #
+      # ⚠️ A hostNetwork pod has no pod IP, so NetworkPolicies that select on
+      # namespace + pod labels no longer match it. postgres and mail admit the
+      # NODE's ip instead — see deploy/patch-hostnetwork-netpol.sh, which must be
+      # applied before this rolls out.
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
       securityContext: { runAsNonRoot: true, runAsUser: 10001, fsGroup: 10001 }
       # The mail relay's cert has exactly one SAN: mail.heros-agent.space.
       # Reaching it by Service name fails TLS and mail then silently never

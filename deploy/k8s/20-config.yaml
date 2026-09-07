@@ -43,6 +43,19 @@ data:
   # second egress. Chosen deliberately on 2026-09-07; switch to s2.1-pro (paid,
   # does not train) if what FORGE says aloud must not be trained on.
   # forged logs `tts_trains_on_input` at startup so this is never implied.
+  # The media plane: multi-party audio rooms (PRD AUD-01).
+  #
+  # PUBLIC_IP is required here and is not optional: this node sits behind
+  # one-to-one NAT (private 172.31.30.81, public 23.21.75.162). Left empty the
+  # SFU advertises what it observes, which is the private address — ICE then
+  # offers candidates nobody outside the VPC can reach, and calls fail to
+  # connect with no error that says why.
+  #
+  # The UDP range must be open on the instance's security group; it is, as of
+  # 2026-09-07 (sgr-04ea9c2e61636ec6b).
+  FORGE_MEDIA_ENABLED: "true"
+  FORGE_MEDIA_PUBLIC_IP: "23.21.75.162"
+
   FORGE_TTS_PROVIDER: "fish"
   FORGE_TTS_VOICE_ID: "df5c6c19dca944918dcbd6f1368fd02f"
   FORGE_TTS_MODEL: "s2.1-pro-free"
