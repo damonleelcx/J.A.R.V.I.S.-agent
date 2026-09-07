@@ -323,3 +323,94 @@ func dedupe(op string, ids []string) ([]string, error) {
 // carry. Stated as a constant so the API, the CLI and the workbench refuse at
 // the same number instead of three different ones.
 const MaxCompare = 6
+
+// Respec re-derives a variant with different parameter values (wave 11).
+//
+// # What this is for
+//
+// It is the operation the 2026-09-05 kernel spike performed by hand nine times:
+// change one parameter and see whether the design survives it. Until the binding
+// layer existed there was nothing to change — a part's width was the number the
+// model typed, and "set plate_size to 80" would have moved nothing.
+//
+// # Why it appends a version rather than editing in place
+//
+// The result keeps the source document's NAME, so it lands on the same artifact
+// path and becomes the next version of the same thing. That is what makes the
+// two comparable side by side (PRD VIS-04) rather than two unrelated designs —
+// and it leaves the original exactly as the model produced it, which is what a
+// replay depends on.
+//
+// # Why an override naming nothing is refused rather than ignored
+//
+// Setting a parameter that does not exist, or a derived value that is recomputed
+// from its expression a moment later, produces a new version identical to the
+// old one. That reads as success and is not, and the person who typed the name
+// would have no way to tell. So it fails, and says which name it could not use.
+func (s *Service) Respec(ctx context.Context, versionID, byUserID string, overrides map[string]float64) (*Variant, []Problem, error) {
+	const op = "geometry.Service.Respec"
+
+	if strings.TrimSpace(byUserID) == "" {
+		return nil, nil, errs.New(op, errs.CodeValidationFailed).
+			WithDetail("re-specifying a variant must name who changed it; a dimension nobody chose " +
+				"has no authority behind it")
+	}
+	if len(overrides) == 0 {
+		return nil, nil, errs.New(op, errs.CodeValidationFailed).
+			WithDetail("no parameter was given to change, so this would append an identical copy. " +
+				"Name at least one parameter and its new value")
+	}
+	source, err := s.repo.Find(ctx, s.pool, versionID)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	next, problems := source.Document.WithParameters(overrides)
+
+	// A problem whose name is one of the requested overrides is a refusal OF
+	// that override — WithParameters names them after the key it could not use.
+	// The rest are things the document already had to say about itself, and
+	// those travel with the new variant rather than blocking it.
+	for _, p := range problems {
+		if p.Severity != Error {
+			continue
+		}
+		if _, requested := overrides[p.Name]; !requested {
+			continue
+		}
+		return nil, nil, errs.New(op, errs.CodeValidationFailed).
+			WithDetail("cannot change %s of %s: %s", p.Name, source.Name, p.Detail)
+	}
+
+	changed := make(map[string]float64, len(overrides))
+	for k, v := range overrides {
+		changed[k] = v
+	}
+	saved, err := s.Save(ctx, NewVariant{
+		ProjectID:   source.ProjectID,
+		InitiatorID: byUserID,
+		// A person chose the new value; the geometry that follows from it was
+		// computed by FORGE. WRK-04's agent says which part of FORGE acted, and
+		// choosing a dimension is an act of a person.
+		Agent:     workspace.AgentHuman,
+		Generator: source.Generator,
+		Document:  *next,
+		Inputs: map[string]any{
+			"source":              "respecified",
+			"respecified_from":    source.VersionID,
+			"respecified_version": source.Version,
+			"respecified_by":      byUserID,
+			"parameters_changed":  changed,
+			"note": "This geometry was COMPUTED from an earlier variant by changing the parameters " +
+				"listed above and re-evaluating every expression that depends on them. It is not a " +
+				"new proposal: no model was asked, and nothing here was checked.",
+		},
+	})
+	if err != nil {
+		return nil, nil, err
+	}
+	s.log.Info(ctx, logx.EventGeometryRespecified,
+		"version_id", saved.VersionID, "respecified_from", source.VersionID,
+		"project_id", saved.ProjectID, "by", byUserID, "parameters", len(changed))
+	return saved, problems, nil
+}

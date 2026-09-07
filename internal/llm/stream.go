@@ -82,6 +82,10 @@ func (c *OpenAICompatible) Stream(ctx context.Context, req Request, onChunk func
 	if req.JSONMode {
 		body["response_format"] = map[string]string{"type": "json_object"}
 	}
+	// The path a person actually waits on. Without this the conversation model
+	// deliberates first and the first word arrives ~29s late — measured, and
+	// explained in full in deliberation.go.
+	c.applyDeliberation(ctx, req.Role, body)
 
 	payload, err := json.Marshal(body)
 	if err != nil {

@@ -810,23 +810,84 @@
         empty('Nothing has been asked yet this session. Ask FORGE something and the turn is ' +
           'timed here.');
 
+    var history = renderHistory();
+
     /* Named, not left blank. The half of NFR-05 this build does not collect is
      * the half somebody would otherwise assume was fine. */
     var missing = '<div class="wbunmeas"><div class="wbunmeas-h">Not measured here</div>' +
       '<ul class="wbrel-l">' +
-      '<li><b>Anything before this tab was opened.</b> The server writes each turn\'s timings ' +
-      'to its log and has no endpoint that reads them back, so there is no history to show ' +
-      'and this panel empties on reload.</li>' +
       '<li><b>End of utterance to first audio</b>, which is the figure AUD-02 actually names. ' +
       'What is measured starts at Send.</li>' +
       '<li><b>Retrieval time.</b> A turn is marked as having quoted memory or not; how long ' +
       'that took is not separated from the rest of the turn.</li>' +
-      '<li><b>Tool calls, plans, approvals and failures</b> (NFR-05). Those belong to goals, ' +
+      '<li><b>A turn that failed before it replied.</b> Nothing is recorded for one: the ' +
+      'record is appended when a reply lands. Those are in the server log with their error ' +
+      'code — so a quiet history is not the same as a healthy one.</li>' +
+      '<li><b>Tool calls, plans and approvals</b> (NFR-05). Those belong to goals, ' +
       'which run in the worker and report on their own timeline — see Operations, not here.</li>' +
-      '<li><b>Anybody else\'s turns.</b> This is one browser session, not the deployment.</li>' +
+      '<li><b>Anybody else\'s turns.</b> The history below is your own, not the deployment\'s. ' +
+      'One signed-in account reading when everybody else was working is an access decision ' +
+      'nobody here has made.</li>' +
       '</ul></div>';
 
-    el.innerHTML = head + models + list + missing;
+    el.innerHTML = head + models + list + history + missing;
+  }
+
+  /* ---- what the SERVER measured, before this tab existed -----------------
+   *
+   * Until wave 28 the first line of "Not measured here" was that this did not
+   * exist: every turn was timed, the timings went to the log, and nothing read
+   * them back — so the panel emptied on reload and knew nothing about
+   * yesterday. NFR-05 was the one PRD line with a real measurement behind it
+   * and no way to look at it.
+   *
+   * Kept as its own block rather than merged into the session list above,
+   * because the two answer different questions and are measured by different
+   * clocks. The session list has the browser's numbers in it — time to first
+   * AUDIO, barge-in — which the server never sees and which are not in here.
+   * Merging them would produce a list where half the columns are silently
+   * absent on half the rows. */
+  function renderHistory() {
+    var h = state.history;
+    if (!h) return '<div class="wbtel-h">Before this session</div>' + empty('Reading…');
+    if (h.error) {
+      return '<div class="wbtel-h">Before this session</div>' +
+        problem('The measured history could not be read: ' + h.error);
+    }
+    var rows = h.turns || [];
+    if (!rows.length) {
+      return '<div class="wbtel-h">Before this session</div>' +
+        empty('No turn has been measured on this account yet. A turn is recorded when its ' +
+          'reply lands, so the first one appears here after you have asked something.');
+    }
+    return '<div class="wbtel-h">Before this session</div>' +
+      '<div class="wbtel-g">' +
+      stat('turns measured', String(rows.length), esc(h.population || '')) +
+      stat('median to first token', ms(h.median_first_token_ms),
+        'server clock, n=' + rows.filter(function (t) { return t.first_token_ms != null; }).length) +
+      stat('median full reply', ms(h.median_total_ms),
+        'server clock, the whole turn') +
+      '</div>' +
+      '<ol class="wbturns">' + rows.map(historyRow).join('') + '</ol>' +
+      '<p class="wbnote">' + esc(h.excludes || '') + '</p>';
+  }
+
+  function historyRow(t) {
+    return '<li class="wbturn">' +
+      '<div class="wbturn-h">' +
+        '<span class="wbver-w">' + esc(t.at) + '</span>' +
+        (t.model ? '<span class="wbver-a">' + esc(t.model) + '</span>' : '') +
+      '</div>' +
+      '<div class="wbturn-m">' +
+        '<span>first token ' + ms(t.first_token_ms) + ' <i>server</i></span>' +
+        '<span>full reply ' + ms(t.total_ms) + ' <i>server</i></span>' +
+        /* The handler's own elapsed time, beside the model's. The DIFFERENCE is
+         * this system's overhead, and it is only visible while the two are
+         * separate numbers. */
+        '<span>round trip ' + ms(t.round_trip_ms) + ' <i>server</i></span>' +
+        (t.tokens ? '<span>' + esc(String(t.tokens)) + ' tokens</span>' : '') +
+      '</div>' +
+      '</li>';
   }
 
   function turnHTML(t, i) {
@@ -898,6 +959,23 @@
         .then(function (m) { state.models = m; if (state.panel === 'telemetry') renderTelemetry(); })
         .catch(function (e) {
           state.models = { error: e.message || 'the model roles could not be read' };
+          if (state.panel === 'telemetry') renderTelemetry();
+        });
+    }
+
+    /* The turns the SERVER measured, including every one from before this tab
+     * was opened. Read on every activation rather than once, because turns are
+     * still arriving while the panel is closed — and because the first line of
+     * this panel's own "not measured" list used to be that none of this
+     * existed.
+     *
+     * A failure here is shown rather than swallowed: an empty history and an
+     * unreachable one look identical, and one of them is fine. */
+    if (id === 'telemetry') {
+      get('/v1/telemetry/turns')
+        .then(function (h) { state.history = h; if (state.panel === 'telemetry') renderTelemetry(); })
+        .catch(function (e) {
+          state.history = { error: e.message || 'the measured history could not be read' };
           if (state.panel === 'telemetry') renderTelemetry();
         });
     }

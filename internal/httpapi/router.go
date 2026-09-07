@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/access"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/cad"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/identity"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/llm"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/clock"
@@ -26,7 +27,12 @@ type Deps struct {
 	// LLM backs the workbench conversation. Nil is legal: the API and the
 	// operations console work without a model, and the workbench says so rather
 	// than failing to load.
-	LLM   llm.Client
+	LLM llm.Client
+	// CAD is the parametric kernel (wave 14). Nil is legal and is the DEFAULT:
+	// a deployment without one refuses STEP with the sentence that fixes it,
+	// exactly as it did when no kernel existed at all. Every call goes through
+	// Kernel's own nil-safe methods, so nothing here has to check.
+	CAD   *cad.Kernel
 	Clock clock.Clock
 	Log   *logx.Logger
 	// Version and Commit are reported by the health endpoint so an operator can
@@ -203,6 +209,13 @@ func NewRouter(d Deps) http.Handler {
 	mux.Handle("GET /v1/conversations/{id}", authed(talk.Get))
 	mux.Handle("DELETE /v1/conversations/{id}", authed(talk.Forget))
 
+	// --- telemetry: what the server measured about this person's turns ---
+	// Read-only and scoped to the caller. Not an operator endpoint and not a
+	// deployment-wide one: a signed-in account reading everybody else's working
+	// hours is an access decision nobody has made. See telemetry.go.
+	tel := NewTelemetryHandlers(d)
+	mux.Handle("GET /v1/telemetry/turns", authed(tel.Turns))
+
 	// --- geometry: variants, comparison, export (PRD VIS-04, VIS-05) ---
 	// A variant is an artifact VERSION, so there is no create endpoint here:
 	// geometry is written by the server at the moment it is produced, in
@@ -222,6 +235,7 @@ func NewRouter(d Deps) http.Handler {
 	// signs nothing off. The sign-off is the separate act on the version this
 	// creates, through the disposition endpoint above.
 	mux.Handle("POST /v1/geometry/{id}/adopt", authed(geo.Adopt))
+	mux.Handle("POST /v1/geometry/{id}/respec", authed(geo.Respec))
 	mux.Handle("GET /v1/geometry/{id}/export", authed(geo.Export))
 	mux.Handle("GET /v1/geometry/{id}/export/label", authed(geo.ExportLabel))
 

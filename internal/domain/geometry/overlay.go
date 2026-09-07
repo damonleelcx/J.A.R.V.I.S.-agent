@@ -361,12 +361,12 @@ func bounds(doc Document) (min, max [3]float64) {
 
 	for _, p := range doc.Parts {
 		pos := padTo3(p.Position)
-		half := halfExtent(p)
+		loLocal, hiLocal := localBox(p)
 		for i := 0; i < 3; i++ {
-			if lo := pos[i] - half[i]; lo < min[i] {
+			if lo := pos[i] + loLocal[i]; lo < min[i] {
 				min[i] = lo
 			}
-			if hi := pos[i] + half[i]; hi > max[i] {
+			if hi := pos[i] + hiLocal[i]; hi > max[i] {
 				max[i] = hi
 			}
 		}
@@ -381,7 +381,22 @@ func bounds(doc Document) (min, max [3]float64) {
 // so a derived overall dimension can read high. Correcting it means bounding the
 // tessellated triangles, which is the honest fix and a larger one. Until then
 // the note on every derived dimension says it measures the model.
-func halfExtent(p Part) [3]float64 {
+// localBox is a part's extent in its OWN frame, as a low corner and a high one.
+//
+// # Why not a half-extent
+//
+// This returned a single symmetric half-extent until extrusions existed, and the
+// caller did pos ± half. Every primitive is centred on its own position, so that
+// was exact.
+//
+// A profile is not. Its coordinates are written by hand and deliberately not
+// re-centred (profile.go), so an L-bracket drawn from (0,0) to (40,40) sits
+// entirely on the positive side of its own origin. A symmetric half-extent
+// describes that part as reaching 20 mm in the wrong direction, and Measure
+// would draw a dimension line against extents nothing has.
+//
+// Two corners cost one extra return value and are exact for both.
+func localBox(p Part) (min, max [3]float64) {
 	s := p.Size
 	get := func(k string, fallback float64) float64 {
 		if v, ok := s[k]; ok && v > 0 {
@@ -389,19 +404,136 @@ func halfExtent(p Part) [3]float64 {
 		}
 		return fallback
 	}
+	sym := func(h [3]float64) ([3]float64, [3]float64) {
+		return [3]float64{-h[0], -h[1], -h[2]}, h
+	}
 	switch strings.ToLower(p.Shape) {
 	case "sphere":
 		r := get("radius", 0.5)
-		return [3]float64{r, r, r}
+		return sym([3]float64{r, r, r})
 	case "cylinder", "cone":
 		r := math.Max(get("radius", 0.5), get("radius_top", 0))
 		h := get("height", 1) / 2
-		return [3]float64{r, h, r}
+		return sym([3]float64{r, h, r})
 	case "plane":
-		return [3]float64{get("width", 1) / 2, 0, get("depth", 1) / 2}
+		return sym([3]float64{get("width", 1) / 2, 0, get("depth", 1) / 2})
+	case "extrusion":
+		lo, hi, ok := profileExtent(p)
+		if !ok {
+			// An outline nothing could read contributes nothing rather than a
+			// default box: a made-up extent would be drawn as a dimension.
+			return [3]float64{}, [3]float64{}
+		}
+		d := get("depth", 1) / 2
+		return [3]float64{lo[0], lo[1], -d}, [3]float64{hi[0], hi[1], d}
+	case "revolve":
+		lo, hi, ok := profileExtent(p)
+		if !ok {
+			return [3]float64{}, [3]float64{}
+		}
+		// Turning sweeps the outline's RADIUS all the way round, so the two
+		// axes perpendicular to the turn reach the largest radius in both
+		// directions — including where the outline itself never goes.
+		if RevolveAxis(p) == "x" {
+			r := math.Max(math.Abs(lo[1]), math.Abs(hi[1]))
+			return [3]float64{lo[0], -r, -r}, [3]float64{hi[0], r, r}
+		}
+		r := math.Max(math.Abs(lo[0]), math.Abs(hi[0]))
+		return [3]float64{-r, lo[1], -r}, [3]float64{r, hi[1], r}
+	case "sweep":
+		// The extent of the points the sweep actually visits, which is exact
+		// rather than conservative: a swept polygon is a polyhedron, and its
+		// corners are its rings' corners. A bounding box of the path grown by
+		// the outline's radius would be right for a round section and too big
+		// for every other one, and a dimension line drawn against it would be a
+		// number this system worked out and got wrong.
+		pts, way, ok := literalSweep(p)
+		if !ok {
+			return [3]float64{}, [3]float64{}
+		}
+		rings, _, err := sweptSections([][][2]float64{pts}, way, p.PathClosed)
+		if rings == nil {
+			// A path that cannot be swept has no extent to measure. Nothing,
+			// rather than a guess: see profileExtent.
+			_ = err
+			return [3]float64{}, [3]float64{}
+		}
+		min = [3]float64{math.Inf(1), math.Inf(1), math.Inf(1)}
+		max = [3]float64{math.Inf(-1), math.Inf(-1), math.Inf(-1)}
+		// Only the OUTLINE is measured, not the holes in it: a bore is inside the
+		// wall around it by construction, so it can only ever shrink an extent
+		// that the outline has already set.
+		for _, ring := range rings[0] {
+			for _, pt := range ring {
+				for axis := 0; axis < 3; axis++ {
+					min[axis] = math.Min(min[axis], pt[axis])
+					max[axis] = math.Max(max[axis], pt[axis])
+				}
+			}
+		}
+		return min, max
 	default:
-		return [3]float64{get("width", 1) / 2, get("height", 1) / 2, get("depth", 1) / 2}
+		return sym([3]float64{get("width", 1) / 2, get("height", 1) / 2, get("depth", 1) / 2})
 	}
+}
+
+// profileExtent is an outline's own bounding rectangle.
+// literalSweep is a sweep's outline and path, flattened, in plain coordinates.
+func literalSweep(p Part) (profile [][2]float64, path [][3]float64, ok bool) {
+	if !drawnInNumbers(p.Profile) || !drawnInNumbers(p.Path) {
+		return nil, nil, false
+	}
+	// Flattened, because a bend radius moves material off the vertex it rounds:
+	// a mitred corner reaches past the path and a rounded one does not, and the
+	// difference is exactly the material that is or is not in the part.
+	flatOutline, _, oerr := partOutline(p).flatten("outline", Millimetre)
+	flatPath, _, perr := partPath(p).flatten("path", Millimetre)
+	if oerr != nil || perr != nil {
+		return nil, nil, false
+	}
+	if len(flatOutline) < minProfilePoints || len(flatPath) < minPathPoints {
+		return nil, nil, false
+	}
+	return flat2D(flatOutline), flatPath, true
+}
+
+// drawnInNumbers reports whether every coordinate and radius is a number rather
+// than an expression.
+//
+// Expressions are NOT evaluated on the measurement path: it runs on a stored
+// document with no parameter context, and a coordinate it cannot read must not
+// become a zero that silently shrinks the part. Bind has already written the
+// numbers in for every document that came through it; one that did not
+// contributes no measured extent, which is a miss rather than a wrong number.
+func drawnInNumbers(pts []Point) bool {
+	for _, pt := range pts {
+		if pt.XFrom != "" || pt.YFrom != "" || pt.ZFrom != "" || pt.RadiusFrom != "" {
+			return false
+		}
+	}
+	return true
+}
+
+func profileExtent(p Part) (min, max [2]float64, ok bool) {
+	min = [2]float64{math.Inf(1), math.Inf(1)}
+	max = [2]float64{math.Inf(-1), math.Inf(-1)}
+	if !drawnInNumbers(p.Profile) {
+		return min, max, false
+	}
+	// The FLATTENED outline. A rounded corner is inside the corner it replaced,
+	// so measuring the drawn vertices would report a plate bigger than the plate
+	// — by the radius, on every side that has one.
+	flat, _, err := partOutline(p).flatten("outline", Millimetre)
+	if err != nil {
+		return min, max, false
+	}
+	for _, pt := range flat {
+		min[0] = math.Min(min[0], pt[0])
+		min[1] = math.Min(min[1], pt[1])
+		max[0] = math.Max(max[0], pt[0])
+		max[1] = math.Max(max[1], pt[1])
+	}
+	return min, max, len(flat) >= minProfilePoints
 }
 
 // DrawableOverlays keeps the overlays that may be shown and reports what was

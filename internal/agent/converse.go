@@ -55,13 +55,32 @@ Reply with JSON only:
   "prototype": null or {
     "name": "what this is",
     "units": "mm" | "cm" | "m",
+    "parameters": [
+      {"name": "snake_case_name", "value": 60.0, "unit": "mm",
+       "how": "chosen" | "standard",
+       "source": "which published figure, when how is \"standard\"; otherwise \"\""}
+    ],
+    "derived": [
+      {"name": "snake_case_name", "expression": "plate_size - 2 * edge_margin",
+       "why": "what relationship this keeps true when the other parameters change"}
+    ],
     "parts": [
       {
         "id": "stable-kebab-id",
         "name": "human name",
-        "shape": "box" | "cylinder" | "cone" | "sphere" | "tube" | "plane",
+        "shape": "box" | "cylinder" | "cone" | "sphere" | "plane" |
+                 "extrusion" | "revolve" | "sweep",
+        "shape_note": "for \"extrusion\", size only needs \"depth\"",
         "size": {"width":1,"height":1,"depth":1,"radius":0.5,"radius_top":0.5},
+        "profile": [{"x": 0, "y": 0, "radius": 0, "x_from": "", "y_from": "plate_height",
+                     "via": null or {"x": 0, "y": 0}}],
+        "holes": [[{"x": 0, "y": 0, "radius": 0}]],
+        "path": [{"x": 0, "y": 0, "z": 0, "radius": 0, "z_from": "run_length"}],
+        "path_closed": false,
+        "axis": "y",
+        "size_from": {"width": "plate_size", "height": "plate_thickness"},
         "position": [0,0,0],
+        "position_from": {"z": "plate_size / 4"},
         "rotation": [0,0,0],
         "color": "#b8bcc4",
         "opacity": 1.0,
@@ -79,6 +98,14 @@ Reply with JSON only:
         "how": "proposed",
         "note": "what this state is for"
       }
+    ],
+    "features": [
+      {"id": "stable-kebab-id", "op": "cut" | "fuse" | "fillet" | "chamfer",
+       "of": "part-id this applies to",
+       "with": ["part-ids used as the tool, for cut and fuse"],
+       "radius": 3.0, "radius_from": "fillet_radius",
+       "edges": "all" | "vertical" | "horizontal" | "top" | "bottom",
+       "note": "what this is for"}
     ],
     "assumptions": ["anything you chose that they did not specify"],
     "not_verified": ["what this render does NOT establish"],
@@ -119,10 +146,183 @@ About "prototype":
 - A figure from a PUBLISHED STANDARD is not an assumption and does not belong in
   that list. "NEMA 17 is 42.3mm across the face" is a claim about the world, and
   you are recalling it, not reading it — there is no reference source in this
-  deployment and nothing here can check you. Name the standard, say plainly that
-  the figure is from memory, and prefer not to quote a number at all unless it
-  changes what you would build. A wrong figure attached to a real standard is
-  more dangerous than no figure, because it is specific enough to be acted on.
+  deployment and nothing here can check you. Quote one only when it changes what
+  you would build; otherwise do not quote a number at all. When you do, put it in
+  "parameters" with "how": "standard" and name the source, because that is the
+  one place it can be labelled as recalled and read back against the published
+  figure. A wrong figure attached to a real standard is more dangerous than no
+  figure, because it is specific enough to be acted on — and a wrong one sitting
+  in a typed field beside a citation is more dangerous still, because it looks
+  like provenance.
+- "parameters" are EVERY fixed number this design rests on, each with a unit —
+  both the ones somebody could change and the ones nobody can. A dimension you
+  picked is a parameter with "how": "chosen". A figure you are recalling from a
+  standard is a parameter too, with "how": "standard" and the source named; it
+  goes here even though nobody may change it, because "how" is what tells the
+  two apart and this is the only list that has it. Both lists are OPTIONAL —
+  leave them out when the shape is not really parametric.
+- "derived" is for anything whose correct value DEPENDS on another parameter.
+  Write the relationship, never the number it currently works out to. A rib
+  whose length does not follow the plate it sits on will hang off the edge the
+  moment the plate shrinks, and that is the commonest way a model that looked
+  right stops being buildable.
+  EVERY expression here must name at least one parameter. A bare number in
+  "derived" — "42.3", "31.0" — is always wrong, because nothing about it follows
+  anything: it is a fixed number and belongs in "parameters", which is the only
+  list that carries a unit and a source. A recalled standard figure put here
+  instead arrives with neither, and nothing can check it.
+- "size_from" and "position_from" are what make the parameters real. Each key
+  names an expression over your parameters, and FORGE evaluates it and draws the
+  result — so a plate whose width IS plate_size should say that, rather than
+  repeat the number. Bind every dimension that follows from a parameter; a
+  thickness you simply chose and that follows nothing needs no entry.
+  "position_from" keys are "x", "y" and "z", and Y is up.
+  Fill in "size" and "position" as well, with the values as they stand now. They
+  are what gets drawn if an expression cannot be read, and FORGE tells the reader
+  when your number and your own expression disagree — so a rib bound to
+  plate_size - 2 * fillet_radius on a 60 mm plate should say 54, not 52.
+  An expression may use + - * / ^, brackets, the other parameter names, the
+  constant pi, and sqrt, abs, min, max, floor, ceil and round. There is no sine
+  or cosine here: half the world writes them in degrees and half in radians, so
+  carry an already-resolved length as a parameter instead.
+- There is NO "tube" shape. A hollow tube is a cylinder with a cylinder cut from
+  it when the bore runs straight, and an outline with a "holes" loop when the
+  bore follows the part — which is the only one of the two that can turn a
+  corner with a bend. Both are below. Naming a wall thickness in prose while
+  drawing a solid cylinder is the one thing to avoid: it reads as a bored part
+  and machines as a bar.
+- "extrusion" is the shape for anything that is not a box or a cylinder: an
+  L-bracket, a T-section, a channel, a gusset, a triangular plate. Give it a
+  "profile" — a closed outline of at least three points in the part's own XY
+  plane — and a "depth" in "size", and it is swept along the part's local Z.
+  The outline is closed for you; do not repeat the first point at the end.
+  The points are LOCAL coordinates and are NOT re-centred, so the part's position
+  places the outline's origin. That is on purpose: it means a hole you place
+  against a corner you drew stays against it. The depth IS centred, like a box's
+  height.
+  Prefer "x_from" and "y_from" with expressions over literal numbers, for the
+  same reason every other dimension does — an outline whose points do not follow
+  the parameters is a drawing that stops being true the first time somebody
+  changes one.
+  The outline must not cross itself. A void that runs all the way through in the
+  same shape — a box section, a tube — is a "holes" loop; a drilled hole is a
+  cut feature. See both below.
+- "revolve" turns the same kind of outline about an axis instead of sweeping it:
+  a shaft, a boss, a flange, a pulley, a dome, a nozzle. Give it a "profile" and
+  an "axis" of "y" (up, the default) or "x". It needs no "depth" — a revolve's
+  size is entirely its outline.
+  Every point must be on ONE SIDE of that axis. Touching it is fine and usual —
+  a dome's outline meets the axis at its apex — but an outline with points on
+  both sides sweeps through itself and is not a solid.
+  It always turns a full circle. For a sector, revolve the whole thing and cut
+  away what you do not want, the same way a hole is a cut rather than a kind of
+  part.
+  A bead, a rounded rim or a filleted shoulder on a turned part is a "radius" on
+  the outline point, because it goes all the way round with the outline.
+- "sweep" carries the same kind of outline along a PATH instead of a straight
+  line, which is where everything that BENDS comes from: a pipe run, a handrail,
+  a cable tray, a wire form, a tube routed around something. Give it a "profile"
+  and a "path" — an open line of at least two points, with "x", "y" and "z" in
+  the part's own frame. It needs no "depth": the path says how far it goes.
+  The outline's own origin RIDES the path and the outline starts square to the
+  first segment, so a path of two points straight up local Z is exactly an
+  extrusion. Draw the outline around (0, 0) when you want the path to run down
+  the middle of the part, which is almost always what a pipe or a rail means.
+  Nothing is centred: an extrusion centres its depth, but a path is drawn, and
+  where you draw it is where the part goes.
+  Corners are MITRED, like a fabricated bend. Two limits follow, and both are
+  refused rather than guessed at: a path cannot turn back through 180°, and a
+  bend cannot be tighter than the outline is wide — at a sharp corner the
+  section on the inside would fold back through itself, so put the points
+  further apart or draw a narrower outline.
+  A bend is a "radius" on the path point that turns — see below. Without one the
+  corner is MITRED, like a welded elbow rather than a bent tube, which is a
+  different part and a different way of making it.
+  "path_closed": true makes the path a LOOP — a ring, a hoop, a frame, a gasket,
+  a roll bar. The last point joins the first, there are no ends and no caps, and
+  the seam is a corner like any other, so it may have a bend radius too. Do not
+  repeat the first point at the end; say "path_closed" instead.
+  A closed path has to bring its section back to itself, and one that leaves a
+  plane generally does not: carried round a loop the section comes back ROTATED,
+  and the two ends would meet at an angle. A loop drawn in one plane always
+  works. A three-dimensional one usually does not, and is refused with the angle
+  named — so keep a loop flat unless you have a reason not to.
+- "holes" are closed loops INSIDE the outline: the section's own voids, which
+  follow it wherever it goes. Each is a list of points like the outline, in the
+  same plane, and they may have corner radii too.
+  A HOLE IN THE SECTION AND A HOLE THROUGH THE SOLID ARE DIFFERENT THINGS.
+  A bolt hole through a plate is still a cylinder you place in space and "cut"
+  with a feature — that is what a drill does, and it is the right way to say it.
+  Use "holes" when the void follows the drawing: the bore of a tube that BENDS
+  (which no cylinder can cut, because it turns the corner with the tube), a box
+  section, a hollow extrusion, a groove that goes all the way round a revolve.
+  Each hole must be wholly inside the outline and must not CROSS another one.
+  Two overlapping holes are one hole, and have to be drawn as one loop.
+  A hole INSIDE another hole is an ISLAND: solid material standing in the void,
+  like the post in an annular slot, the bar of a letter A, or a lug in the bottom
+  of a pocket. It keeps going — a hole inside an island is a bore through the
+  post — so draw exactly the loops the shape has and the nesting says the rest.
+- "via" on a point BENDS THE EDGE ARRIVING AT IT into a circular arc that passes
+  through the via on the way. Use it for an edge that BOWS: a crescent, a lens, a
+  cam lobe, a hook, a D-shaped shaft, the belly of a bracket that clears
+  something. It works on an outline point, a hole point and a path point, and on
+  a path it curves the run itself rather than only its corner.
+  It is a POINT ON THE ARC, not a centre and not a direction. Three points fix a
+  circle completely, so put the via roughly where the middle of the bulge should
+  be and the arc follows.
+  A "via" and a "radius" are different things and are not alternatives. A radius
+  ROUNDS A CORNER between two straight edges; a via CURVES AN EDGE. A corner
+  where an arc meets is left sharp — the radius there is ignored and reported —
+  so do not put one on either end of a bowed edge.
+  Two arcs between the same two points is a crescent, and that is a legitimate
+  outline of TWO points: an outline needs three points only when every edge is
+  straight.
+  A via must not be in line with the two ends of its edge, or on top of one of
+  them — there is no arc through three points in a row, and the edge is simply
+  drawn straight and reported. It must not carry a radius, a z (except on a
+  path), or a via of its own.
+- "radius" on a point ROUNDS THAT CORNER: an arc of that radius, tangent to both
+  edges meeting there. It works the same way on an outline point and on a path
+  point, and on a path it is the BEND RADIUS — the number a tube bender is set
+  to, and the thing that decides whether a tube survives being bent at all. Give
+  a bent pipe or a formed bracket one; a sharp corner on something that is
+  actually bent is a drawing of a part nobody can make.
+  Use "radius_from" with an expression wherever the radius follows a parameter,
+  for the same reason every other dimension does.
+  Two radii on one edge must fit: each eats r × tan(half the turn) of the edge
+  either side of it, so two big radii on a short edge are refused rather than
+  guessed at, as is a radius where the edges either side are in line.
+  Do not put one on the FIRST or LAST point of an open path: those are ends, not
+  corners, and there is nothing there to round. It is ignored and reported rather
+  than refused, but it is still a number that means nothing.
+  A SLOT is a rectangle whose radius is half its width on all four corners: the
+  arcs at each end meet and the straight between them disappears. A stadium, a
+  racetrack, a rounded gusset and a D-section are all the same one number.
+  This overlaps "fillet", and the difference is real: a radius is part of the
+  DRAWING, so it follows the section round every bend of a sweep and all the way
+  round a revolve; a fillet is an operation on the finished solid, chosen by
+  rule. Prefer the radius when the shape simply has it.
+  What it cannot say is an arc that does NOT meet its neighbours smoothly — a
+  crescent, a lens, a bulged edge. There is no vocabulary for those here.
+- "features" are what make an assembly a PART rather than a pile of solids.
+  A HOLE is not a part — it is the absence of one. Put a cylinder where the hole
+  goes, size and place it like any other part, and then "cut" it from the thing
+  it passes through. The cylinder is CONSUMED: it becomes the void, and does not
+  also appear as a solid.
+  "fuse" welds parts into one body. Say it only when they really are one piece;
+  two parts touching are two parts, and fusing them is a claim about how the
+  thing is made.
+  "fillet" rounds edges and "chamfer" cuts them off. Both take a size — prefer
+  "radius_from" with an expression, for the same reason every other dimension
+  does — and choose edges by RULE: "vertical" is the up axis, "top" and "bottom"
+  are the highest and lowest edges, "all" is everything. There is deliberately no
+  way to name an edge by number, because an index picks a different edge as soon
+  as a parameter changes.
+  Features apply IN ORDER, so cutting the holes and then rounding what is left is
+  a different part from rounding first.
+  Only the CAD kernel performs these. The viewport draws solid primitives, so a
+  cut hole is drawn as a part standing in the plate and the reader is told so —
+  do not work around that by leaving the hole out.
 - "material" is a CLAIM about what a part is made of, not a rendering hint.
   Cost, weight, whether it can be welded and whether it survives the load all
   follow from it. If they told you, label it "observed" and quote them; if you
@@ -165,8 +365,12 @@ DONE, not merely discussed. It is a proposal — nothing runs until they start i
 // apart from this backstop (internal/eval/scorers.go). Two copies of this
 // sentence would drift, and the drift would silently credit the backstop to the
 // model — the property would stop being measured with nothing reporting it.
-const NotVerifiedFallback = "Nothing here has been analysed or checked. There is no CAD kernel, " +
-	"solver, or interference check in this deployment — this is a shape, not a result."
+// Reworded in wave 14, when "there is no CAD kernel" stopped being true of every
+// deployment. What it must say is what is still true of ALL of them: a kernel
+// builds a solid and checks nothing about it, so the presence of one changes
+// nothing about this sentence except the part that was about to become false.
+const NotVerifiedFallback = "Nothing here has been analysed or checked. There is no solver " +
+	"and no interference check in this deployment — this is a shape, not a result."
 
 // Conversation is the workbench dialogue.
 //
@@ -363,6 +567,14 @@ type Reply struct {
 	// which displays the REAL figure rather than claiming the PRD's ≤700ms
 	// target. A target asserted without measurement is a marketing claim.
 	LatencyMS int64 `json:"latency_ms"`
+	// Repaired says the reply did not parse as sent and what was read to save
+	// it. Empty for the ordinary case, which is almost every reply.
+	//
+	// It is a FIELD and not a log line because the person is owed it: the
+	// document they are looking at is not byte-for-byte the one the model
+	// produced, and everything else in this system that substitutes something
+	// says so on the screen. See dimensionrepair.go.
+	Repaired string `json:"repaired,omitempty"`
 }
 
 // Respond produces one turn of conversation.
@@ -408,21 +620,44 @@ func (c *Conversation) Respond(ctx context.Context, projectID string, history []
 		Role:      role,
 		Messages:  messages,
 		JSONMode:  true,
-		MaxTokens: 6000,
+		MaxTokens: converseMaxTokens,
 	})
 	if err != nil {
 		return nil, err
 	}
 
 	var reply Reply
-	if err := json.Unmarshal([]byte(extractJSON(resp.Content)), &reply); err != nil {
-		// Rather than fail the turn, fall back to speaking the raw text. A
-		// conversation that dies on a formatting slip is worse than one that
-		// occasionally speaks something unstructured — the person is mid-sentence.
-		reply = Reply{Speech: strings.TrimSpace(resp.Content)}
-		if reply.Speech == "" {
-			return nil, errs.Wrap(op, errs.CodeExternalProtocol, err).
-				WithDetail("the model returned neither usable JSON nor any text")
+	body := []byte(extractJSON(resp.Content))
+	if err := json.Unmarshal(body, &reply); err != nil {
+		// An expression written where a number was expected is the commonest
+		// way a complete, correct reply fails to parse — the contract offers
+		// two slots per dimension and tells the model to prefer the one it then
+		// puts in the wrong place. Read rather than lost; see
+		// dimensionrepair.go for the measurement and the reasoning.
+		//
+		// Only after the strict parse has already failed, so a reply that
+		// parses is never rewritten.
+		repaired, moved := repairDimensions(body)
+		if moved {
+			var second Reply
+			if err2 := json.Unmarshal(repaired, &second); err2 == nil {
+				reply = second
+				// Said out loud, in the channel the person already reads for
+				// what FORGE assumed. A document silently different from the
+				// one the model sent is the same class of thing as a render
+				// that does not match its file.
+				reply.Repaired = "One or more dimensions arrived as expressions written in the " +
+					"place of a number. They were read as the expressions they are — the " +
+					"contract has a field for each — rather than the reply being discarded."
+				err = nil
+			}
+		}
+		if err != nil {
+			reply = Reply{Speech: unreadableReply(resp)}
+			if reply.Speech == "" {
+				return nil, errs.Wrap(op, errs.CodeExternalProtocol, err).
+					WithDetail("the model returned neither usable JSON nor any text")
+			}
 		}
 	}
 	reply.Model = resp.Model
@@ -542,6 +777,50 @@ func (r *Reply) validate() error {
 				p.Color = "#b8bcc4"
 			}
 		}
+		/* The parametric model, resolved and APPLIED (waves 10 and 11).
+		 *
+		 * Bind evaluates the document's expressions and writes the results into
+		 * the numbers the renderer reads, so a part whose width follows
+		 * plate_size actually follows it. It returns everything Resolve would
+		 * have reported plus anything wrong with the bindings themselves, which
+		 * is why there is one call here and not two.
+		 *
+		 * It runs LAST in this block because it needs what the loop above
+		 * guarantees: every part has an id (Bind names parts by their label) and
+		 * a three-element position to write an axis into.
+		 *
+		 * None of what it reports changes a pixel — a document whose parameters
+		 * do not resolve renders exactly like one whose parameters do — which is
+		 * precisely why it has to be said. Appended to NotVerified for the same
+		 * reason as the dropped tolerances and the unconvertible unit above: it
+		 * is the one place the reader is already looking. */
+		for _, problem := range r.Prototype.Bind() {
+			r.Prototype.NotVerified = append(r.Prototype.NotVerified, parameterNote(problem))
+		}
+		/* Features, and the one place the picture and the file disagree.
+		 *
+		 * A feature that does not check out is dropped by the kernel rather than
+		 * approximated, so the reader has to be told which — an assembly missing
+		 * a hole somebody asked for is not something the render will show.
+		 *
+		 * And the viewport has no boolean operations, so it cannot make the
+		 * void. It draws the tool as a faint ghost rather than as a solid post
+		 * — which is the opposite of what a hole is — and says so here. A real
+		 * divergence between two things this product shows the same person,
+		 * stated for the same reason "Drawn approximately" is. */
+		/* An outline nothing could read is a part that is simply NOT THERE, and
+		 * the render looks like a design with a piece missing rather than like
+		 * an error. Its own voice, because "a number is missing" and "a whole
+		 * part is absent" are different things to be told. */
+		for _, problem := range r.Prototype.ProfileProblems() {
+			r.Prototype.NotVerified = append(r.Prototype.NotVerified, profileNote(problem))
+		}
+		if _, featureProblems := r.Prototype.Operations(); len(featureProblems) > 0 {
+			for _, problem := range featureProblems {
+				r.Prototype.NotVerified = append(r.Prototype.NotVerified, featureNote(problem))
+			}
+		}
+		r.Prototype.NotVerified = append(r.Prototype.NotVerified, r.Prototype.FeatureNotes()...)
 	}
 	return nil
 }
@@ -565,4 +844,51 @@ type turnStartKey struct{}
 // from the moment the person finished speaking rather than from the model call.
 func WithTurnStart(ctx context.Context, at time.Time) context.Context {
 	return context.WithValue(ctx, turnStartKey{}, at)
+}
+
+// converseMaxTokens bounds one conversational reply.
+//
+// # Why it is not 6000 any more, stated honestly
+//
+// It was 6000 while a prototype was a bag of primitives. The contract has since
+// grown by five things a document can carry — parameters, derived expressions,
+// bound dimensions, outlines and features — and each lengthens the reply for
+// exactly the designs that need them most.
+//
+// This is a PRECAUTION and not a measurement. A V-belt pulley failed to parse on
+// 2026-09-05 and truncation was the first suspicion; three further runs came
+// back at about 1300 tokens with finish_reason "stop", so the cap was not what
+// broke it — that reply was simply malformed, intermittently. Raising the
+// headroom is still worth having, because the cost is nothing and the failure it
+// would cause is the loss of a whole document, but nobody has seen that failure
+// and this comment must not claim otherwise.
+//
+// What DID come out of that investigation is unreadableReply below, which is the
+// real fix for what the person saw.
+const converseMaxTokens = 16000
+
+// unreadableReply is what to say when the model's JSON could not be read.
+//
+// # Why the raw text is not always spoken
+//
+// Falling back to speaking the raw content is right when the model answered in
+// PROSE — a conversation that dies on a formatting slip is worse than one that
+// occasionally speaks something unstructured, and the person is mid-sentence.
+//
+// It is wrong when the content is a half-written JSON object. That is not
+// "something unstructured", it is the machinery, and printing it tells the
+// reader nothing except that something broke in a way nobody will describe. A
+// truncated reply is the commonest cause and it has a name, so it gets said.
+func unreadableReply(resp *llm.Response) string {
+	raw := strings.TrimSpace(resp.Content)
+	if resp.Truncated() {
+		return "That answer was cut off before it finished — the design was longer than one " +
+			"reply can hold. Ask for it in pieces, or for fewer parts at a time, and it will " +
+			"come back whole."
+	}
+	if strings.HasPrefix(raw, "{") || strings.HasPrefix(raw, "[") {
+		return "That reply came back in a shape FORGE could not read, so nothing of it is " +
+			"shown rather than showing you the machinery. Asking again usually settles it."
+	}
+	return raw
 }

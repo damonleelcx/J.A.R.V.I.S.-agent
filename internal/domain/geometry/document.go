@@ -34,6 +34,26 @@ type Document struct {
 	Name  string `json:"name"`
 	Units string `json:"units"`
 	Parts []Part `json:"parts"`
+	// Parameters are the numbers a person could change, and Derived are the
+	// values that must follow when they do (see parameters.go).
+	//
+	// Optional, and additive on purpose. A document that carries neither is
+	// exactly the document this package has always held — the fields were added
+	// by the 2026-09-05 parametric phase and every existing stored variant
+	// predates them, so absence has to keep meaning "not parametric" rather
+	// than "parametric and empty".
+	//
+	// What they do NOT yet do is drive Parts. A part's Size is still the
+	// authored number, and the link between the two is the next phase's work;
+	// until it exists, Resolve reports what the parameters say and nothing
+	// silently rewrites geometry from them.
+	Parameters []Parameter `json:"parameters,omitempty"`
+	Derived    []Derived   `json:"derived,omitempty"`
+	// Features are the operations that make an assembly a PART rather than a
+	// pile of solids: holes cut through a plate, edges rounded, bodies fused
+	// (see feature.go). Optional, and only the CAD kernel performs them — the
+	// renderer draws primitives and says what it could not show.
+	Features []Feature `json:"features,omitempty"`
 	// Assumptions is every dimension FORGE chose rather than was given. One of
 	// the six things PRD VIS-04 requires a render to link to.
 	Assumptions []string `json:"assumptions"`
@@ -61,10 +81,69 @@ type Part struct {
 	Shape    string             `json:"shape"`
 	Size     map[string]float64 `json:"size"`
 	Position []float64          `json:"position"`
-	Rotation []float64          `json:"rotation"`
-	Color    string             `json:"color"`
-	Opacity  float64            `json:"opacity"`
-	Note     string             `json:"note"`
+	// SizeFrom and PositionFrom bind a dimension to an EXPRESSION over the
+	// document's parameters, so that changing a parameter moves the part
+	// (see binding.go). Keys are the same size keys Size uses, and "x", "y",
+	// "z" for the position.
+	//
+	// Both are optional, and a dimension that appears in neither keeps the
+	// number the model typed. Bind writes the evaluated result into Size and
+	// Position, so nothing downstream — the mesh, the comparison, the exporter —
+	// ever sees an expression.
+	SizeFrom     map[string]string `json:"size_from,omitempty"`
+	PositionFrom map[string]string `json:"position_from,omitempty"`
+	// Profile is a closed outline in the part's own XY plane (see profile.go).
+	// An "extrusion" sweeps it along local Z by Size["depth"]; a "revolve"
+	// turns it about Axis; a "sweep" carries it along Path. Read for no other
+	// shape.
+	Profile []Point `json:"profile,omitempty"`
+	// Holes are closed loops INSIDE Profile: the section's own voids, which
+	// follow it wherever it goes (see triangulate.go).
+	//
+	// # Why this exists when a hole is already a cut
+	//
+	// "A hole is not a part — it is the absence of one" is still true, and a bolt
+	// hole through a plate is still a cylinder cut out of it with a feature. That
+	// rule was written when the only outline shape was an extrusion, where the
+	// two are interchangeable.
+	//
+	// They are NOT interchangeable for a sweep. You cannot cut a bent bore with a
+	// cylinder: the bore follows the path round every corner, and nothing in the
+	// feature vocabulary can describe a tool that does that. A hollow tube that
+	// bends — which is most tube — is expressible only as a section with a hole
+	// in it. The same goes for a revolved part whose void is a groove all the way
+	// round, and for an extruded box section.
+	//
+	// So the rule narrows rather than reverses: a hole in the SECTION is a loop,
+	// and a hole through the SOLID is a cut. The first follows the drawing; the
+	// second is placed in space.
+	Holes [][]Point `json:"holes,omitempty"`
+	// Path is the OPEN polyline a "sweep" carries its profile along, in the
+	// part's own local frame and read for no other shape (see sweep.go). Its
+	// points are the one place a Point's Z means anything.
+	//
+	// A sweep needs no "depth": the path says how far, in three dimensions,
+	// which is the whole reason it is not an extrusion.
+	Path []Point `json:"path,omitempty"`
+	// PathClosed says the path returns to where it started: a ring, a loop, a
+	// frame. The last point joins the first, and the sweep has no ends — so no
+	// caps, and the seam is a corner like any other.
+	//
+	// A flag rather than repeating the first point at the end, because an
+	// outline here is closed IMPLICITLY and repeating its first point is an
+	// error. One idea should not have two spellings depending on which list it
+	// is in.
+	//
+	// Not every closed path can be swept. See sweep.go: the section is carried
+	// round by a rotation-minimising frame, and round a loop that leaves a plane
+	// that frame generally does NOT come back to itself.
+	PathClosed bool `json:"path_closed,omitempty"`
+	// Axis is which way a "revolve" turns: "y" (the default, and up) or "x".
+	Axis     string    `json:"axis,omitempty"`
+	Rotation []float64 `json:"rotation"`
+	Color    string    `json:"color"`
+	Opacity  float64   `json:"opacity"`
+	Note     string    `json:"note"`
 	// Material is what this part is made of (PRD VIS-02). Optional, and a claim
 	// when present: naming a material is a statement everything downstream
 	// depends on, so it carries how it was arrived at. Nil means nobody said,

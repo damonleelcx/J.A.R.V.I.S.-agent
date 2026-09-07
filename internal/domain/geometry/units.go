@@ -222,8 +222,12 @@ func Dimensions(p Part, unit Unit) string {
 	}
 	get := func(k string) (float64, bool) { v, ok := s[k]; return v, ok }
 
-	switch p.Shape {
-	case "cylinder", "cone", "tube":
+	// The summary line names the same shape the exporter builds. A retired word
+	// summarised as itself while the file held a cylinder would put two
+	// different answers about one part on one screen.
+	shape, _ := resolveShape(p.Shape, p.Label())
+	switch shape {
+	case "cylinder", "cone":
 		var parts []string
 		if r, ok := get("radius"); ok {
 			parts = append(parts, "⌀"+q(r*2))

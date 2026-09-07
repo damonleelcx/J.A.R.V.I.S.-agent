@@ -137,14 +137,12 @@ func (h *GeometryHandlers) Formats(w http.ResponseWriter, r *http.Request) {
 		Reason    string `json:"reason,omitempty"`
 	}
 	out := []dto{}
-	for _, f := range geometry.Formats() {
+	for _, f := range geometry.Formats(h.deps.CAD.Available()) {
 		out = append(out, dto{f.Name, f.Extension, f.MediaType, string(f.Kind), f.Available, f.Gloss, f.Reason})
 	}
 	WriteJSON(w, http.StatusOK, map[string]any{
-		"formats": out,
-		"note": "This deployment has no CAD kernel. Mesh export is real; parametric export is declared " +
-			"and refused, because a STEP file full of tessellated facets would be treated downstream " +
-			"as an exact solid.",
+		"formats":     out,
+		"note":        formatsNote(h.deps.CAD.Available()),
 		"max_compare": geometry.MaxCompare,
 	})
 }
@@ -351,6 +349,23 @@ func (h *GeometryHandlers) Export(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	format := r.URL.Query().Get("format")
+
+	/* The parametric path (wave 14).
+	 *
+	 * Dispatched HERE rather than inside geometry.Export, because
+	 * internal/domain/geometry is the vocabulary and must not depend on a
+	 * Python process — its own header says a CAD kernel is deliberately not in
+	 * it, and that is still true. Choosing between a tessellator and a kernel is
+	 * a composition decision, and this is the composition layer.
+	 *
+	 * When no kernel is configured this branch is not taken at all and the mesh
+	 * path refuses STEP with the sentence that fixes it, exactly as it did when
+	 * no kernel existed anywhere. */
+	if strings.EqualFold(format, "step") && h.deps.CAD.Available() {
+		h.exportParametric(w, r, user.ID, v)
+		return
+	}
+
 	res, err := geometry.Export(v, format)
 	if err != nil {
 		h.logRefusal(r, v, format, err)
@@ -372,6 +387,68 @@ func (h *GeometryHandlers) Export(w http.ResponseWriter, r *http.Request) {
 		v.VersionID, res.Format.Name))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(res.Content)
+}
+
+// exportParametric writes a real B-Rep, built by the CAD kernel.
+//
+// # What the label has to say differently
+//
+// The mesh header says "tessellated", and here that would be a lie in the one
+// direction that matters: this file has analytic surfaces and a downstream tool
+// is right to treat them as exact. What it must still say is that nothing about
+// the SHAPE has been checked — no interference test, no stress analysis, no
+// manufacturability review — because a B-Rep is exactly the kind of file that
+// gets mistaken for one that has been.
+func (h *GeometryHandlers) exportParametric(w http.ResponseWriter, r *http.Request, userID string, v *geometry.Variant) {
+	if !v.Units.Known() {
+		// The same refusal the mesh path gives, and for a stronger reason: a
+		// STEP file states its own unit, and writing one FORGE cannot name would
+		// put a guess about scale inside the file itself.
+		WriteError(w, r, h.deps.Log, errs.New("httpapi.exportParametric", errs.CodeValidationFailed).
+			WithDetail("this variant has no unit FORGE can convert (%s), and a STEP file declares "+
+				"its own unit — writing one would put a guess about scale inside the file. "+
+				"Ask FORGE to restate the assembly in mm, cm, m or in, then export that variant.",
+				strings.ToLower(strings.TrimSuffix(v.UnitsNote(), "."))))
+		return
+	}
+
+	built, err := h.deps.CAD.BuildDocument(r.Context(), v.Document, v.Units, "step")
+	if err != nil {
+		h.logRefusal(r, v, "step", err)
+		WriteError(w, r, h.deps.Log, err)
+		return
+	}
+	f, _ := geometry.FormatOf("step")
+
+	h.deps.Log.Info(r.Context(), logx.EventGeometryExported,
+		"user_id", userID, "version_id", v.VersionID, "project_id", v.ProjectID,
+		"format", "step", "parts", built.Parts, "bytes", len(built.STEP),
+		"volume", built.Volume, "skipped", len(built.Skipped))
+
+	w.Header().Set("Content-Type", f.MediaType)
+	w.Header().Set("Content-Disposition",
+		fmt.Sprintf("attachment; filename=%q", geometry.Filename(v, f)))
+	w.Header().Set("Content-Length", strconv.Itoa(len(built.STEP)))
+	label := fmt.Sprintf("unverified proposal; B-Rep, not tessellated; nothing about this shape "+
+		"has been analysed or checked; full label at /v1/geometry/%s/export/label?format=step",
+		v.VersionID)
+	// What is NOT in the file goes FIRST, because a header is read left to right
+	// and this is the half that changes what somebody does with it.
+	//
+	// A dropped feature is the dangerous one: a bracket whose fillet OCCT
+	// refused looks like a bracket, downloads like a bracket, and has square
+	// corners where the design said rounded. Observed live on 2026-09-05, where
+	// a model asked for a 5 mm fillet on a 6 mm plate and the kernel said no.
+	if n := len(built.FeatureFailures); n > 0 {
+		label = fmt.Sprintf("%d feature(s) could NOT be applied, so this shape is not what the "+
+			"design describes (%s); ", n, strings.Join(built.FeatureFailures, "; ")) + label
+	}
+	if len(built.Skipped) > 0 {
+		label = fmt.Sprintf("%d part(s) could not be built and are NOT in this file; ", len(built.Skipped)) + label
+	}
+	w.Header().Set("X-Forge-Export-Label", label)
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(built.STEP)
 }
 
 func labelDTO(l *geometry.Label) map[string]any {
@@ -470,4 +547,110 @@ func orEmptyInts(v []int) []int {
 		return []int{}
 	}
 	return v
+}
+
+type respecRequest struct {
+	// Parameters is name → new value. Only names the document declares as
+	// parameters are accepted; a derived value is computed and cannot be set.
+	Parameters map[string]float64 `json:"parameters"`
+}
+
+// Respec handles POST /v1/geometry/{id}/respec.
+//
+// # What it is for
+//
+// "Show me this bracket with an 80 mm plate." Every expression that depends on
+// the changed parameter is re-evaluated and every bound dimension follows, so
+// the result is a different SHAPE rather than the same shape relabelled. It is
+// the operation the 2026-09-05 kernel spike ran by hand nine times, and the one
+// that separated a design that survives a change from one that does not.
+//
+// # Why it returns a new version and not an edited one
+//
+// The result keeps the source's name, lands on the same artifact path, and
+// becomes the next version — so the two can be put side by side (PRD VIS-04) and
+// the original stays exactly what the model produced. Nothing is accepted by
+// creating it; it still has to be ruled on, the same as an adopted variant.
+//
+// # Why the caveats come back in the response
+//
+// Re-deriving can surface things the original never showed: a rib that now
+// overhangs, an expression that divides by a parameter somebody set to zero.
+// They are returned rather than logged because the person is looking at the
+// result right now and it is the only moment the answer is useful.
+func (h *GeometryHandlers) Respec(w http.ResponseWriter, r *http.Request) {
+	user, _ := UserFrom(r.Context())
+
+	var req respecRequest
+	if err := DecodeJSON(w, r, &req); err != nil {
+		WriteError(w, r, h.deps.Log, err)
+		return
+	}
+	v, err := h.svc.Find(r.Context(), r.PathValue("id"))
+	if err != nil {
+		if errs.Is(err, errs.CodeNotFound) {
+			WriteError(w, r, h.deps.Log, errs.New("httpapi.Respec", errs.CodeNotFound).
+				WithDetail("no geometry variant %s", r.PathValue("id")))
+			return
+		}
+		WriteError(w, r, h.deps.Log, err)
+		return
+	}
+	// The same shape as Adopt: a caller who may not read this project is told
+	// the variant does not exist, rather than that it exists and is not theirs.
+	if err := h.deps.requirePermission(r, v.ProjectID, user.ID, access.PermContentWrite); err != nil {
+		if errs.Is(err, errs.CodeNotFound) {
+			WriteError(w, r, h.deps.Log, errs.New("httpapi.Respec", errs.CodeNotFound).
+				WithDetail("no geometry variant %s", r.PathValue("id")))
+			return
+		}
+		WriteError(w, r, h.deps.Log, err)
+		return
+	}
+
+	next, problems, err := h.svc.Respec(r.Context(), v.VersionID, user.ID, req.Parameters)
+	if err != nil {
+		WriteError(w, r, h.deps.Log, err)
+		return
+	}
+	WriteJSON(w, http.StatusCreated, map[string]any{
+		"variant": toVariantDTO(*next),
+		"caveats": problemDTOs(problems),
+		"note": "This is a NEW version, computed from v" + strconv.Itoa(v.Version) +
+			" by changing the parameters given and re-evaluating everything that depends on them. " +
+			"No model was asked and nothing here was checked. Accept or reject it with " +
+			"POST /v1/workspace/versions/" + next.VersionID + "/disposition.",
+	})
+}
+
+// problemDTOs renders resolution caveats for a reader.
+//
+// Never nil: JSON encodes a nil slice as null and an empty one as [], and every
+// consumer would then need its own opinion about which means "nothing wrong".
+func problemDTOs(in []geometry.Problem) []map[string]any {
+	out := make([]map[string]any, 0, len(in))
+	for _, p := range in {
+		out = append(out, map[string]any{
+			"severity": string(p.Severity), "name": p.Name, "detail": p.Detail,
+		})
+	}
+	return out
+}
+
+// formatsNote says what this deployment can actually write.
+//
+// It used to assert flatly that there is no CAD kernel, which was true of every
+// deployment until wave 14 and is now a question of configuration. A list that
+// describes the build rather than the deployment is exactly the list somebody
+// reads to decide what to ask for.
+func formatsNote(hasKernel bool) string {
+	if hasKernel {
+		return "This deployment has a CAD kernel. STEP is a real B-Rep with analytic surfaces, " +
+			"built by OpenCASCADE from the same document the viewport draws. Mesh export is " +
+			"tessellated and says so. Nothing about any of these shapes has been analysed: " +
+			"there is still no solver and no interference check here."
+	}
+	return "This deployment has no CAD kernel, so parametric export is declared and refused — " +
+		"a STEP file full of tessellated facets would be treated downstream as an exact solid. " +
+		"Mesh export is real. Set FORGE_CAD_PYTHON to a Python with build123d to enable STEP."
 }

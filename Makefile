@@ -23,6 +23,9 @@ LDFLAGS     := -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=
 # with another Postgres already on this machine.
 DB_CONTAINER := forge-pg
 DB_PORT      ?= 55840
+# The CAD kernel's interpreter. Not committed: it is 60+ MB of OpenCASCADE, and
+# a deployment without it refuses parametric export rather than faking it.
+CAD_VENV     ?= .cadvenv
 DB_USER      ?= forge
 DB_PASS      ?= forge_dev_pw
 DB_NAME      ?= forge
@@ -94,6 +97,29 @@ test-cover: db-wait ## Run tests with coverage and print a summary
 	FORGE_TEST_DATABASE_URL="$(DB_URL)" go test -count=1 -coverprofile=coverage.out ./...
 	go tool cover -func=coverage.out | tail -20
 
+.PHONY: cad-venv
+cad-venv: ## Create the Python venv the CAD kernel runs in (PRD VIS-05)
+	@# Parametric export needs a real kernel. This builds the one the tests and
+	@# the server use, and prints the single line that switches it on.
+	@#
+	@# Not committed and not required: a deployment without it declares STEP and
+	@# refuses it, which is the default and a supported configuration.
+	python3 -m venv $(CAD_VENV)
+	$(CAD_VENV)/bin/pip install --quiet --upgrade pip
+	$(CAD_VENV)/bin/pip install --quiet build123d
+	@$(CAD_VENV)/bin/python -c "import build123d; print('build123d', build123d.__version__)"
+	@echo
+	@echo "export FORGE_CAD_PYTHON=$(abspath $(CAD_VENV))/bin/python"
+
+.PHONY: test-cad
+test-cad: ## Run the CAD kernel tests against the real kernel (needs `make cad-venv`)
+	@# These cannot be faked. Every property they check — that the solid is
+	@# valid, that its volume is right, that a cylinder points the way this
+	@# system draws it — is a property of OpenCASCADE and not of our code, and a
+	@# stub would be asserting that the test author knows what OCCT does.
+	@test -x $(CAD_VENV)/bin/python || { echo "no CAD venv: run \`make cad-venv\` first"; exit 1; }
+	FORGE_CAD_PYTHON="$(abspath $(CAD_VENV))/bin/python" go test -count=1 -v ./internal/domain/cad/
+
 .PHONY: drill
 test-asr: ## Speech fences against the REAL provider, both directions (costs a fraction of a cent)
 	@# These cannot be faked. The defect they guard — a model dropping decimal
@@ -108,8 +134,32 @@ test-asr: ## Speech fences against the REAL provider, both directions (costs a f
 drill: db-wait ## Run the recovery drills against live Postgres (PRD NFR-07)
 	FORGE_DATABASE_URL="$(DB_URL)" go run ./cmd/forgectl drill run
 
+.PHONY: drill-fences
+drill-fences: ## Break each sweep fence on purpose and check it goes red (edits source, then restores it)
+	@# Different question from `drill` above, which injects faults into a RUNNING
+	@# system and checks it recovers. This injects them into the SOURCE, one at a
+	@# time, and checks that the test claiming to hold each one actually fails.
+	@#
+	@# Why it is worth a target of its own: a test that has never failed is a
+	@# claim, not a fence. Two in this repository were written, reviewed and could
+	@# not fail — the shape dispatch (wave 18) and the sweep twist test (wave 19)
+	@# — and neither was found by reading the code.
+	@#
+	@# It edits files in place and restores them from a checksummed backup on the
+	@# way out, including on an interrupt, and says whether the tree came back
+	@# byte-identical. Do not run it beside another build: while a mutation is
+	@# applied, the tree on disk is the mutated one.
+	scripts/drill-fences.sh
+
 .PHONY: check
 check: fmt-check vet test-integration drill ## Everything CI runs on every commit
+	@# The fence drills run LAST and from the recipe rather than as a
+	@# prerequisite, because they edit the source while they run. As a
+	@# prerequisite, `make -j check` could run them beside the test suite, and a
+	@# test that read a half-mutated file would fail in a way indistinguishable
+	@# from a real defect. Prerequisites are all finished before a recipe starts,
+	@# so this is the one place they cannot overlap anything.
+	$(MAKE) drill-fences
 
 # ---------------------------------------------------------------------------
 # Release

@@ -236,7 +236,29 @@
     };
   }
 
-  var SUPPORTED = ['box', 'cylinder', 'cone', 'sphere', 'plane', 'tube'];
+  /* Every shape buildGeometry has a case for. It went stale the moment outlines
+   * arrived — 'extrusion' and 'revolve' were drawn correctly and named nowhere,
+   * which makes a list called "supported shapes" say the opposite of the truth
+   * about three of them. */
+  var SUPPORTED = ['box', 'cylinder', 'cone', 'sphere', 'plane',
+                   'extrusion', 'revolve', 'sweep'];
+
+  /* Shape words the document vocabulary no longer offers, and what a document
+   * that already uses one is read as. The browser's copy of the table in
+   * internal/domain/geometry/retired.go — kept in step by a fence, because a
+   * word that resolves one way here and another in the exported file is the
+   * defect the tessellation fences exist to prevent.
+   *
+   * `tube` never modelled a bore and never could: its size keys are radius and
+   * height, so the document had nowhere to say a wall thickness. It resolves to
+   * what it always was, and says so. See retired.go for the full reasoning. */
+  var RETIRED = {
+    tube: {
+      as: 'cylinder',
+      because: 'drawn as a solid cylinder, which is what a "tube" has always been here — ' +
+               'it has no inner dimension, so no bore was ever stated'
+    }
+  };
 
   /* buildGeometry returns { geo, approximated }.
    *
@@ -252,22 +274,886 @@
    * So an unsupported shape is still drawn — a blank viewport helps nobody — but
    * it is flagged, and the workbench puts it in the provenance banner where the
    * viewer reads what this render does NOT establish. */
+  /* ---- extrusions -------------------------------------------------------
+   *
+   * A closed outline in the part's own XY plane, swept along local Z.
+   *
+   * # Why ear clipping and not a triangle fan
+   *
+   * A fan from the first vertex is four lines and is WRONG for any concave
+   * outline, which is most of the interesting ones — an L-bracket is concave by
+   * definition, and a fan across its inner corner draws triangles outside the
+   * part. The first shape anybody makes with this feature would be drawn wrong.
+   *
+   * # Why this is a second implementation
+   *
+   * internal/domain/geometry/triangulate.go does the same thing for the mesh
+   * exporters, which cannot run in a browser. The duplication is real and this
+   * codebase has recorded what two copies of one rule cost — so what is shared
+   * is the PROPERTY rather than the code: any correct triangulation of an
+   * outline covers exactly the outline's area, so the two agree about the SHAPE
+   * however they each cut it up. That is not true of curve tessellation, which
+   * is why the segment counts are fenced across the boundary and this is not.
+   */
+  function signedArea2D(pts) {
+    var a = 0;
+    for (var i = 0; i < pts.length; i++) {
+      var j = (i + 1) % pts.length;
+      a += pts[i][0] * pts[j][1] - pts[j][0] * pts[i][1];
+    }
+    return a / 2;
+  }
+
+  function cross2D(a, b, c) {
+    return (b[0] - a[0]) * (c[1] - b[1]) - (b[1] - a[1]) * (c[0] - b[0]);
+  }
+
+  function pointInTriangle2D(p, a, b, c) {
+    var d1 = cross2D(a, b, p), d2 = cross2D(b, c, p), d3 = cross2D(c, a, p);
+    var neg = d1 < 0 || d2 < 0 || d3 < 0;
+    var pos = d1 > 0 || d2 > 0 || d3 > 0;
+    return !(neg && pos);
+  }
+
+  function samePoint2D(a, b) {
+    return Math.abs(a[0]-b[0]) < 1e-12 && Math.abs(a[1]-b[1]) < 1e-12;
+  }
+
+  /* ---- holes in an outline ----------------------------------------------
+   *
+   * Ear clipping walks ONE ring of vertices and cannot see a loop inside
+   * another, so each hole is spliced into the outer loop by a BRIDGE: a segment
+   * to a visible outer vertex, traversed out and back, which turns a
+   * ring-with-holes into one ring that touches itself along the bridge. Exact:
+   * the bridge is walked both ways and encloses nothing.
+   *
+   * The same algorithm as internal/domain/geometry/triangulate.go, and the same
+   * winding rule — the outline counter-clockwise, every hole the other way —
+   * which is what makes one wall-normal formula point out of the material on
+   * both. TestRendererSweepsTheSameSolidAsTheExporter holds the two together.
+   */
+  function insideLoop2D(p, loop) {
+    var inside = false;
+    for (var i = 0; i < loop.length; i++) {
+      var a = loop[i], b = loop[(i + 1) % loop.length];
+      if ((a[1] > p[1]) !== (b[1] > p[1])) {
+        var x = a[0] + (p[1] - a[1]) / (b[1] - a[1]) * (b[0] - a[0]);
+        if (x > p[0]) inside = !inside;
+      }
+    }
+    return inside;
+  }
+
+  function onSegment2D(a, b, p) {
+    return Math.min(a[0], b[0]) <= p[0] && p[0] <= Math.max(a[0], b[0]) &&
+           Math.min(a[1], b[1]) <= p[1] && p[1] <= Math.max(a[1], b[1]);
+  }
+
+  function strictlyBetween2D(a, b, p) {
+    if (samePoint2D(p, a) || samePoint2D(p, b)) return false;
+    return onSegment2D(a, b, p);
+  }
+
+  function properlyCross2D(p1, p2, p3, p4) {
+    var d1 = cross2D(p3, p4, p1), d2 = cross2D(p3, p4, p2);
+    var d3 = cross2D(p1, p2, p3), d4 = cross2D(p1, p2, p4);
+    if (((d1 > 0 && d2 < 0) || (d1 < 0 && d2 > 0)) &&
+        ((d3 > 0 && d4 < 0) || (d3 < 0 && d4 > 0))) return true;
+    return (d1 === 0 && strictlyBetween2D(p3, p4, p1)) ||
+           (d2 === 0 && strictlyBetween2D(p3, p4, p2)) ||
+           (d3 === 0 && strictlyBetween2D(p1, p2, p3)) ||
+           (d4 === 0 && strictlyBetween2D(p1, p2, p4));
+  }
+
+  function blocksBridge2D(a, b, loop) {
+    for (var i = 0; i < loop.length; i++) {
+      var p = loop[i], q = loop[(i + 1) % loop.length];
+      if (samePoint2D(p, a) || samePoint2D(p, b) || samePoint2D(q, a) || samePoint2D(q, b)) {
+        /* Touching AT a shared endpoint is how a bridge always meets its own
+         * loops. An edge lying ALONG the bridge is not. */
+        if (cross2D(a, b, p) === 0 && cross2D(a, b, q) === 0) return true;
+        continue;
+      }
+      if (properlyCross2D(a, b, p, q)) return true;
+    }
+    return false;
+  }
+
+  function bridgeInto(merged, hole, pending) {
+    var candidates = [], i, j;
+    for (i = 0; i < merged.length; i++) {
+      for (j = 0; j < hole.length; j++) {
+        var dx = hole[j][0] - merged[i][0], dy = hole[j][1] - merged[i][1];
+        candidates.push({ o: i, h: j, d: dx*dx + dy*dy });
+      }
+    }
+    candidates.sort(function (x, y) { return x.d - y.d; });
+
+    for (var c = 0; c < candidates.length; c++) {
+      var a = merged[candidates[c].o], b = hole[candidates[c].h];
+      if (samePoint2D(a, b)) continue;
+      if (blocksBridge2D(a, b, merged) || blocksBridge2D(a, b, hole)) continue;
+      var blocked = false, k;
+      for (k = 0; k < pending.length && !blocked; k++) {
+        if (blocksBridge2D(a, b, pending[k])) blocked = true;
+      }
+      if (blocked) continue;
+      var mid = [(a[0] + b[0]) / 2, (a[1] + b[1]) / 2];
+      if (!insideLoop2D(mid, merged) || insideLoop2D(mid, hole)) continue;
+      for (k = 0; k < pending.length && !blocked; k++) {
+        if (insideLoop2D(mid, pending[k])) blocked = true;
+      }
+      if (blocked) continue;
+
+      /* Out along the bridge, round the hole, and back. Both bridge vertices
+       * appear twice, which is the trick: the ring touches itself along a
+       * segment of zero width and encloses exactly what it did before. */
+      return merged.slice(0, candidates[c].o + 1)
+        .concat(hole.slice(candidates[c].h))
+        .concat(hole.slice(0, candidates[c].h + 1))
+        .concat(merged.slice(candidates[c].o));
+    }
+    return null;
+  }
+
+  function rightmostX2D(loop) {
+    var x = -Infinity;
+    for (var i = 0; i < loop.length; i++) x = Math.max(x, loop[i][0]);
+    return x;
+  }
+
+  /* The outline first, counter-clockwise, then every hole the other way. */
+  function sectionLoops2D(outer, holes) {
+    var loops = [signedArea2D(outer) >= 0 ? outer : outer.slice().reverse()];
+    (holes || []).forEach(function (h) {
+      loops.push(signedArea2D(h) <= 0 ? h : h.slice().reverse());
+    });
+    return loops;
+  }
+
+  /* Which loop directly contains each one, and how deep it sits.
+   *
+   * A loop inside a hole is an ISLAND: solid material standing in a void — the
+   * post in an annular slot, the bar of a letter A, a lug in the bottom of a
+   * pocket. A loop contained in an odd number of others is a void; in an even
+   * number, solid. Go reads it the same way in nestLoops, and sends the same
+   * tree to the CAD kernel, which cannot work it out from curves.
+   *
+   * Ordinarily every hole is directly inside the outline and this is the answer
+   * it always was. */
+  function nest2D(loops) {
+    var depth = [], parent = [], i, j;
+    for (i = 0; i < loops.length; i++) {
+      depth[i] = 0;
+      for (j = 0; j < loops.length; j++) {
+        if (i !== j && loops[j].length && loops[i].length &&
+            insideLoop2D(loops[i][0], loops[j])) depth[i]++;
+      }
+    }
+    for (i = 0; i < loops.length; i++) {
+      var best = -1;
+      for (j = 0; j < loops.length; j++) {
+        if (i === j || !loops[j].length || !loops[i].length) continue;
+        if (!insideLoop2D(loops[i][0], loops[j])) continue;
+        if (best < 0 || depth[j] > depth[best]) best = j;
+      }
+      parent[i] = best;
+    }
+    return { depth: depth, parent: parent };
+  }
+
+  /* { merged, tris, loops } — the caps index into merged, the walls walk loops.
+   *
+   * merged is the CONCATENATION of one bridged ring per solid area, and the
+   * triangles are offset into it, so a section with an island still hands the
+   * extrusion, the revolve and the sweep one point list and one triangle list.
+   * Go does the same, for the same reason: those three are fenced against this
+   * file and neither should have to learn about nesting. */
+  function triangulateSection(outer, holes) {
+    holes = holes || [];
+    if (!holes.length) {
+      var clipped = earClip(signedArea2D(outer) >= 0 ? outer : outer.slice().reverse());
+      return { merged: clipped.pts, tris: clipped.tris, loops: [clipped.pts] };
+    }
+    var raw = [outer].concat(holes);
+    var tree = nest2D(raw);
+    /* Wound by PARITY, not by position: an island's wall must face out of the
+     * material like the outline's, and winding everything after the first one
+     * clockwise would point it into the solid. */
+    var wound = raw.map(function (loop, i) {
+      var ccw = signedArea2D(loop) >= 0;
+      var wantCCW = tree.depth[i] % 2 === 0;
+      return ccw === wantCCW ? loop : loop.slice().reverse();
+    });
+
+    var merged = [], tris = [], i;
+    for (i = 0; i < wound.length; i++) {
+      if (tree.depth[i] % 2 !== 0) continue;          /* a void, not an area */
+      var inner = [];
+      for (var j = 0; j < wound.length; j++) {
+        if (tree.depth[j] % 2 === 1 && tree.parent[j] === i) inner.push(wound[j]);
+      }
+      var ring = wound[i].slice(), remaining = inner.slice();
+      var failed = false;
+      while (remaining.length) {
+        var best = 0, k;
+        for (k = 1; k < remaining.length; k++) {
+          if (rightmostX2D(remaining[k]) > rightmostX2D(remaining[best])) best = k;
+        }
+        var hole = remaining[best];
+        remaining = remaining.slice(0, best).concat(remaining.slice(best + 1));
+        var spliced = bridgeInto(ring, hole, remaining);
+        if (!spliced) { failed = true; break; }
+        ring = spliced;
+      }
+      if (failed) return { merged: wound[0], tris: [], loops: wound };
+      /* earClip returns the points its triangles index INTO — it may reorder
+       * them — so the ring comes back from it rather than being kept
+       * separately. That is the same trap the caps-and-walls bug came from. */
+      var done = earClip(ring);
+      var base = merged.length;
+      merged = merged.concat(done.pts);
+      for (k = 0; k < done.tris.length; k++) {
+        tris.push([done.tris[k][0] + base, done.tris[k][1] + base, done.tris[k][2] + base]);
+      }
+    }
+    return { merged: merged, tris: tris, loops: wound };
+  }
+
+  /* Returns { pts, tris } — the points in the order the triangles index into,
+   * which may be reversed. Returning them is not a convenience: keeping a
+   * separate copy is how the caps come out normalised and the side walls do
+   * not, which draws a clockwise outline inside out. */
+  function earClip(input) {
+    if (input.length < 3) return { pts: input, tris: [] };
+    var pts = input;
+    if (signedArea2D(pts) < 0) pts = input.slice().reverse();
+
+    var idx = [], i;
+    for (i = 0; i < pts.length; i++) idx.push(i);
+    var tris = [], guard = 0;
+
+    while (idx.length > 3) {
+      var clipped = false;
+      for (i = 0; i < idx.length; i++) {
+        var prev = idx[(i - 1 + idx.length) % idx.length];
+        var cur = idx[i];
+        var next = idx[(i + 1) % idx.length];
+        if (cross2D(pts[prev], pts[cur], pts[next]) <= 0) continue;
+        var clear = true;
+        for (var k = 0; k < idx.length && clear; k++) {
+          var o = idx[k];
+          if (o === prev || o === cur || o === next) continue;
+          /* A bridge puts TWO vertices at the same coordinates, and the boundary
+           * counts as inside — so without this, the duplicate of a bridge
+           * endpoint blocks every ear that touches it and clipping stalls on any
+           * outline with a hole in it. Skipped by POSITION, because which index
+           * is the duplicate is not knowable from here. */
+          if (samePoint2D(pts[o], pts[prev]) || samePoint2D(pts[o], pts[cur]) ||
+              samePoint2D(pts[o], pts[next])) continue;
+          if (pointInTriangle2D(pts[o], pts[prev], pts[cur], pts[next])) clear = false;
+        }
+        if (!clear) continue;
+        tris.push([prev, cur, next]);
+        idx.splice(i, 1);
+        clipped = true;
+        break;
+      }
+      /* A pass that removed nothing means the outline crosses itself. Stopping
+       * matters more here than anywhere else in this file: this runs in the
+       * browser's main thread, and a loop that never ends is a tab that never
+       * responds again. */
+      if (!clipped) { guard++; if (guard > 1) return { pts: pts, tris: tris }; }
+    }
+    if (idx.length === 3) tris.push([idx[0], idx[1], idx[2]]);
+    return { pts: pts, tris: tris };
+  }
+
+  /* ---- corner radii ------------------------------------------------------
+   *
+   * A point may carry a `radius`, which rounds the corner there: an arc of that
+   * radius, tangent to both edges meeting at it. The same field on an outline
+   * point and on a path point, because it is the same idea — and on a path it is
+   * the BEND RADIUS, the number a tube bender is set to.
+   *
+   * # Why this is flattened here and not sent as a curve
+   *
+   * internal/domain/geometry/curve.go works out the same corners and hands the
+   * CAD kernel the TRUE arcs, so an exported bend is a real cylindrical surface.
+   * This is a renderer: it draws triangles, so it turns each arc into chords at
+   * the same count a cylinder gets, and the workbench reports the deviation the
+   * Go side computed. Same bargain every curved shape here already makes.
+   *
+   * Returns null when the corners cannot be resolved — radii that overlap each
+   * other, a radius where there is no corner. Go refuses those documents before
+   * they are ever drawn, so reaching null means the two disagree, and drawing a
+   * labelled box beats drawing a lie.
+   */
+  function flattenDrawing(points, closed) {
+    /* A loop that closes itself by repeating its first point is READ, not
+     * refused: every polygon format a model has read closes a ring that way, and
+     * a final edge of zero length is never a shape, so the repeated point is
+     * redundant. The RADIUS moves with it — the repeated point often carries the
+     * corner radius while the original does not, and leaving it behind would
+     * mitre a corner somebody asked to be bent.
+     *
+     * internal/domain/geometry/curve.go does the same on the way to the kernel.
+     * The two must agree or the picture and the file are different shapes. */
+    points = (points || []).slice();
+    if (closed && points.length > 1) {
+      var a0 = points[0], z0 = points[points.length - 1];
+      if (Math.abs(num(a0.x,0)-num(z0.x,0)) < 1e-12 && Math.abs(num(a0.y,0)-num(z0.y,0)) < 1e-12 &&
+          Math.abs(num(a0.z,0)-num(z0.z,0)) < 1e-12) {
+        points.pop();
+        /* The VIA moves with it too, and with a cleaner argument than the
+         * radius: a via on the repeated point describes the edge ARRIVING at
+         * it, which once the duplicate is gone is exactly the closing edge —
+         * entry 0. Same edge, renumbered. Leaving it behind draws a bowed edge
+         * straight, which is a different outline of the same overall size. */
+        var keepR = num(a0.radius, 0) || num(z0.radius, 0);
+        var keepV = z0.via || a0.via;
+        points[0] = { x: num(a0.x,0), y: num(a0.y,0), z: num(a0.z,0),
+                      radius: keepR, via: keepV };
+      }
+    }
+    var n = points.length;
+    if (n < 2) return null;
+    function at(i) {
+      var p = points[((i % n) + n) % n];
+      return [num(p.x, 0), num(p.y, 0), num(p.z, 0)];
+    }
+    function sub(a, b) { return [a[0]-b[0], a[1]-b[1], a[2]-b[2]]; }
+    function add(a, b) { return [a[0]+b[0], a[1]+b[1], a[2]+b[2]]; }
+    function mul(a, s) { return [a[0]*s, a[1]*s, a[2]*s]; }
+    function dot(a, b) { return a[0]*b[0] + a[1]*b[1] + a[2]*b[2]; }
+    function crs(a, b) {
+      return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
+    }
+    function len(a) { return Math.sqrt(dot(a, a)); }
+    function unit(a) { var l = len(a); return l ? mul(a, 1/l) : [0,0,0]; }
+
+    var TOL = 1e-9, corners = [], i;
+
+    /* ---- bowed edges -----------------------------------------------------
+     *
+     * A point may carry a `via`: one more point, and the edge ARRIVING at it is
+     * the circular arc through it. Three points fix a circle completely, which
+     * a radius and two endpoints do not — see internal/domain/geometry/curve.go
+     * for the measurement that settled that, and for why an arc edge always has
+     * SHARP ends. Entry 0 is the closing edge of a closed run. */
+    function arcAt(i2) {
+      var p = points[((i2 % n) + n) % n];
+      if (!p.via) return null;
+      if (!closed && i2 === 0) return null;
+      var from = at(i2 - 1), to = at(i2);
+      var via = [num(p.via.x, 0), num(p.via.y, 0), num(p.via.z, 0)];
+      var u = sub(via, from), v = sub(to, from), nrm = crs(u, v);
+      var nn = dot(nrm, nrm);
+      if (nn < TOL * TOL) return null;               /* in line: no circle */
+      var centre = add(from, mul(add(mul(crs(v, nrm), dot(u, u)),
+                                     mul(crs(nrm, u), dot(v, v))), 1 / (2 * nn)));
+      var a = sub(from, centre), rad = len(a);
+      if (rad < TOL) return null;
+      var axis = unit(nrm);
+      function sweepTo(p2) {
+        var d = sub(p2, centre);
+        var t = Math.atan2(dot(axis, crs(a, d)), dot(a, d));
+        return t < 0 ? t + 2 * Math.PI : t;
+      }
+      var toA = sweepTo(to), viaA = sweepTo(via);
+      if (toA < TOL || viaA < TOL || Math.abs(toA - viaA) < TOL) return null;
+      /* Which way round: the arc is the one that PASSES THROUGH the via. */
+      if (viaA < toA) return { centre: centre, axis: axis, angle: toA, from: from };
+      return { centre: centre, axis: mul(axis, -1), angle: 2 * Math.PI - toA, from: from };
+    }
+    var arcs = [];
+    for (i = 0; i < n; i++) arcs.push(arcAt(i));
+
+    for (i = 0; i < n; i++) {
+      var r = num(points[i].radius, 0);
+      var interior = closed || (i > 0 && i < n - 1);
+      if (!(r > 0) || !interior) { corners.push(null); continue; }
+      /* A vertex with an arc on either side is SHARP. Rounding an arc into an
+       * arc is a fillet between two curves, and the construction below — which
+       * walks back r·tan(θ/2) along a straight — has no answer for it. Go takes
+       * the same reading and reports it as an ignored radius. */
+      if (arcs[i] || arcs[(i + 1) % n]) { corners.push(null); continue; }
+      var dIn = sub(at(i), at(i-1)), dOut = sub(at(i+1), at(i));
+      if (len(dIn) < TOL || len(dOut) < TOL) return null;
+      dIn = unit(dIn); dOut = unit(dOut);
+      var axis = crs(dIn, dOut), sin = len(axis), cos = dot(dIn, dOut);
+      if (sin < TOL) {
+        /* In line: there is no corner here, so the radius names nothing and is
+         * IGNORED — the same reading Go takes, which reports it as a warning and
+         * still builds the part. A reversal is a different matter: no radius can
+         * round it, and there is nothing honest to draw. */
+        if (cos > 0) { corners.push(null); continue; }
+        return null;
+      }
+      var angle = Math.atan2(sin, cos);
+      var cut = r * Math.tan(angle / 2);
+      var from = add(at(i), mul(dIn, -cut));
+      var centre = add(at(i), mul(unit(sub(dOut, dIn)), r / Math.cos(angle / 2)));
+      corners.push({ cut: cut, from: from, centre: centre, angle: angle,
+                     axis: mul(axis, 1/sin) });
+    }
+    /* Two corners on one edge must leave room for each other. */
+    var last = closed ? n - 1 : n - 2;
+    for (i = 0; i <= last; i++) {
+      var j = (i + 1) % n;
+      var need = (corners[i] ? corners[i].cut : 0) + (corners[j] ? corners[j].cut : 0);
+      if (need > len(sub(at(j), at(i))) + TOL) return null;
+    }
+
+    var out = [];
+    function push(p) {
+      var back = out[out.length - 1];
+      if (back && Math.abs(back[0]-p[0]) < 1e-12 && Math.abs(back[1]-p[1]) < 1e-12 &&
+          Math.abs(back[2]-p[2]) < 1e-12) return;
+      out.push(p);
+    }
+    /* One bowed edge, stepped at the same fineness a corner arc gets. Safe to
+     * emit whole, with no trimming, because an arc edge always has sharp ends. */
+    function bow(i2) {
+      var a2 = arcs[i2];
+      if (!a2) return;
+      var steps2 = Math.max(1, Math.ceil(TESSELLATION.radial * a2.angle / (2 * Math.PI)));
+      var spoke2 = sub(a2.from, a2.centre);
+      for (var k3 = 0; k3 <= steps2; k3++) {
+        var t2 = a2.angle * k3 / steps2, c2 = Math.cos(t2), s2 = Math.sin(t2);
+        push(add(a2.centre, add(add(mul(spoke2, c2), mul(crs(a2.axis, spoke2), s2)),
+                                mul(a2.axis, dot(a2.axis, spoke2) * (1 - c2)))));
+      }
+    }
+    var seam = 0;   /* how many points the first corner contributed */
+    for (i = 0; i < n; i++) {
+      /* The edge ARRIVING here, before the corner itself. Index 0's arriving
+       * edge is the closing one and is emitted at the end, where a closed run
+       * actually reaches it. */
+      if (i > 0) bow(i);
+      var c = corners[i];
+      if (!c) {
+        push(at(i));
+        if (i === 0) seam = out.length;
+        continue;
+      }
+      var steps = Math.max(1, Math.ceil(TESSELLATION.radial * c.angle / (2 * Math.PI)));
+      var spoke = sub(c.from, c.centre);
+      for (var k = 0; k <= steps; k++) {
+        var t = c.angle * k / steps;
+        var ct = Math.cos(t), st = Math.sin(t);
+        /* Rodrigues about the corner's own axis. */
+        push(add(c.centre, add(add(mul(spoke, ct), mul(crs(c.axis, spoke), st)),
+                               mul(c.axis, dot(c.axis, spoke) * (1 - ct)))));
+      }
+      if (i === 0) seam = out.length;
+    }
+    if (closed) bow(0);
+    if (closed && out.length > 1) {
+      var a = out[0], b = out[out.length - 1];
+      if (Math.abs(a[0]-b[0]) < 1e-12 && Math.abs(a[1]-b[1]) < 1e-12 &&
+          Math.abs(a[2]-b[2]) < 1e-12) out.pop();
+    }
+    /* A CLOSED run starts where its first corner ENDS. Beginning part-way along
+     * the seam's arc puts the first direction on a CHORD of that arc, while the
+     * kernel's curve has the true tangent there — 4.5° apart at this fineness
+     * for a right angle, which tilts the whole solid. Rotating costs nothing: a
+     * closed run has no first point, only a place we chose to start writing it
+     * down. See internal/domain/geometry/curve.go. */
+    if (closed && seam > 1 && out.length) {
+      var k2 = (seam - 1) % out.length;
+      out = out.slice(k2).concat(out.slice(0, k2));
+    }
+    return out;
+  }
+
+  /* The outline, flattened, in its own two dimensions. */
+  function outlinePoints(profile) {
+    var flat = flattenDrawing(profile || [], true);
+    if (!flat) return null;
+    return flat.map(function (p) { return [p[0], p[1]]; });
+  }
+
+  function extrusionGeometry(profile, depth, holes) {
+    var raw = outlinePoints(profile);
+    var bores = holeOutlines(holes);
+    if (!raw || !bores) {
+      return {
+        geo: boxGeometry(1, 1, num(depth, 1)),
+        approximated: 'the corner radii on this outline could not be resolved, so it is ' +
+                      'drawn as a unit box'
+      };
+    }
+    if (raw.length < 3) {
+      return {
+        geo: boxGeometry(1, 1, num(depth, 1)),
+        approximated: 'this outline has fewer than three points and encloses nothing, ' +
+                      'so it is drawn as a unit box'
+      };
+    }
+    var sec = triangulateSection(raw, bores);
+    if (!sec.tris.length) {
+      return {
+        geo: boxGeometry(1, 1, num(depth, 1)),
+        approximated: 'this outline could not be closed into a surface — it crosses itself, ' +
+                      'repeats a point, or has a hole that will not fit inside it — so it ' +
+                      'is drawn as a unit box'
+      };
+    }
+
+    var pts = sec.merged, half = num(depth, 1) / 2;
+    var positions = [], normals = [], indices = [], n = 0;
+    function vert(x, y, z, nx, ny, nz) {
+      positions.push(x, y, z); normals.push(nx, ny, nz); indices.push(n++);
+    }
+
+    sec.tris.forEach(function (t) {
+      vert(pts[t[0]][0], pts[t[0]][1], half, 0, 0, 1);
+      vert(pts[t[1]][0], pts[t[1]][1], half, 0, 0, 1);
+      vert(pts[t[2]][0], pts[t[2]][1], half, 0, 0, 1);
+      // Reversed, so the bottom cap faces away from the solid too.
+      vert(pts[t[2]][0], pts[t[2]][1], -half, 0, 0, -1);
+      vert(pts[t[1]][0], pts[t[1]][1], -half, 0, 0, -1);
+      vert(pts[t[0]][0], pts[t[0]][1], -half, 0, 0, -1);
+    });
+
+    /* The walls, loop by loop rather than over the merged ring: a wall along a
+     * bridge would be a quad of zero width, drawn twice and facing both ways. */
+    sec.loops.forEach(function (loop) {
+      for (var i = 0; i < loop.length; i++) {
+        var j = (i + 1) % loop.length;
+        var dx = loop[j][0] - loop[i][0], dy = loop[j][1] - loop[i][1];
+        var len = Math.sqrt(dx * dx + dy * dy) || 1;
+        /* Outward for a counter-clockwise outline: on a square wound
+         * counter-clockwise the bottom edge runs +x and the outside is -y. A
+         * HOLE runs the other way, so the same formula points into the hole,
+         * which is out of the material. */
+        var nx = dy / len, ny = -dx / len;
+        vert(loop[i][0], loop[i][1], -half, nx, ny, 0);
+        vert(loop[j][0], loop[j][1], -half, nx, ny, 0);
+        vert(loop[j][0], loop[j][1], half, nx, ny, 0);
+        vert(loop[i][0], loop[i][1], -half, nx, ny, 0);
+        vert(loop[j][0], loop[j][1], half, nx, ny, 0);
+        vert(loop[i][0], loop[i][1], half, nx, ny, 0);
+      }
+    });
+    return { geo: { positions: positions, normals: normals, indices: indices } };
+  }
+
+  /* Every hole of an outline, flattened. null when any of them cannot be. */
+  function holeOutlines(holes) {
+    var out = [];
+    for (var i = 0; i < (holes || []).length; i++) {
+      var flat = outlinePoints(holes[i]);
+      if (!flat) return null;
+      out.push(flat);
+    }
+    return out;
+  }
+
+  /* An outline turned a full circle about its own axis.
+   *
+   * # Why there is no triangulation here
+   *
+   * An extrusion needs its caps triangulated. A full revolve has none — the
+   * surface closes on itself — so every facet is a quad between two adjacent
+   * outline points at two adjacent angles. The winding still matters, because it
+   * decides which way those quads face.
+   *
+   * TESSELLATION.radial is the same count a cylinder uses, so a revolved boss
+   * and a cylinder beside it are drawn to the same fineness, and the exported
+   * mesh is the surface that was on screen.
+   */
+  function revolveGeometry(profile, axis, holes) {
+    var raw = outlinePoints(profile);
+    var bores = holeOutlines(holes);
+    if (!raw || !bores) {
+      return {
+        geo: boxGeometry(1, 1, 1),
+        approximated: 'the corner radii on this outline could not be resolved, so it is ' +
+                      'drawn as a unit box'
+      };
+    }
+    if (raw.length < 3) {
+      return {
+        geo: boxGeometry(1, 1, 1),
+        approximated: 'this outline has fewer than three points and encloses nothing, ' +
+                      'so it is drawn as a unit box'
+      };
+    }
+    /* The same normalisation the extrusion does, for the same reason: the facet
+     * winding below is only outward for a counter-clockwise outline — and a
+     * hole, wound the other way, turns into a surface facing into the void. */
+    var loops = sectionLoops2D(raw, bores);
+    var aboutX = String(axis || '').toLowerCase() === 'x';
+    var seg = TESSELLATION.radial;
+
+    function at(pts, i, t) {
+      if (aboutX) {
+        var rx = pts[i][1];
+        return [pts[i][0], rx * Math.cos(t), rx * Math.sin(t)];
+      }
+      var r = pts[i][0];
+      return [r * Math.cos(t), pts[i][1], r * Math.sin(t)];
+    }
+    /* The normal comes from the facet itself rather than from a formula per
+     * axis: the two axes have opposite handedness, and a formula written for one
+     * is silently inverted for the other. */
+    function normalOf(a, b, c) {
+      var ux = b[0]-a[0], uy = b[1]-a[1], uz = b[2]-a[2];
+      var vx = c[0]-a[0], vy = c[1]-a[1], vz = c[2]-a[2];
+      var nx = uy*vz - uz*vy, ny = uz*vx - ux*vz, nz = ux*vy - uy*vx;
+      var len = Math.sqrt(nx*nx + ny*ny + nz*nz) || 1;
+      return [nx/len, ny/len, nz/len];
+    }
+
+    var positions = [], normals = [], indices = [], n = 0;
+    function tri(a, b, c) {
+      var nn = normalOf(a, b, c);
+      [a, b, c].forEach(function (v) {
+        positions.push(v[0], v[1], v[2]);
+        normals.push(nn[0], nn[1], nn[2]);
+        indices.push(n++);
+      });
+    }
+    for (var k = 0; k < seg; k++) {
+      var t0 = k / seg * 2 * Math.PI, t1 = (k + 1) / seg * 2 * Math.PI;
+      for (var l = 0; l < loops.length; l++) {
+        var pts = loops[l];
+        for (var i = 0; i < pts.length; i++) {
+          var j = (i + 1) % pts.length;
+          var a = at(pts, i, t0), b = at(pts, j, t0), c = at(pts, j, t1), d = at(pts, i, t1);
+          tri(a, b, c);
+          tri(a, c, d);
+        }
+      }
+    }
+    return { geo: { positions: positions, normals: normals, indices: indices } };
+  }
+
+  /* An outline carried along a PATH — the shape everything that bends is made
+   * of: a pipe run, a handrail, a cable tray, a wire form.
+   *
+   * # Why this is a third implementation and what keeps it honest
+   *
+   * internal/domain/geometry/sweep.go decides where every ring of points goes,
+   * and the CAD kernel builds a real B-Rep from the same numbers. This draws the
+   * same rings for the viewport, which cannot call either.
+   *
+   * What is shared is the PROPERTY, as with ear clipping: a swept polygon is a
+   * polyhedron with no curved surface anywhere on it, so all three produce the
+   * SAME solid rather than three approximations of one — and its volume is the
+   * outline's area times the path's length whenever the outline is centred on
+   * the path, which is what the fences on both sides assert.
+   *
+   * Corners are mitred: each ring sits in the plane bisecting the two segments,
+   * which is what a fabricated bend is, and the section is carried between
+   * segments by the smallest rotation that takes one direction to the next, so
+   * it does not twist as the path bends.
+   */
+  function sweepSections(loops, path, closed) {
+    function sub(a, b) { return [a[0]-b[0], a[1]-b[1], a[2]-b[2]]; }
+    function add(a, b) { return [a[0]+b[0], a[1]+b[1], a[2]+b[2]]; }
+    function mul(a, s) { return [a[0]*s, a[1]*s, a[2]*s]; }
+    function dot(a, b) { return a[0]*b[0] + a[1]*b[1] + a[2]*b[2]; }
+    function crs(a, b) {
+      return [a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
+    }
+    function len(a) { return Math.sqrt(dot(a, a)); }
+    function unit(a) { var l = len(a); return l ? mul(a, 1/l) : [0,0,0]; }
+    /* The smallest rotation taking unit a to unit b — Rodrigues, angle in
+     * [0, pi]. Antiparallel has no such axis, so a fixed perpendicular is used
+     * and the answer is at least deterministic; the only path that reaches it
+     * sets off straight down. */
+    function rotation(a, b) {
+      var axis = crs(a, b), sin = len(axis), cos = dot(a, b);
+      if (sin < 1e-12) {
+        if (cos > 0) return function (v) { return v; };
+        var lean = Math.abs(a[0]) > Math.abs(a[1]) ? [0,1,0] : [1,0,0];
+        var k0 = unit(crs(a, lean));
+        return function (v) { return sub(mul(k0, 2*dot(v, k0)), v); };
+      }
+      var k = mul(axis, 1/sin);
+      return function (v) {
+        return add(add(mul(v, cos), mul(crs(k, v), sin)), mul(k, dot(k, v)*(1-cos)));
+      };
+    }
+
+    if (!loops.length || loops[0].length < 3 || path.length < 2) return null;
+    var n = path.length;
+    var i, j, k, segments = closed ? n : n - 1, tangent = [];
+    for (i = 0; i < segments; i++) {
+      var d = sub(path[(i+1) % n], path[i]);
+      if (len(d) < 1e-12) return null;   /* a zero-length segment */
+      tangent.push(unit(d));
+    }
+    /* A CLOSED path has a bisector at every vertex, the seam included: it is a
+     * corner like any other, joining the last segment to the first. An open one
+     * has ends, where the section sits square to the path. */
+    var bisector = [];
+    for (j = 0; j < n; j++) {
+      if (!closed && j === 0) { bisector.push(tangent[0]); continue; }
+      if (!closed && j === n - 1) { bisector.push(tangent[segments-1]); continue; }
+      var sum = add(tangent[(j-1+segments) % segments], tangent[j % segments]);
+      if (len(sum) < 1e-9) return null;  /* the path doubles back */
+      bisector.push(unit(sum));
+    }
+
+    /* The frame at the first segment is the smallest rotation from +Z, so a
+     * path straight up local Z leaves the outline exactly as drawn and the
+     * sweep IS the extrusion. */
+    var start = rotation([0,0,1], tangent[0]);
+    var axisX = [start([1,0,0])], axisY = [start([0,1,0])];
+    for (i = 1; i < segments; i++) {
+      var turn = rotation(tangent[i-1], tangent[i]);
+      axisX.push(turn(axisX[i-1]));
+      axisY.push(turn(axisY[i-1]));
+    }
+    /* Round a loop the carried frame must come back to ITSELF, and generally it
+     * does not: carrying a frame round a closed curve rotates it by the area its
+     * tangents enclose on the sphere. Go refuses those documents and names the
+     * angle; here there is nothing honest to draw. */
+    if (closed) {
+      var backTo = rotation(tangent[segments-1], tangent[0])(axisX[segments-1]);
+      if (Math.abs(Math.atan2(dot(backTo, axisY[0]), dot(backTo, axisX[0]))) > 1e-6) return null;
+    }
+
+    /* EVERY loop is carried by the same frames — the outline and the holes in
+     * it — because they are one section. A bore carried by frames of its own
+     * would drift out of the wall around it as the path bends. */
+    var all = [];
+    for (var l = 0; l < loops.length; l++) {
+      var rings = [];
+      for (j = 0; j < n; j++) {
+        var into = j > 0 ? j - 1 : (closed ? segments - 1 : 0);
+        var t = tangent[into], m = bisector[j];
+        var denom = dot(t, m), ring = [];
+        for (k = 0; k < loops[l].length; k++) {
+          /* On the perpendicular section at the vertex, then slid ALONG the
+           * segment onto the bisector plane. Sliding rather than projecting is
+           * what makes it a mitre: each point stays on the line the sweep
+           * carries it along, so the two faces meet edge to edge. */
+          var base = add(path[j], add(mul(axisX[into], loops[l][k][0]),
+                                      mul(axisY[into], loops[l][k][1])));
+          ring.push(add(base, mul(t, dot(sub(path[j], base), m) / denom)));
+        }
+        rings.push(ring);
+      }
+      all.push(rings);
+    }
+    return all;
+  }
+
+  function sweepGeometry(profile, path, holes, closed) {
+    var raw = outlinePoints(profile);
+    var bores = holeOutlines(holes);
+    var way = flattenDrawing(path || [], !!closed);
+    if (!raw || !bores || !way) {
+      return {
+        geo: boxGeometry(1, 1, 1),
+        approximated: 'the corner radii on this outline or the bend radii on its path could ' +
+                      'not be resolved, so it is drawn as a unit box'
+      };
+    }
+    if (raw.length < 3 || way.length < 2) {
+      return {
+        geo: boxGeometry(1, 1, 1),
+        approximated: 'a sweep needs an outline of at least three points and a path of at ' +
+                      'least two, so it is drawn as a unit box'
+      };
+    }
+    var sec = triangulateSection(raw, bores);
+    /* The merged ring is carried along the path as loop ZERO, so the caps come
+     * from the rings like everything else rather than from a second
+     * transformation that could disagree with them. */
+    var rings = sec.tris.length ? sweepSections([sec.merged].concat(sec.loops), way, !!closed) : null;
+    if (!rings) {
+      return {
+        geo: boxGeometry(1, 1, 1),
+        approximated: 'this outline could not be closed into a surface, or this path ' +
+                      'repeats a point or doubles back, so it is drawn as a unit box'
+      };
+    }
+
+    var positions = [], normals = [], indices = [], n = 0;
+    function normalOf(a, b, c) {
+      var ux = b[0]-a[0], uy = b[1]-a[1], uz = b[2]-a[2];
+      var vx = c[0]-a[0], vy = c[1]-a[1], vz = c[2]-a[2];
+      var nx = uy*vz - uz*vy, ny = uz*vx - ux*vz, nz = ux*vy - uy*vx;
+      var l = Math.sqrt(nx*nx + ny*ny + nz*nz) || 1;
+      return [nx/l, ny/l, nz/l];
+    }
+    function tri(a, b, c, nn) {
+      var norm = nn || normalOf(a, b, c);
+      [a, b, c].forEach(function (v) {
+        positions.push(v[0], v[1], v[2]);
+        normals.push(norm[0], norm[1], norm[2]);
+        indices.push(n++);
+      });
+    }
+
+    var caps = rings[0], walls = rings.slice(1);
+    var vertices = caps.length, last = vertices - 1;
+    /* The two ends, each facing away from the material between them. Taken from
+     * where one outline point MOVED between the first two rings, which is
+     * parallel to the segment however the mitre tilted the ring.
+     *
+     * A CLOSED path has no ends: the surface closes on itself at the seam, and a
+     * cap there would be a disc standing in the middle of the material. */
+    function direction(from, to) {
+      var v = [to[0]-from[0], to[1]-from[1], to[2]-from[2]];
+      var l = Math.sqrt(v[0]*v[0] + v[1]*v[1] + v[2]*v[2]) || 1;
+      return [v[0]/l, v[1]/l, v[2]/l];
+    }
+    if (!closed) {
+      var startN = direction(caps[1][0], caps[0][0]);
+      var endN = direction(caps[last-1][0], caps[last][0]);
+      sec.tris.forEach(function (t) {
+        tri(caps[0][t[2]], caps[0][t[1]], caps[0][t[0]], startN);
+        tri(caps[last][t[0]], caps[last][t[1]], caps[last][t[2]], endN);
+      });
+    }
+    var segments = closed ? vertices : last;
+    for (var l = 0; l < sec.loops.length; l++) {
+      var loop = sec.loops[l], ring = walls[l];
+      for (var i = 0; i < segments; i++) {
+        var onward = (i + 1) % vertices;
+        for (var k = 0; k < loop.length; k++) {
+          var j2 = (k + 1) % loop.length;
+          var a = ring[i][k], b = ring[i][j2], c = ring[onward][j2], d = ring[onward][k];
+          tri(a, b, c);
+          tri(a, c, d);
+        }
+      }
+    }
+    return { geo: { positions: positions, normals: normals, indices: indices } };
+  }
+
   function buildGeometry(part) {
+    /* A retired word is resolved before anything is drawn, and the note travels
+     * on `approximated` — the same channel every other substitution uses, which
+     * is what puts it in the provenance banner rather than nowhere. */
+    var retired = RETIRED[part.shape];
+    var built = buildResolved(retired ? retired.as : part.shape, part);
+    if (retired) built.approximated = retired.because;
+    return built;
+  }
+
+  /* The shape actually drawn, given the word after retirement is applied. Split
+   * out so there is ONE switch: a second one for retired words would be a second
+   * place to add a case to, and the case somebody forgot would draw a bounding
+   * box with no note. */
+  function buildResolved(shape, part) {
     var s = part.size || {};
-    switch (part.shape) {
+    switch (shape) {
       case 'box':      return { geo: boxGeometry(num(s.width,1), num(s.height,1), num(s.depth,1)) };
       case 'cylinder': return { geo: cylinderGeometry(num(s.radius,0.5), num(s.height,1), TESSELLATION.radial, num(s.radius_top, num(s.radius,0.5))) };
       case 'cone':     return { geo: cylinderGeometry(num(s.radius,0.5), num(s.height,1), TESSELLATION.radial, 0) };
       case 'sphere':   return { geo: sphereGeometry(num(s.radius,0.5), TESSELLATION.sphereRadial) };
       case 'plane':    return { geo: planeGeometry(num(s.width,1), num(s.depth,1)) };
-      case 'tube':
-        /* A tube is drawn as its outer wall. The bore is not modelled, and that
-         * is reported: an inner diameter that is not there is exactly the kind
-         * of thing a render must not imply. */
-        return {
-          geo: cylinderGeometry(num(s.radius,0.5), num(s.height,1), TESSELLATION.radial, num(s.radius,0.5)),
-          approximated: 'drawn as a solid cylinder — the bore is not modelled'
-        };
+      case 'extrusion': return extrusionGeometry(part.profile || [], num(s.depth, 1), part.holes);
+      case 'revolve':   return revolveGeometry(part.profile || [], part.axis, part.holes);
+      case 'sweep':     return sweepGeometry(part.profile || [], part.path || [], part.holes, part.path_closed);
       default:
         return {
           geo: boxGeometry(num(s.width,1), num(s.height,1), num(s.depth,1)),
@@ -390,6 +1276,17 @@
   }
 
   /* ---- the studio ------------------------------------------------------- */
+
+  /* How material being removed is drawn.
+   *
+   * Faint enough to read as absence rather than as a translucent SOLID — a
+   * housing somebody made see-through is a real part and must not look like
+   * this — and visible enough that a person can tell where the hole will be. The
+   * colour is the warning gold this interface already uses for "quoted from
+   * memory, not checked", because both mean the same thing to a reader: what you
+   * are looking at is not the whole story. */
+  var REMOVED_ALPHA = 0.22;
+  var REMOVED_COLOUR = '#e6cd8f';
 
   function Studio(canvas, opts) {
     opts = opts || {};
@@ -534,6 +1431,25 @@
 
     this.spec = spec || { parts: [] };
     this.approximations = [];
+
+    /* Parts that are material being REMOVED, not material that is there.
+     *
+     * A cut feature names a part as the tool that makes a hole, and the CAD
+     * kernel consumes it: the exported solid has a void where it was. This
+     * renderer has no boolean operations and cannot make that void, so without
+     * this the four bolt holes of a bracket are drawn as four solid posts
+     * standing on the plate — the exact opposite of what they are.
+     *
+     * It cannot be fixed by drawing the hole. It CAN be stopped from reading as
+     * a post: a tool is drawn as a ghost, and the provenance banner says which
+     * shape the exported file has. Same stance as "Drawn approximately" — say
+     * what was done instead of hiding it. */
+    var removed = {};
+    (this.spec.features || []).forEach(function (f) {
+      if (!f || String(f.op).toLowerCase() !== 'cut') return;
+      (f.with || []).forEach(function (id) { removed[id] = true; });
+    });
+
     this.parts = (this.spec.parts || []).map(function (part) {
       var built = buildGeometry(part);
       var geo = built.geo;
@@ -549,7 +1465,11 @@
         spec: part,
         buffers: buffers,
         count: geo.indices.length,
-        centre: part.position || [0, 0, 0]
+        centre: part.position || [0, 0, 0],
+        // Held on the WRAPPER and never written into spec: the document on
+        // screen has to stay the document that was stored, so a presentation
+        // decision must not become a value the model appears to have stated.
+        removed: !!removed[part.id]
       };
     });
 
@@ -678,11 +1598,17 @@
     gl.uniform1f(loc.secAt, this.section.at);
 
     var self = this;
+    /* One function, read by both the sort and the draw. Two copies would
+     * eventually disagree, and a part sorted as opaque and drawn translucent is
+     * a part that erases whatever is behind it. */
+    var alphaOf = function (p) {
+      return p.removed ? REMOVED_ALPHA : num(p.spec.opacity, 1) * self.transparency;
+    };
     // Opaque first, then transparent back-to-front, so a translucent housing
     // does not erase what is inside it.
     var order = this.parts.slice().sort(function (a, b) {
-      var oa = num(a.spec.opacity, 1) * self.transparency;
-      var ob = num(b.spec.opacity, 1) * self.transparency;
+      var oa = alphaOf(a);
+      var ob = alphaOf(b);
       if ((oa >= 1) !== (ob >= 1)) return oa >= 1 ? -1 : 1;
       var da = length3(sub(eye, a.spec.position || [0,0,0]));
       var db = length3(sub(eye, b.spec.position || [0,0,0]));
@@ -714,8 +1640,8 @@
                              scaling(s.scale || [1,1,1])));
       gl.uniformMatrix4fv(loc.model, false, model);
       gl.uniformMatrix3fv(loc.nmat, false, normalMatrix(model));
-      gl.uniform3fv(loc.color, hexToRGB(s.color || '#b8bcc4'));
-      gl.uniform1f(loc.opacity, num(s.opacity, 1) * self.transparency);
+      gl.uniform3fv(loc.color, hexToRGB(part.removed ? REMOVED_COLOUR : (s.color || '#b8bcc4')));
+      gl.uniform1f(loc.opacity, alphaOf(part));
       gl.uniform1f(loc.highlight, self.selected === s.id ? 1 : 0);
       /* The finish, as the document declared it. Not looked up from the material
        * NAME: that table would have to exist here and in Go, and this codebase
@@ -1083,10 +2009,38 @@
 
   global.Forge3D = {
     supportedShapes: SUPPORTED,
+    /* Exported so a Go fence can read it. The browser and the exporter each
+     * hold a copy of the retirement table, and the failure they guard against
+     * is the two disagreeing about what a retired word means — which a test
+     * cannot see unless it can read both. */
+    retiredShapes: RETIRED,
+    /* Exported for the same reason: the fence drives the real dispatch rather
+     * than a re-implementation of it, so a retired word that stopped resolving
+     * would be caught where it actually happens. */
+    buildGeometry: buildGeometry,
+    /* The corner and arc arithmetic, which is the one thing in this file whose
+     * ANSWER has to be identical to Go's rather than merely equivalent.
+     *
+     * The triangulation does not: two ear-clippings of the same polygon are the
+     * same planar surface, and a fence comparing facets over a strongly concave
+     * cap asserts an implementation detail that has no observable consequence.
+     * Measured 2026-09-06 — the two implementations agree on every outline
+     * tried and disagree on a crescent, with identical outlines and identical
+     * solids. The DRAWING is what must match, so the drawing is what is
+     * exported for comparison. */
+    flattenDrawing: flattenDrawing,
     Studio: Studio,
     geometry: {
       box: boxGeometry, cylinder: cylinderGeometry,
-      sphere: sphereGeometry, plane: planeGeometry
+      sphere: sphereGeometry, plane: planeGeometry,
+      /* Exported because a sweep is the one shape here whose CONVENTIONS have to
+       * agree with two other implementations — which way up the section starts,
+       * how it is carried round a bend, and that corners are mitred. Volume
+       * would not catch a section that came round a bend rolled, so the fence
+       * compares this builder's facets against the Go one's, facet for facet
+       * (TestRendererSweepsTheSameSolidAsTheExporter). It cannot do that unless
+       * it can call this. */
+      sweep: sweepGeometry
     }
   };
 })(window);

@@ -1,6 +1,7 @@
 package geometry
 
 import (
+	"math"
 	"strings"
 	"testing"
 
@@ -287,5 +288,176 @@ func TestStoringAVariantRefusesAnInventedTolerance(t *testing.T) {
 	n.Document.Overlays[0].Tolerance = "±0.05"
 	if err := n.Validate(); err != nil {
 		t.Fatalf("a variant carrying a drawing's own tolerance was refused: %v", err)
+	}
+}
+
+// An extrusion's extent is its OUTLINE's, which is not symmetric about the
+// part's position.
+//
+// # The defect this holds
+//
+// Extents were computed as position ± a symmetric half-extent, which is exact
+// for every primitive because they are centred by construction. A profile is
+// deliberately NOT re-centred (profile.go), so an L-bracket drawn from (0,0) to
+// (40,40) sits entirely on the positive side of its own origin — and the
+// symmetric form described it as reaching 20 mm the wrong way, so Measure drew
+// a dimension line against extents nothing has.
+//
+// A drill disabled the extrusion case in localBox and every existing test
+// stayed green, because none of them had an extrusion in it.
+func TestMeasureUsesAnOutlinesOwnExtentAndNotASymmetricGuess(t *testing.T) {
+	doc := Document{
+		Name: "angle", Units: "mm",
+		Parts: []Part{{ID: "a", Shape: "extrusion",
+			Profile: []Point{{X: 0, Y: 0}, {X: 40, Y: 0}, {X: 40, Y: 8}, {X: 8, Y: 8},
+				{X: 8, Y: 40}, {X: 0, Y: 40}},
+			Size:     map[string]float64{"depth": 20},
+			Position: []float64{0, 0, 0}}},
+	}
+	got := Measure(doc, "mm")
+	if len(got) != 3 {
+		t.Fatalf("expected three extents, got %d", len(got))
+	}
+	// The outline spans 40 in x and 40 in y, and the depth 20 is centred.
+	want := map[int][2]float64{0: {0, 40}, 1: {0, 40}, 2: {-10, 10}}
+	for axis, w := range want {
+		o := got[axis]
+		if math.Abs(o.From[axis]-w[0]) > 1e-9 || math.Abs(o.To[axis]-w[1]) > 1e-9 {
+			t.Errorf("axis %d measured %v..%v, want %v..%v — a symmetric half-extent puts "+
+				"this part where it is not", axis, o.From[axis], o.To[axis], w[0], w[1])
+		}
+	}
+}
+
+// A revolve's extent is the full swept circle, which reaches where the outline
+// itself never goes.
+//
+// An outline from x=10 to x=20 turned about Y produces a ring spanning -20..20
+// in both x and z. Measuring the outline's own reach would report a part 10 mm
+// from the axis at its nearest, when there is material 20 mm the other side of
+// it.
+func TestMeasureSweepsARevolveAllTheWayRound(t *testing.T) {
+	doc := Document{
+		Name: "ring", Units: "mm",
+		Parts: []Part{{ID: "r", Shape: "revolve", Axis: "y",
+			Profile:  []Point{{X: 10, Y: 0}, {X: 20, Y: 0}, {X: 20, Y: 5}, {X: 10, Y: 5}},
+			Position: []float64{0, 0, 0}}},
+	}
+	got := Measure(doc, "mm")
+	if len(got) != 3 {
+		t.Fatalf("expected three extents, got %d", len(got))
+	}
+	want := map[int][2]float64{0: {-20, 20}, 1: {0, 5}, 2: {-20, 20}}
+	for axis, w := range want {
+		o := got[axis]
+		if math.Abs(o.From[axis]-w[0]) > 1e-9 || math.Abs(o.To[axis]-w[1]) > 1e-9 {
+			t.Errorf("axis %d measured %v..%v, want %v..%v — the outline was not swept",
+				axis, o.From[axis], o.To[axis], w[0], w[1])
+		}
+	}
+}
+
+// A sweep is measured along its PATH, including the mitre that overhangs the
+// outside of a bend.
+//
+// # Why the obvious approximation is wrong
+//
+// The tempting answer is the path's own bounding box grown by the outline's
+// radius. That is right for a round section and too big for every other one, and
+// it is also too SMALL in the one place it matters: a mitred right-angle corner
+// reaches half a section-width further along both legs than the path does, and
+// there is real material there.
+//
+// So the extent is taken from the rings the sweep actually visits, which is
+// exact — a swept polygon is a polyhedron and its corners are its rings'
+// corners. Here: a 10 mm square carried 20 mm up and then 30 mm along x, so the
+// mitre puts material at z = 25 and the far end cap stops square at x = 30.
+func TestMeasureFollowsASweptPathAndItsMitre(t *testing.T) {
+	doc := Document{
+		Name: "pipe", Units: "mm",
+		Parts: []Part{{ID: "s", Shape: "sweep",
+			Profile:  []Point{{X: -5, Y: -5}, {X: 5, Y: -5}, {X: 5, Y: 5}, {X: -5, Y: 5}},
+			Path:     []Point{{}, {Z: 20}, {X: 30, Z: 20}},
+			Position: []float64{0, 0, 0}}},
+	}
+	got := Measure(doc, "mm")
+	if len(got) != 3 {
+		t.Fatalf("expected three extents, got %d", len(got))
+	}
+	// x: from the start section at -5 to the end cap at 30.
+	// y: the section is 10 wide and the path never leaves y = 0.
+	// z: from the start cap at 0 to the outside of the mitre at 25.
+	want := map[int][2]float64{0: {-5, 30}, 1: {-5, 5}, 2: {0, 25}}
+	for axis, w := range want {
+		o := got[axis]
+		if math.Abs(o.From[axis]-w[0]) > 1e-9 || math.Abs(o.To[axis]-w[1]) > 1e-9 {
+			t.Errorf("axis %d measured %v..%v, want %v..%v — the outline was not carried "+
+				"along its path, or the mitre at the bend was not counted",
+				axis, o.From[axis], o.To[axis], w[0], w[1])
+		}
+	}
+}
+
+// A rounded corner is measured where the MATERIAL is, not where the corner used
+// to be.
+//
+// # Why a sharp point and not a rounded rectangle
+//
+// Rounding the corners of a rectangle changes nothing about its extents — the
+// arcs are inside the corners they replace, and the part still measures 40 by
+// 40. So a rounded rectangle cannot tell a correct measurement from one taken
+// off the drawn vertices.
+//
+// An ACUTE corner can. Rounding the 45° point of this triangle with R5 pulls it
+// back by r·tan(67.5°) = 5(1+√2) = 12.071, so the part reaches x = 32.929 and
+// not the x = 40 somebody wrote down. Measuring the vertex would draw a
+// dimension line 7 mm past the end of the part, and print a number to go with it.
+func TestMeasureFindsTheMaterialAndNotTheRoundedOffCorner(t *testing.T) {
+	doc := Document{
+		Name: "gusset", Units: "mm",
+		Parts: []Part{{ID: "g", Shape: "extrusion",
+			Profile: []Point{{X: 0, Y: 0}, {X: 40, Y: 0, Radius: 5}, {X: 0, Y: 40}},
+			Size:    map[string]float64{"depth": 6}, Position: []float64{0, 0, 0}}},
+	}
+	got := Measure(doc, "mm")
+	if len(got) != 3 {
+		t.Fatalf("expected three extents, got %d", len(got))
+	}
+	want := 45 - 5*(1+math.Sqrt2)
+	if x := got[0].To[0]; math.Abs(x-want) > 1e-6 {
+		t.Errorf("the part is measured to x = %.6f; the rounded point reaches %.6f. A figure "+
+			"of 40 means the drawn vertex was measured rather than the material, and the "+
+			"dimension line is 7 mm past the end of the part", x, want)
+	}
+}
+
+// A closed sweep is measured round the whole loop, including the mitre at the
+// seam.
+//
+// The seam is where a closed path differs from an open one, and where an
+// implementation that stopped at the last point rather than wrapping round would
+// report a part that stops short of itself.
+func TestMeasureGoesAllTheWayRoundAClosedPath(t *testing.T) {
+	doc := Document{
+		Name: "ring", Units: "mm",
+		Parts: []Part{{ID: "s", Shape: "sweep",
+			Profile:    []Point{{X: -5, Y: -5}, {X: 5, Y: -5}, {X: 5, Y: 5}, {X: -5, Y: 5}},
+			Path:       []Point{{}, {X: 60}, {X: 60, Y: 60}, {Y: 60}},
+			PathClosed: true, Position: []float64{0, 0, 0}}},
+	}
+	got := Measure(doc, "mm")
+	if len(got) != 3 {
+		t.Fatalf("expected three extents, got %d", len(got))
+	}
+	// The loop runs 0..60 in x and y, and the section reaches 5 either side of
+	// it. z is the section's own 10.
+	want := map[int][2]float64{0: {-5, 65}, 1: {-5, 65}, 2: {-5, 5}}
+	for axis, w := range want {
+		o := got[axis]
+		if math.Abs(o.From[axis]-w[0]) > 1e-9 || math.Abs(o.To[axis]-w[1]) > 1e-9 {
+			t.Errorf("axis %d measured %v..%v, want %v..%v — a loop that was not closed "+
+				"stops short of itself at the seam",
+				axis, o.From[axis], o.To[axis], w[0], w[1])
+		}
 	}
 }

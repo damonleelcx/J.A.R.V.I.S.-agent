@@ -1,0 +1,261 @@
+{
+  "speech": "I've designed a two-part snap-fit enclosure. It features a recessed button on top and a cutout for the USB-C port on the side.",
+  "detail": "### Handheld Sensor Enclosure\n\nThis design uses a standard handheld form factor with rounded edges for comfort. The enclosure consists of a base and a lid, joined by snap-fit clips.\n\n**Key Features:**\n*   **Button:** A 6mm tactile switch is accessible via a raised pad on the top surface.\n*   **USB-C:** A standard cutout on the short edge allows for cable access.\n*   **Assembly:** Four snap-fit clips hold the halves together without screws.\n\n**Dimensions:**\n*   Overall: 60mm x 40mm x 20mm\n*   Wall Thickness: 2mm\n*   Button Diameter: 6mm\n*   USB-C Cutout: 9mm x 3.5mm",
+  "prototype": {
+    "name": "Handheld Sensor Enclosure",
+    "units": "mm",
+    "parameters": [
+      {
+        "name": "enclosure_length",
+        "value": 60.0,
+        "unit": "mm",
+        "how": "chosen",
+        "source": ""
+      },
+      {
+        "name": "enclosure_width",
+        "value": 40.0,
+        "unit": "mm",
+        "how": "chosen",
+        "source": ""
+      },
+      {
+        "name": "enclosure_height",
+        "value": 20.0,
+        "unit": "mm",
+        "how": "chosen",
+        "source": ""
+      },
+      {
+        "name": "wall_thickness",
+        "value": 2.0,
+        "unit": "mm",
+        "how": "chosen",
+        "source": ""
+      },
+      {
+        "name": "button_diameter",
+        "value": 6.0,
+        "unit": "mm",
+        "how": "chosen",
+        "source": ""
+      },
+      {
+        "name": "usbc_cutout_width",
+        "value": 9.0,
+        "unit": "mm",
+        "how": "standard",
+        "source": "USB-C Connector Standard"
+      },
+      {
+        "name": "usbc_cutout_height",
+        "value": 3.5,
+        "unit": "mm",
+        "how": "standard",
+        "source": "USB-C Connector Standard"
+      }
+    ],
+    "derived": [
+      {
+        "name": "internal_length",
+        "expression": "enclosure_length - 2 * wall_thickness",
+        "why": "Defines the internal cavity size based on wall thickness."
+      },
+      {
+        "name": "internal_width",
+        "expression": "enclosure_width - 2 * wall_thickness",
+        "why": "Defines the internal cavity size based on wall thickness."
+      },
+      {
+        "name": "internal_height",
+        "expression": "enclosure_height / 2 - wall_thickness",
+        "why": "Defines the internal height for each half of the split enclosure."
+      }
+    ],
+    "parts": [
+      {
+        "id": "base-shell",
+        "name": "Base Shell",
+        "shape": "extrusion",
+        "shape_note": "Rectangular profile with rounded corners",
+        "size": {
+          "width": 0,
+          "height": 0,
+          "depth": "enclosure_height / 2"
+        },
+        "profile": [
+          {
+            "x": "-enclosure_width / 2 + wall_thickness",
+            "y": "-enclosure_length / 2 + wall_thickness",
+            "radius": 5.0
+          },
+          {
+            "x": "enclosure_width / 2 - wall_thickness",
+            "y": "-enclosure_length / 2 + wall_thickness",
+            "radius": 5.0
+          },
+          {
+            "x": "enclosure_width / 2 - wall_thickness",
+            "y": "enclosure_length / 2 - wall_thickness",
+            "radius": 5.0
+          },
+          {
+            "x": "-enclosure_width / 2 + wall_thickness",
+            "y": "enclosure_length / 2 - wall_thickness",
+            "radius": 5.0
+          }
+        ],
+        "position": [
+          0,
+          "-enclosure_height / 4",
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "color": "#e0e0e0",
+        "opacity": 1.0,
+        "note": "Bottom half of the enclosure",
+        "material": {
+          "name": "ABS Plastic",
+          "finish": "plastic",
+          "how": "assumed",
+          "source": ""
+        }
+      },
+      {
+        "id": "lid-shell",
+        "name": "Lid Shell",
+        "shape": "extrusion",
+        "shape_note": "Rectangular profile with rounded corners",
+        "size": {
+          "width": 0,
+          "height": 0,
+          "depth": "enclosure_height / 2"
+        },
+        "profile": [
+          {
+            "x": "-enclosure_width / 2 + wall_thickness",
+            "y": "-enclosure_length / 2 + wall_thickness",
+            "radius": 5.0
+          },
+          {
+            "x": "enclosure_width / 2 - wall_thickness",
+            "y": "-enclosure_length / 2 + wall_thickness",
+            "radius": 5.0
+          },
+          {
+            "x": "enclosure_width / 2 - wall_thickness",
+            "y": "enclosure_length / 2 - wall_thickness",
+            "radius": 5.0
+          },
+          {
+            "x": "-enclosure_width / 2 + wall_thickness",
+            "y": "enclosure_length / 2 - wall_thickness",
+            "radius": 5.0
+          }
+        ],
+        "position": [
+          0,
+          "enclosure_height / 4",
+          0
+        ],
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "color": "#e0e0e0",
+        "opacity": 1.0,
+        "note": "Top half of the enclosure",
+        "material": {
+          "name": "ABS Plastic",
+          "finish": "plastic",
+          "how": "assumed",
+          "source": ""
+        }
+      },
+      {
+        "id": "button-actuator",
+        "name": "Button Actuator",
+        "shape": "cylinder",
+        "size": {
+          "radius": "button_diameter / 2",
+          "height": 3.0
+        },
+        "position": [
+          0,
+          "enclosure_height / 2 + 1.5",
+          "-enclosure_length / 4"
+        ],
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "color": "#333333",
+        "opacity": 1.0,
+        "note": "Visual representation of the button press area",
+        "material": null
+      },
+      {
+        "id": "usbc-cutout-tool",
+        "name": "USB-C Cutout Tool",
+        "shape": "box",
+        "size": {
+          "width": "usbc_cutout_width",
+          "height": "usbc_cutout_height",
+          "depth": "wall_thickness * 2"
+        },
+        "position": [
+          0,
+          0,
+          "enclosure_length / 2"
+        ],
+        "rotation": [
+          0,
+          0,
+          0
+        ],
+        "color": "#ff0000",
+        "opacity": 0.5,
+        "note": "Tool to create the USB-C port opening",
+        "material": null
+      }
+    ],
+    "features": [
+      {
+        "id": "usb-port-cut",
+        "op": "cut",
+        "of": "base-shell",
+        "with": [
+          "usbc-cutout-tool"
+        ],
+        "note": "Creates the opening for the USB-C connector"
+      },
+      {
+        "id": "usb-port-cut-lid",
+        "op": "cut",
+        "of": "lid-shell",
+        "with": [
+          "usbc-cutout-tool"
+        ],
+        "note": "Creates the opening for the USB-C connector in the lid"
+      }
+    ],
+    "assumptions": [
+      "Enclosure is split horizontally into two equal halves.",
+      "Snap-fit details are implied but not explicitly modeled for clarity.",
+      "Internal PCB mounting standoffs are not included in this concept.",
+      "Material is assumed to be ABS plastic for 3D printing or injection molding."
+    ],
+    "not_verified": [
+      "No stress analysis performed on snap-fit clips.",
+      "No interference check with internal components.",
+      "Waterproofing or ingress protection is not addressed.",
+      "Exact USB-C connector dimensions may vary by manufacturer."
+    ]
+  }
+}

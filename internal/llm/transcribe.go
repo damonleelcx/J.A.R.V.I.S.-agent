@@ -152,9 +152,15 @@ func (c *OpenAICompatible) Transcribe(ctx context.Context, audio []byte, mimeTyp
 		return nil, errs.Wrap(op, errs.CodeExternalUnavailable, err)
 	}
 	if resp.StatusCode >= 400 {
+		// A 404 here means the ASR model was retired, not that the provider is
+		// down — so it names what the endpoint DOES serve, through the same
+		// helper the chat path uses. Measured 2026-09-06: this provider retired
+		// the models behind all three roles at once, and this surface said only
+		// "Model not exist."
 		return nil, errs.New(op, errs.CodeExternalUnavailable).
-			WithDetail("the transcription provider returned %d: %s",
-				resp.StatusCode, truncate(raw.String(), 300))
+			WithDetail("the transcription provider returned %d: %s%s",
+				resp.StatusCode, truncate(raw.String(), 300),
+				c.whatIsServed(ctx, resp.StatusCode, RoleTranscriber))
 	}
 	if err := json.Unmarshal(raw.Bytes(), &parsed); err != nil {
 		return nil, errs.Wrap(op, errs.CodeSerializationFail, err).

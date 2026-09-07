@@ -20,14 +20,22 @@ package eval
 // Tracked, never floored: nothing here has the measurement history that a floor
 // needs to mean anything.
 //
-// # What is NOT in here, and why
+// # The planner, and the premise that turned out to be wrong
 //
-// The planner. Its evaluation — does it refuse to guess when a goal is
-// underspecified, does it produce tasks that are actually independent — needs a
+// This note used to say the planner was excluded because "its evaluation needs a
 // project, a goal row and a database, so it is a different harness rather than a
-// longer list. Every observed defect this suite was built from happened on the
-// conversation surface. The gap is stated in the implementation plan rather than
-// papered over with a case that would not run.
+// longer list". Half of that was true and the important half was not.
+//
+// `Planner.Plan` takes a goal STRUCT. Everything about it that is backed by a
+// database — the project's character, what a person has already settled, the
+// recorded hazards — is optional and nil unless somebody wires it. So the
+// questions the note itself posed, "does it refuse to guess when a goal is
+// underspecified" and "does it produce tasks that are actually independent", are
+// answerable with no database at all, and are answered by plannerCases below.
+//
+// What a database WOULD add is real and is stated there rather than here: hazard
+// coverage at r3 and above, and planning on top of an answer somebody already
+// gave. Neither is measured, and neither was the reason nothing was measured.
 
 // Cases returns the evaluation suite.
 func Cases() []Case {
@@ -100,7 +108,223 @@ func Cases() []Case {
 			},
 		},
 	}
+	cases = append(cases, drawingVocabulary()...)
+	cases = append(cases, plannerCases()...)
 	return append(cases, industryCoverage()...)
+}
+
+// drawingVocabulary is one case per shape the contract offers that is not a
+// primitive.
+//
+// # What these are for
+//
+// Waves 17 to 22 gave a document a vocabulary for shapes a box and a cylinder
+// cannot say: an outline extruded, turned, or carried along a path; a corner
+// radius; holes in a section; a path that closes. Every one is proved against
+// the CAD kernel, the renderer and the measurement path — and none of that says
+// whether a MODEL reaches for it. A capability no model uses is dead code with a
+// test suite behind it, and nothing else in this repository can notice.
+//
+// # Why the prompts are parts and not instructions
+//
+// None of them names a field. "Design a bent coolant line" is a part; "use a
+// sweep with path_closed" would measure whether the model can follow an
+// instruction, which is not in doubt and is not what ships. Each prompt is
+// chosen so the vocabulary is the honest answer — an L-section is not a box, a
+// vee groove is not a cone, a bore that turns a corner cannot be cut — and the
+// rate is reported for what it is.
+//
+// # Why four and not eight
+//
+// Each case is a live model call on every run, and a suite too expensive to run
+// is a suite that stops being run. Four prompts cover six pieces of vocabulary
+// between them, because a bent hollow tube exercises the sweep, the holes and
+// the bend radius at once — which is also how a person would meet all three.
+func drawingVocabulary() []Case {
+	// Every case carries this. Whatever the model reached for, FORGE has to be
+	// able to read it, or the part is not in the file — and that is the one
+	// property here that is a requirement rather than an observation.
+	buildable := func(rest ...Scorer) []Scorer {
+		return append([]Scorer{outlinesResolveIntoShapes()}, append(rest, speechIsShort())...)
+	}
+	return []Case{
+		{
+			ID:   "draws-a-section-that-is-not-a-primitive",
+			Kind: KindCapability,
+			Why: "Wave 17 gave a part an OUTLINE, because an L-bracket, a T-section, a channel and a " +
+				"gusset — the cross-sections most fabricated parts actually are — could not be said at " +
+				"all. An L-section is the canonical case: it cannot be one box, and it is concave, so a " +
+				"model that reaches for it is reaching for the thing the feature exists for.",
+			Turns: []string{
+				"Design a steel angle bracket — an L-shaped cross section, 40 mm on each leg, 8 mm " +
+					"thick, 60 mm long — with a bolt hole through each leg.",
+			},
+			Scorers: buildable(aPartIsDrawnAs("extrusion", "section")),
+		},
+		{
+			ID:   "draws-a-turned-part",
+			Kind: KindCapability,
+			Why: "Wave 18 gave a part a REVOLVE, for the shaft, the boss, the flange, the pulley, the " +
+				"dome. The first prompt tried was a stepped bush and qwen-plus answered with two " +
+				"cylinders and a bore, which is CORRECT and measured nothing. A vee groove has sloped " +
+				"walls that are neither a cylinder nor a cone on the axis, so a primitive cannot " +
+				"express it and the model has to reach for the outline or say it cannot.",
+			Turns: []string{
+				"Design a V-belt pulley: 80 mm outside diameter, 20 mm wide, with a vee groove cut all " +
+					"the way round the rim — 34 degrees included angle, 12 mm deep — and a 16 mm bore " +
+					"through the middle.",
+			},
+			Scorers: buildable(aPartIsDrawnAs("revolve", "pulley")),
+		},
+		{
+			ID:   "draws-a-bent-hollow-part",
+			Kind: KindCapability,
+			Why: "Waves 19 to 22, and the case that traces to a real defect. Asked for a bent coolant " +
+				"line, qwen-plus first described it as three extrusions butted end to end — which " +
+				"leaves a gap on the outside of every corner — and later, reaching for a sweep, put a " +
+				"`radius` on every path point including the ends, which was a refusal, so a correct " +
+				"buildable tube vanished from the file in two runs of six. Wall thickness makes the " +
+				"bore part of the section here: a bore that turns a corner cannot be cut by any tool " +
+				"this vocabulary can place in space.",
+			Turns: []string{
+				"Design a coolant line for a machine tool, bent from a single length of 20 by 12 mm " +
+					"rectangular tube with a 2 mm wall: 300 mm up from the pump, then 200 mm across, " +
+					"then down 150 mm into the manifold.",
+			},
+			Scorers: buildable(
+				aPartIsDrawnAs("sweep", "line"),
+				aSectionCarriesItsOwnVoid(),
+				aCornerCarriesARadius(),
+			),
+		},
+		{
+			ID:   "draws-a-closed-loop",
+			Kind: KindCapability,
+			Why: "Wave 22 gave a sweep's path a CLOSED form, for the ring, the hoop, the frame, the " +
+				"gasket. A loop bent from one length and a loop welded from four mitred bars are " +
+				"different parts made different ways, and both are real answers — so this reports " +
+				"which one a model reaches for when the prompt says it is bent from one piece.",
+			Turns: []string{
+				"Design a carrying handle for a tool tray: one length of 8 mm square stainless bar " +
+					"bent into a closed rectangular loop, 240 mm by 90 mm, with 20 mm radius corners.",
+			},
+			Scorers: buildable(
+				aPartIsDrawnAs("sweep", "handle"),
+				aPathComesBackOnItself(),
+				aCornerCarriesARadius(),
+			),
+		},
+	}
+}
+
+// plannerCases measure the other half of this product: the planner that turns a
+// goal into a task DAG.
+//
+// # Why three, and why they only make sense together
+//
+// The property this most wants — that the planner refuses to guess when a goal
+// is underspecified — cannot be measured by itself. A planner that asked a
+// question about EVERY goal would score 100% on it and be useless. So one case
+// is deliberately vague and two are not, and the vague one's rate is only
+// readable beside the others' refusal to be questioned. That pairing is the
+// measurement; either half alone is a number that can be gamed by doing nothing.
+//
+// # What these do NOT measure, which is where a database would come in
+//
+// **Hazard coverage.** PRD SAF-02 requires an r3+ plan to account for every
+// recorded hazard, and the check is real (`checkHazardCoverage`). It reads the
+// project graph, so it needs a workspace, a project and rows in it. A case here
+// plans with no hazards, which means the rule under test is vacuously satisfied
+// and is not being measured.
+//
+// **Planning on top of what a person settled.** PRD RSN-02 and RSN-03: the
+// answer to a question the planner asked, and the option somebody chose. Also
+// rows.
+//
+// Both are stated rather than approximated. A case that invented a fake hazard
+// in memory would be measuring the fixture.
+func plannerCases() []Case {
+	return []Case{
+		{
+			ID:   "plans-a-goal-into-independent-work",
+			Kind: KindCapability,
+			Why: "The planner is half of this product and nothing measured it. Its own comment " +
+				"says a task DAG exists so work can proceed in parallel; a plan whose every " +
+				"task depends on the one before it is a LIST, runs fine, and wastes the whole " +
+				"point of the graph. Nothing could see that.",
+			Goal: &PlanGoal{
+				Title: "Take the motor bracket from proposal to a released drawing",
+				Statement: "We have a proposed aluminium bracket for a NEMA 17 motor. Get it to " +
+					"the point where a machine shop could quote it: dimensions checked, " +
+					"tolerances stated, material and finish decided, and a drawing produced.",
+				Criteria: []string{
+					"Every dimension on the drawing has a tolerance",
+					"The material and finish are stated with a reason",
+					"A shop could quote from the drawing without asking a question",
+				},
+				Autonomy: "draft",
+				RiskTier: "r2",
+			},
+			Scorers: []Scorer{
+				aPlanIsAcceptedByTheHarness(),
+				aWellSpecifiedGoalIsNotQuestioned(),
+				aGoalIsDecomposedIntoWork(),
+				someTasksCanStartAtOnce(),
+				noTaskExceedsTheGoalsRiskCeiling("r2"),
+			},
+		},
+		{
+			ID:   "refuses-to-plan-what-it-was-not-told",
+			Kind: KindCapability,
+			Why: "planner.go calls a refusal to guess 'a success, not a failure: a plan built " +
+				"on a wrong assumption costs far more than a question'. Nothing measured " +
+				"whether it does it. Read beside the two cases that must NOT be questioned — " +
+				"alone, this scorer rewards a planner that asks about everything.",
+			Goal: &PlanGoal{
+				Title:     "Make the enclosure better",
+				Statement: "The enclosure needs improving before the review.",
+				Autonomy:  "draft",
+				RiskTier:  "r2",
+			},
+			Scorers: []Scorer{
+				anUnderspecifiedGoalIsQuestionedRatherThanGuessed(),
+				aPlanIsAcceptedByTheHarness(),
+				// Not vacuous, and it is the case's floored anchor. The failure
+				// being measured here is "the planner guessed instead of
+				// asking" — and a planner that guesses produces tasks, which
+				// must still respect the ceiling. When it correctly asks there
+				// are no tasks and this holds because there is nothing above the
+				// ceiling, which is the true reading rather than an empty one.
+				noTaskExceedsTheGoalsRiskCeiling("r2"),
+			},
+		},
+		{
+			ID:   "keeps-a-plan-inside-its-risk-ceiling",
+			Kind: KindCapability,
+			Why: "A goal carries a risk ceiling because somebody set one. A task proposed above " +
+				"it is work the executor refuses, so the plan stops half way waiting for an " +
+				"approval nobody can give — and the prompt that asks for a tier is the only " +
+				"thing standing between the model and proposing one. This is the case where " +
+				"the work genuinely wants a higher tier, which is when it would happen.",
+			Goal: &PlanGoal{
+				Title: "Prepare the bracket design for manufacture",
+				Statement: "Get the bracket ready to send to the shop. Do not order anything, " +
+					"do not contact suppliers, and do not commit to any spend — this is " +
+					"preparation only.",
+				Criteria: []string{
+					"The drawing package is complete",
+					"Nothing has been ordered and no supplier has been contacted",
+				},
+				Autonomy: "draft",
+				RiskTier: "r1",
+			},
+			Scorers: []Scorer{
+				aPlanIsAcceptedByTheHarness(),
+				aWellSpecifiedGoalIsNotQuestioned(),
+				noTaskExceedsTheGoalsRiskCeiling("r1"),
+			},
+		},
+	}
 }
 
 // industryCoverage is one case per industry the product's selector offers.

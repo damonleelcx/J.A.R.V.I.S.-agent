@@ -138,6 +138,11 @@ func (s *stubLLM) Complete(_ context.Context, req llm.Request) (*llm.Response, e
 	return &llm.Response{
 		Content:      `{"speech":"here","detail":"","prototype":null,"proposed_goal":null}`,
 		FinishReason: "stop",
+		// Named, because the real client always names it — it falls back to the
+		// configured model id when the provider omits one. A stub that returned
+		// an anonymous reply made every fence over model attribution pass
+		// against nothing.
+		Model: "stub",
 	}, nil
 }
 func (s *stubLLM) ModelFor(llm.Role) string { return "stub" }

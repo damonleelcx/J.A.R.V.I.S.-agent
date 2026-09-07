@@ -14,7 +14,13 @@ import (
 //
 // # What this build can and cannot do, and why the refusal is the feature
 //
-// There is no CAD kernel here. STEP and KCL are parametric formats — a STEP file
+// There is no CAD kernel IN THIS PACKAGE, and that is still deliberate: the
+// kernel is a subsystem that can be absent and this is the vocabulary
+// (internal/domain/cad, wave 14). What follows describes why the parametric
+// formats were refused outright before one existed, and why the refusal is now a
+// question of deployment rather than of build.
+//
+// STEP and KCL are parametric formats — a STEP file
 // is a B-Rep with analytic surfaces, and producing one from a bag of primitives
 // is the kernel's job, not a serialiser's. The Zoo spike measured what real
 // parametric output looks like and what it costs to obtain
@@ -79,11 +85,14 @@ var formats = []Format{
 	{
 		Name: "step", Extension: ".step", MediaType: "model/step", Kind: KindParametric,
 		Gloss: "ISO 10303 STEP — a B-Rep solid with analytic surfaces.",
-		Reason: "No CAD kernel is linked into this build, so there is no B-Rep to write. " +
-			"A STEP file containing tessellated facets would be a mesh with a parametric extension, " +
-			"which is worse than no file: everything downstream would treat it as an exact solid. " +
-			"Export the mesh and rebuild the part in a CAD tool, or see " +
-			"docs/spikes/2026-09-02-zoo-text-to-cad/ for what a real parametric path would cost.",
+		// The only format whose availability is decided at RUN TIME. Everything
+		// else here is a property of the build; this is a property of the
+		// deployment, and Formats is told which it is (wave 14).
+		Reason: "This deployment has no CAD kernel configured, so there is no B-Rep to write. " +
+			"Set FORGE_CAD_PYTHON to a Python interpreter with build123d installed. " +
+			"Until then, a STEP file containing tessellated facets would be a mesh with a " +
+			"parametric extension, which is worse than no file: everything downstream would " +
+			"treat it as an exact solid.",
 	},
 	{
 		Name: "kcl", Extension: ".kcl", MediaType: "text/plain", Kind: KindParametric,
@@ -95,8 +104,12 @@ var formats = []Format{
 	{
 		Name: "iges", Extension: ".igs", MediaType: "model/iges", Kind: KindParametric,
 		Gloss: "IGES — surfaces and curves for exchange with older CAD systems.",
-		Reason: "No CAD kernel is linked into this build, so there are no surfaces to write. " +
-			"Export the mesh instead, and rebuild the part in a CAD tool.",
+		// Refused even where a kernel IS configured: nothing in this build
+		// writes IGES, and marking it available because a neighbouring format
+		// became so is how a capability list starts lying.
+		Reason: "Nothing in this build writes IGES, so it is refused whether or not a CAD kernel " +
+			"is configured. Export STEP where a kernel is available, or the mesh otherwise, " +
+			"and rebuild the part in a CAD tool.",
 	},
 }
 
@@ -105,7 +118,23 @@ var formats = []Format{
 // Including the unavailable ones is the point: a person who cannot find STEP in
 // a list concludes it was forgotten, and a model that cannot find it invents
 // something. Both are answered by the format being present and saying why not.
-func Formats() []Format { return append([]Format(nil), formats...) }
+func Formats(hasKernel bool) []Format {
+	out := append([]Format(nil), formats...)
+	if !hasKernel {
+		return out
+	}
+	// STEP, and ONLY step. IGES is still refused with a kernel present: nothing
+	// in this build writes it, and marking it available because a neighbouring
+	// format became so is how a list starts lying. KCL is refused for a reason
+	// the kernel does not touch either — see its gloss.
+	for i := range out {
+		if out[i].Name == "step" {
+			out[i].Available = true
+			out[i].Reason = ""
+		}
+	}
+	return out
+}
 
 // FormatOf resolves a format name.
 func FormatOf(name string) (Format, error) {
@@ -262,15 +291,19 @@ func Export(v *Variant, format string) (*Result, error) {
 			WithDetail("format %q is declared available but this build has no writer for it", f.Name)
 	}
 	return &Result{
-		Format: f, Filename: filename(v, f), Content: content,
+		Format: f, Filename: Filename(v, f), Content: content,
 		Label: label, Triangles: len(mesh.Triangles()),
 	}, nil
 }
 
-// filename names the download after the variant and its version, so two
+// Filename names the download after the variant and its version, so two
 // downloads of the same assembly do not overwrite each other in a downloads
 // folder and become indistinguishable.
-func filename(v *Variant, f Format) string {
+//
+// Exported because the parametric export path lives outside this package (the
+// kernel is a subsystem, the vocabulary is not) and a second naming rule would
+// mean two files of the same variant landing under different names.
+func Filename(v *Variant, f Format) string {
 	base := strings.TrimSuffix(strings.TrimPrefix(v.Path, "geometry/"), ".forge.json")
 	if base == "" {
 		base = "geometry"

@@ -207,14 +207,48 @@ turns, the row says it was matched **by name, not by identity**: nothing in this
 system keeps a part id stable across turns, so that pairing is a guess and is
 labelled as one.
 
-### Mesh export is real; parametric export is refused
+### Mesh export is real; parametric export needs a kernel
 
 **VIS-05** asks for mesh preview and, *where adapters permit*, editable
 parametric export — labelling tessellation, inference and lossy conversion.
 
-No CAD kernel is linked into this build, so STEP, IGES and KCL are **declared and
-refused** with `CONNECTOR_UNAVAILABLE` and a reason, the same shape as the
-unavailable connectors. Leaving them out is what invites somebody to write
+**STEP is real when a CAD kernel is configured.** Point `FORGE_CAD_PYTHON` at a
+Python with [build123d](https://github.com/gumyr/build123d) installed and the
+export path builds a genuine B-Rep through OpenCASCADE — analytic surfaces, not
+triangles — from the same document the viewport draws:
+
+```bash
+python3 -m venv .cadvenv && ./.cadvenv/bin/pip install build123d
+export FORGE_CAD_PYTHON="$PWD/.cadvenv/bin/python"
+```
+
+The kernel is a long-running sidecar because the costs are nothing alike:
+importing build123d takes ~2.5 s and building the part takes ~46 ms, so it is
+imported once and kept warm. It builds a PART, not a pile of solids. A document can cut holes, fuse bodies,
+fillet and chamfer, and a part can be an **extrusion**, a **revolve** or a
+**sweep** — a closed outline swept along an axis, turned about one, or carried
+along a path — so an L-bracket, a turned boss or a bent pipe run is describable
+and not just a box with material removed. Any corner of an outline or a path can
+carry a **radius**, which is a rounded corner on a plate and a real bend radius
+on a tube; the kernel builds it as a true arc, and the viewport flattens it and
+says by how much. An outline can have **holes** in it — the section's own voids,
+which follow it wherever it goes, so a bent tube is hollow round the corner.
+A drilled hole is still a cut feature; a bore that turns a corner cannot be, and
+that is the difference between the two. A sweep's path can be **closed**, for a
+ring or a hoop — and a closed path has to bring its section back to itself, which
+a loop that leaves a plane generally does not; that is refused with the angle
+named rather than quietly twisted to fit. What it does not do is CHECK — there is still no solver and no
+interference test here, and the export label says so, along with any feature
+OCCT refused.
+
+The viewport draws primitives and has no booleans, so a cut hole is drawn as a
+part standing in the plate. The exported file is the one with the hole, and the
+banner says which is which.
+
+**Without one, STEP is declared and refused**, and that is the default. IGES and
+KCL are refused either way — nothing in this build writes them. Refusals carry
+`CONNECTOR_UNAVAILABLE` and a reason, the same shape as the unavailable
+connectors. Leaving them out of the list is what invites somebody to write
 tessellated facets into a `.step` file, which everything downstream would then
 treat as an exact solid.
 

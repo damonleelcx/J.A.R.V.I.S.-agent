@@ -9,6 +9,7 @@ import (
 	"math"
 	"math/rand"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -49,13 +50,24 @@ type OpenAICompatible struct {
 	// warnedPricing remembers which models we have already complained about, so
 	// an unknown price is reported once rather than on every call.
 	warnedPricing sync.Map
+
+	// thinkingField is how this endpoint is told not to deliberate, or "" when
+	// it is not known to have a way (see deliberation.go). Resolved once at
+	// construction because it is a property of the endpoint, not of a call.
+	thinkingField string
+	// warnedThinking makes the "this endpoint deliberates and cannot be told
+	// not to" warning arrive once rather than every turn.
+	warnedThinking sync.Once
 }
 
 // NewOpenAICompatible builds the driver from configuration.
 func NewOpenAICompatible(cfg config.LLMConfig, log *logx.Logger, clk clock.Clock) *OpenAICompatible {
+	base := strings.TrimRight(cfg.BaseURL, "/")
+	field, _ := noDeliberation(base)
 	return &OpenAICompatible{
-		baseURL: strings.TrimRight(cfg.BaseURL, "/"),
-		apiKey:  cfg.APIKey,
+		baseURL:       base,
+		apiKey:        cfg.APIKey,
+		thinkingField: field,
 		models: map[Role]string{
 			RoleVision:      cfg.Vision,
 			RolePlanner:     cfg.Planner,
@@ -77,6 +89,12 @@ func NewOpenAICompatible(cfg config.LLMConfig, log *logx.Logger, clk clock.Clock
 // ModelFor reports which model backs a role.
 func (c *OpenAICompatible) ModelFor(role Role) string { return c.models[role] }
 
+// chatRequest is the wire shape of a completion request.
+//
+// Kept as a type although the request is now BUILT as a map: the body carries
+// provider extensions (see deliberation.go) that no fixed struct can hold, and a
+// struct that silently dropped one would be a latency defect nothing could see.
+// This is the reader's view of that wire format, and the tests decode into it.
 type chatRequest struct {
 	Model       string           `json:"model"`
 	Messages    []Message        `json:"messages"`
@@ -137,13 +155,21 @@ func (c *OpenAICompatible) Complete(ctx context.Context, req Request) (*Response
 		maxTokens = defaultMaxTokens
 	}
 
-	body := chatRequest{
-		Model: model, Messages: req.Messages, Tools: req.Tools,
-		MaxTokens: maxTokens, Temperature: req.Temperature,
+	body := map[string]any{
+		"model": model, "messages": req.Messages, "max_tokens": maxTokens,
+	}
+	if len(req.Tools) > 0 {
+		body["tools"] = req.Tools
+	}
+	if req.Temperature != nil {
+		body["temperature"] = *req.Temperature
 	}
 	if req.JSONMode {
-		body.ResponseFmt = &responseFormat{Type: "json_object"}
+		body["response_format"] = responseFormat{Type: "json_object"}
 	}
+	// Both request paths pass through here, so a role that must not deliberate
+	// cannot start doing it by being called on the other one.
+	c.applyDeliberation(ctx, req.Role, body)
 	payload, err := json.Marshal(body)
 	if err != nil {
 		return nil, errs.Wrap(op, errs.CodeSerializationFail, err)
@@ -308,9 +334,27 @@ func (c *OpenAICompatible) classifyHTTPError(ctx context.Context, status int, bo
 				status, c.baseURL, snippet)
 
 	case status == http.StatusNotFound:
-		return errs.New(op, errs.CodeConfigInvalid).
-			WithDetail("model %q (role %s) was not found at %s. Check the model id is spelled exactly as the provider lists it. Response: %s",
-				model, role, c.baseURL, snippet)
+		// The endpoint is ASKED what it serves, rather than the operator being
+		// told to go and look.
+		//
+		// # Why this is worth an extra request on a failing path
+		//
+		// This is the error a provider returns when it RETIRES a model, and it
+		// arrives on a deployment that was working yesterday and changed
+		// nothing. Measured 2026-09-06: `qwen-plus` — the conversation model's
+		// default since this product had one — stopped existing at
+		// token-plan.cn-beijing.maas.aliyuncs.com, and the reply was
+		// `Model not exist.` and nothing else. That reads as an outage or an
+		// unpaid bill, and it was neither; the catalogue had moved to
+		// qwen3.7/3.8. It cost this repository a day and an entry in the
+		// implementation plan under "Operational — blocking".
+		//
+		// One GET on a path that has already failed permanently, and it turns
+		// "not found" into the list the operator would otherwise spend an hour
+		// finding.
+		return errs.New(op, errs.CodeConfigInvalid).WithDetail("%s",
+			fmt.Sprintf("model %q (role %s) was not found at %s. Response: %s",
+				model, role, c.baseURL, snippet)+c.whatIsServed(ctx, status, role))
 
 	case status >= 500:
 		return errs.New(op, errs.CodeExternalUnavailable).
@@ -322,6 +366,88 @@ func (c *OpenAICompatible) classifyHTTPError(ctx context.Context, status int, bo
 			WithDetail("the model endpoint rejected the request with %d for role %s (%s): %s",
 				status, role, model, snippet)
 	}
+}
+
+// servedModels asks the endpoint what it will answer for.
+//
+// Bounded, and never on a success path: it exists to turn one specific
+// permanent failure into an actionable one. A provider that does not implement
+// /models returns an error here, which is reported rather than swallowed — the
+// caller's message says the list could not be read, so nobody reads a short list
+// as a complete one.
+func (c *OpenAICompatible) servedModels(ctx context.Context) ([]string, error) {
+	ctx, cancel := context.WithTimeout(ctx, modelListTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/models", nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	resp, err := c.client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("the endpoint answered %d when asked for its model list", resp.StatusCode)
+	}
+	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	if err != nil {
+		return nil, err
+	}
+	var list struct {
+		Data []struct {
+			ID string `json:"id"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(raw, &list); err != nil {
+		return nil, fmt.Errorf("its model list is not in the OpenAI format this build can read")
+	}
+	ids := make([]string, 0, len(list.Data))
+	for _, m := range list.Data {
+		if m.ID != "" {
+			ids = append(ids, m.ID)
+		}
+	}
+	sort.Strings(ids)
+	return ids, nil
+}
+
+// modelListTimeout bounds the extra request above. Short: the turn has already
+// failed, and the operator is waiting for a message rather than a model.
+const modelListTimeout = 10 * time.Second
+
+// whatIsServed is the sentence a 404 owes an operator, wherever the 404 arrives.
+//
+// # Why this is shared rather than only in classifyHTTPError
+//
+// The audio roles do not go through the chat path — transcription and speech
+// each speak their own wire format and each classify their own errors. On
+// 2026-09-06 the provider retired the models behind ALL THREE roles at once, and
+// the two audio ones reported "the provider returned 404: Model not exist." with
+// nothing to act on, while the chat one had just been taught to name the
+// survivors. Two of the three surfaces would have been fixed.
+//
+// Returns "" when there is nothing useful to add, so a caller can append it
+// unconditionally.
+func (c *OpenAICompatible) whatIsServed(ctx context.Context, status int, role Role) string {
+	if status != http.StatusNotFound {
+		return ""
+	}
+	served, err := c.servedModels(ctx)
+	if err != nil {
+		return fmt.Sprintf(" This endpoint's model list could not be read either (%v), so check "+
+			"the model id against the provider's console.", err)
+	}
+	if len(served) == 0 {
+		return " This endpoint lists NO models at all, which usually means the key is scoped to " +
+			"a different product or region than the host."
+	}
+	return fmt.Sprintf(" This endpoint currently serves: %s. Set FORGE_LLM_%s_MODEL to one of "+
+		"those — a provider that retires a model answers exactly like this, and the deployment "+
+		"that was working yesterday changed nothing.",
+		strings.Join(served, ", "), strings.ToUpper(string(role)))
 }
 
 // backoff returns an exponential delay with jitter.

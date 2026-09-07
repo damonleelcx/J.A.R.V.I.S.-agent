@@ -372,10 +372,19 @@ func (h *ConverseHandlers) Converse(w http.ResponseWriter, r *http.Request) {
 				// Written before `done` reaches the client, for the same reason
 				// the variant is: `done` stays the last event anybody has to
 				// listen for.
+				//
+				// The TIMING travels with the turn (PRD NFR-05). Until wave 28
+				// these four numbers were measured, logged, and read back by
+				// nothing — so the Telemetry panel could only show what this
+				// browser tab had watched happen, and emptied on reload. They
+				// are attached here and not in a second write because they are
+				// facts about this turn: one row, one owner, one delete path.
 				reply := h.keepSaid(ctx, conversation.Said{
 					ConversationID: convID, OwnerID: user.ID, ProjectID: req.ProjectID,
 					Role: conversation.RoleForge, Text: spokeText,
 					Detail: strings.Join(detailText, "\n\n"),
+					Timing: turnTiming(model, firstTokenMS, totalMS, tokens,
+						h.deps.Clock.Now().Sub(start).Milliseconds()),
 				})
 				if reply.NotKept != "" {
 					if err := send(agent.StreamEvent{Kind: "conversation", Conversation: reply}); err != nil {
@@ -416,6 +425,45 @@ func (h *ConverseHandlers) Converse(w http.ResponseWriter, r *http.Request) {
 		"spoke", spoke,
 		"has_prototype", hadPrototype,
 		"variant_id", savedVariant)
+}
+
+// turnTiming packages what the server measured about one turn, keeping
+// "not measured" distinct from zero all the way to the column.
+//
+// # Why every figure is dropped rather than defaulted
+//
+// A turn that produced no speech has no time to first token; a provider that
+// reports no usage leaves the token count at zero, which is already warned about
+// elsewhere and must not be written here as though it were a measurement. Zero
+// is the one value a reader takes as good news, and the Telemetry panel's rule —
+// older than this function — is that a missing measurement renders as an em dash
+// and a reason. This is where that rule has to start, because a zero written
+// into the column can never be told from a real one again.
+//
+// The round trip is always present: the handler measured its own elapsed time
+// unconditionally, so there is no case where it is unknown.
+func turnTiming(model string, firstTokenMS, totalMS, tokens, roundTripMS int64) *conversation.Timing {
+	t := &conversation.Timing{Model: model}
+	if firstTokenMS > 0 {
+		v := int(firstTokenMS)
+		t.FirstTokenMS = &v
+	}
+	if totalMS > 0 {
+		v := int(totalMS)
+		t.TotalMS = &v
+	}
+	if roundTripMS >= 0 {
+		v := int(roundTripMS)
+		t.RoundTripMS = &v
+	}
+	if tokens > 0 {
+		v := tokens
+		t.Tokens = &v
+	}
+	if !t.Measured() {
+		return nil
+	}
+	return t
 }
 
 // userFacing renders an error for a reader mid-conversation: what happened and
@@ -544,6 +592,7 @@ func (h *ConverseHandlers) keepGeometry(r *http.Request, req converseRequest, pr
 		Name: v.Name, Generator: v.Generator,
 		Units: string(v.Units), UnitsNote: v.UnitsNote(),
 		Parts: len(v.Document.Parts), Assumptions: len(v.Assumptions()),
+		Parameters: len(v.Document.Parameters),
 	}
 }
 

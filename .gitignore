@@ -27,3 +27,4 @@ coverage.*
 # transcribe the container the pipeline itself produced. Generated, not fixture.
 internal/media/testdata/pipeline-output.ogg
 eval-report.json
+.cadvenv/

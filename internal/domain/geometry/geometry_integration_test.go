@@ -561,3 +561,197 @@ func TestAdopt_MustNameWhoChoseIt(t *testing.T) {
 		t.Errorf("the refusal does not say what is missing: %v", err)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// Re-specifying: the parameters actually drive the shape (wave 11)
+// ---------------------------------------------------------------------------
+
+// parametricProposal is a bracket whose rib FOLLOWS its plate, which is the
+// arrangement the 2026-09-05 kernel spike found survives a size change.
+func (h *harness) parametricProposal(name string) geometry.NewVariant {
+	n := h.proposal(name)
+	n.Document.Parameters = []geometry.Parameter{
+		{Name: "plate_size", Value: 60, Unit: "mm", How: geometry.Chosen},
+		{Name: "fillet_radius", Value: 3, Unit: "mm", How: geometry.Chosen},
+	}
+	n.Document.Derived = []geometry.Derived{
+		{Name: "rib_length", Expression: "plate_size - 2 * fillet_radius",
+			Why: "a rib that does not follow the plate overhangs it when the plate shrinks"},
+	}
+	n.Document.Parts = []geometry.Part{
+		{ID: "plate", Name: "Plate", Shape: "box",
+			Size:     map[string]float64{"width": 60, "height": 5, "depth": 60},
+			SizeFrom: map[string]string{"width": "plate_size", "depth": "plate_size"},
+			Position: []float64{0, 0, 0}, Rotation: []float64{0, 0, 0}},
+		{ID: "rib", Name: "Rib", Shape: "box",
+			Size:     map[string]float64{"width": 54, "height": 10, "depth": 6},
+			SizeFrom: map[string]string{"width": "rib_length"},
+			Position: []float64{0, 7, 15}, Rotation: []float64{0, 0, 0}},
+	}
+	return n
+}
+
+// The wave's whole point, through the real database: change one parameter and
+// the geometry that comes back is a different shape.
+func TestRespec_ChangingOneParameterMovesEveryDimensionThatFollowsIt(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	first, err := h.svc.Save(ctx, h.parametricProposal("bracket"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	next, caveats, err := h.svc.Respec(ctx, first.VersionID, h.userID,
+		map[string]float64{"plate_size": 100})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, c := range caveats {
+		if c.Severity == geometry.Error {
+			t.Fatalf("%s: %s", c.Name, c.Detail)
+		}
+	}
+
+	byID := map[string]geometry.Part{}
+	for _, p := range next.Document.Parts {
+		byID[p.ID] = p
+	}
+	if got := byID["plate"].Size["width"]; got != 100 {
+		t.Errorf("plate width = %g, want 100", got)
+	}
+	if got := byID["rib"].Size["width"]; got != 94 {
+		t.Errorf("rib width = %g, want 94 — the rib must follow the plate", got)
+	}
+	if byID["rib"].Size["width"] > byID["plate"].Size["width"] {
+		t.Error("the rib overhangs the plate")
+	}
+	if got := byID["plate"].Size["height"]; got != 5 {
+		t.Errorf("an UNBOUND dimension changed to %g; only what follows a parameter should move", got)
+	}
+}
+
+// It has to survive the round trip. The binding expressions live in the stored
+// document, so a variant read back from Postgres must still be re-specifiable —
+// otherwise this works exactly once, in memory, and never again.
+func TestRespec_TheBindingsSurviveStorage(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	first, err := h.svc.Save(ctx, h.parametricProposal("bracket"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	read, err := h.svc.Find(ctx, first.VersionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := read.Document.Parts[1].SizeFrom["width"]; got != "rib_length" {
+		t.Fatalf("the binding did not survive the database: size_from.width = %q", got)
+	}
+	if len(read.Document.Derived) != 1 || read.Document.Derived[0].Expression != "plate_size - 2 * fillet_radius" {
+		t.Fatalf("the derived expression did not survive: %+v", read.Document.Derived)
+	}
+	// And re-specify FROM the stored copy, not the in-memory one.
+	next, _, err := h.svc.Respec(ctx, read.VersionID, h.userID, map[string]float64{"plate_size": 40})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := next.Document.Parts[1].Size["width"]; got != 34 {
+		t.Errorf("rib width = %g after a round trip, want 34", got)
+	}
+}
+
+// It appends, on the same artifact, so the two are a comparison rather than two
+// unrelated designs (PRD VIS-04).
+func TestRespec_AppendsAVersionOfTheSameArtifact(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	first, err := h.svc.Save(ctx, h.parametricProposal("bracket"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	next, _, err := h.svc.Respec(ctx, first.VersionID, h.userID, map[string]float64{"plate_size": 80})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next.ArtifactID != first.ArtifactID {
+		t.Errorf("the re-specified variant is a different artifact, so the two cannot be compared")
+	}
+	if next.Version != 2 {
+		t.Errorf("re-specifying produced v%d; it must append", next.Version)
+	}
+	// The original is what the model said, and stays that way.
+	original, err := h.svc.Find(ctx, first.VersionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := original.Document.Parts[0].Size["width"]; got != 60 {
+		t.Errorf("the ORIGINAL variant was rewritten to %g; a replay would no longer match "+
+			"what the person saw", got)
+	}
+}
+
+// Setting a name nothing declares would append an identical copy and read as
+// success. It fails instead, and names what it could not use.
+func TestRespec_RefusesAnOverrideThatWouldChangeNothing(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	first, err := h.svc.Save(ctx, h.parametricProposal("bracket"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, bad := range []struct {
+		name   string
+		params map[string]float64
+		wants  string
+	}{
+		{"a typo", map[string]float64{"plaet_size": 80}, "not a parameter"},
+		{"a derived value", map[string]float64{"rib_length": 99}, "is derived"},
+		{"nothing at all", map[string]float64{}, "no parameter was given"},
+	} {
+		_, _, err := h.svc.Respec(ctx, first.VersionID, h.userID, bad.params)
+		if err == nil {
+			t.Errorf("%s was accepted and would have appended an identical copy", bad.name)
+			continue
+		}
+		if !strings.Contains(err.Error(), bad.wants) {
+			t.Errorf("%s: error does not say why: %v", bad.name, err)
+		}
+	}
+}
+
+// A parameter set to a value that breaks an expression must still produce a
+// variant — the person asked to see it — with the breakage reported.
+func TestRespec_ABreakingValueIsShownWithItsCaveat(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	n := h.parametricProposal("bracket")
+	n.Document.Derived = append(n.Document.Derived,
+		geometry.Derived{Name: "ratio", Expression: "plate_size / fillet_radius"})
+	first, err := h.svc.Save(ctx, n)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	next, caveats, err := h.svc.Respec(ctx, first.VersionID, h.userID,
+		map[string]float64{"fillet_radius": 0})
+	if err != nil {
+		t.Fatalf("the variant was refused rather than shown with its caveat: %v", err)
+	}
+	if next == nil {
+		t.Fatal("no variant came back")
+	}
+	var told bool
+	for _, c := range caveats {
+		if c.Name == "ratio" && strings.Contains(c.Detail, "division by zero") {
+			told = true
+		}
+	}
+	if !told {
+		t.Errorf("the division by zero was not reported: %+v", caveats)
+	}
+}

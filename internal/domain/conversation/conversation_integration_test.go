@@ -293,3 +293,226 @@ func TestTheSchemaAcceptsEveryRoleTheCodeCanWrite(t *testing.T) {
 			"vocabulary, so a provider's word for a speaker could end up in a product's record.")
 	}
 }
+
+// ---------------------------------------------------------------------------
+// The timings (wave 28, PRD NFR-05)
+// ---------------------------------------------------------------------------
+
+func ms(v int) *int        { return &v }
+func count(v int64) *int64 { return &v }
+
+// conversationFor mints a conversation for this person. A client may not name
+// one into existence, so the tests below ask the service for one.
+func (h *harness) conversationFor(t *testing.T, owner string) string {
+	t.Helper()
+	conv, err := h.svc.Resolve(context.Background(), "", owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return conv
+}
+
+// timed says something and records what it cost.
+func (h *harness) timed(t *testing.T, conv, owner, text string, tm *conversation.Timing) *conversation.Turn {
+	t.Helper()
+	turn, err := h.svc.Record(context.Background(), conversation.Said{
+		ConversationID: conv, OwnerID: owner, Role: conversation.RoleForge,
+		Text: text, Timing: tm,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return turn
+}
+
+// The measurement survives the tab that saw it happen.
+//
+// # What was wrong before this
+//
+// Every turn was already measured and every measurement went to the log and
+// nowhere else. The Telemetry panel could only show what THIS browser tab had
+// watched, so it emptied on reload and knew nothing about yesterday — the one
+// PRD line (NFR-05) with a real measurement behind it and no way to look at it.
+func TestATurnsTimingSurvivesTheTabThatSawIt(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	me := h.person(t, "timed@example.com")
+	conv := h.timed(t, h.conversationFor(t, me), me, "here it is",
+		&conversation.Timing{Model: "qwen3.7-plus", FirstTokenMS: ms(735),
+			TotalMS: ms(4210), RoundTripMS: ms(4290), Tokens: count(1820)}).ConversationID
+
+	got, err := h.svc.Measured(ctx, me)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("%d measured turns, want 1 — the timing was measured and then not stored", len(got))
+	}
+	tm := got[0].Timing
+	if tm == nil {
+		t.Fatal("the turn came back with no timing at all")
+	}
+	if tm.Model != "qwen3.7-plus" {
+		t.Errorf("model = %q; NFR-05 names model selection and this is where it is kept", tm.Model)
+	}
+	if tm.FirstTokenMS == nil || *tm.FirstTokenMS != 735 {
+		t.Errorf("first token = %v, want 735", tm.FirstTokenMS)
+	}
+	if tm.TotalMS == nil || *tm.TotalMS != 4210 {
+		t.Errorf("total = %v, want 4210", tm.TotalMS)
+	}
+	if tm.Tokens == nil || *tm.Tokens != 1820 {
+		t.Errorf("tokens = %v, want 1820", tm.Tokens)
+	}
+	// And it is on the turn it belongs to, not floating beside it.
+	said, err := h.svc.History(ctx, conv, me)
+	if err != nil || len(said) != 1 || said[0].Timing == nil {
+		t.Fatalf("the timing did not come back with the turn it measured: %v %+v", err, said)
+	}
+}
+
+// An unmeasured turn comes back UNMEASURED, not fast.
+//
+// This is the property the whole design rests on. A default of 0 in the column
+// would make a turn nobody timed indistinguishable from an instantaneous one,
+// and the panel — whose own rule is that a missing measurement renders as an em
+// dash and never as a zero — would draw the best possible number for the worst
+// possible reason.
+func TestAnUnmeasuredTurnIsNotAFastOne(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	me := h.person(t, "untimed@example.com")
+
+	// A human turn, and a FORGE turn with nothing measured. Neither is timed.
+	conv := h.conversationFor(t, me)
+	h.say(t, conv, me, conversation.RoleHuman, "design me a bracket")
+	h.say(t, conv, me, conversation.RoleForge, "here you go")
+
+	turns, err := h.svc.History(ctx, conv, me)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, turn := range turns {
+		if turn.Timing != nil {
+			t.Errorf("turn %d came back with a timing nobody measured: %+v", turn.Seq, turn.Timing)
+		}
+	}
+	// And it is not in the measured history at all, rather than being a row of
+	// em dashes that reads as a failure.
+	measured, err := h.svc.Measured(ctx, me)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(measured) != 0 {
+		t.Errorf("%d measured turns, want none: an unmeasured turn is not a measurement", len(measured))
+	}
+}
+
+// Timings are somebody's, like the turns they are attached to.
+func TestOneAccountCannotReadAnothersTimings(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	mine := h.person(t, "mine@example.com")
+	theirs := h.person(t, "theirs@example.com")
+
+	h.timed(t, h.conversationFor(t, mine), mine, "mine",
+		&conversation.Timing{Model: "m", FirstTokenMS: ms(100)})
+
+	got, err := h.svc.Measured(ctx, theirs)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Errorf("a second account read %d of somebody else's measured turns. The scope is in "+
+			"the query rather than applied afterwards for exactly this reason.", len(got))
+	}
+}
+
+// Deleting a conversation deletes its measurements with it.
+//
+// PRD AUD-07 requires deletion to always be reachable, and this is the reason
+// the timings are columns on the turn rather than a table beside it: there is
+// one delete path, it already exists, and there is no second sweeper to forget.
+func TestForgettingAConversationTakesItsTimings(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	me := h.person(t, "forgetful@example.com")
+	conv := h.timed(t, h.conversationFor(t, me), me, "here",
+		&conversation.Timing{Model: "m", FirstTokenMS: ms(500)}).ConversationID
+
+	if _, err := h.svc.Forget(ctx, conv, me); err != nil {
+		t.Fatal(err)
+	}
+	got, err := h.svc.Measured(ctx, me)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Errorf("%d measured turns survived the deletion of the conversation they belonged to. "+
+			"A record of when somebody had a conversation, after they deleted it, is the "+
+			"failure AUD-07 exists to prevent.", len(got))
+	}
+}
+
+// The schema refuses what the domain refuses, and the other way round.
+//
+// Both halves matter: a check the code enforces and the schema does not is one
+// a second writer bypasses, and a check the schema enforces and the code does
+// not is a constraint name where a sentence should be.
+func TestTheSchemaAndTheCodeAgreeAboutTimings(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	me := h.person(t, "constrained@example.com")
+
+	t.Run("a human turn cannot be timed", func(t *testing.T) {
+		_, err := h.svc.Record(ctx, conversation.Said{
+			ConversationID: h.conversationFor(t, me),
+			OwnerID:        me, Role: conversation.RoleHuman, Text: "hello",
+			Timing: &conversation.Timing{Model: "m", FirstTokenMS: ms(10)},
+		})
+		if err == nil {
+			t.Fatal("a human turn was recorded with a model timing on it")
+		}
+		if errs.CodeOf(err) != errs.CodeValidationFailed {
+			t.Errorf("code = %v; want a validation failure with a sentence in it", errs.CodeOf(err))
+		}
+	})
+
+	t.Run("a negative duration is refused", func(t *testing.T) {
+		_, err := h.svc.Record(ctx, conversation.Said{
+			ConversationID: h.conversationFor(t, me),
+			OwnerID:        me, Role: conversation.RoleForge, Text: "hi",
+			Timing: &conversation.Timing{Model: "m", FirstTokenMS: ms(-1)},
+		})
+		if err == nil {
+			t.Fatal("a negative time to first token was stored; it would drag every median " +
+				"somewhere no measurement can be")
+		}
+	})
+
+	// The two subtests above stop at Validate, which is where a person gets a
+	// sentence — and which means neither of them has judged the SCHEMA. A check
+	// only the code enforces is one the next writer bypasses, so both
+	// constraints are asked directly, past the domain.
+	t.Run("and the schema enforces them without the code", func(t *testing.T) {
+		conv := h.conversationFor(t, me)
+		for _, tc := range []struct {
+			name, role string
+			first      int
+		}{
+			{"a human turn carrying a timing", "human", 10},
+			{"a negative duration", "forge", -1},
+		} {
+			_, err := h.pool.Exec(ctx, `
+				insert into forge_conversation_turns
+					(id, conversation_id, owner_id, seq, role, text, images, said_at,
+					 model, first_token_ms)
+				values ($1, $2, $3, 99, $4, 'x', 0, now(), 'm', $5)`,
+				id.New(id.PrefixTurn), conv, me, tc.role, tc.first)
+			if err == nil {
+				t.Errorf("the schema accepted %s. The domain refuses it, which protects this "+
+					"writer and no other one.", tc.name)
+			}
+		}
+	})
+}

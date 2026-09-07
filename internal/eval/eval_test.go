@@ -184,10 +184,13 @@ func TestScorer_DoesNotReachAcrossASentence(t *testing.T) {
 func TestScorer_DoesNotCreditForgesOwnFallback(t *testing.T) {
 	s := notVerifiedIsTheModelsOwn()
 
-	fallback := proto("mm", []string{
-		"Nothing here has been analysed or checked. There is no CAD kernel, solver, or " +
-			"interference check in this deployment — this is a shape, not a result.",
-	}, part("plate"))
+	// The CONSTANT, not a copy of it. A literal here is the drift the constant's
+	// own comment warns about, and it drifted: wave 14 reworded the sentence
+	// (a CAD kernel can now be configured, so "there is no CAD kernel" stopped
+	// being true of every deployment) and this fixture went on asserting that
+	// the scorer rejects a sentence nothing injects any more. It went red, which
+	// is the fence working — and the fix is to stop having two copies.
+	fallback := proto("mm", []string{agent.NotVerifiedFallback}, part("plate"))
 	if held, detail := s.Judge(obs(reply("here", fallback))); held {
 		t.Fatalf("FORGE's injected fallback was credited to the model: %s", detail)
 	}
@@ -377,8 +380,16 @@ func TestCases_EveryCaseIsTraceableAndScored(t *testing.T) {
 		if len(strings.Fields(c.Why)) < 8 {
 			t.Errorf("%s: Why is too thin to trace to a real failure: %q", c.ID, c.Why)
 		}
-		if len(c.Turns) == 0 {
-			t.Errorf("%s: has no turns", c.ID)
+		// A case says something to the model: turns for a conversation case, a
+		// goal for a planner one. Neither is a case that costs a model call and
+		// measures nothing.
+		if len(c.Turns) == 0 && c.Goal == nil {
+			t.Errorf("%s: has neither turns nor a goal, so there is nothing to run", c.ID)
+		}
+		if len(c.Turns) > 0 && c.Goal != nil {
+			t.Errorf("%s: has both turns and a goal. A case is answered by the conversation "+
+				"or by the planner; running both would score two different things under one id",
+				c.ID)
 		}
 		if len(c.Scorers) == 0 {
 			t.Errorf("%s: has no scorers, so it costs a model call and measures nothing", c.ID)
@@ -601,10 +612,21 @@ func TestEveryCaseDeclaresItsKind(t *testing.T) {
 			}
 		case KindCoverage:
 			// Checked above.
+		case KindCapability:
+			// A capability case measures whether a model reaches for a shipped
+			// vocabulary, which has nothing to do with a domain — and pinning
+			// one to an industry would hand the model conventions the question
+			// is not about.
+			if c.Industry != "" {
+				t.Errorf("%s is a capability case pinned to the %q domain. Whether a model "+
+					"reaches for a sweep is not a question about an industry, and answering "+
+					"it under one measures something else", c.ID, c.Industry)
+			}
 		default:
 			t.Errorf("%s declares no kind. A case is either a regression — traceable to an "+
-				"observed defect — or coverage of a claim the product makes, and which one "+
-				"decides how its result should be read", c.ID)
+				"observed defect — coverage of an industry the product offers, or a "+
+				"capability this build shipped, and which one decides how its result "+
+				"should be read", c.ID)
 		}
 	}
 }
@@ -635,8 +657,15 @@ func TestCoverageScorersAreTrackedNotFloored(t *testing.T) {
 	}
 }
 
-// isSharedHonestyScorer names the floored scorers a coverage case legitimately
-// carries: the rules that apply to any physical proposal in any domain.
+// isSharedHonestyScorer names the floored scorers a coverage or capability case
+// legitimately carries: the rules that apply to any physical proposal, in any
+// domain and whatever shape it was drawn as.
+//
+// outlinesResolveIntoShapes is deliberately NOT here. It measures something a
+// capability case badly wants — that what the model drew can be built — and it
+// is tracked rather than floored, because three of its four observed refusals
+// were FORGE refusing a drawing that has exactly one reading. Flooring it would
+// measure whether that decision has been taken. See the scorer.
 func isSharedHonestyScorer(name string) bool {
 	for _, s := range []Scorer{standardsAreLabelled(), speechIsShort()} {
 		if s.Name == name {
@@ -644,4 +673,250 @@ func isSharedHonestyScorer(name string) bool {
 		}
 	}
 	return false
+}
+
+// Capability scorers are Tracked, except the shared requirements.
+//
+// The rate a capability case reports — did the model reach for a sweep — must
+// never carry a floor. The design does not depend on it, the alternative is
+// sometimes the right answer, and a floor would sit red until somebody lowered
+// it to make the red go away. What the case DOES require is the same thing every
+// physical proposal requires: that what was drawn can be built.
+//
+// # Why PLANNER cases are exempt from the second half
+//
+// The "at least one floored scorer" rule below is really "the case must be able
+// to fail", and it was implemented as "carries a shared honesty scorer" because
+// every case was a conversation and those two scorers apply to any reply. A
+// planner case has no speech and names no standards, so requiring one would
+// force it to carry a scorer that measures nothing.
+//
+// What a planner case must carry instead is a floor set from a MEASUREMENT, and
+// until wave 32 had run there was none. The exemption is therefore narrow and
+// temporary in intent: it is written as "a planner case must still carry at
+// least one scorer that can fail" and the floors it carries came from the
+// 2026-09-07 run recorded in the implementation plan.
+func TestCapabilityRatesAreTrackedAndOnlyTheRequirementsAreFloored(t *testing.T) {
+	seen := 0
+	for _, c := range Cases() {
+		if c.Kind != KindCapability {
+			continue
+		}
+		if c.Goal != nil {
+			// A planner case: it must still be able to fail, but its floored
+			// scorer is its own rather than one of the conversation's.
+			canFail := false
+			for _, s := range c.Scorers {
+				if !s.Tracked {
+					canFail = true
+				}
+			}
+			if !canFail {
+				t.Errorf("%s: every scorer is tracked, so the planner case can never fail. "+
+					"Whatever the model planned, FORGE still has to be willing to run it", c.ID)
+			}
+			continue
+		}
+		seen++
+		floored := 0
+		for _, s := range c.Scorers {
+			if s.Tracked {
+				continue
+			}
+			if isSharedHonestyScorer(s.Name) {
+				floored++
+				continue
+			}
+			t.Errorf("%s/%s: a capability rate carries floor %v. Whether a model reaches for "+
+				"a shape is an observation, not a requirement — a floor here demands a "+
+				"vocabulary rather than a shape, and is the first number somebody lowers",
+				c.ID, s.Name, s.Floor)
+		}
+		if floored == 0 {
+			t.Errorf("%s: every scorer is tracked, so the case can never fail. Whatever the "+
+				"model drew still has to be readable", c.ID)
+		}
+	}
+	if seen == 0 {
+		t.Error("no capability cases at all: the drawing vocabulary shipped and nothing " +
+			"measures whether a model reaches for it")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// fences over the drawing-vocabulary scorers
+// ---------------------------------------------------------------------------
+
+// swept builds a part the way the model would draw one, so these fixtures are
+// documents FORGE can actually read rather than shapes only the test believes in.
+func swept(id string, holes [][]geometry.Point, closed bool, bend float64) geometry.Part {
+	p := geometry.Part{ID: id, Name: humanNameFor(id), Shape: "sweep",
+		Profile:  []geometry.Point{{X: -10, Y: -10}, {X: 10, Y: -10}, {X: 10, Y: 10}, {X: -10, Y: 10}},
+		Path:     []geometry.Point{{}, {Z: 100, Radius: bend}, {X: 80, Z: 100}},
+		Holes:    holes,
+		Position: []float64{0, 0, 0}, Rotation: []float64{0, 0, 0}}
+	if closed {
+		p.Path = []geometry.Point{{}, {X: 80}, {X: 80, Y: 60}, {Y: 60}}
+		p.PathClosed = true
+	}
+	return p
+}
+
+func bore() [][]geometry.Point {
+	return [][]geometry.Point{{{X: -6, Y: -6}, {X: 6, Y: -6}, {X: 6, Y: 6}, {X: -6, Y: 6}}}
+}
+
+// The defect the readability scorer was built for: a radius on a path's END.
+//
+// This is the exact document qwen-plus produced on 2026-09-05 — a correct bent
+// tube with an inert radius on the last point — which was a REFUSAL before wave
+// 22 and cost the whole part. The scorer must accept it now, and must still
+// reject a document FORGE genuinely cannot read.
+func TestScorer_ReadabilityAcceptsAnInertRadiusAndRejectsAnUnreadableOutline(t *testing.T) {
+	s := outlinesResolveIntoShapes()
+
+	inert := swept("coolant-line", nil, false, 25)
+	inert.Path[len(inert.Path)-1].Radius = 8 // the end: names no corner, changes nothing
+	if held, detail := s.Judge(obs(reply("here", proto("mm", []string{"x"}, inert)))); !held {
+		t.Errorf("a buildable bent tube was scored as unreadable because of an inert radius "+
+			"on its end — the whole part would be missing from the file: %s", detail)
+	}
+
+	// A hole outside the outline it claims to be inside. FORGE refuses it, the
+	// part is not in the export, and a scorer that shrugged would be measuring
+	// nothing.
+	broken := swept("coolant-line", [][]geometry.Point{{
+		{X: 90, Y: 90}, {X: 100, Y: 90}, {X: 100, Y: 100}, {X: 90, Y: 100}}}, false, 25)
+	held, detail := s.Judge(obs(reply("here", proto("mm", []string{"x"}, broken))))
+	if held {
+		t.Errorf("a part FORGE drops from the build was scored as readable: %s", detail)
+	}
+	if !strings.Contains(detail, "not inside the outline") {
+		t.Errorf("the detail does not say what FORGE refused, so a reader cannot act on it: %q", detail)
+	}
+}
+
+// A reply with no geometry has not demonstrated a bad outline, and must not be
+// scored as if it had — the same rule every geometry scorer here follows.
+func TestScorer_ReadabilityIsNotAFailureWhenNothingWasDrawn(t *testing.T) {
+	held, detail := outlinesResolveIntoShapes().Judge(obs(reply("no shape here", nil)))
+	if !held {
+		t.Errorf("a reply with no geometry was scored as an unreadable outline: %s", detail)
+	}
+}
+
+// The vocabulary rate has to distinguish the shape asked about from every other
+// shape — including a document that drew plenty of geometry of the wrong kind,
+// which is the observed failure it exists to count.
+func TestScorer_TheVocabularyRateCountsTheShapeAndNotTheEffort(t *testing.T) {
+	s := aPartIsDrawnAs("sweep", "line")
+
+	// Three extrusions butted end to end: what qwen-plus produced for a bent
+	// tube before the vocabulary was expanded. Buildable, and not a bent tube.
+	butted := proto("mm", []string{"x"},
+		geometry.Part{ID: "a", Shape: "extrusion", Size: map[string]float64{"depth": 300}},
+		geometry.Part{ID: "b", Shape: "extrusion", Size: map[string]float64{"depth": 200}},
+		geometry.Part{ID: "c", Shape: "extrusion", Size: map[string]float64{"depth": 150}})
+	held, detail := s.Judge(obs(reply("here", butted)))
+	if held {
+		t.Fatalf("three extrusions were counted as a sweep: %s", detail)
+	}
+	if !strings.Contains(detail, "extrusion") {
+		t.Errorf("the detail does not say what WAS drawn, so a reader cannot tell a near "+
+			"miss from an empty reply: %q", detail)
+	}
+
+	if held, detail := s.Judge(obs(reply("here", proto("mm", []string{"x"},
+		swept("line", nil, false, 0))))); !held {
+		t.Errorf("a sweep was not counted as one: %s", detail)
+	}
+
+	// No geometry at all is a failure of this scorer and not a free pass: the
+	// case asked for a part.
+	if held, _ := s.Judge(obs(reply("here", nil))); held {
+		t.Error("a reply with no geometry was counted as having drawn the shape")
+	}
+}
+
+// A bore in the SECTION and a cylinder CUT through the part are different
+// answers, and the scorer must not accept the second for the first — that is
+// the whole distinction holes were added for.
+func TestScorer_AVoidInTheSectionIsNotACutFeature(t *testing.T) {
+	s := aSectionCarriesItsOwnVoid()
+
+	cutInstead := proto("mm", []string{"x"}, swept("line", nil, false, 25),
+		geometry.Part{ID: "drill", Shape: "cylinder", Size: map[string]float64{"radius": 6}})
+	cutInstead.Features = []geometry.Feature{{ID: "bore-it", Op: "cut", Of: "line", With: []string{"drill"}}}
+	held, detail := s.Judge(obs(reply("here", cutInstead)))
+	if held {
+		t.Fatalf("a cylinder cut through a bent tube was counted as a hollow section — the "+
+			"bore would be straight through a part that turns a corner: %s", detail)
+	}
+	if !strings.Contains(detail, "cut") {
+		t.Errorf("the detail does not mention what the model reached for instead: %q", detail)
+	}
+
+	if held, detail := s.Judge(obs(reply("here", proto("mm", []string{"x"},
+		swept("line", bore(), false, 25))))); !held {
+		t.Errorf("a section with a loop inside it was not counted: %s", detail)
+	}
+}
+
+// A loop made of four separate bars and a loop bent from one length are
+// different parts, and the scorer must tell them apart.
+func TestScorer_AClosedLoopIsNotFourBars(t *testing.T) {
+	s := aPathComesBackOnItself()
+
+	fourBars := proto("mm", []string{"x"},
+		swept("side-a", nil, false, 0), swept("side-b", nil, false, 0),
+		swept("side-c", nil, false, 0), swept("side-d", nil, false, 0))
+	held, detail := s.Judge(obs(reply("here", fourBars)))
+	if held {
+		t.Fatalf("four separate swept bars were counted as a closed loop: %s", detail)
+	}
+	if !strings.Contains(detail, "4") {
+		t.Errorf("the detail does not say how many were swept, so a reader cannot see how "+
+			"close it came: %q", detail)
+	}
+
+	if held, detail := s.Judge(obs(reply("here", proto("mm", []string{"x"},
+		swept("handle", nil, true, 0))))); !held {
+		t.Errorf("a closed path was not counted: %s", detail)
+	}
+}
+
+// The radius scorer must see a radius wherever it legitimately lives — on an
+// outline, on a hole, or on a path — and must not be satisfied by a drawing with
+// none, however many points it has.
+func TestScorer_ARadiusIsCountedWhereverItLives(t *testing.T) {
+	s := aCornerCarriesARadius()
+
+	sharp := swept("line", bore(), false, 0)
+	held, detail := s.Judge(obs(reply("here", proto("mm", []string{"x"}, sharp))))
+	if held {
+		t.Fatalf("a drawing with no radius anywhere was counted as having one: %s", detail)
+	}
+	if !strings.Contains(detail, "drawn points") {
+		t.Errorf("the detail does not say how much drawing it looked at: %q", detail)
+	}
+
+	// On the path: a bend radius.
+	if held, detail := s.Judge(obs(reply("here", proto("mm", []string{"x"},
+		swept("line", bore(), false, 25))))); !held {
+		t.Errorf("a bend radius on a path was not counted: %s", detail)
+	}
+	// On a hole: the same field, and the same idea.
+	inBore := swept("line", bore(), false, 0)
+	inBore.Holes[0][2].Radius = 2
+	if held, detail := s.Judge(obs(reply("here", proto("mm", []string{"x"}, inBore)))); !held {
+		t.Errorf("a radius on a hole's corner was not counted: %s", detail)
+	}
+	// And as an EXPRESSION, which is the form the contract asks for whenever the
+	// radius follows a parameter — a scorer reading only the number would report
+	// the better-written document as the one that did not use the feature.
+	bound := swept("line", nil, false, 0)
+	bound.Profile[1].RadiusFrom = "corner_radius"
+	if held, detail := s.Judge(obs(reply("here", proto("mm", []string{"x"}, bound)))); !held {
+		t.Errorf("a radius written as an expression was not counted: %s", detail)
+	}
 }

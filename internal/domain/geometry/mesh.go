@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 )
 
 // Turning a proposal into triangles (PRD VIS-05).
@@ -84,6 +85,32 @@ type Mesh struct {
 	Inferences []string
 }
 
+// labelOf names a part by id, for a message about a feature that refers to one.
+//
+// Falls back to the raw id rather than to "unknown": a feature naming a part
+// that does not exist is a real document fault, and the id is what somebody
+// needs in order to find it.
+func labelOf(doc Document, id string) string {
+	for _, p := range doc.Parts {
+		if p.ID == id {
+			return p.Label()
+		}
+	}
+	return id
+}
+
+// toolNames joins a feature's tools into something readable.
+func toolNames(doc Document, ids []string) string {
+	if len(ids) == 0 {
+		return "nothing"
+	}
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, labelOf(doc, id))
+	}
+	return strings.Join(out, ", ")
+}
+
 // Triangles returns every facet in the mesh, flattened.
 func (m *Mesh) Triangles() []Triangle {
 	var out []Triangle
@@ -129,10 +156,61 @@ func Tessellate(doc Document, unit Unit) *Mesh {
 		}
 	}
 
+	// What the features would have done, and did not.
+	//
+	// # Why this is here at all
+	//
+	// Tessellate draws PARTS. It has never performed a feature — a cut, a fuse,
+	// a fillet — because those need a kernel and this is a triangle builder, and
+	// only the CAD kernel does them (document.go says so).
+	//
+	// What it also did, until now, was say nothing. So an OBJ or an STL of a
+	// bracket with four bolt holes contained four solid POSTS standing on the
+	// plate, and the file carried no hint that the four cylinders in it are the
+	// opposite of what they represent. That is the same failure this package
+	// names in three other places — "a file quietly missing a part is worse than
+	// one that says it is missing it", "the export asserting something the
+	// system did not do" — and it was the one place nobody had said it.
+	//
+	// It cannot be fixed by cutting: that is a boolean operation and there is no
+	// CSG here (see the implementation plan on what that would take). It CAN be
+	// stopped from passing unnoticed, which is exactly the stance the viewport
+	// already takes by drawing a cut tool as a ghost.
+	tools := map[string]string{}
+	for _, f := range doc.Features {
+		switch strings.ToLower(f.Op) {
+		case "cut":
+			for _, id := range f.With {
+				tools[id] = "cut"
+			}
+			infer("%s: the material %s removes is NOT removed in this file. This is a mesh; "+
+				"the cut is performed by the CAD kernel and appears in the STEP export.",
+				labelOf(doc, f.Of), toolNames(doc, f.With))
+		case "fuse":
+			for _, id := range f.With {
+				tools[id] = "fuse"
+			}
+			infer("%s: %s is present as a separate solid rather than fused into it. This is a "+
+				"mesh; the fuse is performed by the CAD kernel.",
+				labelOf(doc, f.Of), toolNames(doc, f.With))
+		case "fillet", "chamfer":
+			infer("%s: its %s is not in this file — a mesh has no edges to round. The rounded "+
+				"solid is what the STEP export contains.", labelOf(doc, f.Of),
+				strings.ToLower(f.Op))
+		}
+	}
+
 	for _, p := range doc.Parts {
 		local, dev := partTriangles(p, unit, infer)
 		if len(local) == 0 {
 			continue
+		}
+		if op, isTool := tools[p.ID]; isTool {
+			// Named per PART as well as per feature, because the parts list and
+			// the group names in the file are where somebody looks when they are
+			// wondering what a cylinder is doing there.
+			infer("%s is a %s TOOL and is in this file as a solid. It is the shape of the "+
+				"operation, not a part of the assembly.", p.Label(), op)
 		}
 		placed := place(local, p)
 		m.Groups = append(m.Groups, MeshGroup{
@@ -165,12 +243,36 @@ func sizeOr(p Part, key string, fallback float64, unit Unit, infer func(string, 
 
 // partTriangles builds one part in its own local frame, centred on the origin.
 func partTriangles(p Part, unit Unit, infer func(string, ...any)) ([]Triangle, *Deviation) {
-	switch p.Shape {
+	// A retired shape word is read as the shape it always was, and the reader
+	// is told which — through the same table the exporter, the summary line and
+	// the renderer all consult (retired.go).
+	shape, retiredNote := resolveShape(p.Shape, p.Label())
+	if retiredNote != "" {
+		infer("%s", retiredNote)
+	}
+	switch shape {
 	case "box":
 		return box(
 			sizeOr(p, "width", 1, unit, infer),
 			sizeOr(p, "height", 1, unit, infer),
 			sizeOr(p, "depth", 1, unit, infer)), nil
+
+	case "extrusion":
+		return extrusion(p, sizeOr(p, "depth", 1, unit, infer), unit, infer)
+
+	case "revolve":
+		tris, dev := revolved(p, unit, infer)
+		// Faceted twice over when the outline has rounded corners: once round
+		// the turn and once round each corner. The worse of the two is what the
+		// file actually is.
+		return tris, worseDeviation(dev, chordDeviation(revolveRadius(p), radialSegments, unit))
+
+	case "sweep":
+		// A sweep with no rounded corner has NO deviation, and that is not an
+		// omission: a polygon carried along a polyline has no curved surface
+		// anywhere on it, so the triangles ARE the solid. A bend radius is the
+		// one thing that makes a sweep an approximation.
+		return swept(p, unit, infer)
 
 	case "plane":
 		// A plane has no thickness and is not a solid. Exported as the two
@@ -193,16 +295,6 @@ func partTriangles(p Part, unit Unit, infer func(string, ...any)) ([]Triangle, *
 		r := sizeOr(p, "radius", 0.5, unit, infer)
 		h := sizeOr(p, "height", 1, unit, infer)
 		return cylinder(r, 0, h, radialSegments), chordDeviation(r, radialSegments, unit)
-
-	case "tube":
-		r := sizeOr(p, "radius", 0.5, unit, infer)
-		h := sizeOr(p, "height", 1, unit, infer)
-		// The bore is not modelled — the same substitution the renderer makes,
-		// reported the same way. An inner diameter that is not in the file is
-		// exactly the thing an export must not let somebody assume is there.
-		infer("%s is a tube and is exported as a SOLID cylinder. Its bore is not in this file; "+
-			"anything printed or machined from it will be solid.", p.Label())
-		return cylinder(r, r, h, radialSegments), chordDeviation(r, radialSegments, unit)
 
 	case "sphere":
 		r := sizeOr(p, "radius", 0.5, unit, infer)
@@ -294,19 +386,38 @@ func padTo3(v []float64) []float64 {
 // which takes RADIANS. Mirrored term by term rather than rederived, because a
 // rotation convention that is merely equivalent-looking is one that rotates
 // some parts the other way.
-func rotate(v [3]float64, r [3]float64) [3]float64 {
+// RotationMatrix is this system's rotation convention, row-major.
+//
+// # Why it is exported, and why rotate now goes through it
+//
+// The convention lives in exactly one place. A CAD kernel placing the same part
+// has to agree with the renderer about what a rotation MEANS — the Euler order,
+// and that the angles are RADIANS and not degrees — and the only way to
+// guarantee that is for both to read the same nine numbers rather than each
+// implement the same paragraph of trigonometry. A kernel that disagreed would
+// export a part rotated somewhere other than where it was drawn, which is the
+// one failure a downloaded file cannot be labelled out of.
+//
+// Angles are radians, as they have always been here: nothing in this file has
+// ever converted from degrees, and a caller passing 90 gets 90 radians.
+func RotationMatrix(r [3]float64) [9]float64 {
 	cx, sx := math.Cos(r[0]), math.Sin(r[0])
 	cy, sy := math.Cos(r[1]), math.Sin(r[1])
 	cz, sz := math.Cos(r[2]), math.Sin(r[2])
 
-	m00, m01, m02 := cy*cz, -cy*sz, sy
-	m10, m11, m12 := sx*sy*cz+cx*sz, -sx*sy*sz+cx*cz, -sx*cy
-	m20, m21, m22 := -cx*sy*cz+sx*sz, cx*sy*sz+sx*cz, cx*cy
+	return [9]float64{
+		cy * cz, -cy * sz, sy,
+		sx*sy*cz + cx*sz, -sx*sy*sz + cx*cz, -sx * cy,
+		-cx*sy*cz + sx*sz, cx*sy*sz + sx*cz, cx * cy,
+	}
+}
 
+func rotate(v [3]float64, r [3]float64) [3]float64 {
+	m := RotationMatrix(r)
 	return [3]float64{
-		m00*v[0] + m01*v[1] + m02*v[2],
-		m10*v[0] + m11*v[1] + m12*v[2],
-		m20*v[0] + m21*v[1] + m22*v[2],
+		m[0]*v[0] + m[1]*v[1] + m[2]*v[2],
+		m[3]*v[0] + m[4]*v[1] + m[5]*v[2],
+		m[6]*v[0] + m[7]*v[1] + m[8]*v[2],
 	}
 }
 
@@ -488,4 +599,270 @@ func normalise(v [3]float64) [3]float64 {
 		return [3]float64{0, 0, 0}
 	}
 	return [3]float64{v[0] / l, v[1] / l, v[2] / l}
+}
+
+// extrusion tessellates a profile swept along local Z, centred on it.
+//
+// # Why the caps are triangulated and the walls are not
+//
+// The walls are quads between consecutive points and need no triangulation at
+// all. The caps are the outline itself, which is where ear clipping earns its
+// place: a fan across an L-bracket's inner corner puts triangles outside the
+// part, and the exported file would be a different shape from the drawing.
+//
+// # Winding
+//
+// triangulate normalises the outline to counter-clockwise, so the +Z cap is used
+// as it comes and the -Z cap is reversed. The walls take their outward normal
+// from the edge direction, which is only well defined BECAUSE the winding was
+// normalised — an inside-out solid is a defect this repository has shipped once
+// already.
+func extrusion(p Part, depth float64, unit Unit, infer func(string, ...any)) ([]Triangle, *Deviation) {
+	outer, holes, dev, err := flattenSection(partOutline(p), partHoles(p), unit)
+	if err != nil {
+		// Reported and then not drawn. A drawing whose corners cannot be
+		// resolved has no points to fall back to — unlike a self-crossing one,
+		// which at least has the points it was given.
+		infer("%s: %v, so it is not drawn.", p.Label(), err)
+		return nil, nil
+	}
+	sec := triangulateLoops(outer, holes)
+	if !sec.OK {
+		// Reported and then drawn as far as it went. A part that vanishes from a
+		// render is read as a design with a piece missing; a partial one with a
+		// note beside it is read as what it is.
+		infer("%s: this outline could not be closed into a surface — it crosses itself, "+
+			"repeats a point, or has a hole that will not fit inside it — so it is drawn "+
+			"only as far as FORGE could read it.", p.Label())
+	}
+	if len(sec.Tris) == 0 {
+		return nil, nil
+	}
+	half := depth / 2
+	pts := sec.Merged
+	at := func(i int, z float64) [3]float64 { return [3]float64{pts[i][0], pts[i][1], z} }
+
+	out := make([]Triangle, 0, len(sec.Tris)*2+len(pts)*2)
+	for _, t := range sec.Tris {
+		out = appendNonDegenerate(out, Triangle{
+			A: at(t[0], half), B: at(t[1], half), C: at(t[2], half),
+			Normal: [3]float64{0, 0, 1}})
+		// Reversed, so the bottom cap faces away from the solid too.
+		out = appendNonDegenerate(out, Triangle{
+			A: at(t[2], -half), B: at(t[1], -half), C: at(t[0], -half),
+			Normal: [3]float64{0, 0, -1}})
+	}
+	// The walls, loop by loop rather than over the merged ring: a wall along a
+	// bridge would be a quad of zero width, drawn twice and facing both ways.
+	for _, loop := range sec.Loops {
+		for i := range loop {
+			j := (i + 1) % len(loop)
+			dx, dy := loop[j][0]-loop[i][0], loop[j][1]-loop[i][1]
+			// Outward for a counter-clockwise outline. (dy, -dx) and not
+			// (-dy, dx): on a square wound counter-clockwise the bottom edge
+			// runs +x, and the outward direction is -y. A HOLE is wound the
+			// other way, so the same formula points into the hole — which is out
+			// of the material, which is what outward means there.
+			n := normalise([3]float64{dy, -dx, 0})
+			a := [3]float64{loop[i][0], loop[i][1], -half}
+			b := [3]float64{loop[j][0], loop[j][1], -half}
+			c := [3]float64{loop[j][0], loop[j][1], half}
+			d := [3]float64{loop[i][0], loop[i][1], half}
+			out = appendNonDegenerate(out, Triangle{A: a, B: b, C: c, Normal: n})
+			out = appendNonDegenerate(out, Triangle{A: a, B: c, C: d, Normal: n})
+		}
+	}
+	return out, dev
+}
+
+// revolved tessellates an outline turned a full circle about its own axis.
+//
+// # Why there is no triangulation here
+//
+// An extrusion needs its caps triangulated. A full revolve has none: the surface
+// closes on itself, and every facet is a quad between two adjacent outline
+// points at two adjacent angles. The outline's winding still matters, because it
+// decides which way those quads face.
+//
+// The segment count is the renderer's own radial count, so a revolved boss and a
+// cylinder beside it are tessellated to the same fineness — and the exported
+// file is the surface that was on screen, which is what the tessellation fence
+// exists to keep true.
+func revolved(p Part, unit Unit, infer func(string, ...any)) ([]Triangle, *Deviation) {
+	outer, holes, dev, err := flattenSection(partOutline(p), partHoles(p), unit)
+	if err != nil {
+		infer("%s: %v, so it is not drawn.", p.Label(), err)
+		return nil, nil
+	}
+	if len(outer) < minProfilePoints {
+		return nil, nil
+	}
+	// Normalised the same way the extrusion does, and for the same reason: the
+	// facet winding below is only outward for a counter-clockwise outline, and an
+	// inside-out solid is a defect this repository has shipped once.
+	loops := sectionLoops(outer, holes)
+	for _, loop := range loops {
+		if selfIntersects(loop) {
+			infer("%s: this outline crosses itself, so the shape it would sweep is not a "+
+				"solid; it is drawn as FORGE read it.", p.Label())
+			break
+		}
+	}
+
+	aboutX := RevolveAxis(p) == "x"
+	// at maps an outline point and an angle to a point on the swept surface.
+	// Turning about Y, the outline's x is the radius and its y stays; turning
+	// about X, the other way round.
+	at := func(pts [][2]float64, i int, t float64) [3]float64 {
+		if aboutX {
+			r := pts[i][1]
+			return [3]float64{pts[i][0], r * math.Cos(t), r * math.Sin(t)}
+		}
+		r := pts[i][0]
+		return [3]float64{r * math.Cos(t), pts[i][1], r * math.Sin(t)}
+	}
+
+	out := make([]Triangle, 0, len(outer)*radialSegments*2)
+	for seg := 0; seg < radialSegments; seg++ {
+		t0 := float64(seg) / float64(radialSegments) * 2 * math.Pi
+		t1 := float64(seg+1) / float64(radialSegments) * 2 * math.Pi
+		// Every loop is turned: the outline sweeps the outside of the part and a
+		// hole sweeps a surface inside it, wound the other way so its facets face
+		// into the void.
+		for _, pts := range loops {
+			for i := range pts {
+				j := (i + 1) % len(pts)
+				a, b := at(pts, i, t0), at(pts, j, t0)
+				c, d := at(pts, j, t1), at(pts, i, t1)
+				// The normal comes from the facet itself rather than from a
+				// formula per axis: the two axes have opposite handedness and a
+				// formula written for one is silently inverted for the other.
+				out = appendNonDegenerate(out, Triangle{A: a, B: b, C: c, Normal: faceNormal(a, b, c)})
+				out = appendNonDegenerate(out, Triangle{A: a, B: c, C: d, Normal: faceNormal(a, c, d)})
+			}
+		}
+	}
+	return out, dev
+}
+
+// swept tessellates an outline carried along a path (see sweep.go).
+//
+// # Why this shares its geometry with the measurement path and the kernel
+//
+// Where each ring of points ends up is the whole of what a sweep IS, and it is
+// decided by sweptSections. This function turns rings into triangles and does
+// not decide anything else — the alternative is a viewport, an exporter and a
+// bounding box that each frame the section their own way, and a part that is
+// drawn one way, measured another and built a third.
+//
+// # Winding
+//
+// triangulate normalises the outline counter-clockwise, so the caps and the
+// facet order below are outward for the same reason the extrusion's are. The
+// facet normals are computed from the facets rather than from a formula, because
+// a path may point anywhere and a formula written for one direction is silently
+// inverted for another.
+func swept(p Part, unit Unit, infer func(string, ...any)) ([]Triangle, *Deviation) {
+	outer, holes, sectionDev, oerr := flattenSection(partOutline(p), partHoles(p), unit)
+	flatPath, pathDev, perr := partPath(p).flatten("path", unit)
+	if err := firstOf(oerr, perr); err != nil {
+		infer("%s: %v, so it is not drawn.", p.Label(), err)
+		return nil, nil
+	}
+	dev := worseDeviation(sectionDev, pathDev)
+	sec := triangulateLoops(outer, holes)
+	if !sec.OK {
+		infer("%s: this outline could not be closed into a surface — it crosses itself, "+
+			"repeats a point, or has a hole that will not fit inside it — so it is drawn "+
+			"only as far as FORGE could read it.", p.Label())
+	}
+	if len(sec.Tris) == 0 {
+		return nil, nil
+	}
+
+	// The merged ring is carried along the path as loop ZERO, so the caps can be
+	// built from the rings like everything else rather than from a second
+	// transformation that could disagree with them. At the two ends the mitre is
+	// the identity, so its ring is exactly the section as drawn.
+	loops := append([][][2]float64{sec.Merged}, sec.Loops...)
+	rings, _, err := sweptSections(loops, flatPath, p.PathClosed)
+	if err != nil {
+		// Drawn anyway when there is anything to draw, and named. A part that
+		// vanishes from a render reads as a design with a piece missing; the
+		// export path refuses the same document, and the banner says which.
+		infer("%s: %v. It is drawn as FORGE read it, and it is not a solid.", p.Label(), err)
+	}
+	if len(rings) == 0 || len(rings[0]) < minPathPoints {
+		return nil, nil
+	}
+	caps, walls := rings[0], rings[1:]
+	vertices := len(caps)
+	last := vertices - 1
+
+	out := make([]Triangle, 0, len(sec.Tris)*2+len(sec.Merged)*vertices*2)
+	// The two ends — unless there are none. A CLOSED path has no ends: the
+	// surface closes on itself at the seam, and a cap there would be a disc
+	// standing in the middle of the material.
+	if !p.PathClosed {
+		startNormal := normalise(sub3(caps[0][0], caps[1][0]))
+		endNormal := normalise(sub3(caps[last][0], caps[last-1][0]))
+		for _, t := range sec.Tris {
+			out = appendNonDegenerate(out, Triangle{
+				A: caps[0][t[2]], B: caps[0][t[1]], C: caps[0][t[0]], Normal: startNormal})
+			out = appendNonDegenerate(out, Triangle{
+				A: caps[last][t[0]], B: caps[last][t[1]], C: caps[last][t[2]], Normal: endNormal})
+		}
+	}
+	segments := last
+	if p.PathClosed {
+		segments = vertices
+	}
+	for l, loop := range sec.Loops {
+		ring := walls[l]
+		for i := 0; i < segments; i++ {
+			for k := range loop {
+				next := (k + 1) % len(loop)
+				onward := (i + 1) % vertices
+				a, b := ring[i][k], ring[i][next]
+				c, d := ring[onward][next], ring[onward][k]
+				out = appendNonDegenerate(out, Triangle{A: a, B: b, C: c, Normal: faceNormal(a, b, c)})
+				out = appendNonDegenerate(out, Triangle{A: a, B: c, C: d, Normal: faceNormal(a, c, d)})
+			}
+		}
+	}
+	return out, dev
+}
+
+// revolveRadius is the largest radius the outline sweeps, which is what decides
+// how far the tessellated surface departs from the true one.
+func revolveRadius(p Part) float64 {
+	// The FLATTENED outline, because a rounded corner can be the outermost thing
+	// on it — the crown of a bead, the outer edge of a rounded flange — and the
+	// vertex it was rounded from sits further out than any material does.
+	// Measuring the vertex would overstate the deviation, which is the safe
+	// direction but is still a number that is not true of the file.
+	flat, _, err := partOutline(p).flatten("outline", Millimetre)
+	if err != nil {
+		return 0
+	}
+	aboutX := RevolveAxis(p) == "x"
+	var r float64
+	for _, pt := range flat {
+		v := pt[0]
+		if aboutX {
+			v = pt[1]
+		}
+		r = math.Max(r, math.Abs(v))
+	}
+	return r
+}
+
+func faceNormal(a, b, c [3]float64) [3]float64 {
+	u := [3]float64{b[0] - a[0], b[1] - a[1], b[2] - a[2]}
+	v := [3]float64{c[0] - a[0], c[1] - a[1], c[2] - a[2]}
+	return normalise([3]float64{
+		u[1]*v[2] - u[2]*v[1],
+		u[2]*v[0] - u[0]*v[2],
+		u[0]*v[1] - u[1]*v[0],
+	})
 }

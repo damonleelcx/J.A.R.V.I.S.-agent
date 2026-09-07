@@ -105,9 +105,12 @@ func (c *OpenAICompatible) Speak(ctx context.Context, text string, onPCM func([]
 	if resp.StatusCode >= 400 {
 		snippet := new(bytes.Buffer)
 		_, _ = snippet.ReadFrom(resp.Body)
+		// Same reasoning as the transcriber's: a 404 is a retired model, and the
+		// endpoint can be asked what replaced it.
 		return errs.New(op, errs.CodeExternalUnavailable).
-			WithDetail("the speech provider returned %d: %s",
-				resp.StatusCode, truncate(snippet.String(), 300))
+			WithDetail("the speech provider returned %d: %s%s",
+				resp.StatusCode, truncate(snippet.String(), 300),
+				c.whatIsServed(ctx, resp.StatusCode, RoleSpeaker))
 	}
 
 	var total int
