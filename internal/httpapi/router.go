@@ -209,6 +209,13 @@ func NewRouter(d Deps) http.Handler {
 	mux.Handle("GET /v1/conversations/{id}", authed(talk.Get))
 	mux.Handle("DELETE /v1/conversations/{id}", authed(talk.Forget))
 
+	// --- telemetry: what the server measured about this person's turns ---
+	// Read-only and scoped to the caller. Not an operator endpoint and not a
+	// deployment-wide one: a signed-in account reading everybody else's working
+	// hours is an access decision nobody has made. See telemetry.go.
+	tel := NewTelemetryHandlers(d)
+	mux.Handle("GET /v1/telemetry/turns", authed(tel.Turns))
+
 	// --- geometry: variants, comparison, export (PRD VIS-04, VIS-05) ---
 	// A variant is an artifact VERSION, so there is no create endpoint here:
 	// geometry is written by the server at the moment it is produced, in

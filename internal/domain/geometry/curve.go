@@ -116,14 +116,32 @@ type CurveEdge struct {
 type polyline struct {
 	Points [][3]float64
 	Radii  []float64
+	// Vias[i] bows the edge ARRIVING at Points[i] into a circular arc through
+	// that point; nil is a straight edge, which is the ordinary case. For a
+	// closed run entry 0 is the CLOSING edge, from the last point back to the
+	// first — which is the only indexing under which "the edge arriving at
+	// point i" means one thing everywhere.
+	//
+	// Sparse rather than a parallel struct per point, because the overwhelming
+	// majority of edges are straight and a nil is the cheapest possible way to
+	// say so.
+	Vias   []*[3]float64
 	Closed bool
+}
+
+// via returns the through-point of the edge arriving at point i, or nil.
+func (p polyline) via(i int) *[3]float64 {
+	if i < 0 || i >= len(p.Vias) {
+		return nil
+	}
+	return p.Vias[i]
 }
 
 // flatten is the polyline the tessellators draw, and what it cost to draw it
 // that way. The deviation is nil when nothing is rounded, which is not a
 // rounding of zero but the absence of any curve to approximate.
 func (p polyline) flatten(what string, unit Unit) ([][3]float64, *Deviation, error) {
-	flat, radius, angle, segments, err := flattenCurve(p.Points, p.Radii, p.Closed, what)
+	flat, radius, angle, segments, err := flattenCurve(p.Points, p.Radii, p.Vias, p.Closed, what)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -133,13 +151,17 @@ func (p polyline) flatten(what string, unit Unit) ([][3]float64, *Deviation, err
 // validate is the corner arithmetic run for what it has to SAY: what is wrong,
 // and what was given and could not mean anything.
 func (p polyline) validate(what string) ([]string, error) {
-	_, ignored, err := roundedCorners(p.Points, p.Radii, p.Closed, what)
-	return ignored, err
+	_, cornerNotes, err := roundedCorners(p.Points, p.Radii, p.Vias, p.Closed, what)
+	if err != nil {
+		return cornerNotes, err
+	}
+	_, arcNotes := resolveArcs(p.Points, p.Vias, p.Closed, what)
+	return append(cornerNotes, arcNotes...), nil
 }
 
 // exact is the drawing the CAD kernel builds, arcs and all.
 func (p polyline) exact(what string) (Curve, error) {
-	return exactCurve(p.Points, p.Radii, p.Closed, what)
+	return exactCurve(p.Points, p.Radii, p.Vias, p.Closed, what)
 }
 
 // rounded reports whether any corner has a radius, which is the difference
@@ -151,6 +173,27 @@ func (p polyline) rounded() bool {
 			return true
 		}
 	}
+	// A bowed edge is a curve too. It was added here rather than at every call
+	// site because the question this answers — "is the drawn shape an
+	// approximation of a curved one" — has exactly one right answer for both,
+	// and a caller that knew about radii and not about vias would report a
+	// crescent as exact.
+	for _, v := range p.Vias {
+		if v != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// bows reports whether any edge is an arc, which is the question every check
+// that only matters once a drawing leaves its own chords has to ask.
+func (p polyline) bows() bool {
+	for _, v := range p.Vias {
+		if v != nil {
+			return true
+		}
+	}
 	return false
 }
 
@@ -159,12 +202,24 @@ func (p polyline) rounded() bool {
 // 25.4 times too hard.
 func (p polyline) scaled(toMM float64) polyline {
 	out := polyline{Points: make([][3]float64, len(p.Points)),
-		Radii: make([]float64, len(p.Radii)), Closed: p.Closed}
+		Radii: make([]float64, len(p.Radii)), Vias: make([]*[3]float64, len(p.Vias)),
+		Closed: p.Closed}
 	for i, pt := range p.Points {
 		out.Points[i] = scale3(pt, toMM)
 	}
 	for i, r := range p.Radii {
 		out.Radii[i] = r * toMM
+	}
+	// A via is a POINT, so it converts like one. Left in inches while its
+	// endpoints became millimetres it would describe an arc bulging 25 times too
+	// far — and unlike a wrong radius, which OCCT eventually refuses, a wrong
+	// via still builds. It builds the wrong shape.
+	for i, v := range p.Vias {
+		if v == nil {
+			continue
+		}
+		scaled := scale3(*v, toMM)
+		out.Vias[i] = &scaled
 	}
 	return out
 }
@@ -194,15 +249,30 @@ func (p polyline) scaled(toMM float64) polyline {
 //
 // conflict reports the one case with no single reading: both points carrying a
 // radius, and the two disagreeing. One corner cannot have two radii.
-func withoutClosingDuplicate(pts [][3]float64, radii []float64) (
-	outPts [][3]float64, outRadii []float64, dropped, conflict bool) {
+// # Why the VIA moves with it too
+//
+// For the same reason and with a cleaner argument. A via on the repeated point
+// describes the edge ARRIVING at it — which, once the duplicate is dropped, is
+// exactly the closing edge, and the closing edge's via is entry 0. So it is not
+// carried by analogy with the radius; it is the same edge, renumbered.
+//
+// Leaving it behind would draw a bowed edge as a straight one, which is a
+// different outline of the same overall size — the failure that looks right in
+// a thumbnail and is wrong in the file.
+func withoutClosingDuplicate(pts [][3]float64, radii []float64, vias []*[3]float64) (
+	outPts [][3]float64, outRadii []float64, outVias []*[3]float64, dropped, conflict bool) {
 
 	n := len(pts)
 	if n < 2 || !same(pts[0], pts[n-1]) {
-		return pts, radii, false, false
+		return pts, radii, vias, false, false
 	}
 	outPts = pts[:n-1]
 	outRadii = append([]float64{}, radii[:n-1]...)
+	if len(vias) >= n {
+		outVias = append([]*[3]float64{}, vias[:n-1]...)
+	} else {
+		outVias = append([]*[3]float64{}, vias...)
+	}
 	closing := 0.0
 	if n-1 < len(radii) {
 		closing = radii[n-1]
@@ -213,9 +283,16 @@ func withoutClosingDuplicate(pts [][3]float64, radii []float64) (
 	case outRadii[0] == 0:
 		outRadii[0] = closing
 	case outRadii[0] != closing:
-		return pts, radii, false, true
+		return pts, radii, vias, false, true
 	}
-	return outPts, outRadii, true, false
+	if n-1 < len(vias) && vias[n-1] != nil && len(outVias) > 0 {
+		// Both carrying one is not a conflict the way two radii are: they
+		// describe the SAME edge, so the closing point's is the one that was
+		// written about it and wins. A via already on entry 0 of a loop that
+		// also repeats its first point is the model saying the same thing twice.
+		outVias[0] = vias[n-1]
+	}
+	return outPts, outRadii, outVias, true, false
 }
 
 // partOutline and partPath read a part's drawing out of a stored document.
@@ -240,9 +317,16 @@ func readLoop(pts []Point, closed bool) polyline {
 	for _, pt := range pts {
 		out.Points = append(out.Points, [3]float64{pt.X, pt.Y, pt.Z})
 		out.Radii = append(out.Radii, pt.Radius)
+		if pt.Via == nil {
+			out.Vias = append(out.Vias, nil)
+			continue
+		}
+		v := [3]float64{pt.Via.X, pt.Via.Y, pt.Via.Z}
+		out.Vias = append(out.Vias, &v)
 	}
 	if closed {
-		out.Points, out.Radii, _, _ = withoutClosingDuplicate(out.Points, out.Radii)
+		out.Points, out.Radii, out.Vias, _, _ =
+			withoutClosingDuplicate(out.Points, out.Radii, out.Vias)
 	}
 	return out
 }
@@ -341,12 +425,17 @@ type corner struct {
 // What is still refused is a radius that cannot be READ as anything: a negative
 // one, one on a point sitting on top of its neighbour, one on a reversal, and
 // two that need more edge than there is between them.
-func roundedCorners(pts [][3]float64, radii []float64, closed bool, what string) (
-	[]corner, []string, error) {
+func roundedCorners(pts [][3]float64, radii []float64, vias []*[3]float64, closed bool,
+	what string) ([]corner, []string, error) {
 
 	n := len(pts)
 	out := make([]corner, n)
 	var ignored []string
+	// Which edges bow. A vertex with an arc on either side is SHARP — see the
+	// note on arcs at the foot of this file: rounding an arc into an arc is a
+	// fillet between two curves, and the construction below, which walks back
+	// r·tan(θ/2) along a straight, has no answer for it.
+	arcs, _ := resolveArcs(pts, vias, closed, what)
 	inert := func(i int, why string) {
 		ignored = append(ignored, fmt.Sprintf("has a corner radius on %s point %d, %s, so it "+
 			"was ignored", what, i+1, why))
@@ -359,6 +448,11 @@ func roundedCorners(pts [][3]float64, radii []float64, closed bool, what string)
 		}
 		interior := closed || (i > 0 && i < n-1)
 		if r == 0 {
+			continue
+		}
+		if bowed(arcs, i) || bowed(arcs, (i+1)%n) {
+			inert(i, "where an arc meets the corner — rounding an arc into an arc is a fillet "+
+				"between two curves, which this build does not compute")
 			continue
 		}
 		if r < 0 {
@@ -436,13 +530,14 @@ func roundedCorners(pts [][3]float64, radii []float64, closed bool, what string)
 // chords, so the caller can report the deviation with a number rather than an
 // adjective. Zero when nothing is rounded, which is the common case and is not a
 // deviation at all.
-func flattenCurve(pts [][3]float64, radii []float64, closed bool, what string) (
-	flat [][3]float64, worstRadius, worstAngle float64, segments int, err error) {
+func flattenCurve(pts [][3]float64, radii []float64, vias []*[3]float64, closed bool,
+	what string) (flat [][3]float64, worstRadius, worstAngle float64, segments int, err error) {
 
-	corners, _, err := roundedCorners(pts, radii, closed, what)
+	corners, _, err := roundedCorners(pts, radii, vias, closed, what)
 	if err != nil {
 		return nil, 0, 0, 0, err
 	}
+	arcs, _ := resolveArcs(pts, vias, closed, what)
 	// Consecutive duplicates are dropped as they are emitted. Two arcs that meet
 	// exactly — a slot's end — each produce the point where they touch, and a
 	// repeated point is a zero-length edge: the outline checks refuse one, ear
@@ -453,8 +548,36 @@ func flattenCurve(pts [][3]float64, radii []float64, closed bool, what string) (
 		}
 		flat = append(flat, p)
 	}
+	// A bowed edge contributes its own chords, between the two corners it joins.
+	// Emitted from the same push, so an arc that meets a straight exactly — or
+	// another arc — does not leave a repeated point behind.
+	//
+	// Safe to write as "the whole arc", with no trimming against a corner arc,
+	// because an arc edge always has sharp ends: see the note at the foot of
+	// this file. Its endpoints are the drawn points, unmoved.
+	bow := func(i int) {
+		a := arcs[i]
+		if a == nil {
+			return
+		}
+		steps := 0
+		var points [][3]float64
+		points, steps = arcPoints(a)
+		for _, p := range points {
+			push(p)
+		}
+		if deviationOf(a.radius, a.angle, steps) > deviationOf(worstRadius, worstAngle, segments) {
+			worstRadius, worstAngle, segments = a.radius, a.angle, steps
+		}
+	}
 	seam := 0 // how many points the first corner contributed
-	for _, c := range corners {
+	for idx, c := range corners {
+		// The edge ARRIVING here, before the corner itself. Index 0's arriving
+		// edge is the closing one and is emitted at the end instead, where a
+		// closed run actually reaches it.
+		if idx > 0 {
+			bow(idx)
+		}
 		if c.sharp {
 			push(pts[c.index])
 			if c.index == 0 {
@@ -477,6 +600,10 @@ func flattenCurve(pts [][3]float64, radii []float64, closed bool, what string) (
 		if deviationOf(c.radius, c.angle, n) > deviationOf(worstRadius, worstAngle, segments) {
 			worstRadius, worstAngle, segments = c.radius, c.angle, n
 		}
+	}
+	// The closing edge, which may itself bow.
+	if closed && len(corners) > 0 {
+		bow(0)
 	}
 	// A closed drawing can also meet itself at the seam, for the same reason.
 	if closed && len(flat) > 1 && same(flat[0], flat[len(flat)-1]) {
@@ -518,11 +645,14 @@ func flattenCurve(pts [][3]float64, radii []float64, closed bool, what string) (
 // is those, joined by straights. Written that way because the alternative is a
 // special case per combination of (first/last, sharp/rounded, open/closed), and
 // the version of this function that had them got one wrong.
-func exactCurve(pts [][3]float64, radii []float64, closed bool, what string) (Curve, error) {
-	corners, _, err := roundedCorners(pts, radii, closed, what)
+func exactCurve(pts [][3]float64, radii []float64, vias []*[3]float64, closed bool,
+	what string) (Curve, error) {
+
+	corners, _, err := roundedCorners(pts, radii, vias, closed, what)
 	if err != nil {
 		return Curve{}, err
 	}
+	arcs, _ := resolveArcs(pts, vias, closed, what)
 	entry := func(i int) [3]float64 {
 		if corners[i].sharp {
 			return pts[i]
@@ -539,6 +669,18 @@ func exactCurve(pts [][3]float64, radii []float64, closed bool, what string) (Cu
 		via := corners[i].via
 		return CurveEdge{To: corners[i].to, Via: &via}
 	}
+	// The edge INTO vertex i: straight, or the arc a via bowed it into. The
+	// kernel has carried To+Via since wave 20, so a bowed edge needs nothing new
+	// from OCCT — this is a way for a person to say the thing it could always
+	// build.
+	edgeInto := func(i int) CurveEdge {
+		to := entry(i)
+		if a := arcs[i]; a != nil {
+			mid := add3(a.centre, rotateAbout(sub3(a.from, a.centre), a.axis, a.angle/2))
+			return CurveEdge{To: to, Via: &mid}
+		}
+		return CurveEdge{To: to}
+	}
 
 	// A closed run starts where its first corner ENDS — see flattenCurve for
 	// why, and for the 0.3% of volume it costs to start anywhere else. An open
@@ -551,7 +693,7 @@ func exactCurve(pts [][3]float64, radii []float64, closed bool, what string) (Cu
 		// point of a slot: a rectangle whose radius is half its width ends in a
 		// semicircle, and there is no straight left between the two quarters.
 		if !same(exit(i), entry(i+1)) {
-			curve.Edges = append(curve.Edges, CurveEdge{To: entry(i + 1)})
+			curve.Edges = append(curve.Edges, edgeInto(i+1))
 		}
 		if !corners[i+1].sharp {
 			curve.Edges = append(curve.Edges, arc(i+1))
@@ -559,7 +701,7 @@ func exactCurve(pts [][3]float64, radii []float64, closed bool, what string) (Cu
 	}
 	if closed {
 		if !same(exit(len(pts)-1), entry(0)) {
-			curve.Edges = append(curve.Edges, CurveEdge{To: entry(0)})
+			curve.Edges = append(curve.Edges, edgeInto(0))
 		}
 		// The seam's own arc closes the run, ending back at Start.
 		if !corners[0].sharp {
@@ -625,6 +767,213 @@ func lift3D(pts [][2]float64) [][3]float64 {
 	out := make([][3]float64, len(pts))
 	for i, p := range pts {
 		out[i] = [3]float64{p[0], p[1], 0}
+	}
+	return out
+}
+
+// ---------------------------------------------------------------------------
+// Arcs that are NOT tangent to their neighbours (wave 29)
+// ---------------------------------------------------------------------------
+//
+// # What was missing, and why the corner radius could not say it
+//
+// The header of this file states the limit that shipped with wave 20: a corner
+// radius "cannot say an arc that is NOT tangent to its neighbours: a crescent, a
+// lens, an arc meeting a straight edge at an angle. Those need a vocabulary with
+// a plane in it, and no model has been asked for one yet."
+//
+// That was correct and it is now the thing being fixed. A crescent is two arcs
+// between the same two points. A lens is the same with the second bulging the
+// other way. A cam lobe, a hook, a D-shaped shaft, the leading edge of an
+// aerofoil, the belly of a bracket that clears something — all of them are one
+// edge that BOWS, and none of them is a rounded corner.
+//
+// # The vocabulary, and why it is a through-point rather than a radius
+//
+// A point may carry a `via`: one more point, and the edge ARRIVING at it is the
+// circular arc that passes through the via on the way.
+//
+// This is the same answer, arrived at twice. The header already explains why a
+// radius plus two endpoints does not determine an arc in three dimensions — it
+// determines one per plane through the chord, and build123d's RadiusArc,
+// measured 2026-09-05, returned an arc leaning out of the plane that was wanted.
+// Three points fix a circle completely: the plane, the centre, the radius and
+// which way round. There is nothing left to guess, which is exactly the property
+// the corner radius was chosen for.
+//
+// It is also, already, what the kernel is sent. CurveEdge has carried To and Via
+// since wave 20, because that is how a rounded corner reaches OCCT. So this
+// vocabulary adds a way for a PERSON to say the thing the kernel could always
+// build, rather than a new thing for the kernel to learn.
+//
+// # Why an arc edge and a corner radius do not combine
+//
+// A radius rounds the corner between two edges by fitting an arc tangent to
+// both. Where one of those edges is ITSELF an arc, that is a fillet between two
+// curves: the tangent point is no longer a fixed distance along a straight, and
+// the construction here — which walks back r·tan(θ/2) along each edge — has no
+// answer at all.
+//
+// So a vertex with an arc on either side is SHARP, and a radius written there is
+// ignored with a warning, not refused. That follows the rule wave 24 arrived at
+// after refusing radii cost two whole parts for numbers that meant nothing: an
+// inert radius is reported, and the part is still built. The invariant it buys
+// is worth stating on its own, because everything below relies on it —
+//
+//	AN ARC EDGE ALWAYS HAS SHARP ENDS.
+//
+// — which means an arc's endpoints are exactly the two points that were drawn,
+// and no arc has to be trimmed against a corner arc that moved one of them.
+
+// arcThrough resolves the circle through three points: where its centre is,
+// which way round the travel goes, how big it is and how far it turns.
+//
+// Returns ok=false for the three ways this can fail to describe an arc, all of
+// which mean the same thing to a reader — the via names no curve — and are
+// distinguished by the caller so it can say which:
+//
+//   - the three points are in line (the "circle" has infinite radius)
+//   - the via sits on top of one of the endpoints
+//   - the endpoints are the same point
+func arcThrough(from, via, to [3]float64) (centre, axis [3]float64, radius, angle float64, ok bool) {
+	u, v := sub3(via, from), sub3(to, from)
+	n := cross3(u, v)
+	nn := dot3(n, n)
+	// |u×v|² vanishes when the three are in line OR two coincide. Both are
+	// "there is no circle here", and the caller reports which.
+	if nn < arcTolerance*arcTolerance {
+		return centre, axis, 0, 0, false
+	}
+	// The circumcentre, in the plane the three points span:
+	//   c = from + [ |u|²(v×n) + |v|²(n×u) ] / 2|n|²
+	centre = add3(from, scale3(add3(
+		scale3(cross3(v, n), dot3(u, u)),
+		scale3(cross3(n, u), dot3(v, v))), 1/(2*nn)))
+	a := sub3(from, centre)
+	radius = length3(a)
+	if radius < arcTolerance {
+		return centre, axis, 0, 0, false
+	}
+	unit := normalise(n)
+	// Sweep angles about `unit`, measured from the start of the arc, in [0, 2π).
+	sweep := func(p [3]float64) float64 {
+		d := sub3(p, centre)
+		t := math.Atan2(dot3(unit, cross3(a, d)), dot3(a, d))
+		if t < 0 {
+			t += 2 * math.Pi
+		}
+		return t
+	}
+	toAngle, viaAngle := sweep(to), sweep(via)
+	if toAngle < arcTolerance || viaAngle < arcTolerance ||
+		math.Abs(toAngle-viaAngle) < arcTolerance {
+		// The arc ends where it starts, or the via is one of the ends. Neither
+		// is a curve anybody drew.
+		return centre, axis, 0, 0, false
+	}
+	// Which way round: the arc is the one that PASSES THROUGH the via, so if
+	// the via is not inside the positive sweep, the travel is the other way.
+	if viaAngle < toAngle {
+		return centre, unit, radius, toAngle, true
+	}
+	return centre, scale3(unit, -1), radius, 2*math.Pi - toAngle, true
+}
+
+// arcEdge is one bowed edge, resolved.
+type arcEdge struct {
+	centre, axis  [3]float64
+	radius, angle float64
+	// from and to are the points that were drawn. They are never moved, because
+	// an arc edge always has sharp ends — see the note above.
+	from, to [3]float64
+}
+
+// resolveArcs turns each via into an arc, or says why it names nothing.
+//
+// Indexed the same way Vias is: entry i describes the edge ARRIVING at point i,
+// which for a closed run means entry 0 is the closing edge. An open run's entry
+// 0 describes an edge that does not exist, and says so.
+//
+// An unusable via is IGNORED with a warning rather than refused, for the reason
+// wave 24 established about radii: a via that names no curve changes nothing,
+// and a document that vanishes over one is a part somebody loses.
+func resolveArcs(pts [][3]float64, vias []*[3]float64, closed bool, what string) (
+	[]*arcEdge, []string) {
+
+	n := len(pts)
+	out := make([]*arcEdge, n)
+	var ignored []string
+	inert := func(i int, why string) {
+		ignored = append(ignored, fmt.Sprintf("bends the %s edge arriving at point %d through a "+
+			"via, %s, so the edge was drawn straight", what, i+1, why))
+	}
+	for i := 0; i < n && i < len(vias); i++ {
+		via := vias[i]
+		if via == nil {
+			continue
+		}
+		if !closed && i == 0 {
+			inert(i, "which is where the run starts, so no edge arrives at it")
+			continue
+		}
+		from := pts[(i-1+n)%n]
+		centre, axis, radius, angle, ok := arcThrough(from, *via, pts[i])
+		if !ok {
+			inert(i, "which names no arc — it is in line with the two ends, or on top of one of them")
+			continue
+		}
+		out[i] = &arcEdge{centre: centre, axis: axis, radius: radius, angle: angle,
+			from: from, to: pts[i]}
+	}
+	return out, ignored
+}
+
+// bowed reports whether the edge arriving at point i is an arc.
+func bowed(arcs []*arcEdge, i int) bool { return i < len(arcs) && arcs[i] != nil }
+
+// arcPoints steps an arc into chords, at the same fineness a cylinder gets.
+//
+// Both ends are ON the arc and are emitted, so a caller that already has the
+// endpoints drops the duplicates through its own push — which every caller here
+// does, because two arcs meeting exactly is the ordinary case and a repeated
+// point is a zero-length edge OCCT will not build.
+func arcPoints(a *arcEdge) ([][3]float64, int) {
+	steps := arcSegments(a.angle)
+	out := make([][3]float64, 0, steps+1)
+	spoke := sub3(a.from, a.centre)
+	for k := 0; k <= steps; k++ {
+		t := a.angle * float64(k) / float64(steps)
+		out = append(out, add3(a.centre, rotateAbout(spoke, a.axis, t)))
+	}
+	return out, steps
+}
+
+// FlattenOutlineForTest is the flattened drawing of an authored outline.
+//
+// # Why this is exported
+//
+// The renderer holds its own copy of the corner and arc arithmetic — it must,
+// because it is browser code and cannot import this package — and the one thing
+// that has to be IDENTICAL rather than merely equivalent is the drawing the two
+// produce. A fence over that has to be able to ask this package for its answer,
+// and everything that produces one is unexported.
+//
+// Named for what it is. An exported helper that exists for a test and pretends
+// otherwise is how a test-only path ends up in a product code path, and this
+// name makes that impossible to do by accident.
+func FlattenOutlineForTest(profile []Point) [][3]float64 {
+	flat, _, err := readLoop(profile, true).flatten("outline", Millimetre)
+	if err != nil {
+		return nil
+	}
+	return flat
+}
+
+// scaledLoops converts a list of drawings to millimetres.
+func scaledLoops(loops []polyline, toMM float64) []polyline {
+	out := make([]polyline, len(loops))
+	for i, l := range loops {
+		out[i] = l.scaled(toMM)
 	}
 	return out
 }

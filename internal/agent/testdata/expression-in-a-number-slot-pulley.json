@@ -1,0 +1,167 @@
+{
+  "speech": "Here is the V-belt pulley with an 80 mm outside diameter, a 34-degree included angle groove, and a 16 mm bore.",
+  "detail": "The pulley is modeled as a revolved solid. The profile defines the outer rim, the V-groove geometry, and the central hub area. A cylindrical cut feature creates the 16 mm through-bore.",
+  "prototype": {
+    "name": "V-belt pulley",
+    "units": "mm",
+    "parameters": [
+      {
+        "name": "outside_diameter",
+        "value": 80.0,
+        "unit": "mm",
+        "how": "chosen",
+        "source": ""
+      },
+      {
+        "name": "width",
+        "value": 20.0,
+        "unit": "mm",
+        "how": "chosen",
+        "source": ""
+      },
+      {
+        "name": "groove_angle",
+        "value": 34.0,
+        "unit": "deg",
+        "how": "chosen",
+        "source": ""
+      },
+      {
+        "name": "groove_depth",
+        "value": 12.0,
+        "unit": "mm",
+        "how": "chosen",
+        "source": ""
+      },
+      {
+        "name": "bore_diameter",
+        "value": 16.0,
+        "unit": "mm",
+        "how": "chosen",
+        "source": ""
+      }
+    ],
+    "derived": [
+      {
+        "name": "outside_radius",
+        "expression": "outside_diameter / 2",
+        "why": "Radius is half the diameter for revolve profile"
+      },
+      {
+        "name": "groove_half_angle",
+        "expression": "groove_angle / 2",
+        "why": "Profile uses half-angle from vertical"
+      },
+      {
+        "name": "groove_bottom_radius",
+        "expression": "outside_radius - groove_depth",
+        "why": "Bottom of groove is depth below outer surface"
+      },
+      {
+        "name": "half_width",
+        "expression": "width / 2",
+        "why": "Profile is drawn from centerline to edge"
+      }
+    ],
+    "parts": [
+      {
+        "id": "pulley-body",
+        "name": "Pulley Body",
+        "shape": "revolve",
+        "shape_note": "Revolved around Y axis",
+        "size": {},
+        "profile": [
+          {
+            "x": 0,
+            "y": 0,
+            "radius": 0,
+            "x_from": "",
+            "y_from": ""
+          },
+          {
+            "x": 0,
+            "y": "half_width",
+            "radius": 0,
+            "x_from": "",
+            "y_from": ""
+          },
+          {
+            "x": "outside_radius",
+            "y": "half_width",
+            "radius": 0,
+            "x_from": "",
+            "y_from": ""
+          },
+          {
+            "x": "outside_radius",
+            "y": "half_width - groove_depth * tan(groove_half_angle * pi / 180)",
+            "radius": 0,
+            "x_from": "",
+            "y_from": ""
+          },
+          {
+            "x": "groove_bottom_radius",
+            "y": 0,
+            "radius": 0,
+            "x_from": "",
+            "y_from": ""
+          }
+        ],
+        "axis": "y",
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "color": "#b8bcc4",
+        "opacity": 1.0,
+        "note": "Main pulley body with V-groove profile",
+        "material": {
+          "name": "aluminium 6061-T6",
+          "finish": "metal",
+          "how": "assumed",
+          "source": ""
+        }
+      },
+      {
+        "id": "bore-cutter",
+        "name": "Bore Cutter",
+        "shape": "cylinder",
+        "size": {
+          "radius": "bore_diameter / 2",
+          "height": "width * 2"
+        },
+        "position": [
+          0,
+          0,
+          0
+        ],
+        "color": "#ff6666",
+        "opacity": 0.5,
+        "note": "Tool to cut the central bore",
+        "material": null
+      }
+    ],
+    "features": [
+      {
+        "id": "cut-bore",
+        "op": "cut",
+        "of": "pulley-body",
+        "with": [
+          "bore-cutter"
+        ],
+        "note": "Creates the 16 mm through-bore"
+      }
+    ],
+    "assumptions": [
+      "Material is Aluminium 6061-T6",
+      "Groove profile is straight-sided V-shape without bottom radius",
+      "No keyway or set-screw holes included"
+    ],
+    "not_verified": [
+      "Not stress-analysed for belt tension",
+      "No interference check for belt fit",
+      "Surface finish not specified"
+    ]
+  }
+}

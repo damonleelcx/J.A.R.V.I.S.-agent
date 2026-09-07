@@ -46,6 +46,7 @@ import (
 	"time"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/agent"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/engine"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/pack"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/llm"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/persona"
@@ -114,8 +115,44 @@ type Case struct {
 	// Turns are the user's messages, in order. More than one where the property
 	// only exists ACROSS turns — part-id stability cannot be observed in a
 	// single reply.
-	Turns   []string `json:"turns"`
-	Scorers []Scorer `json:"scorers"`
+	Turns []string `json:"turns"`
+	// Goal makes this a PLANNER case instead of a conversation one: the goal is
+	// handed to the planner and what comes back is a plan rather than a reply.
+	//
+	// # Why the planner is in this suite after all
+	//
+	// It was excluded, in a note in cases.go, because "its evaluation needs a
+	// project, a goal row and a database, so it is a different harness". Half of
+	// that was true and the important half was not: `Planner.Plan` takes a goal
+	// STRUCT, and every database-backed thing it can use — the project's
+	// character, what a person has already settled, the recorded hazards — is
+	// optional and nil here by construction. So the core question the planner
+	// exists to answer is measurable with no database at all.
+	//
+	// What genuinely does need one is stated where it belongs: on the scorers,
+	// and in the note on plannerCases.
+	Goal    *PlanGoal `json:"goal,omitempty"`
+	Scorers []Scorer  `json:"scorers"`
+}
+
+// PlanGoal is a goal to plan, written out in the case rather than read from a
+// database.
+//
+// A struct of its own rather than engine.Goal, because a goal ROW carries an id,
+// an owner, a project, a state and a lifecycle, and a case that had to invent
+// all of those would be measuring the harness's fixture-building rather than the
+// planner. These are the fields the planner actually reads.
+type PlanGoal struct {
+	Title     string `json:"title"`
+	Statement string `json:"statement"`
+	// Criteria is what "done" means. Optional: a goal with none is a goal
+	// somebody has not finished writing, which is itself worth planning against.
+	Criteria []string `json:"criteria,omitempty"`
+	// Autonomy and RiskTier are the ceilings the plan must stay inside. A task
+	// proposed above them is a safety gate the executor would refuse, and the
+	// rate at which the model asks for one is a thing worth knowing.
+	Autonomy string `json:"autonomy"`
+	RiskTier string `json:"risk_tier"`
 }
 
 // Scorer is one deterministic judgement about a run.
@@ -173,6 +210,17 @@ type Observation struct {
 	Err     error         `json:"-"`
 	ErrText string        `json:"error,omitempty"`
 	Elapsed time.Duration `json:"elapsed_ns"`
+	// Plan is what a PLANNER case produced. Nil for every conversation case,
+	// which is all of them until wave 32.
+	Plan *agent.PlanResult `json:"plan,omitempty"`
+	// PlanRefused is why the planner's own validation rejected what the model
+	// produced, and is empty when it did not.
+	//
+	// Kept apart from Err, which means the RUN failed — a timeout, an outage —
+	// and is excluded from scoring. A plan the system refuses is not a failed
+	// run: it is the model producing something the harness will not execute,
+	// which is exactly the thing a scorer should see.
+	PlanRefused string `json:"plan_refused,omitempty"`
 }
 
 // Reply returns the reply to turn i, or nil.
@@ -373,6 +421,12 @@ func (r *Runner) once(ctx context.Context, c Case, run int) Observation {
 	obs := Observation{Case: c.ID, Run: run}
 	start := time.Now()
 
+	if c.Goal != nil {
+		r.plan(ctx, c, &obs)
+		obs.Elapsed = time.Since(start)
+		return obs
+	}
+
 	conv := r.convFor(c)
 	var history []agent.Turn
 	for _, message := range c.Turns {
@@ -393,6 +447,49 @@ func (r *Runner) once(ctx context.Context, c Case, run int) Observation {
 	}
 	obs.Elapsed = time.Since(start)
 	return obs
+}
+
+// plan runs one planner case.
+//
+// # Why a REFUSED plan is not a failed run
+//
+// Plan() validates what the model produced — the dependency keys resolve, the
+// graph is acyclic — and returns an error when it does not. That error means the
+// MODEL produced something unusable, which is the thing being measured, and
+// recording it as a run failure would exclude it from scoring and quietly turn
+// the suite's worst outcome into no outcome at all.
+//
+// A genuine transport failure still lands in Err, where it belongs. The two are
+// told apart by the error's code: an unusable plan is a protocol or validation
+// fault, anything else is the request not completing.
+func (r *Runner) plan(ctx context.Context, c Case, obs *Observation) {
+	// No character store, no settled store, no hazards: every one of them is
+	// backed by a database, all three are optional, and a planner wired to none
+	// is the planner this case is about. What they would add is stated on
+	// plannerCases rather than faked here.
+	planner := agent.NewPlanner(r.client, persona.DefaultCharacter())
+	goal := &engine.Goal{
+		Title:     c.Goal.Title,
+		Statement: c.Goal.Statement,
+		Autonomy:  engine.Autonomy(c.Goal.Autonomy),
+		RiskTier:  engine.RiskTier(c.Goal.RiskTier),
+	}
+	for _, criterion := range c.Goal.Criteria {
+		goal.CompletionCriteria = append(goal.CompletionCriteria,
+			engine.CompletionCriterion{Statement: criterion})
+	}
+	out, err := planner.Plan(ctx, goal, nil, "")
+	if err == nil {
+		obs.Plan = out
+		return
+	}
+	switch errs.CodeOf(err) {
+	case errs.CodeExternalProtocol, errs.CodeValidationFailed, errs.CodeInvariantViolated:
+		// The model's fault, and the measurement.
+		obs.PlanRefused = err.Error()
+	default:
+		obs.Err = err
+	}
 }
 
 // carryForward turns one exchange into the history the NEXT turn is given.

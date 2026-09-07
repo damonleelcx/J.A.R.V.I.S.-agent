@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 )
 
 // Turning a proposal into triangles (PRD VIS-05).
@@ -84,6 +85,32 @@ type Mesh struct {
 	Inferences []string
 }
 
+// labelOf names a part by id, for a message about a feature that refers to one.
+//
+// Falls back to the raw id rather than to "unknown": a feature naming a part
+// that does not exist is a real document fault, and the id is what somebody
+// needs in order to find it.
+func labelOf(doc Document, id string) string {
+	for _, p := range doc.Parts {
+		if p.ID == id {
+			return p.Label()
+		}
+	}
+	return id
+}
+
+// toolNames joins a feature's tools into something readable.
+func toolNames(doc Document, ids []string) string {
+	if len(ids) == 0 {
+		return "nothing"
+	}
+	out := make([]string, 0, len(ids))
+	for _, id := range ids {
+		out = append(out, labelOf(doc, id))
+	}
+	return strings.Join(out, ", ")
+}
+
 // Triangles returns every facet in the mesh, flattened.
 func (m *Mesh) Triangles() []Triangle {
 	var out []Triangle
@@ -129,10 +156,61 @@ func Tessellate(doc Document, unit Unit) *Mesh {
 		}
 	}
 
+	// What the features would have done, and did not.
+	//
+	// # Why this is here at all
+	//
+	// Tessellate draws PARTS. It has never performed a feature — a cut, a fuse,
+	// a fillet — because those need a kernel and this is a triangle builder, and
+	// only the CAD kernel does them (document.go says so).
+	//
+	// What it also did, until now, was say nothing. So an OBJ or an STL of a
+	// bracket with four bolt holes contained four solid POSTS standing on the
+	// plate, and the file carried no hint that the four cylinders in it are the
+	// opposite of what they represent. That is the same failure this package
+	// names in three other places — "a file quietly missing a part is worse than
+	// one that says it is missing it", "the export asserting something the
+	// system did not do" — and it was the one place nobody had said it.
+	//
+	// It cannot be fixed by cutting: that is a boolean operation and there is no
+	// CSG here (see the implementation plan on what that would take). It CAN be
+	// stopped from passing unnoticed, which is exactly the stance the viewport
+	// already takes by drawing a cut tool as a ghost.
+	tools := map[string]string{}
+	for _, f := range doc.Features {
+		switch strings.ToLower(f.Op) {
+		case "cut":
+			for _, id := range f.With {
+				tools[id] = "cut"
+			}
+			infer("%s: the material %s removes is NOT removed in this file. This is a mesh; "+
+				"the cut is performed by the CAD kernel and appears in the STEP export.",
+				labelOf(doc, f.Of), toolNames(doc, f.With))
+		case "fuse":
+			for _, id := range f.With {
+				tools[id] = "fuse"
+			}
+			infer("%s: %s is present as a separate solid rather than fused into it. This is a "+
+				"mesh; the fuse is performed by the CAD kernel.",
+				labelOf(doc, f.Of), toolNames(doc, f.With))
+		case "fillet", "chamfer":
+			infer("%s: its %s is not in this file — a mesh has no edges to round. The rounded "+
+				"solid is what the STEP export contains.", labelOf(doc, f.Of),
+				strings.ToLower(f.Op))
+		}
+	}
+
 	for _, p := range doc.Parts {
 		local, dev := partTriangles(p, unit, infer)
 		if len(local) == 0 {
 			continue
+		}
+		if op, isTool := tools[p.ID]; isTool {
+			// Named per PART as well as per feature, because the parts list and
+			// the group names in the file are where somebody looks when they are
+			// wondering what a cylinder is doing there.
+			infer("%s is a %s TOOL and is in this file as a solid. It is the shape of the "+
+				"operation, not a part of the assembly.", p.Label(), op)
 		}
 		placed := place(local, p)
 		m.Groups = append(m.Groups, MeshGroup{
@@ -165,7 +243,14 @@ func sizeOr(p Part, key string, fallback float64, unit Unit, infer func(string, 
 
 // partTriangles builds one part in its own local frame, centred on the origin.
 func partTriangles(p Part, unit Unit, infer func(string, ...any)) ([]Triangle, *Deviation) {
-	switch p.Shape {
+	// A retired shape word is read as the shape it always was, and the reader
+	// is told which — through the same table the exporter, the summary line and
+	// the renderer all consult (retired.go).
+	shape, retiredNote := resolveShape(p.Shape, p.Label())
+	if retiredNote != "" {
+		infer("%s", retiredNote)
+	}
+	switch shape {
 	case "box":
 		return box(
 			sizeOr(p, "width", 1, unit, infer),
@@ -210,16 +295,6 @@ func partTriangles(p Part, unit Unit, infer func(string, ...any)) ([]Triangle, *
 		r := sizeOr(p, "radius", 0.5, unit, infer)
 		h := sizeOr(p, "height", 1, unit, infer)
 		return cylinder(r, 0, h, radialSegments), chordDeviation(r, radialSegments, unit)
-
-	case "tube":
-		r := sizeOr(p, "radius", 0.5, unit, infer)
-		h := sizeOr(p, "height", 1, unit, infer)
-		// The bore is not modelled — the same substitution the renderer makes,
-		// reported the same way. An inner diameter that is not in the file is
-		// exactly the thing an export must not let somebody assume is there.
-		infer("%s is a tube and is exported as a SOLID cylinder. Its bore is not in this file; "+
-			"anything printed or machined from it will be solid.", p.Label())
-		return cylinder(r, r, h, radialSegments), chordDeviation(r, radialSegments, unit)
 
 	case "sphere":
 		r := sizeOr(p, "radius", 0.5, unit, infer)

@@ -50,6 +50,19 @@ type Solid struct {
 	// Holes are the loops inside Outline, in millimetres. Empty when there are
 	// none, which is the common case.
 	Holes []Curve `json:"holes,omitempty"`
+	// HoleParents says which loop directly contains each hole: -1 for the
+	// outline, or the index of another hole — which makes that hole an ISLAND,
+	// solid material standing in a void (see nestLoops).
+	//
+	// Absent, and all -1, mean the same thing and that is deliberate: every
+	// document written before wave 30 has every hole directly in the outline,
+	// which is what an absent field has to keep meaning.
+	//
+	// Sent rather than derived, because the kernel holds the drawing as CURVES
+	// and containment is a question about polygons. It would have to flatten
+	// them again at a fineness it chose, and a kernel that nested differently
+	// from the tessellator would export a solid that is not the one on screen.
+	HoleParents []int `json:"hole_parents,omitempty"`
 	// Path is a sweep's, in millimetres, in the part's own frame. Nil otherwise.
 	Path *Curve `json:"path,omitempty"`
 	// SectionFrame is where the outline's own x and y axes point when a sweep
@@ -132,7 +145,17 @@ func Solids(d Document, unit Unit) ([]Solid, []string) {
 		dims := map[string]float64{}
 		var section *outline
 		var route *polyline
-		switch strings.ToLower(p.Shape) {
+		// Resolved through the one table every reader uses (retired.go), so the
+		// exported file and the viewport cannot disagree about what a retired
+		// word means. The kernel is then sent the RESOLVED word and has no case
+		// for the retired one: if this ever stopped happening, the sidecar would
+		// refuse the part loudly rather than quietly build the right thing for
+		// the wrong reason.
+		shape, retiredNote := resolveShape(strings.ToLower(p.Shape), p.Label())
+		if retiredNote != "" {
+			inferred = append(inferred, retiredNote)
+		}
+		switch shape {
 		case "extrusion":
 			pts, ok := profiles[p.ID]
 			if !ok {
@@ -171,7 +194,7 @@ func Solids(d Document, unit Unit) ([]Solid, []string) {
 			dims["depth"] = sizeOr(p, "depth", 1, unit, infer)
 		case "sphere":
 			dims["radius"] = sizeOr(p, "radius", 0.5, unit, infer)
-		case "cylinder", "tube":
+		case "cylinder":
 			dims["radius"] = sizeOr(p, "radius", 0.5, unit, infer)
 			dims["height"] = sizeOr(p, "height", 1, unit, infer)
 			// radius_top is what makes a cylinder a truncated cone. Absent means
@@ -216,6 +239,7 @@ func Solids(d Document, unit Unit) ([]Solid, []string) {
 		var outlineCurve, pathCurve *Curve
 		var holeCurves []Curve
 		failed := ""
+		var holeParents []int
 		if section != nil {
 			c, err := section.Outer.scaled(toMM).exact("outline")
 			if err != nil {
@@ -228,6 +252,23 @@ func Solids(d Document, unit Unit) ([]Solid, []string) {
 					failed = err.Error()
 				}
 				holeCurves = append(holeCurves, h)
+			}
+			// The nesting, worked out once and sent. Only when there is
+			// something to say: a document whose holes are all directly in the
+			// outline sends nothing, which is the wire every document written
+			// before wave 30 already produces.
+			if len(section.Holes) > 0 {
+				flatOuter, flatHoles, _, ferr := flattenSection(
+					section.Outer.scaled(toMM), scaledLoops(section.Holes, toMM), Millimetre)
+				if ferr == nil {
+					parents := loopParents(flatOuter, flatHoles)
+					for _, parent := range parents {
+						if parent >= 0 {
+							holeParents = parents
+							break
+						}
+					}
+				}
 			}
 		}
 		if route != nil && failed == "" {
@@ -273,7 +314,7 @@ func Solids(d Document, unit Unit) ([]Solid, []string) {
 		}
 
 		out = append(out, Solid{
-			ID: p.ID, Label: p.Label(), Shape: strings.ToLower(p.Shape), Dims: dims,
+			ID: p.ID, Label: p.Label(), Shape: shape, Dims: dims, HoleParents: holeParents,
 			Outline: outlineCurve, Holes: holeCurves, Path: pathCurve, SectionFrame: frame,
 			Axis: axisOf(p), Matrix: RotationMatrix(rot), Position: pos,
 		})

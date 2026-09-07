@@ -68,11 +68,12 @@ Reply with JSON only:
       {
         "id": "stable-kebab-id",
         "name": "human name",
-        "shape": "box" | "cylinder" | "cone" | "sphere" | "tube" | "plane" |
+        "shape": "box" | "cylinder" | "cone" | "sphere" | "plane" |
                  "extrusion" | "revolve" | "sweep",
         "shape_note": "for \"extrusion\", size only needs \"depth\"",
         "size": {"width":1,"height":1,"depth":1,"radius":0.5,"radius_top":0.5},
-        "profile": [{"x": 0, "y": 0, "radius": 0, "x_from": "", "y_from": "plate_height"}],
+        "profile": [{"x": 0, "y": 0, "radius": 0, "x_from": "", "y_from": "plate_height",
+                     "via": null or {"x": 0, "y": 0}}],
         "holes": [[{"x": 0, "y": 0, "radius": 0}]],
         "path": [{"x": 0, "y": 0, "z": 0, "radius": 0, "z_from": "run_length"}],
         "path_closed": false,
@@ -184,6 +185,12 @@ About "prototype":
   constant pi, and sqrt, abs, min, max, floor, ceil and round. There is no sine
   or cosine here: half the world writes them in degrees and half in radians, so
   carry an already-resolved length as a parameter instead.
+- There is NO "tube" shape. A hollow tube is a cylinder with a cylinder cut from
+  it when the bore runs straight, and an outline with a "holes" loop when the
+  bore follows the part — which is the only one of the two that can turn a
+  corner with a bend. Both are below. Naming a wall thickness in prose while
+  drawing a solid cylinder is the one thing to avoid: it reads as a bored part
+  and machines as a bar.
 - "extrusion" is the shape for anything that is not a box or a cylinder: an
   L-bracket, a T-section, a channel, a gusset, a triangular plate. Give it a
   "profile" — a closed outline of at least three points in the part's own XY
@@ -249,8 +256,31 @@ About "prototype":
   Use "holes" when the void follows the drawing: the bore of a tube that BENDS
   (which no cylinder can cut, because it turns the corner with the tube), a box
   section, a hollow extrusion, a groove that goes all the way round a revolve.
-  Each hole must be wholly inside the outline and must not touch another one.
+  Each hole must be wholly inside the outline and must not CROSS another one.
   Two overlapping holes are one hole, and have to be drawn as one loop.
+  A hole INSIDE another hole is an ISLAND: solid material standing in the void,
+  like the post in an annular slot, the bar of a letter A, or a lug in the bottom
+  of a pocket. It keeps going — a hole inside an island is a bore through the
+  post — so draw exactly the loops the shape has and the nesting says the rest.
+- "via" on a point BENDS THE EDGE ARRIVING AT IT into a circular arc that passes
+  through the via on the way. Use it for an edge that BOWS: a crescent, a lens, a
+  cam lobe, a hook, a D-shaped shaft, the belly of a bracket that clears
+  something. It works on an outline point, a hole point and a path point, and on
+  a path it curves the run itself rather than only its corner.
+  It is a POINT ON THE ARC, not a centre and not a direction. Three points fix a
+  circle completely, so put the via roughly where the middle of the bulge should
+  be and the arc follows.
+  A "via" and a "radius" are different things and are not alternatives. A radius
+  ROUNDS A CORNER between two straight edges; a via CURVES AN EDGE. A corner
+  where an arc meets is left sharp — the radius there is ignored and reported —
+  so do not put one on either end of a bowed edge.
+  Two arcs between the same two points is a crescent, and that is a legitimate
+  outline of TWO points: an outline needs three points only when every edge is
+  straight.
+  A via must not be in line with the two ends of its edge, or on top of one of
+  them — there is no arc through three points in a row, and the edge is simply
+  drawn straight and reported. It must not carry a radius, a z (except on a
+  path), or a via of its own.
 - "radius" on a point ROUNDS THAT CORNER: an arc of that radius, tangent to both
   edges meeting there. It works the same way on an outline point and on a path
   point, and on a path it is the BEND RADIUS — the number a tube bender is set
@@ -537,6 +567,14 @@ type Reply struct {
 	// which displays the REAL figure rather than claiming the PRD's ≤700ms
 	// target. A target asserted without measurement is a marketing claim.
 	LatencyMS int64 `json:"latency_ms"`
+	// Repaired says the reply did not parse as sent and what was read to save
+	// it. Empty for the ordinary case, which is almost every reply.
+	//
+	// It is a FIELD and not a log line because the person is owed it: the
+	// document they are looking at is not byte-for-byte the one the model
+	// produced, and everything else in this system that substitutes something
+	// says so on the screen. See dimensionrepair.go.
+	Repaired string `json:"repaired,omitempty"`
 }
 
 // Respond produces one turn of conversation.
@@ -589,11 +627,37 @@ func (c *Conversation) Respond(ctx context.Context, projectID string, history []
 	}
 
 	var reply Reply
-	if err := json.Unmarshal([]byte(extractJSON(resp.Content)), &reply); err != nil {
-		reply = Reply{Speech: unreadableReply(resp)}
-		if reply.Speech == "" {
-			return nil, errs.Wrap(op, errs.CodeExternalProtocol, err).
-				WithDetail("the model returned neither usable JSON nor any text")
+	body := []byte(extractJSON(resp.Content))
+	if err := json.Unmarshal(body, &reply); err != nil {
+		// An expression written where a number was expected is the commonest
+		// way a complete, correct reply fails to parse — the contract offers
+		// two slots per dimension and tells the model to prefer the one it then
+		// puts in the wrong place. Read rather than lost; see
+		// dimensionrepair.go for the measurement and the reasoning.
+		//
+		// Only after the strict parse has already failed, so a reply that
+		// parses is never rewritten.
+		repaired, moved := repairDimensions(body)
+		if moved {
+			var second Reply
+			if err2 := json.Unmarshal(repaired, &second); err2 == nil {
+				reply = second
+				// Said out loud, in the channel the person already reads for
+				// what FORGE assumed. A document silently different from the
+				// one the model sent is the same class of thing as a render
+				// that does not match its file.
+				reply.Repaired = "One or more dimensions arrived as expressions written in the " +
+					"place of a number. They were read as the expressions they are — the " +
+					"contract has a field for each — rather than the reply being discarded."
+				err = nil
+			}
+		}
+		if err != nil {
+			reply = Reply{Speech: unreadableReply(resp)}
+			if reply.Speech == "" {
+				return nil, errs.Wrap(op, errs.CodeExternalProtocol, err).
+					WithDetail("the model returned neither usable JSON nor any text")
+			}
 		}
 	}
 	reply.Model = resp.Model

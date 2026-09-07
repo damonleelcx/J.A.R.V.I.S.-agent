@@ -68,6 +68,79 @@ type Point struct {
 	YFrom      string  `json:"y_from,omitempty"`
 	ZFrom      string  `json:"z_from,omitempty"`
 	RadiusFrom string  `json:"radius_from,omitempty"`
+	// Via bows the edge ARRIVING at this point into a circular arc that passes
+	// through the via on the way (see curve.go). Absent — the ordinary case —
+	// is a straight edge.
+	//
+	// # Why a through-point and not a radius and a direction
+	//
+	// Three points fix a circle completely: the plane, the centre, the size and
+	// which way round. A radius plus two endpoints does not — it names one arc
+	// per plane through the chord, and that ambiguity was measured producing a
+	// visibly wrong solid on 2026-09-05. It is also already how the kernel is
+	// told about an arc, so this adds a way for a person to say what OCCT could
+	// always build rather than a new thing for it to learn.
+	//
+	// # Why a *Point rather than a type of its own
+	//
+	// A via IS a point: it has coordinates, and they follow the parameters like
+	// every other coordinate here, so it carries the same x_from/y_from/z_from.
+	// A separate struct would be the same four fields with a second set of rules
+	// about how to read them. A via's OWN Radius and Via are meaningless and are
+	// refused rather than ignored — a corner radius on a point that is not a
+	// corner is a different mistake from the inert ones curve.go tolerates,
+	// because there is no corner there even in principle.
+	Via *Point `json:"via,omitempty"`
+}
+
+// loopBows reports whether any point of an authored loop bends the edge into it.
+//
+// Asked of the AUTHORED points rather than of the resolved polyline because the
+// checks that consult it run before resolution — and because a via that turns
+// out to name no arc still means "do not judge this drawing by its polygon",
+// which is the question being asked.
+func loopBows(loop []Point) bool {
+	for _, pt := range loop {
+		if pt.Via != nil {
+			return true
+		}
+	}
+	return false
+}
+
+// resolveVia evaluates a point's through-point, if it has one.
+//
+// One function for the outline, the holes and the path, because a via means the
+// same thing in all three and three copies of these rules would be three places
+// for them to differ. planar refuses a z, which is what an outline and a hole
+// need and a path does not.
+//
+// Returns nil and no error when there is no via, which is almost every point.
+func resolveVia(pt Point, planar bool, lookup func(string) (float64, bool)) (*[3]float64, error) {
+	v := pt.Via
+	if v == nil {
+		return nil, nil
+	}
+	if v.Via != nil {
+		return nil, fmt.Errorf("its via carries a via of its own; an arc passes through one " +
+			"point, and a via is that point rather than another edge")
+	}
+	if v.Radius != 0 || strings.TrimSpace(v.RadiusFrom) != "" {
+		return nil, fmt.Errorf("its via carries a corner radius; a via is a point the edge " +
+			"passes THROUGH, not a corner, so there is nothing there to round")
+	}
+	if planar && (v.Z != 0 || strings.TrimSpace(v.ZFrom) != "") {
+		return nil, fmt.Errorf("its via carries a z; the arc lies in the same plane as the " +
+			"drawing it bends")
+	}
+	x, xerr := coordinate(v.X, v.XFrom, lookup)
+	y, yerr := coordinate(v.Y, v.YFrom, lookup)
+	z, zerr := coordinate(v.Z, v.ZFrom, lookup)
+	if err := firstOf(xerr, yerr, zerr); err != nil {
+		return nil, fmt.Errorf("its via: %v", err)
+	}
+	out := [3]float64{x, y, z}
+	return &out, nil
 }
 
 // revolveAxes is the closed set of axes an outline may be turned about.
@@ -84,6 +157,28 @@ var revolveAxes = map[string]string{"": "y", "y": "y", "x": "x"}
 // an outline. A "profile" with fewer is not a degenerate shape to be drawn
 // thinly — it is a document that means nothing, and it is refused.
 const minProfilePoints = 3
+
+// minLoopPoints is how many points a closed drawing needs, given what its edges
+// are allowed to be.
+//
+// Three was right while every edge was a straight line, and it stopped being
+// right the moment an edge could BOW (curve.go, wave 29). A CRESCENT is two arcs
+// between two points; a circular segment is one arc and one straight between the
+// same two. Both enclose area, and neither can be drawn with three points
+// without inventing one that is not part of the shape.
+//
+// So the floor is a property of the drawing rather than a constant: two when
+// something bends, three when nothing does. Note that this is about the points a
+// PERSON writes — every flattened list downstream still gets many more, and the
+// checks over those keep using minProfilePoints.
+func minLoopPoints(loop []Point) int {
+	for _, pt := range loop {
+		if pt.Via != nil {
+			return 2
+		}
+	}
+	return minProfilePoints
+}
 
 // outlineShapes is the closed set of shapes that are drawn from an outline
 // rather than from dimensions.
@@ -173,9 +268,9 @@ func (d *Document) resolvedProfiles() (map[string]outline, map[string]polyline, 
 				"when the shape is \"sweep\"", shape)
 			continue
 		}
-		if len(p.Profile) < minProfilePoints {
+		if len(p.Profile) < minLoopPoints(p.Profile) {
 			add(label, "is an %s with %d point(s); an outline needs at least %d to "+
-				"enclose anything", shape, len(p.Profile), minProfilePoints)
+				"enclose anything", shape, len(p.Profile), minLoopPoints(p.Profile))
 			continue
 		}
 		if shape == "sweep" && len(p.Path) < minPathPoints {
@@ -199,6 +294,7 @@ func (d *Document) resolvedProfiles() (map[string]outline, map[string]polyline, 
 
 		pts := make([][2]float64, 0, len(p.Profile))
 		radii := make([]float64, 0, len(p.Profile))
+		vias := make([]*[3]float64, 0, len(p.Profile))
 		bad := false
 		for i, pt := range p.Profile {
 			if pt.Z != 0 || strings.TrimSpace(pt.ZFrom) != "" {
@@ -228,8 +324,15 @@ func (d *Document) resolvedProfiles() (map[string]outline, map[string]polyline, 
 				bad = true
 				break
 			}
+			via, verr := resolveVia(pt, true, lookup)
+			if verr != nil {
+				add(label, "point %d %v", i+1, verr)
+				bad = true
+				break
+			}
 			pts = append(pts, [2]float64{x, y})
 			radii = append(radii, r)
+			vias = append(vias, via)
 		}
 		if bad {
 			continue
@@ -238,7 +341,7 @@ func (d *Document) resolvedProfiles() (map[string]outline, map[string]polyline, 
 		// A loop that closes itself by repeating its first point is READ, not
 		// refused: see withoutClosingDuplicate. Done before the duplicate check
 		// below, which is the one that would otherwise refuse it.
-		lifted, radii, dropped, conflict := withoutClosingDuplicate(lift3D(pts), radii)
+		lifted, radii, vias, dropped, conflict := withoutClosingDuplicate(lift3D(pts), radii, vias)
 		if conflict {
 			add(label, "closes by repeating its first point, and the two copies carry "+
 				"different corner radii; one corner cannot have two")
@@ -249,10 +352,10 @@ func (d *Document) resolvedProfiles() (map[string]outline, map[string]polyline, 
 				"closed already, so the repeated point was dropped")
 			pts = flat2D(lifted)
 		}
-		if len(pts) < minProfilePoints {
+		if len(pts) < minLoopPoints(p.Profile) {
 			add(label, "is an %s with %d point(s) once its repeated closing point is dropped; "+
 				"an outline needs at least %d to enclose anything",
-				shape, len(pts), minProfilePoints)
+				shape, len(pts), minLoopPoints(p.Profile))
 			continue
 		}
 
@@ -265,14 +368,19 @@ func (d *Document) resolvedProfiles() (map[string]outline, map[string]polyline, 
 				"edge of zero length", i+1, j+1, pts[i][0], pts[i][1])
 			continue
 		}
-		if area := math.Abs(signedArea(pts)); area < 1e-9 {
+		// A drawing that bows encloses area its POLYGON does not — a crescent's
+		// three points are in line, and a two-point lens has no polygon at all.
+		// So this check waits for the flattened form below, where the area is
+		// the area of the shape rather than of the chords standing in for it.
+		bowsHere := loopBows(p.Profile)
+		if area := math.Abs(signedArea(pts)); !bowsHere && area < 1e-9 {
 			add(label, "encloses no area; the points are all on one line")
 			continue
 		}
 		// An outline that crosses itself is not a shape. OCCT refuses it too,
 		// but saying so here names the part and reaches a reader who has no
 		// kernel configured at all.
-		if selfIntersects(pts) {
+		if !bowsHere && selfIntersects(pts) {
 			add(label, "crosses itself, so it does not enclose a single region; check the "+
 				"order of the points")
 			continue
@@ -293,7 +401,7 @@ func (d *Document) resolvedProfiles() (map[string]outline, map[string]polyline, 
 				continue
 			}
 		}
-		outer := polyline{Points: lift3D(pts), Radii: radii, Closed: true}
+		outer := polyline{Points: lift3D(pts), Radii: radii, Vias: vias, Closed: true}
 		// The corner radii are checked against the outline they are drawn on: a
 		// radius is only wrong in relation to the edges either side of it, so
 		// this cannot be done a point at a time.
@@ -315,14 +423,47 @@ func (d *Document) resolvedProfiles() (map[string]outline, map[string]polyline, 
 			add(label, "%v", ferr)
 			continue
 		}
+		// Checked AGAIN, on the flattened drawing, when an edge bows.
+		//
+		// # Why the check above is not enough once arcs exist
+		//
+		// selfIntersects runs on the points as drawn, which is the right place
+		// for it: it names the two points that cross and it catches the common
+		// mistake, which is points in the wrong order. A bowed edge is invisible
+		// to it — the arc leaves the chord, and an arc that bulges far enough
+		// crosses an edge the straight version cleared by a mile. The polygon
+		// is fine; the shape is not.
+		//
+		// So the flattened form is checked too, and only when something bows,
+		// because on a drawing of straight edges this would be the same question
+		// asked twice with a worse error message: the flattened outline has no
+		// point numbers a person would recognise.
+		if outer.bows() {
+			if math.Abs(signedArea(flatOuter)) < 1e-9 {
+				add(label, "encloses no area once its arcs are drawn")
+				continue
+			}
+			if selfIntersects(flatOuter) {
+				add(label, "crosses itself once its arcs are drawn. The points do not cross, so "+
+					"this is a via bulging its edge across another one — move the via closer to "+
+					"the line between its two ends")
+				continue
+			}
+		}
 		if problem := holesFit(flatOuter, flatHoles); problem != "" {
 			add(label, "%s", problem)
 			continue
 		}
+		// An island reads as a shape AND as a mistake with the same spelling, so
+		// which reading was taken is said out loud (wave 30).
+		note(label, islandNotes(flatHoles)...)
 
 		if shape == "sweep" {
 			way := make([][3]float64, 0, len(p.Path))
 			bends := make([]float64, 0, len(p.Path))
+			// A path is the one drawing here that is NOT confined to a plane, so
+			// its vias may carry a z like its points do.
+			wayVias := make([]*[3]float64, 0, len(p.Path))
 			for i, pt := range p.Path {
 				x, xerr := coordinate(pt.X, pt.XFrom, lookup)
 				y, yerr := coordinate(pt.Y, pt.YFrom, lookup)
@@ -333,8 +474,15 @@ func (d *Document) resolvedProfiles() (map[string]outline, map[string]polyline, 
 					bad = true
 					break
 				}
+				via, verr := resolveVia(pt, false, lookup)
+				if verr != nil {
+					add(label, "path point %d %v", i+1, verr)
+					bad = true
+					break
+				}
 				way = append(way, [3]float64{x, y, z})
 				bends = append(bends, r)
+				wayVias = append(wayVias, via)
 			}
 			if bad {
 				continue
@@ -363,7 +511,8 @@ func (d *Document) resolvedProfiles() (map[string]outline, map[string]polyline, 
 			// while the original does not, and leaving it behind would mitre a
 			// corner somebody asked to be bent. See withoutClosingDuplicate.
 			if p.PathClosed {
-				cleaned, radii, dropped, conflict := withoutClosingDuplicate(way, bends)
+				cleaned, radii, cleanedVias, dropped, conflict :=
+					withoutClosingDuplicate(way, bends, wayVias)
 				if conflict {
 					add(label, "closes its path by repeating its first point, and the two "+
 						"copies carry different bend radii; one corner cannot have two")
@@ -373,7 +522,7 @@ func (d *Document) resolvedProfiles() (map[string]outline, map[string]polyline, 
 					note(label, "closes its path by repeating its first point. A closed path "+
 						"joins its last point to its first already, so the repeated point "+
 						"was dropped")
-					way, bends = cleaned, radii
+					way, bends, wayVias = cleaned, radii, cleanedVias
 				}
 				if len(way) < minClosedPathPoints {
 					add(label, "is a sweep round a closed path of %d points once its repeated "+
@@ -382,7 +531,7 @@ func (d *Document) resolvedProfiles() (map[string]outline, map[string]polyline, 
 					continue
 				}
 			}
-			route := polyline{Points: way, Radii: bends, Closed: p.PathClosed}
+			route := polyline{Points: way, Radii: bends, Vias: wayVias, Closed: p.PathClosed}
 			ignoredBends, berr := route.validate("path")
 			note(label, ignoredBends...)
 			if berr != nil {
@@ -550,12 +699,13 @@ func (d *Document) resolvedHoles(p Part, lookup func(string) (float64, bool)) ([
 	out := make([]polyline, 0, len(p.Holes))
 	var notes []string
 	for n, hole := range p.Holes {
-		if len(hole) < minProfilePoints {
+		if len(hole) < minLoopPoints(hole) {
 			return nil, notes, fmt.Sprintf("hole %d has %d point(s); a hole needs at least %d to "+
-				"enclose anything", n+1, len(hole), minProfilePoints)
+				"enclose anything", n+1, len(hole), minLoopPoints(hole))
 		}
 		pts := make([][2]float64, 0, len(hole))
 		radii := make([]float64, 0, len(hole))
+		vias := make([]*[3]float64, 0, len(hole))
 		for i, pt := range hole {
 			if pt.Z != 0 || strings.TrimSpace(pt.ZFrom) != "" {
 				return nil, notes, fmt.Sprintf("hole %d point %d carries a z; a hole lies in the "+
@@ -567,12 +717,18 @@ func (d *Document) resolvedHoles(p Part, lookup func(string) (float64, bool)) ([
 			if err := firstOf(xerr, yerr, rerr); err != nil {
 				return nil, notes, fmt.Sprintf("hole %d point %d: %v", n+1, i+1, err)
 			}
+			via, verr := resolveVia(pt, true, lookup)
+			if verr != nil {
+				return nil, notes, fmt.Sprintf("hole %d point %d %v", n+1, i+1, verr)
+			}
 			pts = append(pts, [2]float64{x, y})
 			radii = append(radii, r)
+			vias = append(vias, via)
 		}
 		// A hole closed by repeating its first point is read the same way an
 		// outline's is, and for the same reason.
-		lifted, cleaned, dropped, conflict := withoutClosingDuplicate(lift3D(pts), radii)
+		lifted, cleaned, cleanedVias, dropped, conflict :=
+			withoutClosingDuplicate(lift3D(pts), radii, vias)
 		if conflict {
 			return nil, notes, fmt.Sprintf("hole %d closes by repeating its first point, and "+
 				"the two copies carry different corner radii; one corner cannot have two", n+1)
@@ -580,25 +736,25 @@ func (d *Document) resolvedHoles(p Part, lookup func(string) (float64, bool)) ([
 		if dropped {
 			notes = append(notes, fmt.Sprintf("closes hole %d by repeating its first point. A "+
 				"hole is a closed loop already, so the repeated point was dropped", n+1))
-			pts, radii = flat2D(lifted), cleaned
+			pts, radii, vias = flat2D(lifted), cleaned, cleanedVias
 		}
-		if len(pts) < minProfilePoints {
+		if len(pts) < minLoopPoints(hole) {
 			return nil, notes, fmt.Sprintf("hole %d has %d point(s) once its repeated closing "+
 				"point is dropped; a hole needs at least %d to enclose anything",
-				n+1, len(pts), minProfilePoints)
+				n+1, len(pts), minLoopPoints(hole))
 		}
 		if i, j, dup := duplicatePoint(pts); dup {
 			return nil, notes, fmt.Sprintf("hole %d has points %d and %d the same (%g, %g); a loop "+
 				"cannot have an edge of zero length", n+1, i+1, j+1, pts[i][0], pts[i][1])
 		}
-		if math.Abs(signedArea(pts)) < 1e-9 {
+		if !loopBows(hole) && math.Abs(signedArea(pts)) < 1e-9 {
 			return nil, notes, fmt.Sprintf("hole %d encloses no area; its points are all on one line", n+1)
 		}
-		if selfIntersects(pts) {
+		if !loopBows(hole) && selfIntersects(pts) {
 			return nil, notes, fmt.Sprintf("hole %d crosses itself, so it does not enclose a single "+
 				"region; check the order of its points", n+1)
 		}
-		loop := polyline{Points: lift3D(pts), Radii: radii, Closed: true}
+		loop := polyline{Points: lift3D(pts), Radii: radii, Vias: vias, Closed: true}
 		ignored, err := loop.validate(fmt.Sprintf("hole %d", n+1))
 		notes = append(notes, ignored...)
 		if err != nil {
@@ -642,13 +798,49 @@ func holesFit(outer [][2]float64, holes [][][2]float64) string {
 				return fmt.Sprintf("holes %d and %d cross each other; two holes that overlap "+
 					"are one hole, and it has to be drawn as one loop", i+1, j+1)
 			}
-			if insideLoop(hole[0], holes[j]) || insideLoop(holes[j][0], hole) {
-				return fmt.Sprintf("hole %d is inside hole %d. An island in a hole is a "+
-					"second outline, and there is no vocabulary for one here", i+1, j+1)
-			}
+			// A loop inside another loop is an ISLAND — solid material standing
+			// in a void — and it is read that way rather than refused (wave 30).
+			// See nestLoops for the rule and for why it is not a new field.
+			//
+			// Left as a NOTE and not silent, because it is a real shape and a
+			// real mistake with the same spelling: an annular slot with a post
+			// in it, and a bolt hole somebody accidentally drew inside a pocket,
+			// arrive here looking identical. The reader is told which reading
+			// was taken.
+			_ = j
 		}
 	}
 	return ""
+}
+
+// islandNotes says which holes were read as islands.
+//
+// # Why this is reported rather than assumed understood
+//
+// A hole drawn inside another hole is two things at once: an annular slot with a
+// post in the middle — a real part, and the reason islands are now read — and a
+// bolt hole somebody put inside a pocket by mistake. They are spelled
+// identically, and this build cannot tell them apart, so it takes the reading
+// the drawing supports and NAMES it. Somebody who meant the second one sees the
+// sentence and moves the hole.
+func islandNotes(holes [][][2]float64) []string {
+	var out []string
+	for i, hole := range holes {
+		if len(hole) == 0 {
+			continue
+		}
+		for j, other := range holes {
+			if i == j || len(other) == 0 || !insideLoop(hole[0], other) {
+				continue
+			}
+			out = append(out, fmt.Sprintf("draws hole %d inside hole %d, so it is read as an "+
+				"ISLAND — solid material standing in the void, the way a post stands in an "+
+				"annular slot. If it was meant as a second bore, move it outside hole %d",
+				i+1, j+1, j+1))
+			break
+		}
+	}
+	return out
 }
 
 func loopsCross(a, b [][2]float64) bool {

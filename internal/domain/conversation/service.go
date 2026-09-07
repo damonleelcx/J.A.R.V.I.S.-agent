@@ -35,6 +35,9 @@ type Said struct {
 	Text           string
 	Detail         string
 	Images         int
+	// Timing is what this turn cost, for a FORGE turn that was measured. Nil
+	// otherwise, and nil is written as null rather than zero — see model.Timing.
+	Timing *Timing
 }
 
 // Resolve returns the conversation this turn belongs to, minting one when the
@@ -80,12 +83,33 @@ func (s *Service) Record(ctx context.Context, said Said) (*Turn, error) {
 		ID: id.New(id.PrefixTurn), ConversationID: said.ConversationID,
 		OwnerID: said.OwnerID, ProjectID: said.ProjectID,
 		Role: said.Role, Text: said.Text, Detail: said.Detail,
-		Images: said.Images, SaidAt: s.clock.Now(),
+		Images: said.Images, SaidAt: s.clock.Now(), Timing: said.Timing,
 	}
 	if err := s.repo.Append(ctx, s.pool, t); err != nil {
 		return nil, err
 	}
 	return t, nil
+}
+
+// measuredWindow is how many timed turns the panel reads.
+//
+// Enough to see a trend across a few sessions, small enough that the reply is
+// one screenful of JSON and one index scan. A caller wanting a deployment-wide
+// history wants a different thing, and this deliberately is not it — see
+// Repository.Measured.
+const measuredWindow = 100
+
+// Measured returns this person's recently timed turns, newest first (PRD
+// NFR-05). Empty is a normal answer: it means nothing has been asked yet, not
+// that anything is wrong.
+func (s *Service) Measured(ctx context.Context, ownerID string) ([]Turn, error) {
+	const op = "conversation.Service.Measured"
+
+	if strings.TrimSpace(ownerID) == "" {
+		return nil, errs.New(op, errs.CodeValidationFailed).
+			WithDetail("telemetry belongs to somebody; there is no unattributed measurement")
+	}
+	return s.repo.Measured(ctx, s.pool, ownerID, measuredWindow)
 }
 
 // History returns a conversation's turns in order, for this owner only.

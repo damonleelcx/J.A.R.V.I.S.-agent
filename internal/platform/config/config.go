@@ -635,13 +635,19 @@ func Load(required ...Section) (*Config, []string, error) {
 	}
 
 	cfg.LLM = LLMConfig{
-		BaseURL:        strings.TrimRight(l.str("FORGE_LLM_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"), "/"),
-		APIKey:         l.requiredIn(SectionLLM, "FORGE_LLM_API_KEY"),
-		Planner:        l.str("FORGE_LLM_PLANNER_MODEL", "qwen3.8-max"),
-		Executor:       l.str("FORGE_LLM_EXECUTOR_MODEL", "qwen3.8-max"),
-		Verifier:       l.str("FORGE_LLM_VERIFIER_MODEL", "deepseek-v4-pro"),
-		Summarizer:     l.str("FORGE_LLM_SUMMARIZER_MODEL", "qwen3.8-flash"),
-		Converse:       l.str("FORGE_LLM_CONVERSE_MODEL", "qwen-plus"),
+		BaseURL:    strings.TrimRight(l.str("FORGE_LLM_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"), "/"),
+		APIKey:     l.requiredIn(SectionLLM, "FORGE_LLM_API_KEY"),
+		Planner:    l.str("FORGE_LLM_PLANNER_MODEL", "qwen3.8-max"),
+		Executor:   l.str("FORGE_LLM_EXECUTOR_MODEL", "qwen3.8-max"),
+		Verifier:   l.str("FORGE_LLM_VERIFIER_MODEL", "deepseek-v4-pro"),
+		Summarizer: l.str("FORGE_LLM_SUMMARIZER_MODEL", "qwen3.8-flash"),
+		// qwen-plus until 2026-09-06, when the provider retired it and every
+		// live call to the conversation role — the whole workbench, and the
+		// entire evaluation suite — failed with `Model not exist.` The rest of
+		// the defaults on this block had already been moved to the 3.8
+		// generation; this one was missed, so the only role a PERSON waits on
+		// was the only one pointing at a model that no longer existed.
+		Converse:       l.str("FORGE_LLM_CONVERSE_MODEL", "qwen3.7-plus"),
 		Vision:         l.str("FORGE_LLM_VISION_MODEL", ""),
 		Transcriber:    l.str("FORGE_LLM_TRANSCRIBER_MODEL", "qwen3-asr-flash-2026-02-10"),
 		Speaker:        l.str("FORGE_LLM_SPEAKER_MODEL", "qwen3-omni-flash"),

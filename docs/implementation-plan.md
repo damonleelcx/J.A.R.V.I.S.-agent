@@ -2547,18 +2547,27 @@ that changes what somebody does with the file.
 
 ### What is still NOT done
 
-- **The renderer still cannot draw a hole**, and cannot without a CSG engine in
-  JavaScript. What it no longer does is draw one as a solid POST, which is the
-  opposite of a hole: a cut tool renders as a faint ghost in the warning gold
-  this interface already uses for "quoted from memory, not checked". A fence over
-  `forge3d.js` holds that in place, because the realistic failure is somebody
-  refactoring the loader and dropping a field nothing in Go refers to.
-- ~~**No sketches or extrusions.**~~ **Done in wave 17.** Revolves and sweeps are
-  still absent.
-- **No `max_fillet`.** A radius the geometry cannot take is refused by OCCT and
-  reported; nothing suggests the largest one that would work.
-- **A tube's bore is still unmodelled** by the `tube` primitive — though a bore
-  is now expressible properly, as a cylinder cut from a cylinder.
+- **The renderer still cannot draw a hole.** Still true; the framing is not —
+  see "Carried defects", updated 2026-09-06. The exported MESH cannot draw one
+  either, and as of wave 31 both say so. What the renderer no longer does is draw
+  one as a solid POST, which is the opposite of a hole: a cut tool renders as a
+  faint ghost in the warning gold this interface already uses for "quoted from
+  memory, not checked".
+- ~~**No sketches or extrusions.**~~ **Done in wave 17.** ~~Revolves and sweeps
+  are still absent.~~ **Revolves landed in wave 18 and sweeps in wave 19**; this
+  line said otherwise until 2026-09-06, which is four waves of a list nobody
+  re-read. A "still NOT done" list is a claim with a shelf life, and one that
+  outlives its subject is worse than no list: it is the reason somebody plans a
+  wave that has already shipped.
+- ~~**No `max_fillet`.**~~ **Done in wave 26.** OCCT still refuses a radius the
+  geometry cannot take — correctly — but the refusal now names the largest one
+  that DOES build, found by asking the kernel and reporting a radius it watched
+  succeed.
+- ~~**A tube's bore is still unmodelled**~~ **Retired in wave 27.** `tube` was
+  never a shape the document could keep its promise about: its size keys are
+  `radius` and `height`, so a wall thickness could not be stated. It is no longer
+  offered, it still reads out of the ledger as the cylinder it always was, and it
+  says so.
 
 ## Wave 16 — two defects found by asking whether it worked · **DONE**
 
@@ -2908,7 +2917,10 @@ and the straight between them vanishes. Stadiums, racetracks, D-sections and
 rounded gussets are all the same one number.
 
 What it cannot say is an arc that does NOT meet its neighbours smoothly: a
-crescent, a lens, a bulged edge. Those need a vocabulary with a plane in it.
+crescent, a lens, a bulged edge. Those need a vocabulary with a plane in it —
+**which wave 29 gave them**, as a `via`: one more point, and the edge arriving at
+it is the circular arc through it. Three points fix a circle completely, which is
+the same reasoning that chose a corner radius over an arc-with-a-radius here.
 
 ### It overlaps `fillet`, and the overlap is named rather than tidied away
 
@@ -3223,7 +3235,17 @@ be read as anything.
 part-way through the re-run — first `Arrearage` (overdue payment), then
 `Model not exist` — so ten of the twenty-four runs never happened, and
 `draws-a-closed-loop`, the case where the closing convention appeared most often,
-is among them. The scorer stays TRACKED: a floor set from a partial
+is among them.
+
+> **Corrected 2026-09-06.** The two failures above are not one thing and reading
+> them as one cost a day. `Arrearage` was real and was settled. `Model not exist`
+> was NOT the same outage returning: the provider had retired `qwen-plus`, and
+> the account was answering normally throughout — `GET /models` returns 200 and
+> lists twelve. Wave 25 has the whole of it. The lesson is narrow and worth
+> keeping: two failures in sequence from one endpoint are not evidence of one
+> cause, and the second one here had a completely different remedy from the first.
+
+ The scorer stays TRACKED: a floor set from a partial
 re-measurement is exactly the target-dressed-as-an-observation this suite is
 arranged against.
 
@@ -3236,10 +3258,472 @@ rather than mitred.
 The one refusal that survived is neither pattern: an outline crossing its own
 revolve axis, which is a drawing that genuinely is not a shape.
 
+## Wave 25 — the model that was not there · **DONE**
+
+The implementation plan carried this under "Operational — blocking": *the model
+provider account is in arrears*, and it named that as the reason nothing in the
+evaluation section could be measured. It was wrong. `GET /models` on the same
+host with the same key answers 200 and lists twelve models; what had gone was
+`qwen-plus`.
+
+Every other default in `config.go` had already been moved to the 3.8 generation.
+`Converse` had not — so the only role a person actually WAITS on was the only one
+pointing at a model that no longer existed. Two more roles were in the same state
+and nothing had noticed, because their tests only run when an API key is present.
+
+### The three things that came out of it
+
+**The message now names the survivors.** A 404 asks the endpoint what it serves
+— one GET on a path that has already failed permanently — and says so. The same
+sentence is used by the transcription and speech paths, which classify their own
+errors and would otherwise have been left with "Model not exist." and nothing to
+act on. That single change is the difference between a day and ten minutes.
+
+**The conversation role was thinking out loud.** Every model this endpoint now
+serves is a reasoning model, and every one deliberates by default. Measured on
+the eval suite's own bracket prompt, time to the first CONTENT token:
+qwen3.7-plus 28 693 ms thinking against 735 ms not; qwen3.8-flash 3 140 against
+507; qwen3.6-flash 15 538 against 270; qwen3.8-max 4 119 against 486. AUD-02 asks
+for 700 ms. Nothing was broken — the tokens were produced, they arrived on
+`reasoning_content`, which this client has always ignored and should keep
+ignoring. The reply just took half a minute to begin, silently.
+
+`deliberation.go` turns it off for the conversation role and only for it, keyed
+on the role rather than on a setting: llm.go's comment already said the rule
+("an executor should think hard and may take a minute; a conversation is someone
+waiting mid-sentence") and nothing enforced it. And only at endpoints known to
+understand the field, because it is a provider extension and a strict endpoint
+rejects the whole request — trading a slow conversation for no conversation.
+
+**This deployment has no voice, and that is now stated rather than broken.** The
+endpoint serves no ASR or TTS model reachable through the chat surface. That is
+a deployment decision — a different endpoint and its own key, or accept a
+text-only installation — and it is carried below rather than guessed at.
+
+`docs/bugfix/2026-09-06-the-provider-retired-three-models.md`.
+
+## Wave 26 — the largest radius that would have worked · **DONE**
+
+Carried since wave 15 as "No `max_fillet`": OCCT refuses a radius the geometry
+cannot take, correctly, because the alternative is a self-intersecting solid —
+and it refuses it with an EMPTY message. A `Standard_Failure` carrying no text
+(measured 2026-09-05 against build123d 0.11.1), so the person who asked for R45
+on a 60 mm plate was told `Standard_Failure`: a word with no number in it, about
+a number.
+
+### Why bisection and not a formula
+
+There is a closed form for the largest fillet on one convex edge between two
+planes, and it is useless here. `edges` is a RULE that selects many edges at
+once, the limit is whichever of them is tightest, and edges interact — two
+fillets that each fit alone do not fit together when their faces meet. The only
+authority on "does this radius work" is the kernel, so it is asked, ten times,
+on a path that has already failed.
+
+### Why the answer is always one that was BUILT
+
+The number goes into a sentence telling somebody what to type next, and a
+suggestion that then fails is worse than no suggestion. So it is the lower bound
+of the bisection — a radius the search watched OCCT accept — rounded down. On the
+reference plate, whose true limit is exactly 30, it reports 29.97.
+
+Edges that take no fillet at ANY radius are a different fact and are reported as
+one: there is nothing to suggest, and suggesting something very small would send
+somebody round the loop again for nothing.
+
+### Why not build123d's own `Shape.max_fillet`
+
+OCCT's refusal literally recommends it, and it was read first. It searches 0 to
+2× the bounding box DIAGONAL and gives up after ten iterations with a
+`RuntimeError` — on the 60 mm plate that window is 170 mm wide and ten halvings
+land short of its own tolerance, so the common case is an exception where a
+number was wanted. It also has no chamfer, and raises where "these edges take no
+fillet at all" is worth saying differently. Searching only up to the radius
+somebody ASKED for needs no luck: the answer is inside the window by
+construction.
+
+## Wave 27 — `tube` is retired · **DONE**
+
+Carried since wave 15 as "a tube's bore is still unmodelled". It was never
+modelled and never could be: a tube's size keys are `radius` and `height`, and
+there has never been an inner one — so the document had nowhere to say a wall
+thickness. Every consumer drew and exported a SOLID cylinder and apologised for a
+void that was never stated anywhere.
+
+That is not a defect to repair. Repairing it means adding a size key, and the
+document can already say a bored tube two ways, both of which model the void
+properly: a cylinder with a cylinder cut from it, and — since wave 21 — a section
+carrying a `holes` loop, which is the only one of the two that can turn a corner
+with a bent tube. The word carried no information the vocabulary did not already
+carry better, and it carried a claim the document could not keep.
+
+### Retired from the contract, still READ from the ledger
+
+The model is no longer offered the word, and is told what to write instead —
+silently removing it would leave the model to guess, and the guess it made before
+this vocabulary existed was three extrusions butted end to end.
+
+Every variant already stored with a `tube` in it still opens, still renders and
+still exports. The ledger is append-only and a part that stops drawing is a
+revision history that lies about what was proposed. So the word resolves, in ONE
+table (`retired.go`), to the shape it always actually was — and says so, in the
+same channel every other substitution uses.
+
+Not rewritten at the document boundary, though that would be tidier: what is
+persisted is exactly what the model said, so a replay cannot differ from what the
+person saw. A stored document that says `tube` goes on saying `tube`; every
+reader resolves it the same way, through one function.
+
+The kernel's `tube` case was REMOVED rather than left as a belt and braces. If
+the resolution ever stopped happening, the sidecar now refuses the part by name,
+loudly, instead of quietly building the right solid for the wrong reason.
+
+## Wave 28 — telemetry has a store · **DONE**
+
+NFR-05 was the one PRD line with a real measurement behind it and no way to look
+at it. Every turn was already timed — request in to first speech token, the whole
+turn, the tokens, which model answered — and every measurement went to the log
+and nowhere else. So the Telemetry panel could only show what the browser tab in
+front of you had watched happen: it emptied on reload, knew nothing about
+yesterday, and its own "Not measured here" list said so in the first line.
+
+What was missing was never the measurement. It was a store.
+
+### Why these are COLUMNS and not a `forge_turn_telemetry` table
+
+There is already exactly one row per FORGE turn. The timings are facts ABOUT that
+turn — same turn, same owner, same moment — and a second table keyed on the same
+thing would be a second place for "which turn" to be wrong, plus a second thing
+to delete.
+
+That last part is not a convenience. AUD-07 requires deletion to always be
+reachable, and `DELETE /v1/conversations/{id}` is the path. Timings on the turn
+are deleted BY the path that already exists, on the day it is written, with no
+second sweeper to forget.
+
+### Why every column is nullable, and what that buys
+
+Absence has to keep meaning absence. A default of 0 would make an unmeasured turn
+indistinguishable from an instantaneous one — and the panel's own rule, written
+long before this existed, is that a missing measurement renders as an em dash and
+a reason, never as a zero, because zero is a number somebody reads as "instant".
+That rule only holds if the wire and the column can carry the difference, so
+`Timing`'s fields are pointers all the way to the JSON.
+
+### One thing the first attempt got wrong
+
+The partial index and the query were first keyed on `first_token_ms`. The handler
+times itself unconditionally, but time-to-first-token is absent whenever the
+model did not STREAM — so a deployment whose model returns whole replies would
+have had an empty panel and no way to tell that from an idle one. Keyed on
+`round_trip_ms`, which is the figure that always answers "was anything measured
+about this turn".
+
+### What is still NOT stored
+
+A turn that FAILED. Nothing is written for one: the record is appended when a
+reply lands, and a turn that produced no reply has nothing to append — the
+table's own constraint refuses a turn that said nothing, which is correct for a
+record of what was SAID. Those are in the log with their error code, and the
+panel says so, because a latency history that silently omitted its failures would
+read best exactly when things were worst.
+
+## Wave 29 — an arc that is not tangent to its neighbours · **DONE**
+
+`curve.go` has said since wave 20 what a corner radius cannot say: "an arc that
+is NOT tangent to its neighbours: a crescent, a lens, an arc meeting a straight
+edge at an angle. Those need a vocabulary with a plane in it, and no model has
+been asked for one yet." This is that vocabulary.
+
+A point may carry a `via`: one more point, and the edge ARRIVING at it is the
+circular arc that passes through the via on the way. A cam lobe, a hook, a
+D-shaped shaft, the leading edge of an aerofoil, the belly of a bracket that
+clears something — all of them are one edge that BOWS, and none is a rounded
+corner.
+
+### The same answer arrived at twice
+
+Wave 20 already explains why a radius plus two endpoints does not determine an
+arc in three dimensions: it names one per plane through the chord, and that
+ambiguity was measured producing a visibly wrong solid. Three points fix a
+circle completely — plane, centre, size and which way round — so there is nothing
+left to guess.
+
+It is also, already, what the kernel is sent: `CurveEdge` has carried To and Via
+since wave 20, because that is how a rounded corner reaches OCCT. So this adds a
+way for a PERSON to say what OCCT could always build, rather than a new thing for
+it to learn.
+
+### The invariant that makes the rest simple
+
+A vertex with an arc on either side is SHARP, and a radius written there is
+ignored with a warning. Rounding an arc into an arc is a fillet between two
+curves: the tangent point is no longer a fixed distance along a straight, and the
+construction here has no answer for it. Ignoring rather than refusing follows the
+rule wave 24 arrived at after refusing radii cost two whole parts for numbers
+that meant nothing.
+
+What that buys is worth stating on its own — **an arc edge always has sharp
+ends** — so an arc's endpoints are exactly the two points that were drawn, and
+nothing has to be trimmed against a corner arc that moved one of them.
+
+### Three rules that had to change, and one that did not
+
+**Three points is no longer the minimum.** A crescent is two arcs between TWO
+points; a circular segment is one arc and one straight between the same two. Both
+enclose area, and neither can be drawn with three points without inventing one
+that is not part of the shape. So the floor is a property of the drawing: two
+when something bends, three when nothing does.
+
+**"Encloses no area" and "crosses itself" move to the flattened drawing when an
+edge bows.** A crescent's three points are in line and a two-point lens has no
+polygon at all, so the polygon's area is not the shape's. And an arc that bulges
+far enough crosses an edge the straight version cleared by a mile — invisible to
+a check on the points, which is why the check on the points is kept for the
+common case, where it can still name the two points that cross.
+
+**A via converts with everything else.** Left in inches while its endpoints
+became millimetres it describes an arc bulging 25 times too far — and unlike a
+wrong radius, which OCCT eventually refuses, a wrong via still builds. It builds
+the wrong shape.
+
+**A via on a repeated closing point travels to entry 0**, like the radius, and
+with a cleaner argument: it describes the edge arriving at the repeated point,
+which once the duplicate is dropped is exactly the closing edge. Same edge,
+renumbered.
+
+### What the fence found, and what it was right not to fence
+
+The renderer/exporter comparison was first written to compare FACETS, the way the
+sweep fence does. It went red on a crescent — with the two flattened outlines
+byte-identical and the two solids the same solid. The difference was the ear
+clipping: two triangulations of one planar polygon, which is the same surface and
+has no observable consequence.
+
+So the fence compares the DRAWING, which is what this wave decides and what is a
+property of the shape: which way round each arc goes, how finely it is stepped,
+where a closed run starts, and what happens to a via on a repeated closing point.
+A facet comparison would have asserted all of that AND an implementation detail
+besides, which is how a fence starts going red for reasons nobody can act on.
+
+Noted in passing and not fixed: the existing sweep fence is stricter than it
+needs to be for the same reason, and will eventually go red on a triangulation
+change that means nothing.
+
+### One error in a fence, which the kernel caught
+
+`TestKernel_ABowedEdgeIsARealArc` first hard-coded the circle through its three
+points and got it wrong — centre (0, −12.5) and r 37.5, where the real one is
+(0, −17.5) and r 42.5. It failed against a kernel that was right to seven
+significant figures. The constants are now DERIVED in the test. A constant nobody
+can re-derive is a fence that eventually asserts an arithmetic slip and gets
+"fixed" by changing the code.
+
+## Wave 30 — an island in a hole · **DONE**
+
+`profile.go` refused this in as many words: *"hole %d is inside hole %d. An
+island in a hole is a second outline, and there is no vocabulary for one here."*
+The vocabulary turned out to be one the drawing already had.
+
+A loop contained in an ODD number of others is a void; in an EVEN number it is
+solid. That is how TrueType glyphs, SVG paths, DXF and shapefiles all represent
+it, and it needs no new field — which is the point. A `holes` entry inside
+another `holes` entry is the post in an annular slot, the bar of a letter A, a
+lug in the bottom of a pocket. It keeps going: a hole inside an island is a bore
+through the post, which is an ordinary machined part rather than an edge case, so
+the depth is not limited.
+
+### Why the nesting is READ rather than declared
+
+A new field would be a second way to say something the drawing already says, and
+the two could then disagree. It is also not a guess: the loops are already known
+not to cross — `holesFit` refuses that before this is reached — so containment is
+a fact about the drawing and one point per loop settles it.
+
+What the reader IS owed is to be told, and is. A hole drawn inside another is two
+things at once: a real shape, and a bolt hole somebody put inside a pocket by
+mistake. They are spelled identically and this build cannot tell them apart, so
+it takes the reading the drawing supports and names it — "read as an ISLAND —
+solid material standing in the void… if it was meant as a second bore, move it
+outside hole 1".
+
+### Where it had to be taught, and what kept the change small
+
+Four implementations decide what a section is, and all four had to agree.
+
+The Go tessellator and the browser both keep `merged` (one point list) and
+`tris` (one triangle list). Making those a list of regions would have reached
+into the extrusion, the revolve and the sweep — the three most fenced builders
+here, each compared facet-for-facet against the other implementation. Instead
+each solid area is bridged and clipped on its own and the results are
+CONCATENATED, with the triangle indices offset. Every caller still sees one list
+of points and one list of triangles, and none of them learned about nesting.
+
+The walls are wound by PARITY rather than by position. `sectionLoops` winds
+everything after the first loop clockwise, which is right for a hole and points
+an island's wall INTO the material — invisible in a silhouette and wrong in
+every file.
+
+The kernel is TOLD. `Face(outer, inners)` treats every inner wire as a hole, so
+an island handed to OCCT that way is cut away, and what comes back is a closed
+valid solid with a piece missing — nothing but the volume distinguishes it. Each
+solid area is its own face, and the solids they produce are fused; the areas are
+disjoint by construction, so the union is exact. The nesting travels as
+`hole_parents` rather than being recomputed there, because the kernel holds the
+drawing as CURVES and containment is a question about polygons: it would have to
+flatten them again at a fineness of its own choosing, and a kernel that nested
+differently from the picture is the failure the section frame is also sent to
+prevent.
+
+### A drill this change made vacuous, and what that revealed
+
+`sectionLoops` used to wind the first loop counter-clockwise and every other one
+clockwise, and a drill inverted that to check the fence went red. After the first
+version of this wave it STAYED GREEN — because `nestLoops` was re-winding
+everything by parity afterwards, so the mutation had no effect and
+`sectionLoops`' winding had quietly become dead code.
+
+Two implementations of one rule, one of them unreachable, and the only thing that
+noticed was a drill that stopped being able to fail. It also meant the REVOLVE,
+which still called `sectionLoops` directly, would have wound an island's wall the
+wrong way — a real defect that had not shipped only because nothing had drawn one
+yet.
+
+So the winding moved INTO `sectionLoops`, which is now the one place that decides
+it, and `nestLoops` trusts what it is handed. The drill points at the surviving
+copy and goes red again.
+
+### What the fences compare, and why not facets
+
+By VOLUME, through the divergence theorem, in both implementations. The
+60×60 plate with a 40×40 pocket and a 20×20 post is 12 000 mm³ read correctly,
+10 000 with the island cut away, and NEGATIVE if a wall faces the wrong way — so
+one number separates all three failures. Facet-for-facet would have added an
+assertion about ear clipping, which wave 29 established is not a property of the
+shape.
+
+## Wave 31 — the mesh says what it did not do · **DONE**
+
+Found while looking at what a CSG engine in the browser would take. `Tessellate`
+draws PARTS and has never performed a feature — a cut, a fuse, a fillet need a
+kernel and this is a triangle builder. What it also did was say nothing.
+
+So an OBJ or an STL of a bracket with four bolt holes contained four solid POSTS
+standing on the plate, and the file carried no hint that the four cylinders in it
+are the exact opposite of what they represent. The viewport has drawn a cut tool
+as a warning-gold ghost since wave 15 for precisely this reason; the exported
+mesh — the artefact somebody takes away and opens somewhere else, where FORGE
+cannot caption anything — said nothing at all.
+
+It is now reported twice, deliberately: once per FEATURE ("the material Hole 0
+removes is NOT removed in this file… the cut is performed by the CAD kernel and
+appears in the STEP export") and once per TOOL PART ("Hole 0 is a cut TOOL and is
+in this file as a solid"), because the parts list and the group names in the file
+are where somebody looks when they are wondering what a cylinder is doing there.
+
+A document with no features says nothing about them. A note on every export is
+noise, and noise is what makes a real warning invisible.
+
+## Wave 32 — the planner gets a harness, and it found something · **DONE**
+
+`cases.go` excluded the planner from the evaluation suite in a note: *"its
+evaluation — does it refuse to guess when a goal is underspecified, does it
+produce tasks that are actually independent — needs a project, a goal row and a
+database, so it is a different harness rather than a longer list."*
+
+Half of that was true and the important half was not. `Planner.Plan` takes a goal
+STRUCT. Everything about it that is backed by a database — the project's
+character, what a person has already settled, the recorded hazards — is optional
+and nil unless somebody wires it. Both questions the note itself posed are
+answerable with no database at all.
+
+### What it found on its first run
+
+**Every plan is a chain. 0 of 3.**
+
+Asked to take a bracket from proposal to a released drawing, qwen3.7-plus
+produced three, then three, then four tasks — and in every single plan exactly
+ONE task could start. Each of the rest waited on the one before it.
+
+A chain is a legitimate plan for genuinely sequential work, which is why the
+scorer is tracked rather than floored. But a planner that always emits one has a
+task DAG that is decorative: nothing proceeds in parallel, and one stuck task
+stops everything behind it. That is the exact question the note posed when it
+left the planner out, and nothing in this repository could see the answer until
+now.
+
+### And a floor that the measurement refused
+
+`aWellSpecifiedGoalIsNotQuestioned` was written as a floor of 1 — obviously a
+goal stating its own completion criteria should be planned rather than
+questioned — and it measured **4 of 6**.
+
+The reason is about the FIXTURE, not the model, and is worth keeping. Both goals
+say what done looks like and neither says where the existing bracket IS, and
+every question the planner asked was that one: *"which bracket, and where is its
+geometry"*. That is a fair question about a goal a person would also have to
+answer. A floor there would have demanded that the planner stop asking a
+reasonable thing — which is exactly what this suite's rule about floors exists to
+prevent, caught by the rule working.
+
+### What IS floored, and why that one
+
+`noTaskExceedsTheGoalsRiskCeiling`, at 1, measured 6 of 6 across an r2 goal and
+an r1 one. Not a judgement about quality: a goal's ceiling is set by a person,
+and a task above it is work the executor refuses — so the plan stops half way
+waiting for an approval that cannot be given. There is no acceptable rate above
+zero, and the measurement says the model is not near it.
+
+### A meta-fence that had to change, and how narrowly
+
+`TestCapabilityRatesAreTrackedAndOnlyTheRequirementsAreFloored` required every
+capability case to carry a floored SHARED HONESTY scorer — `speechIsShort` or
+`standardsAreLabelled`. That is really "the case must be able to fail", written
+when every case was a conversation. A planner case has no speech and names no
+standards, so the rule would have forced it to carry a scorer measuring nothing.
+The exemption is written as what it means — a planner case must still carry at
+least one scorer that can fail — rather than as a hole.
+
+### And an operational finding, which is why the run took 21 minutes
+
+The planner role runs on `qwen3.8-max` with deliberation ON, correctly: llm.go
+says an executor should think hard, and only conversation is latency-bound. But
+the planner does NOT stream — a plan is useless until its last task arrives — so
+the whole call has to fit inside `FORGE_LLM_REQUEST_TIMEOUT`, which defaults to
+3m.
+
+Measured 2026-09-07: one plan of this repository's own reference goal took **128
+seconds** for 2982 reasoning tokens and 4493 completion tokens — 71% of the
+budget — and the first attempt at this run hit the timeout on three consecutive
+retries and gave up. The same call with deliberation off took 17 seconds.
+
+The default is left at 3m and the measurement is written into `.env.example`
+beside it. Raising it would hide the shape of the problem: a planner that takes
+two minutes is one a person is waiting on.
+
+### What is still NOT measured, and where a database would come in
+
+**Hazard coverage.** SAF-02 requires an r3+ plan to account for every recorded
+hazard, and `checkHazardCoverage` is real. It reads the project graph, so it
+needs a workspace, a project and rows in it. A case here plans with no hazards,
+which means the rule is vacuously satisfied and is not under test.
+
+**Planning on top of what a person settled** (RSN-02, RSN-03). Also rows.
+
+Both are stated rather than approximated. A case that invented a fake hazard in
+memory would be measuring the fixture.
+
 ## Carried defects
 
-Eight of the eleven carried here are closed. The three that remain are not
-oversights and are stated with what each would actually take.
+Most of what is carried here is closed. What remains is not an oversight: each
+entry says what it would actually take, and several are decisions rather than
+gaps — kept so nobody re-opens them as work.
+
+Two of those closures are from 2026-09-06 and one of them changed what the
+others mean: the entry filed under "Operational — blocking" said the model
+provider account was in arrears, and it was not. Nothing was blocked. See wave 25
+— and note that "blocked on X" is a claim with a shelf life exactly like a "still
+NOT done" list, and this one had gone stale in the direction that stops work.
 
 ### Closed
 
@@ -3378,11 +3862,38 @@ oversights and are stated with what each would actually take.
   mode, independent audio deletion). The premises are proven rather than
   assumed — see `docs/spikes/2026-09-03-webrtc-sfu/`. **What it needs:** waves
   9.2 to 9.5, in that order.
-- **The industry coverage suite has run, and one failure was lost to operator
-  error** (2026-09-04). Against **qwen-plus at `--repeats 3`**, all fourteen
-  cases scored **3/3 on every scorer** — four regressions and ten coverage
-  cases. The coverage scorers stay **Tracked**: one clean run of one model is
-  exactly the measurement that must not become a floor.
+- **Re-measured against qwen3.7-plus, and it produced the finding the suite
+  exists for** (2026-09-06). The 2026-09-04 run below stands as a record of
+  qwen-plus; that model no longer exists at this endpoint (wave 25), so the
+  suite was re-run whole against its successor: **180 of 198 scorer-runs held,
+  every FLOORED scorer at 100%**, and eighteen tracked scorer-runs short across
+  four cases.
+
+  Every one of the eighteen was **one defect**, and not a capability going dead:
+  an expression written where a number was expected, which discarded the entire
+  reply. `draws-a-turned-part` scored 0 of 3 and `covers-product-design` 0 of 3
+  entirely from it. It is also the unexplained "simply malformed, intermittently"
+  recorded against the V-belt pulley on 2026-09-05 — the same case, four weeks of
+  contract growth and two models apart.
+  `docs/bugfix/2026-09-06-an-expression-where-a-number-was-expected.md`.
+
+  **`draws-a-closed-loop` now has scored runs.** It was carried here with none,
+  and it is the case the wave 24 fixes most affect.
+
+  **The planner is now in the suite too** (wave 32), which closes the last piece
+  of this entry that was outstanding: its exclusion rested on needing a database,
+  and it does not. Its first run found that every plan it produces is a CHAIN,
+  0 of 3 — the exact question the exclusion note posed.
+
+  **The floors are still Tracked, and after this they should stay that way for
+  longer than one more run.** A model change moved eighteen scorer-runs; a floor
+  set from a single good measurement against a model that can be retired
+  underneath you is a target dressed as an observation, twice over.
+
+  The original entry follows for context. Against **qwen-plus at `--repeats 3`**,
+  all fourteen cases scored **3/3 on every scorer** — four regressions and ten
+  coverage cases. The coverage scorers stay **Tracked**: one clean run of one
+  model is exactly the measurement that must not become a floor.
 
   The domain conventions demonstrably reach the model. Architecture replies used
   *massing, circulation, core, envelope, daylight*; every industry's terms
@@ -3407,6 +3918,14 @@ oversights and are stated with what each would actually take.
   **What would settle it:** always run with `--json`, never through a pipe. A
   second full run would give a second sample; it would not recover the lost one.
 
+  **Since closed structurally, not by diagnosis.** `EVAL_REPORT` in the Makefile
+  writes the full report on EVERY run, so the irrecoverable-by-accident state
+  cannot happen again whatever the terminal does. Two further full runs have
+  since been taken (2026-09-06) and neither reproduced it. The original failure
+  remains undiagnosed and is left recorded, because "it passed three more times"
+  is still not a diagnosis — but nothing further can be learned about it, and the
+  thing that made it unlearnable is fixed.
+
 - **No real FEA or SPICE backend, by decision — and a real CAD one since wave
   14.** Packs now declare which
   adapters their domain needs and every one is `CONNECTOR_UNAVAILABLE`. Wiring a
@@ -3427,6 +3946,13 @@ oversights and are stated with what each would actually take.
   a build out of a conversational turn is therefore **wrong**, and only the 2.5 s
   import cost is real. What is still undone is the wiring, not the feasibility.
 
+  **Amended again 2026-09-06.** The wiring is done, and has been since wave 14:
+  the sidecar is a long-running process, `make test-cad` runs against a real
+  OpenCASCADE, and waves 26 and 29 both added kernel behaviour with kernel tests
+  behind it. The *entry* is still open and still means what it says — no FEA and
+  no SPICE. Every adapter a pack declares is `CONNECTOR_UNAVAILABLE` and fails
+  loudly, by decision.
+
 - **The industry IS now inferred — as a suggestion.** The planner returns what
   domain it made of a goal on the reply it was already producing, and Intake
   writes it into the project graph as an assumption that changes nothing. The
@@ -3434,6 +3960,51 @@ oversights and are stated with what each would actually take.
   deliberately so. **What is still not done:** nothing acts on the suggestion
   automatically, and nothing should — a guessed domain that became the rule set
   is the defect this whole area removed.
+
+- **The renderer still cannot draw a cut hole, and the honest question is now a
+  different one** (updated 2026-09-06). Wave 15 recorded this as "cannot without
+  a CSG engine in JavaScript". That framing predates wave 14's kernel and this
+  repository's own conclusion about duplicated derivations, and following it
+  would mean writing a boolean engine in ES5 that must agree with — nothing. The
+  Go tessellator has no CSG either, so a browser that cut holes would show a
+  shape the exported OBJ and STL do not contain, which is the reverse of the
+  property this layer exists to keep.
+
+  **What changed today (wave 31):** the mesh export now SAYS which features it
+  did not perform and which parts are tools. The viewport already said it. So the
+  two agree, and both are honest, which is the state wave 15 described but only
+  half achieved.
+
+  **The two ways forward, and why this is a decision rather than a task.**
+  Writing CSG twice — once in Go and once in JavaScript, kept in step by a fence
+  — is a large, numerically delicate subsystem, and this codebase has recorded
+  what happens to duplicated derivations more than once. Asking the SERVER to
+  tessellate the solid OCCT already builds is far smaller and has one producer,
+  but it puts a network round trip and a kernel dependency behind the viewport,
+  and a deployment with no kernel configured is a supported configuration that
+  would fall back to the ghost. Neither is obviously right; both change the shape
+  of the product, so neither was chosen unilaterally.
+
+- **This deployment has no voice, and that is a deployment decision** (new
+  2026-09-06). The provider retired the models behind the transcriber and speaker
+  roles along with the conversation one (wave 25). The conversation role had a
+  successor on this endpoint; the audio roles do not. It offers
+  `qwen-audio-3.0-realtime-plus`, which answers the chat-completions
+  transcription shape with `{"status_message":"Success"}` and no transcript, and
+  `qwen-audio-3.0-tts-plus`, which returns 500 to it.
+
+  So `make test-asr` cannot pass here and FORGE cannot speak or listen on this
+  installation. **What it needs is a decision, not code:** either point
+  `FORGE_LLM_BASE_URL` at an endpoint that serves an ASR and a TTS model — with
+  the key issued for that host, because this one is host-specific — or accept
+  that this deployment is text-only. Nothing has been substituted in the
+  meantime, which is the same discipline the vision model already follows: an
+  absent capability that says it is absent.
+
+  Note what this does NOT block. The workbench, the evaluation suite, the kernel
+  and every fence run without it; wave 9.6's "FORGE has a voice in a room" is
+  about the session spine, which is unaffected. What is unavailable is audio in
+  and audio out at this endpoint.
 
 - **Pre-migration events are unattestable.** 11 events on the dev database
   predate the audit chain. This is permanent BY DESIGN and must not be "fixed":

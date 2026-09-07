@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -1635,4 +1636,241 @@ func TestKernel_TheDrawingsTheEvalSuiteLostNowBuild(t *testing.T) {
 				"with the point", got.Volume, want, mitred)
 		}
 	})
+}
+
+// A refused fillet says the largest radius that WOULD have worked.
+//
+// # The gap this closes
+//
+// Carried in the implementation plan since wave 15 as "No max_fillet": OCCT
+// refuses a radius the geometry cannot take, and nothing suggested the largest
+// one that would. The refusal it produces is a Standard_Failure carrying an
+// EMPTY message, so the person who asked for R20 on a 6 mm plate was told
+// "Standard_Failure" — a word with no number in it, about a number.
+//
+// Only the kernel can answer this: `edges` is a rule that selects many edges,
+// the limit is whichever is tightest, and two fillets that each fit alone need
+// not fit together. So the search asks it, and reports a radius it WATCHED build.
+func TestKernel_ARefusedFilletNamesTheLargestThatFits(t *testing.T) {
+	k := kernel(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	// A 60×6×60 plate. Rounding its four vertical corners can go as far as
+	// R30 — half the plate — and no further: at R45 the arcs would have to
+	// overlap each other, and OCCT refuses.
+	doc := bracket()
+	doc.Features = []geometry.Feature{{
+		ID: "too-big", Op: "fillet", Of: "plate", Radius: 45, Edges: "vertical"}}
+
+	got, err := k.BuildDocument(ctx, doc, geometry.Millimetre, "")
+	if err != nil {
+		t.Fatalf("an impossible fillet lost the whole assembly: %v", err)
+	}
+	if len(got.FeatureFailures) != 1 {
+		t.Fatalf("want exactly one feature failure, got %v", got.FeatureFailures)
+	}
+	msg := got.FeatureFailures[0]
+	t.Logf("refusal: %s", msg)
+	if !strings.Contains(msg, "largest that DOES build") {
+		t.Fatalf("the refusal does not suggest a workable radius, so the person who "+
+			"typed 20 has to guess again:\n  %s", msg)
+	}
+
+	// And the number it names has to be true. A suggestion that then fails is
+	// worse than no suggestion, so the suggestion is BUILT here.
+	suggested := largestFromMessage(t, msg)
+	if suggested <= 0 || suggested >= 45 {
+		t.Fatalf("suggested radius %g is not a smaller, usable radius (from %q)", suggested, msg)
+	}
+	doc.Features[0].Radius = suggested
+	again, err := k.BuildDocument(ctx, doc, geometry.Millimetre, "")
+	if err != nil {
+		t.Fatalf("building with the suggested radius failed outright: %v", err)
+	}
+	if len(again.FeatureFailures) != 0 {
+		t.Errorf("the radius the kernel SUGGESTED was then refused: %v.\n"+
+			"The search must report a radius it has watched build, never a computed bound.",
+			again.FeatureFailures)
+	}
+}
+
+// largestFromMessage pulls the suggested radius out of the refusal.
+//
+// Parsed rather than passed in a field: the number is offered to a PERSON, and a
+// test that read it from somewhere else would pass while the sentence they
+// actually see carried a different figure.
+func largestFromMessage(t *testing.T, msg string) float64 {
+	t.Helper()
+	const marker = "edges is "
+	i := strings.Index(msg, marker)
+	if i < 0 {
+		t.Fatalf("no suggested radius in %q", msg)
+	}
+	rest := msg[i+len(marker):]
+	end := strings.IndexFunc(rest, func(r rune) bool {
+		return !(r >= '0' && r <= '9') && r != '.'
+	})
+	if end >= 0 {
+		rest = rest[:end]
+	}
+	v, err := strconv.ParseFloat(rest, 64)
+	if err != nil {
+		t.Fatalf("suggested radius %q is not a number: %v", rest, err)
+	}
+	return v
+}
+
+// Edges that can take no fillet at all are a different fact, and are reported as
+// one: there is no radius to suggest, and suggesting a very small one would send
+// somebody round the loop again for nothing.
+func TestKernel_EdgesThatTakeNoFilletSaySo(t *testing.T) {
+	k := kernel(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	// Two coincident faces of a fused pair leave edges OCCT will not round at
+	// any radius. A cylinder's own top rim, filleted beyond its own radius, is
+	// the simplest reliable case: nothing below it works either, because the
+	// refusal is about the topology and not the size.
+	doc := bracket()
+	doc.Parts = append(doc.Parts, geometry.Part{ID: "pin", Name: "Pin", Shape: "sphere",
+		Size: map[string]float64{"radius": 4}, Position: []float64{0, 40, 0}})
+	doc.Features = []geometry.Feature{{
+		ID: "no-radius-works", Op: "fillet", Of: "pin", Radius: 9, Edges: "all"}}
+
+	got, err := k.BuildDocument(ctx, doc, geometry.Millimetre, "")
+	if err != nil {
+		t.Fatalf("the assembly was lost: %v", err)
+	}
+	if len(got.FeatureFailures) != 1 {
+		t.Fatalf("want one feature failure, got %v", got.FeatureFailures)
+	}
+	msg := got.FeatureFailures[0]
+	t.Logf("refusal: %s", msg)
+	if strings.Contains(msg, "largest that DOES build") {
+		t.Errorf("a radius was suggested for edges that take none: %s", msg)
+	}
+}
+
+// A bowed edge is a real curved face in the exported solid (wave 29).
+//
+// # Why this needs the kernel and not just arithmetic
+//
+// The Go side proves the drawing carries an arc and the tessellator proves it
+// leaves its chord. Neither says what OCCT built. The failure this catches is
+// the one wave 20 named for corner radii and is exactly as invisible here: a
+// bow sent as chords produces a many-sided PRISM which is closed, valid, almost
+// the right volume, and a mesh wearing a solid model's extension.
+//
+// Measured against the area, because that is where a real arc and its chords
+// differ by an amount arithmetic can state: a segment of a circle has a known
+// area and its inscribed chords always have less.
+func TestKernel_ABowedEdgeIsARealArc(t *testing.T) {
+	k := kernel(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	// A 40 x 20 plate whose top edge bows up through (0, 25) — a circular
+	// segment sitting on a rectangle. Extruded 5 deep.
+	//
+	// The expected volume is DERIVED below rather than written down. The first
+	// version of this test hard-coded the circle (centre (0,-12.5), r 37.5) and
+	// it was wrong — the real one is centred at (0,-17.5) with r 42.5 — so the
+	// test failed against a kernel that was right to seven significant figures.
+	// A constant nobody can re-derive is a fence that eventually asserts an
+	// arithmetic slip and gets "fixed" by changing the code.
+	const half, top, bulge, depth = 20.0, 20.0, 25.0, 5.0
+	doc := geometry.Document{Name: "bowed", Units: "mm", Parts: []geometry.Part{{
+		ID: "plate", Name: "Plate", Shape: "extrusion",
+		Size: map[string]float64{"depth": depth}, Position: []float64{0, 0, 0},
+		Rotation: []float64{0, 0, 0},
+		Profile: []geometry.Point{
+			{X: -half, Y: 0}, {X: half, Y: 0}, {X: half, Y: top},
+			{X: -half, Y: top, Via: &geometry.Point{X: 0, Y: bulge}},
+		},
+	}}}
+
+	got, err := k.BuildDocument(ctx, doc, geometry.Millimetre, "")
+	if err != nil {
+		t.Fatalf("a bowed outline was not built: %v", err)
+	}
+	// The circle through (−half, top), (0, bulge), (half, top). By symmetry its
+	// centre is on x=0 at k, where (bulge−k)² = half² + (top−k)².
+	centreY := (half*half + top*top - bulge*bulge) / (2 * (top - bulge))
+	r := bulge - centreY
+	theta := 2 * math.Asin(half/r) // the turn the arc makes over the chord
+	segment := r * r / 2 * (theta - math.Sin(theta))
+	want := (2*half*top + segment) * depth
+	if math.Abs(got.Volume-want) > want*0.001 {
+		t.Errorf("volume = %.4f mm³, want %.4f (±0.1%%).\n"+
+			"A bow sent to the kernel as CHORDS builds a prism: closed, valid, and a few "+
+			"tenths of a percent light. That is the difference this measures.",
+			got.Volume, want)
+	}
+	// And it reaches the height the via named. A prism through the same points
+	// would too, so this is not the headline — it is the check that the arc went
+	// the right way round, which the volume alone would not catch for a shallow
+	// bow.
+	if got.Bounds[4] < bulge-0.01 {
+		t.Errorf("the solid reaches y=%.4f; the via says the edge passes through %.1f",
+			got.Bounds[4], bulge)
+	}
+}
+
+// An island inside a hole is solid material, and OCCT builds it (wave 30).
+//
+// # What was refused before
+//
+// "hole %d is inside hole %d. An island in a hole is a second outline, and there
+// is no vocabulary for one here." The vocabulary turned out to be one the
+// document already had: a loop contained in an odd number of others is solid,
+// which is how every format a model has read represents this.
+//
+// # Why this needs the kernel
+//
+// `Face(outer, inners)` treats every inner wire as a hole, so an island handed
+// to OCCT that way is cut away rather than left standing — and the result is a
+// closed, valid solid with a piece missing. The volume is the only thing that
+// tells them apart.
+func TestKernel_AnIslandInAHoleIsSolid(t *testing.T) {
+	k := kernel(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	// A 60 x 60 plate, 5 thick, with a 40 x 40 pocket through it and a 20 x 20
+	// post standing in the middle of the pocket.
+	//
+	//   plate 3600 − pocket 1600 + island 400 = 2400 mm², times 5 = 12 000 mm³.
+	//
+	// Built as a hole cut away and NOT put back, it would be 10 000. The two
+	// differ by a sixth, which no tessellation or tolerance can account for.
+	sq := func(half float64) []geometry.Point {
+		return []geometry.Point{{X: -half, Y: -half}, {X: half, Y: -half},
+			{X: half, Y: half}, {X: -half, Y: half}}
+	}
+	doc := geometry.Document{Name: "island", Units: "mm", Parts: []geometry.Part{{
+		ID: "plate", Name: "Plate", Shape: "extrusion",
+		Size: map[string]float64{"depth": 5}, Position: []float64{0, 0, 0},
+		Rotation: []float64{0, 0, 0},
+		Profile:  sq(30),
+		Holes:    [][]geometry.Point{sq(20), sq(10)},
+	}}}
+
+	got, err := k.BuildDocument(ctx, doc, geometry.Millimetre, "")
+	if err != nil {
+		t.Fatalf("a section with an island was not built: %v", err)
+	}
+	const want = (60*60 - 40*40 + 20*20) * 5
+	if math.Abs(got.Volume-want) > 0.01 {
+		t.Errorf("volume = %.4f mm³, want %.1f.\n"+
+			"10000 means the island was cut away with the pocket — a closed, valid solid "+
+			"with a piece missing, which nothing but the volume distinguishes.",
+			got.Volume, float64(want))
+	}
+	// And it is one solid, not two: the post is attached to nothing, so a
+	// section that produced two disjoint bodies would be a different part.
+	if got.Parts != 1 {
+		t.Errorf("%d parts, want 1", got.Parts)
+	}
 }

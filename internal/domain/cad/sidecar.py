@@ -28,6 +28,7 @@ here would be a second opinion about what the document means.
 """
 import base64
 import json
+import math
 import os
 import sys
 import tempfile
@@ -80,19 +81,88 @@ def _wire(curve):
     return Wire(edges)
 
 
-def _face(solid):
-    """The section: the outline, with the loops inside it taken out of it.
+def _faces(solid):
+    """The section, as one face per SOLID area.
 
     A hole in the SECTION and a hole through the SOLID are different things and
     both exist. A bolt hole through a plate is a cylinder cut out with a feature,
     placed in space. A bore that follows a bent tube round every corner cannot be
     cut by any tool this vocabulary can describe, and is a loop in the drawing.
+
+    # Why a LIST, when a section is usually one face
+
+    Because a loop can sit inside another loop, and then it is an ISLAND: solid
+    material standing in a void — the post in an annular slot, the bar of a
+    letter A, a lug in the bottom of a pocket. Ordinarily there is exactly one
+    face here and this reads as it always did.
+
+    OCCT cannot be told that with one Face. `Face(outer, inners)` treats every
+    inner wire as a hole, so an island handed to it would be cut away rather than
+    left standing. Each solid area is therefore its own face, and the caller
+    fuses the solids they produce.
+
+    # Why the nesting is not worked out here
+
+    It arrives in "hole_parents", computed in Go where the tessellator computes
+    the same thing (see loopParents). Containment is a question about polygons,
+    this file holds the drawing as CURVES, and a kernel that flattened them again
+    at a fineness of its own choosing could nest differently from the picture on
+    screen — which is the one thing the section frame is also sent to prevent.
     """
     outer = _wire(solid["outline"])
     holes = solid.get("holes") or []
     if not holes:
-        return make_face(outer)
-    return Face(outer, [_wire(h) for h in holes])
+        return [make_face(outer)]
+
+    # -1 means "directly inside the outline", which is what every hole is unless
+    # the document says otherwise — including every document written before this
+    # existed, which sends no parents at all.
+    parents = solid.get("hole_parents") or [-1] * len(holes)
+    if len(parents) != len(holes):
+        parents = [-1] * len(holes)
+
+    def depth(i):
+        d, seen = 0, set()
+        while i >= 0 and i not in seen:
+            seen.add(i)
+            d += 1
+            i = parents[i]
+        return d
+
+    faces = []
+    # The outline itself, with the holes DIRECTLY inside it.
+    faces.append(_solid_face(outer, [h for i, h in enumerate(holes) if parents[i] == -1]))
+    # Then every island: a hole at an even depth is not a hole at all.
+    for i, hole in enumerate(holes):
+        if depth(i) % 2 == 0:
+            faces.append(_solid_face(_wire(hole),
+                                     [h for j, h in enumerate(holes) if parents[j] == i]))
+    return faces
+
+
+def _solid_face(outer_wire, inner_loops):
+    """One face: a boundary and the voids directly inside it."""
+    if not inner_loops:
+        return make_face(outer_wire)
+    return Face(outer_wire, [_wire(h) if isinstance(h, dict) else h for h in inner_loops])
+
+
+def _fused(solids):
+    """One solid from the areas a section describes.
+
+    Ordinarily a section has ONE area and this returns it untouched — no boolean
+    is performed, so the common case pays nothing and cannot be changed by this.
+    More than one means the section had an island in it, and the areas are
+    disjoint by construction (their loops do not cross, which Go checks), so the
+    fuse is a union of things that do not touch and OCCT does it exactly.
+    """
+    built = list(solids)
+    if not built:
+        raise ValueError("the section described no area at all")
+    out = built[0]
+    for other in built[1:]:
+        out = out + other
+    return out
 
 
 def _placement(solid):
@@ -125,7 +195,12 @@ def _shape(solid):
         return Box(d["width"], d["height"], d["depth"])
     if kind == "sphere":
         return Sphere(d["radius"])
-    if kind in ("cylinder", "tube", "cone"):
+    # No "tube": it was retired from the vocabulary and Go resolves it before
+    # anything reaches here (internal/domain/geometry/retired.go). Accepting it
+    # anyway would build the right solid for the wrong reason and hide the day
+    # the resolution stopped happening — this way the kernel refuses the part by
+    # name, loudly, which is the failure that gets fixed.
+    if kind in ("cylinder", "cone"):
         # A cone is a cylinder whose top radius is zero; both arrive already
         # reduced that way, so there is one code path and no second opinion
         # about what "cone" means.
@@ -148,7 +223,8 @@ def _shape(solid):
         # not re-centred — see internal/domain/geometry/profile.go for why — so
         # the part's position places the outline's ORIGIN and a hole placed
         # against a drawn corner stays against it.
-        return extrude(_face(solid), amount=d["depth"] / 2.0, both=True)
+        return _fused(extrude(f, amount=d["depth"] / 2.0, both=True)
+                      for f in _faces(solid))
     if kind == "revolve":
         # The outline turned a full circle about its own axis. Every point is on
         # one side of that axis — checked in Go, where the offending coordinate
@@ -158,7 +234,8 @@ def _shape(solid):
         # A full turn only. A sector is a revolve with something cut out of it,
         # which needs no vocabulary of its own — the same reasoning that makes a
         # hole a cut rather than a new kind of part.
-        return revolve(_face(solid), Axis.X if solid.get("axis") == "x" else Axis.Y, 360)
+        axis = Axis.X if solid.get("axis") == "x" else Axis.Y
+        return _fused(revolve(f, axis, 360) for f in _faces(solid))
     if kind == "sweep":
         # The same outline, carried along a path instead of a straight line.
         #
@@ -187,7 +264,9 @@ def _shape(solid):
         start = Plane(origin=Vector(*path["start"]),
                       x_dir=Vector(m[0], m[3], m[6]),
                       z_dir=Vector(m[2], m[5], m[8]))
-        return sweep(start * _face(solid), _wire(path), transition=Transition.RIGHT)
+        route = _wire(path)
+        return _fused(sweep(start * f, route, transition=Transition.RIGHT)
+                      for f in _faces(solid))
     if kind == "plane":
         # A face, not a solid, and deliberately so: a plane has no thickness and
         # will not print, machine, or hold a volume. It is exported because it is
@@ -248,6 +327,120 @@ def _apply(op, shapes):
         shapes[op["of"]] = chamfer(selected, length=op["radius"])
 
 
+# How many times the search below is allowed to call the kernel.
+#
+# Ten halvings of the requested radius resolve it to within 0.1% of itself, which
+# is far finer than any radius a person types. The bound exists because this runs
+# on a path that has ALREADY failed and a person is waiting for a message: a
+# search that took a minute to produce a better sentence would be a worse
+# outcome than the sentence.
+_FIT_STEPS = 10
+
+
+def _largest_that_fits(kind, selected, requested):
+    """The biggest radius this geometry actually takes, at or below `requested`.
+
+    # The problem this solves
+
+    OCCT refuses a fillet the geometry cannot carry — correctly, because the
+    alternative is a self-intersecting solid — and it refuses it with an EMPTY
+    message: a Standard_Failure carrying no text (measured 2026-09-05 against
+    build123d 0.11.1). So the person who asked for R12 on a 15 mm web was told
+    "Standard_Failure" and had to guess. Every guess is another round trip
+    through the model, and the number they are guessing at is one the kernel
+    already knows.
+
+    # Why bisection and not a formula
+
+    There IS a closed form for the largest fillet on one convex edge between two
+    planes, and it is useless here: `edges` is a RULE that selects many edges at
+    once (see _edges), the limit is whichever of them is tightest, and edges
+    interact — two fillets that each fit alone will not fit together when their
+    faces meet. The only authority on "does this radius work" is the kernel, so
+    it is asked.
+
+    # Why not build123d's own Shape.max_fillet
+
+    OCCT's refusal literally recommends it ("use max_fillet() to find the largest
+    valid fillet radius") and it was read before this was written. Three reasons
+    it is not what is called here, in order of weight:
+
+      - it searches 0 to 2x the bounding box DIAGONAL and gives up after 10
+        iterations with a RuntimeError. On the 60 mm plate this file's own test
+        uses, that window is 170 mm wide and 10 halvings land 0.17 mm short of
+        its own 0.1 tolerance — so the common case is an exception where a
+        number was wanted. Searching only up to the radius somebody ASKED for
+        needs no such luck: the answer is always inside the window, by
+        construction.
+      - it has no chamfer. A chamfer that is too long fails the same way and the
+        person needs the same sentence, and two implementations of one idea is
+        how the two drift.
+      - it raises when nothing works, where "these edges take no fillet at all"
+        is a fact worth reporting differently rather than an error.
+
+    # Why it returns a radius that was BUILT, never one that was computed
+
+    The value goes into a message telling somebody what to type next, and a
+    suggestion that then fails is worse than no suggestion. So the answer is
+    always the lower bound of the bisection — a radius this function has watched
+    the kernel accept — rounded DOWN. None is returned when even the smallest
+    step fails, which is a different fact and is reported as one: the edges
+    cannot be rounded at all, and no radius is the answer.
+    """
+    def works(r):
+        try:
+            if kind == "fillet":
+                fillet(selected, radius=r)
+            else:
+                chamfer(selected, length=r)
+            return True
+        except Exception:
+            return False
+
+    lo, hi = 0.0, float(requested)
+    for _ in range(_FIT_STEPS):
+        mid = (lo + hi) / 2
+        if works(mid):
+            lo = mid
+        else:
+            hi = mid
+    if lo <= 0:
+        return None
+    # Down to three decimals, and down rather than to-nearest: rounding up would
+    # hand back a number one ulp past the last one that was proven to build.
+    return math.floor(lo * 1000) / 1000
+
+
+def _with_a_way_out(op, shapes, reason):
+    """Add the largest radius that would have worked, when that is the problem.
+
+    Only for a fillet or chamfer whose EDGES were found — "the fillet selected no
+    vertical edges" is a different failure with a different remedy, and running a
+    ten-step search to re-discover it would waste the person's time to tell them
+    something they were already told.
+
+    The search itself is defended: it is a diagnostic on an already-failed path,
+    and a diagnostic that raises would replace a real refusal with a confusing
+    one.
+    """
+    kind = op.get("op")
+    if kind not in ("fillet", "chamfer"):
+        return reason
+    try:
+        selected = _edges(shapes[op["of"]], op.get("edges") or "all")
+        if not selected:
+            return reason
+        fits = _largest_that_fits(kind, selected, op["radius"])
+    except Exception:
+        return reason
+    what = "radius" if kind == "fillet" else "length"
+    if fits is None:
+        return ("%s; these edges take no %s at all, so this one cannot be rounded here — "
+                "remove the %s, or change the shape it is applied to" % (reason, kind, kind))
+    return ("%s; the geometry cannot take a %s of %g here. The largest that DOES build on these "
+            "edges is %g, found by asking the kernel" % (reason, what, op["radius"], fits))
+
+
 def _build(request):
     solids = request.get("solids") or []
     if not solids:
@@ -296,7 +489,7 @@ def _build(request):
             _apply(op, shapes)
         except Exception as exc:
             reason = str(exc).strip() or type(exc).__name__
-            failed.append("%s: %s" % (op["id"], reason))
+            failed.append("%s: %s" % (op["id"], _with_a_way_out(op, shapes, reason)))
             continue
         consumed.update(op.get("with") or [])
 

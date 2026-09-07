@@ -65,7 +65,7 @@ func TestFlattenCurve_ARoundedCornerRemovesWhatArithmeticSays(t *testing.T) {
 			800 - removed(5, obtuse), 1, 4},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			flat, radius, angle, segments, err := flattenCurve(tc.pts, tc.radii, true, "outline")
+			flat, radius, angle, segments, err := flattenCurve(tc.pts, tc.radii, nil, true, "outline")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -81,7 +81,7 @@ func TestFlattenCurve_ARoundedCornerRemovesWhatArithmeticSays(t *testing.T) {
 					"%.6f and the chords can only lose up to %.6f of it", got, tc.wantExact, slack)
 			}
 
-			exact, err := exactCurve(tc.pts, tc.radii, true, "outline")
+			exact, err := exactCurve(tc.pts, tc.radii, nil, true, "outline")
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -113,7 +113,7 @@ func TestFlattenCurve_ARoundedCornerRemovesWhatArithmeticSays(t *testing.T) {
 func TestFlattenCurve_ReportsWhatFlatteningCost(t *testing.T) {
 	pts := square(40, 40)
 	radii := []float64{10, 10, 10, 10}
-	flat, radius, angle, segments, err := flattenCurve(pts, radii, true, "outline")
+	flat, radius, angle, segments, err := flattenCurve(pts, radii, nil, true, "outline")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +179,7 @@ func TestRoundedCorners_RefusesWhatCannotBeRounded(t *testing.T) {
 			[]float64{0, 0, 5, 0}, false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			_, _, err := roundedCorners(tc.pts, tc.radii, tc.closed, "outline")
+			_, _, err := roundedCorners(tc.pts, tc.radii, nil, tc.closed, "outline")
 			if err == nil {
 				t.Fatal("this was rounded without complaint, and the result is not a shape")
 			}
@@ -221,7 +221,7 @@ func TestRoundedCorners_IgnoresARadiusThatNamesNoCorner(t *testing.T) {
 			[][3]float64{{0, 0, 0}, {0, 0, 20}, {30, 0, 20}}, []float64{0, 0, 5}, false, 2},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			corners, ignored, err := roundedCorners(tc.pts, tc.radii, tc.closed, "path")
+			corners, ignored, err := roundedCorners(tc.pts, tc.radii, nil, tc.closed, "path")
 			if err != nil {
 				t.Fatalf("an inert radius was refused, and the whole part with it: %v", err)
 			}
@@ -248,7 +248,7 @@ func TestRoundedCorners_IgnoresARadiusThatNamesNoCorner(t *testing.T) {
 // and the part would be the wrong length — quietly, by the radius.
 func TestExactCurve_AnOpenPathStartsAndEndsWhereItWasDrawn(t *testing.T) {
 	pts := [][3]float64{{0, 0, 0}, {0, 0, 40}, {30, 0, 40}}
-	curve, err := exactCurve(pts, []float64{0, 12, 0}, false, "path")
+	curve, err := exactCurve(pts, []float64{0, 12, 0}, nil, false, "path")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -296,7 +296,7 @@ func TestExactCurve_AnOpenPathStartsAndEndsWhereItWasDrawn(t *testing.T) {
 func TestWithoutClosingDuplicate_CarriesTheRadiusToThePointThatStays(t *testing.T) {
 	loop := [][3]float64{{0, 0, 0}, {240, 0, 0}, {240, 90, 0}, {0, 90, 0}, {0, 0, 0}}
 
-	pts, radii, dropped, conflict := withoutClosingDuplicate(loop, []float64{0, 20, 20, 20, 20})
+	pts, radii, _, dropped, conflict := withoutClosingDuplicate(loop, []float64{0, 20, 20, 20, 20}, nil)
 	if !dropped || conflict {
 		t.Fatalf("dropped=%v conflict=%v for a plain closing duplicate", dropped, conflict)
 	}
@@ -310,17 +310,17 @@ func TestWithoutClosingDuplicate_CarriesTheRadiusToThePointThatStays(t *testing.
 
 	// Nothing to drop: untouched, and reported as untouched.
 	open := [][3]float64{{0, 0, 0}, {10, 0, 0}, {10, 10, 0}}
-	if _, _, dropped, _ := withoutClosingDuplicate(open, []float64{0, 0, 0}); dropped {
+	if _, _, _, dropped, _ := withoutClosingDuplicate(open, []float64{0, 0, 0}, nil); dropped {
 		t.Error("a run that does not repeat its first point was altered")
 	}
 
 	// Both carrying a radius, and disagreeing: one corner, two answers.
-	if _, _, _, conflict := withoutClosingDuplicate(loop, []float64{5, 0, 0, 0, 20}); !conflict {
+	if _, _, _, _, conflict := withoutClosingDuplicate(loop, []float64{5, 0, 0, 0, 20}, nil); !conflict {
 		t.Error("two different radii on one corner were merged into one of them silently")
 	}
 	// Both carrying the SAME radius is not a conflict — it is the same corner
 	// said twice, which is what the convention produces.
-	if _, _, dropped, conflict := withoutClosingDuplicate(loop, []float64{20, 0, 0, 0, 20}); conflict || !dropped {
+	if _, _, _, dropped, conflict := withoutClosingDuplicate(loop, []float64{20, 0, 0, 0, 20}, nil); conflict || !dropped {
 		t.Errorf("a corner written twice with the same radius was refused: dropped=%v conflict=%v",
 			dropped, conflict)
 	}

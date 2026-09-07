@@ -147,12 +147,136 @@ func triangulateLoops(outer [][2]float64, holes [][][2]float64) section {
 			return out
 		}
 	}
-	merged, ok := mergeHoles(loops[0], loops[1:])
-	if !ok {
-		return out
+
+	// One region per SOLID area. Ordinarily there is exactly one — an outline
+	// with its bores — and this reduces to what it always did. It is more than
+	// one when a loop sits inside a hole: see nestLoops.
+	regions := nestLoops(loops)
+	out.OK = true
+	for _, r := range regions {
+		var merged [][2]float64
+		var tris [][3]int
+		var ok bool
+		if len(r.holes) == 0 {
+			merged, tris, ok = triangulate(r.outer)
+		} else {
+			merged, ok = mergeHoles(r.outer, r.holes)
+			if ok {
+				tris, ok = earClip(merged)
+			}
+		}
+		if !ok {
+			// One region that will not close does not lose the others: the same
+			// bargain the callers make about a partial outline, one level down.
+			out.OK = false
+			if len(merged) == 0 {
+				continue
+			}
+		}
+		// Indices are offset into the CONCATENATED point list, so every caller
+		// goes on seeing one list of points and one list of triangles. That is
+		// what keeps this change out of the extrusion, the revolve and the
+		// sweep, each of which is fenced facet-for-facet against the browser.
+		base := len(out.Merged)
+		if len(out.Merged) == 0 && len(regions) == 1 {
+			out.Merged = merged
+		} else {
+			if base == 0 {
+				out.Merged = nil
+			}
+			out.Merged = append(out.Merged, merged...)
+		}
+		for _, t := range tris {
+			out.Tris = append(out.Tris, [3]int{t[0] + base, t[1] + base, t[2] + base})
+		}
 	}
-	out.Merged = merged
-	out.Tris, out.OK = earClip(merged)
+	return out
+}
+
+// loopParents reports, for each hole, which loop directly contains it: -1 for
+// the outline, or the index of another hole.
+//
+// # Why the CAD kernel is given this rather than working it out
+//
+// The kernel holds the drawing as CURVES — arcs and lines — and containment is a
+// question about polygons. It would have to flatten them again to answer it, at
+// a fineness it would have to choose, and a kernel that decided nesting
+// differently from the tessellator would export a solid that is not the one on
+// screen. So the reading is made once, here, where nestLoops already makes it
+// for the triangles, and travels with the solid.
+//
+// The same reasoning as the section frame, which is computed here and sent for
+// exactly this reason: a builder handed only the parts and asked to decide is a
+// second opinion waiting to diverge.
+func loopParents(outer [][2]float64, holes [][][2]float64) []int {
+	_, parent := nesting(append([][][2]float64{outer}, holes...))
+	out := make([]int, len(holes))
+	for i := range holes {
+		// parent indexes into a list whose element 0 is the outline; the
+		// caller's holes are numbered from 0, so shift. -1 already means "the
+		// outline", and 0-1 = -1 says the same thing.
+		out[i] = parent[i+1] - 1
+	}
+	return out
+}
+
+// region is one solid area of a section: its boundary, and the voids directly
+// inside it.
+type region struct {
+	outer [][2]float64
+	holes [][][2]float64
+}
+
+// nestLoops groups a section's loops into the solid areas they describe.
+//
+// # What this is for
+//
+// A loop inside a hole is an ISLAND: solid material standing in a void. The
+// annular slot with a post in the middle, the letter O extruded, a lug in the
+// bottom of a pocket, a spider in a casting's core. Until wave 30 it was refused
+// with "an island in a hole is a second outline, and there is no vocabulary for
+// one here" — and the vocabulary turns out to be one this document already has.
+//
+// # Why nesting is READ rather than declared
+//
+// The even-odd rule is how every format a model has seen represents this —
+// TrueType glyphs, SVG paths, DXF, shapefiles — and it is unambiguous: a loop
+// contained in an odd number of others is solid, in an even number it is a void.
+// So a new field would be a second way to say something the drawing already
+// says, and the two could then disagree.
+//
+// It is not a guess. The loops are already known not to cross (holesFit refuses
+// that before this is reached), so containment is a fact about the drawing, and
+// one point per loop settles it.
+//
+// What the reader is owed instead is to be TOLD, which profile.go does: a hole
+// inside a hole is a real mistake as well as a real shape, and the note is what
+// makes the difference visible.
+//
+// # Why arbitrary depth rather than one level
+//
+// Because the rule is the same at every depth and stopping at two would be an
+// arbitrary limit that somebody hits. A hole in an island in a hole is a
+// counterbore in a boss in a pocket, which is an ordinary machined part.
+// The loops arrive ALREADY WOUND, from sectionLoops, and that winding is trusted
+// rather than reapplied. One rule, in one place: a second copy here would be a
+// second opinion about which loops are solid, and the day the two disagreed the
+// caps would be cut from one reading and the walls faced by the other.
+func nestLoops(loops [][][2]float64) []region {
+	depth, parent := nesting(loops)
+	var out []region
+	for i := range loops {
+		if depth[i]%2 != 0 {
+			continue // a void, and it belongs to whatever contains it
+		}
+		r := region{outer: loops[i]}
+		for j := range loops {
+			if depth[j]%2 == 1 && parent[j] == i {
+				r.holes = append(r.holes, loops[j])
+			}
+		}
+		out = append(out, r)
+	}
 	return out
 }
 
@@ -174,19 +298,69 @@ type section struct {
 	OK    bool
 }
 
-// sectionLoops winds an outline counter-clockwise and every hole the other way.
+// sectionLoops winds every loop so that one wall-normal formula points out of
+// the material on all of them.
 //
-// That opposition is what makes a bore's walls face the right way for free: the
+// A solid boundary runs counter-clockwise and a void runs the other way. That
+// opposition is what makes a bore's walls face the right way for free: the
 // outward normal formula, applied to a loop running backwards, points INTO the
-// hole, which is out of the material. Neither the extrusion nor the sweep has to
-// know which loop it is walking.
+// hole, which is out of the material. Neither the extrusion, the revolve nor the
+// sweep has to know which loop it is walking.
+//
+// Which loops are solid is decided by NESTING and not by position in the list
+// (wave 30). "The first one is the outline and the rest are holes" was true
+// while a hole could not contain anything; a loop inside a hole is an island,
+// and winding it like a hole points its wall into the solid — invisible in a
+// silhouette and wrong in every file.
 func sectionLoops(outer [][2]float64, holes [][][2]float64) [][][2]float64 {
-	loops := make([][][2]float64, 0, len(holes)+1)
-	loops = append(loops, counterClockwise(outer))
-	for _, h := range holes {
-		loops = append(loops, clockwise(h))
+	loops := append([][][2]float64{outer}, holes...)
+	depth, _ := nesting(loops)
+	out := make([][][2]float64, len(loops))
+	for i, loop := range loops {
+		if depth[i]%2 == 0 {
+			out[i] = counterClockwise(loop)
+		} else {
+			out[i] = clockwise(loop)
+		}
 	}
-	return loops
+	return out
+}
+
+// nesting reports how many loops contain each one, and which contains it most
+// directly.
+//
+// Containment is a fact rather than a guess: the loops are already known not to
+// cross — holesFit refuses that before any of this is reached — so one point per
+// loop settles it.
+func nesting(loops [][][2]float64) (depth []int, parent []int) {
+	depth = make([]int, len(loops))
+	parent = make([]int, len(loops))
+	for i := range loops {
+		if len(loops[i]) == 0 {
+			continue
+		}
+		for j := range loops {
+			if i != j && len(loops[j]) > 0 && insideLoop(loops[i][0], loops[j]) {
+				depth[i]++
+			}
+		}
+	}
+	for i := range loops {
+		best := -1
+		for j := range loops {
+			if i == j || len(loops[j]) == 0 || len(loops[i]) == 0 {
+				continue
+			}
+			if !insideLoop(loops[i][0], loops[j]) {
+				continue
+			}
+			if best < 0 || depth[j] > depth[best] {
+				best = j
+			}
+		}
+		parent[i] = best
+	}
+	return depth, parent
 }
 
 // counterClockwise and clockwise return the loop wound the stated way, reversing

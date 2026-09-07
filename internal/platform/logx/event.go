@@ -98,12 +98,17 @@ const (
 	EventLLMEmptyResponse Event = "forge.llm.empty_response"
 	EventLLMUsageMissing  Event = "forge.llm.usage_missing"
 	EventLLMRefused       Event = "forge.llm.refused"
+	// EventLLMDeliberating: a role that must answer inside a person's pause is
+	// running against an endpoint with no way to stop the model thinking out
+	// loud first. Warned once per process — see internal/llm/deliberation.go.
+	EventLLMDeliberating Event = "forge.llm.deliberating"
 )
 
 func init() {
 	allEvents = append(allEvents,
 		EventLLMCompleted, EventLLMRetrying, EventLLMTruncated,
 		EventLLMEmptyResponse, EventLLMUsageMissing, EventLLMRefused,
+		EventLLMDeliberating,
 	)
 }
 

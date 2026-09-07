@@ -75,6 +75,53 @@ type Turn struct {
 	// image is an input to one turn (PRD VIS-01) and there is nowhere to put one.
 	Images int
 	SaidAt time.Time
+	// Timing is what this turn cost, when it was measured. Nil means it was
+	// NOT measured, which is a different fact from "it was instant" — see
+	// Timing's own comment, and migration 0022.
+	Timing *Timing
+}
+
+// Timing is the server's measurement of one FORGE turn (PRD NFR-05, AUD-02).
+//
+// # Why every field is a pointer
+//
+// Because "not measured" has to survive the trip. A turn that produced no speech
+// has no time-to-first-token; a turn recorded before this existed has none of
+// these at all. Zero is the wrong stand-in for any of them: the panel that reads
+// these renders a missing measurement as an em dash and a reason precisely
+// because zero is a number a reader takes as "instant", and a metric nobody
+// collected looks best of all when drawn as one.
+//
+// # Why the two durations are both here
+//
+// FirstTokenMS and TotalMS are the model's part. RoundTripMS is the handler's,
+// measured outside the model call, and the difference between it and TotalMS is
+// this system's own overhead. Averaged into one "latency" they would answer
+// neither question — the same reason the panel keeps the server's clock and the
+// browser's clock in separate columns.
+type Timing struct {
+	// Model is which model answered. NFR-05 names model selection.
+	Model string
+	// FirstTokenMS is request-in to first speech token out, server clock.
+	FirstTokenMS *int
+	// TotalMS is the whole turn including the structured tail, server clock.
+	TotalMS *int
+	// RoundTripMS is what the handler took end to end.
+	RoundTripMS *int
+	// Tokens is what the provider reported for the turn.
+	Tokens *int64
+}
+
+// Measured reports whether this timing carries anything at all.
+//
+// A Timing with every field nil is not a measurement of a fast turn; it is the
+// absence of one, and it is not written.
+func (t *Timing) Measured() bool {
+	if t == nil {
+		return false
+	}
+	return t.Model != "" || t.FirstTokenMS != nil || t.TotalMS != nil ||
+		t.RoundTripMS != nil || t.Tokens != nil
 }
 
 // Validate refuses a turn the record could not honestly hold.
@@ -112,5 +159,60 @@ func (t *Turn) Validate() error {
 		return errs.New(op, errs.CodeValidationFailed).
 			WithDetail("a turn cannot have attached %d images", t.Images)
 	}
+	// A human turn is not timed: there is no model call behind it, and a figure
+	// there would be a measurement of nothing attributed to a person. Mirrors
+	// the schema's own check for the reason the rest of this function exists —
+	// so the caller gets a sentence rather than a constraint name.
+	if t.Role == RoleHuman && t.Timing.Measured() {
+		return errs.New(op, errs.CodeValidationFailed).
+			WithDetail("a human turn carries a model timing. Nothing was asked of a model " +
+				"to produce it, so there is nothing here that was measured")
+	}
+	for _, d := range []struct {
+		name string
+		val  *int
+	}{{"time to first token", t.Timing.first()}, {"total time", t.Timing.total()},
+		{"round trip", t.Timing.roundTrip()}} {
+		if d.val != nil && *d.val < 0 {
+			return errs.New(op, errs.CodeValidationFailed).
+				WithDetail("this turn's %s is %d ms. A negative duration is a clock that went "+
+					"backwards, and stored it would drag every median somewhere no measurement "+
+					"can be", d.name, *d.val)
+		}
+	}
+	if t.Timing != nil && t.Timing.Tokens != nil && *t.Timing.Tokens < 0 {
+		return errs.New(op, errs.CodeValidationFailed).
+			WithDetail("this turn reports %d tokens", *t.Timing.Tokens)
+	}
 	return nil
+}
+
+// The three accessors below exist so Validate can loop rather than repeat
+// itself, and so a nil Timing reads as "nothing measured" in one place.
+func (t *Timing) first() *int {
+	if t == nil {
+		return nil
+	}
+	return t.FirstTokenMS
+}
+
+func (t *Timing) total() *int {
+	if t == nil {
+		return nil
+	}
+	return t.TotalMS
+}
+
+func (t *Timing) roundTrip() *int {
+	if t == nil {
+		return nil
+	}
+	return t.RoundTripMS
+}
+
+func (t *Timing) tokens() *int64 {
+	if t == nil {
+		return nil
+	}
+	return t.Tokens
 }

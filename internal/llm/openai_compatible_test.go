@@ -183,9 +183,15 @@ func TestRetryClassification(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(http.StatusText(tc.status), func(t *testing.T) {
+			// Counted per COMPLETION, not per request. A 404 also asks the
+			// endpoint what it does serve, so that the operator is told the way
+			// out (see servedModels) — and counting every request would read
+			// that one diagnostic GET as a retry of a permanent failure.
 			var calls atomic.Int64
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				calls.Add(1)
+				if r.URL.Path == "/chat/completions" {
+					calls.Add(1)
+				}
 				w.WriteHeader(tc.status)
 				_, _ = w.Write([]byte(`{"error":{"message":"upstream said no"}}`))
 			}))

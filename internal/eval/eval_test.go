@@ -380,8 +380,16 @@ func TestCases_EveryCaseIsTraceableAndScored(t *testing.T) {
 		if len(strings.Fields(c.Why)) < 8 {
 			t.Errorf("%s: Why is too thin to trace to a real failure: %q", c.ID, c.Why)
 		}
-		if len(c.Turns) == 0 {
-			t.Errorf("%s: has no turns", c.ID)
+		// A case says something to the model: turns for a conversation case, a
+		// goal for a planner one. Neither is a case that costs a model call and
+		// measures nothing.
+		if len(c.Turns) == 0 && c.Goal == nil {
+			t.Errorf("%s: has neither turns nor a goal, so there is nothing to run", c.ID)
+		}
+		if len(c.Turns) > 0 && c.Goal != nil {
+			t.Errorf("%s: has both turns and a goal. A case is answered by the conversation "+
+				"or by the planner; running both would score two different things under one id",
+				c.ID)
 		}
 		if len(c.Scorers) == 0 {
 			t.Errorf("%s: has no scorers, so it costs a model call and measures nothing", c.ID)
@@ -674,10 +682,39 @@ func isSharedHonestyScorer(name string) bool {
 // sometimes the right answer, and a floor would sit red until somebody lowered
 // it to make the red go away. What the case DOES require is the same thing every
 // physical proposal requires: that what was drawn can be built.
+//
+// # Why PLANNER cases are exempt from the second half
+//
+// The "at least one floored scorer" rule below is really "the case must be able
+// to fail", and it was implemented as "carries a shared honesty scorer" because
+// every case was a conversation and those two scorers apply to any reply. A
+// planner case has no speech and names no standards, so requiring one would
+// force it to carry a scorer that measures nothing.
+//
+// What a planner case must carry instead is a floor set from a MEASUREMENT, and
+// until wave 32 had run there was none. The exemption is therefore narrow and
+// temporary in intent: it is written as "a planner case must still carry at
+// least one scorer that can fail" and the floors it carries came from the
+// 2026-09-07 run recorded in the implementation plan.
 func TestCapabilityRatesAreTrackedAndOnlyTheRequirementsAreFloored(t *testing.T) {
 	seen := 0
 	for _, c := range Cases() {
 		if c.Kind != KindCapability {
+			continue
+		}
+		if c.Goal != nil {
+			// A planner case: it must still be able to fail, but its floored
+			// scorer is its own rather than one of the conversation's.
+			canFail := false
+			for _, s := range c.Scorers {
+				if !s.Tracked {
+					canFail = true
+				}
+			}
+			if !canFail {
+				t.Errorf("%s: every scorer is tracked, so the planner case can never fail. "+
+					"Whatever the model planned, FORGE still has to be willing to run it", c.ID)
+			}
 			continue
 		}
 		seen++

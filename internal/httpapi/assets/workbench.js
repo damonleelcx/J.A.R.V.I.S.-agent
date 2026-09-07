@@ -1502,6 +1502,20 @@
           renderProvenance();
           break;
 
+        case 'notice':
+          /* Something about the reply was READ rather than received — today
+           * only one thing: an expression the model wrote where a number was
+           * expected, which used to discard the entire document. Shown in the
+           * bubble, in the warning gold this interface already uses for
+           * "quoted from memory, not checked", because it is the same kind of
+           * statement: what you are looking at is not exactly what arrived. */
+          var n = document.createElement('div');
+          n.className = 'detail';
+          n.style.color = 'var(--warn)';
+          n.textContent = ev.text;
+          bubble.appendChild(n);
+          break;
+
         case 'error':
           turn.failed = true;
           var e = document.createElement('div');

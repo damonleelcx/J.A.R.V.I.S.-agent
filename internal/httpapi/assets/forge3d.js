@@ -240,8 +240,25 @@
    * arrived — 'extrusion' and 'revolve' were drawn correctly and named nowhere,
    * which makes a list called "supported shapes" say the opposite of the truth
    * about three of them. */
-  var SUPPORTED = ['box', 'cylinder', 'cone', 'sphere', 'plane', 'tube',
+  var SUPPORTED = ['box', 'cylinder', 'cone', 'sphere', 'plane',
                    'extrusion', 'revolve', 'sweep'];
+
+  /* Shape words the document vocabulary no longer offers, and what a document
+   * that already uses one is read as. The browser's copy of the table in
+   * internal/domain/geometry/retired.go — kept in step by a fence, because a
+   * word that resolves one way here and another in the exported file is the
+   * defect the tessellation fences exist to prevent.
+   *
+   * `tube` never modelled a bore and never could: its size keys are radius and
+   * height, so the document had nowhere to say a wall thickness. It resolves to
+   * what it always was, and says so. See retired.go for the full reasoning. */
+  var RETIRED = {
+    tube: {
+      as: 'cylinder',
+      because: 'drawn as a solid cylinder, which is what a "tube" has always been here — ' +
+               'it has no inner dimension, so no bore was ever stated'
+    }
+  };
 
   /* buildGeometry returns { geo, approximated }.
    *
@@ -414,30 +431,93 @@
     return loops;
   }
 
-  /* { merged, tris, loops } — the caps index into merged, the walls walk loops. */
+  /* Which loop directly contains each one, and how deep it sits.
+   *
+   * A loop inside a hole is an ISLAND: solid material standing in a void — the
+   * post in an annular slot, the bar of a letter A, a lug in the bottom of a
+   * pocket. A loop contained in an odd number of others is a void; in an even
+   * number, solid. Go reads it the same way in nestLoops, and sends the same
+   * tree to the CAD kernel, which cannot work it out from curves.
+   *
+   * Ordinarily every hole is directly inside the outline and this is the answer
+   * it always was. */
+  function nest2D(loops) {
+    var depth = [], parent = [], i, j;
+    for (i = 0; i < loops.length; i++) {
+      depth[i] = 0;
+      for (j = 0; j < loops.length; j++) {
+        if (i !== j && loops[j].length && loops[i].length &&
+            insideLoop2D(loops[i][0], loops[j])) depth[i]++;
+      }
+    }
+    for (i = 0; i < loops.length; i++) {
+      var best = -1;
+      for (j = 0; j < loops.length; j++) {
+        if (i === j || !loops[j].length || !loops[i].length) continue;
+        if (!insideLoop2D(loops[i][0], loops[j])) continue;
+        if (best < 0 || depth[j] > depth[best]) best = j;
+      }
+      parent[i] = best;
+    }
+    return { depth: depth, parent: parent };
+  }
+
+  /* { merged, tris, loops } — the caps index into merged, the walls walk loops.
+   *
+   * merged is the CONCATENATION of one bridged ring per solid area, and the
+   * triangles are offset into it, so a section with an island still hands the
+   * extrusion, the revolve and the sweep one point list and one triangle list.
+   * Go does the same, for the same reason: those three are fenced against this
+   * file and neither should have to learn about nesting. */
   function triangulateSection(outer, holes) {
-    var loops = sectionLoops2D(outer, holes || []);
-    if (!holes || !holes.length) {
-      var clipped = earClip(outer);
+    holes = holes || [];
+    if (!holes.length) {
+      var clipped = earClip(signedArea2D(outer) >= 0 ? outer : outer.slice().reverse());
       return { merged: clipped.pts, tris: clipped.tris, loops: [clipped.pts] };
     }
-    var merged = loops[0].slice(), remaining = loops.slice(1);
-    while (remaining.length) {
-      var best = 0, i;
-      for (i = 1; i < remaining.length; i++) {
-        if (rightmostX2D(remaining[i]) > rightmostX2D(remaining[best])) best = i;
+    var raw = [outer].concat(holes);
+    var tree = nest2D(raw);
+    /* Wound by PARITY, not by position: an island's wall must face out of the
+     * material like the outline's, and winding everything after the first one
+     * clockwise would point it into the solid. */
+    var wound = raw.map(function (loop, i) {
+      var ccw = signedArea2D(loop) >= 0;
+      var wantCCW = tree.depth[i] % 2 === 0;
+      return ccw === wantCCW ? loop : loop.slice().reverse();
+    });
+
+    var merged = [], tris = [], i;
+    for (i = 0; i < wound.length; i++) {
+      if (tree.depth[i] % 2 !== 0) continue;          /* a void, not an area */
+      var inner = [];
+      for (var j = 0; j < wound.length; j++) {
+        if (tree.depth[j] % 2 === 1 && tree.parent[j] === i) inner.push(wound[j]);
       }
-      var hole = remaining[best];
-      remaining = remaining.slice(0, best).concat(remaining.slice(best + 1));
-      var spliced = bridgeInto(merged, hole, remaining);
-      if (!spliced) return { merged: loops[0], tris: [], loops: loops };
-      merged = spliced;
+      var ring = wound[i].slice(), remaining = inner.slice();
+      var failed = false;
+      while (remaining.length) {
+        var best = 0, k;
+        for (k = 1; k < remaining.length; k++) {
+          if (rightmostX2D(remaining[k]) > rightmostX2D(remaining[best])) best = k;
+        }
+        var hole = remaining[best];
+        remaining = remaining.slice(0, best).concat(remaining.slice(best + 1));
+        var spliced = bridgeInto(ring, hole, remaining);
+        if (!spliced) { failed = true; break; }
+        ring = spliced;
+      }
+      if (failed) return { merged: wound[0], tris: [], loops: wound };
+      /* earClip returns the points its triangles index INTO — it may reorder
+       * them — so the ring comes back from it rather than being kept
+       * separately. That is the same trap the caps-and-walls bug came from. */
+      var done = earClip(ring);
+      var base = merged.length;
+      merged = merged.concat(done.pts);
+      for (k = 0; k < done.tris.length; k++) {
+        tris.push([done.tris[k][0] + base, done.tris[k][1] + base, done.tris[k][2] + base]);
+      }
     }
-    /* earClip returns the points its triangles index INTO — it may reorder them
-     * — so the merged ring comes back from it rather than being kept separately.
-     * That is the same trap the caps-and-walls bug came from. */
-    var done = earClip(merged);
-    return { merged: done.pts, tris: done.tris, loops: loops };
+    return { merged: merged, tris: tris, loops: wound };
   }
 
   /* Returns { pts, tris } — the points in the order the triangles index into,
@@ -525,9 +605,15 @@
       if (Math.abs(num(a0.x,0)-num(z0.x,0)) < 1e-12 && Math.abs(num(a0.y,0)-num(z0.y,0)) < 1e-12 &&
           Math.abs(num(a0.z,0)-num(z0.z,0)) < 1e-12) {
         points.pop();
-        if (!num(a0.radius, 0) && num(z0.radius, 0)) {
-          points[0] = { x: num(a0.x,0), y: num(a0.y,0), z: num(a0.z,0), radius: num(z0.radius,0) };
-        }
+        /* The VIA moves with it too, and with a cleaner argument than the
+         * radius: a via on the repeated point describes the edge ARRIVING at
+         * it, which once the duplicate is gone is exactly the closing edge —
+         * entry 0. Same edge, renumbered. Leaving it behind draws a bowed edge
+         * straight, which is a different outline of the same overall size. */
+        var keepR = num(a0.radius, 0) || num(z0.radius, 0);
+        var keepV = z0.via || a0.via;
+        points[0] = { x: num(a0.x,0), y: num(a0.y,0), z: num(a0.z,0),
+                      radius: keepR, via: keepV };
       }
     }
     var n = points.length;
@@ -547,10 +633,51 @@
     function unit(a) { var l = len(a); return l ? mul(a, 1/l) : [0,0,0]; }
 
     var TOL = 1e-9, corners = [], i;
+
+    /* ---- bowed edges -----------------------------------------------------
+     *
+     * A point may carry a `via`: one more point, and the edge ARRIVING at it is
+     * the circular arc through it. Three points fix a circle completely, which
+     * a radius and two endpoints do not — see internal/domain/geometry/curve.go
+     * for the measurement that settled that, and for why an arc edge always has
+     * SHARP ends. Entry 0 is the closing edge of a closed run. */
+    function arcAt(i2) {
+      var p = points[((i2 % n) + n) % n];
+      if (!p.via) return null;
+      if (!closed && i2 === 0) return null;
+      var from = at(i2 - 1), to = at(i2);
+      var via = [num(p.via.x, 0), num(p.via.y, 0), num(p.via.z, 0)];
+      var u = sub(via, from), v = sub(to, from), nrm = crs(u, v);
+      var nn = dot(nrm, nrm);
+      if (nn < TOL * TOL) return null;               /* in line: no circle */
+      var centre = add(from, mul(add(mul(crs(v, nrm), dot(u, u)),
+                                     mul(crs(nrm, u), dot(v, v))), 1 / (2 * nn)));
+      var a = sub(from, centre), rad = len(a);
+      if (rad < TOL) return null;
+      var axis = unit(nrm);
+      function sweepTo(p2) {
+        var d = sub(p2, centre);
+        var t = Math.atan2(dot(axis, crs(a, d)), dot(a, d));
+        return t < 0 ? t + 2 * Math.PI : t;
+      }
+      var toA = sweepTo(to), viaA = sweepTo(via);
+      if (toA < TOL || viaA < TOL || Math.abs(toA - viaA) < TOL) return null;
+      /* Which way round: the arc is the one that PASSES THROUGH the via. */
+      if (viaA < toA) return { centre: centre, axis: axis, angle: toA, from: from };
+      return { centre: centre, axis: mul(axis, -1), angle: 2 * Math.PI - toA, from: from };
+    }
+    var arcs = [];
+    for (i = 0; i < n; i++) arcs.push(arcAt(i));
+
     for (i = 0; i < n; i++) {
       var r = num(points[i].radius, 0);
       var interior = closed || (i > 0 && i < n - 1);
       if (!(r > 0) || !interior) { corners.push(null); continue; }
+      /* A vertex with an arc on either side is SHARP. Rounding an arc into an
+       * arc is a fillet between two curves, and the construction below — which
+       * walks back r·tan(θ/2) along a straight — has no answer for it. Go takes
+       * the same reading and reports it as an ignored radius. */
+      if (arcs[i] || arcs[(i + 1) % n]) { corners.push(null); continue; }
       var dIn = sub(at(i), at(i-1)), dOut = sub(at(i+1), at(i));
       if (len(dIn) < TOL || len(dOut) < TOL) return null;
       dIn = unit(dIn); dOut = unit(dOut);
@@ -585,8 +712,25 @@
           Math.abs(back[2]-p[2]) < 1e-12) return;
       out.push(p);
     }
+    /* One bowed edge, stepped at the same fineness a corner arc gets. Safe to
+     * emit whole, with no trimming, because an arc edge always has sharp ends. */
+    function bow(i2) {
+      var a2 = arcs[i2];
+      if (!a2) return;
+      var steps2 = Math.max(1, Math.ceil(TESSELLATION.radial * a2.angle / (2 * Math.PI)));
+      var spoke2 = sub(a2.from, a2.centre);
+      for (var k3 = 0; k3 <= steps2; k3++) {
+        var t2 = a2.angle * k3 / steps2, c2 = Math.cos(t2), s2 = Math.sin(t2);
+        push(add(a2.centre, add(add(mul(spoke2, c2), mul(crs(a2.axis, spoke2), s2)),
+                                mul(a2.axis, dot(a2.axis, spoke2) * (1 - c2)))));
+      }
+    }
     var seam = 0;   /* how many points the first corner contributed */
     for (i = 0; i < n; i++) {
+      /* The edge ARRIVING here, before the corner itself. Index 0's arriving
+       * edge is the closing one and is emitted at the end, where a closed run
+       * actually reaches it. */
+      if (i > 0) bow(i);
       var c = corners[i];
       if (!c) {
         push(at(i));
@@ -604,6 +748,7 @@
       }
       if (i === 0) seam = out.length;
     }
+    if (closed) bow(0);
     if (closed && out.length > 1) {
       var a = out[0], b = out[out.length - 1];
       if (Math.abs(a[0]-b[0]) < 1e-12 && Math.abs(a[1]-b[1]) < 1e-12 &&
@@ -985,8 +1130,22 @@
   }
 
   function buildGeometry(part) {
+    /* A retired word is resolved before anything is drawn, and the note travels
+     * on `approximated` — the same channel every other substitution uses, which
+     * is what puts it in the provenance banner rather than nowhere. */
+    var retired = RETIRED[part.shape];
+    var built = buildResolved(retired ? retired.as : part.shape, part);
+    if (retired) built.approximated = retired.because;
+    return built;
+  }
+
+  /* The shape actually drawn, given the word after retirement is applied. Split
+   * out so there is ONE switch: a second one for retired words would be a second
+   * place to add a case to, and the case somebody forgot would draw a bounding
+   * box with no note. */
+  function buildResolved(shape, part) {
     var s = part.size || {};
-    switch (part.shape) {
+    switch (shape) {
       case 'box':      return { geo: boxGeometry(num(s.width,1), num(s.height,1), num(s.depth,1)) };
       case 'cylinder': return { geo: cylinderGeometry(num(s.radius,0.5), num(s.height,1), TESSELLATION.radial, num(s.radius_top, num(s.radius,0.5))) };
       case 'cone':     return { geo: cylinderGeometry(num(s.radius,0.5), num(s.height,1), TESSELLATION.radial, 0) };
@@ -995,14 +1154,6 @@
       case 'extrusion': return extrusionGeometry(part.profile || [], num(s.depth, 1), part.holes);
       case 'revolve':   return revolveGeometry(part.profile || [], part.axis, part.holes);
       case 'sweep':     return sweepGeometry(part.profile || [], part.path || [], part.holes, part.path_closed);
-      case 'tube':
-        /* A tube is drawn as its outer wall. The bore is not modelled, and that
-         * is reported: an inner diameter that is not there is exactly the kind
-         * of thing a render must not imply. */
-        return {
-          geo: cylinderGeometry(num(s.radius,0.5), num(s.height,1), TESSELLATION.radial, num(s.radius,0.5)),
-          approximated: 'drawn as a solid cylinder — the bore is not modelled'
-        };
       default:
         return {
           geo: boxGeometry(num(s.width,1), num(s.height,1), num(s.depth,1)),
@@ -1858,6 +2009,26 @@
 
   global.Forge3D = {
     supportedShapes: SUPPORTED,
+    /* Exported so a Go fence can read it. The browser and the exporter each
+     * hold a copy of the retirement table, and the failure they guard against
+     * is the two disagreeing about what a retired word means — which a test
+     * cannot see unless it can read both. */
+    retiredShapes: RETIRED,
+    /* Exported for the same reason: the fence drives the real dispatch rather
+     * than a re-implementation of it, so a retired word that stopped resolving
+     * would be caught where it actually happens. */
+    buildGeometry: buildGeometry,
+    /* The corner and arc arithmetic, which is the one thing in this file whose
+     * ANSWER has to be identical to Go's rather than merely equivalent.
+     *
+     * The triangulation does not: two ear-clippings of the same polygon are the
+     * same planar surface, and a fence comparing facets over a strongly concave
+     * cap asserts an implementation detail that has no observable consequence.
+     * Measured 2026-09-06 — the two implementations agree on every outline
+     * tried and disagree on a crescent, with identical outlines and identical
+     * solids. The DRAWING is what must match, so the drawing is what is
+     * exported for comparison. */
+    flattenDrawing: flattenDrawing,
     Studio: Studio,
     geometry: {
       box: boxGeometry, cylinder: cylinderGeometry,

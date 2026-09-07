@@ -175,6 +175,15 @@ func (c *Conversation) RespondStream(
 				return err
 			}
 		}
+		// What was READ rather than received. Rare, and it has to reach the
+		// screen when it happens: the document in front of the person is then
+		// not byte-for-byte the one the model produced, and everything else here
+		// that substitutes something says so where they can see it.
+		if reply.Repaired != "" {
+			if err := emit(StreamEvent{Kind: "notice", Text: reply.Repaired}); err != nil {
+				return err
+			}
+		}
 		return emit(StreamEvent{Kind: "done", TotalMS: reply.LatencyMS, Model: reply.Model,
 			Tokens: reply.Usage.TotalTokens})
 	}
@@ -287,6 +296,15 @@ func (c *Conversation) RespondStream(
 		}
 		if len(reply.Claims) > 0 {
 			if err := emit(StreamEvent{Kind: "claims", Claims: reply.Claims}); err != nil {
+				return err
+			}
+		}
+		// What was READ rather than received. Rare, and it has to reach the
+		// screen when it happens: the document in front of the person is then
+		// not byte-for-byte the one the model produced, and everything else here
+		// that substitutes something says so where they can see it.
+		if reply.Repaired != "" {
+			if err := emit(StreamEvent{Kind: "notice", Text: reply.Repaired}); err != nil {
 				return err
 			}
 		}

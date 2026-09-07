@@ -81,8 +81,12 @@ FILES=(
   internal/domain/geometry/overlay.go
   internal/domain/geometry/profile.go
   internal/domain/geometry/solid.go
+  internal/domain/geometry/retired.go
   internal/httpapi/assets/forge3d.js
   internal/domain/cad/sidecar.py
+  internal/llm/deliberation.go
+  internal/llm/stream.go
+  internal/llm/openai_compatible.go
 )
 
 BACKUP=""
@@ -243,6 +247,88 @@ drill "the kernel builds a straight line where an arc was sent" internal/domain/
   ./internal/domain/cad 'TestKernel_ARoundedCornerIsARealArc'
 
 echo
+echo "Arcs that are not tangent to their neighbours"
+drill "the arc goes the other way round" internal/domain/geometry/curve.go \
+  's = s.replace("\tif viaAngle < toAngle {\n\t\treturn centre, unit, radius, toAngle, true\n\t}", "\tif viaAngle >= toAngle {\n\t\treturn centre, unit, radius, toAngle, true\n\t}", 1)' \
+  ./internal/domain/geometry 'TestArcThrough_ResolvesACircleFromThreePoints|TestABowedEdgeLeavesItsChord'
+
+drill "a via is ignored entirely" internal/domain/geometry/curve.go \
+  's = s.replace("\t\tif via == nil {\n\t\t\tcontinue\n\t\t}", "\t\tif true {\n\t\t\tcontinue\n\t\t}", 1)' \
+  ./internal/domain/geometry 'TestABowedEdgeLeavesItsChord|TestACrescentIsExpressible'
+
+drill "the kernel is sent a chord where an arc was drawn" internal/domain/geometry/curve.go \
+  's = s.replace("\t\tif a := arcs[i]; a != nil {", "\t\tif a := arcs[i]; false {", 1)' \
+  ./internal/domain/cad 'TestKernel_ABowedEdgeIsARealArc'
+
+drill "a corner beside an arc is rounded after all" internal/domain/geometry/curve.go \
+  's = s.replace("\t\tif bowed(arcs, i) || bowed(arcs, (i+1)%n) {", "\t\tif false {", 1)' \
+  ./internal/domain/geometry 'TestARadiusBesideAnArcIsIgnoredRatherThanFatal'
+
+drill "the closing duplicate drops its via" internal/domain/geometry/curve.go \
+  's = s.replace("\tif n-1 < len(vias) && vias[n-1] != nil && len(outVias) > 0 {", "\tif false {", 1)' \
+  ./internal/domain/geometry 'TestAClosingDuplicateCarriesItsVia'
+
+drill "a via is left in the document unit" internal/domain/geometry/curve.go \
+  's = s.replace("\t\tscaled := scale3(*v, toMM)", "\t\tscaled := *v", 1)' \
+  ./internal/domain/geometry 'TestAViaIsConvertedWithItsDrawing'
+
+drill "an arc that crosses another edge is not noticed" internal/domain/geometry/profile.go \
+  's = s.replace("\t\tif outer.bows() {", "\t\tif false {", 1)' \
+  ./internal/domain/geometry 'TestAnArcThatCrossesAnotherEdgeIsRefused'
+
+drill "the renderer steps its bows at a different fineness" internal/httpapi/assets/forge3d.js \
+  "s = s.replace('var steps2 = Math.max(1, Math.ceil(TESSELLATION.radial * a2.angle / (2 * Math.PI)));', 'var steps2 = Math.max(1, Math.ceil(TESSELLATION.radial * a2.angle / (3 * Math.PI)));', 1)" \
+  ./internal/httpapi 'TestRendererBowsTheSameOutlineAsTheExporter'
+
+drill "the renderer bows the other way round" internal/httpapi/assets/forge3d.js \
+  "s = s.replace('if (viaA < toA) return { centre: centre, axis: axis, angle: toA, from: from };', 'if (viaA >= toA) return { centre: centre, axis: axis, angle: toA, from: from };', 1)" \
+  ./internal/httpapi 'TestRendererBowsTheSameOutlineAsTheExporter'
+
+echo
+echo "Retired shape words"
+drill "a retired word resolves to nothing" internal/domain/geometry/retired.go \
+  's = s.replace("\tr, ok := retiredShapes[shape]", "\tr, ok := retirement{}, false\n\t_ = retiredShapes", 1)' \
+  ./internal/domain/geometry 'TestARetiredShapeStillDraws|TestTheKernelIsSentTheResolvedWord'
+
+drill "a retired word resolves silently" internal/domain/geometry/retired.go \
+  's = s.replace("\treturn r.As, fmt.Sprintf(r.Because, label, shape)", "\treturn r.As, \"\"", 1)' \
+  ./internal/domain/geometry 'TestARetiredShapeSaysWhatItWasReadAs'
+
+drill "the renderer does not retire what Go retires" internal/httpapi/assets/forge3d.js \
+  "s = s.replace('var RETIRED = {', 'var RETIRED = {}; var UNUSED_RETIRED = {', 1)" \
+  ./internal/httpapi 'TestTheRendererRetiresTheSameShapeWords'
+
+echo
+echo "Islands"
+drill "an island is cut away with its hole" internal/domain/geometry/triangulate.go \
+  's = s.replace("\t\tif depth[i]%2 != 0 {\n\t\t\tcontinue // a void, and it belongs to whatever contains it\n\t\t}", "\t\tif i != 0 {\n\t\t\tcontinue\n\t\t}", 1)' \
+  ./internal/domain/geometry 'TestAnIslandIsSolidInTheMesh|TestNestingKeepsGoing'
+
+drill "the nesting parity is ignored, so every loop after the first is a hole" internal/domain/geometry/triangulate.go \
+  's = s.replace("\t\tif depth[i]%2 == 0 {\n\t\t\tout[i] = counterClockwise(loop)", "\t\tif i == 0 {\n\t\t\tout[i] = counterClockwise(loop)", 1)' \
+  ./internal/domain/geometry 'TestAnIslandsWallFacesOutOfTheMaterial|TestAnIslandIsSolidInTheMesh'
+
+drill "the kernel is not told which loop is an island" internal/domain/geometry/solid.go \
+  's = s.replace("\t\t\t\t\t\t\tholeParents = parents", "\t\t\t\t\t\t\t_ = parents", 1)' \
+  ./internal/domain/geometry 'TestTheKernelIsToldWhichLoopIsAnIsland'
+
+drill "the kernel treats an island as a second hole" internal/domain/cad/sidecar.py \
+  "s = s.replace('        if depth(i) % 2 == 0:', '        if False:', 1)" \
+  ./internal/domain/cad 'TestKernel_AnIslandInAHoleIsSolid'
+
+drill "an island is read but never mentioned" internal/domain/geometry/profile.go \
+  's = s.replace("\t\tnote(label, islandNotes(flatHoles)...)", "", 1)' \
+  ./internal/domain/geometry 'TestAnIslandIsReportedAsOne'
+
+drill "the renderer draws an island as a hole" internal/httpapi/assets/forge3d.js \
+  "s = s.replace('      if (tree.depth[i] % 2 !== 0) continue;          /* a void, not an area */', '      if (i !== 0) continue;', 1)" \
+  ./internal/httpapi 'TestRendererNestsTheSameSectionAsTheExporter'
+
+drill "the mesh export says nothing about the features it did not perform" internal/domain/geometry/mesh.go \
+  's = s.replace("\tfor _, f := range doc.Features {", "\tfor _, f := range []Feature(nil) {\n\t\t_ = f\n\t}\n\tfor _, f := range []Feature(nil) {", 1)' \
+  ./internal/domain/geometry 'TestAMeshSaysWhichFeaturesItDidNotPerform'
+
+echo
 echo "The Go tessellator"
 drill "the sweep case is gone from partTriangles" internal/domain/geometry/mesh.go \
   's = s.replace("\tcase \"sweep\":\n", "\tcase \"sweep-disabled\":\n", 1)' \
@@ -275,7 +361,7 @@ drill "holes are dropped from the section entirely" internal/domain/geometry/cur
   ./internal/domain/geometry 'TestExtrusion_AHoleTakesMaterialOut|TestSwept_ABentTubeIsHollowAllTheWayRound'
 
 drill "a hole is wound the same way as the outline" internal/domain/geometry/triangulate.go \
-  's = s.replace("loops = append(loops, clockwise(h))", "loops = append(loops, counterClockwise(h))", 1)' \
+  's = s.replace("\t\t\tout[i] = clockwise(loop)", "\t\t\tout[i] = counterClockwise(loop)", 1)' \
   ./internal/domain/geometry 'TestExtrusion_AHoleTakesMaterialOut'
 
 drill "the walls are built over the merged ring, bridges and all" internal/domain/geometry/mesh.go \
@@ -287,7 +373,7 @@ drill "a hole is not checked against the outline it sits in" internal/domain/geo
   ./internal/domain/geometry 'TestProfileProblems_RefusesHolesThatAreNotHoles|TestProfileProblems_AHoleMustFitTheROUNDEDOutline'
 
 drill "the kernel builds the outline and ignores its holes" internal/domain/cad/sidecar.py \
-  "s = s.replace('return Face(outer, [_wire(h) for h in holes])', 'return make_face(outer)', 1)" \
+  "s = s.replace('    return Face(outer_wire, [_wire(h) if isinstance(h, dict) else h for h in inner_loops])', '    return make_face(outer_wire)', 1)" \
   ./internal/domain/cad 'TestKernel_ABentTubeIsHollowRoundTheCorner'
 
 drill "the renderer draws the outline and ignores its holes" internal/httpapi/assets/forge3d.js \
@@ -311,7 +397,7 @@ drill "the closing point's radius is dropped with the point" internal/domain/geo
   ./internal/domain/geometry 'TestSolids_TheClosingPointsRadiusSurvivesIntoTheBuild|TestWithoutClosingDuplicate'
 
 drill "two different radii on one corner are merged silently" internal/domain/geometry/curve.go \
-  's = s.replace("\tcase outRadii[0] != closing:\n\t\treturn pts, radii, false, true", "\tcase false:\n\t\treturn pts, radii, false, true", 1)' \
+  's = s.replace("\tcase outRadii[0] != closing:\n\t\treturn pts, radii, vias, false, true", "\tcase false:\n\t\treturn pts, radii, vias, false, true", 1)' \
   ./internal/domain/geometry 'TestWithoutClosingDuplicate'
 
 drill "a duplicate ANYWHERE is read as a closing convention" internal/domain/geometry/curve.go \
@@ -331,7 +417,7 @@ drill "the renderer keeps a loop's repeated closing point" internal/httpapi/asse
   ./internal/httpapi 'TestRendererSweepsTheSameSolidAsTheExporter'
 
 drill "the renderer drops the closing point's radius" internal/httpapi/assets/forge3d.js \
-  "s = s.replace('        if (!num(a0.radius, 0) && num(z0.radius, 0)) {', '        if (false) {', 1)" \
+  "s = s.replace('var keepR = num(a0.radius, 0) || num(z0.radius, 0);', 'var keepR = num(a0.radius, 0);', 1)" \
   ./internal/httpapi 'TestRendererSweepsTheSameSolidAsTheExporter'
 
 echo
@@ -401,6 +487,28 @@ drill "the renderer lights its facets from the wrong side" internal/httpapi/asse
 drill "the renderer has no sweep case" internal/httpapi/assets/forge3d.js \
   "s = s.replace(\"case 'sweep':\", \"case 'sweep-disabled':\", 1)" \
   ./internal/httpapi 'TestRendererDrawsOutlineShapes'
+
+echo
+echo "Latency and the model catalogue"
+drill "the conversation role is allowed to deliberate" internal/llm/deliberation.go \
+  's = s.replace("var latencyBound = map[Role]bool{\n\tRoleConverse: true,\n}", "var latencyBound = map[Role]bool{}", 1)' \
+  ./internal/llm 'TestTheConversationRoleIsToldNotToDeliberate|TestTheStreamingPathIsToldToo'
+
+drill "the STREAMING path forgets to say it" internal/llm/stream.go \
+  's = s.replace("\tc.applyDeliberation(ctx, req.Role, body)\n", "", 1)' \
+  ./internal/llm 'TestTheStreamingPathIsToldToo'
+
+drill "the provider extension is sent to every endpoint" internal/llm/deliberation.go \
+  's = s.replace("\tfor domain, field := range deliberationField {", "\treturn \"enable_thinking\", true\n\tfor domain, field := range deliberationField {", 1)' \
+  ./internal/llm 'TestAnUnknownEndpointIsNotSentAProviderExtension|TestWhichEndpointsUnderstandTheField'
+
+drill "the host match is a bare suffix, not a domain one" internal/llm/deliberation.go \
+  's = s.replace("if host == domain || strings.HasSuffix(host, \".\"+domain) {", "if strings.HasSuffix(host, domain) {", 1)' \
+  ./internal/llm 'TestWhichEndpointsUnderstandTheField'
+
+drill "a retired model is reported without naming the survivors" internal/llm/openai_compatible.go \
+  's = s.replace("\tserved, err := c.servedModels(ctx)", "\tserved, err := []string(nil), error(nil)\n\t_ = c.servedModels", 1)' \
+  ./internal/llm 'TestAMissingModelNamesWhatTheEndpointDoesServe'
 
 echo
 echo "The kernel"
