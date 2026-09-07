@@ -33,6 +33,20 @@ data:
   # change, this value is a promise that has to change with them.
   FORGE_DATA_BOUNDARY: "no_training"
 
+  # FORGE's voice (PRD AUD-05). Fish Audio, the same vendor and the same
+  # published voice as jobs.heros-agent.space, so the estate sounds like one
+  # product rather than three.
+  #
+  # ‼️ s2.1-pro-free is Fish's FREE backbone and its terms permit using requests
+  # to improve model quality. FORGE_DATA_BOUNDARY above states what the contract
+  # with the MODEL endpoint says and says NOTHING about this one — speech is a
+  # second egress. Chosen deliberately on 2026-09-07; switch to s2.1-pro (paid,
+  # does not train) if what FORGE says aloud must not be trained on.
+  # forged logs `tts_trains_on_input` at startup so this is never implied.
+  FORGE_TTS_PROVIDER: "fish"
+  FORGE_TTS_VOICE_ID: "df5c6c19dca944918dcbd6f1368fd02f"
+  FORGE_TTS_MODEL: "s2.1-pro-free"
+
   FORGE_LLM_BASE_URL: "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
   FORGE_LLM_PLANNER_MODEL: "qwen3.8-max"
 

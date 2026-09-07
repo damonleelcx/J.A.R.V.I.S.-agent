@@ -16,6 +16,7 @@ import (
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/persona"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/errs"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/logx"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/tts"
 )
 
 // The shared session over HTTP (PRD COL-01).
@@ -96,9 +97,43 @@ func NewRoomHandlers(d Deps) *RoomHandlers {
 			d.Log.Warn(context.Background(), logx.EventMediaRefused,
 				"reason", "transcription is enabled but no model client is configured; room audio will not be written down")
 		}
+		// FORGE's voice. Two implementations satisfy media.Speaker and the
+		// deployment chooses between them:
+		//
+		//   - a configured speech vendor (FORGE_TTS_PROVIDER), which is how her
+		//     timbre matches the other products in this estate; or
+		//   - the model client itself, which synthesises through the same
+		//     endpoint that answers.
+		//
+		// Nil means she has no voice, which was the state before this: Speaker
+		// was never set, so rooms had transcription and no speech even where
+		// the media plane was enabled.
+		var sp media.Speaker
+		if d.Config.TTS.Configured() {
+			fish, ferr := tts.NewFish(d.Config.TTS.APIURL, d.Config.TTS.APIKey,
+				d.Config.TTS.VoiceID, d.Config.TTS.Model, llm.SpeechSampleRate)
+			if ferr != nil {
+				// Loud and carried. A deployment that named a speech vendor and
+				// did not get one must say so; it must not fail to start,
+				// because every non-audio path still works.
+				d.Log.ErrorWith(context.Background(), logx.EventMediaRefused, ferr,
+					"reason", "a speech vendor was configured but could not be built; FORGE has no voice")
+			} else {
+				sp = fish
+				d.Log.Info(context.Background(), logx.EventMediaSpeakerReady,
+					"speech_provider", fish.Name(), "backbone", fish.Model,
+					// Repeated here, not only at config load, because this is
+					// the line that proves the vendor was actually WIRED —
+					// config can name one that never reached the media plane.
+					"trains_on_input", tts.TrainsOnRequests(fish.Model))
+			}
+		} else if oc, ok := d.LLM.(*llm.OpenAICompatible); ok && oc != nil {
+			sp = oc
+		}
+
 		sfu, err := media.New(media.Options{
 			Config: d.Config.Media, Log: d.Log, Clock: d.Clock,
-			Transcriber: tr, Turns: h, Activity: h,
+			Transcriber: tr, Speaker: sp, Turns: h, Activity: h,
 		})
 		if err != nil {
 			// Logged at ERROR and carried, not swallowed. A deployment that asked
