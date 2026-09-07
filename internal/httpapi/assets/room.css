@@ -9,6 +9,9 @@ body.room {
   display: flex;
   flex-direction: column;
   height: 100vh;
+  /* dvh, so the composer is not left under a phone's address bar. `vh` first as
+   * the fallback for a browser without it. */
+  height: 100dvh;
   margin: 0;
   overflow: hidden;
   /* shell.css centres every page body with `place-items: center` and pads it.
@@ -250,9 +253,9 @@ body.room {
 /* The affirmative action on its surface — joining audio, sending. One per
    region, so it reads as the thing to do rather than as decoration. */
 .room-btn.primary {
-  background: linear-gradient(180deg, #9aa6ff 0%, var(--core) 55%, #5a69e0 100%);
+  background: linear-gradient(180deg, var(--btn-top) 0%, var(--core) 55%, var(--btn-bottom) 100%);
   border-color: transparent;
-  color: #0e0f1a;
+  color: var(--on-accent);
   font-weight: 650;
 }
 .room-btn.primary:hover:not(:disabled) { filter: brightness(1.07); background: var(--core); }
@@ -301,7 +304,7 @@ body.room {
      the body is right for the desktop layout, where every region manages its own
      scrolling; at this width the regions stack taller than the viewport and
      hiding the overflow would put the controls out of reach entirely. */
-  body.room { height: auto; min-height: 100vh; overflow-y: auto; }
+  body.room { height: auto; min-height: 100vh; min-height: 100dvh; overflow-y: auto; }
   .room-main { grid-template-columns: minmax(0, 1fr); }
   .turns { min-height: 240px; }
   .room-say { margin-left: 0; }

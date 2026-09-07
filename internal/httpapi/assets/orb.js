@@ -96,6 +96,8 @@
     ['visibilitychange', 'pageshow', 'focus'].forEach(function (ev) {
       global.addEventListener(ev, function () { self.start(); });
     });
+
+    ORBS.push(this);
   }
 
   Orb.prototype._resize = function () {
@@ -183,6 +185,8 @@
     if (this._raf) global.cancelAnimationFrame(this._raf);
     if (this._watchdog) global.clearInterval(this._watchdog);
     if (this._ro) this._ro.disconnect();
+    var i = ORBS.indexOf(this);
+    if (i >= 0) ORBS.splice(i, 1);
   };
 
   /* amplitude resolves what the waveform should be showing right now.
@@ -215,15 +219,45 @@
    *   --gold  #d9b25c  trim; the sigil's blade shadow and boundary ring
    *   --core  #4fd8e8  the ornament, collar gem, wrist display — means "active"
    * Nothing outside them is introduced. `thinking` shifts the rim toward gold
-   * because that is what the sigil already does when a model call is in flight. */
-  var GOLD = '217,178,92';
-
-  var COLORS = {
-    idle:      { rim: '79,216,232', wave: [[79,216,232], [120,150,235]] },
-    listening: { rim: '79,216,232', wave: [[79,216,232], [200,108,224]] },
-    thinking:  { rim: GOLD,         wave: [[217,178,92], [79,216,232]] },
-    speaking:  { rim: '124,232,245', wave: [[124,232,245], [200,108,224]] }
+   * because that is what the sigil already does when a model call is in flight.
+   *
+   * # Two grounds, because an aura is made of LIGHT and light does not exist on
+   * paper.
+   *
+   * Everything below composites additively on the dark ground: that is what
+   * makes the halo look emitted rather than drawn. Additive compositing over a
+   * pale surface is a no-op — adding to white stays white — so on the light
+   * ground the same shapes are drawn as ink with `source-over`, at the same
+   * hues taken down to where they read against it.
+   *
+   * The hues themselves are hers and do not change: cyan is still "active",
+   * gold is still "thinking", magenta is still the centre of the band. Only
+   * their depth moves. */
+  var GROUNDS = {
+    dark: {
+      composite: 'lighter',
+      gold: '217,178,92',
+      states: {
+        idle:      { rim: '79,216,232',  wave: [[79,216,232], [120,150,235]] },
+        listening: { rim: '79,216,232',  wave: [[79,216,232], [200,108,224]] },
+        thinking:  { rim: '217,178,92',  wave: [[217,178,92], [79,216,232]] },
+        speaking:  { rim: '124,232,245', wave: [[124,232,245], [200,108,224]] }
+      }
+    },
+    light: {
+      composite: 'source-over',
+      gold: '138,101,32',
+      states: {
+        idle:      { rim: '20,120,140',  wave: [[20,120,140], [62,80,180]] },
+        listening: { rim: '20,120,140',  wave: [[20,120,140], [140,48,168]] },
+        thinking:  { rim: '138,101,32',  wave: [[138,101,32], [20,120,140]] },
+        speaking:  { rim: '26,140,160',  wave: [[26,140,160], [140,48,168]] }
+      }
+    }
   };
+
+  var LIGHT = false;
+  function ground() { return LIGHT ? GROUNDS.light : GROUNDS.dark; }
 
 
   Orb.prototype.draw = function () {
@@ -234,25 +268,26 @@
     var cx = w / 2, cy = h / 2;
     var r = Math.min(w, h) * 0.30;
     var amp = REDUCED ? 0.12 : this.amplitude();
-    var pal = COLORS[this.state] || COLORS.idle;
+    var g = ground();
+    var pal = g.states[this.state] || g.states.idle;
 
     this._glow(ctx, cx, cy, r, amp, pal);
     this._wave(ctx, cx, cy, r, amp, pal, w);
-    this._sphere(ctx, cx, cy, r, amp, pal);
-    this._boundary(ctx, cx, cy, r, amp);
+    this._sphere(ctx, cx, cy, r, amp, pal, g);
+    this._boundary(ctx, cx, cy, r, amp, g);
   };
 
   /* The gold boundary ring. In the sigil this is "the containing ring — the
    * boundary the work may not leave", and it is present in every state,
    * including failure and completion, because the boundary does not disappear
    * when the work does. Same rule here: it is never conditional. */
-  Orb.prototype._boundary = function (ctx, cx, cy, r, amp) {
+  Orb.prototype._boundary = function (ctx, cx, cy, r, amp, g) {
     var rr = r * 1.14;
     ctx.save();
     ctx.beginPath();
     ctx.arc(cx, cy, rr, 0, TAU);
     ctx.lineWidth = Math.max(1, r * 0.016);
-    ctx.strokeStyle = 'rgba(' + GOLD + ',' + (0.30 + amp * 0.22).toFixed(3) + ')';
+    ctx.strokeStyle = 'rgba(' + g.gold + ',' + (0.30 + amp * 0.22).toFixed(3) + ')';
     ctx.stroke();
     ctx.restore();
   };
@@ -312,11 +347,11 @@
    * space, and anything painted underneath it is either invisible or a fringe
    * around her edge. What is left is what a halo actually is: a rim on the
    * portrait's boundary and light behind it. */
-  Orb.prototype._sphere = function (ctx, cx, cy, r, amp, pal) {
+  Orb.prototype._sphere = function (ctx, cx, cy, r, amp, pal, g) {
     var rr = r * (1 + amp * 0.03);
 
     ctx.save();
-    ctx.globalCompositeOperation = 'lighter';
+    ctx.globalCompositeOperation = g.composite;
 
     // Light behind her, so the portrait sits IN the aura rather than on it.
     var back = ctx.createRadialGradient(cx, cy, r * 0.2, cx, cy, r * 1.05);
@@ -343,5 +378,22 @@
     ctx.restore();
   };
 
-  global.ForgeOrb = { Orb: Orb, reducedMotion: REDUCED };
+  /* A theme change has to force a frame.
+   *
+   * The loop is continuous, so an ordinary running orb would pick the new ground
+   * up on its very next pass with nothing to do here. Under reduced motion there
+   * IS no next pass — `start()` returns without scheduling and the only frames
+   * ever drawn come from `setState` — so the aura would stay in the old palette
+   * until FORGE happened to change state. */
+  var ORBS = [];
+  if (global.ForgeTheme) {
+    global.ForgeTheme.onChange(function (light) {
+      LIGHT = !!light;
+      for (var i = 0; i < ORBS.length; i++) {
+        try { ORBS[i].draw(); } catch (e) { /* a dead canvas must not stop the rest */ }
+      }
+    });
+  }
+
+  global.ForgeOrb = { Orb: Orb, reducedMotion: REDUCED, _instances: ORBS };
 })(window);

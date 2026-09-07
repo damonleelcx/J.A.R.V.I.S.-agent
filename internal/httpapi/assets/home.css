@@ -37,8 +37,8 @@
   /* This gradient is the design when WebGL is unavailable, not a placeholder
    * for it. See portal-field.js. */
   background:
-    radial-gradient(120% 90% at 68% 12%, #1e1c30 0%, transparent 58%),
-    radial-gradient(90% 70% at 18% 88%, #2b1c2e 0%, transparent 60%),
+    radial-gradient(120% 90% at 68% 12%, var(--wash-a) 0%, transparent 58%),
+    radial-gradient(90% 70% at 18% 88%, var(--wash-b) 0%, transparent 60%),
     var(--bg);
 }
 
@@ -64,11 +64,39 @@
   align-items: center;
   gap: 11px;
   padding: 22px clamp(20px, 4vw, 54px);
-  background: linear-gradient(to bottom, rgba(10,10,13,.82), rgba(10,10,13,0));
+  background: linear-gradient(to bottom, var(--scrim-mast), var(--scrim-0));
   pointer-events: none;
 }
 .home-mast > * { pointer-events: auto; }
 .home-mast .wordmark { font-weight: 700; letter-spacing: .22em; font-size: 12px; }
+
+/* The year and the repository, beside the name.
+ *
+ * Both are quiet on purpose. They are provenance — when this is from and where
+ * it comes from — and provenance belongs next to the name it qualifies, at a
+ * weight that does not compete with it. The hairline between them is the only
+ * separator; a bullet or a slash would read as a third item. */
+.home-year {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: .14em;
+  color: var(--ink-dim);
+  padding-left: 11px;
+  border-left: 1px solid var(--edge-solid);
+}
+.home-gh {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 30px; height: 30px;
+  border-radius: 999px;
+  color: var(--ink-dim);
+  text-decoration: none;
+}
+.home-gh svg { width: 16px; height: 16px; display: block; }
+.home-gh:hover { color: var(--ink); background: var(--hover-wash); }
+.home-gh:focus-visible { outline: 2px solid var(--core-dim); outline-offset: 2px; }
+
 .home-skip {
   margin-left: auto;
   font-size: 12.5px;
@@ -77,7 +105,7 @@
   padding: 7px 15px;
   border: 1px solid var(--edge-solid);
   border-radius: 999px;
-  background: rgba(18,18,21,.55);
+  background: color-mix(in srgb, var(--bg) 55%, transparent);
 }
 .home-skip:hover { border-color: var(--core-dim); }
 
@@ -108,10 +136,10 @@
   z-index: -1;
   pointer-events: none;
   background: linear-gradient(100deg,
-    rgba(10,10,13,.93) 0%,
-    rgba(10,10,13,.86) 34%,
-    rgba(10,10,13,.52) 62%,
-    rgba(10,10,13,0)   88%);
+    var(--scrim-1) 0%,
+    var(--scrim-2) 34%,
+    var(--scrim-3) 62%,
+    var(--scrim-0) 88%);
 }
 
 .sec-num {
@@ -131,7 +159,7 @@
   margin: 0;
   line-height: .98;
   letter-spacing: -0.015em;
-  text-shadow: 0 6px 40px rgba(0,0,0,.6);
+  text-shadow: var(--display-shadow);
 }
 .home-display {
   font-size: clamp(56px, 11vw, 150px);
@@ -240,5 +268,16 @@
 
 @media (max-width: 720px) {
   .sec { max-width: none; padding-top: 110px; }
+  /* The call to action goes, not the identity.
+   *
+   * There is a full-size "Open the workbench" button in the first section,
+   * which is on screen at the moment this pill would be — so at this width the
+   * pill is a second copy of a control the reader can already see, and it is the
+   * only thing in the masthead that IS duplicated. The year, the repository and
+   * the theme control have nowhere else to be. */
   .home-skip { display: none; }
+  .home-mast { gap: 8px; padding: 16px clamp(16px, 4vw, 54px); }
+  /* The toggle to the right, so the masthead reads identity-left,
+   * control-right at every width rather than bunching into one cluster. */
+  .home-mast .theme-toggle { margin-left: auto; }
 }

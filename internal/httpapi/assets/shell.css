@@ -4,64 +4,294 @@
    a corporate network that blocks third-party origins. Nothing here may depend
    on a request that could fail.
 
-   The palette is FORGE's own: a deep field, white shell, gold trim, and a cyan
-   core. Cyan means "active" everywhere in the product — the sigil's centre, a
-   focused input, a primary action — so a reader learns it once and it holds. */
+   The palette is FORGE's own: a deep field, white shell, gold trim, and a
+   periwinkle core. The core colour means "active" everywhere in the product —
+   the sigil's centre, a focused input, a primary action — so a reader learns it
+   once and it holds. */
+
+/* ===== Theme ==============================================================
+ *
+ * # How a theme is chosen
+ *
+ * Dark is FORGE's own look and stays the default. Light exists because these
+ * pages are read on other people's screens, in daylight, next to documents that
+ * are white.
+ *
+ * There are two inputs and one of them wins:
+ *
+ *   1. `data-theme="light|dark"` on <html>, RENDERED BY THE SERVER from the
+ *      `forge_theme` cookie. An explicit choice, and it always wins.
+ *   2. Nothing at all — the operating system's `prefers-color-scheme` decides.
+ *
+ * The server renders the attribute rather than a script setting it on load, and
+ * that is not a preference: the application's CSP is `script-src 'self'`, which
+ * blocks the inline script the usual anti-flash trick depends on. A theme
+ * applied after first paint is a white page that turns dark in front of the
+ * reader, on every navigation. Resolving it before the bytes are sent is the
+ * only version of this that does not flash.
+ *
+ * # Why every token is declared twice
+ *
+ * `light-dark()` needs one declaration per token, so there is no second copy of
+ * the palette to drift out of step — which is what happens with the usual
+ * `@media` block plus attribute-selector block arrangement.
+ *
+ * The plain declaration ABOVE each `light-dark()` one is load-bearing, not
+ * decoration. A browser too old for `light-dark()` drops the second line and
+ * keeps the first, and renders exactly the dark design that shipped before this
+ * file gained a light mode. Without the fallback line the token would resolve to
+ * nothing and the page would arrive unreadable — on precisely the old phone that
+ * these pages exist to work on. `TestEveryLightDarkTokenHasAPlainFallback`
+ * keeps the pairs together.
+ *
+ * `color-scheme` is what makes the browser's OWN surfaces agree: form controls,
+ * scrollbars, and the section-cut <select> on the workbench. Setting it is why
+ * none of those need restyling per theme.
+ */
 
 :root {
-  /* The palette is taken from two references: a near-black NEUTRAL ground with
-   * a white organic subject, and a field of blue-to-magenta wavefronts.
-   *
-   * The ground is deliberately neutral rather than blue. The previous palette
-   * was blue-grey throughout (#0b0f18, #141a26), which tinted every surface and
-   * left no room for a blue accent to read AS an accent. A neutral charcoal
-   * lets the periwinkle and the magenta be the only chromatic things on screen.
-   *
-   * Everything here is a token because a hue change has to happen in one place;
-   * the hardcoded values that used to sit in the stylesheets were swept into
-   * this scheme at the same time. */
+  color-scheme: light dark;
 
+  /* The dark ground is taken from two references: a near-black NEUTRAL ground
+   * with a white organic subject, and a field of blue-to-magenta wavefronts.
+   *
+   * The ground is deliberately neutral rather than blue. An earlier palette was
+   * blue-grey throughout (#0b0f18, #141a26), which tinted every surface and left
+   * no room for a blue accent to read AS an accent. A neutral charcoal lets the
+   * periwinkle and the magenta be the only chromatic things on screen. The light
+   * ground mirrors that: a neutral near-white, not a blue-tinted one. */
   --bg: #121215;
+  --bg: light-dark(#f4f4f7, #121215);
   --panel: #1c1c22;
+  --panel: light-dark(#ffffff, #1c1c22);
   --edge: #2c2c3680;
+  --edge: light-dark(#d7d7e180, #2c2c3680);
   --edge-solid: #2c2c36;
+  --edge-solid: light-dark(#d7d7e1, #2c2c36);
   --ink: #f3f3f6;
+  --ink: light-dark(#1a1a20, #f3f3f6);
   /* Slate, not blue-grey. This is the reference's display colour and it is the
    * quietest thing on the page; it must not compete with the accent. */
   --ink-dim: #8b90a4;
+  --ink-dim: light-dark(#5f6478, #8b90a4);
+  /* Between --ink and --ink-dim: quoted text, code blocks, dimension labels —
+   * secondary content you still READ, as opposed to labels you glance at. */
+  --ink-soft: #c3c5d2;
+  --ink-soft: light-dark(#3a3d4d, #c3c5d2);
 
-  /* The character's three colours. Gold stays — it is her hair, not a UI
-   * choice — and her gem moves with the accent so she belongs to the theme. */
+  /* Surfaces, in order of how far forward they sit. These were ~40 hardcoded
+   * hex literals spread across five stylesheets before light mode needed them
+   * to move together. */
+  --surface-1: #141417;   /* rails, the quietest surface */
+  --surface-1: light-dark(#ebedf2, #141417);
+  --surface-2: #17171b;   /* inputs, wells */
+  --surface-2: light-dark(#ffffff, #17171b);
+  --surface-3: #1a1a20;   /* cards standing on a rail */
+  --surface-3: light-dark(#f7f8fb, #1a1a20);
+  --surface-4: #16161a;   /* inset blocks: quoted text, code, pre */
+  --surface-4: light-dark(#eef0f5, #16161a);
+  --surface-hover: #222229;
+  --surface-hover: light-dark(#e3e5ee, #222229);
+  /* A hover wash that works on any of the above without knowing which. */
+  --hover-wash: rgba(255, 255, 255, .05);
+  --hover-wash: light-dark(rgba(20, 20, 32, .06), rgba(255, 255, 255, .05));
+  /* The one-pixel top highlight that gives the console bar and the panels their
+   * material. On a light ground the same trick needs a much stronger white. */
+  --sheen: rgba(255, 255, 255, .05);
+  --sheen: light-dark(rgba(255, 255, 255, .9), rgba(255, 255, 255, .05));
+  /* Zebra striping on long lists. Weaker than --hover-wash on purpose: a stripe
+   * that reads as strongly as a hover state makes every other row look armed. */
+  --stripe: rgba(255, 255, 255, .02);
+  --stripe: light-dark(rgba(20, 20, 32, .035), rgba(255, 255, 255, .02));
+  /* Labels floating over the 3D viewport. They sit on rendered geometry rather
+   * than on a surface, so they carry their own ground. */
+  --chip-bg: rgba(16, 16, 20, .88);
+  --chip-bg: light-dark(rgba(255, 255, 255, .90), rgba(16, 16, 20, .88));
+
+  /* The character's three colours. Gold stays gold and the core stays
+   * periwinkle in both themes — they are hers, not UI choices. What changes is
+   * only how dark they are, because #d9b25c on white is 1.9:1 and unreadable as
+   * text, and #7b8cff on white is 2.6:1. */
   --shell: #f7f8fa;
+  --shell: light-dark(#2a2a33, #f7f8fa);
   --gold: #d9b25c;
+  --gold: light-dark(#8a6d21, #d9b25c);
   --gold-dim: #8d7233;
+  --gold-dim: light-dark(#b99b52, #8d7233);
   --core: #7b8cff;
+  --core: light-dark(#4b57d6, #7b8cff);
+  /* The quieter accent: focus rings, borders, the armed state of a control. In
+   * dark it is darker than --core; in light it is lighter. Both directions have
+   * to clear 3:1 against their own ground, because a focus ring is the one thing
+   * on the page a keyboard user cannot do without. */
   --core-dim: #3e45a8;
+  --core-dim: light-dark(#7180dd, #3e45a8);
+  /* The ink that sits ON the accent — a filled button, a selected tab. */
+  --on-accent: #0e0f1a;
+  --on-accent: light-dark(#f7f8ff, #0e0f1a);
+  /* The primary button's gradient ends. --core is its middle. */
+  --btn-top: #9aa6ff;
+  --btn-top: light-dark(#6572e6, #9aa6ff);
+  --btn-bottom: #5a69e0;
+  --btn-bottom: light-dark(#3a45bd, #5a69e0);
+  --core-hover: #a6b0ff;
+  --core-hover: light-dark(#3b46bd, #a6b0ff);
+  /* A surface tinted by the accent: a selected diagram node, a lit control. */
+  --core-wash: #10202a;
+  --core-wash: light-dark(rgba(75, 87, 214, .10), #10202a);
+  --badge-src-bg: #2b2c52;
+  --badge-src-bg: light-dark(#dfe1fb, #2b2c52);
 
   /* Display serif colour, from the reference's title treatment: a desaturated
    * slate that sits BEHIND the subject rather than in front of it. */
   --slate: #5c6580;
+  --slate: light-dark(#767f9a, #5c6580);
   /* The far end of the wavefront gradient. Used as a second accent and as the
    * error colour, which is why --bad is the same value. */
   --warm: #f0576f;
+  --warm: light-dark(#c22b44, #f0576f);
 
   --ok: #56b487;
+  --ok: light-dark(#1c7a53, #56b487);
   --warn: #e0b64c;
+  --warn: light-dark(#8a6520, #e0b64c);
   --bad: #f0576f;
+  --bad: light-dark(#c22b44, #f0576f);
+
+  /* Status surfaces. Each state needs three values, not one: the ink you read,
+   * the edge that bounds it, and the wash behind it. They were written out by
+   * hand at ~30 sites and could not be themed while they stayed there. */
+  --ok-ink: #a6dcb0;
+  --ok-ink: light-dark(#146044, #a6dcb0);
+  --ok-edge: #2b5a49;
+  --ok-edge: light-dark(#8fc9ac, #2b5a49);
+  --ok-wash: rgba(80, 170, 100, .09);
+  --ok-wash: light-dark(rgba(28, 122, 83, .10), rgba(80, 170, 100, .09));
+  --warn-ink: #e6cd8f;
+  --warn-ink: light-dark(#7a5a12, #e6cd8f);
+  /* The emphatic half of a warning — a <b> inside the banner. */
+  --warn-ink-strong: #f2dfae;
+  --warn-ink-strong: light-dark(#5a4108, #f2dfae);
+  --warn-edge: #6a5626;
+  --warn-edge: light-dark(#d8bd7d, #6a5626);
+  --warn-wash: rgba(26, 18, 6, .90);
+  --warn-wash: light-dark(rgba(253, 246, 228, .94), rgba(26, 18, 6, .90));
+  /* The translucent variant, for a chip sitting on an arbitrary surface rather
+   * than a banner owning its own rectangle. */
+  --warn-wash-soft: rgba(180, 140, 40, .10);
+  --warn-wash-soft: light-dark(rgba(138, 101, 32, .12), rgba(180, 140, 40, .10));
+  --bad-ink: #f5c2c8;
+  --bad-ink: light-dark(#a3202f, #f5c2c8);
+  --bad-edge: #6e2f3c;
+  --bad-edge: light-dark(#e0a3ab, #6e2f3c);
+  --bad-wash: rgba(42, 18, 22, .88);
+  --bad-wash: light-dark(rgba(253, 236, 238, .94), rgba(42, 18, 22, .88));
+  --bad-wash-soft: rgba(200, 90, 100, .10);
+  --bad-wash-soft: light-dark(rgba(194, 43, 68, .10), rgba(200, 90, 100, .10));
+
+  /* Shadows. A dark UI hides depth in near-black; a light one cannot, so the
+   * light values are much weaker or the whole page looks bruised. */
+  --shadow-lift: 0 22px 60px rgba(0, 0, 0, .55);
+  --shadow-lift: light-dark(0 18px 44px rgba(24, 26, 44, .16), 0 22px 60px rgba(0, 0, 0, .55));
+  --shadow-drop: 0 20px 44px -26px rgba(0, 0, 0, .95);
+  --shadow-drop: light-dark(0 16px 34px -22px rgba(24, 26, 44, .40), 0 20px 44px -26px rgba(0, 0, 0, .95));
+  /* Behind the home page's display serif, which sits over a moving field. On a
+   * dark ground it is a black glow that deepens the type; on a light one the
+   * same glow would look like soot, so it becomes a faint lift instead. */
+  --display-shadow: 0 6px 40px rgba(0, 0, 0, .6);
+  --display-shadow: light-dark(0 4px 24px rgba(244, 244, 247, .85), 0 6px 40px rgba(0, 0, 0, .6));
+
+  /* Scrims. Written as whole colours rather than as an RGB triple plus an alpha,
+   * because `light-dark()` takes colours and not arbitrary value lists. */
+  --scrim-1: rgba(10, 10, 13, .93);
+  --scrim-1: light-dark(rgba(244, 244, 247, .95), rgba(10, 10, 13, .93));
+  --scrim-2: rgba(10, 10, 13, .86);
+  --scrim-2: light-dark(rgba(244, 244, 247, .90), rgba(10, 10, 13, .86));
+  --scrim-3: rgba(10, 10, 13, .52);
+  --scrim-3: light-dark(rgba(244, 244, 247, .62), rgba(10, 10, 13, .52));
+  --scrim-0: rgba(10, 10, 13, 0);
+  --scrim-0: light-dark(rgba(244, 244, 247, 0), rgba(10, 10, 13, 0));
+  --scrim-mast: rgba(10, 10, 13, .82);
+  --scrim-mast: light-dark(rgba(244, 244, 247, .88), rgba(10, 10, 13, .82));
+
+  /* The two radial washes behind the body and the home page. They are the
+   * design when WebGL is unavailable, not a placeholder for it. */
+  --wash-a: #1d1c2b;
+  --wash-a: light-dark(#e6e4f4, #1d1c2b);
+  --wash-b: #2a1c2c;
+  --wash-b: light-dark(#f3e6f0, #2a1c2c);
+  /* The stage's ground, and the GL clear colour that has to match it. */
+  --stage-bg: #101014;
+  --stage-bg: light-dark(#f2f3f6, #101014);
+  --stage-wash: #1e1c2e;
+  --stage-wash: light-dark(#e8e9f4, #1e1c2e);
+  /* Wells that sit BELOW the darkest surface: diffs, exported payloads. */
+  --well: #080b11;
+  --well: light-dark(#f4f5f9, #080b11);
+
+  /* ===== The character's own values =======================================
+   *
+   * These are hers rather than the interface's, so most of them do not move
+   * with the theme at all. Only two do, and both for the same reason: they are
+   * the parts drawn AGAINST the page rather than against her.
+   *
+   *   --wing-lit        white blades vanish on a white masthead.
+   *   --sigil-core-edge the gem needs a boundary when the ground is pale.
+   *
+   * The gem itself is emissive and does not change: a lit object does not take
+   * a new colour because the room did. */
+  --wing-lit: #f7f8fa;
+  --wing-lit: light-dark(#5c6580, #f7f8fa);
+  --sigil-core-hot: #d6fbff;
+  --sigil-core-mid: #7b8cff;
+  --sigil-core-edge: #3e45a8;
+  --sigil-core-edge: light-dark(#2c3183, #3e45a8);
+  /* The ✕ and ✓ are drawn on the gem, so they take their contrast from it. */
+  --sigil-mark: #16161a;
+  /* Behind the portrait, visible only until the image decodes. */
+  --portrait-lit: #f7f8fa;
+  --portrait-mid: #e6e9ee;
+
+  /* ===== Categorical colours ===============================================
+   *
+   * Two sets where the colour IS the information: who did a thing, and what
+   * kind of node a thing is. They are hues rather than states, so they are
+   * darkened for light mode rather than being given light-mode counterparts —
+   * the reader has to tell six of them apart, which only works if the set keeps
+   * its spacing around the wheel. */
+  --who-planner: #9d8cf0;
+  --who-planner: light-dark(#5b45c6, #9d8cf0);
+  --role-intent: #6fb2c7;
+  --role-intent: light-dark(#26707f, #6fb2c7);
+  --role-build: #8fa2d8;
+  --role-build: light-dark(#41539b, #8fa2d8);
+  --role-check: #7fc79a;
+  --role-check: light-dark(#2c7f52, #7fc79a);
+  --role-risk: #d69aa2;
+  --role-risk: light-dark(#a5505c, #d69aa2);
+  --role-account: #cbb079;
+  --role-account: light-dark(#87693a, #cbb079);
+
   --radius: 12px;
 }
+
+/* An explicit choice overrides the operating system. This is the whole of the
+ * override mechanism: every token above is already resolved by `light-dark()`
+ * against the used colour scheme, so naming the scheme names the palette. */
+:root[data-theme="light"] { color-scheme: light; }
+:root[data-theme="dark"]  { color-scheme: dark; }
 
 * { box-sizing: border-box; }
 
 body {
   margin: 0;
-  min-height: 100vh;
+  min-height: 100dvh;
   display: grid;
   place-items: center;
   padding: 24px;
   background:
-    radial-gradient(1200px 680px at 50% -12%, #1d1c2b 0%, transparent 62%),
-    radial-gradient(700px 400px at 82% 8%, #2a1c2c 0%, transparent 60%),
+    radial-gradient(1200px 680px at 50% -12%, var(--wash-a) 0%, transparent 62%),
+    radial-gradient(700px 400px at 82% 8%, var(--wash-b) 0%, transparent 60%),
     var(--bg);
   color: var(--ink);
   font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -101,8 +331,8 @@ p  { margin: 0 0 14px; }
   padding: 12px 18px;
   border: 0;
   border-radius: 8px;
-  background: linear-gradient(180deg, #9aa6ff 0%, var(--core) 55%, #5a69e0 100%);
-  color: #0e0f1a;
+  background: linear-gradient(180deg, var(--btn-top) 0%, var(--core) 55%, var(--btn-bottom) 100%);
+  color: var(--on-accent);
   font: inherit;
   font-weight: 650;
   text-align: center;
@@ -134,7 +364,7 @@ input[type="password"],
   padding: 11px 13px;
   border: 1px solid var(--edge-solid);
   border-radius: 7px;
-  background: #17171b;
+  background: var(--surface-2);
   color: var(--ink);
   font: inherit;
 }
@@ -150,8 +380,8 @@ input[type="password"]:focus,
   border: 1px solid var(--edge);
   font-size: 13px;
 }
-.note.ok  { border-color: #2b5a49; color: #bde8d3; }
-.note.bad { border-color: #6e2f3c; color: #f5c2c8; }
+.note.ok  { border-color: var(--ok-edge); color: var(--ok-ink); }
+.note.bad { border-color: var(--bad-edge); color: var(--bad-ink); }
 .hidden { display: none; }
 
 hr { border: 0; border-top: 1px solid var(--edge); margin: 22px 0; }
@@ -167,7 +397,7 @@ hr { border: 0; border-top: 1px solid var(--edge); margin: 22px 0; }
 a,
 a:link,
 a:visited { color: var(--core); text-decoration-color: color-mix(in srgb, var(--core) 45%, transparent); }
-a:hover { color: #a6b0ff; }
+a:hover { color: var(--core-hover); }
 
 /* An <a class="btn"> is a button that happens to navigate, and it must keep the
  * button's own colour.
@@ -186,7 +416,7 @@ a:hover { color: #a6b0ff; }
 a.btn,
 a.btn:link,
 a.btn:visited,
-a.btn:hover { color: #0e0f1a; }
+a.btn:hover { color: var(--on-accent); }
 a:focus-visible {
   outline: 2px solid var(--core-dim);
   outline-offset: 2px;
@@ -225,3 +455,41 @@ a:focus-visible {
   outline: 2px solid var(--core);
   outline-offset: 2px;
 }
+
+/* ===== The theme toggle ===================================================
+ *
+ * Shared rather than per-page, because it appears in four different headers and
+ * a control that means "change the theme" must not be a different shape on the
+ * page where you happen to find it.
+ *
+ * It shows the theme you would GET, not the one you are in: a sun while dark,
+ * a moon while light. Both glyphs are in the markup and one is hidden, so the
+ * swap is CSS and there is no frame where the button is empty. See theme.js. */
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  flex: none;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: transparent;
+  color: var(--ink-dim);
+  cursor: pointer;
+}
+.theme-toggle:hover { color: var(--ink); border-color: var(--edge-solid); background: var(--hover-wash); }
+.theme-toggle:focus-visible { outline: 2px solid var(--core-dim); outline-offset: 2px; }
+.theme-toggle svg { width: 17px; height: 17px; display: block; }
+/* Which glyph shows is decided by the USED colour scheme, so it stays correct
+ * when the theme comes from the operating system and no attribute is set. */
+.theme-toggle .ico-dark { display: none; }
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme="dark"]) .theme-toggle .ico-dark { display: block; }
+  :root:not([data-theme="dark"]) .theme-toggle .ico-light { display: none; }
+}
+:root[data-theme="light"] .theme-toggle .ico-dark { display: block; }
+:root[data-theme="light"] .theme-toggle .ico-light { display: none; }
+:root[data-theme="dark"] .theme-toggle .ico-dark { display: none; }
+:root[data-theme="dark"] .theme-toggle .ico-light { display: block; }

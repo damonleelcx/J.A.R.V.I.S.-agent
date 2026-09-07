@@ -360,6 +360,11 @@ func TestNoPageUsesAClassStyledOnlyInAStylesheetItDoesNotLoad(t *testing.T) {
 		{"room", "/rooms/rom_1"},
 		{"workbench", "/workbench"},
 		{"console", "/console"},
+		// The landing page was outside this check until it grew classes of its
+		// own — the year, the repository link and the theme control. It loads a
+		// different set of stylesheets from the three above (home.css, and not
+		// console.css), which is exactly the arrangement this fence exists for.
+		{"index", "/"},
 	} {
 		t.Run(page.name, func(t *testing.T) {
 			rr := httptest.NewRecorder()
@@ -372,6 +377,8 @@ func TestNoPageUsesAClassStyledOnlyInAStylesheetItDoesNotLoad(t *testing.T) {
 				pages.Workbench(rr, r)
 			case "console":
 				pages.Console(rr, r)
+			case "index":
+				pages.Index(rr, r)
 			}
 			html := rr.Body.String()
 

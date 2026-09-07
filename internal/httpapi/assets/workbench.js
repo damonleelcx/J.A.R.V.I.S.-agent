@@ -2514,7 +2514,64 @@
     }
   }
 
+
+  /* ---- the narrow layout's section switcher ------------------------------
+   *
+   * Below the three-column breakpoint the conversation, the stage and the work
+   * rail share one grid cell and this decides which is on top. See the
+   * `max-width: 1199px` block in workbench.css for why the layout collapses and
+   * why the stage is never the one hidden.
+   *
+   * The selection is held in an attribute on .wb-body rather than in a variable,
+   * so the CSS is the only thing that acts on it and there is no second copy of
+   * "which pane is showing" to fall out of step. The default is the stage,
+   * which is where the console bar and FORGE herself are.
+   */
+  function mobileNav() {
+    var body = document.querySelector('.wb-body');
+    var tabs = document.querySelectorAll('.wbmobile-tab');
+    if (!body || !tabs.length) return;
+
+    function show(view) {
+      body.setAttribute('data-view', view);
+      for (var i = 0; i < tabs.length; i++) {
+        tabs[i].setAttribute('aria-pressed', tabs[i].getAttribute('data-view') === view ? 'true' : 'false');
+      }
+    }
+    for (var i = 0; i < tabs.length; i++) {
+      (function (b) {
+        b.addEventListener('click', function () { show(b.getAttribute('data-view')); });
+      })(tabs[i]);
+    }
+    show('stage');
+  }
+
+  /* The console bar's height, measured into a custom property.
+   *
+   * At narrow widths the bar is fixed to the bottom of the viewport, so the
+   * transcript, the work rail and the provenance banner all have to stop that
+   * far short of the bottom or their last line sits underneath it. Its height is
+   * not a constant: an attachment strip, a voice warning, or a wrapped options
+   * row each change it, and those are exactly the states where content hidden
+   * under the bar would matter.
+   *
+   * Measured rather than declared, so the number cannot drift away from the
+   * thing it describes — which is what the `bottom: 168px` this replaces had
+   * already done. The stylesheet carries a fallback for the first frame and for
+   * a browser with no ResizeObserver. */
+  function trackDockHeight() {
+    var wb = document.querySelector('.wb');
+    var voice = $('voice');
+    if (!wb || !voice || !window.ResizeObserver) return;
+    var ro = new ResizeObserver(function () {
+      wb.style.setProperty('--wb-dock-h', Math.round(voice.getBoundingClientRect().height) + 'px');
+    });
+    ro.observe(voice);
+  }
+
   function boot() {
+    safely('mobile-nav', mobileNav);
+    safely('dock-height', trackDockHeight);
     safely('orb', function () { orb = new ForgeOrb.Orb($('orb')); });
     studio = new Forge3D.Studio($('canvas'), {
       labels: $('dimlayer'),
