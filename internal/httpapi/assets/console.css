@@ -7,7 +7,13 @@
  * Palette is FORGE's own — see shell.css. Cyan means "active" throughout, so a
  * reader learns it once. */
 
-.console { display: block; place-items: initial; padding: 0; min-height: 100vh; }
+.console { display: block; place-items: initial; padding: 0; min-height: 100vh; min-height: 100dvh; }
+
+/* The header is a no-wrap flex row holding an account address and two links, and
+ * the address is filled by script with no width bound — a long one pushed the
+ * links past the right edge on a phone. */
+.topbar { flex-wrap: wrap; row-gap: 4px; }
+.topbar .who { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
 
 .topbar {
   display: flex;
@@ -67,8 +73,8 @@
  * in a new tab the way a link should. It must look identical to the goal rows
  * beside it, so the anchor's own colour and underline are cleared. */
 a.goal { color: inherit; text-decoration: none; }
-.goal:hover { background: #1a2233; }
-.goal[aria-current="true"] { background: #222229; border-color: var(--core-dim); }
+.goal:hover { background: var(--surface-hover); }
+.goal[aria-current="true"] { background: var(--surface-hover); border-color: var(--core-dim); }
 .goal .t { font-weight: 600; font-size: 14px; line-height: 1.35; }
 .goal .m { font-size: 12px; color: var(--ink-dim); margin-top: 3px; }
 .goal .sig { flex: none; margin-top: 1px; }
@@ -95,11 +101,11 @@ a.goal { color: inherit; text-decoration: none; }
 .approval pre {
   margin: 10px 0 0;
   padding: 10px;
-  background: #16161a;
+  background: var(--surface-4);
   border-radius: 7px;
   font-size: 12px;
   overflow-x: auto;
-  color: #c3c5d2;
+  color: var(--ink-soft);
   max-height: 220px;
 }
 .approval .acts { display: flex; gap: 9px; margin-top: 12px; }
@@ -108,7 +114,7 @@ a.goal { color: inherit; text-decoration: none; }
   padding: 8px 15px;
   border: 1px solid var(--edge-solid);
   border-radius: 7px;
-  background: #232329;
+  background: var(--surface-hover);
   color: var(--ink);
   font: inherit;
   font-size: 13px;
@@ -116,8 +122,8 @@ a.goal { color: inherit; text-decoration: none; }
   cursor: pointer;
 }
 .btn-sm:hover { border-color: var(--core-dim); }
-.btn-sm.go { background: var(--core); color: #0e0f1a; border-color: transparent; }
-.btn-sm.no { border-color: #6e2f3c; color: #f5c2c8; }
+.btn-sm.go { background: var(--core); color: var(--on-accent); border-color: transparent; }
+.btn-sm.no { border-color: var(--bad-edge); color: var(--bad-ink); }
 .btn-sm:disabled { opacity: .5; cursor: default; }
 /* Same reason as a.btn in shell.css: `a:link` at (0,1,1) beats `.btn-sm` at
  * (0,1,0), so an <a class="btn-sm"> lost its text colour to the link colour.
@@ -127,7 +133,7 @@ a.btn-sm:link,
 a.btn-sm:visited { color: var(--ink); }
 a.btn-sm.go,
 a.btn-sm.go:link,
-a.btn-sm.go:visited { color: #0e0f1a; }
+a.btn-sm.go:visited { color: var(--on-accent); }
 
 /* Tasks */
 /* The status column is sized for the LONGEST status, not the average one.
@@ -146,7 +152,18 @@ a.btn-sm.go:visited { color: #0e0f1a; }
 @media (max-width: 700px) {
   .task { grid-template-columns: 1fr auto; }
 }
-.task:nth-child(even) { background: #131a27; }
+
+/* The timeline's 74px actor column never collapsed, which left about 187px for
+ * the event text at 375px — and neither the key nor the summary could break, so
+ * long identifiers ran off the screen. The actor moves above its own line
+ * instead of squeezing what it labels. */
+@media (max-width: 560px) {
+  .event { grid-template-columns: minmax(0, 1fr); gap: 2px; }
+  .event .who { padding-top: 0; }
+  .event .k,
+  .event .s { overflow-wrap: anywhere; }
+}
+.task:nth-child(even) { background: var(--stripe); }
 .task .st {
   font-size: 10.5px;
   letter-spacing: .05em;
@@ -162,7 +179,7 @@ a.btn-sm.go:visited { color: #0e0f1a; }
 .st-running, .st-claimed, .st-verifying { color: var(--core); }
 .st-awaiting_approval { color: var(--warn); }
 .st-pending, .st-ready, .st-skipped { color: var(--ink-dim); }
-.task .err { color: #f5c2c8; font-size: 12px; margin-top: 4px; }
+.task .err { color: var(--bad-ink); font-size: 12px; margin-top: 4px; }
 
 /* "Verified" is shown separately from status, always. Completion and
    verification are different facts (PRD AGT-08), and collapsing them in the UI
@@ -177,8 +194,8 @@ a.btn-sm.go:visited { color: #0e0f1a; }
   color: var(--ink-dim);
   white-space: nowrap;
 }
-.tag.ok { border-color: #2b5a49; color: #9fe0c0; }
-.tag.warn { border-color: #6a5626; color: #e6cd8f; }
+.tag.ok { border-color: var(--ok-edge); color: var(--ok-ink); }
+.tag.warn { border-color: var(--warn-edge); color: var(--warn-ink); }
 
 /* Timeline */
 .event {
@@ -199,7 +216,7 @@ a.btn-sm.go:visited { color: #0e0f1a; }
 /* Actors are colour-coded because the single most important thing a reader
    takes from this list is WHO did each thing. */
 .who-human { color: var(--warn); }
-.who-planner { color: #9d8cf0; }
+.who-planner { color: var(--who-planner); }
 .who-executor { color: var(--core); }
 .who-verifier { color: var(--ok); }
 .who-system, .who-scheduler { color: var(--ink-dim); }

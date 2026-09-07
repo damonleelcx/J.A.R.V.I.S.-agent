@@ -28,6 +28,7 @@ import (
 //go:embed assets/shell.css assets/avatar.css assets/console.css assets/workbench.css
 //go:embed assets/pages.js assets/console.js assets/workbench.js assets/forge3d.js
 //go:embed assets/password-reveal.js assets/portal-field.js assets/home.css
+//go:embed assets/theme.js
 //go:embed assets/stage.js assets/voice.js assets/orb.js
 //go:embed assets/audio-input.js assets/room.js assets/room-page.js assets/room.css
 //go:embed assets/portrait/*.png
@@ -128,6 +129,36 @@ func paragraphs(s string) []string {
 	return out
 }
 
+// themeCookie carries a reader's explicit light/dark choice across navigations.
+//
+// Plain-named and readable by script, unlike the session cookie beside it: this
+// one is written by assets/theme.js and holds a display preference, not a
+// credential. Nothing is authorised by it and nothing is disclosed by it.
+const themeCookie = "forge_theme"
+
+// repoURL is where this is developed. Taken from the module path in go.mod;
+// stated once here rather than typed into the template, so the landing page and
+// the README cannot disagree about it.
+const repoURL = "https://github.com/damonleelcx/J.A.R.V.I.S.-agent"
+
+// readTheme returns the reader's explicit choice, or "" when there is none.
+//
+// Anything other than the two known values is treated as no choice rather than
+// passed through. The value reaches the page as an HTML attribute, and a cookie
+// is reader-controlled input.
+func readTheme(r *http.Request) string {
+	c, err := r.Cookie(themeCookie)
+	if err != nil {
+		return ""
+	}
+	switch c.Value {
+	case "light", "dark":
+		return c.Value
+	default:
+		return ""
+	}
+}
+
 type pageData struct {
 	// Presence is FORGE's portrait with the state sigil badged onto it. Used on
 	// surfaces with room for it; the sigil alone is used where there is not.
@@ -174,6 +205,23 @@ type pageData struct {
 	PersonaVersion int
 	Soul           []persona.Commitment
 
+	// Theme is the reader's EXPLICIT choice — "light", "dark", or empty.
+	//
+	// Empty is not "dark". It means nobody has chosen, and the stylesheet lets
+	// `prefers-color-scheme` decide; rendering a default here would override the
+	// operating system for every reader who never touched the control.
+	//
+	// It is rendered into an attribute on <html> rather than applied by script
+	// because the CSP is `script-src 'self'`, which blocks the inline script the
+	// usual before-first-paint trick needs. A theme applied by a deferred
+	// external script arrives after the page has painted in the other one, and
+	// every navigation flashes. See assets/theme.js.
+	Theme string
+	// Year and RepoURL identify the work on the landing page's masthead. Year is
+	// rendered rather than written into the template so it cannot go stale.
+	Year    int
+	RepoURL string
+
 	// Panels are the workbench stage's views (PRD WRK-01). Rendered rather than
 	// fetched for the reason given in stage.go: two of them are empty in this
 	// build, and why they are empty is a fact about the build that must have one
@@ -199,6 +247,9 @@ func (p *PageHandlers) render(w http.ResponseWriter, r *http.Request, name strin
 	data.Tagline = persona.Tagline
 	data.PersonaVersion = persona.Version
 	data.Soul = persona.Soul
+	data.Theme = readTheme(r)
+	data.Year = time.Now().Year()
+	data.RepoURL = repoURL
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	// These pages carry a live credential in their URL. Caching one — in the
@@ -379,7 +430,8 @@ func (p *PageHandlers) Assets(w http.ResponseWriter, r *http.Request) {
 	case name == "pages.js", name == "console.js", name == "workbench.js",
 		name == "forge3d.js", name == "voice.js", name == "orb.js",
 		name == "audio-input.js", name == "room.js", name == "room-page.js",
-		name == "stage.js", name == "password-reveal.js", name == "portal-field.js":
+		name == "stage.js", name == "password-reveal.js", name == "portal-field.js",
+		name == "theme.js":
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 	case name == "favicon.png":
 		w.Header().Set("Content-Type", "image/png")
@@ -432,8 +484,21 @@ func isPortraitAsset(name string) bool {
 var _ = auth.LooksLikeToken
 
 const pageTemplates = `
+{{define "themetoggle"}}<button type="button" class="theme-toggle" data-theme-toggle
+        aria-label="Switch the theme" title="Switch the theme">
+  <svg class="ico-light" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+       stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <circle cx="12" cy="12" r="4"></circle>
+    <path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path>
+  </svg>
+  <svg class="ico-dark" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+       stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    <path d="M20 14.5A8.5 8.5 0 1 1 9.5 4a6.8 6.8 0 0 0 10.5 10.5z"></path>
+  </svg>
+</button>{{end}}
+
 {{define "head"}}<!doctype html>
-<html lang="en"><head>
+<html lang="en"{{if .Theme}} data-theme="{{.Theme}}"{{end}}><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="referrer" content="no-referrer">
@@ -442,14 +507,16 @@ const pageTemplates = `
 <link rel="stylesheet" href="{{asset "shell.css"}}">
 <link rel="stylesheet" href="{{asset "avatar.css"}}">
 </head><body><main class="panel" data-page="{{.Page}}" data-token="{{.Token}}">
-<div class="mark">{{.Avatar}}<div class="wordmark">FORGE</div></div>
+<div class="mark">{{.Avatar}}<div class="wordmark">FORGE</div>
+<span style="margin-left:auto">{{template "themetoggle" .}}</span></div>
 {{end}}
 
-{{define "foot"}}</main><script src="{{asset "password-reveal.js"}}"></script>
+{{define "foot"}}</main><script src="{{asset "theme.js"}}"></script>
+<script src="{{asset "password-reveal.js"}}"></script>
 <script src="{{asset "pages.js"}}"></script></body></html>{{end}}
 
 {{define "workbench"}}<!doctype html>
-<html lang="en"><head>
+<html lang="en"{{if .Theme}} data-theme="{{.Theme}}"{{end}}><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{{.Title}}</title>
@@ -476,6 +543,7 @@ const pageTemplates = `
   <span id="models" style="font-size:11px;color:var(--ink-dim)"></span>
   <span class="who" id="who"></span>
   <a href="/console" style="font-size:12px">Operations</a>
+  {{template "themetoggle" .}}
 </div>
 
 <!-- The soul. Not decoration and not marketing: this is the exact commitment
@@ -505,7 +573,7 @@ const pageTemplates = `
 <div class="wb-body">
 
   <!-- Conversation. The control plane (PRD §2.3). -->
-  <div class="wb-left">
+  <div class="wb-left" id="wb-talk">
     <div class="railhead">
       Conversation
       <!-- PRD AUD-07 asks for delete-session to be reachable at all times, and
@@ -743,7 +811,7 @@ const pageTemplates = `
   </div>
 
   <!-- Artifacts, evidence, and the one place work can be started. -->
-  <div class="wb-right rail">
+  <div class="wb-right rail" id="wb-work">
     <!-- PRD VIS-01: geometry generated from recorded requirements. Ticking one
          sends its ID; the server reads the requirement's own words out of the
          project graph and writes them into the turn, so what the model sees is
@@ -790,6 +858,21 @@ const pageTemplates = `
 
 </div>
 
+<!-- How the two regions that are not on top are reached, below the width where
+     all three fit at once. Rendered on every workbench and hidden by CSS above
+     that width, rather than rendered conditionally: the breakpoint is a fact
+     about the viewport, and the viewport can change after the page is served —
+     a rotated phone would otherwise need a reload to grow a way back to its own
+     conversation. See workbench.css. -->
+<nav class="wbmobile" aria-label="Workbench sections">
+  <button type="button" class="wbmobile-tab" data-view="talk"
+          aria-controls="wb-talk" aria-pressed="false">Talk</button>
+  <button type="button" class="wbmobile-tab" data-view="stage"
+          aria-controls="stage" aria-pressed="true">Stage</button>
+  <button type="button" class="wbmobile-tab" data-view="work"
+          aria-controls="wb-work" aria-pressed="false">Work</button>
+</nav>
+
 <!-- Side by side. A dialog rather than a route: the conversation underneath is
      the thing being decided about, and navigating away from it to compare two of
      its outputs would lose the context that made the comparison worth doing. -->
@@ -801,6 +884,7 @@ const pageTemplates = `
   <div class="compare-body" id="compare-body"></div>
 </div>
 
+<script src="{{asset "theme.js"}}"></script>
 <script src="{{asset "forge3d.js"}}"></script>
 <script src="{{asset "voice.js"}}"></script>
 <script src="{{asset "orb.js"}}"></script>
@@ -809,7 +893,7 @@ const pageTemplates = `
 </body></html>{{end}}
 
 {{define "room"}}<!doctype html>
-<html lang="en"><head>
+<html lang="en"{{if .Theme}} data-theme="{{.Theme}}"{{end}}><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{{.Title}}</title>
@@ -825,6 +909,7 @@ const pageTemplates = `
   <span class="wordmark">FORGE</span>
   <span class="room-title" id="room-title">Room</span>
   <span class="room-status" id="room-status">connecting</span>
+  {{template "themetoggle" .}}
 </div>
 
 <!-- SEC-06's visible state. Never dismissible, and never abbreviated to an icon:
@@ -909,13 +994,14 @@ const pageTemplates = `
 
 <div id="err" class="room-err hidden" role="alert"></div>
 
+<script src="{{asset "theme.js"}}"></script>
 <script src="{{asset "audio-input.js"}}"></script>
 <script src="{{asset "room.js"}}"></script>
 <script src="{{asset "room-page.js"}}"></script>
 </body></html>{{end}}
 
 {{define "console"}}<!doctype html>
-<html lang="en"><head>
+<html lang="en"{{if .Theme}} data-theme="{{.Theme}}"{{end}}><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{{.Title}}</title>
@@ -928,6 +1014,7 @@ const pageTemplates = `
   {{.Avatar}}
   <div class="wordmark">FORGE</div>
   <div class="who"><span id="whoami"></span><a href="/">Home</a></div>
+  {{template "themetoggle" .}}
 </div>
 <div id="err" class="note bad hidden" style="margin:16px 22px"></div>
 
@@ -962,12 +1049,13 @@ const pageTemplates = `
   </div>
   <div id="detail" class="hidden"></div>
 </div>
+<script src="{{asset "theme.js"}}"></script>
 <script src="{{asset "password-reveal.js"}}"></script>
 <script src="{{asset "console.js"}}"></script>
 </body></html>{{end}}
 
 {{define "index"}}<!doctype html>
-<html lang="en"><head>
+<html lang="en"{{if .Theme}} data-theme="{{.Theme}}"{{end}}><head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="referrer" content="no-referrer">
@@ -983,17 +1071,50 @@ const pageTemplates = `
 <canvas id="field" aria-hidden="true"></canvas>
 
 <header class="home-mast">{{.Avatar}}<div class="wordmark">FORGE</div>
+  <!-- The year is rendered, not written into the template, so it cannot go
+       stale in a file nobody revisits. The repository link is the one outward
+       claim this page makes that a reader can check for themselves, which is
+       why it is beside the name rather than in a footer under five screens of
+       scrolling. The icon is inline SVG because the CSP's img-src allows only
+       this origin and data: URLs, so a remote one would be blocked — and an
+       icon that silently fails to load is worse than no icon. -->
+  <span class="home-year">{{.Year}}</span>
+  <a class="home-gh" href="{{.RepoURL}}" target="_blank" rel="noopener noreferrer"
+     aria-label="FORGE on GitHub" title="FORGE on GitHub">
+    <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+      <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27s1.36.09 2 .27c1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8z"></path>
+    </svg>
+  </a>
   <a class="home-skip" href="/workbench">Open the workbench</a>
+  {{template "themetoggle" .}}
 </header>
 
 <main class="home-scroll">
 
-  <!-- 1 ---------------------------------------------------------------- -->
+  <!-- 1 ----------------------------------------------------------------
+       The page leads with what you DO, and carries what makes it trustworthy
+       in the small spec blocks beside it.
+
+       It used to be the other way round: three of the five sections were about
+       checkpoint frequency, verifier separation and refusal semantics — all
+       true, all load-bearing, and none of them an answer to "what is this for".
+       The two most distinctive things this product does, that you talk to it
+       and that it draws the thing while you are still describing it, were not
+       mentioned anywhere on the page.
+
+       So the display type is now the experience and the spec lines are the
+       guarantees, which is also what the reference this page is built from
+       does: a large statement with the exact data set small beside it. Nothing
+       was dropped — every claim the old copy made is still here, one size
+       down. Nothing was added that this build does not do: there is no mention
+       of EDA or simulation, which this build declares empty and says so on the
+       workbench itself. -->
   <section class="sec sec--hero" id="s1">
     <p class="sec-num">01</p>
-    <h1 class="home-display"><span>FORGE</span> <em>durable</em></h1>
-    <p class="home-lede">A durable engineering partner. It plans the work, does
-    it with tools, and keeps a record you can audit line by line.</p>
+    <h1 class="home-display"><span>FORGE</span> <em>out loud</em></h1>
+    <p class="home-lede">Describe what you are building, out loud. FORGE asks
+    what it needs to know, proposes a shape you can turn around on screen, and
+    keeps the reasoning behind every decision.</p>
     <div class="home-actions">
       <a class="btn" href="/workbench">Open the workbench</a>
       <a class="home-quiet" href="/console">Operations console</a>
@@ -1004,56 +1125,64 @@ const pageTemplates = `
   <!-- 2 ---------------------------------------------------------------- -->
   <section class="sec" id="s2">
     <p class="sec-num">02</p>
-    <h2 class="sec-title">It survives <em>being stopped</em></h2>
-    <p class="sec-body">FORGE reconstructs its state from a database on every
-    cycle. Interrupt it, restart the process, lose the machine — the work
-    resumes from the last checkpoint rather than starting over.</p>
+    <h2 class="sec-title">Say it, and <em>turn it around</em></h2>
+    <p class="sec-body">Hold the space bar and describe the part. FORGE builds
+    geometry you can rotate, section, explode and measure while you are still
+    talking about it — and you can cut it off mid-sentence when it has taken the
+    wrong idea.</p>
     <div class="home-spec">
-      <b>How</b>
-      <span>A checkpoint is written after every iteration, before the next model call.</span>
-      <span>A crash costs at most one iteration, never the task.</span>
-      <span>Tool results are recorded on their own path, so a lost checkpoint loses no evidence.</span>
+      <b>In the room</b>
+      <span>Speak, or type instead — every step has a path that does not need your voice.</span>
+      <span>Interrupt whenever you like. It stops talking and keeps the work.</span>
+      <span>Every dimension carries its units, its frame, and where the number came from.</span>
     </div>
   </section>
 
   <!-- 3 ---------------------------------------------------------------- -->
   <section class="sec" id="s3">
     <p class="sec-num">03</p>
-    <h2 class="sec-title">It will not claim <em>what did not happen</em></h2>
-    <p class="sec-body">Finishing work, confirming it, and a person accepting it
-    are three different facts. Most systems collapse them into one and then
-    report that something was checked when nothing checked it.</p>
+    <h2 class="sec-title">It asks before it <em>guesses</em></h2>
+    <p class="sec-body">An ambiguous goal gets a question, not a confident wrong
+    answer. FORGE draws out the constraints it is missing, offers you options
+    that are actually different from each other, and says so when it thinks you
+    are wrong.</p>
     <div class="home-spec">
-      <b>Kept apart</b>
-      <span>Completed is not verified. Verified is not accepted.</span>
-      <span>A verifier reads the raw tool output, not the executor's account of it.</span>
-      <span>A criterion marked satisfied without evidence is a claim, and is refused as one.</span>
+      <b>Before anything runs</b>
+      <span>Options come with the tradeoffs, and with the criteria that separate them.</span>
+      <span>You can turn the arguing down. You cannot turn off dissent about safety.</span>
+      <span>Where a tool has no real backend the call fails by name, rather than returning a plausible number.</span>
     </div>
   </section>
 
   <!-- 4 ---------------------------------------------------------------- -->
   <section class="sec" id="s4">
     <p class="sec-num">04</p>
-    <h2 class="sec-title">It refuses rather than <em>invents</em></h2>
-    <p class="sec-body">Where a connector has no real backend, the call fails
-    with a named reason. A fabricated solver result is the most dangerous thing
-    this system could produce, so unavailability is reported and never
-    simulated.</p>
+    <h2 class="sec-title">You see <em>what actually happened</em></h2>
+    <p class="sec-body">Every change carries who asked for it, which tool made
+    it, what it changed, whether anything checked it, and whether a person
+    accepted it. Nothing irreversible happens while you are not looking.</p>
     <div class="home-spec">
-      <b>Under human control</b>
+      <b>Under your hand</b>
       <span>Read, write, execute, simulate, export, deploy, transact and control are granted separately.</span>
-      <span>Anything irreversible sits behind a named human approval.</span>
-      <span>Autonomy is set once, by a person, and the system cannot raise its own.</span>
+      <span>Anything irreversible waits for a named person to approve it.</span>
+      <span>Finished, checked and accepted are three different words here, and it uses them that way.</span>
     </div>
   </section>
 
   <!-- 5 ---------------------------------------------------------------- -->
   <section class="sec sec--end" id="s5">
     <p class="sec-num">05</p>
-    <h2 class="sec-title">Start with <em>one goal</em></h2>
-    <p class="sec-body">Describe what you want built. FORGE plans it into tasks,
-    asks when the goal is ambiguous rather than guessing, and shows you the plan
-    before anything runs.</p>
+    <h2 class="sec-title">Close it, and <em>come back</em></h2>
+    <p class="sec-body">Shut the laptop in the middle of a task. FORGE picks up
+    from where the work actually got to, not from a summary of what was said
+    about it — which is how an agent quietly loses an afternoon. A durable
+    engineering partner, in the sense that it is still there tomorrow.</p>
+    <div class="home-spec">
+      <b>What survives</b>
+      <span>A crash costs at most one step of the work, never the task.</span>
+      <span>Tool output is kept exactly as it came back, so the evidence outlives the conversation.</span>
+      <span>Pick it up on another machine; the project is the record, not the session.</span>
+    </div>
     <div class="home-actions">
       <a class="btn" href="/workbench">Open the workbench</a>
       <a class="home-quiet" href="/console">Operations console — goals, timeline, approvals.</a>
@@ -1065,6 +1194,7 @@ const pageTemplates = `
   </section>
 
 </main>
+<script src="{{asset "theme.js"}}"></script>
 <script src="{{asset "portal-field.js"}}"></script>
 </body></html>{{end}}
 

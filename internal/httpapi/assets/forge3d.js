@@ -1209,6 +1209,7 @@
     'uniform int uSectionAxis;',   // 0 none, 1 x, 2 y, 3 z
     'uniform float uSectionAt;',
     'uniform float uHighlight;',
+    'uniform float uLight;',
     'uniform float uSpecPower;',
     'uniform float uSpecGloss;',
     'void main() {',
@@ -1221,12 +1222,26 @@
     '  vec3 V = normalize(uCamPos - vWorld);',
     '  vec3 H = normalize(L + V);',
     '  float spec = pow(max(dot(N, H), 0.0), uSpecPower) * uSpecGloss;',
-    // A little rim light so silhouettes read against a dark background — the
-    // difference between "a shape" and "a mass" at a glance.
-    '  float rim = pow(1.0 - max(dot(N, V), 0.0), 2.5) * 0.30;',
-    '  vec3 ambient = uColor * 0.30;',
-    '  vec3 col = ambient + uColor * diff * 0.78 + vec3(spec) + vec3(0.31, 0.85, 0.91) * rim;',
-    '  col = mix(col, vec3(0.31, 0.85, 0.91), uHighlight * 0.45);',
+    // The edge treatment is the one thing that cannot be shared between the two
+    // grounds, and it is worth being explicit about why.
+    //
+    // Against near-black, a silhouette is invisible until something lifts it, so
+    // an additive cyan rim is added: that is the difference between "a shape"
+    // and "a mass" at a glance. Against paper the mass is ALREADY darker than
+    // what is behind it, so there is nothing to lift — adding light to a pale
+    // ground just fogs the edge. The same edge is carved instead, by taking
+    // light away, which is what contact shadow does on a physical object.
+    //
+    // Both are driven from one term so the falloff is identical and only its
+    // sign changes.
+    '  float rim = pow(1.0 - max(dot(N, V), 0.0), 2.5);',
+    '  vec3 ambient = uColor * mix(0.30, 0.46, uLight);',
+    '  vec3 col = ambient + uColor * diff * mix(0.78, 0.62, uLight) + vec3(spec);',
+    '  col += vec3(0.31, 0.85, 0.91) * rim * 0.30 * (1.0 - uLight);',
+    '  col *= 1.0 - rim * 0.30 * uLight;',
+    // Selection. Bright cyan reads as "lit" on black and as "washed out" on
+    // paper, so the light ground gets the same hue at a legible depth.
+    '  col = mix(col, mix(vec3(0.31, 0.85, 0.91), vec3(0.10, 0.40, 0.50), uLight), uHighlight * 0.45);',
     '  gl_FragColor = vec4(col, uOpacity);',
     '}'
   ].join('\n');
@@ -1267,11 +1282,11 @@
   }
 
   function hexToRGB(hex) {
-    if (typeof hex !== 'string') return [0.72, 0.74, 0.78];
+    if (typeof hex !== 'string') return ground().partFallback;
     var h = hex.replace('#', '');
     if (h.length === 3) h = h[0]+h[0]+h[1]+h[1]+h[2]+h[2];
     var v = parseInt(h, 16);
-    if (isNaN(v)) return [0.72, 0.74, 0.78];
+    if (isNaN(v)) return ground().partFallback;
     return [((v >> 16) & 255) / 255, ((v >> 8) & 255) / 255, (v & 255) / 255];
   }
 
@@ -1286,7 +1301,50 @@
    * memory, not checked", because both mean the same thing to a reader: what you
    * are looking at is not the whole story. */
   var REMOVED_ALPHA = 0.22;
-  var REMOVED_COLOUR = '#e6cd8f';
+
+  /* ---- the two grounds ---------------------------------------------------
+   *
+   * Every colour the viewport chooses for itself, in one table rather than at
+   * nine call sites. The viewport is not chrome — it is a picture with its own
+   * light — so it cannot inherit the page's custom properties, and before this
+   * table each of these was a literal buried in a draw call.
+   *
+   * The light ground is NOT the dark one lightened. A part at #b8bcc4 is a
+   * pale grey that reads as a solid object on black and as a smudge on paper,
+   * so the light ground gets its own mid grey. The same is true of the grid and
+   * the dimension overlays: on paper they have to be darker than the ground,
+   * not brighter. */
+  var GROUNDS = {
+    dark: {
+      clear: [0.043, 0.059, 0.094],
+      grid: [0.16, 0.22, 0.31],
+      gridOpacity: 0.55,
+      part: '#b8bcc4',
+      partFallback: [0.72, 0.74, 0.78],
+      /* The warning gold this interface already uses for "quoted, not checked".
+       * Both mean the same thing to a reader: what you are looking at is not the
+       * whole story. Matches --warn-ink in shell.css, in each theme. */
+      removed: '#e6cd8f',
+      stated: [0.55, 0.85, 0.95],
+      derived: [0.52, 0.60, 0.72]
+    },
+    light: {
+      clear: [0.949, 0.953, 0.965],
+      grid: [0.72, 0.75, 0.80],
+      gridOpacity: 0.90,
+      part: '#8d929c',
+      partFallback: [0.55, 0.57, 0.61],
+      removed: '#8a6520',
+      stated: [0.08, 0.38, 0.52],
+      derived: [0.34, 0.38, 0.48]
+    }
+  };
+
+  /* Which ground is in force. Read at draw time rather than cached into each
+   * Studio: this is a draw-on-demand renderer with no loop, so there is no
+   * per-frame cost to reading it, and no second copy to leave stale. */
+  var LIGHT = false;
+  function ground() { return LIGHT ? GROUNDS.light : GROUNDS.dark; }
 
   function Studio(canvas, opts) {
     opts = opts || {};
@@ -1328,6 +1386,46 @@
 
     var self = this;
     window.addEventListener('resize', function () { self._resize(); self.draw(); });
+
+    /* Registered so a theme change repaints this viewport.
+     *
+     * This is draw-on-demand: there is no animation loop that would pick the new
+     * ground up on its next pass, so without this the model stays on the old
+     * background until something else happens to redraw it — and on a settled
+     * screen nothing does.
+     *
+     * The list is never pruned, and that is safe rather than sloppy: Studios are
+     * created once and deliberately outlive the DOM they are shown in. The
+     * compare view keeps a POOL for exactly that reason (see workbench.js), so
+     * there is no destruction path to hook and nothing accumulates. */
+    STUDIOS.push(this);
+
+    /* Paint once, immediately, before there is anything to look at.
+     *
+     * This is a draw-on-demand renderer and nothing demanded a draw until
+     * geometry arrived, so a freshly mounted viewport was never cleared at all.
+     * A WebGL canvas created with `alpha: false` and never drawn composites as
+     * opaque BLACK — which was indistinguishable from this viewport's intended
+     * near-black ground, so for as long as there was only one ground the defect
+     * could not be seen. On a light page it is a black rectangle in the middle
+     * of the screen, sitting where the model will be.
+     *
+     * It also only reproduced on a settled window: any resize calls draw(), so
+     * anyone who dragged a window edge — or ran a test that emulated a
+     * viewport — saw the correct ground and could not reproduce it.
+     *
+     * docs/bugfix/2026-09-07-the-workbench-hid-half-itself-on-a-phone.md */
+    this.draw();
+  }
+
+  var STUDIOS = [];
+  if (window.ForgeTheme) {
+    /* Called back immediately on registration, which is what sets LIGHT before
+     * the first draw. */
+    window.ForgeTheme.onChange(function (light) {
+      LIGHT = !!light;
+      for (var i = 0; i < STUDIOS.length; i++) { STUDIOS[i].draw(); }
+    });
   }
 
   Studio.prototype._resize = function () {
@@ -1558,7 +1656,8 @@
     var w = this.canvas.width, h = this.canvas.height;
 
     gl.viewport(0, 0, w, h);
-    gl.clearColor(0.043, 0.059, 0.094, 1);
+    var g = ground();
+    gl.clearColor(g.clear[0], g.clear[1], g.clear[2], 1);
     gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     gl.enable(gl.DEPTH_TEST);
     gl.enable(gl.CULL_FACE);
@@ -1587,6 +1686,7 @@
       secAxis: gl.getUniformLocation(P, 'uSectionAxis'),
       secAt: gl.getUniformLocation(P, 'uSectionAt'),
       highlight: gl.getUniformLocation(P, 'uHighlight'),
+      light2: gl.getUniformLocation(P, 'uLight'),
       specPower: gl.getUniformLocation(P, 'uSpecPower'),
       specGloss: gl.getUniformLocation(P, 'uSpecGloss')
     };
@@ -1594,6 +1694,7 @@
     gl.uniformMatrix4fv(loc.proj, false, proj);
     gl.uniform3fv(loc.light, normalize([0.45, 0.85, 0.5]));
     gl.uniform3fv(loc.cam, eye);
+    gl.uniform1f(loc.light2, LIGHT ? 1 : 0);
     gl.uniform1i(loc.secAxis, this.section.axis);
     gl.uniform1f(loc.secAt, this.section.at);
 
@@ -1640,7 +1741,7 @@
                              scaling(s.scale || [1,1,1])));
       gl.uniformMatrix4fv(loc.model, false, model);
       gl.uniformMatrix3fv(loc.nmat, false, normalMatrix(model));
-      gl.uniform3fv(loc.color, hexToRGB(part.removed ? REMOVED_COLOUR : (s.color || '#b8bcc4')));
+      gl.uniform3fv(loc.color, hexToRGB(part.removed ? g.removed : (s.color || g.part)));
       gl.uniform1f(loc.opacity, alphaOf(part));
       gl.uniform1f(loc.highlight, self.selected === s.id ? 1 : 0);
       /* The finish, as the document declared it. Not looked up from the material
@@ -1706,8 +1807,9 @@
     var pos = gl.getAttribLocation(this.lineProg, 'aPos');
     gl.uniformMatrix4fv(gl.getUniformLocation(this.lineProg, 'uView'), false, view);
     gl.uniformMatrix4fv(gl.getUniformLocation(this.lineProg, 'uProj'), false, proj);
-    gl.uniform3fv(gl.getUniformLocation(this.lineProg, 'uColor'), [0.16, 0.22, 0.31]);
-    gl.uniform1f(gl.getUniformLocation(this.lineProg, 'uOpacity'), 0.55);
+    var gg = ground();
+    gl.uniform3fv(gl.getUniformLocation(this.lineProg, 'uColor'), gg.grid);
+    gl.uniform1f(gl.getUniformLocation(this.lineProg, 'uOpacity'), gg.gridOpacity);
     gl.bindBuffer(gl.ARRAY_BUFFER, this._gridBuffer);
     gl.enableVertexAttribArray(pos);
     gl.vertexAttribPointer(pos, 3, gl.FLOAT, false, 0, 0);
@@ -1835,8 +1937,9 @@
      * measures is worse than useless, because the reader sees a number with no
      * visible extent and cannot tell which feature it belongs to. */
     gl.disable(gl.DEPTH_TEST);
-    this._drawSegments(stated,  view, proj, [0.55, 0.85, 0.95], 0.95);
-    this._drawSegments(derived, view, proj, [0.52, 0.60, 0.72], 0.85);
+    var go = ground();
+    this._drawSegments(stated,  view, proj, go.stated, 0.95);
+    this._drawSegments(derived, view, proj, go.derived, 0.85);
     gl.enable(gl.DEPTH_TEST);
   };
 

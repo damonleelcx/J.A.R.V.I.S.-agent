@@ -41,6 +41,9 @@
     'uniform float uScale;',
     'uniform float uBright;',
     'uniform float uScroll;',
+    /* 0 = the field as designed: light on a near-black ground. 1 = the same
+     * field printed as ink on paper. See the branch at the tone map. */
+    'uniform float uLight;',
 
     'float hash(vec2 v){ return fract(sin(dot(v, vec2(127.1, 311.7))) * 43758.5453123); }',
 
@@ -162,9 +165,44 @@
 
     /* Tone map the field before the subject is composited, so the blob is lit
      * on its own terms and does not inherit the ribbons' bloom. */
-    '  col = col / (1.0 + col);',
-    '  col = pow(col, vec3(0.85));',
-    '  col = max(col, vec3(0.070, 0.070, 0.082));',
+    '  vec3 dcol = col / (1.0 + col);',
+    '  dcol = pow(dcol, vec3(0.85));',
+    '  dcol = max(dcol, vec3(0.070, 0.070, 0.082));',
+
+    /* The light ground is not an inversion of the dark one, and it cannot be.
+     *
+     * Everything above accumulates ADDITIVELY, because that is what light does:
+     * three overlapping wavefronts sum to violet-white. Adding light to white
+     * paper produces white paper, so on a pale ground the same accumulation
+     * renders as nothing at all — which is what the first attempt looked like.
+     *
+     * So the two quantities are separated and used differently. The MAGNITUDE
+     * of the accumulation becomes coverage — how much ink is on the paper here —
+     * and the HUE becomes the ink itself, normalised so a bright pixel and a dim
+     * pixel of the same stream print the same colour at different strengths.
+     * The result is the same composition drawn in violet ink rather than in
+     * violet light, which keeps the streams' identity: blue leads, violet sits
+     * in the middle, magenta trails, exactly as above.
+     *
+     * Inverting `dcol` was the cheaper option and it is wrong: it takes the hue
+     * with it, and a blue field inverts to a gold one. */
+    /* Prefixed names: main() already has an `a` (the blob's smin radius, above)
+     * and GLSL ES has no block scope to hide behind, so a bare `a` here is a
+     * redefinition — which fails the COMPILE, not the draw. That failure is
+     * quiet by design: mount() returns null, `is-live` is never added, and the
+     * CSS gradient underneath renders a perfectly plausible page with no field
+     * in it at all. It cost a round trip; the names stay prefixed. */
+    '  float inkMag = max(col.r, max(col.g, col.b));',
+    '  vec3  inkHue = col / max(inkMag, 1e-4);',
+    /* A lower exponent than the dark path's gamma, on purpose. Ink covering
+     * paper is not the same curve as light adding to black: the dim tail that
+     * reads as bloom on a dark ground is nearly invisible as coverage on a pale
+     * one, so the midtones are lifted to give the streams the same presence in
+     * both. Tuned against side-by-side screenshots, not by eye on one. */
+    '  float inkA = clamp(pow(inkMag / (1.0 + inkMag), 0.72) * 0.95, 0.0, 1.0);',
+    '  vec3 lcol = mix(vec3(0.957, 0.957, 0.969), inkHue * 0.56, inkA);',
+
+    '  col = mix(dcol, lcol, uLight);',
 
     /* ---- composite the subject ------------------------------------------ */
     /* Screen-space ray. The subject drifts up and shrinks as the page scrolls,
@@ -200,10 +238,16 @@
     '    float kd = max(dot(n, key), 0.0);',
     '    float fd = max(dot(n, fill), 0.0);',
     '    float rim = pow(1.0 - max(dot(n, -rd), 0.0), 2.6);',
-    '    vec3 mat = vec3(0.97, 0.97, 0.98);',
-    '    vec3 lit = mat * (0.34 + 0.86 * kd)',
+    /* The subject is white against a near-black field and mid-grey against
+     * paper. It is the same material either way — what changes is that a white
+     * mass on a white page has no silhouette, and the silhouette is the whole
+     * of what this shape contributes. The rim is nearly withdrawn in light for
+     * the same reason the ribbons are: a lift on an already-pale ground reads as
+     * a smudge rather than as an edge. */
+    '    vec3 mat = mix(vec3(0.97, 0.97, 0.98), vec3(0.60, 0.61, 0.69), uLight);',
+    '    vec3 lit = mat * (mix(0.34, 0.30, uLight) + mix(0.86, 0.80, uLight) * kd)',
     '             + vec3(0.26, 0.28, 0.36) * fd * 0.24',
-    '             + vec3(0.58, 0.62, 0.95) * rim * 0.26;',
+    '             + vec3(0.58, 0.62, 0.95) * rim * mix(0.26, 0.10, uLight);',
     /* Distance fade so the mass sits IN the field rather than pasted on it. */
     '    float fog = exp(-max(dist - 5.2, 0.0) * 0.50);',
     '    lit = mix(col, lit, clamp(fog, 0.0, 1.0));',
@@ -266,6 +310,7 @@
     var uScale  = gl.getUniformLocation(prog, 'uScale');
     var uBright = gl.getUniformLocation(prog, 'uBright');
     var uScroll = gl.getUniformLocation(prog, 'uScroll');
+    var uLight  = gl.getUniformLocation(prog, 'uLight');
 
     gl.uniform1f(uSpeed,  opts.speed  === undefined ? 1.0 : opts.speed);
     gl.uniform1f(uScale,  opts.scale  === undefined ? 1.0 : opts.scale);
@@ -308,13 +353,39 @@
       raf = global.requestAnimationFrame(frame);
     }
 
+    /* The held frame, as its own function.
+     *
+     * Under `prefers-reduced-motion` this is the ONLY draw that ever happens —
+     * there is no loop to pick a changed uniform up on its next pass. A theme
+     * change would leave the field in the old palette until the page was
+     * reloaded, which is exactly the reader who asked not to be surprised by
+     * things moving. So setTheme calls this. */
+    function paint() {
+      resize();
+      gl.uniform1f(uTime, 12.0);
+      gl.uniform1f(uScroll, scroll);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+    }
+
+    /* Registered before the first draw so the very first frame is already in the
+     * right palette; ForgeTheme calls back immediately on registration. */
+    function setTheme(light) {
+      gl.uniform1f(uLight, light ? 1.0 : 0.0);
+      if (reduced) paint();
+    }
+    if (global.ForgeTheme) {
+      global.ForgeTheme.onChange(setTheme);
+    } else {
+      /* theme.js is loaded first on every page that mounts this, so this is the
+       * "somebody reused the module elsewhere" path, not a live one. Dark is the
+       * design's own ground, so it is the safe assumption. */
+      setTheme(false);
+    }
+
     if (reduced) {
       /* One frame, held. The composition is the point; the motion is not, and a
        * reader who asked for less of it should still get the picture. */
-      resize();
-      gl.uniform1f(uTime, 12.0);
-      gl.uniform1f(uScroll, 0.0);
-      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      paint();
     } else {
       raf = global.requestAnimationFrame(frame);
     }
@@ -332,7 +403,10 @@
       }
     });
 
-    return { stop: function () { running = false; if (raf) global.cancelAnimationFrame(raf); } };
+    return {
+      stop: function () { running = false; if (raf) global.cancelAnimationFrame(raf); },
+      setTheme: setTheme
+    };
   }
 
   global.PortalField = { mount: mount };

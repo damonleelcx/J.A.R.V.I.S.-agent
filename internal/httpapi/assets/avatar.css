@@ -16,19 +16,30 @@
 
 .forge-avatar { display: block; overflow: visible; }
 
-/* Blades: white shell with gold shadow, as on the uniform trim. */
-.fa-wing-lit   { stop-color: #f7f8fa; }
-.fa-wing-shade { stop-color: #d9b25c; }
+/* Blades: white shell with gold shadow, as on the uniform trim.
+ *
+ * The lit end is the ONE part of the mark that has to change with the theme.
+ * White blades on a white masthead are not a subtle mark, they are an absent
+ * one — the sigil simply disappeared. In light they run slate-to-gold instead,
+ * which keeps the same two-tone shape at the same contrast the dark version
+ * has against its own ground. */
+.fa-wing-lit   { stop-color: var(--wing-lit); }
+.fa-wing-shade { stop-color: var(--gold); }
 
-/* Core: cyan, the colour of the ornament, the collar gem, and the wrist display. */
-.fa-core-hot  { stop-color: #d6fbff; }
-.fa-core-mid  { stop-color: #7b8cff; }
-.fa-core-edge { stop-color: #3e45a8; }
+/* Core: the gem. Deliberately NOT themed — it is emissive, the one thing on the
+ * mark that is meant to look lit from inside, and an emissive object does not
+ * change colour because the room did. Only its outer edge darkens in light, so
+ * the gem still has a boundary against a white ground. */
+.fa-core-hot  { stop-color: var(--sigil-core-hot); }
+.fa-core-mid  { stop-color: var(--sigil-core-mid); }
+.fa-core-edge { stop-color: var(--sigil-core-edge); }
 
-.fa-ring  { stroke: #d9b25c; opacity: .55; }
+.fa-ring  { stroke: var(--gold); opacity: .55; }
 .fa-core  { transform-origin: 50% 60%; }
 .fa-wings { transform-origin: 50% 34%; }
-.fa-mark  { stroke: #16161a; fill: none; }
+/* The ✕ and ✓ are drawn ON the gem, so they stay dark in both themes — they
+ * take their contrast from the gem underneath, not from the page. */
+.fa-mark  { stroke: var(--sigil-mark); fill: none; }
 
 /* Idle — the core breathes slowly. Alive, not demanding attention. */
 .forge-avatar--idle .fa-core {
@@ -46,7 +57,7 @@
  * The motion is on the BOUNDARY because a tool call happens outside this
  * process. */
 .forge-avatar--working .fa-arc {
-  stroke: #7b8cff;
+  stroke: var(--sigil-core-mid);
   transform-origin: 50% 60%;
   animation: fa-orbit 1.6s linear infinite;
 }
@@ -62,7 +73,7 @@
  * until a human acts, and an agent waiting unnoticed looks like one that died. */
 .forge-avatar--blocked .fa-ring { stroke: transparent; }
 .forge-avatar--blocked .fa-gate {
-  stroke: #e0b64c;
+  stroke: var(--warn);
   transform-origin: 50% 60%;
   animation: fa-orbit 9s linear infinite;
 }
@@ -72,10 +83,10 @@
  * animating anyway is the visual form of overstating state. */
 .forge-avatar--failed .fa-core  { opacity: .3; filter: grayscale(.85); }
 .forge-avatar--failed .fa-wings { opacity: .45; filter: grayscale(.7); }
-.forge-avatar--failed .fa-ring  { stroke: #f0576f; opacity: .8; }
+.forge-avatar--failed .fa-ring  { stroke: var(--bad); opacity: .8; }
 
 /* Done — settled. Also motionless: the work is finished. */
-.forge-avatar--done .fa-ring { stroke: #56b487; opacity: .95; }
+.forge-avatar--done .fa-ring { stroke: var(--ok); opacity: .95; }
 .forge-avatar--done .fa-core { opacity: 1; }
 
 @keyframes fa-breathe {
@@ -115,16 +126,16 @@
   object-fit: cover;
   display: block;
   border-radius: 50%;
-  background: linear-gradient(160deg, #f7f8fa 0%, #e6e9ee 55%, #d9b25c 170%);
-  border: 1.5px solid rgba(217, 178, 92, .5);
+  background: linear-gradient(160deg, var(--portrait-lit) 0%, var(--portrait-mid) 55%, var(--gold) 170%);
+  border: 1.5px solid color-mix(in srgb, var(--gold) 50%, transparent);
 }
 
 .forge-portrait__badge {
   position: absolute;
   right: -4px; bottom: -4px;
   border-radius: 50%;
-  background: var(--panel, #1c1c22);
-  box-shadow: 0 0 0 2px var(--panel, #1c1c22);
+  background: var(--panel);
+  box-shadow: 0 0 0 2px var(--panel);
   display: grid; place-items: center;
 }
 
