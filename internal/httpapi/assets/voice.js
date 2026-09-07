@@ -30,6 +30,10 @@
 
   var SR = global.SpeechRecognition || global.webkitSpeechRecognition;
 
+  /* A 44-byte silent WAV. Played once on the first gesture to satisfy the
+   * autoplay policy, so a later reply can play without one. */
+  var SILENT_WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YQAAAAA=';
+
   function Voice(opts) {
     opts = opts || {};
     this.onTranscript = opts.onTranscript || function () {};
@@ -60,8 +64,32 @@
     this.remoteVoice = undefined;
     this._audio = null;
     this._remoteAbort = null;
+    this._spoken = '';
+    this._echoTail = null;
 
     if (SR) this._initRecognition();
+
+    /* Take the first user gesture as permission to play audio later.
+     *
+     * Enabling hands-free, granting the microphone, pressing send — all of them
+     * are gestures, and one silent play() during any of them is what lets her
+     * speak without a click later on. Cheap, once per page, and it removes the
+     * autoplay refusal rather than only recovering from it. */
+    var self = this;
+    var unlock = function () {
+      global.removeEventListener('pointerdown', unlock, true);
+      global.removeEventListener('keydown', unlock, true);
+      if (self._unlocked) return;
+      self._unlocked = true;
+      try {
+        var a = new Audio(SILENT_WAV);
+        a.volume = 0;
+        var p = a.play();
+        if (p && p.catch) p.catch(function () { /* nothing to recover */ });
+      } catch (e) { /* no Audio here; the browser voice still works */ }
+    };
+    global.addEventListener('pointerdown', unlock, true);
+    global.addEventListener('keydown', unlock, true);
   }
 
   Voice.prototype._initRecognition = function () {
@@ -80,6 +108,30 @@
         var text = event.results[i][0].transcript;
         if (event.results[i].isFinal) final += text;
         else interim += text;
+      }
+
+      /* Is this her own voice coming back through the microphone?
+       *
+       * In hands-free the mic is open while she speaks, and it hears the
+       * speakers. Every word she says was then transcribed as though the person
+       * had said it, submitted, answered, spoken — and heard again. That is an
+       * endless conversation with herself, and it is what an open mic plus a
+       * loudspeaker does unless something tells them apart.
+       *
+       * Barge-in and echo look identical at this layer: both are "speech while
+       * FORGE is talking". What separates them is WHOSE WORDS THEY ARE, so that
+       * is what gets checked — the heard text against the text she is currently
+       * saying. Hers, discard it: she is not interrupted by herself, and it must
+       * never be submitted. Not hers, it is a real interruption and behaves
+       * exactly as before.
+       *
+       * Deliberately not solved by closing the mic while she speaks. That would
+       * end the loop and end barge-in with it, and AUD-01 asks for full duplex —
+       * being able to interrupt her is the point. */
+      var heard = (final || interim);
+      if (heard && self.speaking && self._isOwnEcho(heard)) {
+        if (interim) return;            // her own words, still forming
+        return;                         // her own words, final — never submit
       }
 
       // Barge-in: the moment ANY speech is detected while FORGE is talking,
@@ -263,6 +315,11 @@
      * Which is why a failure here is silent and immediate — the answer is
      * already on screen, and a person waiting to hear it must not wait through
      * a retry to find out the vendor is down. */
+    /* The echo guard needs to know what she is about to say BEFORE the audio
+     * starts, because recognition can hear the first syllable before play()
+     * resolves. */
+    this._nowSpeaking(text);
+
     if (this.remoteVoice !== false) {
       this._speakRemote(text, onDone);
       return;
@@ -297,20 +354,42 @@
         URL.revokeObjectURL(url);
         self.speaking = false;
         self._audio = null;
+        self._doneSpeaking();
         self._setState();
         if (onDone) onDone();
       };
       audio.onplay = function () { self.speaking = true; self._setState(); };
       audio.onended = done;
       audio.onerror = function () {
-        /* The bytes arrived and would not play. That is this path failing, not
-         * the vendor, so it still falls back rather than going silent. */
+        /* The bytes arrived and would not decode. That is this path failing,
+         * not the vendor, so it falls back — and latches, because a file the
+         * browser cannot decode will not decode next time either. */
         URL.revokeObjectURL(url);
         self._audio = null;
         self.remoteVoice = false;
         self._speakLocal(text, onDone);
       };
-      audio.play().catch(function () { audio.onerror(); });
+      audio.play().catch(function (err) {
+        /* ‼️ An autoplay refusal is NOT a vendor failure and must not latch.
+         *
+         * A browser rejects programmatic play() until the page has had a user
+         * gesture. In hands-free the person SPOKE rather than clicked, so there
+         * may never have been one — and the first reply of the session hit
+         * exactly that. Latching on it disabled her voice for the rest of the
+         * page after a synthesis that had already succeeded and been paid for:
+         * observed once in production, 200 from /v1/speech, and never heard.
+         *
+         * So this falls back for THIS utterance only and tries again on the
+         * next, by which time a gesture has almost certainly happened. */
+        URL.revokeObjectURL(url);
+        self._audio = null;
+        if (err && err.name === 'NotAllowedError') {
+          self._speakLocal(text, onDone);
+          return;
+        }
+        self.remoteVoice = false;
+        self._speakLocal(text, onDone);
+      });
     }).catch(function (err) {
       if (err && err.name === 'AbortError') return;   // interrupted, not failed
       /* Remembered, so a deployment with no vendor pays one request per page
@@ -339,8 +418,8 @@
     }
 
     utter.onstart = function () { self.speaking = true; self._setState(); };
-    utter.onend = function () { self.speaking = false; self._setState(); if (onDone) onDone(); };
-    utter.onerror = function () { self.speaking = false; self._setState(); if (onDone) onDone(); };
+    utter.onend = function () { self.speaking = false; self._doneSpeaking(); self._setState(); if (onDone) onDone(); };
+    utter.onerror = function () { self.speaking = false; self._doneSpeaking(); self._setState(); if (onDone) onDone(); };
 
     global.speechSynthesis.speak(utter);
   };
@@ -353,7 +432,65 @@
    * arrived yet. Leaving that request in flight would let her start speaking
    * AFTER the person interrupted her, which is the one thing a barge-in must
    * never do. */
+
+  /* ---- telling her own voice from an interruption ----------------------- */
+
+  /* What she is saying right now, normalised for comparison, plus a short tail
+   * after she stops.
+   *
+   * The tail matters: recognition lags the audio by a beat, so the last words
+   * of an utterance arrive AFTER speaking has finished. Without it the final
+   * fragment of every reply gets submitted, which is the loop again — just one
+   * message per turn instead of continuously. 1.6s covers the lag without
+   * swallowing a person who answers immediately.
+   */
+  Voice.prototype._nowSpeaking = function (text) {
+    this._spoken = normaliseForEcho(text || '');
+    if (this._echoTail) { global.clearTimeout(this._echoTail); this._echoTail = null; }
+  };
+
+  Voice.prototype._doneSpeaking = function () {
+    var self = this;
+    if (this._echoTail) global.clearTimeout(this._echoTail);
+    this._echoTail = global.setTimeout(function () {
+      self._spoken = '';
+      self._echoTail = null;
+    }, 1600);
+  };
+
+  /* True when the heard text is made of the words she is currently saying.
+   *
+   * Word overlap rather than substring: recognition drops words, mishears
+   * others and never punctuates, so "I am FORGE your engineering partner" comes
+   * back as "hello I am" or "Forge" — both real examples from the loop this
+   * fixes. A substring test misses those; asking what fraction of the heard
+   * words appear in hers catches them.
+   *
+   * The threshold errs toward treating speech as HERS. Getting it wrong in that
+   * direction drops one interruption and the person repeats themselves; getting
+   * it wrong the other way restarts an infinite loop. Short heard fragments —
+   * one or two words, which is what echo usually produces — need every word to
+   * match, because at that length a coincidence is likely. */
+  Voice.prototype._isOwnEcho = function (heard) {
+    if (!this._spoken) return false;
+    var h = normaliseForEcho(heard).split(' ').filter(Boolean);
+    if (!h.length) return false;
+    var mine = ' ' + this._spoken + ' ';
+    var hits = 0;
+    for (var i = 0; i < h.length; i++) {
+      if (mine.indexOf(' ' + h[i] + ' ') !== -1) hits++;
+    }
+    var ratio = hits / h.length;
+    return h.length <= 2 ? ratio === 1 : ratio >= 0.6;
+  };
+
+  function normaliseForEcho(s) {
+    return String(s).toLowerCase().replace(/[^a-z0-9\s]/g, ' ')
+      .replace(/\s+/g, ' ').trim();
+  }
+
   Voice.prototype.stopSpeaking = function () {
+    this._doneSpeaking();
     if (this._remoteAbort) {
       try { this._remoteAbort.abort(); } catch (e) { /* already settled */ }
       this._remoteAbort = null;
