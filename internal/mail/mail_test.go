@@ -245,3 +245,53 @@ func TestFileSenderRefusesAnInvalidMessage(t *testing.T) {
 		t.Error("an invalid message was written to disk anyway")
 	}
 }
+
+// A dark template must not rely on the body rule for its text colour.
+//
+// Gmail rewrites <body> into a <div>, so `body { color: … }` never reaches the
+// content. On 2026-09-07 the verification mail arrived with its greeting and
+// its call to action invisible — dark default text on the dark card — while
+// every line carrying a class colour (.muted, .url, .btn) rendered correctly.
+// The difference was that a plain <p> had no colour of its own.
+//
+// This fails if the colour goes back to living only on body.
+// See deploy/README.md and the Why block in templates.go.
+func TestPlainParagraphsCarryTheirOwnColour(t *testing.T) {
+	out := wrapHTML("t", "<p>a plain paragraph</p>")
+
+	style := out
+	if i := strings.Index(out, "<style>"); i >= 0 {
+		if j := strings.Index(out, "</style>"); j > i {
+			style = out[i:j]
+		}
+	}
+
+	// The p rule must set a colour. Without it a plain paragraph inherits from
+	// body, which Gmail drops.
+	pRule := ""
+	for _, line := range strings.Split(style, "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), "p {") {
+			pRule = line
+		}
+	}
+	if pRule == "" {
+		t.Fatal("no `p {` rule found in the mail stylesheet")
+	}
+	if !strings.Contains(pRule, "color:") {
+		t.Errorf("the `p` rule sets no colour, so a plain paragraph inherits from body — "+
+			"which Gmail drops when it rewrites <body> into a <div>, rendering the text "+
+			"invisible on this dark card. Rule was: %s", strings.TrimSpace(pRule))
+	}
+
+	// The card is the element the content actually sits in, so it must carry a
+	// colour too for clients that resolve inheritance from there.
+	if !strings.Contains(style, ".card") {
+		t.Fatal("no .card rule found")
+	}
+	for _, line := range strings.Split(style, "\n") {
+		if strings.Contains(line, "border-radius:12px; padding:28px") && !strings.Contains(line, "color:") {
+			t.Error("the .card rule sets no colour; content inheriting from it falls back " +
+				"to the client default, which on a dark card is unreadable")
+		}
+	}
+}
