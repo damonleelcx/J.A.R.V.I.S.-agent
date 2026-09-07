@@ -229,15 +229,6 @@
 .home-quiet { font-size: 13px; text-decoration: none; }
 .home-quiet:hover { text-decoration: underline; }
 
-.home-links {
-  margin-top: 26px;
-  font-size: 12.5px;
-  line-height: 1.85;
-  color: var(--ink-dim);
-}
-.home-links a { text-decoration: none; }
-.home-links a:hover { text-decoration: underline; }
-
 .sec-hint {
   margin: 30px 0 0;
   font-size: 11px;

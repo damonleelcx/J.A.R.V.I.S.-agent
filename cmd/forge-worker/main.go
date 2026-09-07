@@ -37,6 +37,15 @@ var (
 	date    = "unknown"
 )
 
+// dbWaitLimit bounds the wait for the database at boot.
+//
+// Long enough to cover a database restarting alongside this process, short
+// enough that a genuinely absent database is reported while somebody is still
+// watching the deploy. Stated here rather than as configuration: it is a
+// property of how this process is scheduled, not something an operator tunes
+// per environment, and a knob nobody turns is surface for no benefit.
+const dbWaitLimit = 90 * time.Second
+
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "\nforge-worker failed to start.")
@@ -79,7 +88,18 @@ func run() error {
 	// carries both. See docs/security-promises.md.
 	log.Info(ctx, logx.EventConfigLoaded, "config", cfg.Redacted())
 
-	pool, err := db.Connect(ctx, cfg.DB, log)
+	// Wait rather than die if the database is not up yet.
+	//
+	// The worker and postgres start together, and losing that race by a second
+	// is normal — it happened in production on 2026-09-07. Exiting 1 hands the
+	// problem to CrashLoopBackOff, whose delay is exponential and reaches
+	// minutes, so a database that is one second late can cost far more than a
+	// second. A misconfiguration is still fatal immediately: WaitForConnect
+	// waits only while NOTHING is answering, never on a refusal.
+	//
+	// forged and the migrate initContainer take the same race and are
+	// deliberately left as they are; see the note in db.WaitForConnect.
+	pool, err := db.WaitForConnect(ctx, cfg.DB, log, dbWaitLimit)
 	if err != nil {
 		return err
 	}
