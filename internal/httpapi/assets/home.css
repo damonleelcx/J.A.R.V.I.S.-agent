@@ -1,0 +1,213 @@
+/* The home page.
+ *
+ * # What it is doing
+ *
+ * Editorial rather than panelled: a full-bleed field, a display line that the
+ * portrait sits inside rather than beside, and the product's claims set as a
+ * precise spec block. The reference is a product plate — large serif with an
+ * italic counterpart, small exact data in a corner, and a great deal of empty
+ * space carrying the composition.
+ *
+ * # Why the type is a serif here and nowhere else
+ *
+ * Every other surface in this application is a working tool and uses the system
+ * sans. This page is the only one whose job is to introduce rather than to
+ * operate, so the display line is the one place a serif earns its keep. It is
+ * scoped to .home-display; nothing else on the site inherits it.
+ *
+ * Colours are the existing tokens. The page introduces no new palette — the
+ * field's violets come from the shader, not from CSS, so there is one place to
+ * change them.
+ */
+
+.home {
+  /* shell.css sets `body { display:grid; place-items:center; padding:24px }`,
+   * which every other page wants — it centres a panel. This page is full-bleed,
+   * and inheriting that grid pushed the whole composition below the fold with
+   * only the masthead visible. The display and padding must both be undone, not
+   * just the padding. */
+  display: block;
+  place-items: normal;
+  position: relative;
+  min-height: 100vh;
+  min-height: 100dvh;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  color: var(--ink);
+  /* This gradient is the design when WebGL is unavailable, not a placeholder
+   * for it. See portal-field.js. */
+  background:
+    radial-gradient(120% 90% at 68% 18%, #1a1436 0%, transparent 58%),
+    radial-gradient(90% 70% at 22% 82%, #2a1030 0%, transparent 60%),
+    var(--bg);
+}
+
+#field {
+  position: fixed;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  border: 0;
+  z-index: 0;
+  opacity: 0;
+  transition: opacity 900ms ease;
+}
+#field.is-live { opacity: 1; }
+
+/* A scrim under the text column.
+ *
+ * The field animates, so at some point in its cycle a bright ribbon WILL pass
+ * behind any given line of copy. Contrast that depends on where the animation
+ * happens to be is contrast that fails intermittently and is never caught in a
+ * screenshot. The scrim makes the floor fixed: it is strongest at the left edge
+ * where the type lives and clears entirely on the right, so the field is still
+ * the thing you see. */
+.home-inner::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  /* MUST be negative. A positioned ::before at z-index 0 paints ABOVE its
+   * non-positioned in-flow siblings, so at 0 this scrim covered the copy it
+   * exists to protect and dimmed the whole page instead. */
+  z-index: -1;
+  pointer-events: none;
+  background:
+    linear-gradient(100deg,
+      rgba(6, 8, 14, .92) 0%,
+      rgba(6, 8, 14, .78) 26%,
+      rgba(6, 8, 14, .34) 52%,
+      rgba(6, 8, 14, 0)   74%),
+    linear-gradient(to top,
+      rgba(6, 8, 14, .72) 0%,
+      rgba(6, 8, 14, 0)   34%);
+}
+
+.home-inner {
+  position: relative;
+  z-index: 1;
+  min-height: 100vh;
+  min-height: 100dvh;
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  gap: 24px;
+  padding: 30px clamp(22px, 5vw, 68px) 28px;
+  box-sizing: border-box;
+}
+
+/* --- masthead ----------------------------------------------------------- */
+.home-mast {
+  display: flex;
+  align-items: center;
+  gap: 11px;
+}
+.home-mast .wordmark {
+  font-weight: 700;
+  letter-spacing: .22em;
+  font-size: 12px;
+}
+
+/* --- the display line --------------------------------------------------- */
+/* The portrait is placed INSIDE the line rather than above it, so the type and
+ * the character occupy one object the way the reference's title crosses its
+ * subject. */
+.home-stage {
+  align-self: center;
+  display: grid;
+  gap: clamp(18px, 3vw, 30px);
+  max-width: 1180px;
+  width: 100%;
+  margin: 0 auto;
+}
+
+.home-display {
+  font-family: "Iowan Old Style", "Palatino Linotype", Palatino, Georgia,
+               "Times New Roman", serif;
+  font-weight: 400;
+  font-size: clamp(52px, 11.5vw, 168px);
+  line-height: .92;
+  letter-spacing: -0.015em;
+  margin: 0;
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 0 .28em;
+  /* Slightly translucent so the field reads through the counters of the
+   * letterforms — the type sits in the scene rather than on top of it. */
+  color: color-mix(in srgb, var(--ink) 92%, transparent);
+  text-shadow: 0 6px 40px rgba(0, 0, 0, .55);
+}
+.home-display em {
+  font-style: italic;
+  color: color-mix(in srgb, var(--core) 78%, var(--ink));
+}
+.home-portrait {
+  width: clamp(58px, 9vw, 124px);
+  height: clamp(58px, 9vw, 124px);
+  border-radius: 50%;
+  overflow: hidden;
+  flex: none;
+  box-shadow: 0 10px 50px rgba(0, 0, 0, .6);
+  transform: translateY(.06em);
+}
+.home-portrait img,
+.home-portrait svg { width: 100%; height: 100%; display: block; }
+
+.home-lede {
+  max-width: 46ch;
+  margin: 0;
+  font-size: clamp(15px, 1.35vw, 18px);
+  line-height: 1.62;
+  color: var(--ink-dim);
+}
+
+/* --- the spec block ----------------------------------------------------- */
+/* Small, exact, aligned left — the counterweight to the display line. Every
+ * line here is a claim the product actually makes; none of it is decorative
+ * copy. */
+.home-spec {
+  font-size: 12.5px;
+  line-height: 1.75;
+  color: var(--ink-dim);
+  letter-spacing: .01em;
+}
+.home-spec b {
+  display: block;
+  font-size: 13px;
+  font-weight: 650;
+  letter-spacing: .16em;
+  text-transform: uppercase;
+  color: var(--ink);
+  margin-bottom: 6px;
+}
+.home-spec span { color: color-mix(in srgb, var(--ink) 72%, transparent); }
+
+/* --- actions ------------------------------------------------------------ */
+.home-foot {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 22px 40px;
+}
+.home-actions { display: flex; align-items: center; gap: 18px; flex-wrap: wrap; }
+
+/* The primary action is the site's .btn, narrowed — this page is not a form and
+ * a full-width button would read as one. */
+.home .btn { width: auto; padding: 13px 26px; }
+
+.home-links {
+  font-size: 12.5px;
+  line-height: 1.85;
+  color: var(--ink-dim);
+  text-align: right;
+}
+.home-links a { text-decoration: none; }
+.home-links a:hover { text-decoration: underline; }
+
+@media (max-width: 720px) {
+  .home-links { text-align: left; }
+  .home-foot { align-items: flex-start; }
+  .home-display { gap: 0 .18em; }
+}

@@ -27,6 +27,7 @@ import (
 //
 //go:embed assets/shell.css assets/avatar.css assets/console.css assets/workbench.css
 //go:embed assets/pages.js assets/console.js assets/workbench.js assets/forge3d.js
+//go:embed assets/password-reveal.js assets/portal-field.js assets/home.css
 //go:embed assets/stage.js assets/voice.js assets/orb.js
 //go:embed assets/audio-input.js assets/room.js assets/room-page.js assets/room.css
 //go:embed assets/portrait/*.png
@@ -352,12 +353,12 @@ func (p *PageHandlers) Assets(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimPrefix(r.URL.Path, "/assets/")
 	switch {
 	case name == "shell.css", name == "avatar.css", name == "console.css",
-		name == "workbench.css", name == "room.css":
+		name == "workbench.css", name == "room.css", name == "home.css":
 		w.Header().Set("Content-Type", "text/css; charset=utf-8")
 	case name == "pages.js", name == "console.js", name == "workbench.js",
 		name == "forge3d.js", name == "voice.js", name == "orb.js",
 		name == "audio-input.js", name == "room.js", name == "room-page.js",
-		name == "stage.js":
+		name == "stage.js", name == "password-reveal.js", name == "portal-field.js":
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 	case isPortraitAsset(name):
 		w.Header().Set("Content-Type", "image/png")
@@ -420,7 +421,8 @@ const pageTemplates = `
 <div class="mark">{{.Avatar}}<div class="wordmark">FORGE</div></div>
 {{end}}
 
-{{define "foot"}}</main><script src="{{asset "pages.js"}}"></script></body></html>{{end}}
+{{define "foot"}}</main><script src="{{asset "password-reveal.js"}}"></script>
+<script src="{{asset "pages.js"}}"></script></body></html>{{end}}
 
 {{define "workbench"}}<!doctype html>
 <html lang="en"><head>
@@ -929,27 +931,63 @@ const pageTemplates = `
   </div>
   <div id="detail" class="hidden"></div>
 </div>
+<script src="{{asset "password-reveal.js"}}"></script>
 <script src="{{asset "console.js"}}"></script>
 </body></html>{{end}}
 
-{{define "index"}}{{template "head" .}}
-<div class="forge-presence">
-  {{.Presence}}
-  <div>
-    <h1 style="margin:0 0 4px">FORGE</h1>
-    <p class="dim" style="margin:0">A durable engineering partner.</p>
+{{define "index"}}<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>{{.Title}}</title>
+<link rel="stylesheet" href="{{asset "shell.css"}}">
+<link rel="stylesheet" href="{{asset "avatar.css"}}">
+<link rel="stylesheet" href="{{asset "home.css"}}">
+</head><body class="home" data-page="{{.Page}}" data-token="{{.Token}}">
+
+<!-- Decoration only. It carries no information, so it is hidden from assistive
+     technology and the page reads identically without it. -->
+<canvas id="field" aria-hidden="true"></canvas>
+
+<div class="home-inner">
+
+  <header class="home-mast">{{.Avatar}}<div class="wordmark">FORGE</div></header>
+
+  <div class="home-stage">
+    <h1 class="home-display">
+      <span>FORGE</span>
+      <span class="home-portrait" aria-hidden="true">{{.Presence}}</span>
+      <em>durable</em>
+    </h1>
+
+    <p class="home-lede">A durable engineering partner. FORGE reconstructs its
+    state from a database on every cycle, so it can be interrupted, restarted,
+    and resumed without losing what it was doing.</p>
+
+    <div class="home-spec">
+      <b>What it will not do</b>
+      It never claims a tool ran, a check passed, or a person approved
+      something that did not happen.<br>
+      <span>Completion, verification and acceptance are separate facts.</span><br>
+      <span>An unavailable connector is reported, never simulated.</span>
+    </div>
   </div>
+
+  <div class="home-foot">
+    <div class="home-actions">
+      <a class="btn" href="/workbench">Open the workbench</a>
+      <span class="home-spec"><a href="/console">Operations console</a> — goals, timeline, approvals.</span>
+    </div>
+    <div class="home-links">
+      Health: <a href="/healthz">/healthz</a> · <a href="/readyz">/readyz</a><br>
+      Error dictionary: <a href="/v1/meta/error-codes">/v1/meta/error-codes</a>
+    </div>
+  </div>
+
 </div>
-<p class="dim" style="margin-top:20px">FORGE reconstructs its state from a database
-on every cycle, so it can be interrupted, restarted, and resumed without losing
-what it was doing. It never claims a tool ran, a check passed, or a person
-approved something that did not happen.</p>
-<hr>
-<p><a class="btn" href="/workbench">Open the workbench</a></p>
-<p class="dim" style="margin-top:10px"><a href="/console">Operations console</a> — goals, timeline, approvals.</p>
-<p class="dim" style="margin-top:16px">Health: <a href="/healthz">/healthz</a> · <a href="/readyz">/readyz</a><br>
-Error dictionary: <a href="/v1/meta/error-codes">/v1/meta/error-codes</a></p>
-{{template "foot" .}}{{end}}
+<script src="{{asset "portal-field.js"}}"></script>
+</body></html>{{end}}
 
 {{define "verify"}}{{template "head" .}}
 <h1>Confirm your email</h1>

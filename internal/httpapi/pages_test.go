@@ -538,3 +538,54 @@ func TestAssetURLsNameTheirContentsSoTheyCanBeCachedHard(t *testing.T) {
 		t.Errorf("a matching If-None-Match returned %d, want 304", notModified.Code)
 	}
 }
+
+// Every asset a template asks for must actually be servable.
+//
+// Assets pass through three independent lists, and nothing tied them together:
+// the //go:embed directives, the assetVersions map that builds the ?v= URL, and
+// the explicit allowlist in Assets() that maps a filename to a Content-Type and
+// 404s everything else. An asset can be embedded AND hashed into a correct URL
+// and still 404, because the third list did not mention it.
+//
+// That is exactly what happened when home.css and password-reveal.js were added
+// on 2026-09-07: the pages rendered, the <link> and <script> tags carried valid
+// versioned URLs, and both files 404'd. Nothing failed loudly — the home page
+// simply had no styling, and the password toggle simply never appeared.
+//
+// TestAssetsServeOnlyWhatIsEmbedded above checks the opposite direction (that
+// nothing outside the embed is served). This checks the direction that actually
+// broke: that everything the templates ASK for comes back.
+func TestEveryAssetATemplateReferencesIsServable(t *testing.T) {
+	pages := NewPageHandlers(testDeps())
+
+	refs := map[string]bool{}
+	for _, m := range assetRefRE.FindAllStringSubmatch(pageTemplates, -1) {
+		refs[m[1]] = true
+	}
+	if len(refs) < 5 {
+		t.Fatalf("only found %d asset references in the templates; the regex has stopped "+
+			"matching and this test is no longer checking anything", len(refs))
+	}
+
+	names := make([]string, 0, len(refs))
+	for n := range refs {
+		names = append(names, n)
+	}
+	sort.Strings(names)
+
+	for _, name := range names {
+		rr := httptest.NewRecorder()
+		pages.Assets(rr, httptest.NewRequest(http.MethodGet, "/assets/"+name, nil))
+		if rr.Code != http.StatusOK {
+			t.Errorf("a template references %q but the handler returns %d. It can be embedded "+
+				"and correctly versioned and still 404: the allowlist in Assets() is a third, "+
+				"separate list. The browser gets nothing and the page silently loses that "+
+				"stylesheet or script.", name, rr.Code)
+		}
+		if ct := rr.Header().Get("Content-Type"); rr.Code == http.StatusOK && ct == "" {
+			t.Errorf("%s served with no Content-Type", name)
+		}
+	}
+}
+
+var assetRefRE = regexp.MustCompile(`asset "([^"]+)"`)

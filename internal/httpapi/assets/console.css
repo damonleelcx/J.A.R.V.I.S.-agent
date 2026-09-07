@@ -119,6 +119,15 @@ a.goal { color: inherit; text-decoration: none; }
 .btn-sm.go { background: var(--core); color: #08202a; border-color: transparent; }
 .btn-sm.no { border-color: #6a3238; color: #f0bcc0; }
 .btn-sm:disabled { opacity: .5; cursor: default; }
+/* Same reason as a.btn in shell.css: `a:link` at (0,1,1) beats `.btn-sm` at
+ * (0,1,0), so an <a class="btn-sm"> lost its text colour to the link colour.
+ * workbench.js renders one of these. */
+a.btn-sm,
+a.btn-sm:link,
+a.btn-sm:visited { color: var(--ink); }
+a.btn-sm.go,
+a.btn-sm.go:link,
+a.btn-sm.go:visited { color: #08202a; }
 
 /* Tasks */
 /* The status column is sized for the LONGEST status, not the average one.

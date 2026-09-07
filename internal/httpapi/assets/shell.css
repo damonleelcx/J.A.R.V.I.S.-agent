@@ -92,8 +92,15 @@ p  { margin: 0 0 14px; }
 
 label { display: block; font-size: 13px; color: var(--ink-dim); margin: 14px 0 6px; }
 
+/* .pw-wrap input[type="text"] is a REVEALED password field. These rules select
+ * by type, so toggling type="password" to "text" dropped the entire style —
+ * the field rendered as a bare browser input and the reveal button fell outside
+ * it. Selecting the revealed state explicitly keeps the two identical, which is
+ * the point: showing your password should change the characters, not the
+ * furniture. */
 input[type="email"],
-input[type="password"] {
+input[type="password"],
+.pw-wrap input[type="text"] {
   width: 100%;
   padding: 11px 13px;
   border: 1px solid var(--edge-solid);
@@ -103,7 +110,8 @@ input[type="password"] {
   font: inherit;
 }
 input[type="email"]:focus,
-input[type="password"]:focus { outline: 2px solid var(--core-dim); outline-offset: 1px; border-color: var(--core-dim); }
+input[type="password"]:focus,
+.pw-wrap input[type="text"]:focus { outline: 2px solid var(--core-dim); outline-offset: 1px; border-color: var(--core-dim); }
 
 .note {
   margin-top: 18px;
@@ -130,8 +138,60 @@ a,
 a:link,
 a:visited { color: var(--core); text-decoration-color: color-mix(in srgb, var(--core) 45%, transparent); }
 a:hover { color: #7ce8f5; }
+
+/* An <a class="btn"> is a button that happens to navigate, and it must keep the
+ * button's own colour.
+ *
+ * The rules above are `a, a:link, a:visited`, and a pseudo-class pushes those to
+ * specificity (0,1,1) — which OUTRANKS the plain `.btn` class at (0,1,0). So the
+ * anchor took the link colour, var(--core), and rendered cyan-on-cyan against
+ * the button's cyan gradient: the label was invisible while the button itself
+ * looked perfectly normal. Observed 2026-09-07 on "Open the workbench".
+ *
+ * A real <button class="btn"> was never affected, which is why this survived —
+ * every other button on the site was fine.
+ *
+ * Stated for each link state rather than with !important, so the next person can
+ * still override it in the ordinary way. */
+a.btn,
+a.btn:link,
+a.btn:visited,
+a.btn:hover { color: #08202a; }
 a:focus-visible {
   outline: 2px solid var(--core-dim);
   outline-offset: 2px;
   border-radius: 3px;
+}
+
+/* Password reveal (password-reveal.js).
+ *
+ * The button sits inside the field rather than beside it so the form's column
+ * width is unchanged — the inputs are 100% wide and a sibling control would
+ * either wrap or shrink them. */
+.pw-wrap { position: relative; display: block; }
+.pw-wrap input[type="password"],
+.pw-wrap input[type="text"] { padding-right: 44px; }
+.pw-reveal {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-dim);
+  cursor: pointer;
+}
+.pw-reveal svg { width: 18px; height: 18px; }
+.pw-reveal:hover { color: var(--ink); }
+.pw-reveal[aria-pressed="true"] { color: var(--core); }
+.pw-reveal:focus-visible {
+  outline: 2px solid var(--core);
+  outline-offset: 2px;
 }
