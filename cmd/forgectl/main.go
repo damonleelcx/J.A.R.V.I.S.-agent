@@ -14,6 +14,7 @@ import (
 	"log/slog"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -31,6 +32,7 @@ Usage:
 Operations:
   migrate             Apply the schema migration chain (idempotent; safe to re-run)
   migrate --dry-run   List the migrations that would run, without touching the database
+  migrate --wait 90s  Wait up to this long for the database to accept connections first
   health              Check database connectivity and report latency
   config              Print the effective configuration with secrets redacted
   version             Print build information
@@ -552,7 +554,20 @@ func run(ctx context.Context, cmd string, args []string) error {
 			}
 			return nil
 		}
-		pool, err := db.Connect(ctx, cfg.DB, log)
+		// --wait exists for one caller: the migrate initContainer, which races
+		// postgres exactly as forged and the worker do and whose failure costs a
+		// whole pod restart.
+		//
+		// It defaults to zero, so a person running `forgectl migrate` still gets
+		// today's behaviour — an answer in under a second when the database is
+		// down, rather than a command that looks like it has hung. The caller
+		// that wants to wait says so, in the manifest, where the next person
+		// reading the deployment can see that it does.
+		wait, err := durationFlag(args, "--wait")
+		if err != nil {
+			return err
+		}
+		pool, err := db.WaitForConnect(ctx, cfg.DB, log, wait)
 		if err != nil {
 			return err
 		}
@@ -652,6 +667,31 @@ func newFlagSet(name string) *flag.FlagSet {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)
 	return fs
+}
+
+// durationFlag reads `--name <duration>` or `--name=<duration>`, defaulting to
+// zero when absent. A malformed value is an error rather than a silent zero:
+// `--wait 90` (no unit) meaning "do not wait" would be a deployment that lost
+// its retry without anything saying so.
+func durationFlag(args []string, flag string) (time.Duration, error) {
+	for i, a := range args {
+		var raw string
+		switch {
+		case a == flag && i+1 < len(args):
+			raw = args[i+1]
+		case strings.HasPrefix(a, flag+"="):
+			raw = strings.TrimPrefix(a, flag+"=")
+		default:
+			continue
+		}
+		d, err := time.ParseDuration(raw)
+		if err != nil {
+			return 0, errs.New("forgectl.run", errs.CodeValidationFailed).
+				WithDetail("%s expects a duration such as 90s or 2m, got %q", flag, raw)
+		}
+		return d, nil
+	}
+	return 0, nil
 }
 
 func hasFlag(args []string, flag string) bool {

@@ -61,7 +61,11 @@ spec:
         # start rather than being a one-shot Job somebody has to remember.
         - name: migrate
           image: FORGE_IMAGE
-          command: ["/usr/local/bin/forgectl", "migrate"]
+          # --wait, because this container races postgres exactly as the two
+          # long-lived ones do, and its failure costs a whole pod restart
+          # rather than one process. forgectl waits only while NOTHING is
+          # answering — a bad credential still fails here immediately.
+          command: ["/usr/local/bin/forgectl", "migrate", "--wait", "90s"]
           envFrom:
             - configMapRef: { name: forge-config }
             - secretRef:    { name: forge }
