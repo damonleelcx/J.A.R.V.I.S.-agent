@@ -97,36 +97,20 @@ func NewRoomHandlers(d Deps) *RoomHandlers {
 			d.Log.Warn(context.Background(), logx.EventMediaRefused,
 				"reason", "transcription is enabled but no model client is configured; room audio will not be written down")
 		}
-		// FORGE's voice. Two implementations satisfy media.Speaker and the
-		// deployment chooses between them:
-		//
-		//   - a configured speech vendor (FORGE_TTS_PROVIDER), which is how her
-		//     timbre matches the other products in this estate; or
-		//   - the model client itself, which synthesises through the same
-		//     endpoint that answers.
-		//
-		// Nil means she has no voice, which was the state before this: Speaker
-		// was never set, so rooms had transcription and no speech even where
-		// the media plane was enabled.
+		// FORGE's voice, built once in Deps and shared with the workbench
+		// endpoint so she cannot sound like one thing in a room and another at the
+		// workbench. Nil means no vendor is configured, in which case the model
+		// client speaks if it can — and if neither, rooms have transcription and
+		// no speech, which was the state before any of this.
 		var sp media.Speaker
-		if d.Config.TTS.Configured() {
-			fish, ferr := tts.NewFish(d.Config.TTS.APIURL, d.Config.TTS.APIKey,
-				d.Config.TTS.VoiceID, d.Config.TTS.Model, llm.SpeechSampleRate)
-			if ferr != nil {
-				// Loud and carried. A deployment that named a speech vendor and
-				// did not get one must say so; it must not fail to start,
-				// because every non-audio path still works.
-				d.Log.ErrorWith(context.Background(), logx.EventMediaRefused, ferr,
-					"reason", "a speech vendor was configured but could not be built; FORGE has no voice")
-			} else {
-				sp = fish
-				d.Log.Info(context.Background(), logx.EventMediaSpeakerReady,
-					"speech_provider", fish.Name(), "backbone", fish.Model,
-					// Repeated here, not only at config load, because this is
-					// the line that proves the vendor was actually WIRED —
-					// config can name one that never reached the media plane.
-					"trains_on_input", tts.TrainsOnRequests(fish.Model))
-			}
+		if d.Speaker != nil {
+			sp = d.Speaker
+			d.Log.Info(context.Background(), logx.EventMediaSpeakerReady,
+				"speech_provider", d.Speaker.Name(), "backbone", d.Config.TTS.Model,
+				// Repeated at WIRING time, not only at config load: config can name a
+				// vendor that never reached the media plane, and "configured" is not
+				// "wired".
+				"trains_on_input", tts.TrainsOnRequests(d.Config.TTS.Model))
 		} else if oc, ok := d.LLM.(*llm.OpenAICompatible); ok && oc != nil {
 			sp = oc
 		}
