@@ -1187,10 +1187,6 @@ const pageTemplates = `
       <a class="btn" href="/workbench">Open the workbench</a>
       <a class="home-quiet" href="/console">Operations console — goals, timeline, approvals.</a>
     </div>
-    <div class="home-links">
-      Health: <a href="/healthz">/healthz</a> · <a href="/readyz">/readyz</a><br>
-      Error dictionary: <a href="/v1/meta/error-codes">/v1/meta/error-codes</a>
-    </div>
   </section>
 
 </main>

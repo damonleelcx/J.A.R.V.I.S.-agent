@@ -24,9 +24,12 @@ const (
 	EventShutdownTimeout Event = "forge.shutdown.timeout"
 
 	// Storage
-	EventDBConnecting        Event = "forge.db.connecting"
-	EventDBConnected         Event = "forge.db.connected"
-	EventDBConnectFailed     Event = "forge.db.connect_failed"
+	EventDBConnecting    Event = "forge.db.connecting"
+	EventDBConnected     Event = "forge.db.connected"
+	EventDBConnectFailed Event = "forge.db.connect_failed"
+	// Emitted only by db.WaitForConnect, once per attempt, so that a slow
+	// database start is legible as one rather than as silence.
+	EventDBConnectRetry      Event = "forge.db.connect_retry"
 	EventMigrationApplying   Event = "forge.migration.applying"
 	EventMigrationApplied    Event = "forge.migration.applied"
 	EventMigrationSkipped    Event = "forge.migration.skipped"
@@ -73,7 +76,7 @@ var allEvents = []Event{
 	EventServerStarting, EventServerReady, EventServerStopping, EventServerStopped,
 	EventWorkerStarting, EventWorkerReady, EventWorkerStopping, EventWorkerStopped,
 	EventShutdownTimeout,
-	EventDBConnecting, EventDBConnected, EventDBConnectFailed,
+	EventDBConnecting, EventDBConnected, EventDBConnectFailed, EventDBConnectRetry,
 	EventMigrationApplying, EventMigrationApplied, EventMigrationSkipped,
 	EventMigrationFailed, EventMigrationAdvisoryOK,
 	EventHTTPRequest, EventHTTPRejected, EventHTTPPanic, EventHTTPRateLimit,
