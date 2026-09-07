@@ -90,6 +90,25 @@
     }).then(function (b) {
       $('password').value = '';
       $('whoami').textContent = (b.user && b.user.email) || '';
+
+      /* Go back where the person came from, if they came from somewhere.
+       *
+       * The workbench sends people here to sign in and says it will bring them
+       * back. Without this they arrive at the operations console instead — a
+       * different surface, for a different job — and have to find their own way
+       * to the thing they were trying to use.
+       *
+       * ‼️ ONLY a same-origin absolute PATH is accepted. `next` arrives in the
+       * URL, so anyone can put anything in it: without this check a link to
+       * /console?next=https://elsewhere.example would sign a person in here and
+       * then hand them to an attacker's page wearing our flow. A leading `//`
+       * is rejected too — the browser reads //host/path as protocol-relative
+       * and would leave the origin. */
+      var next = new URLSearchParams(location.search).get('next');
+      if (next && next.charAt(0) === '/' && next.charAt(1) !== '/') {
+        location.assign(next);
+        return;
+      }
       hideSignIn();
       return refresh().then(startPolling);
     }).catch(function (err) {

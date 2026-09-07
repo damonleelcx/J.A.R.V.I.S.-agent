@@ -9,8 +9,20 @@ spec:
   selector:
     matchLabels: { app.kubernetes.io/name: forged }
   strategy:
-    # No PVC on this one, so a rolling update is safe and gives zero downtime.
-    type: RollingUpdate
+    # Recreate, NOT RollingUpdate — required by hostNetwork below.
+    #
+    # On host network the container's port 8080 is a NODE-WIDE singleton. A
+    # rolling update starts the replacement before the old pod releases it, so
+    # the new pod cannot schedule at all: "0/1 nodes are available: 1 node(s)
+    # didn't have free ports for the requested pod ports", and it stays Pending
+    # forever while the old pod serves on. The deploy reports no error — it just
+    # never completes.
+    #
+    # This is the same shape as forge-worker's ReadWriteOnce PVC, with a host
+    # port as the singleton instead of a volume. It costs a few seconds of 5xx
+    # on every deploy, which is the price of hostNetwork and cheaper than a
+    # rollout that silently does nothing.
+    type: Recreate
   template:
     metadata:
       labels:

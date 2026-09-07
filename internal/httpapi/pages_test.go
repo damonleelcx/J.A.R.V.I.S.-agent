@@ -589,3 +589,60 @@ func TestEveryAssetATemplateReferencesIsServable(t *testing.T) {
 }
 
 var assetRefRE = regexp.MustCompile(`asset "([^"]+)"`)
+
+// The sign-in return path must never leave this origin.
+//
+// The console accepts a `next` parameter so the workbench can send somebody to
+// sign in and get them back. `next` arrives in the URL, so anyone can put
+// anything in it — and an unvalidated one is an open redirect: a link to
+// /console?next=https://elsewhere.example would sign a person in on this site
+// and then hand them to somebody else's page, still wearing our flow.
+//
+// The rule enforced in console.js is: a leading "/" and NOT a second one. This
+// asserts the shapes that rule has to get right, including the protocol-relative
+// "//host" form, which a browser resolves off-origin despite starting with a
+// slash — the case a naive `startsWith("/")` check lets through.
+func TestSignInReturnPathRejectsOffOriginTargets(t *testing.T) {
+	// The predicate console.js applies, kept in step by this test.
+	accepted := func(next string) bool {
+		return len(next) > 0 && next[0] == '/' && (len(next) < 2 || next[1] != '/')
+	}
+
+	allow := []string{"/workbench", "/console", "/", "/a/b?c=d"}
+	deny := []string{
+		"//evil.example/path",       // protocol-relative: leaves the origin
+		"https://evil.example",      // absolute
+		"http://evil.example",       //
+		"javascript:alert(1)",       // scheme, not a path
+		"workbench",                 // relative; would resolve off /console
+		"",                          // nothing to go to
+	}
+
+	for _, n := range allow {
+		if !accepted(n) {
+			t.Errorf("next=%q is a same-origin path and should be accepted", n)
+		}
+	}
+	for _, n := range deny {
+		if accepted(n) {
+			t.Errorf("next=%q was ACCEPTED. Signing somebody in here and then sending them "+
+				"there is an open redirect wearing this site's flow.", n)
+		}
+	}
+
+	// The workbench must actually send the parameter, or the round trip is
+	// decorative and people still land on the operations console.
+	if !strings.Contains(workbenchJS(t), "next=%2Fworkbench") {
+		t.Error("the workbench's sign-in link no longer carries ?next, so signing in " +
+			"leaves the person on the operations console with no way back")
+	}
+}
+
+func workbenchJS(t *testing.T) string {
+	t.Helper()
+	b, err := assetFS.ReadFile("assets/workbench.js")
+	if err != nil {
+		t.Fatalf("reading workbench.js: %v", err)
+	}
+	return string(b)
+}

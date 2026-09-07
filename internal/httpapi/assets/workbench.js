@@ -2577,9 +2577,13 @@
           'Hold the microphone or the space bar to talk; press Escape to stop me mid-sentence.');
       });
     }).catch(function () {
-      $('who').innerHTML = '<a href="/console">Sign in</a>';
+      /* Carry where to come back to. The workbench sends people to the console
+       * to sign in and then tells them to "come back" — and nothing brought
+       * them back, so they landed on the operations console and had to find
+       * their own way here. */
+      $('who').innerHTML = '<a href="/console?next=%2Fworkbench">Sign in</a>';
       setCaption('Sign in from the console to start.', false);
-      addTurn('forge', 'You are not signed in. Sign in from the console, then come back — ' +
+      addTurn('forge', 'You are not signed in. Sign in from the console — it will bring you back — ' +
         'I cannot hold a conversation without knowing whose workspace this is.');
       $('say').disabled = true;
       $('mic').disabled = true;
