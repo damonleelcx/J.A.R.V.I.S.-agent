@@ -380,6 +380,14 @@ const (
 	EventMediaRenegotiateFailed Event = "forge.media.renegotiate_failed"
 	EventMediaForwardFailed     Event = "forge.media.forward_failed"
 	EventMediaRefused           Event = "forge.media.refused"
+	// EventMediaSpeakerReady records which vendor gives FORGE her voice AND
+	// whether that vendor's backbone may be trained on what she says.
+	//
+	// Logged at wiring time, not only at config load: config can name a speech
+	// vendor that never reached the media plane, and "configured" is not
+	// "wired". The training flag is repeated here because FORGE_DATA_BOUNDARY
+	// describes the MODEL endpoint and says nothing about this second egress.
+	EventMediaSpeakerReady Event = "forge.media.speaker_ready"
 	// EventMediaStateChanged is somebody muting, pausing or resuming (AUD-07).
 	EventMediaStateChanged Event = "forge.media.state_changed"
 
@@ -447,7 +455,7 @@ func init() {
 		EventRoomTranscribing, EventRoomVoiceRedacted,
 		EventMediaPeerJoined, EventMediaPeerLeft,
 		EventMediaRenegotiated, EventMediaRenegotiateFailed,
-		EventMediaForwardFailed, EventMediaRefused, EventMediaStateChanged,
+		EventMediaForwardFailed, EventMediaRefused, EventMediaSpeakerReady, EventMediaStateChanged,
 		EventASRTranscribed, EventASRFailed, EventASREmptyResponse, EventASRDropped,
 		EventTTSSpoke, EventTTSInterrupted, EventTTSFailed, EventTTSEmpty,
 		EventCharacterFallback, EventToolExceededTier, EventPlanHazardsLoaded,

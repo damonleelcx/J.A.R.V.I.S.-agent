@@ -13,6 +13,7 @@ import (
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/db"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/errs"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/logx"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/tts"
 )
 
 // Deps is everything the HTTP surface needs.
@@ -32,9 +33,17 @@ type Deps struct {
 	// a deployment without one refuses STEP with the sentence that fixes it,
 	// exactly as it did when no kernel existed at all. Every call goes through
 	// Kernel's own nil-safe methods, so nothing here has to check.
-	CAD   *cad.Kernel
-	Clock clock.Clock
-	Log   *logx.Logger
+	CAD *cad.Kernel
+	// Speaker is FORGE's own voice, or nil when this deployment has none — in
+	// which case the workbench falls back to the browser's speech synthesis and
+	// says so, rather than going silent.
+	//
+	// Built ONCE and shared by the workbench endpoint and the media plane, so a
+	// deployment cannot have her sounding like one thing in a room and another
+	// at the workbench.
+	Speaker tts.Speaker
+	Clock   clock.Clock
+	Log     *logx.Logger
 	// Version and Commit are reported by the health endpoint so an operator can
 	// confirm which build is actually answering.
 	Version string
@@ -265,6 +274,7 @@ func NewRouter(d Deps) http.Handler {
 	// --- workbench conversation ---
 	converse := NewConverseHandlers(d)
 	mux.Handle("POST /v1/converse", authed(converse.Converse))
+	mux.Handle("POST /v1/speech", authed(converse.Speak))
 	mux.HandleFunc("GET /v1/meta/models", converse.Models)
 
 	// --- browser landing pages for emailed links ---
@@ -284,6 +294,8 @@ func NewRouter(d Deps) http.Handler {
 	// 3D studio. /console is the operations view beside it.
 	mux.HandleFunc("GET /workbench", pages.Workbench)
 	mux.HandleFunc("GET /rooms/{id}", pages.RoomPage)
+	mux.HandleFunc("GET /auth/sign-up", pages.SignUpPage)
+	mux.HandleFunc("GET /auth/forgot-password", pages.ForgotPasswordPage)
 	mux.HandleFunc("GET /auth/verify-email", pages.VerifyEmailPage)
 	mux.HandleFunc("GET /auth/reset-password", pages.ResetPasswordPage)
 	mux.HandleFunc("GET /", pages.Index)

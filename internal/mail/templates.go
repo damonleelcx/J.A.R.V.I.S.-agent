@@ -201,6 +201,19 @@ func button(url, label string) string {
 // centred column. Email clients support roughly 2003-era HTML; anything that
 // depends on flexbox, grid, or an external stylesheet renders as a broken page
 // in Outlook and is therefore not used.
+//
+// # Why the text colour is set on .card and p, and not only on body
+//
+// This is a DARK template: a dark card with light text. Gmail rewrites <body>
+// into a <div>, so `body { color: … }` never reaches the content. Anything
+// carrying its own class colour (.mark, .btn, .url, .muted) still rendered, but
+// a plain <p> fell back to Gmail's default dark text — on a dark card, which
+// means invisible. Observed 2026-09-07 on the verification mail: the greeting
+// and the call to action were both unreadable while every other line was fine.
+//
+// So the colour is declared on selectors that survive the rewrite. Do not
+// collapse these back into the body rule; the body rule is kept only for the
+// clients that do honour it.
 func wrapHTML(title, body string) string {
 	return fmt.Sprintf(`<!doctype html>
 <html><head><meta charset="utf-8">
@@ -211,9 +224,9 @@ func wrapHTML(title, body string) string {
          font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
          font-size:15px; line-height:1.6; }
   .card { max-width:520px; margin:0 auto; background:#141a26; border:1px solid #263041;
-          border-radius:12px; padding:28px; }
+          border-radius:12px; padding:28px; color:#eef1f6; }
   .mark { font-weight:700; letter-spacing:.22em; font-size:12px; color:#4fd8e8; margin:0 0 20px; }
-  p { margin:0 0 14px; }
+  p { margin:0 0 14px; color:#eef1f6; }
   .muted { color:#98a3b8; font-size:13px; }
   .url { color:#4fd8e8; word-break:break-all; font-family:ui-monospace,SFMono-Regular,Menlo,monospace; font-size:12px; }
   .btn { display:inline-block; background:#4fd8e8; color:#08202a !important; text-decoration:none;

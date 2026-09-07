@@ -54,6 +54,12 @@
     this.voiceName = null;
     this.available = !!SR;
     this.synthAvailable = !!global.speechSynthesis;
+    /* undefined = not yet tried, false = this deployment has no usable server
+     * voice and we stop asking. Never persisted: a vendor that was down when
+     * the page loaded may be up on the next load. */
+    this.remoteVoice = undefined;
+    this._audio = null;
+    this._remoteAbort = null;
 
     if (SR) this._initRecognition();
   }
@@ -238,12 +244,88 @@
    * point zero" is a number a listener can write down; read as "vee zero point
    * twenty" it is not. */
   Voice.prototype.speak = function (text, onDone) {
-    if (!this.synthAvailable || this.muted || !text) {
+    if (this.muted || !text) {
       if (onDone) onDone();
       return;
     }
     var self = this;
     this.stopSpeaking();
+
+    /* FORGE's own voice first, the browser's as the fallback.
+     *
+     * speechSynthesis reads her in whatever voice the machine has — Samantha on
+     * a Mac, something else on Windows — so the character sounds different on
+     * every device. Where the deployment has a speech vendor she has ONE voice,
+     * and it is the same one the media plane uses in rooms.
+     *
+     * The fallback is not a degradation to apologise for: it needs no vendor,
+     * no key and no network, and it is what a deployment without a vendor has.
+     * Which is why a failure here is silent and immediate — the answer is
+     * already on screen, and a person waiting to hear it must not wait through
+     * a retry to find out the vendor is down. */
+    if (this.remoteVoice !== false) {
+      this._speakRemote(text, onDone);
+      return;
+    }
+    this._speakLocal(text, onDone);
+  };
+
+  /* Ask the server to synthesise. On any failure — no vendor configured, vendor
+   * down, audio that will not play — fall through to the browser once and
+   * remember, so one outage does not cost a round trip per utterance. */
+  Voice.prototype._speakRemote = function (text, onDone) {
+    var self = this;
+    var ctl = new AbortController();
+    this._remoteAbort = ctl;
+
+    global.fetch('/v1/speech', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      credentials: 'same-origin',
+      body: JSON.stringify({ text: readable(text) }),
+      signal: ctl.signal
+    }).then(function (r) {
+      if (!r.ok) throw new Error('speech ' + r.status);
+      return r.blob();
+    }).then(function (blob) {
+      var url = URL.createObjectURL(blob);
+      var audio = new Audio(url);
+      audio.rate = self.rate;
+      self._audio = audio;
+
+      var done = function () {
+        URL.revokeObjectURL(url);
+        self.speaking = false;
+        self._audio = null;
+        self._setState();
+        if (onDone) onDone();
+      };
+      audio.onplay = function () { self.speaking = true; self._setState(); };
+      audio.onended = done;
+      audio.onerror = function () {
+        /* The bytes arrived and would not play. That is this path failing, not
+         * the vendor, so it still falls back rather than going silent. */
+        URL.revokeObjectURL(url);
+        self._audio = null;
+        self.remoteVoice = false;
+        self._speakLocal(text, onDone);
+      };
+      audio.play().catch(function () { audio.onerror(); });
+    }).catch(function (err) {
+      if (err && err.name === 'AbortError') return;   // interrupted, not failed
+      /* Remembered, so a deployment with no vendor pays one request per page
+       * rather than one per utterance. */
+      self.remoteVoice = false;
+      self._speakLocal(text, onDone);
+    });
+  };
+
+  Voice.prototype._speakLocal = function (text, onDone) {
+    if (!this.synthAvailable) {
+      if (onDone) onDone();
+      return;
+    }
+    var self = this;
 
     var utter = new SpeechSynthesisUtterance(readable(text));
     utter.rate = this.rate;
@@ -263,9 +345,24 @@
     global.speechSynthesis.speak(utter);
   };
 
+  /* Stop, whichever path is speaking.
+   *
+   * AUD-07 requires stop-speaking to be always reachable, and AUD-02 requires a
+   * barge-in to silence her within 250ms — so this cancels the browser voice,
+   * stops any audio element, AND aborts a synthesis request that has not
+   * arrived yet. Leaving that request in flight would let her start speaking
+   * AFTER the person interrupted her, which is the one thing a barge-in must
+   * never do. */
   Voice.prototype.stopSpeaking = function () {
-    if (!this.synthAvailable) return;
-    global.speechSynthesis.cancel();
+    if (this._remoteAbort) {
+      try { this._remoteAbort.abort(); } catch (e) { /* already settled */ }
+      this._remoteAbort = null;
+    }
+    if (this._audio) {
+      try { this._audio.pause(); } catch (e) { /* not started */ }
+      this._audio = null;
+    }
+    if (this.synthAvailable) global.speechSynthesis.cancel();
     this.speaking = false;
     this._setState();
   };

@@ -1,0 +1,88 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: forged
+  namespace: forge
+  labels: { app.kubernetes.io/name: forged }
+spec:
+  replicas: 1
+  selector:
+    matchLabels: { app.kubernetes.io/name: forged }
+  strategy:
+    # No PVC on this one, so a rolling update is safe and gives zero downtime.
+    type: RollingUpdate
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: forged
+        # Named by the postgres and mail NetworkPolicies in the heros namespace.
+        app.kubernetes.io/part-of: forge
+    spec:
+      # hostNetwork so the media plane can bind its WebRTC UDP range.
+      #
+      # k8s has no workable way to publish 200 UDP ports: hostPort is per-port,
+      # and NodePort's range does not contain them. An SFU needs the ports it
+      # advertises in ICE candidates to be the ports the world can reach, so the
+      # pod takes the node's network namespace.
+      #
+      # ⚠️ dnsPolicy MUST be ClusterFirstWithHostNet. The default ClusterFirst
+      # resolves against the HOST's resolver once the pod is on host network,
+      # and every cluster name it depends on — postgres.heros.svc.cluster.local,
+      # and mail.heros-agent.space via hostAliases — stops resolving. The pod
+      # starts and then cannot reach its database.
+      #
+      # ⚠️ A hostNetwork pod has no pod IP, so NetworkPolicies that select on
+      # namespace + pod labels no longer match it. postgres and mail admit the
+      # NODE's ip instead — see deploy/patch-hostnetwork-netpol.sh, which must be
+      # applied before this rolls out.
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      securityContext: { runAsNonRoot: true, runAsUser: 10001, fsGroup: 10001 }
+      # The mail relay's cert has exactly one SAN: mail.heros-agent.space.
+      # Reaching it by Service name fails TLS and mail then silently never
+      # delivers. See 20-config.yaml for why this is not a CoreDNS rewrite.
+      hostAliases:
+        - ip: "10.43.120.55"
+          hostnames: ["mail.heros-agent.space"]
+      initContainers:
+        # Migrations are idempotent and safe to re-run, so this runs on every
+        # start rather than being a one-shot Job somebody has to remember.
+        - name: migrate
+          image: FORGE_IMAGE
+          command: ["/usr/local/bin/forgectl", "migrate"]
+          envFrom:
+            - configMapRef: { name: forge-config }
+            - secretRef:    { name: forge }
+          resources:
+            requests: { cpu: "50m", memory: "64Mi" }
+            limits:   { cpu: "500m", memory: "256Mi" }
+      containers:
+        - name: forged
+          image: FORGE_IMAGE
+          ports: [{ containerPort: 8080, name: http }]
+          envFrom:
+            - configMapRef: { name: forge-config }
+            - secretRef:    { name: forge }
+          startupProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 3
+            failureThreshold: 40
+          readinessProbe:
+            httpGet: { path: /readyz, port: http }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 20
+            failureThreshold: 3
+          resources:
+            requests: { cpu: "100m", memory: "256Mi" }
+            limits:   { cpu: "1", memory: "1Gi" }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: forged
+  namespace: forge
+spec:
+  selector: { app.kubernetes.io/name: forged }
+  ports: [{ port: 80, targetPort: http, name: http }]

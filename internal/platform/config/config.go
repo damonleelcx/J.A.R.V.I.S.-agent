@@ -50,7 +50,40 @@ type Config struct {
 	Security SecurityConfig
 	// CAD is the parametric kernel. Empty Python means this deployment has none.
 	CAD CADConfig
+	// TTS is FORGE's voice. An empty Provider means she speaks through the model
+	// client, which is the default and needs no vendor.
+	TTS TTSConfig
 }
+
+// TTSConfig selects the speech vendor FORGE's own voice comes from.
+//
+// # Why this is separate from FORGE_LLM_SPEAKER_MODEL
+//
+// The model client can already synthesise speech. This exists because the VOICE
+// is a product decision and the model is not: the timbre has to match the other
+// products in this estate, and that voice is published by a different vendor
+// than the one answering questions.
+//
+// ‼️ A speech vendor is a SECOND EGRESS. FORGE_DATA_BOUNDARY states what the
+// contract with the MODEL endpoint says; it says nothing about this one. A
+// deployment can be truthfully `no_training` about its LLM while reading every
+// answer aloud through a backbone that trains on it — which is why Load logs
+// the backbone's training status at startup rather than leaving it implied.
+type TTSConfig struct {
+	// Provider is empty (the model client) or "fish".
+	Provider string
+	APIURL   string
+	APIKey   string
+	// VoiceID is the vendor's published voice id. No default: guessing one gives
+	// FORGE a different voice than the rest of the estate.
+	VoiceID string
+	// Model is the synthesis backbone, which is separate from the voice and is
+	// what decides whether requests may be trained on.
+	Model string
+}
+
+// Configured reports whether a speech vendor was asked for.
+func (t TTSConfig) Configured() bool { return strings.TrimSpace(t.Provider) != "" }
 
 // HTTPConfig covers the public API and console surface.
 type HTTPConfig struct {
@@ -672,6 +705,29 @@ func Load(required ...Section) (*Config, []string, error) {
 	// substitutes something else.
 	cfg.CAD = CADConfig{Python: strings.TrimSpace(l.str("FORGE_CAD_PYTHON", ""))}
 
+	cfg.TTS = TTSConfig{
+		Provider: strings.ToLower(strings.TrimSpace(l.str("FORGE_TTS_PROVIDER", ""))),
+		APIURL:   strings.TrimSpace(l.str("FORGE_TTS_API_URL", "")),
+		APIKey:   strings.TrimSpace(l.str("FORGE_TTS_API_KEY", "")),
+		VoiceID:  strings.TrimSpace(l.str("FORGE_TTS_VOICE_ID", "")),
+		Model:    strings.TrimSpace(l.str("FORGE_TTS_MODEL", "")),
+	}
+	if cfg.TTS.Configured() {
+		if cfg.TTS.Provider != "fish" {
+			l.fail("FORGE_TTS_PROVIDER", fmt.Sprintf(
+				"is %q, and the only speech vendor this build implements is %q. Leave it unset "+
+					"to use the model client's own voice", cfg.TTS.Provider, "fish"))
+		}
+		if cfg.TTS.APIKey == "" {
+			l.fail("FORGE_TTS_API_KEY", "is required when FORGE_TTS_PROVIDER names a vendor")
+		}
+		if cfg.TTS.VoiceID == "" {
+			l.fail("FORGE_TTS_VOICE_ID", "is required when FORGE_TTS_PROVIDER names a vendor. "+
+				"The voice is not a default this code may pick: it is a specific published voice, "+
+				"and guessing one would give FORGE a different voice than the rest of this estate")
+		}
+	}
+
 	cfg.Security = SecurityConfig{
 		DataBoundary: DataBoundary(strings.ToLower(strings.TrimSpace(l.str("FORGE_DATA_BOUNDARY", "")))),
 		ShellAllowed: l.list("FORGE_SHELL_ALLOWED_COMMANDS"),
@@ -780,20 +836,27 @@ func (c *Config) Redacted() map[string]any {
 		"llm_vision":         visionForPrint(c.LLM.Vision),
 		// A path, not a secret, and printed so an operator can see at a glance
 		// whether this deployment can write a parametric file at all.
-		"cad_kernel":         cadForPrint(c.CAD.Python),
-		"media_enabled":      c.Media.Enabled,
-		"media_udp_ports":    fmt.Sprintf("%d-%d", c.Media.UDPPortMin, c.Media.UDPPortMax),
-		"media_max_parts":    c.Media.MaxParticipants,
-		"media_transcribe":   c.Media.Transcribe,
-		"media_silence_gap":  c.Media.SilenceGap.String(),
-		"media_ice_servers":  len(c.Media.ICEServers),
-		"data_boundary":      string(c.Security.DataBoundary),
-		"shell_allowed":      shellAllowedForPrint(c.Security.ShellAllowed),
-		"worker_concurrency": c.Engine.WorkerConcurrency,
-		"lease_duration":     c.Engine.LeaseDuration.String(),
-		"max_attempts_task":  c.Engine.MaxAttemptsPerTask,
-		"max_tasks_per_goal": c.Engine.MaxTasksPerGoal,
-		"max_wallclock_goal": c.Engine.MaxWallClockPerGoal.String(),
+		"cad_kernel": cadForPrint(c.CAD.Python),
+		// The speech vendor and, separately, whether its backbone may be trained
+		// on what FORGE says. FORGE_DATA_BOUNDARY answers that question for the
+		// MODEL endpoint and not for this one, so a deployment that reads
+		// answers aloud has a second egress the boundary does not describe.
+		// Printed rather than implied for that reason alone.
+		"tts_voice":           ttsForPrint(c.TTS),
+		"tts_trains_on_input": ttsTrains(c.TTS),
+		"media_enabled":       c.Media.Enabled,
+		"media_udp_ports":     fmt.Sprintf("%d-%d", c.Media.UDPPortMin, c.Media.UDPPortMax),
+		"media_max_parts":     c.Media.MaxParticipants,
+		"media_transcribe":    c.Media.Transcribe,
+		"media_silence_gap":   c.Media.SilenceGap.String(),
+		"media_ice_servers":   len(c.Media.ICEServers),
+		"data_boundary":       string(c.Security.DataBoundary),
+		"shell_allowed":       shellAllowedForPrint(c.Security.ShellAllowed),
+		"worker_concurrency":  c.Engine.WorkerConcurrency,
+		"lease_duration":      c.Engine.LeaseDuration.String(),
+		"max_attempts_task":   c.Engine.MaxAttemptsPerTask,
+		"max_tasks_per_goal":  c.Engine.MaxTasksPerGoal,
+		"max_wallclock_goal":  c.Engine.MaxWallClockPerGoal.String(),
 	}
 }
 
@@ -841,6 +904,49 @@ func redactURL(raw string) string {
 // Same reason visionForPrint exists: an empty string in a config dump reads as
 // something somebody forgot to fill in, and this one is a deliberate default
 // that changes what the product can do.
+// ttsForPrint names the vendor and backbone, never the key or the voice id.
+func ttsForPrint(t TTSConfig) string {
+	if !t.Configured() {
+		return "<none — FORGE speaks through the model client>"
+	}
+	model := t.Model
+	if model == "" {
+		model = "<vendor default>"
+	}
+	return t.Provider + " (" + model + ")"
+}
+
+// ttsTrains reports whether the configured backbone may be trained on the text
+// FORGE speaks.
+//
+// The allowlist lives in internal/tts and is deliberately not imported here:
+// config must not depend on a vendor package to print a line. The names are
+// duplicated, and tts_backbone_allowlist_test.go asserts the two agree —
+// because a disagreement would print a reassurance that is false.
+func ttsTrains(t TTSConfig) any {
+	if !t.Configured() {
+		return "n/a"
+	}
+	model := t.Model
+	if model == "" {
+		model = "s2.1-pro-free"
+	}
+	switch model {
+	case "s2.1-pro", "s2-pro":
+		return false
+	default:
+		// Unknown backbones are reported as training. Over-warning costs some
+		// caution nobody needed; under-warning costs something unrecoverable.
+		return true
+	}
+}
+
+// TTSTrainsForTest exposes ttsTrains to the fence in internal/tts, which
+// asserts this file and the provider's allowlist cannot drift apart. Exported
+// for that fence alone — see backbone_allowlist_test.go for why the duplication
+// is tolerated at all.
+func TTSTrainsForTest(t TTSConfig) any { return ttsTrains(t) }
+
 func cadForPrint(python string) string {
 	if strings.TrimSpace(python) == "" {
 		return "(none: parametric export is declared and refused)"

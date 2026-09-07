@@ -22,13 +22,13 @@
 
 /* Core: cyan, the colour of the ornament, the collar gem, and the wrist display. */
 .fa-core-hot  { stop-color: #d6fbff; }
-.fa-core-mid  { stop-color: #4fd8e8; }
-.fa-core-edge { stop-color: #1c7f8e; }
+.fa-core-mid  { stop-color: #7b8cff; }
+.fa-core-edge { stop-color: #3e45a8; }
 
 .fa-ring  { stroke: #d9b25c; opacity: .55; }
 .fa-core  { transform-origin: 50% 60%; }
 .fa-wings { transform-origin: 50% 34%; }
-.fa-mark  { stroke: #0d1420; fill: none; }
+.fa-mark  { stroke: #16161a; fill: none; }
 
 /* Idle — the core breathes slowly. Alive, not demanding attention. */
 .forge-avatar--idle .fa-core {
@@ -46,7 +46,7 @@
  * The motion is on the BOUNDARY because a tool call happens outside this
  * process. */
 .forge-avatar--working .fa-arc {
-  stroke: #4fd8e8;
+  stroke: #7b8cff;
   transform-origin: 50% 60%;
   animation: fa-orbit 1.6s linear infinite;
 }
@@ -72,10 +72,10 @@
  * animating anyway is the visual form of overstating state. */
 .forge-avatar--failed .fa-core  { opacity: .3; filter: grayscale(.85); }
 .forge-avatar--failed .fa-wings { opacity: .45; filter: grayscale(.7); }
-.forge-avatar--failed .fa-ring  { stroke: #d9636b; opacity: .8; }
+.forge-avatar--failed .fa-ring  { stroke: #f0576f; opacity: .8; }
 
 /* Done — settled. Also motionless: the work is finished. */
-.forge-avatar--done .fa-ring { stroke: #4ea87a; opacity: .95; }
+.forge-avatar--done .fa-ring { stroke: #56b487; opacity: .95; }
 .forge-avatar--done .fa-core { opacity: 1; }
 
 @keyframes fa-breathe {
@@ -123,8 +123,8 @@
   position: absolute;
   right: -4px; bottom: -4px;
   border-radius: 50%;
-  background: var(--panel, #141a26);
-  box-shadow: 0 0 0 2px var(--panel, #141a26);
+  background: var(--panel, #1c1c22);
+  box-shadow: 0 0 0 2px var(--panel, #1c1c22);
   display: grid; place-items: center;
 }
 

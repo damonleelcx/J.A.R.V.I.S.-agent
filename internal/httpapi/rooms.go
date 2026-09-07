@@ -16,6 +16,7 @@ import (
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/persona"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/errs"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/logx"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/tts"
 )
 
 // The shared session over HTTP (PRD COL-01).
@@ -96,9 +97,27 @@ func NewRoomHandlers(d Deps) *RoomHandlers {
 			d.Log.Warn(context.Background(), logx.EventMediaRefused,
 				"reason", "transcription is enabled but no model client is configured; room audio will not be written down")
 		}
+		// FORGE's voice, built once in Deps and shared with the workbench
+		// endpoint so she cannot sound like one thing in a room and another at the
+		// workbench. Nil means no vendor is configured, in which case the model
+		// client speaks if it can — and if neither, rooms have transcription and
+		// no speech, which was the state before any of this.
+		var sp media.Speaker
+		if d.Speaker != nil {
+			sp = d.Speaker
+			d.Log.Info(context.Background(), logx.EventMediaSpeakerReady,
+				"speech_provider", d.Speaker.Name(), "backbone", d.Config.TTS.Model,
+				// Repeated at WIRING time, not only at config load: config can name a
+				// vendor that never reached the media plane, and "configured" is not
+				// "wired".
+				"trains_on_input", tts.TrainsOnRequests(d.Config.TTS.Model))
+		} else if oc, ok := d.LLM.(*llm.OpenAICompatible); ok && oc != nil {
+			sp = oc
+		}
+
 		sfu, err := media.New(media.Options{
 			Config: d.Config.Media, Log: d.Log, Clock: d.Clock,
-			Transcriber: tr, Turns: h, Activity: h,
+			Transcriber: tr, Speaker: sp, Turns: h, Activity: h,
 		})
 		if err != nil {
 			// Logged at ERROR and carried, not swallowed. A deployment that asked

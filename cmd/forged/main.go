@@ -136,10 +136,14 @@ func run() error {
 		Identity: identitySvc,
 		LLM:      modelClient,
 		CAD:      cadKernel,
-		Clock:    clk,
-		Log:      log,
-		Version:  version,
-		Commit:   commit,
+		// FORGE's own voice, built once and shared by the workbench endpoint
+		// and the media plane. Nil when no vendor is configured, which is the
+		// default: the browser then reads answers aloud in its own voice.
+		Speaker: httpapi.SpeakerFor(ctx, cfg, log),
+		Clock:   clk,
+		Log:     log,
+		Version: version,
+		Commit:  commit,
 	})
 
 	srv := &http.Server{

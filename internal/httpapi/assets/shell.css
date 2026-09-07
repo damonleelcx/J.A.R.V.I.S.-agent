@@ -9,23 +9,45 @@
    focused input, a primary action — so a reader learns it once and it holds. */
 
 :root {
-  --bg: #0b0f18;
-  --panel: #141a26;
-  --edge: #26304180;
-  --edge-solid: #263041;
-  --ink: #eef1f6;
-  --ink-dim: #98a3b8;
+  /* The palette is taken from two references: a near-black NEUTRAL ground with
+   * a white organic subject, and a field of blue-to-magenta wavefronts.
+   *
+   * The ground is deliberately neutral rather than blue. The previous palette
+   * was blue-grey throughout (#0b0f18, #141a26), which tinted every surface and
+   * left no room for a blue accent to read AS an accent. A neutral charcoal
+   * lets the periwinkle and the magenta be the only chromatic things on screen.
+   *
+   * Everything here is a token because a hue change has to happen in one place;
+   * the hardcoded values that used to sit in the stylesheets were swept into
+   * this scheme at the same time. */
 
-  /* The character's three colours. */
+  --bg: #121215;
+  --panel: #1c1c22;
+  --edge: #2c2c3680;
+  --edge-solid: #2c2c36;
+  --ink: #f3f3f6;
+  /* Slate, not blue-grey. This is the reference's display colour and it is the
+   * quietest thing on the page; it must not compete with the accent. */
+  --ink-dim: #8b90a4;
+
+  /* The character's three colours. Gold stays — it is her hair, not a UI
+   * choice — and her gem moves with the accent so she belongs to the theme. */
   --shell: #f7f8fa;
   --gold: #d9b25c;
   --gold-dim: #8d7233;
-  --core: #4fd8e8;
-  --core-dim: #1c7f8e;
+  --core: #7b8cff;
+  --core-dim: #3e45a8;
 
-  --ok: #4ea87a;
+  /* Display serif colour, from the reference's title treatment: a desaturated
+   * slate that sits BEHIND the subject rather than in front of it. */
+  --slate: #5c6580;
+  /* The far end of the wavefront gradient. Used as a second accent and as the
+   * error colour, which is why --bad is the same value. */
+  --warm: #f0576f;
+
+  --ok: #56b487;
   --warn: #e0b64c;
-  --bad: #d9636b;
+  --bad: #f0576f;
   --radius: 12px;
 }
 
@@ -38,8 +60,8 @@ body {
   place-items: center;
   padding: 24px;
   background:
-    radial-gradient(1200px 680px at 50% -12%, #16233a 0%, transparent 62%),
-    radial-gradient(700px 400px at 82% 8%, #10303a 0%, transparent 60%),
+    radial-gradient(1200px 680px at 50% -12%, #1d1c2b 0%, transparent 62%),
+    radial-gradient(700px 400px at 82% 8%, #2a1c2c 0%, transparent 60%),
     var(--bg);
   color: var(--ink);
   font: 15px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
@@ -79,8 +101,8 @@ p  { margin: 0 0 14px; }
   padding: 12px 18px;
   border: 0;
   border-radius: 8px;
-  background: linear-gradient(180deg, #62e2f0 0%, var(--core) 55%, #35b6c8 100%);
-  color: #08202a;
+  background: linear-gradient(180deg, #9aa6ff 0%, var(--core) 55%, #5a69e0 100%);
+  color: #0e0f1a;
   font: inherit;
   font-weight: 650;
   text-align: center;
@@ -92,18 +114,34 @@ p  { margin: 0 0 14px; }
 
 label { display: block; font-size: 13px; color: var(--ink-dim); margin: 14px 0 6px; }
 
+/* .pw-wrap input[type="text"] is a REVEALED password field. These rules select
+ * by type, so toggling type="password" to "text" dropped the entire style —
+ * the field rendered as a bare browser input and the reveal button fell outside
+ * it. Selecting the revealed state explicitly keeps the two identical, which is
+ * the point: showing your password should change the characters, not the
+ * furniture. */
+/* `.panel input[type="text"]` is scoped deliberately. These rules select by
+ * type, so a plain text field — the name on the sign-up form — inherited none
+ * of this and rendered as a bare white browser input beside two styled ones.
+ * Scoped to .panel rather than made global because the workbench and the room
+ * have their own text inputs with their own treatment, and a global rule here
+ * would reach them. */
 input[type="email"],
-input[type="password"] {
+input[type="password"],
+.panel input[type="text"],
+.pw-wrap input[type="text"] {
   width: 100%;
   padding: 11px 13px;
   border: 1px solid var(--edge-solid);
   border-radius: 7px;
-  background: #0f131b;
+  background: #17171b;
   color: var(--ink);
   font: inherit;
 }
 input[type="email"]:focus,
-input[type="password"]:focus { outline: 2px solid var(--core-dim); outline-offset: 1px; border-color: var(--core-dim); }
+input[type="password"]:focus,
+.panel input[type="text"]:focus,
+.pw-wrap input[type="text"]:focus { outline: 2px solid var(--core-dim); outline-offset: 1px; border-color: var(--core-dim); }
 
 .note {
   margin-top: 18px;
@@ -112,8 +150,8 @@ input[type="password"]:focus { outline: 2px solid var(--core-dim); outline-offse
   border: 1px solid var(--edge);
   font-size: 13px;
 }
-.note.ok  { border-color: #2c5a44; color: #b7e6cd; }
-.note.bad { border-color: #6a2f34; color: #f0bcc0; }
+.note.ok  { border-color: #2b5a49; color: #bde8d3; }
+.note.bad { border-color: #6e2f3c; color: #f5c2c8; }
 .hidden { display: none; }
 
 hr { border: 0; border-top: 1px solid var(--edge); margin: 22px 0; }
@@ -129,9 +167,61 @@ hr { border: 0; border-top: 1px solid var(--edge); margin: 22px 0; }
 a,
 a:link,
 a:visited { color: var(--core); text-decoration-color: color-mix(in srgb, var(--core) 45%, transparent); }
-a:hover { color: #7ce8f5; }
+a:hover { color: #a6b0ff; }
+
+/* An <a class="btn"> is a button that happens to navigate, and it must keep the
+ * button's own colour.
+ *
+ * The rules above are `a, a:link, a:visited`, and a pseudo-class pushes those to
+ * specificity (0,1,1) — which OUTRANKS the plain `.btn` class at (0,1,0). So the
+ * anchor took the link colour, var(--core), and rendered cyan-on-cyan against
+ * the button's cyan gradient: the label was invisible while the button itself
+ * looked perfectly normal. Observed 2026-09-07 on "Open the workbench".
+ *
+ * A real <button class="btn"> was never affected, which is why this survived —
+ * every other button on the site was fine.
+ *
+ * Stated for each link state rather than with !important, so the next person can
+ * still override it in the ordinary way. */
+a.btn,
+a.btn:link,
+a.btn:visited,
+a.btn:hover { color: #0e0f1a; }
 a:focus-visible {
   outline: 2px solid var(--core-dim);
   outline-offset: 2px;
   border-radius: 3px;
+}
+
+/* Password reveal (password-reveal.js).
+ *
+ * The button sits inside the field rather than beside it so the form's column
+ * width is unchanged — the inputs are 100% wide and a sibling control would
+ * either wrap or shrink them. */
+.pw-wrap { position: relative; display: block; }
+.pw-wrap input[type="password"],
+.pw-wrap input[type="text"] { padding-right: 44px; }
+.pw-reveal {
+  position: absolute;
+  top: 50%;
+  right: 6px;
+  transform: translateY(-50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--ink-dim);
+  cursor: pointer;
+}
+.pw-reveal svg { width: 18px; height: 18px; }
+.pw-reveal:hover { color: var(--ink); }
+.pw-reveal[aria-pressed="true"] { color: var(--core); }
+.pw-reveal:focus-visible {
+  outline: 2px solid var(--core);
+  outline-offset: 2px;
 }

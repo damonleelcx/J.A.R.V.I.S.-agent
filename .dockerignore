@@ -1,0 +1,9 @@
+.git
+.github
+.cadvenv
+.forge
+.env
+.env.bak-*
+.secrets*
+docs
+*.md

@@ -27,6 +27,7 @@ import (
 //
 //go:embed assets/shell.css assets/avatar.css assets/console.css assets/workbench.css
 //go:embed assets/pages.js assets/console.js assets/workbench.js assets/forge3d.js
+//go:embed assets/password-reveal.js assets/portal-field.js assets/home.css
 //go:embed assets/stage.js assets/voice.js assets/orb.js
 //go:embed assets/audio-input.js assets/room.js assets/room-page.js assets/room.css
 //go:embed assets/portrait/*.png
@@ -237,6 +238,26 @@ func (p *PageHandlers) ResetPasswordPage(w http.ResponseWriter, r *http.Request)
 	p.render(w, r, "reset", pageData{Page: "reset", Token: token, Title: "Set a new password · FORGE"})
 }
 
+// SignUpPage handles GET /auth/sign-up.
+//
+// A page rather than a panel on the console: signing up and signing in are
+// different acts with different consequences, and a form that silently does one
+// when the person meant the other is the kind of thing nobody notices until an
+// account exists that should not.
+func (p *PageHandlers) SignUpPage(w http.ResponseWriter, r *http.Request) {
+	p.render(w, r, "signup", pageData{Page: "signup", Title: "Create an account · FORGE"})
+}
+
+// ForgotPasswordPage handles GET /auth/forgot-password.
+//
+// The POST behind this deliberately answers the same way whether or not the
+// address has an account, so this page must not promise that a mail was sent —
+// only that one is on its way IF there is an account. Saying more would turn
+// the form into a way to test which addresses are registered.
+func (p *PageHandlers) ForgotPasswordPage(w http.ResponseWriter, r *http.Request) {
+	p.render(w, r, "forgot", pageData{Page: "forgot", Title: "Reset your password · FORGE"})
+}
+
 // Console handles GET /console.
 //
 // The page is a shell; everything in it is fetched from the API. That keeps ONE
@@ -352,12 +373,12 @@ func (p *PageHandlers) Assets(w http.ResponseWriter, r *http.Request) {
 	name := strings.TrimPrefix(r.URL.Path, "/assets/")
 	switch {
 	case name == "shell.css", name == "avatar.css", name == "console.css",
-		name == "workbench.css", name == "room.css":
+		name == "workbench.css", name == "room.css", name == "home.css":
 		w.Header().Set("Content-Type", "text/css; charset=utf-8")
 	case name == "pages.js", name == "console.js", name == "workbench.js",
 		name == "forge3d.js", name == "voice.js", name == "orb.js",
 		name == "audio-input.js", name == "room.js", name == "room-page.js",
-		name == "stage.js":
+		name == "stage.js", name == "password-reveal.js", name == "portal-field.js":
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 	case isPortraitAsset(name):
 		w.Header().Set("Content-Type", "image/png")
@@ -420,7 +441,8 @@ const pageTemplates = `
 <div class="mark">{{.Avatar}}<div class="wordmark">FORGE</div></div>
 {{end}}
 
-{{define "foot"}}</main><script src="{{asset "pages.js"}}"></script></body></html>{{end}}
+{{define "foot"}}</main><script src="{{asset "password-reveal.js"}}"></script>
+<script src="{{asset "pages.js"}}"></script></body></html>{{end}}
 
 {{define "workbench"}}<!doctype html>
 <html lang="en"><head>
@@ -914,6 +936,10 @@ const pageTemplates = `
       <p></p>
       <button class="btn" type="submit" id="signin-go">Sign in</button>
     </form>
+    <p class="dim" style="margin:16px 0 0;font-size:12.5px">
+      <a href="/auth/forgot-password">Forgot your password?</a><br>
+      No account yet? <a href="/auth/sign-up">Create one</a>.
+    </p>
   </div>
 </div>
 
@@ -929,26 +955,145 @@ const pageTemplates = `
   </div>
   <div id="detail" class="hidden"></div>
 </div>
+<script src="{{asset "password-reveal.js"}}"></script>
 <script src="{{asset "console.js"}}"></script>
 </body></html>{{end}}
 
-{{define "index"}}{{template "head" .}}
-<div class="forge-presence">
-  {{.Presence}}
-  <div>
-    <h1 style="margin:0 0 4px">FORGE</h1>
-    <p class="dim" style="margin:0">A durable engineering partner.</p>
-  </div>
-</div>
-<p class="dim" style="margin-top:20px">FORGE reconstructs its state from a database
-on every cycle, so it can be interrupted, restarted, and resumed without losing
-what it was doing. It never claims a tool ran, a check passed, or a person
-approved something that did not happen.</p>
-<hr>
-<p><a class="btn" href="/workbench">Open the workbench</a></p>
-<p class="dim" style="margin-top:10px"><a href="/console">Operations console</a> — goals, timeline, approvals.</p>
-<p class="dim" style="margin-top:16px">Health: <a href="/healthz">/healthz</a> · <a href="/readyz">/readyz</a><br>
-Error dictionary: <a href="/v1/meta/error-codes">/v1/meta/error-codes</a></p>
+{{define "index"}}<!doctype html>
+<html lang="en"><head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="referrer" content="no-referrer">
+<title>{{.Title}}</title>
+<link rel="stylesheet" href="{{asset "shell.css"}}">
+<link rel="stylesheet" href="{{asset "avatar.css"}}">
+<link rel="stylesheet" href="{{asset "home.css"}}">
+</head><body class="home" data-page="{{.Page}}" data-token="{{.Token}}">
+
+<!-- Decoration only: it carries no information and the page reads identically
+     without it. Fixed, so one subject carries all five sections. -->
+<canvas id="field" aria-hidden="true"></canvas>
+
+<header class="home-mast">{{.Avatar}}<div class="wordmark">FORGE</div>
+  <a class="home-skip" href="/workbench">Open the workbench</a>
+</header>
+
+<main class="home-scroll">
+
+  <!-- 1 ---------------------------------------------------------------- -->
+  <section class="sec sec--hero" id="s1">
+    <p class="sec-num">01</p>
+    <h1 class="home-display"><span>FORGE</span> <em>durable</em></h1>
+    <p class="home-lede">A durable engineering partner. It plans the work, does
+    it with tools, and keeps a record you can audit line by line.</p>
+    <div class="home-actions">
+      <a class="btn" href="/workbench">Open the workbench</a>
+      <a class="home-quiet" href="/console">Operations console</a>
+    </div>
+    <p class="sec-hint" aria-hidden="true">Scroll</p>
+  </section>
+
+  <!-- 2 ---------------------------------------------------------------- -->
+  <section class="sec" id="s2">
+    <p class="sec-num">02</p>
+    <h2 class="sec-title">It survives <em>being stopped</em></h2>
+    <p class="sec-body">FORGE reconstructs its state from a database on every
+    cycle. Interrupt it, restart the process, lose the machine — the work
+    resumes from the last checkpoint rather than starting over.</p>
+    <div class="home-spec">
+      <b>How</b>
+      <span>A checkpoint is written after every iteration, before the next model call.</span>
+      <span>A crash costs at most one iteration, never the task.</span>
+      <span>Tool results are recorded on their own path, so a lost checkpoint loses no evidence.</span>
+    </div>
+  </section>
+
+  <!-- 3 ---------------------------------------------------------------- -->
+  <section class="sec" id="s3">
+    <p class="sec-num">03</p>
+    <h2 class="sec-title">It will not claim <em>what did not happen</em></h2>
+    <p class="sec-body">Finishing work, confirming it, and a person accepting it
+    are three different facts. Most systems collapse them into one and then
+    report that something was checked when nothing checked it.</p>
+    <div class="home-spec">
+      <b>Kept apart</b>
+      <span>Completed is not verified. Verified is not accepted.</span>
+      <span>A verifier reads the raw tool output, not the executor's account of it.</span>
+      <span>A criterion marked satisfied without evidence is a claim, and is refused as one.</span>
+    </div>
+  </section>
+
+  <!-- 4 ---------------------------------------------------------------- -->
+  <section class="sec" id="s4">
+    <p class="sec-num">04</p>
+    <h2 class="sec-title">It refuses rather than <em>invents</em></h2>
+    <p class="sec-body">Where a connector has no real backend, the call fails
+    with a named reason. A fabricated solver result is the most dangerous thing
+    this system could produce, so unavailability is reported and never
+    simulated.</p>
+    <div class="home-spec">
+      <b>Under human control</b>
+      <span>Read, write, execute, simulate, export, deploy, transact and control are granted separately.</span>
+      <span>Anything irreversible sits behind a named human approval.</span>
+      <span>Autonomy is set once, by a person, and the system cannot raise its own.</span>
+    </div>
+  </section>
+
+  <!-- 5 ---------------------------------------------------------------- -->
+  <section class="sec sec--end" id="s5">
+    <p class="sec-num">05</p>
+    <h2 class="sec-title">Start with <em>one goal</em></h2>
+    <p class="sec-body">Describe what you want built. FORGE plans it into tasks,
+    asks when the goal is ambiguous rather than guessing, and shows you the plan
+    before anything runs.</p>
+    <div class="home-actions">
+      <a class="btn" href="/workbench">Open the workbench</a>
+      <a class="home-quiet" href="/console">Operations console — goals, timeline, approvals.</a>
+    </div>
+    <div class="home-links">
+      Health: <a href="/healthz">/healthz</a> · <a href="/readyz">/readyz</a><br>
+      Error dictionary: <a href="/v1/meta/error-codes">/v1/meta/error-codes</a>
+    </div>
+  </section>
+
+</main>
+<script src="{{asset "portal-field.js"}}"></script>
+</body></html>{{end}}
+
+{{define "signup"}}{{template "head" .}}
+<h1>Create an account</h1>
+<p class="dim">FORGE holds a conversation and does work inside a workspace, so
+it needs to know whose workspace it is. Nothing is shared between accounts.</p>
+<form id="form" autocomplete="on">
+  <label for="name">Your name</label>
+  <input type="text" id="name" autocomplete="name" required>
+  <label for="email">Email</label>
+  <input type="email" id="email" autocomplete="username" required>
+  <label for="pw">Password</label>
+  <input type="password" id="pw" autocomplete="new-password" minlength="{{.MinChars}}" required>
+  <p class="dim" style="margin:6px 0 0;font-size:12.5px">Choose something long.
+  Length is what is enforced — {{.MinChars}} characters minimum — not a mix of
+  symbols, because a passphrase beats a mangled word.</p>
+  <p></p>
+  <button class="btn" type="submit" id="go">Create account</button>
+</form>
+<div class="note hidden" id="note"></div>
+<p class="dim" style="margin-top:16px">Already have one?
+<a href="/console">Sign in</a>.</p>
+{{template "foot" .}}{{end}}
+
+{{define "forgot"}}{{template "head" .}}
+<h1>Reset your password</h1>
+<p class="dim">Give the address on the account and we will send a link that sets
+a new password. The link works once and expires.</p>
+<form id="form" autocomplete="on">
+  <label for="email">Email</label>
+  <input type="email" id="email" autocomplete="username" required>
+  <p></p>
+  <button class="btn" type="submit" id="go">Send the link</button>
+</form>
+<div class="note hidden" id="note"></div>
+<p class="dim" style="margin-top:16px"><a href="/console">Back to sign in</a></p>
 {{template "foot" .}}{{end}}
 
 {{define "verify"}}{{template "head" .}}
