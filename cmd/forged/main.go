@@ -30,6 +30,10 @@ var (
 	date    = "unknown"
 )
 
+// dbWaitLimit bounds the wait for the database at boot. See the same constant
+// in cmd/forge-worker for why this is a constant rather than configuration.
+const dbWaitLimit = 90 * time.Second
+
 func main() {
 	if err := run(); err != nil {
 		fmt.Fprintln(os.Stderr, "\nforged failed to start.")
@@ -76,7 +80,12 @@ func run() error {
 
 	clk := clock.System{}
 
-	pool, err := db.Connect(ctx, cfg.DB, log)
+	// Same race the worker had: forged and postgres start together, and losing
+	// by a second is normal rather than exceptional. Exiting hands the problem
+	// to CrashLoopBackOff, whose delay is exponential and reaches minutes.
+	// A misconfiguration is still fatal at once — WaitForConnect waits only
+	// while nothing is answering, never on a refusal.
+	pool, err := db.WaitForConnect(ctx, cfg.DB, log, dbWaitLimit)
 	if err != nil {
 		return err
 	}

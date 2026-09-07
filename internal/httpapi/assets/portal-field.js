@@ -209,8 +209,52 @@
      * so it hands the stage to the copy instead of following it down. */
     '  vec2 sp = (gl_FragCoord.xy - 0.5 * uRes) / uRes.y;',
     '  sp.x -= 0.46;',
-    '  sp.y += 0.02 - uScroll * 0.60;',
-    '  float zoom = mix(1.0, 1.85, clamp(uScroll, 0.0, 1.0));',
+
+    /* The subject travels UP the screen as the page scrolls, and when it leaves
+     * the top it comes back from the bottom rather than simply being gone.
+     *
+     * It used to be a single monotonic drift — 0.6 units over the whole page —
+     * which meant the subject inched upward, shrank, and then sat off to one
+     * side for the last three sections doing nothing. Scrolling further did not
+     * bring anything back, so the composition emptied out exactly where the copy
+     * was asking to be read against something.
+     *
+     * `sawtooth` is written to be continuous at the wrap: it starts at 0 when
+     * nothing is scrolled, climbs to +HALF, and rejoins at -HALF. The wrap is
+     * only invisible because HALF exceeds half the viewport plus the subject's
+     * own radius — at the moment it jumps, the subject is entirely past the top
+     * edge, and it re-enters from below still rising. Shrink HALF and the shape
+     * will visibly teleport.
+     *
+     * TRAVEL is an exact multiple of the period, so the bottom of the page
+     * frames the subject exactly as the top does.
+     */
+    /* HALF has to exceed half the viewport plus the subject's own screen
+     * radius, or the wrap is visible as a jump. Derived rather than guessed:
+     *
+     *   mapBlob is ten spheres with centres bounded by 0.40 per axis and radii
+     *   up to 0.34, smin-blended with k=0.26. Worst case |centre| is
+     *   0.40*sqrt(3)=0.693, so the world radius is under 0.693+0.34+0.07=1.10.
+     *   The camera puts the object plane 6.4 away and scales by 3.20, so screen
+     *   radius = 1.10 * 3.20/6.4 = 0.55 viewport heights, and `sp *= zoom`
+     *   only ever divides that further.
+     *
+     *   Fully clear of the top edge therefore needs 0.5 + 0.02 + 0.55 = 1.07.
+     *
+     * 1.25 leaves a margin over a bound that already assumes all three
+     * Lissajous axes peak at once, which they never do. If the shape or the
+     * camera changes, redo this — a too-small HALF does not look like a bug,
+     * it looks like a stutter. */
+    '  const float HALF   = 1.25;',   // half a cycle, in viewport heights
+    '  const float PERIOD = 2.50;',   // 2 * HALF
+    '  const float TRAVEL = 7.50;',   // 3 * PERIOD — three passes over the page
+    '  float march = clamp(uScroll, 0.0, 1.0) * TRAVEL;',
+    '  float sawtooth = mod(march + HALF, PERIOD) - HALF;',
+    '  sp.y += 0.02 - sawtooth;',
+    /* A gentler recede than before. The subject now returns, so it no longer
+     * has to shrink its way out of the copy's way — and at the old 1.85 the
+     * later passes came back as a speck. */
+    '  float zoom = mix(1.0, 1.35, clamp(uScroll, 0.0, 1.0));',
     '  sp *= zoom;',
 
     '  vec3 ro = vec3(0.0, 0.0, 6.4);',
