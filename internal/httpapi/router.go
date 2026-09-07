@@ -284,6 +284,8 @@ func NewRouter(d Deps) http.Handler {
 	// 3D studio. /console is the operations view beside it.
 	mux.HandleFunc("GET /workbench", pages.Workbench)
 	mux.HandleFunc("GET /rooms/{id}", pages.RoomPage)
+	mux.HandleFunc("GET /auth/sign-up", pages.SignUpPage)
+	mux.HandleFunc("GET /auth/forgot-password", pages.ForgotPasswordPage)
 	mux.HandleFunc("GET /auth/verify-email", pages.VerifyEmailPage)
 	mux.HandleFunc("GET /auth/reset-password", pages.ResetPasswordPage)
 	mux.HandleFunc("GET /", pages.Index)

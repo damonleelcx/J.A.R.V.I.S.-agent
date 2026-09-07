@@ -238,6 +238,26 @@ func (p *PageHandlers) ResetPasswordPage(w http.ResponseWriter, r *http.Request)
 	p.render(w, r, "reset", pageData{Page: "reset", Token: token, Title: "Set a new password · FORGE"})
 }
 
+// SignUpPage handles GET /auth/sign-up.
+//
+// A page rather than a panel on the console: signing up and signing in are
+// different acts with different consequences, and a form that silently does one
+// when the person meant the other is the kind of thing nobody notices until an
+// account exists that should not.
+func (p *PageHandlers) SignUpPage(w http.ResponseWriter, r *http.Request) {
+	p.render(w, r, "signup", pageData{Page: "signup", Title: "Create an account · FORGE"})
+}
+
+// ForgotPasswordPage handles GET /auth/forgot-password.
+//
+// The POST behind this deliberately answers the same way whether or not the
+// address has an account, so this page must not promise that a mail was sent —
+// only that one is on its way IF there is an account. Saying more would turn
+// the form into a way to test which addresses are registered.
+func (p *PageHandlers) ForgotPasswordPage(w http.ResponseWriter, r *http.Request) {
+	p.render(w, r, "forgot", pageData{Page: "forgot", Title: "Reset your password · FORGE"})
+}
+
 // Console handles GET /console.
 //
 // The page is a shell; everything in it is fetched from the API. That keeps ONE
@@ -916,6 +936,10 @@ const pageTemplates = `
       <p></p>
       <button class="btn" type="submit" id="signin-go">Sign in</button>
     </form>
+    <p class="dim" style="margin:16px 0 0;font-size:12.5px">
+      <a href="/auth/forgot-password">Forgot your password?</a><br>
+      No account yet? <a href="/auth/sign-up">Create one</a>.
+    </p>
   </div>
 </div>
 
@@ -1035,6 +1059,42 @@ const pageTemplates = `
 </main>
 <script src="{{asset "portal-field.js"}}"></script>
 </body></html>{{end}}
+
+{{define "signup"}}{{template "head" .}}
+<h1>Create an account</h1>
+<p class="dim">FORGE holds a conversation and does work inside a workspace, so
+it needs to know whose workspace it is. Nothing is shared between accounts.</p>
+<form id="form" autocomplete="on">
+  <label for="name">Your name</label>
+  <input type="text" id="name" autocomplete="name" required>
+  <label for="email">Email</label>
+  <input type="email" id="email" autocomplete="username" required>
+  <label for="pw">Password</label>
+  <input type="password" id="pw" autocomplete="new-password" minlength="{{.MinChars}}" required>
+  <p class="dim" style="margin:6px 0 0;font-size:12.5px">Choose something long.
+  Length is what is enforced — {{.MinChars}} characters minimum — not a mix of
+  symbols, because a passphrase beats a mangled word.</p>
+  <p></p>
+  <button class="btn" type="submit" id="go">Create account</button>
+</form>
+<div class="note hidden" id="note"></div>
+<p class="dim" style="margin-top:16px">Already have one?
+<a href="/console">Sign in</a>.</p>
+{{template "foot" .}}{{end}}
+
+{{define "forgot"}}{{template "head" .}}
+<h1>Reset your password</h1>
+<p class="dim">Give the address on the account and we will send a link that sets
+a new password. The link works once and expires.</p>
+<form id="form" autocomplete="on">
+  <label for="email">Email</label>
+  <input type="email" id="email" autocomplete="username" required>
+  <p></p>
+  <button class="btn" type="submit" id="go">Send the link</button>
+</form>
+<div class="note hidden" id="note"></div>
+<p class="dim" style="margin-top:16px"><a href="/console">Back to sign in</a></p>
+{{template "foot" .}}{{end}}
 
 {{define "verify"}}{{template "head" .}}
 <h1>Confirm your email</h1>

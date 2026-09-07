@@ -120,8 +120,15 @@ label { display: block; font-size: 13px; color: var(--ink-dim); margin: 14px 0 6
  * it. Selecting the revealed state explicitly keeps the two identical, which is
  * the point: showing your password should change the characters, not the
  * furniture. */
+/* `.panel input[type="text"]` is scoped deliberately. These rules select by
+ * type, so a plain text field — the name on the sign-up form — inherited none
+ * of this and rendered as a bare white browser input beside two styled ones.
+ * Scoped to .panel rather than made global because the workbench and the room
+ * have their own text inputs with their own treatment, and a global rule here
+ * would reach them. */
 input[type="email"],
 input[type="password"],
+.panel input[type="text"],
 .pw-wrap input[type="text"] {
   width: 100%;
   padding: 11px 13px;
@@ -133,6 +140,7 @@ input[type="password"],
 }
 input[type="email"]:focus,
 input[type="password"]:focus,
+.panel input[type="text"]:focus,
 .pw-wrap input[type="text"]:focus { outline: 2px solid var(--core-dim); outline-offset: 1px; border-color: var(--core-dim); }
 
 .note {

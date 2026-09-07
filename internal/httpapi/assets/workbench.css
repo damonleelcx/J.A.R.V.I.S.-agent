@@ -129,8 +129,8 @@
   min-width: 0;
   min-height: 0;
   background:
-    radial-gradient(900px 520px at 50% 42%, #131c30 0%, transparent 70%),
-    #0a0e17;
+    radial-gradient(900px 520px at 50% 42%, #1e1c2e 0%, transparent 70%),
+    #101014;
 }
 .stage canvas#canvas { width: 100%; height: 100%; display: block; cursor: grab; }
 .stage canvas#canvas:active { cursor: grabbing; }
@@ -235,6 +235,18 @@
   transform: translate(-50%, -50%);
   width: min(640px, 86%);
   display: grid;
+  /* minmax(0, 1fr), NOT the default `auto` column.
+   *
+   * An `auto` grid column refuses to shrink below its content's min-content
+   * width. The control pill's min-content is ~309px — the mic, the two icon
+   * buttons and the stop button, none of which can shrink — so in the 306px
+   * dock the pill burst 16px through the card's rounded border and sat outside
+   * it. The card looked broken because its contents were, in fact, outside it.
+   *
+   * The children get min-width:0 for the same reason one layer down: a grid
+   * item's automatic minimum size is also min-content, so constraining the
+   * column alone is not enough. */
+  grid-template-columns: minmax(0, 1fr);
   justify-items: center;
   gap: 4px;
   z-index: 4;
@@ -258,6 +270,7 @@
   padding: 10px 12px 11px;
   backdrop-filter: blur(8px);
 }
+.voice > * { min-width: 0; max-width: 100%; }
 
 .orb {
   position: relative;
@@ -405,9 +418,9 @@
 .mic {
   color: var(--core);
   border-color: color-mix(in srgb, var(--core-dim) 70%, transparent);
-  background: radial-gradient(circle at 50% 30%, rgba(79,216,232,.16), rgba(79,216,232,.04));
+  background: radial-gradient(circle at 50% 30%, rgba(123,140,255,.16), rgba(123,140,255,.04));
 }
-.mic:hover { color: #a6b0ff; background: radial-gradient(circle at 50% 30%, rgba(79,216,232,.26), rgba(79,216,232,.07)); }
+.mic:hover { color: #a6b0ff; background: radial-gradient(circle at 50% 30%, rgba(123,140,255,.26), rgba(123,140,255,.07)); }
 .mic[aria-pressed="true"] {
   background: var(--core);
   color: #0e0f1a;
@@ -428,7 +441,7 @@
 .send { color: var(--ink-dim); }
 .voice-ctl form:has(input:not(:placeholder-shown)) .send {
   color: var(--core);
-  background: rgba(79,216,232,.10);
+  background: rgba(123,140,255,.10);
 }
 
 /* Stop is present at all times (AUD-07) and brightens while FORGE is actually
@@ -578,7 +591,7 @@
 .turn .detail {
   margin-top: 8px; padding: 9px 11px;
   background: #16161a; border-radius: 8px;
-  font-size: 12.5px; color: #b9c4d6; white-space: pre-wrap;
+  font-size: 12.5px; color: #c3c5d2; white-space: pre-wrap;
 }
 .turn.partial { opacity: .75; }
 .turn.partial .body { color: var(--ink-dim); font-style: italic; }
@@ -1038,7 +1051,7 @@
    * rather than as a fact about a part. The solid variant below is the
    * exception, not the base case — a number is FORGE's own arithmetic until
    * something says otherwise. */
-  background: rgba(12, 17, 27, 0.86);
+  background: rgba(16, 16, 20, 0.86);
   border: 1px dashed #3b4457;
   color: #9aa6b8;
 }
@@ -1047,9 +1060,9 @@
  * is — solid, brighter, and carrying the word for where it came from. */
 .dimlayer .dim-stated {
   border-style: solid;
-  border-color: #4d7f93;
-  color: #d6e6ee;
-  background: rgba(10, 22, 30, 0.9);
+  border-color: var(--core-dim);
+  color: #d8daea;
+  background: rgba(16, 16, 22, 0.9);
 }
 
 .dimlayer .dim-label {
@@ -1073,8 +1086,8 @@
   padding: 1px 5px;
   border-radius: 3px;
 }
-.dimlayer .dim-src   { background: #17414f; color: #86d3e8; }
-.dimlayer .dim-model { background: #232a37; color: #8894a8; }
+.dimlayer .dim-src   { background: #2b2c52; color: #9aa6ff; }
+.dimlayer .dim-model { background: #26262e; color: #8b90a4; }
 
 /* Assembly states (PRD VIS-02). Sits under the view buttons, above the
  * sliders — it changes WHAT is shown, where the sliders change how. */
@@ -1086,7 +1099,7 @@
   width: 210px;
   padding: 10px 12px;
   border-radius: 9px;
-  background: rgba(12, 17, 27, 0.9);
+  background: rgba(16, 16, 20, 0.9);
   border: 1px solid var(--edge-solid);
 }
 
@@ -1127,8 +1140,8 @@
   padding: 1px 4px;
   margin-left: 4px;
   border-radius: 3px;
-  background: #232a37;
-  color: #8894a8;
+  background: #26262e;
+  color: #8b90a4;
 }
 
 /* Attaching a sketch (PRD VIS-01). The control sits in the composer beside
@@ -1231,7 +1244,7 @@
   align-items: center;
   gap: 12px;
   padding: 0 12px;
-  background: color-mix(in srgb, #0a0e17 88%, transparent);
+  background: color-mix(in srgb, #101014 88%, transparent);
   border-bottom: 1px solid var(--edge-solid);
   backdrop-filter: blur(6px);
   z-index: 6;
@@ -1417,7 +1430,7 @@
 .wbd-l { display: block; }
 .wbd-add { color: #a6dcb0; background: rgba(80, 170, 100, .09); }
 .wbd-del { color: #e8a6ac; background: rgba(200, 90, 100, .09); }
-.wbd-hunk { color: #86d3e8; }
+.wbd-hunk { color: #9aa6ff; }
 .wbd-file { color: var(--ink); font-weight: 600; }
 
 /* ---- Checks ------------------------------------------------------------- */
@@ -1506,6 +1519,23 @@
   font-size: 12.5px;
   line-height: 1.6;
   color: var(--ink-dim);
+  /* Centred in whatever room the panel has, rather than pinned to its top.
+   *
+   * An empty panel is the LARGEST this text will ever have to hold, and pinned
+   * to the top it left a single line above several hundred pixels of nothing,
+   * with the docked voice card marooned at the bottom. The page read as broken
+   * when it was merely empty — and "empty" is the state a new user sees first.
+   *
+   * min-height rather than height: when the panel does have content this rule
+   * still applies to the empty case only, and nothing else moves. */
+  min-height: min(340px, 100%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  max-width: 46ch;
+  margin: 0 auto;
 }
 
 /* A failure to read, said where the answer was expected. This panel is what the

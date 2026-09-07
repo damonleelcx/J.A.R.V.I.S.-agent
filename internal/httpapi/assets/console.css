@@ -99,7 +99,7 @@ a.goal { color: inherit; text-decoration: none; }
   border-radius: 7px;
   font-size: 12px;
   overflow-x: auto;
-  color: #b9c4d6;
+  color: #c3c5d2;
   max-height: 220px;
 }
 .approval .acts { display: flex; gap: 9px; margin-top: 12px; }
