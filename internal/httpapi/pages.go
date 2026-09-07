@@ -31,6 +31,7 @@ import (
 //go:embed assets/stage.js assets/voice.js assets/orb.js
 //go:embed assets/audio-input.js assets/room.js assets/room-page.js assets/room.css
 //go:embed assets/portrait/*.png
+//go:embed assets/favicon.png
 var assetFS embed.FS
 
 // PageHandlers render the small set of browser pages reached from email.
@@ -380,6 +381,8 @@ func (p *PageHandlers) Assets(w http.ResponseWriter, r *http.Request) {
 		name == "audio-input.js", name == "room.js", name == "room-page.js",
 		name == "stage.js", name == "password-reveal.js", name == "portal-field.js":
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
+	case name == "favicon.png":
+		w.Header().Set("Content-Type", "image/png")
 	case isPortraitAsset(name):
 		w.Header().Set("Content-Type", "image/png")
 	default:
@@ -435,6 +438,7 @@ const pageTemplates = `
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="referrer" content="no-referrer">
 <title>{{.Title}}</title>
+<link rel="icon" type="image/png" href="{{asset "favicon.png"}}">
 <link rel="stylesheet" href="{{asset "shell.css"}}">
 <link rel="stylesheet" href="{{asset "avatar.css"}}">
 </head><body><main class="panel" data-page="{{.Page}}" data-token="{{.Token}}">
@@ -449,6 +453,7 @@ const pageTemplates = `
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{{.Title}}</title>
+<link rel="icon" type="image/png" href="{{asset "favicon.png"}}">
 <link rel="stylesheet" href="{{asset "shell.css"}}">
 <link rel="stylesheet" href="{{asset "avatar.css"}}">
 <link rel="stylesheet" href="{{asset "console.css"}}">
@@ -808,6 +813,7 @@ const pageTemplates = `
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{{.Title}}</title>
+<link rel="icon" type="image/png" href="{{asset "favicon.png"}}">
 <link rel="stylesheet" href="{{asset "shell.css"}}">
 <link rel="stylesheet" href="{{asset "avatar.css"}}">
 <link rel="stylesheet" href="{{asset "console.css"}}">
@@ -913,6 +919,7 @@ const pageTemplates = `
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>{{.Title}}</title>
+<link rel="icon" type="image/png" href="{{asset "favicon.png"}}">
 <link rel="stylesheet" href="{{asset "shell.css"}}">
 <link rel="stylesheet" href="{{asset "avatar.css"}}">
 <link rel="stylesheet" href="{{asset "console.css"}}">
@@ -965,6 +972,7 @@ const pageTemplates = `
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="referrer" content="no-referrer">
 <title>{{.Title}}</title>
+<link rel="icon" type="image/png" href="{{asset "favicon.png"}}">
 <link rel="stylesheet" href="{{asset "shell.css"}}">
 <link rel="stylesheet" href="{{asset "avatar.css"}}">
 <link rel="stylesheet" href="{{asset "home.css"}}">

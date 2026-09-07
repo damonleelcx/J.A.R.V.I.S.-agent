@@ -1,0 +1,13 @@
+favicon.png is FORGE's portrait, cropped to the head and resized to 64px:
+
+  sips -c 340 340 --cropOffset 60 86 assets/portrait/calm.png --out face.png
+  sips -z 64 64 face.png --out assets/favicon.png
+
+Cropped to the head on purpose. assets/portrait/README.md notes that a detailed
+illustration does not stay legible where the sigil does — and that is true of the
+FULL portrait, which is head-and-shoulders: at 32px the shoulders and background
+take the pixels that make the face recognisable. Cropped to the head first, it
+reads.
+
+The portrait itself is not used directly: it is 512px and ~310KB, which is a
+large thing to fetch on every page for something drawn at 16px.
