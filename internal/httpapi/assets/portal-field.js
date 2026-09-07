@@ -210,51 +210,55 @@
     '  vec2 sp = (gl_FragCoord.xy - 0.5 * uRes) / uRes.y;',
     '  sp.x -= 0.46;',
 
-    /* The subject travels UP the screen as the page scrolls, and when it leaves
-     * the top it comes back from the bottom rather than simply being gone.
+    /* The subject ORBITS as the page scrolls: it rises, passes behind, comes
+     * back up from below, and ends where it started. Exactly one revolution
+     * over the length of the page.
      *
-     * It used to be a single monotonic drift — 0.6 units over the whole page —
-     * which meant the subject inched upward, shrank, and then sat off to one
-     * side for the last three sections doing nothing. Scrolling further did not
-     * bring anything back, so the composition emptied out exactly where the copy
-     * was asking to be read against something.
+     * # Two things this replaces, and why the second was worse
      *
-     * `sawtooth` is written to be continuous at the wrap: it starts at 0 when
-     * nothing is scrolled, climbs to +HALF, and rejoins at -HALF. The wrap is
-     * only invisible because HALF exceeds half the viewport plus the subject's
-     * own radius — at the moment it jumps, the subject is entirely past the top
-     * edge, and it re-enters from below still rising. Shrink HALF and the shape
-     * will visibly teleport.
+     * First it was a monotonic drift — 0.6 units up over the whole page. The
+     * subject inched upward, shrank, and then sat off to one side for the last
+     * three sections doing nothing, so the composition emptied out exactly
+     * where the copy was asking to be read against something.
      *
-     * TRAVEL is an exact multiple of the period, so the bottom of the page
-     * frames the subject exactly as the top does.
+     * Then it was a sawtooth: travel up, wrap, re-enter from the bottom, three
+     * times over. The wrap was arranged to happen while the subject was fully
+     * off screen, and that reasoning was sound as far as it went — but a wrap
+     * is a TELEPORT, and putting a teleport out of frame does not make it
+     * continuous, it only makes it unwitnessed. Nothing connected the exit to
+     * the arrival. Three identical passes, same size and same column each time,
+     * read as three copies of the shape stacked down the page rather than as
+     * one shape going anywhere. Reported from a real browser; the arithmetic
+     * had been checked and the arithmetic was not the thing that was wrong.
+     *
+     * # Why a circle fixes what a bigger margin could not
+     *
+     * The path is closed and every point on it is differentiable, so there is
+     * no instant to catch. Height and distance run a quarter turn apart, which
+     * is what makes it read as ONE object on a journey rather than a repeat:
+     * the subject is never twice at the same height AND the same size, so there
+     * is no frame that looks like a frame you already saw.
+     *
+     *   quarter turn   high, and half way out
+     *   half turn      back at centre height, at its furthest — this is the
+     *                  pass BEHIND, and it is what stops the return reading as
+     *                  the same object simply sliding back down
+     *   three quarters low, coming forward again
+     *   full turn      home, and the foot of the page frames it as the head did
+     *
+     * RISE is deliberately under the 1.07 that would carry it off the top edge.
+     * Leaving it partly in frame is the point: the previous version's gap was
+     * the composition going empty, and an orbit that hides has reintroduced it.
      */
-    /* HALF has to exceed half the viewport plus the subject's own screen
-     * radius, or the wrap is visible as a jump. Derived rather than guessed:
-     *
-     *   mapBlob is ten spheres with centres bounded by 0.40 per axis and radii
-     *   up to 0.34, smin-blended with k=0.26. Worst case |centre| is
-     *   0.40*sqrt(3)=0.693, so the world radius is under 0.693+0.34+0.07=1.10.
-     *   The camera puts the object plane 6.4 away and scales by 3.20, so screen
-     *   radius = 1.10 * 3.20/6.4 = 0.55 viewport heights, and `sp *= zoom`
-     *   only ever divides that further.
-     *
-     *   Fully clear of the top edge therefore needs 0.5 + 0.02 + 0.55 = 1.07.
-     *
-     * 1.25 leaves a margin over a bound that already assumes all three
-     * Lissajous axes peak at once, which they never do. If the shape or the
-     * camera changes, redo this — a too-small HALF does not look like a bug,
-     * it looks like a stutter. */
-    '  const float HALF   = 1.25;',   // half a cycle, in viewport heights
-    '  const float PERIOD = 2.50;',   // 2 * HALF
-    '  const float TRAVEL = 7.50;',   // 3 * PERIOD — three passes over the page
-    '  float march = clamp(uScroll, 0.0, 1.0) * TRAVEL;',
-    '  float sawtooth = mod(march + HALF, PERIOD) - HALF;',
-    '  sp.y += 0.02 - sawtooth;',
-    /* A gentler recede than before. The subject now returns, so it no longer
-     * has to shrink its way out of the copy's way — and at the old 1.85 the
-     * later passes came back as a speck. */
-    '  float zoom = mix(1.0, 1.35, clamp(uScroll, 0.0, 1.0));',
+    '  const float TAU  = 6.28318530718;',
+    '  const float RISE = 0.78;',   // peak height, in viewport heights
+    '  const float AWAY = 0.62;',   // how much further it is at the back of the turn
+    '  float turn = clamp(uScroll, 0.0, 1.0) * TAU;',
+    '  sp.y += 0.02 - RISE * sin(turn);',
+    /* A quarter turn behind the height, so the extremes do not coincide. Larger
+     * zoom is further away: sp is the ray's screen offset, so scaling it up
+     * widens the view and the subject occupies less of it. */
+    '  float zoom = 1.0 + AWAY * 0.5 * (1.0 - cos(turn));',
     '  sp *= zoom;',
 
     '  vec3 ro = vec3(0.0, 0.0, 6.4);',
