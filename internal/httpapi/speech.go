@@ -1,9 +1,7 @@
 package httpapi
 
 import (
-	"bytes"
 	"context"
-	"encoding/binary"
 	"net/http"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/llm"
@@ -29,18 +27,26 @@ import (
 // page with an <audio> element. So this endpoint hands the same provider's
 // output to that element.
 //
-// # Why WAV, and why that is not a second format
+// # Why this asks for MP3 when the media plane takes PCM
 //
-// The provider streams 16-bit PCM at llm.SpeechSampleRate because that is what
-// the media plane consumes. A browser will not play raw PCM, but WAV is PCM
-// with a 44-byte header — so this wraps rather than converts. There is no
-// second encoder, no decoder, and no place where a sample rate could disagree
-// with the media plane's.
+// It first shipped wrapping the media plane's PCM in a WAV header — no second
+// encoder, no decoder, nothing that could disagree about a sample rate. Elegant,
+// and wrong twice.
 //
-// The utterance is buffered before the header is written, because a WAV header
-// carries the length. That is affordable here and only here: an utterance is a
-// few seconds and a few hundred KB, and unlike the room path nobody is holding
-// a conversation against it in real time.
+// Wrong on size: half a megabyte of WAV per utterance, against roughly thirty
+// kilobytes of MP3 for the same seconds, on a path that fires on every reply.
+//
+// Wrong on support: a WAV is PCM, and PCM is the codec a browser is LEAST likely
+// to have. canPlayType answers "probably" for audio/mpeg everywhere and only
+// "maybe" for audio/wav, and some engines refuse WAV outright — which is exactly
+// what happened. The endpoint returned a byte-perfect 500KB WAV, the browser
+// answered NotSupportedError, and voice.js fell back to the browser's own voice.
+// Server-side every signal said success: 200, forge.tts.spoke, half a megabyte
+// delivered. Nothing was wrong except that nobody could play it.
+//
+// Fish emits both, so neither format is converted here. The endpoint asks for
+// what its consumer can actually play — which is the decision the WAV wrapper
+// was avoiding having to make.
 
 type speechRequest struct {
 	Text string `json:"text"`
@@ -73,63 +79,34 @@ func (h *ConverseHandlers) Speak(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var pcm bytes.Buffer
-	err := h.deps.Speaker.Speak(r.Context(), req.Text, func(chunk []byte) error {
-		pcm.Write(chunk)
-		return nil
+	// A vendor that can hand a browser a container it will actually play is used
+	// that way. One that cannot is not degraded around silently — the caller is
+	// told, and falls back to the browser's own voice.
+	mp3, ok := h.deps.Speaker.(interface {
+		SpeakMP3(context.Context, string) ([]byte, string, error)
 	})
+	if !ok {
+		WriteError(w, r, h.deps.Log, errs.New(op, errs.CodeConnectorUnavailable).
+			WithDetail("the configured speech vendor cannot produce audio this browser can "+
+				"play; the browser's own voice is used instead"))
+		return
+	}
+
+	out, ctype, err := mp3.SpeakMP3(r.Context(), req.Text)
 	if err != nil {
 		WriteError(w, r, h.deps.Log, err)
 		return
 	}
-	if pcm.Len() == 0 {
-		// Silence is exactly what a broken voice sounds like, so it is reported
-		// rather than served as valid audio nobody can hear.
-		WriteError(w, r, h.deps.Log, errs.New(op, errs.CodeExternalUnavailable).
-			WithDetail("the speech vendor returned no audio"))
-		return
-	}
 
-	out := wavFromPCM(pcm.Bytes(), llm.SpeechSampleRate)
 	h.deps.Log.Info(r.Context(), logx.EventTTSSpoke,
-		"provider", h.deps.Speaker.Name(), "chars", len([]rune(req.Text)), "bytes", len(out))
+		"provider", h.deps.Speaker.Name(), "chars", len([]rune(req.Text)),
+		"bytes", len(out), "content_type", ctype)
 
-	w.Header().Set("Content-Type", "audio/wav")
+	w.Header().Set("Content-Type", ctype)
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(out)
-}
-
-// wavFromPCM prepends a canonical 44-byte WAV header to 16-bit mono PCM.
-//
-// Written out rather than pulled from a library: it is 44 bytes of a format that
-// has not changed since 1991, and a dependency for it would be a supply chain
-// for something this file can state completely.
-func wavFromPCM(pcm []byte, sampleRate int) []byte {
-	const (
-		channels      = 1
-		bitsPerSample = 16
-	)
-	byteRate := sampleRate * channels * bitsPerSample / 8
-	blockAlign := channels * bitsPerSample / 8
-
-	var b bytes.Buffer
-	b.Grow(44 + len(pcm))
-	b.WriteString("RIFF")
-	_ = binary.Write(&b, binary.LittleEndian, uint32(36+len(pcm)))
-	b.WriteString("WAVEfmt ")
-	_ = binary.Write(&b, binary.LittleEndian, uint32(16)) // PCM chunk size
-	_ = binary.Write(&b, binary.LittleEndian, uint16(1))  // PCM, uncompressed
-	_ = binary.Write(&b, binary.LittleEndian, uint16(channels))
-	_ = binary.Write(&b, binary.LittleEndian, uint32(sampleRate))
-	_ = binary.Write(&b, binary.LittleEndian, uint32(byteRate))
-	_ = binary.Write(&b, binary.LittleEndian, uint16(blockAlign))
-	_ = binary.Write(&b, binary.LittleEndian, uint16(bitsPerSample))
-	b.WriteString("data")
-	_ = binary.Write(&b, binary.LittleEndian, uint32(len(pcm)))
-	b.Write(pcm)
-	return b.Bytes()
 }
 
 // SpeakerFor builds the deployment's voice, or nil when it has none.

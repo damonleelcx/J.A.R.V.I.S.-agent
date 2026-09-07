@@ -143,7 +143,8 @@ type fishRequest struct {
 	Text        string `json:"text"`
 	ReferenceID string `json:"reference_id,omitempty"`
 	Format      string `json:"format"`
-	SampleRate  int    `json:"sample_rate"`
+	SampleRate  int    `json:"sample_rate,omitempty"`
+	MP3Bitrate  int    `json:"mp3_bitrate,omitempty"`
 	// Latency trades quality for time-to-first-byte. "balanced" because this is
 	// somebody waiting to hear an answer in a conversation.
 	Latency string `json:"latency"`
@@ -151,6 +152,106 @@ type fishRequest struct {
 	// for this product: PRD AUD-04 requires tolerances, coordinates and part ids
 	// to be read back unambiguously, and read digit by digit they are useless.
 	Normalize bool `json:"normalize"`
+}
+
+// SpeakMP3 synthesises text and returns MP3 bytes, for a browser.
+//
+// # Why the browser gets a different format than the media plane
+//
+// The media plane consumes raw PCM, so Speak streams PCM. A browser wants a
+// CONTAINER it can hand to an <audio> element, and the obvious move — wrapping
+// that same PCM in a WAV header — was the one this shipped with and it was
+// wrong twice over.
+//
+// Wrong on size: 500KB of WAV for one utterance, against roughly 30KB of MP3 for
+// the same seconds, on a path that fires on every reply.
+//
+// Wrong on support: a WAV is PCM, and PCM is the codec a browser is LEAST likely
+// to have optimised. MP3 answers "probably" to canPlayType everywhere; WAV
+// answers "maybe" and some engines refuse it outright.
+//
+// Fish emits both, so nothing is converted here either way — the endpoint asks
+// for what its consumer can actually play, which is the thing the WAV wrapper
+// was avoiding having to decide.
+func (f *Fish) SpeakMP3(ctx context.Context, text string) ([]byte, string, error) {
+	const op = "tts.Fish.SpeakMP3"
+
+	body, err := f.request(text, fishRequest{Format: "mp3", MP3Bitrate: 128})
+	if err != nil {
+		return nil, "", err
+	}
+	resp, err := f.do(ctx, op, body)
+	if err != nil {
+		return nil, "", err
+	}
+	defer resp.Body.Close()
+
+	audio, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, "", errs.Wrap(op, errs.CodeExternalUnavailable, err).
+			WithDetail("reading audio from %s", f.Name())
+	}
+	if len(audio) == 0 {
+		// Silence is what a broken voice sounds like; it is reported, never
+		// served as valid audio nobody can hear.
+		return nil, "", errs.New(op, errs.CodeExternalUnavailable).
+			WithDetail("%s answered 200 with no audio", f.Name())
+	}
+	ct := resp.Header.Get("Content-Type")
+	if ct == "" {
+		ct = "audio/mpeg"
+	}
+	return audio, ct, nil
+}
+
+// request builds the JSON body, applying the caps and defaults both formats share.
+func (f *Fish) request(text string, r fishRequest) ([]byte, error) {
+	const op = "tts.Fish.request"
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil, errs.New(op, errs.CodeValidationFailed).WithDetail("nothing to speak")
+	}
+	if rs := []rune(text); len(rs) > MaxChars {
+		text = string(rs[:MaxChars])
+	}
+	r.Text = text
+	r.ReferenceID = f.VoiceID
+	r.Latency = "balanced"
+	r.Normalize = true
+	b, err := json.Marshal(r)
+	if err != nil {
+		return nil, errs.Wrap(op, errs.CodeInvariantViolated, err).
+			WithDetail("the speech request could not be encoded")
+	}
+	return b, nil
+}
+
+// do performs the call and returns a response whose status is already 200.
+func (f *Fish) do(ctx context.Context, op string, body []byte) (*http.Response, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, f.Endpoint, bytes.NewReader(body))
+	if err != nil {
+		return nil, errs.Wrap(op, errs.CodeInvariantViolated, err).
+			WithDetail("the speech request could not be built")
+	}
+	req.Header.Set("Authorization", "Bearer "+f.APIKey)
+	req.Header.Set("Content-Type", "application/json")
+	// The backbone travels as a HEADER. In the body it is accepted and ignored,
+	// which would silently use — and bill — a different backbone.
+	req.Header.Set("model", f.Model)
+
+	resp, err := f.Client.Do(req)
+	if err != nil {
+		return nil, errs.Wrap(op, errs.CodeExternalUnavailable, err).
+			WithDetail("%s could not be reached to synthesise speech", f.Name())
+	}
+	if resp.StatusCode != http.StatusOK {
+		detail, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		resp.Body.Close()
+		return nil, errs.New(op, errs.CodeExternalUnavailable).
+			WithDetail("%s answered %d: %s", f.Name(), resp.StatusCode,
+				strings.TrimSpace(string(detail)))
+	}
+	return resp, nil
 }
 
 // Speak synthesises text and streams PCM to onPCM as it arrives.

@@ -30,9 +30,15 @@
 
   var SR = global.SpeechRecognition || global.webkitSpeechRecognition;
 
-  /* A 44-byte silent WAV. Played once on the first gesture to satisfy the
-   * autoplay policy, so a later reply can play without one. */
-  var SILENT_WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YQAAAAA=';
+  /* A short silent MP3, played once on the first gesture so a later reply can
+   * play without one.
+   *
+   * ‼️ Not a WAV, and not a zero-length file. The first version of this was a
+   * 44-byte WAV header with NO samples, and browsers reject an empty media file
+   * outright — so the unlock threw, unlocked nothing, and left the very problem
+   * it was added to remove. It has to be a file the browser will actually
+   * decode, which is also why it is MP3: the same reason /v1/speech serves MP3. */
+  var SILENT_MP3 = 'data:audio/mpeg;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQxAADB8AhSmxhIIEVCSiJrDCQBTcu3UrAIwUdkRgQbFAZC1CQEwTJ9mjRvBA4UOLD8nKVOWfh+UlK3z/177OXrfOdKl7pyn3Xf//WreyTRUoAWgBgkOAGbZHBgG1OF6zM82DWbZaUmMBptgQhGjsyYqc9ae9XFz280948NMBWInljyzsNRFLPWdnZGWrddDsjK1unuSrVN9jJsK8KuQtQCtMBjCEtImISdNKJOouhYnb17nJfrfvltIQAAAAAAAA=';
 
   function Voice(opts) {
     opts = opts || {};
@@ -82,7 +88,7 @@
       if (self._unlocked) return;
       self._unlocked = true;
       try {
-        var a = new Audio(SILENT_WAV);
+        var a = new Audio(SILENT_MP3);
         a.volume = 0;
         var p = a.play();
         if (p && p.catch) p.catch(function () { /* nothing to recover */ });
@@ -367,6 +373,8 @@
         URL.revokeObjectURL(url);
         self._audio = null;
         self.remoteVoice = false;
+        self._fellBack('this browser could not decode the audio (' +
+          (blob && blob.type ? blob.type : 'unknown type') + ')');
         self._speakLocal(text, onDone);
       };
       audio.play().catch(function (err) {
@@ -384,19 +392,42 @@
         URL.revokeObjectURL(url);
         self._audio = null;
         if (err && err.name === 'NotAllowedError') {
+          self._fellBack('the browser blocked audio until you interact with the page — ' +
+            'click anywhere and she will use her own voice from the next reply');
           self._speakLocal(text, onDone);
           return;
         }
         self.remoteVoice = false;
+        self._fellBack('playback failed: ' + (err && err.name ? err.name : 'unknown') +
+          (err && err.message ? ' — ' + err.message : ''));
         self._speakLocal(text, onDone);
       });
     }).catch(function (err) {
       if (err && err.name === 'AbortError') return;   // interrupted, not failed
+      self._fellBack('could not fetch her voice: ' +
+        (err && err.message ? err.message : 'request failed'));
       /* Remembered, so a deployment with no vendor pays one request per page
        * rather than one per utterance. */
       self.remoteVoice = false;
       self._speakLocal(text, onDone);
     });
+  };
+
+  /* Say WHY her own voice was not used.
+   *
+   * Falling back to the browser's voice is the correct behaviour and it is also
+   * silent, which made it undiagnosable: the server logged 200 and a synthesis
+   * it had been paid for, and the only symptom anybody could report was "still
+   * the browser voice". Every signal on the server said success; the failure was
+   * entirely in the browser and left no trace anywhere.
+   *
+   * Reported once per page — a reason repeated on every reply is noise, and the
+   * first one is the one that explains it. */
+  Voice.prototype._fellBack = function (why) {
+    if (this._toldFallback) return;
+    this._toldFallback = true;
+    if (global.console && console.warn) console.warn('FORGE voice fell back:', why);
+    this.onError("Using the browser's voice instead of FORGE's: " + why);
   };
 
   Voice.prototype._speakLocal = function (text, onDone) {

@@ -64,7 +64,7 @@ func TestHandsFreeEchoGuardsArePresent(t *testing.T) {
 			"FORGE's own voice for the rest of the page after a synthesis that already " +
 			"succeeded. Observed once in production: 200 from /v1/speech, never heard.")
 	}
-	if !strings.Contains(js, "SILENT_WAV") {
+	if !strings.Contains(js, "SILENT_MP3") {
 		t.Error("the first-gesture audio unlock is gone, so the autoplay refusal will " +
 			"happen on every session that starts hands-free rather than being avoided")
 	}
