@@ -1,0 +1,44 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: forge-config
+  namespace: forge
+data:
+  FORGE_ENV: "production"
+  FORGE_HTTP_ADDR: ":8080"
+  FORGE_PUBLIC_URL: "https://forge.heros-agent.space"
+  FORGE_LOG_FORMAT: "json"
+  FORGE_LOG_LEVEL: "info"
+
+  # Mail. The relay is docker-mailserver in the heros namespace. It MUST be
+  # addressed as mail.heros-agent.space: the relay's certificate carries that
+  # one SAN, so reaching it by Service name fails TLS — and mail then silently
+  # never delivers rather than erroring. hostAliases (below, per pod) maps the
+  # name to the Service ClusterIP without a CoreDNS rewrite, which would also
+  # answer cert-manager's HTTP-01 self-check and break the relay's renewal.
+  FORGE_MAIL_TRANSPORT: "smtp"
+  FORGE_SMTP_HOST: "mail.heros-agent.space"
+  FORGE_SMTP_PORT: "587"
+  FORGE_MAIL_FROM_NAME: "FORGE"
+  FORGE_MAIL_FROM_EMAIL: "support@heros-agent.space"
+
+  # CAD kernel. Present in this image; an empty value would disable it and make
+  # STEP export refuse with its documented message.
+  FORGE_CAD_PYTHON: "/opt/cad/venv/bin/python"
+
+  # PRD SEC-01. Deliberately has no default: FORGE will not assert what a
+  # provider does with submitted content on the strength of a guess. Set to
+  # no_training on 2026-09-07, matching the local .env, as a statement about the
+  # Aliyun Model Studio terms this endpoint is used under. If those terms
+  # change, this value is a promise that has to change with them.
+  FORGE_DATA_BOUNDARY: "no_training"
+
+  FORGE_LLM_BASE_URL: "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
+  FORGE_LLM_PLANNER_MODEL: "qwen3.8-max"
+
+  # PRD SEC-05: an empty list denies every shell_run call. Deliberately narrower
+  # than .env.example's development list — no `go`, no `make` — because nothing
+  # on this deployment is meant to build code.
+  FORGE_SHELL_ALLOWED_COMMANDS: "ls,cat,rg,git"
+
+  FORGE_WORKSPACE_ROOT: "/var/lib/forge/workspaces"
