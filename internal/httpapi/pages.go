@@ -946,46 +946,93 @@ const pageTemplates = `
 <link rel="stylesheet" href="{{asset "home.css"}}">
 </head><body class="home" data-page="{{.Page}}" data-token="{{.Token}}">
 
-<!-- Decoration only. It carries no information, so it is hidden from assistive
-     technology and the page reads identically without it. -->
+<!-- Decoration only: it carries no information and the page reads identically
+     without it. Fixed, so one subject carries all five sections. -->
 <canvas id="field" aria-hidden="true"></canvas>
 
-<div class="home-inner">
+<header class="home-mast">{{.Avatar}}<div class="wordmark">FORGE</div>
+  <a class="home-skip" href="/workbench">Open the workbench</a>
+</header>
 
-  <header class="home-mast">{{.Avatar}}<div class="wordmark">FORGE</div></header>
+<main class="home-scroll">
 
-  <div class="home-stage">
-    <h1 class="home-display">
-      <span>FORGE</span>
-      <span class="home-portrait" aria-hidden="true">{{.Presence}}</span>
-      <em>durable</em>
-    </h1>
-
-    <p class="home-lede">A durable engineering partner. FORGE reconstructs its
-    state from a database on every cycle, so it can be interrupted, restarted,
-    and resumed without losing what it was doing.</p>
-
-    <div class="home-spec">
-      <b>What it will not do</b>
-      It never claims a tool ran, a check passed, or a person approved
-      something that did not happen.<br>
-      <span>Completion, verification and acceptance are separate facts.</span><br>
-      <span>An unavailable connector is reported, never simulated.</span>
-    </div>
-  </div>
-
-  <div class="home-foot">
+  <!-- 1 ---------------------------------------------------------------- -->
+  <section class="sec sec--hero" id="s1">
+    <p class="sec-num">01</p>
+    <h1 class="home-display"><span>FORGE</span> <em>durable</em></h1>
+    <p class="home-lede">A durable engineering partner. It plans the work, does
+    it with tools, and keeps a record you can audit line by line.</p>
     <div class="home-actions">
       <a class="btn" href="/workbench">Open the workbench</a>
-      <span class="home-spec"><a href="/console">Operations console</a> — goals, timeline, approvals.</span>
+      <a class="home-quiet" href="/console">Operations console</a>
+    </div>
+    <p class="sec-hint" aria-hidden="true">Scroll</p>
+  </section>
+
+  <!-- 2 ---------------------------------------------------------------- -->
+  <section class="sec" id="s2">
+    <p class="sec-num">02</p>
+    <h2 class="sec-title">It survives <em>being stopped</em></h2>
+    <p class="sec-body">FORGE reconstructs its state from a database on every
+    cycle. Interrupt it, restart the process, lose the machine — the work
+    resumes from the last checkpoint rather than starting over.</p>
+    <div class="home-spec">
+      <b>How</b>
+      <span>A checkpoint is written after every iteration, before the next model call.</span>
+      <span>A crash costs at most one iteration, never the task.</span>
+      <span>Tool results are recorded on their own path, so a lost checkpoint loses no evidence.</span>
+    </div>
+  </section>
+
+  <!-- 3 ---------------------------------------------------------------- -->
+  <section class="sec" id="s3">
+    <p class="sec-num">03</p>
+    <h2 class="sec-title">It will not claim <em>what did not happen</em></h2>
+    <p class="sec-body">Finishing work, confirming it, and a person accepting it
+    are three different facts. Most systems collapse them into one and then
+    report that something was checked when nothing checked it.</p>
+    <div class="home-spec">
+      <b>Kept apart</b>
+      <span>Completed is not verified. Verified is not accepted.</span>
+      <span>A verifier reads the raw tool output, not the executor's account of it.</span>
+      <span>A criterion marked satisfied without evidence is a claim, and is refused as one.</span>
+    </div>
+  </section>
+
+  <!-- 4 ---------------------------------------------------------------- -->
+  <section class="sec" id="s4">
+    <p class="sec-num">04</p>
+    <h2 class="sec-title">It refuses rather than <em>invents</em></h2>
+    <p class="sec-body">Where a connector has no real backend, the call fails
+    with a named reason. A fabricated solver result is the most dangerous thing
+    this system could produce, so unavailability is reported and never
+    simulated.</p>
+    <div class="home-spec">
+      <b>Under human control</b>
+      <span>Read, write, execute, simulate, export, deploy, transact and control are granted separately.</span>
+      <span>Anything irreversible sits behind a named human approval.</span>
+      <span>Autonomy is set once, by a person, and the system cannot raise its own.</span>
+    </div>
+  </section>
+
+  <!-- 5 ---------------------------------------------------------------- -->
+  <section class="sec sec--end" id="s5">
+    <p class="sec-num">05</p>
+    <h2 class="sec-title">Start with <em>one goal</em></h2>
+    <p class="sec-body">Describe what you want built. FORGE plans it into tasks,
+    asks when the goal is ambiguous rather than guessing, and shows you the plan
+    before anything runs.</p>
+    <div class="home-actions">
+      <a class="btn" href="/workbench">Open the workbench</a>
+      <a class="home-quiet" href="/console">Operations console — goals, timeline, approvals.</a>
     </div>
     <div class="home-links">
       Health: <a href="/healthz">/healthz</a> · <a href="/readyz">/readyz</a><br>
       Error dictionary: <a href="/v1/meta/error-codes">/v1/meta/error-codes</a>
     </div>
-  </div>
+  </section>
 
-</div>
+</main>
 <script src="{{asset "portal-field.js"}}"></script>
 </body></html>{{end}}
 

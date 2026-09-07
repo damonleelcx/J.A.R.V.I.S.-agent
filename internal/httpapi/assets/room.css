@@ -250,9 +250,9 @@ body.room {
 /* The affirmative action on its surface — joining audio, sending. One per
    region, so it reads as the thing to do rather than as decoration. */
 .room-btn.primary {
-  background: linear-gradient(180deg, #62e2f0 0%, var(--core) 55%, #35b6c8 100%);
+  background: linear-gradient(180deg, #9aa6ff 0%, var(--core) 55%, #5a69e0 100%);
   border-color: transparent;
-  color: #08202a;
+  color: #0e0f1a;
   font-weight: 650;
 }
 .room-btn.primary:hover:not(:disabled) { filter: brightness(1.07); background: var(--core); }

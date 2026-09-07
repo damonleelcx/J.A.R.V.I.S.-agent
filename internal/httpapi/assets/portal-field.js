@@ -40,6 +40,7 @@
     'uniform float uSpeed;',
     'uniform float uScale;',
     'uniform float uBright;',
+    'uniform float uScroll;',
 
     'float hash(vec2 v){ return fract(sin(dot(v, vec2(127.1, 311.7))) * 43758.5453123); }',
 
@@ -57,6 +58,44 @@
     '}',
 
     'float band(float d, float w){ return w / (w + d * d); }',
+
+    /* ---- the subject -----------------------------------------------------
+     *
+     * A white organic mass, raymarched from a smooth union of moving spheres.
+     * Metaballs rather than a mesh because there is no asset pipeline here and
+     * no geometry to load — and because the shape has to keep changing without
+     * ever repeating a pose a viewer could recognise.
+     *
+     * smin() is the whole trick: a plain min() unions the spheres with visible
+     * creases at every intersection, which reads as a pile of balls. Blending
+     * the distance instead makes one surface that bulges. */
+    'float smin(float a, float b, float k){',
+    '  float h = clamp(0.5 + 0.5 * (b - a) / k, 0.0, 1.0);',
+    '  return mix(b, a, h) - k * h * (1.0 - h);',
+    '}',
+
+    'float mapBlob(vec3 p, float t){',
+    '  float d = 1e9;',
+    '  for (int i = 0; i < 10; i++){',
+    '    float fi = float(i);',
+    /* Lissajous paths with incommensurate rates, so the mass never returns to
+     * a pose it has held before. */
+    '    vec3 c = vec3(sin(t * 0.51 + fi * 1.7),',
+    '                  cos(t * 0.43 + fi * 2.3),',
+    '                  sin(t * 0.37 + fi * 1.1)) * 0.40;',
+    '    float rr = 0.34 - 0.15 * fract(fi * 0.37);',
+    '    d = smin(d, length(p - c) - rr, 0.26);',
+    '  }',
+    '  return d;',
+    '}',
+
+    'vec3 blobNormal(vec3 p, float t){',
+    '  vec2 e = vec2(0.0025, 0.0);',
+    '  return normalize(vec3(',
+    '    mapBlob(p + e.xyy, t) - mapBlob(p - e.xyy, t),',
+    '    mapBlob(p + e.yxy, t) - mapBlob(p - e.yxy, t),',
+    '    mapBlob(p + e.yyx, t) - mapBlob(p - e.yyx, t)));',
+    '}',
 
     /* One wavefront, sampled at a phase offset. Returns the SIGNED DISTANCE to
      * the curve, so the caller can build a tight core and a wide halo from a
@@ -121,11 +160,56 @@
     '  float vig = 1.0 - 0.70 * dot(uv * 0.32, uv * 0.32);',
     '  col *= clamp(vig, 0.0, 1.0);',
 
-    /* Tone map, then lift the floor to the page background so the canvas and
-     * the CSS behind it meet without a seam. */
+    /* Tone map the field before the subject is composited, so the blob is lit
+     * on its own terms and does not inherit the ribbons' bloom. */
     '  col = col / (1.0 + col);',
     '  col = pow(col, vec3(0.85));',
-    '  col = max(col, vec3(0.043, 0.059, 0.094));',
+    '  col = max(col, vec3(0.070, 0.070, 0.082));',
+
+    /* ---- composite the subject ------------------------------------------ */
+    /* Screen-space ray. The subject drifts up and shrinks as the page scrolls,
+     * so it hands the stage to the copy instead of following it down. */
+    '  vec2 sp = (gl_FragCoord.xy - 0.5 * uRes) / uRes.y;',
+    '  sp.x -= 0.46;',
+    '  sp.y += 0.02 - uScroll * 0.60;',
+    '  float zoom = mix(1.0, 1.85, clamp(uScroll, 0.0, 1.0));',
+    '  sp *= zoom;',
+
+    '  vec3 ro = vec3(0.0, 0.0, 6.4);',
+    '  vec3 rd = normalize(vec3(sp, -3.20));',
+    '  float bt = uTime * uSpeed * 0.85;',
+
+    '  float dist = 0.0;',
+    '  float hit = 0.0;',
+    '  for (int i = 0; i < 64; i++){',
+    '    vec3 pos = ro + rd * dist;',
+    '    float dd = mapBlob(pos, bt);',
+    '    if (dd < 0.0016){ hit = 1.0; break; }',
+    '    dist += dd * 0.92;',
+    '    if (dist > 8.0) break;',
+    '  }',
+
+    '  if (hit > 0.5){',
+    '    vec3 pos = ro + rd * dist;',
+    '    vec3 n = blobNormal(pos, bt);',
+    /* A white matte subject: one key from upper left, a cool fill from below so
+     * the shadow side never goes to black, and a narrow rim that separates the
+     * silhouette from the field behind it. */
+    '    vec3 key  = normalize(vec3(-0.55, 0.80, 0.62));',
+    '    vec3 fill = normalize(vec3(0.65, -0.35, 0.40));',
+    '    float kd = max(dot(n, key), 0.0);',
+    '    float fd = max(dot(n, fill), 0.0);',
+    '    float rim = pow(1.0 - max(dot(n, -rd), 0.0), 2.6);',
+    '    vec3 mat = vec3(0.97, 0.97, 0.98);',
+    '    vec3 lit = mat * (0.34 + 0.86 * kd)',
+    '             + vec3(0.26, 0.28, 0.36) * fd * 0.24',
+    '             + vec3(0.58, 0.62, 0.95) * rim * 0.26;',
+    /* Distance fade so the mass sits IN the field rather than pasted on it. */
+    '    float fog = exp(-max(dist - 5.2, 0.0) * 0.50);',
+    '    lit = mix(col, lit, clamp(fog, 0.0, 1.0));',
+    '    col = lit;',
+    '  }',
+
     '  gl_FragColor = vec4(col, 1.0);',
     '}'
   ].join('\n');
@@ -181,6 +265,7 @@
     var uSpeed  = gl.getUniformLocation(prog, 'uSpeed');
     var uScale  = gl.getUniformLocation(prog, 'uScale');
     var uBright = gl.getUniformLocation(prog, 'uBright');
+    var uScroll = gl.getUniformLocation(prog, 'uScroll');
 
     gl.uniform1f(uSpeed,  opts.speed  === undefined ? 1.0 : opts.speed);
     gl.uniform1f(uScale,  opts.scale  === undefined ? 1.0 : opts.scale);
@@ -200,12 +285,25 @@
       gl.uniform2f(uRes, canvas.width, canvas.height);
     }
 
+    /* Scroll drives the subject. Read once per frame from a value the scroll
+     * listener only stores — reading layout inside the listener would force a
+     * reflow on every scroll event. */
+    var scroll = 0;
+    function onScroll() {
+      var max = (document.documentElement.scrollHeight - global.innerHeight) || 1;
+      scroll = Math.min(Math.max(global.scrollY / max, 0), 1);
+    }
+    global.addEventListener('scroll', onScroll, { passive: true });
+    global.addEventListener('resize', onScroll);
+    onScroll();
+
     var running = true, raf = 0, t0 = (global.performance || Date).now();
 
     function frame(now) {
       if (!running) return;
       resize();
       gl.uniform1f(uTime, (now - t0) / 1000);
+      gl.uniform1f(uScroll, scroll);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
       raf = global.requestAnimationFrame(frame);
     }
@@ -215,6 +313,7 @@
        * reader who asked for less of it should still get the picture. */
       resize();
       gl.uniform1f(uTime, 12.0);
+      gl.uniform1f(uScroll, 0.0);
       gl.drawArrays(gl.TRIANGLES, 0, 3);
     } else {
       raf = global.requestAnimationFrame(frame);
