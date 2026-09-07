@@ -610,12 +610,12 @@ func TestSignInReturnPathRejectsOffOriginTargets(t *testing.T) {
 
 	allow := []string{"/workbench", "/console", "/", "/a/b?c=d"}
 	deny := []string{
-		"//evil.example/path",       // protocol-relative: leaves the origin
-		"https://evil.example",      // absolute
-		"http://evil.example",       //
-		"javascript:alert(1)",       // scheme, not a path
-		"workbench",                 // relative; would resolve off /console
-		"",                          // nothing to go to
+		"//evil.example/path",  // protocol-relative: leaves the origin
+		"https://evil.example", // absolute
+		"http://evil.example",  //
+		"javascript:alert(1)",  // scheme, not a path
+		"workbench",            // relative; would resolve off /console
+		"",                     // nothing to go to
 	}
 
 	for _, n := range allow {
