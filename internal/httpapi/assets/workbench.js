@@ -2539,10 +2539,31 @@
   /* ---- view controls ----------------------------------------------------- */
 
   function initControls() {
-    Array.prototype.forEach.call(document.querySelectorAll('[data-view]'), function (b) {
+    /* ‼️ Scoped to .viewctl. A bare [data-view] is not "the camera buttons".
+     *
+     * `data-view` is also how the narrow layout records which pane is showing,
+     * and it lives on .wb-body — the whole workbench body — plus the three
+     * Talk/Stage/Work tabs. An unscoped document.querySelectorAll('[data-view]')
+     * therefore bound this click handler to the ENTIRE BODY, so every click
+     * anywhere in the workbench bubbled up to it and called
+     * studio.viewFrom('stage'), which is a pane name and not a camera, while
+     * clearing aria-pressed on all four camera buttons. Iso/Front/Top/Side did
+     * nothing at all: their own handler ran, then the body's ran after it and
+     * undid it.
+     *
+     * mobileNav's own comment states the intent this broke — the attribute is
+     * held on .wb-body "so the CSS is the only thing that acts on it". This is
+     * the second thing that acted on it.
+     *
+     * Both selectors are scoped, and the list is captured once: clearing
+     * aria-pressed across a document-wide match would also stamp the mobile
+     * tabs, which are a different control answering a different question.
+     * See docs/bugfix/2026-09-08-view-buttons-bound-to-the-whole-body.md */
+    var cameraButtons = document.querySelectorAll('.viewctl [data-view]');
+    Array.prototype.forEach.call(cameraButtons, function (b) {
       b.addEventListener('click', function () {
         studio.viewFrom(b.getAttribute('data-view'));
-        document.querySelectorAll('[data-view]').forEach(function (o) {
+        Array.prototype.forEach.call(cameraButtons, function (o) {
           o.setAttribute('aria-pressed', String(o === b));
         });
       });
