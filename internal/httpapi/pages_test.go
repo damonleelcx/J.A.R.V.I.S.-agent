@@ -153,6 +153,50 @@ func TestCSPForbidsInlineScript(t *testing.T) {
 	}
 }
 
+// TestCSPAllowsHerVoice fences the directive that FORGE's voice depends on.
+//
+// The voice is fetched from /v1/speech as bytes and played through a blob: URL;
+// the one-time autoplay unlock is a data: URL. Neither is an origin default-src
+// understands, so with no media-src the policy BLOCKS BOTH — before any decoder
+// sees them, and with no server-side trace of any kind.
+//
+// It shipped that way. The browser reports MEDIA_ERR code 4, which reads as
+// "this file will not decode", so the audio was blamed: the vendor's MP3 was
+// frame-walked and found well formed, the handler was shown to write every byte
+// to the socket, the ingress was shown to deliver large bodies byte-identically,
+// and that exact file played in another tab. Every layer was sound. The only
+// evidence anywhere was one console line in the affected browser.
+//
+// This asserts the directive is STATED — an inherited default is the bug — and
+// that it carries both schemes.
+// See docs/bugfix/2026-09-08-she-said-every-reply-twice.md
+func TestCSPAllowsHerVoice(t *testing.T) {
+	h := SecurityHeaders(true)(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	rr := httptest.NewRecorder()
+	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/", nil))
+
+	mediaSrc := ""
+	for _, directive := range strings.Split(rr.Header().Get("Content-Security-Policy"), ";") {
+		if d := strings.TrimSpace(directive); strings.HasPrefix(d, "media-src") {
+			mediaSrc = d
+		}
+	}
+	if mediaSrc == "" {
+		t.Fatal("the policy states no media-src, so audio falls back to default-src 'self' and " +
+			"every blob: and data: source is blocked. FORGE then has no voice of her own, and the " +
+			"browser reports it as a decode failure rather than as a policy refusal.")
+	}
+	for _, scheme := range []string{"blob:", "data:"} {
+		if !strings.Contains(mediaSrc, scheme) {
+			t.Errorf("media-src does not allow %s (%q). %s", scheme, mediaSrc, map[string]string{
+				"blob:": "The synthesised reply is played through a blob: URL, so her voice is silently blocked.",
+				"data:": "The one-time autoplay unlock is a data: URL, so the unlock never runs and " +
+					"every hands-free session hits an autoplay refusal instead.",
+			}[scheme])
+		}
+	}
+}
+
 // TestPagesWithoutATokenExplainThemselves — a link that lost its token in
 // transit (mail clients do truncate long URLs) must say so, not render a form
 // that cannot possibly work.

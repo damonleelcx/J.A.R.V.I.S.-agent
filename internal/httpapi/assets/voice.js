@@ -333,6 +333,59 @@
     this._speakLocal(text, onDone);
   };
 
+  /* What a media element means when it refuses. Spelled out because the number
+   * alone is unreadable, and the DIFFERENCE between 3 and 4 is the whole
+   * diagnosis: 3 means the decoder got the bytes and choked on them, 4 means it
+   * would not even accept the source. */
+  var MEDIA_ERR = { 1: 'ABORTED', 2: 'NETWORK', 3: 'DECODE', 4: 'SRC_NOT_SUPPORTED' };
+
+  /* Everything needed to tell the plausible failures apart, in one line.
+   *
+   * ‼️ Written because "could not decode the audio (audio/mpeg)" was true and
+   * useless. It was reported from production and cost a full investigation that
+   * excluded, one at a time: the vendor (a frame walk proved the MP3 well
+   * formed), the handler (the access log counts bytes actually written to the
+   * socket), the ingress (large assets arrive byte-identical) and the decoder
+   * (that exact file plays in Chromium). All four were sound, and the message
+   * had narrowed nothing — because it reported the CONTENT TYPE, which was
+   * never in doubt, and not the size, which nobody could see.
+   *
+   * The three things that can actually be wrong, and what separates them:
+   *   - truncation      received < declared
+   *   - wrong container blob.type is not what the element was given
+   *   - decoder refusal media error 3 or 4 on a complete body
+   *
+   * A body with no declared length is called out as chunked rather than
+   * compared against nothing, so "no Content-Length" cannot read as "matched".
+   *
+   * ‼️ A complete body plus media error 4 is the signature of a load the
+   * browser REFUSED rather than failed to decode — a Content Security Policy
+   * block looks exactly like an unplayable file from here, and that is what
+   * this actually was: docs/bugfix/2026-09-08-csp-blocked-her-own-voice.md.
+   * Check the console for a CSP violation before suspecting the audio. */
+  function describeWire(wire, blob, mediaError) {
+    var bits = [];
+    var got = blob && typeof blob.size === 'number' ? blob.size : 0;
+    bits.push(blob && blob.type ? blob.type : 'unknown type');
+    if (wire && wire.declared != null && wire.declared !== '') {
+      bits.push(got + ' bytes received of ' + wire.declared + ' declared' +
+        (String(got) === String(wire.declared) ? '' : ' — TRUNCATED'));
+    } else {
+      bits.push(got + ' bytes received, no declared length (chunked)');
+    }
+    if (wire && wire.encoding && wire.encoding !== 'identity') {
+      bits.push('content-encoding ' + wire.encoding);
+    }
+    if (wire && wire.ctype && blob && blob.type && wire.ctype.indexOf(blob.type) !== 0) {
+      bits.push('header said ' + wire.ctype);
+    }
+    if (mediaError) {
+      bits.push('media error ' + mediaError.code + ' ' +
+        (MEDIA_ERR[mediaError.code] || 'UNKNOWN'));
+    }
+    return bits.join(', ');
+  }
+
   /* Ask the server to synthesise. On any failure — no vendor configured, vendor
    * down, audio that will not play — fall through to the browser once and
    * remember, so one outage does not cost a round trip per utterance. */
@@ -363,6 +416,9 @@
      * Fence: scripts/echo-guard-check.js (single-fallback rule). */
     var handled = false;
     var url = null;
+    /* Read off the response and kept for the failure messages: by the time a
+     * media element refuses, the Response is long gone. */
+    var wire = null;
     var failOver = function (why, latch) {
       if (handled) return;
       handled = true;
@@ -381,8 +437,20 @@
       signal: ctl.signal
     }).then(function (r) {
       if (!r.ok) throw new Error('speech ' + r.status);
+      wire = {
+        ctype: (r.headers && r.headers.get('content-type')) || '',
+        encoding: (r.headers && r.headers.get('content-encoding')) || 'identity',
+        declared: r.headers ? r.headers.get('content-length') : null
+      };
       return r.blob();
     }).then(function (blob) {
+      /* An empty body is a distinct fault and must say so. It reaches the
+       * element as a source it cannot open, which reports as a DECODE failure
+       * and sends the reader hunting for a codec problem that is not there. */
+      if (!blob || !blob.size) {
+        failOver('the server sent no audio (' + describeWire(wire, blob, null) + ')', true);
+        return;
+      }
       url = URL.createObjectURL(blob);
       var audio = new Audio(url);
       /* playbackRate, not rate. `rate` is the SpeechSynthesisUtterance spelling
@@ -410,7 +478,7 @@
          * not the vendor, so it falls back — and latches, because a file the
          * browser cannot decode will not decode next time either. */
         failOver('this browser could not decode the audio (' +
-          (blob && blob.type ? blob.type : 'unknown type') + ')', true);
+          describeWire(wire, blob, audio.error) + ')', true);
       };
       audio.play().catch(function (err) {
         /* ‼️ An autoplay refusal is NOT a vendor failure and must not latch.
@@ -430,7 +498,8 @@
           return;
         }
         failOver('playback failed: ' + (err && err.name ? err.name : 'unknown') +
-          (err && err.message ? ' — ' + err.message : ''), true);
+          (err && err.message ? ' — ' + err.message : '') +
+          ' (' + describeWire(wire, blob, audio.error) + ')', true);
       });
     }).catch(function (err) {
       if (err && err.name === 'AbortError') return;   // interrupted, not failed
