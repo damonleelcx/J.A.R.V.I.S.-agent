@@ -334,8 +334,18 @@
   function select(goalID) {
     state.selected = goalID;
     renderGoals();
-    $('detail').classList.remove('hidden');
+    showDetail();
     loadDetail();
+  }
+
+  /* Reveal the reading pane and put the page into its two-column shape.
+   *
+   * The class goes on the layout rather than being inferred from the pane's own
+   * visibility, so the grid has one switch instead of the stylesheet trying to
+   * reason about a sibling's state. */
+  function showDetail() {
+    $('detail').classList.remove('hidden');
+    $('main').classList.add('with-detail');
   }
 
   function loadGoals() {
@@ -343,7 +353,7 @@
       state.goals = b.goals || [];
       if (!state.selected && state.goals.length) state.selected = state.goals[0].id;
       renderGoals();
-      if (state.selected) { $('detail').classList.remove('hidden'); return loadDetail(); }
+      if (state.selected) { showDetail(); return loadDetail(); }
     });
   }
 

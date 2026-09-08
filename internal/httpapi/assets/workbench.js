@@ -160,6 +160,21 @@
      * available BEFORE one did. */
     if (wasNew) renderIndustry();
     if (wasNew) loadMembers();
+    /* ‼️ And the WORK, not only the rules.
+     *
+     * restoreVariants() runs once at boot and reads the project id out of
+     * localStorage, so a browser that did not already have the key showed an
+     * empty rail forever — "No geometry yet" beside a conversation that had
+     * plainly produced geometry, with the variant sitting in the table the
+     * whole time. Reported as "i don't see the 3d artifact from yesterday",
+     * from a private window that had never held the key.
+     *
+     * Learning which project we are in is exactly the moment that becomes
+     * answerable, so it is loaded here rather than only at boot: every path
+     * that adopts a project now shows that project's work, including the
+     * conversation restore that used to adopt none.
+     * See docs/bugfix/2026-09-08-history-was-unreachable.md */
+    if (wasNew) restoreVariants();
   }
 
   /* The conversation, brought back (PRD RSN-07).
@@ -203,6 +218,21 @@
           }
           addTurn(who, body, t.detail || '', true);
         });
+        /* The project this conversation ended in, adopted so the rails show its
+         * work rather than nothing.
+         *
+         * The LAST turn that had one, not the first: a project is created by the
+         * first thing worth keeping rather than by the first sentence, so the
+         * opening turns of every conversation carry none. Reading the first
+         * would adopt "no project" from almost every thread — the same reasoning
+         * the server uses for a conversation's project in its listing.
+         *
+         * Without this the transcript came back and the Parts, Variants and
+         * Industry rails did not, which reads as the work having been lost when
+         * only the pointer to it was. */
+        var lastProject = '';
+        b.turns.forEach(function (t) { if (t.project_id) lastProject = t.project_id; });
+        if (lastProject) rememberProject(lastProject);
         var note = document.createElement('div');
         note.className = 'turn note';
         note.innerHTML = '<div class="body">' + esc(b.note || '') + '</div>';
@@ -361,6 +391,7 @@
         if (!b || !b.variants || !b.variants.length) return;
         state.variants = b.variants.map(railRow);
         renderVariants();
+        drawRestoredVariant(b.variants);
       })
       .catch(function () {
         /* Silent. The rail being empty is a correct rendering of "nothing was
@@ -516,6 +547,49 @@
       button.textContent = 'Adopt this one';
       addTurn('forge', err.message);
     });
+  }
+
+  /* Put the work back on the stage, not only in the rail.
+   *
+   * # What was wrong
+   *
+   * loadPrototype() had exactly ONE caller: the live turn stream. So the studio
+   * only ever drew geometry that arrived while somebody watched it arrive — and
+   * a reload left the model gone from view for good, with "No geometry yet"
+   * beside a rail that was listing the very thing it said did not exist. The
+   * document was in the database the whole time and the rail could export it,
+   * compare it and re-derive it; the one thing nothing could do was SHOW it.
+   * Reported as "i don't see the 3d artifact from yesterday".
+   *
+   * # Why no request is added
+   *
+   * The listing already carries `document` and `measured` — it is built from
+   * the same DTO as the single-variant read — so this is a render, not a fetch.
+   *
+   * # Which variant
+   *
+   * The newest that has not been SUPERSEDED. Superseded means a later version
+   * replaced it, and drawing one would show somebody an old shape in the place
+   * the current one belongs, which is worse than showing nothing. If every
+   * variant is superseded the newest is drawn anyway: something real is better
+   * than an empty stage, and the rail states each one's disposition beside it.
+   *
+   * # Why it will not overwrite a live model
+   *
+   * Only when the stage is empty. A restore that resolves after a turn has
+   * already drawn something must not replace it — that would take the model a
+   * person is looking at and swap in an older one.
+   *
+   * See docs/bugfix/2026-09-08-history-was-unreachable.md */
+  function drawRestoredVariant(variants) {
+    if (state.prototype) return;
+    var pick = null;
+    for (var i = 0; i < variants.length; i++) {
+      if (variants[i].disposition !== 'superseded') { pick = variants[i]; break; }
+    }
+    if (!pick) pick = variants[0];
+    if (!pick || !pick.document || !pick.document.parts) return;
+    loadPrototype(pick.document, pick.measured || []);
   }
 
   /* What this deployment can write, and what it cannot.

@@ -30,17 +30,46 @@
 .topbar .who { margin-left: auto; font-size: 13px; color: var(--ink-dim); }
 .topbar .who a { margin-left: 12px; }
 
+/* The page has two shapes, because it answers two different questions.
+ *
+ * Nothing open: it is an overview, and the panels flow across the full width.
+ * The layout that shipped was a fixed 280–340px rail plus a reading pane that
+ * is EMPTY until a goal is selected — so in the ordinary state, and in the only
+ * state a deployment with no goals can be in, five cards queued in one narrow
+ * column while the whole right of the screen stayed blank.
+ *
+ * A goal open: it is a reading view, and the rail returns so the detail has the
+ * room. That is the layout the detail pane was designed for, so it is kept
+ * exactly rather than replaced with something that would reflow while somebody
+ * is reading. `with-detail` is set by the script at the moment the pane is
+ * revealed. */
 .layout {
   display: grid;
-  grid-template-columns: minmax(280px, 340px) 1fr;
+  grid-template-columns: 1fr;
   gap: 22px;
   padding: 22px;
   max-width: 1500px;
   margin: 0 auto;
   align-items: start;
 }
+
+.cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
+  align-content: start;
+}
+/* The grid's gap does the spacing here. `.card + .card` stays for the detail
+ * pane, where cards genuinely do stack. */
+.cards .card + .card { margin-top: 0; }
+
+.layout.with-detail { grid-template-columns: minmax(280px, 340px) 1fr; }
+.layout.with-detail .cards { grid-template-columns: 1fr; }
+
 @media (max-width: 900px) {
-  .layout { grid-template-columns: 1fr; }
+  .layout,
+  .layout.with-detail { grid-template-columns: 1fr; }
+  .layout.with-detail .cards { grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); }
 }
 
 .card {

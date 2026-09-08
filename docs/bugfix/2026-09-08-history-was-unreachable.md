@@ -76,6 +76,57 @@ writes the key and lets the existing `restoreConversation()` do the work —
 including the 404 case, where a conversation that is not this person's forgets
 the key rather than showing anything. A second copy of that logic would drift.
 
+## The same fault, one layer up: the model could not be SEEN
+
+Reported separately as *"i don't see the 3d artifact from yesterday"*.
+
+`loadPrototype()` — the only thing that puts geometry on the studio — had
+**exactly one caller: the live turn stream**. So the stage only ever drew a
+model that arrived while somebody watched it arrive. After a reload the studio
+showed *"No geometry yet"* beside a rail that was listing the very model it said
+did not exist: the document was in the database, and the rail could export it,
+compare it and re-derive it. The one thing nothing in the product could do was
+show it.
+
+Two things had to be true for a person to see their own model, and both were
+accidents of one browser's storage:
+
+| Step | Before | Now |
+|---|---|---|
+| know the project | only from `localStorage` | adopted from the conversation's turns |
+| load its variants | only at boot, from that key | whenever a project is adopted |
+| draw one | only from a live turn | the newest non-superseded one, on restore |
+
+No request was added: the listing already carries `document` and `measured`
+because it is built from the same DTO as the single-variant read. This is a
+render, not a fetch.
+
+**Which variant:** the newest that is not `superseded`. Superseded means a later
+version replaced it, and drawing one would show an old shape in the place the
+current one belongs — worse than showing nothing. If all are superseded the
+newest is drawn anyway, and the rail states each disposition beside it.
+
+**It cannot overwrite a live model:** it draws only when the stage is empty, so
+a restore that resolves after a turn has drawn something never replaces it.
+
+Confirmed on a live server from a browser with `localStorage.clear()`: the
+transcript, the project, the rail and the model itself all came back, with
+`PARTS` reading `Main Body — box · 1900 mm × 800 mm × 4500 mm`.
+
+## The console reclaims the space it was wasting
+
+The layout was a fixed 280–340px rail plus a reading pane that is empty until a
+goal is selected. In the ordinary state — and in the *only* state a deployment
+with no goals can be in — five cards queued in one narrow column while the whole
+right of the screen stayed blank.
+
+The page now has two shapes, because it answers two questions. Nothing open: an
+overview, panels flowing across the full width. A goal open: a reading view,
+where the rail returns so the detail has the room — the layout the detail pane
+was designed for, kept exactly rather than reflowing under somebody who is
+reading. The switch is one class, `with-detail`, set by the script when the pane
+is revealed.
+
 ## Verification
 
 Proven end to end on a live server against a real database, not only in tests:

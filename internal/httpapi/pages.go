@@ -1038,7 +1038,7 @@ const pageTemplates = `
 </div>
 
 <div id="main" class="layout">
-  <div>
+  <div class="cards">
     <!-- Where your work is. Membership is the single authorisation path in this
          build, so "which projects am I in, and as what" was previously a
          question only a terminal could answer — and it is the first question
