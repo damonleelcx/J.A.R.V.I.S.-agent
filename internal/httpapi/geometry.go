@@ -179,6 +179,90 @@ func (h *GeometryHandlers) Get(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, map[string]any{"variant": toVariantDTO(*v)})
 }
 
+// Mesh handles GET /v1/geometry/{id}/mesh — the surface of the BUILT solid.
+//
+// # Why this exists
+//
+// The viewport has no boolean operations, so it draws the PRIMITIVES: a bolt
+// hole is a cylinder standing in a plate rather than a void through it, a fillet
+// is invisible, and a fuse of two bodies is two bodies. The STEP file exported
+// from the same document is correct — the divergence exists only on screen,
+// which is the one place a person judges the result.
+//
+// This is that same solid, tessellated. Not a second model: it comes from the
+// same build as the export, so the picture and the file cannot disagree.
+//
+// # Why a refusal here is not an error the person sees
+//
+// A deployment with no Python has no kernel, which is a supported configuration
+// and the default. It refuses, the viewport keeps drawing primitives exactly as
+// before, and the document's own feature notes keep saying what the picture does
+// not show. So this answers with a reason and the client falls back quietly —
+// the answer is already on screen either way.
+func (h *GeometryHandlers) Mesh(w http.ResponseWriter, r *http.Request) {
+	v, err := h.authorisedVariant(r)
+	if err != nil {
+		WriteError(w, r, h.deps.Log, err)
+		return
+	}
+	if h.deps.CAD == nil || !h.deps.CAD.Available() {
+		WriteError(w, r, h.deps.Log, errs.New("httpapi.Mesh", errs.CodeConnectorUnavailable).
+			WithDetail("this deployment has no CAD kernel, so the viewport draws the primitives "+
+				"and says which features it could not show. Set FORGE_CAD_PYTHON to a Python "+
+				"with build123d to have the built solid drawn instead"))
+		return
+	}
+	if !v.Units.Known() {
+		WriteError(w, r, h.deps.Log, errs.New("httpapi.Mesh", errs.CodeValidationFailed).
+			WithDetail("this variant has no unit FORGE can convert (%s), and the kernel works in "+
+				"millimetres", strings.ToLower(strings.TrimSuffix(v.UnitsNote(), "."))))
+		return
+	}
+
+	built, err := h.deps.CAD.BuildMesh(r.Context(), v.Document, v.Units)
+	if err != nil {
+		h.logRefusal(r, v, "mesh", err)
+		WriteError(w, r, h.deps.Log, err)
+		return
+	}
+
+	parts := make([]meshPartDTO, 0, len(built.Mesh))
+	for _, m := range built.Mesh {
+		parts = append(parts, meshPartDTO{
+			ID: m.ID, Label: m.Label, Vertices: m.Vertices, Triangles: m.Triangles,
+		})
+	}
+	WriteJSON(w, http.StatusOK, map[string]any{
+		"version_id": v.VersionID,
+		"parts":      parts,
+		"triangles":  built.Triangles,
+		// The tolerance the shape is described to, and whether it was coarsened
+		// to fit the budget. Reported rather than hidden: a coarse model shown
+		// as an exact one is the same class of claim this endpoint exists to
+		// stop the renderer making.
+		"deflection": built.Deflection,
+		"simplified": built.Simplified,
+		// Named, not dropped. A part the kernel could not build has no surface,
+		// and a viewport that silently drew nothing for it would be back to
+		// showing something other than what was built.
+		"skipped":          built.Skipped,
+		"feature_failures": built.FeatureFailures,
+		"mesh_error":       built.MeshError,
+	})
+}
+
+// meshPartDTO is one built solid's surface.
+//
+// Vertices is flat — x, y, z, x, y, z — and Triangles indexes it in threes,
+// both in millimetres. A part consumed as a tool by a cut has no entry, which
+// is the whole point: it is no longer a body.
+type meshPartDTO struct {
+	ID        string    `json:"id"`
+	Label     string    `json:"label"`
+	Vertices  []float64 `json:"vertices"`
+	Triangles []int32   `json:"triangles"`
+}
+
 // Compare handles GET /v1/geometry/compare?ids=a,b,c.
 //
 // A GET because it reads and stores nothing: the comparison is derived from the

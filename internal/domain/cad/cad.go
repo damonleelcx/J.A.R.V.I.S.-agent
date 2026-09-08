@@ -151,12 +151,57 @@ type Build struct {
 	// mesh exporter uses. It travels with the file for the same reason: a
 	// defaulted 1 and a stated 1 are indistinguishable once written.
 	Inferred []string
+	// Mesh is the built solid's surface, one entry per surviving part, empty
+	// unless it was asked for.
+	//
+	// # Why this exists
+	//
+	// The viewport has no boolean operations, so it drew the PRIMITIVES: a bolt
+	// hole was a cylinder standing in a plate rather than a void through it, a
+	// fillet was invisible, and a fuse of two bodies was two bodies. The STEP
+	// file exported from the same document was correct — the divergence existed
+	// only on screen, which is the one place a person judges the result.
+	//
+	// This is the same solid the exporter writes, tessellated. It is not a
+	// second model that could disagree with the first.
+	Mesh []MeshPart
+	// Triangles is the whole mesh's count, and Deflection the tolerance in
+	// millimetres it was reached with. Simplified says the tolerance was
+	// COARSENED to fit the budget: the shape is the same shape, described less
+	// finely, and a caller that shows the mesh should be able to say so rather
+	// than presenting a coarse model as an exact one.
+	Triangles  int
+	Deflection float64
+	Simplified bool
+	// MeshError is why there is no mesh, when one was asked for and the solid
+	// built. Reported rather than returned as an error: the build succeeded and
+	// its volume, bounds and STEP are all still true.
+	MeshError string
+}
+
+// MeshPart is one built solid's surface, attributed to the part it came from.
+//
+// Vertices is flat — x, y, z, x, y, z — and Triangles indexes it in threes.
+// Both in MILLIMETRES, like everything else the kernel returns.
+//
+// A part consumed as a tool by a cut has NO entry here, which is correct: it is
+// no longer a body. That is the whole difference between this and the primitive
+// drawing it replaces.
+type MeshPart struct {
+	ID        string
+	Label     string
+	Vertices  []float64
+	Triangles []int32
 }
 
 type request struct {
 	Solids     []geometry.Solid     `json:"solids"`
 	Operations []geometry.Operation `json:"operations,omitempty"`
 	Format     string               `json:"format,omitempty"`
+	// Deflection is the tessellation tolerance in millimetres. Zero lets the
+	// kernel choose from the model's own size — 0.1 mm is invisible on a
+	// bracket and catastrophic on a car body, so a constant cannot serve both.
+	Deflection float64 `json:"deflection,omitempty"`
 }
 
 type reply struct {
@@ -170,6 +215,18 @@ type reply struct {
 	Skipped        []string   `json:"skipped,omitempty"`
 	FeaturesFailed []string   `json:"features_failed,omitempty"`
 	STEP           string     `json:"step,omitempty"`
+	Mesh           []meshPart `json:"mesh,omitempty"`
+	MeshTriangles  int        `json:"mesh_triangles,omitempty"`
+	MeshDeflection float64    `json:"mesh_deflection,omitempty"`
+	MeshSimplified bool       `json:"mesh_simplified,omitempty"`
+	MeshError      string     `json:"mesh_error,omitempty"`
+}
+
+type meshPart struct {
+	ID        string    `json:"id"`
+	Label     string    `json:"label"`
+	Vertices  []float64 `json:"vertices"`
+	Triangles []int32   `json:"triangles"`
 }
 
 // BuildDocument builds a document and, when format is "step", exports it.
@@ -249,7 +306,29 @@ func (k *Kernel) BuildDocument(ctx context.Context, doc geometry.Document, unit 
 		}
 		out.STEP = decoded
 	}
+	if len(res.Mesh) > 0 {
+		out.Mesh = make([]MeshPart, 0, len(res.Mesh))
+		for _, m := range res.Mesh {
+			out.Mesh = append(out.Mesh, MeshPart{
+				ID: m.ID, Label: m.Label, Vertices: m.Vertices, Triangles: m.Triangles,
+			})
+		}
+	}
+	out.Triangles = res.MeshTriangles
+	out.Deflection = res.MeshDeflection
+	out.Simplified = res.MeshSimplified
+	out.MeshError = res.MeshError
 	return out, nil
+}
+
+// BuildMesh builds a document and returns the surface of the solid it makes.
+//
+// Separate from BuildDocument only in what it asks the kernel for. Deliberately
+// the same code path otherwise: a mesh that came from a different build than the
+// STEP file could disagree with it, and then the picture and the file would be
+// two claims about one design.
+func (k *Kernel) BuildMesh(ctx context.Context, doc geometry.Document, unit geometry.Unit) (*Build, error) {
+	return k.BuildDocument(ctx, doc, unit, "mesh")
 }
 
 // roundTrip sends one request and reads one reply. Caller holds the mutex.

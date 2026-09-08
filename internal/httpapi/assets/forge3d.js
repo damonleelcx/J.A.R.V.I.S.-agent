@@ -241,7 +241,7 @@
    * which makes a list called "supported shapes" say the opposite of the truth
    * about three of them. */
   var SUPPORTED = ['box', 'cylinder', 'cone', 'sphere', 'plane',
-                   'extrusion', 'revolve', 'sweep'];
+                   'extrusion', 'revolve', 'sweep', 'section'];
 
   /* Shape words the document vocabulary no longer offers, and what a document
    * that already uses one is read as. The browser's copy of the table in
@@ -1129,7 +1129,69 @@
     return { geo: { positions: positions, normals: normals, indices: indices } };
   }
 
+  /* The surface the CAD kernel actually built, when the deployment has one.
+   *
+   * # Why this is not "another shape case"
+   *
+   * Every case below draws a PRIMITIVE, and this renderer has no boolean
+   * operations: a bolt hole is a cylinder standing in a plate rather than a void
+   * through it, a fillet is invisible, and a fuse of two bodies is two bodies.
+   * The exported STEP file has always been correct — the divergence was only on
+   * screen, which is the one place a person judges the result.
+   *
+   * So this is not a new shape. It is the same solid the exporter writes,
+   * tessellated by OpenCASCADE and handed here, and it takes precedence over
+   * every case below because it is the thing those cases were approximating.
+   *
+   * # Why the normals are accumulated rather than sent
+   *
+   * OCCT tessellates per FACE, so a box arrives as 24 vertices and not 8 — each
+   * face owns its corners. Accumulating a normal per vertex therefore yields
+   * FLAT shading for free, and a crease stays a crease. Averaging across a
+   * shared vertex would round every edge of every machined part, which is the
+   * one thing a CAD viewport must not do.
+   *
+   * See docs/plan-2026-09-08-solids-the-viewport-can-show.md */
+  function kernelGeometry(mesh) {
+    var positions = mesh.vertices || [];
+    var indices = mesh.triangles || [];
+    var normals = new Array(positions.length);
+    for (var n = 0; n < normals.length; n++) normals[n] = 0;
+
+    for (var t = 0; t + 2 < indices.length; t += 3) {
+      var a = indices[t] * 3, b = indices[t + 1] * 3, c = indices[t + 2] * 3;
+      var abx = positions[b] - positions[a],
+          aby = positions[b + 1] - positions[a + 1],
+          abz = positions[b + 2] - positions[a + 2];
+      var acx = positions[c] - positions[a],
+          acy = positions[c + 1] - positions[a + 1],
+          acz = positions[c + 2] - positions[a + 2];
+      /* Not normalised per triangle on purpose: the cross product's LENGTH is
+       * twice the triangle's area, so accumulating raw lets big triangles
+       * outweigh slivers. A sliver at the edge of a fillet would otherwise tilt
+       * the shading as much as the face it sits on. */
+      var nx = aby * acz - abz * acy,
+          ny = abz * acx - abx * acz,
+          nz = abx * acy - aby * acx;
+      for (var k = 0; k < 3; k++) {
+        var at = indices[t + k] * 3;
+        normals[at] += nx; normals[at + 1] += ny; normals[at + 2] += nz;
+      }
+    }
+    for (var v = 0; v < normals.length; v += 3) {
+      var len = Math.sqrt(normals[v] * normals[v] + normals[v + 1] * normals[v + 1] +
+                          normals[v + 2] * normals[v + 2]);
+      if (len > 0) { normals[v] /= len; normals[v + 1] /= len; normals[v + 2] /= len; }
+      else { normals[v + 1] = 1; }   // a degenerate triangle: point it up rather than at nothing
+    }
+    return { geo: { positions: positions, normals: normals, indices: indices }, fromKernel: true };
+  }
+
   function buildGeometry(part) {
+    /* The built solid wins over the primitive that approximated it. */
+    if (part.mesh && part.mesh.triangles && part.mesh.triangles.length) {
+      return kernelGeometry(part.mesh);
+    }
     /* A retired word is resolved before anything is drawn, and the note travels
      * on `approximated` — the same channel every other substitution uses, which
      * is what puts it in the provenance banner rather than nowhere. */
@@ -1154,6 +1216,15 @@
       case 'extrusion': return extrusionGeometry(part.profile || [], num(s.depth, 1), part.holes);
       case 'revolve':   return revolveGeometry(part.profile || [], part.axis, part.holes);
       case 'sweep':     return sweepGeometry(part.profile || [], part.path || [], part.holes, part.path_closed);
+      /* A drawing with no thickness — a loft's station.
+       *
+       * Drawn as a sheet, because that is what it is: a section has no depth to
+       * give it, and drawing it with one would show a slab where somebody wrote
+       * an outline. Where the deployment has a CAD kernel this is replaced by
+       * the blended solid before anybody sees it (workbench.js), and where it
+       * does not, the document's own feature notes say the body between the
+       * stations is not on screen. */
+      case 'section':   return extrusionGeometry(part.profile || [], 0, part.holes);
       default:
         return {
           geo: boxGeometry(num(s.width,1), num(s.height,1), num(s.depth,1)),
@@ -1354,6 +1425,15 @@
 
     var gl = canvas.getContext('webgl', { antialias: true, alpha: false })
           || canvas.getContext('experimental-webgl', { antialias: true, alpha: false });
+    /* 32-bit indices, so a tessellated solid is not capped at 65,535 vertices.
+     *
+     * WebGL 1 indexes with an unsigned short unless this extension is present,
+     * and a real tessellation passes that in one body: the primitives never
+     * came close, so the ceiling was invisible until the kernel started drawing.
+     * Where the extension is missing the part falls back to its primitive and
+     * SAYS so — a mesh silently truncated to 65k vertices would draw a shape
+     * nobody built. */
+    if (gl && gl.getExtension) gl.getExtension('OES_element_index_uint');
     if (!gl) {
       // Reported, never silently blank. A viewport that renders nothing with no
       // explanation is indistinguishable from a model that produced nothing.
@@ -1544,25 +1624,52 @@
      * what was done instead of hiding it. */
     var removed = {};
     (this.spec.features || []).forEach(function (f) {
-      if (!f || String(f.op).toLowerCase() !== 'cut') return;
+      if (!f) return;
+      var op = String(f.op).toLowerCase();
+      /* A cut's tool is material being removed. A loft's stations are consumed
+       * too — the kernel blends them into one body and they cease to exist as
+       * parts — so they are ghosted for the same reason: drawn solid, two
+       * stations read as two flat plates somebody meant to keep. */
+      if (op !== 'cut' && op !== 'loft') return;
       (f.with || []).forEach(function (id) { removed[id] = true; });
     });
 
+    var wide = !!gl.getExtension('OES_element_index_uint');
+
     this.parts = (this.spec.parts || []).map(function (part) {
       var built = buildGeometry(part);
+      /* A tessellation this browser cannot index. Drawn as its primitive
+       * instead, and named — truncating to 65,535 vertices would draw a shape
+       * nobody built, which is worse than drawing the approximation everybody
+       * has been looking at until now. */
+      if (built.fromKernel && !wide && built.geo.positions.length / 3 > 65535) {
+        var fallback = buildGeometry({ shape: part.shape, size: part.size,
+          profile: part.profile, holes: part.holes, path: part.path,
+          path_closed: part.path_closed, axis: part.axis });
+        fallback.approximated = 'the built solid needs ' +
+          Math.round(built.geo.positions.length / 3) + ' vertices and this browser indexes ' +
+          '65,535, so the primitive is drawn instead';
+        built = fallback;
+      }
       var geo = built.geo;
       if (built.approximated) {
         self.approximations.push((part.name || part.id) + ': ' + built.approximated);
       }
+      var vertexCount = geo.positions.length / 3;
+      var wideHere = wide && vertexCount > 65535;
       var buffers = {
         position: makeBuffer(gl, gl.ARRAY_BUFFER, new Float32Array(geo.positions)),
         normal:   makeBuffer(gl, gl.ARRAY_BUFFER, new Float32Array(geo.normals)),
-        index:    makeBuffer(gl, gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(geo.indices))
+        index:    makeBuffer(gl, gl.ELEMENT_ARRAY_BUFFER,
+                    wideHere ? new Uint32Array(geo.indices) : new Uint16Array(geo.indices))
       };
       return {
         spec: part,
         buffers: buffers,
         count: geo.indices.length,
+        // Held per part: one body may need 32-bit indices while its neighbour
+        // does not, and drawing with the wrong width renders noise.
+        indexType: wideHere ? gl.UNSIGNED_INT : gl.UNSIGNED_SHORT,
         centre: part.position || [0, 0, 0],
         // Held on the WRAPPER and never written into spec: the document on
         // screen has to stay the document that was stored, so a presentation
@@ -1758,7 +1865,7 @@
       gl.enableVertexAttribArray(loc.nrm);
       gl.vertexAttribPointer(loc.nrm, 3, gl.FLOAT, false, 0, 0);
       gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, part.buffers.index);
-      gl.drawElements(gl.TRIANGLES, part.count, gl.UNSIGNED_SHORT, 0);
+      gl.drawElements(gl.TRIANGLES, part.count, part.indexType || gl.UNSIGNED_SHORT, 0);
     });
 
     /* PRD VIS-03, drawn last so the marks sit over the model rather than

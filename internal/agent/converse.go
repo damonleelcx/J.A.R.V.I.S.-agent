@@ -69,7 +69,7 @@ Reply with JSON only:
         "id": "stable-kebab-id",
         "name": "human name",
         "shape": "box" | "cylinder" | "cone" | "sphere" | "plane" |
-                 "extrusion" | "revolve" | "sweep",
+                 "extrusion" | "revolve" | "sweep" | "section",
         "shape_note": "for \"extrusion\", size only needs \"depth\"",
         "size": {"width":1,"height":1,"depth":1,"radius":0.5,"radius_top":0.5},
         "profile": [{"x": 0, "y": 0, "radius": 0, "x_from": "", "y_from": "plate_height",
@@ -100,9 +100,9 @@ Reply with JSON only:
       }
     ],
     "features": [
-      {"id": "stable-kebab-id", "op": "cut" | "fuse" | "fillet" | "chamfer",
-       "of": "part-id this applies to",
-       "with": ["part-ids used as the tool, for cut and fuse"],
+      {"id": "stable-kebab-id", "op": "cut" | "fuse" | "fillet" | "chamfer" | "loft",
+       "of": "part-id this applies to; for loft, the FIRST station",
+       "with": ["part-ids used as the tool for cut and fuse, or the remaining stations for loft"],
        "radius": 3.0, "radius_from": "fillet_radius",
        "edges": "all" | "vertical" | "horizontal" | "top" | "bottom",
        "note": "what this is for"}
@@ -191,6 +191,14 @@ About "prototype":
   corner with a bend. Both are below. Naming a wall thickness in prose while
   drawing a solid cylinder is the one thing to avoid: it reads as a bored part
   and machines as a bar.
+- Reach for the shape that describes the thing, not the one that is easiest to
+  type. A box is a box; it is not a car body, a bracket, a hull or a housing.
+  Asked for something whose real form is curved or tapering, a stack of boxes and
+  cylinders is not a simplification of it — it is a different object, and calling
+  it "low-poly" or "conceptual" in the note does not make the geometry say what
+  you meant. Use "extrusion" for a constant section, "revolve" for anything
+  turned, "sweep" for a section carried along a route, "loft" for a section that
+  changes. Then cut, fillet and chamfer what is left.
 - "extrusion" is the shape for anything that is not a box or a cylinder: an
   L-bracket, a T-section, a channel, a gusset, a triangular plate. Give it a
   "profile" — a closed outline of at least three points in the part's own XY
@@ -304,6 +312,22 @@ About "prototype":
   rule. Prefer the radius when the shape simply has it.
   What it cannot say is an arc that does NOT meet its neighbours smoothly — a
   crescent, a lens, a bulged edge. There is no vocabulary for those here.
+- "section" is a drawing with NO thickness, and it exists for one purpose: to be
+  a station of a "loft". Give it a "profile" like an extrusion's; give it no
+  depth. On its own it encloses nothing.
+- "loft" blends one section into the next, in the order you name them, and is the
+  shape for anything whose CROSS-SECTION CHANGES along its length: a hull, a
+  fuselage, a car body, a turbine blade, a bottle, a duct that tapers. Nothing
+  else in this vocabulary can say that — an extrusion carries one outline along a
+  line, a revolve turns one about an axis, and a sweep carries one along a path,
+  but all three move a SINGLE section unchanged.
+  Stack the stations along local Z by their "position", because a section lies in
+  its own XY plane: two stations offset along x or y are side by side in one
+  plane with no length to blend through, and the kernel will refuse it.
+  The stations are CONSUMED, like a cut's tool: they become the body and do not
+  also appear as flat plates.
+  A body that is genuinely a constant section is an extrusion — do not loft two
+  identical stations to say what one extrusion says.
 - "features" are what make an assembly a PART rather than a pile of solids.
   A HOLE is not a part — it is the absence of one. Put a cylinder where the hole
   goes, size and place it like any other part, and then "cut" it from the thing

@@ -589,7 +589,7 @@
     }
     if (!pick) pick = variants[0];
     if (!pick || !pick.document || !pick.document.parts) return;
-    loadPrototype(pick.document, pick.measured || []);
+    loadPrototype(pick.document, pick.measured || [], pick.version_id);
   }
 
   /* What this deployment can write, and what it cannot.
@@ -1156,11 +1156,77 @@
            '. Keep these part ids when you revise it.';
   }
 
-  function loadPrototype(proto, measured) {
+  /* Replace the drawn primitives with the surface the CAD kernel built.
+   *
+   * # What this fixes
+   *
+   * The renderer has no boolean operations, so it draws the parts as they were
+   * authored: a bolt hole is a cylinder standing in a plate rather than a void
+   * through it, a fillet is invisible, and a fuse of two bodies is two bodies.
+   * The STEP file exported from the same document has always been correct — the
+   * divergence existed only on screen, which is the one place a person judges
+   * the result.
+   *
+   * # Why failure here is silent
+   *
+   * A deployment with no Python has no kernel, which is the default and a
+   * supported configuration. It refuses, the primitives stay, and the document's
+   * own feature notes keep saying what the picture does not show — exactly the
+   * behaviour that shipped. An error banner would be telling somebody their
+   * deployment is configured the way they configured it.
+   *
+   * A tool consumed by a cut comes back with NO mesh and keeps its primitive —
+   * but the renderer already draws a cut tool as a ghost, so it reads as the
+   * void it made rather than as a post.
+   *
+   * See docs/plan-2026-09-08-solids-the-viewport-can-show.md */
+  function refineWithBuiltSolid(versionID, proto) {
+    fetch('/v1/geometry/' + encodeURIComponent(versionID) + '/mesh')
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (b) {
+        if (!b || !b.parts || !b.parts.length) return;
+        /* Still the same prototype on screen? A slow tessellation must not
+         * repaint a model the person has already moved on from. */
+        if (state.prototype !== proto) return;
+
+        var byID = {};
+        b.parts.forEach(function (m) { byID[m.id] = m; });
+        var drawn = 0;
+        (proto.parts || []).forEach(function (part) {
+          var m = byID[part.id];
+          if (!m) return;
+          part.mesh = { vertices: m.vertices, triangles: m.triangles };
+          drawn++;
+        });
+        if (!drawn) return;
+
+        state.builtSolid = {
+          triangles: b.triangles || 0,
+          simplified: !!b.simplified,
+          deflection: b.deflection || 0
+        };
+        studio.load(proto);
+        studio.setOverlays(proto.overlays || [], state.measured);
+        renderProvenance();
+      })
+      .catch(function () { /* the primitives are already on screen */ });
+  }
+
+  function loadPrototype(proto, measured, versionID) {
     state.prototype = proto;
     state.measured = measured || [];
     state.selectedPart = null;
+    state.builtSolid = null;
     studio.load(proto);
+    /* The primitives are drawn FIRST and the built solid replaces them.
+     *
+     * Not "instead of": the kernel is a subsystem that can be absent, and it
+     * costs a round trip and a tessellation when it is not. Drawing the
+     * approximation immediately and refining it when the real surface arrives
+     * puts the shape on screen at the moment it always appeared, and makes it
+     * true a moment later — rather than leaving the viewport empty while
+     * somebody waits for OpenCASCADE. */
+    if (versionID) refineWithBuiltSolid(versionID, proto);
     /* PRD VIS-03. Authored and derived stay separate all the way here — the
      * server sends two lists and the studio draws them differently, so a
      * dimension somebody took off a drawing never looks like one FORGE worked
@@ -1592,6 +1658,17 @@
            * believing they could come back to a shape that was never written
            * down, and they would find out when they went looking for it. */
           noteVariant(ev.variant, bubble);
+          /* Refine HERE and not on the prototype event.
+           *
+           * The kernel builds a SAVED variant, addressed by id, and the id only
+           * exists once the turn's geometry has been written down. The prototype
+           * arrives first and has no id — hooking it would ask the kernel to
+           * build something that is not there yet. A turn whose save FAILED
+           * therefore keeps its primitives, which is correct: there is nothing
+           * to build from. */
+          if (ev.variant && ev.variant.version_id && state.prototype) {
+            refineWithBuiltSolid(ev.variant.version_id, state.prototype);
+          }
           break;
 
         case 'goal':

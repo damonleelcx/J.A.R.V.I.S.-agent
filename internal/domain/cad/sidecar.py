@@ -39,7 +39,7 @@ PROTOCOL = 1
 try:
     from build123d import (
         Box, Cylinder, Cone, Sphere, Rectangle, Plane, Location, Vector,
-        Compound, Axis, Polyline, export_step, extrude, fillet, chamfer,
+        Compound, Axis, Polyline, export_step, extrude, fillet, chamfer, loft,
         make_face, revolve, sweep, Transition, Line, ThreePointArc, Wire, Face,
     )
 except Exception as exc:  # pragma: no cover - reported to the caller, not raised
@@ -213,6 +213,12 @@ def _shape(solid):
             body = Cone(d["radius"], top, d["height"])
         # +Z to +Y.
         return Plane.XZ * body
+    if kind == "section":
+        # A drawing with no thickness. It is not a solid and has no volume, and
+        # that is correct: it exists to be blended with other sections by a loft,
+        # which consumes it. On its own it is a face, and the kernel is content
+        # to carry faces in an assembly — see the volume note in _build.
+        return _fused(_faces(solid))
     if kind == "extrusion":
         # A closed outline in the part's own XY plane, swept along local Z and
         # CENTRED on it: amount is half the depth in both directions, so an
@@ -313,6 +319,44 @@ def _apply(op, shapes):
             tool = shapes[tool_id]
             target = (target - tool) if kind == "cut" else (target + tool)
         shapes[op["of"]] = target
+        return
+
+    if kind == "loft":
+        # The target is the first station and the named parts are the rest, in
+        # the order they are named. Order is the shape: the same three sections
+        # in a different order are a different solid, so they are NOT sorted by
+        # position here — a document that lists them out of order is describing
+        # something, and silently reordering would build a shape nobody wrote.
+        sections = [target] + [shapes[i] for i in (op.get("with") or [])]
+        faces = []
+        for shape in sections:
+            found = shape.faces()
+            if not found:
+                raise ValueError("a loft station has no face to blend; a station must be a "
+                                 "\"section\", which is an outline with no thickness")
+            # A solid used as a station contributes its faces and would blend to
+            # the wrong one. Refused by name rather than guessed at.
+            if len(found) > 1:
+                raise ValueError("a loft station has %d faces; a station must be a \"section\", "
+                                 "which is a single outline with no thickness" % len(found))
+            faces.append(found[0])
+        if len(faces) < 2:
+            raise ValueError("a loft needs at least two stations to blend between")
+        blended = loft(faces)
+        # ‼️ A loft of COPLANAR stations succeeds and encloses nothing.
+        #
+        # A section lies in its own XY plane, so two stations offset along X or Y
+        # are side by side in ONE plane and there is no length to blend along.
+        # OCCT does not refuse this: it returns a shape with no volume, which
+        # exports as an empty solid and tessellates to nothing. Caught here,
+        # where the reason can be named — the alternative is a person looking at
+        # an empty viewport with a build that reported success.
+        if float(getattr(blended, "volume", 0.0)) <= 0.0:
+            raise ValueError("the loft enclosed no volume; its stations are in one plane. "
+                             "A section lies in its own XY plane, so stations are separated "
+                             "along local Z — offsetting them along X or Y places them side "
+                             "by side with no length to blend along")
+        shapes[op["of"]] = blended
         return
 
     selected = _edges(target, op.get("edges") or "all")
@@ -441,6 +485,86 @@ def _with_a_way_out(op, shapes, reason):
             "edges is %g, found by asking the kernel" % (reason, what, op["radius"], fits))
 
 
+# --- tessellation ----------------------------------------------------------
+#
+# # Why the kernel draws as well as exports
+#
+# The viewport had no boolean operations, so it drew the PRIMITIVES: a bolt hole
+# was a cylinder standing in a plate rather than a void through it, a fillet was
+# invisible, and a fuse of two bodies was two bodies. The STEP file exported from
+# the same document was correct — the divergence existed only on screen, which is
+# the one place a person judges the result.
+#
+# The solid is already built here, with every cut, fuse and fillet applied. All
+# that was missing was handing back its surface. So this is not a new capability
+# so much as the one that was already paid for and never collected.
+#
+# # Per solid, not one blob
+#
+# Each surviving part is tessellated separately and carries its id. The Parts
+# panel selects and colours by part, and a single merged mesh would make that
+# impossible — while a tool consumed by a cut correctly has no mesh at all,
+# because it is no longer a body.
+
+# A triangle budget, not a tolerance, is what a caller can reason about: nobody
+# knows what deflection 0.05 costs, and everybody knows what two million
+# triangles costs. The tolerance is searched to fit the budget and REPORTED.
+_MESH_BUDGET = 400000
+_MESH_COARSEN = 2.5
+_MESH_TRIES = 6
+
+
+def _tessellate_once(solids, deflection):
+    meshes, total = [], 0
+    for solid in solids:
+        verts, tris = solid.tessellate(deflection)
+        flat = []
+        for v in verts:
+            flat.extend((float(v.X), float(v.Y), float(v.Z)))
+        idx = []
+        for t in tris:
+            idx.extend((int(t[0]), int(t[1]), int(t[2])))
+        meshes.append({"vertices": flat, "triangles": idx})
+        total += len(tris)
+    return meshes, total
+
+
+def _tessellate(solids, ids, names, request):
+    # A deflection in millimetres, from the model's own size rather than a
+    # constant: 0.1 mm is invisible on a bracket and catastrophic on a car body,
+    # and the same number cannot serve both.
+    box = Compound(children=list(solids)).bounding_box()
+    span = max(float(box.max.X - box.min.X),
+               float(box.max.Y - box.min.Y),
+               float(box.max.Z - box.min.Z), 1.0)
+    deflection = float(request.get("deflection") or (span / 2000.0))
+
+    simplified = False
+    for _ in range(_MESH_TRIES):
+        try:
+            meshes, total = _tessellate_once(solids, deflection)
+        except Exception as exc:
+            reason = str(exc).strip() or type(exc).__name__
+            return {"mesh_error": "the solid could not be tessellated: %s" % reason}
+        if total <= _MESH_BUDGET:
+            break
+        # Over budget. Coarsened rather than truncated: half a model is a lie
+        # about the shape, and a coarser one is the same shape less finely.
+        deflection *= _MESH_COARSEN
+        simplified = True
+    else:
+        return {"mesh_error": "this assembly could not be tessellated within %d triangles"
+                             % _MESH_BUDGET}
+
+    for mesh, part_id, name in zip(meshes, ids, names):
+        mesh["id"] = part_id
+        mesh["label"] = name
+    return {"mesh": meshes,
+            "mesh_triangles": total,
+            "mesh_deflection": deflection,
+            "mesh_simplified": simplified}
+
+
 def _build(request):
     solids = request.get("solids") or []
     if not solids:
@@ -493,16 +617,20 @@ def _build(request):
             continue
         consumed.update(op.get("with") or [])
 
-    kept, kept_names = [], []
+    kept, kept_names, kept_ids = [], [], []
     for part_id, name in zip(ids, names):
         if part_id in consumed:
             continue
         kept.append(shapes[part_id])
         kept_names.append(name)
+        # The id travels with the solid so a tessellation can be attributed back
+        # to the part the viewport lists. Without it a mesh is one anonymous
+        # blob and selecting "Cabin" in the Parts panel can highlight nothing.
+        kept_ids.append(part_id)
     if not kept:
         return {"ok": False, "error": "every part was consumed as a tool, leaving nothing to export",
                 "skipped": skipped, "features_failed": failed}
-    built, names = kept, kept_names
+    built, names, ids = kept, kept_names, kept_ids
 
     # A compound, not a fused union. Fusing would MERGE parts that touch, and a
     # bracket and the plate it sits on would come back as one body with the seam
@@ -529,6 +657,8 @@ def _build(request):
     }
 
     fmt = request.get("format")
+    if fmt == "mesh":
+        out.update(_tessellate(built, ids, names, request))
     if fmt == "step":
         # export_step writes a file; there is no in-memory form in build123d.
         # Deleted immediately after reading, and created with mkstemp so a

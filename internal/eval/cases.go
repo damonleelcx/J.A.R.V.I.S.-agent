@@ -162,6 +162,23 @@ func drawingVocabulary() []Case {
 			Scorers: buildable(aPartIsDrawnAs("extrusion", "section")),
 		},
 		{
+			ID:   "draws-a-body-whose-section-changes",
+			Kind: KindCapability,
+			Why: "Wave 31 gave the vocabulary a \"loft\": a section that CHANGES along its length, " +
+				"which no other shape can say — an extrusion carries one outline along a line, a " +
+				"revolve turns one about an axis, a sweep carries one along a path, and all three move " +
+				"a single section unchanged. It was added because asked for a car body the model " +
+				"answered with two boxes and four cylinders and called it low-poly, which is not a " +
+				"simplification of a car but a different object. A tapering duct with a round end and " +
+				"a square end is the canonical case: neither end is the other, no primitive spans " +
+				"them, and the transition is the whole part.",
+			Turns: []string{
+				"Design a transition duct 300 mm long: round at one end, 160 mm diameter, and " +
+					"rectangular at the other, 200 mm by 100 mm, with a smooth transition between them.",
+			},
+			Scorers: buildable(aChangingSectionIsLofted()),
+		},
+		{
 			ID:   "draws-a-turned-part",
 			Kind: KindCapability,
 			Why: "Wave 18 gave a part a REVOLVE, for the shaft, the boss, the flange, the pulley, the " +

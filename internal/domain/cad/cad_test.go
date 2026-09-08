@@ -1874,3 +1874,223 @@ func TestKernel_AnIslandInAHoleIsSolid(t *testing.T) {
 		t.Errorf("%d parts, want 1", got.Parts)
 	}
 }
+
+// The kernel hands back the surface of the solid it actually built.
+//
+// # What this closes
+//
+// The viewport has no boolean operations, so it drew the PRIMITIVES: a bolt hole
+// was a cylinder standing in a plate rather than a void through it, a fillet was
+// invisible, and a fuse of two bodies was two bodies. The STEP file exported from
+// the same document was correct — the divergence existed only on screen, which is
+// the one place a person judges the result.
+//
+// So the properties that matter are not "there are triangles". They are that the
+// mesh is of the BUILT solid: that a tool consumed by a cut has no surface of its
+// own, and that cutting a hole changes the surface rather than leaving a box.
+func TestKernel_ReturnsTheSurfaceOfTheSolidItBuilt(t *testing.T) {
+	k := kernel(t)
+	ctx := context.Background()
+
+	doc := plate()
+	got, err := k.BuildMesh(ctx, doc, geometry.Millimetre)
+	if err != nil {
+		t.Fatalf("building a mesh: %v", err)
+	}
+	if got.MeshError != "" {
+		t.Fatalf("the solid built and could not be tessellated: %s", got.MeshError)
+	}
+	if len(got.Mesh) != 2 {
+		t.Fatalf("two parts were built and %d meshes came back", len(got.Mesh))
+	}
+	if got.Triangles == 0 {
+		t.Fatal("a mesh came back with no triangles, so there is nothing to draw")
+	}
+	for _, m := range got.Mesh {
+		if len(m.Vertices) == 0 || len(m.Vertices)%3 != 0 {
+			t.Errorf("%s has %d vertex floats, which is not a whole number of points",
+				m.ID, len(m.Vertices))
+		}
+		if len(m.Triangles) == 0 || len(m.Triangles)%3 != 0 {
+			t.Errorf("%s has %d indices, which is not a whole number of triangles",
+				m.ID, len(m.Triangles))
+		}
+		// Every index must address a real vertex, or the viewport draws garbage
+		// or throws. A mesh that is merely PRESENT is not a mesh that can be
+		// drawn, and this is the difference.
+		points := len(m.Vertices) / 3
+		for _, idx := range m.Triangles {
+			if int(idx) < 0 || int(idx) >= points {
+				t.Fatalf("%s indexes vertex %d of %d", m.ID, idx, points)
+				break
+			}
+		}
+	}
+	if got.Deflection <= 0 {
+		t.Error("the tessellation reported no tolerance, so nothing downstream can say how " +
+			"finely the shape is described")
+	}
+}
+
+// A hole is a hole, not a cylinder standing in a plate.
+//
+// The one assertion that separates this from the drawing it replaces. The tool
+// is consumed, so it has NO surface of its own — and the plate's own surface
+// gains the walls of the bore, so it cannot be the six faces it started with.
+func TestKernel_ACutLeavesAVoidAndConsumesItsTool(t *testing.T) {
+	k := kernel(t)
+	ctx := context.Background()
+
+	solid := plate()
+	solid.Parts = solid.Parts[:1] // the plate alone
+
+	before, err := k.BuildMesh(ctx, solid, geometry.Millimetre)
+	if err != nil {
+		t.Fatalf("building the plain plate: %v", err)
+	}
+
+	holed := plate()
+	holed.Parts[1] = geometry.Part{
+		ID: "bore", Name: "Bore", Shape: "cylinder",
+		Size:     map[string]float64{"radius": 8, "height": 40},
+		Position: []float64{0, 0, 0}, Rotation: []float64{0, 0, 0},
+	}
+	holed.Features = []geometry.Feature{{ID: "drill", Op: "cut", Of: "plate", With: []string{"bore"}}}
+
+	after, err := k.BuildMesh(ctx, holed, geometry.Millimetre)
+	if err != nil {
+		t.Fatalf("building the drilled plate: %v", err)
+	}
+	if after.MeshError != "" {
+		t.Fatalf("the drilled plate could not be tessellated: %s", after.MeshError)
+	}
+
+	// The tool is gone as a body.
+	if len(after.Mesh) != 1 {
+		var ids []string
+		for _, m := range after.Mesh {
+			ids = append(ids, m.ID)
+		}
+		t.Fatalf("the cut left %d bodies (%v); the tool must be consumed, or the hole is "+
+			"filled by the thing that made it — which is exactly the drawing this replaces",
+			len(after.Mesh), ids)
+	}
+	if after.Mesh[0].ID != "plate" {
+		t.Errorf("the surviving body is %q, wanted the plate", after.Mesh[0].ID)
+	}
+
+	// And the plate is no longer a box. A bore adds wall, so the drilled plate
+	// must have more triangles than the plain one at the same tolerance.
+	if after.Triangles <= before.Triangles {
+		t.Errorf("the drilled plate has %d triangles and the plain one %d. The hole is not in "+
+			"the surface, so the mesh is the primitive drawing again with extra steps.",
+			after.Triangles, before.Triangles)
+	}
+	// Less material, whatever the surface did.
+	if after.Volume >= before.Volume {
+		t.Errorf("the drilled plate has volume %.1f and the plain one %.1f; a cut must remove "+
+			"material", after.Volume, before.Volume)
+	}
+}
+
+// A loft blends the sections it names into one solid.
+//
+// # What this closes
+//
+// `loft` is the one thing no combination of the existing shapes could fake. An
+// extrusion carries ONE outline along a line, a revolve turns one about an axis,
+// and a sweep carries one along a path — all of them move a single section. A
+// hull, a fuselage, a turbine blade and a car body are all defined by a section
+// that CHANGES along its length, and there was no way to say that.
+//
+// It is an operation over parts rather than a shape carrying its own list of
+// outlines, for the reason feature.go already gives about holes: the stations
+// are ordinary parts, already placed, sized, parameter-bound and validated.
+func TestKernel_ALoftBlendsItsStationsAndConsumesThem(t *testing.T) {
+	k := kernel(t)
+	ctx := context.Background()
+
+	// Two squares, 20 and 8 across, 30 apart along local Z — the direction an
+	// extrusion travels, and the only one a section can be stacked along: the
+	// outline lies in the part's own XY plane, so stations offset along X or Y
+	// would be side by side in one plane with nothing to blend through.
+	//
+	// The exact frustum the kernel spike measured:
+	// h/3 * (A1 + A2 + sqrt(A1·A2)) = 30/3 * (400 + 64 + 160) = 6240 mm³.
+	square := func(id string, half, z float64) geometry.Part {
+		return geometry.Part{
+			ID: id, Name: id, Shape: "section",
+			Profile: []geometry.Point{
+				{X: -half, Y: -half}, {X: half, Y: -half},
+				{X: half, Y: half}, {X: -half, Y: half},
+			},
+			Position: []float64{0, 0, z}, Rotation: []float64{0, 0, 0},
+		}
+	}
+	doc := geometry.Document{
+		Name: "frustum", Units: "mm",
+		Parts: []geometry.Part{square("base", 10, 0), square("top", 4, 30)},
+		Features: []geometry.Feature{
+			{ID: "blend", Op: "loft", Of: "base", With: []string{"top"}},
+		},
+	}
+
+	got, err := k.BuildMesh(ctx, doc, geometry.Millimetre)
+	if err != nil {
+		t.Fatalf("lofting: %v", err)
+	}
+	if len(got.FeatureFailures) > 0 {
+		t.Fatalf("the loft was not applied: %v", got.FeatureFailures)
+	}
+	// One body: the station named as a tool is consumed, exactly as a cut's tool
+	// is. Two bodies would mean the loft did not happen and two flat faces are
+	// standing in space.
+	if len(got.Mesh) != 1 {
+		var ids []string
+		for _, m := range got.Mesh {
+			ids = append(ids, m.ID)
+		}
+		t.Fatalf("the loft left %d bodies (%v); the stations must be consumed.\n"+
+			"  parts=%d volume=%.1f skipped=%v featureFailures=%v meshError=%q triangles=%d",
+			len(got.Mesh), ids, got.Parts, got.Volume, got.Skipped, got.FeatureFailures,
+			got.MeshError, got.Triangles)
+	}
+	// A solid, not the faces it was blended from. Faces have no volume.
+	if got.Volume < 6000 || got.Volume > 6500 {
+		t.Errorf("the lofted solid has volume %.0f mm³; a 20→8 frustum over 30 is 6240", got.Volume)
+	}
+	if got.Triangles < 4 {
+		t.Errorf("the loft tessellated to %d triangles, which cannot be a closed solid",
+			got.Triangles)
+	}
+}
+
+// A section is a drawing, and a drawing is not a solid.
+//
+// Guards the half of the design that is easy to lose: if "section" ever starts
+// building something with thickness, a loft blends the wrong faces and the
+// stations stop being consumable — and the failure looks like a strange shape
+// rather than like a vocabulary that changed underneath.
+func TestKernel_ASectionHasNoVolumeOfItsOwn(t *testing.T) {
+	k := kernel(t)
+	ctx := context.Background()
+
+	doc := geometry.Document{
+		Name: "one station", Units: "mm",
+		Parts: []geometry.Part{{
+			ID: "station", Name: "Station", Shape: "section",
+			Profile: []geometry.Point{
+				{X: -10, Y: -10}, {X: 10, Y: -10}, {X: 10, Y: 10}, {X: -10, Y: 10},
+			},
+			Position: []float64{0, 0, 0}, Rotation: []float64{0, 0, 0},
+		}},
+	}
+	got, err := k.BuildDocument(ctx, doc, geometry.Millimetre, "")
+	if err != nil {
+		t.Fatalf("building a lone section: %v", err)
+	}
+	if got.Volume > 1e-6 {
+		t.Errorf("a section has volume %g; it is an outline with no thickness, and one that "+
+			"encloses material is an extrusion nobody asked for", got.Volume)
+	}
+}

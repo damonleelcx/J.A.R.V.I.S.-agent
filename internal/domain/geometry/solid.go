@@ -185,6 +185,16 @@ func Solids(d Document, unit Unit) ([]Solid, []string) {
 			// No dimension either, for the same reason and more so: a sweep's
 			// size is its outline and the path it follows, and a "depth" beside
 			// them would be a third opinion about how far it goes.
+		case "section":
+			pts, ok := profiles[p.ID]
+			if !ok {
+				continue
+			}
+			section = &pts
+			// No dimension of ANY kind, which is the whole point. A section is
+			// a drawing with no thickness: it exists to be blended with other
+			// sections by a loft, and a depth would make it an extrusion that
+			// somebody would then be surprised to find lofted away.
 		case "box":
 			dims["width"] = sizeOr(p, "width", 1, unit, infer)
 			dims["height"] = sizeOr(p, "height", 1, unit, infer)

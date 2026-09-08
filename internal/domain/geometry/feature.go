@@ -82,8 +82,25 @@ var featureOps = map[string]struct {
 	NeedsTools  bool
 	NeedsRadius bool
 }{
-	"cut":     {NeedsTools: true},
-	"fuse":    {NeedsTools: true},
+	"cut":  {NeedsTools: true},
+	"fuse": {NeedsTools: true},
+	// A loft blends the target section into the ones it names, in the order it
+	// names them, and consumes them exactly as a cut consumes its tool.
+	//
+	// # Why this is an operation and not a shape with a list of outlines
+	//
+	// The same reasoning that made a hole "an existing part used as a tool".
+	// Sections named here are ORDINARY parts: already placed, already sized,
+	// already bound to parameters, already validated for arcs, holes,
+	// self-intersection and corner radii. A "loft" shape carrying its own array
+	// of outlines would be a second way to say "a drawing somewhere", with a
+	// second and weaker set of rules — and the two would drift the day somebody
+	// taught one of them about arcs.
+	//
+	// It also means a section can be inspected, dimensioned and re-parameterised
+	// on its own before it is blended, which is how somebody actually arrives at
+	// a hull or a body: by getting the stations right first.
+	"loft":    {NeedsTools: true},
 	"fillet":  {NeedsRadius: true},
 	"chamfer": {NeedsRadius: true},
 }
@@ -286,7 +303,7 @@ func (d *Document) FeatureNotes() []string {
 	for _, p := range d.Parts {
 		label[p.ID] = p.Label()
 	}
-	var cuts, fuses, rounds []string
+	var cuts, fuses, rounds, lofts []string
 	for _, op := range ops {
 		names := make([]string, 0, len(op.With))
 		for _, t := range op.With {
@@ -299,6 +316,9 @@ func (d *Document) FeatureNotes() []string {
 			fuses = append(fuses, fmt.Sprintf("%s into %s", strings.Join(names, ", "), label[op.Of]))
 		case "fillet", "chamfer":
 			rounds = append(rounds, fmt.Sprintf("%s (%s, %s edges)", label[op.Of], op.Op, op.Edges))
+		case "loft":
+			lofts = append(lofts, fmt.Sprintf("%s through %s",
+				label[op.Of], strings.Join(names, ", ")))
 		}
 	}
 	var out []string
@@ -317,6 +337,18 @@ func (d *Document) FeatureNotes() []string {
 		sort.Strings(rounds)
 		out = append(out, "Rounded in the exported solid and drawn square on screen: "+
 			strings.Join(rounds, "; ")+".")
+	}
+	if len(lofts) > 0 {
+		// Said in the strongest terms of the four, because it is the largest
+		// divergence: a cut still shows the material and a fillet still shows
+		// the part, but the drawn stations are FLAT DRAWINGS and the blended
+		// body between them is not on screen at all. Somebody looking at two
+		// outlines standing in space is not looking at a weaker version of the
+		// hull — they are looking at its ribs.
+		sort.Strings(lofts)
+		out = append(out, "The viewport cannot blend one section into another, so a loft is "+
+			"drawn as its flat stations and the body between them is not shown: "+
+			strings.Join(lofts, "; ")+". The exported file is the blended solid.")
 	}
 	return out
 }

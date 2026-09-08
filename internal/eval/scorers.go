@@ -809,6 +809,62 @@ func aSectionCarriesItsOwnVoid() Scorer {
 	}
 }
 
+// aChangingSectionIsLofted: a body whose cross-section changes is blended,
+// rather than approximated by a stack of boxes.
+//
+// This measures the capability wave 31 added and, more to the point, the habit
+// it was added to break. Asked for a car body the model answered with a red box,
+// a dark box and four cylinders and called it "a simplified, low-poly concept
+// model" — which is not a simplification of a car, it is a different object.
+// Boxes were never the limit: "extrusion", "revolve" and "sweep" were all there
+// and unused. What was genuinely missing was a section that CHANGES, and that is
+// what this looks for.
+//
+// Tracked rather than floored, and deliberately: a stack of primitives can be
+// the right answer for a packaging study, and a floor here would demand a
+// vocabulary rather than a shape. What the rate is for is the capability going
+// dead — which only shows over runs.
+func aChangingSectionIsLofted() Scorer {
+	return Scorer{
+		Name:    "a body whose section changes is lofted between stations",
+		Asserts: "a `loft` feature blends `section` parts, rather than the form being approximated by boxes",
+		Tracked: true,
+		FloorWhy: "TRACKED, with no measured baseline: the capability did not exist before wave 31, " +
+			"so there is nothing to compare against yet. The first runs establish the number.",
+		Judge: func(o *Observation) (bool, string) {
+			var sections, lofts, boxes, parts int
+			for _, r := range o.Replies {
+				if r == nil || r.Prototype == nil {
+					continue
+				}
+				for _, p := range r.Prototype.Parts {
+					parts++
+					switch strings.ToLower(strings.TrimSpace(p.Shape)) {
+					case "section":
+						sections++
+					case "box":
+						boxes++
+					}
+				}
+				for _, f := range r.Prototype.Features {
+					if strings.EqualFold(f.Op, "loft") {
+						lofts++
+					}
+				}
+			}
+			if parts == 0 {
+				return false, "no geometry was proposed at all"
+			}
+			// Both halves, because either alone is meaningless: sections with no
+			// loft are flat drawings standing in space, and a loft naming
+			// anything else is refused by the kernel.
+			return lofts > 0 && sections > 0,
+				fmt.Sprintf("%d loft feature(s) over %d section(s); %d boxes, %d parts in all",
+					lofts, sections, boxes, parts)
+		},
+	}
+}
+
 // aPathComesBackOnItself: a ring drawn as a loop rather than as four bars.
 func aPathComesBackOnItself() Scorer {
 	return Scorer{
