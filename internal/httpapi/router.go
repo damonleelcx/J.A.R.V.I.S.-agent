@@ -215,6 +215,9 @@ func NewRouter(d Deps) http.Handler {
 	// of a turn are known to be real; a POST here would let a client file a
 	// record of a conversation nobody can check it had.
 	talk := NewConversationHandlers(d)
+	// Listing comes before the {id} route for readability only — net/http's
+	// mux matches on specificity, not order.
+	mux.Handle("GET /v1/conversations", authed(talk.List))
 	mux.Handle("GET /v1/conversations/{id}", authed(talk.Get))
 	mux.Handle("DELETE /v1/conversations/{id}", authed(talk.Forget))
 

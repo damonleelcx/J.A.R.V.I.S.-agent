@@ -12,7 +12,7 @@
 (function () {
   'use strict';
 
-  var state = { goals: [], projects: [], selected: null, timer: null, everSignedIn: false };
+  var state = { goals: [], projects: [], conversations: [], artifacts: [], selected: null, timer: null, everSignedIn: false };
 
   function $(id) { return document.getElementById(id); }
 
@@ -189,6 +189,119 @@
     });
   }
 
+  /* ---- conversations ----------------------------------------------------- */
+
+  /* What was said, and how to get back into it.
+   *
+   * # Why this panel exists
+   *
+   * Every turn has been durable since the workbench record shipped, and the only
+   * route back to one was a key in a single browser's localStorage: the
+   * workbench reopened the LAST conversation and nothing could ask for the
+   * others. A new browser, a new profile or a closed private window reached none
+   * of them while every turn sat in the table. The record was never the problem;
+   * being able to ASK for it was.
+   *
+   * # Why the first line is the label
+   *
+   * A conversation has no title. Giving it one would mean asking a person to
+   * name every thread they start, or asking a model to — which files a guess in
+   * a permanent record. The first thing the person said is what they came to do,
+   * in their words, and it is read back rather than written, so it cannot drift. */
+  function renderConversations() {
+    var el = $('conversations');
+    if (!state.conversations.length) {
+      el.innerHTML = '<div class="empty">Nothing said yet.<br><br>' +
+        'Talk to FORGE at the <a href="/workbench">workbench</a> and it will be here.</div>';
+      return;
+    }
+    el.innerHTML = state.conversations.map(function (c) {
+      var bits = [c.turns + (c.turns === 1 ? ' turn' : ' turns'), when(c.last_at)];
+      if (c.project_id) {
+        var p = state.projects.filter(function (x) { return x.id === c.project_id; })[0];
+        if (p) bits.push(esc(p.name));
+      }
+      /* Opens the workbench ON this conversation rather than merely opening the
+       * workbench, which would drop the person into whichever one their browser
+       * happened to remember — the exact behaviour this panel exists to fix. */
+      return '<a class="goal" href="/workbench?conversation=' + encodeURIComponent(c.id) + '">' +
+        '<div><div class="t">' + esc(c.opening || 'Untitled conversation') + '</div>' +
+        '<div class="m">' + bits.join(' · ') + '</div></div></a>';
+    }).join('');
+  }
+
+  function loadConversations() {
+    return api('/v1/conversations').then(function (b) {
+      state.conversations = b.conversations || [];
+      renderConversations();
+    });
+  }
+
+  /* ---- artifacts ---------------------------------------------------------- */
+
+  /* What was built, across every project this person is in.
+   *
+   * Reuses GET /v1/geometry?project_id= rather than adding an endpoint: the
+   * projects are already listed here, and a variant is already addressable by
+   * project. One request per project is acceptable for a page with a handful of
+   * them and is honest about what it costs; if a deployment ever has enough
+   * projects for that to hurt, the fix is one endpoint that spans them, not a
+   * cache here. */
+  function renderArtifacts() {
+    var el = $('artifacts');
+    if (!state.artifacts.length) {
+      el.innerHTML = '<div class="empty">Nothing built yet.<br><br>' +
+        'Describe something at the <a href="/workbench">workbench</a> and the shape will be here.</div>';
+      return;
+    }
+    el.innerHTML = state.artifacts.map(function (v) {
+      var bits = ['v' + v.version];
+      if (v.units) bits.push(esc(v.units));
+      /* Said plainly, and not softened. An unverified shape that lists like a
+       * checked one is the one thing this panel must not do. */
+      bits.push(v.verification === 'verified' ? 'verified' :
+        '<span style="color:var(--warn)">' + esc(v.verification || 'unverified') + '</span>');
+      bits.push(when(v.created_at));
+      var name = v.name || v.path || v.version_id;
+      return '<a class="goal" href="/workbench?project=' + encodeURIComponent(v.project_id) + '">' +
+        '<div><div class="t">' + esc(name) + '</div>' +
+        '<div class="m">' + bits.join(' · ') + '</div></div></a>';
+    }).join('');
+  }
+
+  function loadArtifacts() {
+    /* Depends on the projects already being loaded — see refresh(). A project
+     * whose variants cannot be read does not fail the panel: the others are
+     * still worth showing, and a console that goes blank because one project
+     * errored tells the reader less than one that shows what it could. */
+    var projects = state.projects || [];
+    if (!projects.length) { state.artifacts = []; renderArtifacts(); return Promise.resolve(); }
+    return Promise.all(projects.map(function (p) {
+      return api('/v1/geometry?project_id=' + encodeURIComponent(p.id))
+        .then(function (b) { return b.variants || []; })
+        .catch(function () { return []; });
+    })).then(function (lists) {
+      var all = [];
+      lists.forEach(function (l) { all = all.concat(l); });
+      all.sort(function (a, b) { return String(b.created_at).localeCompare(String(a.created_at)); });
+      state.artifacts = all;
+      renderArtifacts();
+    });
+  }
+
+  /* A date a person can read, in en-US, and never "just now" for something that
+   * is not. Locale is pinned rather than taken from the browser so that a
+   * timestamp means the same thing in a screenshot as it does on the screen. */
+  function when(iso) {
+    if (!iso) return 'unknown time';
+    var d = new Date(iso);
+    if (isNaN(d.getTime())) return esc(iso);
+    return d.toLocaleString('en-US', {
+      year: 'numeric', month: 'short', day: 'numeric',
+      hour: '2-digit', minute: '2-digit'
+    });
+  }
+
   /* ---- goals ------------------------------------------------------------ */
 
   function renderGoals() {
@@ -357,7 +470,14 @@
   /* ---- polling ---------------------------------------------------------- */
 
   function refresh() {
-    return Promise.all([loadProjects(), loadGoals(), loadApprovals()]).then(function () {
+    /* Artifacts are read per project, so the projects have to exist first.
+     * Everything else is independent and runs together. */
+    return Promise.all([
+      loadProjects().then(loadArtifacts),
+      loadConversations(),
+      loadGoals(),
+      loadApprovals()
+    ]).then(function () {
       $('err').classList.add('hidden');
     }).catch(function (err) {
       if (err instanceof NotAuthenticated) {

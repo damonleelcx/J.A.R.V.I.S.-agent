@@ -112,6 +112,31 @@ func (s *Service) Measured(ctx context.Context, ownerID string) ([]Turn, error) 
 	return s.repo.Measured(ctx, s.pool, ownerID, measuredWindow)
 }
 
+// listWindow caps a listing. Generous, because this is somebody's own history
+// and a page that silently stops at ten would look like history that stops at
+// ten — but capped, because an unbounded list grows with use and this is the
+// query behind a page that loads on sign-in.
+const listWindow = 200
+
+// List returns this person's conversations, most recently active first.
+//
+// Empty is a normal answer and NOT an error: it means nothing has been said
+// yet. That is the opposite of History, where absence is NOT_FOUND — the
+// difference is the question. "Show me this conversation" has a wrong answer
+// when there is nothing; "show me my conversations" does not.
+func (s *Service) List(ctx context.Context, ownerID string) ([]Summary, error) {
+	const op = "conversation.Service.List"
+
+	if strings.TrimSpace(ownerID) == "" {
+		// Never an empty list for a missing owner: that would answer "you have
+		// no conversations" to a question nobody was entitled to ask, and read
+		// as a fact about the record rather than a refusal.
+		return nil, errs.New(op, errs.CodeValidationFailed).
+			WithDetail("conversations belong to somebody; there is no unowned history")
+	}
+	return s.repo.Summaries(ctx, s.pool, ownerID, listWindow)
+}
+
 // History returns a conversation's turns in order, for this owner only.
 func (s *Service) History(ctx context.Context, conversationID, ownerID string) ([]Turn, error) {
 	const op = "conversation.Service.History"
