@@ -10,7 +10,7 @@ import (
 
 // What was said at the workbench, over HTTP (PRD RSN-07, AUD-07).
 //
-// # Why there are only two verbs
+// # Why there is no POST
 //
 // Turns are WRITTEN by /v1/converse, at the moment both halves of a turn exist
 // and are known to be real. A POST here would let a client file a record of a
@@ -18,6 +18,15 @@ import (
 // permanent record, which is a worse version of the same reason RecordChange is
 // not on the HTTP surface. So this endpoint reads and it deletes, and nothing
 // else.
+//
+// # Why listing was added
+//
+// A conversation was durable on the server and reachable only through a key in
+// one browser's localStorage: the workbench remembered the LAST one, and a new
+// browser, a new profile or a closed private window could not reach any of them
+// even though every turn was still in the table. Reported as "the console is not
+// showing past conversations or sessions" — accurately, because there was no way
+// to ask for them. See docs/bugfix/2026-09-08-history-was-unreachable.md
 //
 // # Why delete is here at all rather than being an operator's job
 //
@@ -49,6 +58,49 @@ type turnDTO struct {
 	Images    int    `json:"images,omitempty"`
 	ProjectID string `json:"project_id,omitempty"`
 	SaidAt    string `json:"said_at"`
+}
+
+type conversationDTO struct {
+	ID string `json:"id"`
+	// ProjectID is the project it most recently belonged to, empty when it never
+	// reached one. Omitted rather than sent empty, so a client cannot render
+	// "project: " for a conversation that genuinely had none.
+	ProjectID string `json:"project_id,omitempty"`
+	Turns     int    `json:"turns"`
+	// Opening is the first thing the person said — what they came to do, in
+	// their words. There is no title: see conversation.Summary.
+	Opening   string `json:"opening,omitempty"`
+	StartedAt string `json:"started_at"`
+	LastAt    string `json:"last_at"`
+}
+
+// List handles GET /v1/conversations — this person's conversations, newest
+// activity first.
+//
+// Scoped to the caller and not parameterised by owner. There is deliberately no
+// way to ask for somebody else's: the id is taken from the session, so the
+// question "whose?" has exactly one answer this endpoint can give.
+func (h *ConversationHandlers) List(w http.ResponseWriter, r *http.Request) {
+	user, _ := UserFrom(r.Context())
+
+	items, err := h.svc.List(r.Context(), user.ID)
+	if err != nil {
+		WriteError(w, r, h.deps.Log, err)
+		return
+	}
+	out := make([]conversationDTO, 0, len(items))
+	for i := range items {
+		c := items[i]
+		out = append(out, conversationDTO{
+			ID: c.ID, ProjectID: c.ProjectID, Turns: c.Turns, Opening: c.Opening,
+			StartedAt: c.StartedAt.UTC().Format(time.RFC3339),
+			LastAt:    c.LastAt.UTC().Format(time.RFC3339),
+		})
+	}
+	// A plain empty array for somebody with no history, not null: a client that
+	// has to tell "none" from "the field is missing" will eventually get it
+	// wrong, and "you have no conversations" is a true and ordinary answer.
+	WriteJSON(w, http.StatusOK, map[string]any{"conversations": out})
 }
 
 // Get handles GET /v1/conversations/{id} — the record, in order.

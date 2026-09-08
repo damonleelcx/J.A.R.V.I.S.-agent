@@ -516,3 +516,127 @@ func TestTheSchemaAndTheCodeAgreeAboutTimings(t *testing.T) {
 		}
 	})
 }
+
+// Listing is what makes a durable record reachable.
+//
+// Every turn was already kept, and the only route back to one was a key in a
+// single browser's localStorage: the workbench remembered the LAST conversation
+// and nothing could ask for the others. A new browser, a new profile or a closed
+// private window reached none of them while every turn sat in the table. So this
+// asserts the properties a list has to have to be that route — ordering, the
+// counts, the opening line, and the boundary.
+func TestListingBringsBackEveryConversationNewestFirst(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	older, err := h.svc.Resolve(ctx, "", h.a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.say(t, older, h.a, conversation.RoleHuman, "a 24mm washer, 3mm thick")
+	h.say(t, older, h.a, conversation.RoleForge, "Proposing a washer.")
+
+	// Time has to move, or "most recently active first" is unordered and the
+	// assertion below would pass on a coin toss.
+	h.clk.Advance(time.Hour)
+
+	newer, err := h.svc.Resolve(ctx, "", h.a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.say(t, newer, h.a, conversation.RoleHuman, "a bracket for a sports car")
+
+	got, err := h.svc.List(ctx, h.a)
+	if err != nil {
+		t.Fatalf("listing failed: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("two conversations were had and %d came back", len(got))
+	}
+	if got[0].ID != newer || got[1].ID != older {
+		t.Errorf("listed oldest-first (%s then %s). A history page that opens on the "+
+			"oldest thread buries the one the person was just in.", got[0].ID, got[1].ID)
+	}
+	if got[0].Turns != 1 || got[1].Turns != 2 {
+		t.Errorf("turn counts came back %d and %d, wanted 1 and 2", got[0].Turns, got[1].Turns)
+	}
+	// The opening is the FIRST thing the person said, and it is the only label a
+	// conversation has. Taking any other turn would title a thread with the
+	// middle of it.
+	if got[1].Opening != "a 24mm washer, 3mm thick" {
+		t.Errorf("the opening line is %q, wanted the first thing the person said", got[1].Opening)
+	}
+	if got[0].StartedAt.IsZero() || got[0].LastAt.IsZero() {
+		t.Error("a conversation came back with no times, so a list cannot say when it happened")
+	}
+}
+
+// A listing is one person's, and empty is a real answer.
+//
+// The same boundary as History and Forget, checked separately because it is a
+// different query — a filter only applies where somebody remembered to write it,
+// and this one is the query that would hand somebody the index of everything
+// another account has ever discussed.
+func TestAListingIsOnlyItsOwners(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	conv, err := h.svc.Resolve(ctx, "", h.a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.say(t, conv, h.a, conversation.RoleHuman, "a 24mm washer")
+
+	other, err := h.svc.List(ctx, h.b)
+	if err != nil {
+		t.Fatalf("listing for somebody with no history is a normal question: %v", err)
+	}
+	if len(other) != 0 {
+		t.Fatalf("account B was handed %d of account A's conversations", len(other))
+	}
+
+	mine, err := h.svc.List(ctx, h.a)
+	if err != nil || len(mine) != 1 {
+		t.Fatalf("account A could not see its own conversation: %v, %d", err, len(mine))
+	}
+
+	// Nobody is not somebody with an empty history.
+	if _, err := h.svc.List(ctx, ""); err == nil {
+		t.Error("listing with no owner returned a list. An empty answer to an unowned " +
+			"question reads as 'you have no conversations' rather than as a refusal.")
+	} else if errs.CodeOf(err) != errs.CodeValidationFailed {
+		t.Errorf("listing with no owner failed with %s, wanted a validation failure", errs.CodeOf(err))
+	}
+}
+
+// A conversation that never reached a project still lists, and says so.
+//
+// A project is created by the first thing worth keeping, not by the first
+// sentence, so early turns carry no project at all. The summary takes the LAST
+// turn that had one: reading the first would file nearly every conversation
+// under "no project", which is the shape of a list where nothing is grouped.
+func TestAConversationTakesTheProjectItEndedIn(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	conv, err := h.svc.Resolve(ctx, "", h.a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	h.say(t, conv, h.a, conversation.RoleHuman, "something for a car")
+
+	got, err := h.svc.List(ctx, h.a)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("wanted one conversation, got %d", len(got))
+	}
+	if got[0].ProjectID != "" {
+		t.Errorf("a conversation with no project reported %q; a list that invents one "+
+			"groups threads under a project they were never in", got[0].ProjectID)
+	}
+	if got[0].Turns != 1 {
+		t.Errorf("turn count %d, wanted 1", got[0].Turns)
+	}
+}

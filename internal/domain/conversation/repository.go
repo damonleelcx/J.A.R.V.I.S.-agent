@@ -139,6 +139,72 @@ func (r *Repository) List(ctx context.Context, q db.Querier, conversationID, own
 	return out, nil
 }
 
+// Summaries returns this owner's conversations, most recently active first.
+//
+// # Why one query rather than a list plus a lookup per conversation
+//
+// The obvious shape — select the distinct ids, then fetch each one's first line
+// — is a query per conversation on a page that exists to show many of them.
+// Grouping and a lateral do it in one round trip, and the lateral is what makes
+// "the FIRST thing the person said" expressible at all: an aggregate can give
+// the min or the max of a column, not the value of a different column at the
+// row where the sequence is lowest.
+//
+// The project is taken from the LAST turn that had one, because a conversation
+// starts before its project exists (see the schema note on project_id). Reading
+// the first turn's project would file nearly every conversation under none.
+func (r *Repository) Summaries(ctx context.Context, q db.Querier, ownerID string, limit int) ([]Summary, error) {
+	const op = "conversation.Repository.Summaries"
+
+	rows, err := q.Query(ctx, `
+		select c.conversation_id,
+		       coalesce(c.project_id, '') as project_id,
+		       c.turns,
+		       coalesce(o.text, '') as opening,
+		       c.started_at,
+		       c.last_at
+		from (
+			select conversation_id,
+			       count(*) as turns,
+			       min(said_at) as started_at,
+			       max(said_at) as last_at,
+			       (array_agg(project_id order by seq desc)
+			            filter (where project_id is not null))[1] as project_id
+			from forge_conversation_turns
+			where owner_id = $1
+			group by conversation_id
+		) c
+		left join lateral (
+			select t.text
+			from forge_conversation_turns t
+			where t.conversation_id = c.conversation_id
+			  and t.owner_id = $1
+			  and t.role = 'human'
+			order by t.seq
+			limit 1
+		) o on true
+		order by c.last_at desc
+		limit $2`, ownerID, limit)
+	if err != nil {
+		return nil, errs.Wrap(op, errs.CodeDatabaseUnavail, err)
+	}
+	defer rows.Close()
+
+	out := []Summary{}
+	for rows.Next() {
+		var c Summary
+		if err := rows.Scan(&c.ID, &c.ProjectID, &c.Turns, &c.Opening,
+			&c.StartedAt, &c.LastAt); err != nil {
+			return nil, errs.Wrap(op, errs.CodeDatabaseUnavail, err)
+		}
+		out = append(out, c)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, errs.Wrap(op, errs.CodeDatabaseUnavail, err)
+	}
+	return out, nil
+}
+
 // Recent returns the last `limit` turns in order, and how many there are in all.
 //
 // # Why the total comes back with them

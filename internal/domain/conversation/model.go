@@ -81,6 +81,39 @@ type Turn struct {
 	Timing *Timing
 }
 
+// Summary is one conversation seen from the outside, for a list of them.
+//
+// # Why this is derived and not stored
+//
+// A conversation still has no row of its own, and this does not give it one.
+// Every field here is computed from the turns at read time, so there is nothing
+// that can drift out of step with what was actually said — the same reasoning
+// that kept a conversations table out of this package in the first place.
+//
+// # Why Opening rather than a title
+//
+// A conversation has no title and giving it one would mean either asking a
+// person to name every thread they start, or asking a model to, which files a
+// guess in the permanent record. The first thing the person actually said is
+// the closest honest stand-in: it is what they came to do, in their words, and
+// it costs nothing to keep true because it is read back rather than written.
+type Summary struct {
+	ID string
+	// ProjectID is the project the conversation most recently belonged to, and
+	// empty when it never reached one. Taken from the LAST turn that had a
+	// project rather than the first: a conversation begins before its project
+	// exists, so the first turns carry none, and reporting that emptiness as
+	// the conversation's project would file every thread under "no project".
+	ProjectID string
+	// Turns is how many things were said, both halves counted.
+	Turns int
+	// Opening is the first thing the person said, trimmed for a list. Empty
+	// when the conversation somehow opens with FORGE.
+	Opening   string
+	StartedAt time.Time
+	LastAt    time.Time
+}
+
 // Timing is the server's measurement of one FORGE turn (PRD NFR-05, AUD-02).
 //
 // # Why every field is a pointer

@@ -286,6 +286,46 @@
    * address bar carries the project rather than a one-shot instruction to
    * abandon whatever conversation the recipient was in.
    */
+  /* Reopen a named conversation (from the console's Conversations panel).
+   *
+   * # Why this exists
+   *
+   * The workbench remembered exactly ONE conversation, in localStorage, so
+   * history was durable on the server and reachable only from the browser that
+   * happened to have the key. A new browser, a new profile or a closed private
+   * window reached none of it. This is the way back in: the console lists what
+   * the server holds and links here with the id.
+   *
+   * # Why it writes the key rather than loading directly
+   *
+   * restoreConversation() already reads that key, checks ownership through the
+   * server and paints the transcript. Loading here as well would be a second
+   * copy of that logic, and the two would drift. So this only decides WHICH
+   * conversation is current and lets the existing path do the rest — including
+   * the 404 case, where a conversation that is not this person's forgets the key
+   * instead of showing anything.
+   *
+   * Runs BEFORE restoreConversation, or the page would paint the remembered
+   * conversation and then swap, which reads as opening the wrong one.
+   *
+   * The parameter is stripped afterwards so a refresh does not re-open it over
+   * whatever the person has moved on to. */
+  function openConversationFromURL() {
+    var wanted = null;
+    try {
+      wanted = new URLSearchParams(window.location.search).get('conversation');
+    } catch (e) { return; }
+    if (!wanted) return;
+
+    try { window.localStorage.setItem(CONV_KEY, wanted); } catch (e) { /* not fatal */ }
+    state.conversationID = wanted;
+    try {
+      var url = new URL(window.location.href);
+      url.searchParams.delete('conversation');
+      window.history.replaceState({}, '', url.pathname + (url.search || ''));
+    } catch (e) { /* an address bar that keeps the parameter is not worth failing over */ }
+  }
+
   function switchProjectFromURL() {
     var wanted = null;
     try {
@@ -2586,6 +2626,9 @@
      * in force by the time the panels restore rather than being applied over
      * the top of the previous project's state. */
     safely('switch', switchProjectFromURL);
+    /* After the project switch — which forgets the conversation key when the
+     * project changes — and before the restore that reads it. */
+    safely('open-conversation', openConversationFromURL);
     safely('industry', startIndustry);
     safely('voice', initVoice);
     safely('controls', initControls);

@@ -1045,6 +1045,13 @@ const pageTemplates = `
          somebody opening this page has. -->
     <div class="card"><h2>Your projects</h2><div id="projects"><div class="spin">Loading…</div></div></div>
     <div class="card"><h2>Waiting for you</h2><div id="approvals"><div class="spin">Loading…</div></div></div>
+    <!-- Conversations and artifacts, because until these existed the console
+         answered "what work is running" and could not answer "what have I
+         done". Every turn was durable and reachable only through a key in one
+         browser's localStorage, so a new browser or a closed private window
+         reached none of it. See docs/bugfix/2026-09-08-history-was-unreachable.md -->
+    <div class="card"><h2>Conversations</h2><div id="conversations"><div class="spin">Loading…</div></div></div>
+    <div class="card"><h2>Artifacts</h2><div id="artifacts"><div class="spin">Loading…</div></div></div>
     <div class="card"><h2>Goals</h2><div id="goals"><div class="spin">Loading…</div></div></div>
   </div>
   <div id="detail" class="hidden"></div>
