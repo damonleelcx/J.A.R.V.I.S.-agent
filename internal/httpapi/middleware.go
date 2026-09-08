@@ -164,8 +164,35 @@ func SecurityHeaders(isProduction bool) Middleware {
 			// No third-party origins are used, so the policy can be maximally
 			// restrictive. 'unsafe-inline' for styles only, because the console
 			// ships one inline stylesheet rather than a separate asset request.
+			//
+			// ‼️ media-src MUST be stated, and must allow blob: and data:.
+			//
+			// FORGE's own voice is fetched from /v1/speech as bytes and played
+			// through a blob: URL; the one-time autoplay unlock is a data: URL.
+			// Neither is an "origin" in the sense default-src understands, so
+			// with no media-src the fallback to default-src 'self' BLOCKS BOTH
+			// — before any decoder sees them.
+			//
+			// That is not a theoretical hardening note. It shipped, and it cost
+			// a long investigation: the browser reported MEDIA_ERR code 4, which
+			// reads as "this file will not decode", so the audio itself was
+			// blamed. The vendor's MP3 was frame-walked and found well formed,
+			// the handler was shown to write every byte to the socket, the
+			// ingress was shown to deliver large bodies byte-identically, and
+			// that exact file was played successfully in another browser tab.
+			// Every layer was sound. The blocked load left NO server-side trace
+			// at all — only a console line in the one browser affected.
+			//
+			// jobs.heros-agent.space plays the same vendor's audio, from the
+			// same account and the same voice, because it sets no CSP at all.
+			//
+			// So: adding a media source that is not 'self' — a CDN, a vendor
+			// streaming URL — needs a new entry HERE, and the symptom if you
+			// forget will again look like broken audio rather than policy.
+			// See docs/bugfix/2026-09-08-she-said-every-reply-twice.md
 			h.Set("Content-Security-Policy",
-				"default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; "+
+				"default-src 'self'; img-src 'self' data:; media-src 'self' blob: data:; "+
+					"style-src 'self' 'unsafe-inline'; "+
 					"script-src 'self'; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 			if isProduction {
 				h.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")

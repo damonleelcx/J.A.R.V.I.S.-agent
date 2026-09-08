@@ -5,9 +5,9 @@ voice response twice", alongside the banner *"Using the browser's voice instead
 of FORGE's: this browser could not decode the audio (audio/mpeg)"*.
 **Severity:** high on the voice path — every spoken reply was read twice, for as
 long as her own voice was failing to decode.
-**Status:** fixed. The decode failure underneath it is a **separate, still-open**
-defect, but the server side of it has been excluded with evidence — see "What
-this does NOT fix" below.
+**Status:** fixed. The failure underneath it — her voice being blocked — was
+also found and fixed: see
+`docs/bugfix/2026-09-08-csp-blocked-her-own-voice.md`.
 
 ## What happened
 
@@ -89,61 +89,44 @@ working copy produces failures indistinguishable from real ones.
 The third case asserts the happy path: audio that plays must not reach the
 browser voice at all.
 
-## What this does NOT fix
+## What triggered it: the block underneath
 
-The reason her own voice fell back in the first place — the browser refusing to
-decode the audio — is **still open**. This change only makes that failure
-produce one voice instead of two, with an accurate reason.
+The decode failure that made her fall back at all was **CSP**, not audio: the
+policy stated no `media-src`, so the `blob:` URL her voice is played through
+inherited `default-src 'self'` and was blocked before any decoder saw it. The
+browser reports that as `MEDIA_ERR_SRC_NOT_SUPPORTED` — the same code as an
+unplayable file — which is why it read as a codec problem.
 
-### What was ruled out, with evidence
+Root cause and the full investigation:
+`docs/bugfix/2026-09-08-csp-blocked-her-own-voice.md`.
 
-The first hypothesis was that the endpoint *labels* rather than *verifies*:
-`SpeakMP3` defaults to `ct = "audio/mpeg"` when the vendor sends no
-`Content-Type`, so PCM under a missing content type would be served as MP3 and
-produce exactly this symptom. **That hypothesis is wrong.** Probed against the
-live vendor with the deployment's own key, voice and backbone:
+That matters here because it is what made the doubling reachable at all. Until
+`/v1/speech` started failing in the browser, the second handler never ran and
+this bug could not fire.
 
-```
-HTTP 200   bytes=200201
-vendor Content-Type: audio/mpeg          <- sent by Fish, not defaulted by us
-first 16 bytes: ff fb 90 c4 00 00 ...    <- MPEG-1 Layer III frame sync
-```
+## The message now diagnoses itself
 
-and walking every frame rather than trusting the first:
+`"could not decode the audio (audio/mpeg)"` was true and useless. It reported
+the content type — which was never in doubt — and not the size, which nobody
+could see. It cost a full investigation that excluded four subsystems and
+narrowed nothing.
 
-```
-frames parsed: 479      stray/unparsed bytes: 0
-bitrates: [128] kbps    sample rates: [44100] Hz
-duration: 12.51 s       VERDICT: well-formed MP3 end to end
-```
+`describeWire()` now reports the three things that can actually be wrong, and
+what separates them:
 
-The production log agrees the handler passed real audio through:
+| Failure | What names it |
+|---|---|
+| truncation | `1024 bytes received of 147956 declared — TRUNCATED` |
+| empty body | `the server sent no audio (…, 0 bytes …)` — its own message, because an empty body reaches the element as an unopenable source and reports as a *decode* failure, sending the reader after a codec problem that is not there |
+| wrong container | `header said …` when the declared type and the blob disagree |
+| decoder refusal | `media error 3 DECODE` vs `4 SRC_NOT_SUPPORTED` — 3 means the decoder got the bytes and choked; 4 means it would not accept the source at all |
 
-```
-forge.tts.spoke  provider=fish  chars=65  bytes=157987  content_type=audio/mpeg
-```
+A body with no `Content-Length` is called out as chunked rather than compared
+against nothing, so "no declared length" cannot read as "matched".
 
-So the server side is **proven correct**: the vendor returns a well-formed MP3,
-declares `audio/mpeg` itself, and the handler writes those bytes unmodified.
-Nothing here needs changing, and the `ct` default is not implicated.
-
-### What is left
-
-The failure is in the browser, not in what is served. The reporting browser had
-a Chrome update pending ("Finish update" in the toolbar) and was in an Incognito
-window; a Chrome that has updated in place can lose its bundled media decoders
-until it is relaunched, which surfaces as `MEDIA_ERR_SRC_NOT_SUPPORTED` on
-formats it otherwise plays. That is a suspicion, not a finding — it has not been
-reproduced.
-
-Next step is to relaunch the browser and retry. If it still refuses, the thing
-to capture is the `audio.error.code` and `networkState` on the failing element,
-since the server side is now excluded.
-
-One incidental oddity worth noting for later: 12.51 s of audio for a 65-character
-sentence is roughly three times longer than the words take to say, and the file
-begins with a long run of zero bytes. Fish appears to pad heavily. It is not the
-cause of this bug and is not addressed here.
+`jobs` guards with `if (!blob.size) return false;` and falls back silently.
+FORGE names it instead: an empty body is a fault worth seeing, not a condition
+to swallow.
 
 ## Also fixed here: the speech rate never reached playback
 

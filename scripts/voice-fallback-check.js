@@ -58,6 +58,11 @@ function stubAudio(order) {
     this.play = () => {
       const err = new Error('no supported source');
       err.name = 'NotSupportedError';
+      /* A real element populates .error before firing onerror. The stub must
+       * too, or the fence silently stops covering the media-error code — the
+       * field that separates "the decoder choked" (3) from "the source was
+       * refused outright" (4). */
+      this.error = { code: 4 };
       if (order === 'error-first') {
         if (this.onerror) this.onerror();
         return Promise.reject(err);
@@ -70,12 +75,23 @@ function stubAudio(order) {
   };
 }
 
+/* A response shaped like the real one: a body with a SIZE, and headers the
+ * diagnostics read. A stub blob with no `size` would trip the empty-body guard
+ * and quietly test a different path than the one named. */
+function okResponse(size, declared, ctype) {
+  const headers = { get: (k) => ({
+    'content-type': ctype || 'audio/mpeg',
+    'content-length': declared === undefined ? String(size) : declared,
+    'content-encoding': null
+  })[String(k).toLowerCase()] };
+  return { ok: true, headers,
+           blob: () => Promise.resolve({ type: ctype || 'audio/mpeg', size }) };
+}
+
 function run(label, order, expectSpoken, expectDone) {
   spokenLocally = [];
   stubAudio(order);
-  g.fetch = () => Promise.resolve({
-    ok: true, blob: () => Promise.resolve({ type: 'audio/mpeg' })
-  });
+  g.fetch = () => Promise.resolve(okResponse(147956));
 
   const v = new V({});
   let doneCalls = 0;
@@ -106,7 +122,7 @@ function run(label, order, expectSpoken, expectDone) {
     element = this;
     this.play = () => { if (this.onplay) this.onplay(); return Promise.resolve(); };
   };
-  g.fetch = () => Promise.resolve({ ok: true, blob: () => Promise.resolve({ type: 'audio/mpeg' }) });
+  g.fetch = () => Promise.resolve(okResponse(147956));
   const v = new V({});
   v.rate = 1.5;
   v.speak('Hello.', () => {});
@@ -127,6 +143,50 @@ function run(label, order, expectSpoken, expectDone) {
     console.log('        the rate never reached playback: check it is not being assigned to `rate`');
   }
   results.push(!!rated);
+
+  /* An empty body reaches the element as an unopenable source and reports as a
+   * decode failure, which sends the reader after a codec problem that is not
+   * there. It must be named for what it is, and still fall back exactly once. */
+  console.log('--- an empty body must be reported as empty, not as a decode failure ---');
+  spokenLocally = [];
+  let reason = '';
+  stubAudio('error-first');
+  g.fetch = () => Promise.resolve(okResponse(0));
+  const v2 = new V({ onError: (m) => { reason = m; } });
+  v2.speak('Hello.', () => {});
+  await new Promise(r => setTimeout(r, 60));
+  const named = /no audio/.test(reason) && /0 bytes/.test(reason);
+  const once = spokenLocally.length === 1;
+  console.log(`  ${named && once ? 'PASS' : 'FAIL'}  ${'empty body named, spoken once'.padEnd(38)} spoken=${spokenLocally.length} (want 1)`);
+  console.log(`        reason: ${reason || '(none)'}`);
+  results.push(named && once);
+
+  /* Truncation is the failure the old message could not distinguish from a
+   * codec problem, so the diagnosis must say so in words. */
+  console.log('--- a short body must be called TRUNCATED ---');
+  spokenLocally = []; reason = '';
+  stubAudio('error-first');
+  g.fetch = () => Promise.resolve(okResponse(1024, '147956'));
+  const v3 = new V({ onError: (m) => { reason = m; } });
+  v3.speak('Hello.', () => {});
+  await new Promise(r => setTimeout(r, 60));
+  const flagged = /TRUNCATED/.test(reason) && /1024 bytes received of 147956/.test(reason);
+  console.log(`  ${flagged ? 'PASS' : 'FAIL'}  ${'short body flagged as truncated'.padEnd(38)}`);
+  console.log(`        reason: ${reason || '(none)'}`);
+  results.push(flagged);
+
+  /* The media error code must survive into the message. */
+  console.log('--- the media error code must reach the message ---');
+  spokenLocally = []; reason = '';
+  stubAudio('error-first');
+  g.fetch = () => Promise.resolve(okResponse(147956));
+  const v4 = new V({ onError: (m) => { reason = m; } });
+  v4.speak('Hello.', () => {});
+  await new Promise(r => setTimeout(r, 60));
+  const coded = /media error 4 SRC_NOT_SUPPORTED/.test(reason);
+  console.log(`  ${coded ? 'PASS' : 'FAIL'}  ${'media error 4 named in the reason'.padEnd(38)}`);
+  console.log(`        reason: ${reason || '(none)'}`);
+  results.push(coded);
 
   const failed = results.filter(x => !x).length;
   console.log(failed === 0 ? '\nONE FAILURE, ONE FALLBACK' : `\n${failed} CASE(S) WRONG`);
