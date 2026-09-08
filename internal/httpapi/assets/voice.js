@@ -341,6 +341,38 @@
     var ctl = new AbortController();
     this._remoteAbort = ctl;
 
+    /* ‼️ One failed load fires TWO handlers, and each used to fall back.
+     *
+     * A media element whose source will not decode fires `error` on the element
+     * AND rejects the play() promise with NotSupportedError — both, for one
+     * file. Each path called _speakLocal, so the browser voice read the whole
+     * reply twice, while _fellBack's own latch still showed a single banner:
+     * the symptom people reported was "she repeats herself", with nothing on
+     * screen to connect it to the audio failure that caused it.
+     *
+     * Measured in Chrome against an undecodable blob typed audio/mpeg:
+     *   ['onerror', 'play-rejected:NotSupportedError']  — two, every time.
+     *
+     * So the fallback is latched per utterance: the FIRST path to fail owns it
+     * and owns the reason, and any later path is the same failure seen a second
+     * time. Note this is a DIFFERENT latch from `remoteVoice`, which spans the
+     * page — this one spans one utterance, so an autoplay refusal can still
+     * decline to disable her voice for the rest of the session.
+     *
+     * See docs/bugfix/2026-09-08-she-said-every-reply-twice.md
+     * Fence: scripts/echo-guard-check.js (single-fallback rule). */
+    var handled = false;
+    var url = null;
+    var failOver = function (why, latch) {
+      if (handled) return;
+      handled = true;
+      if (url) { URL.revokeObjectURL(url); url = null; }
+      self._audio = null;
+      if (latch) self.remoteVoice = false;
+      self._fellBack(why);
+      self._speakLocal(text, onDone);
+    };
+
     global.fetch('/v1/speech', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -351,13 +383,20 @@
       if (!r.ok) throw new Error('speech ' + r.status);
       return r.blob();
     }).then(function (blob) {
-      var url = URL.createObjectURL(blob);
+      url = URL.createObjectURL(blob);
       var audio = new Audio(url);
-      audio.rate = self.rate;
+      /* playbackRate, not rate. `rate` is the SpeechSynthesisUtterance spelling
+       * and it is not a property of a media element, so assigning it merely
+       * added a stray field to the object and the chosen speech rate was
+       * silently ignored on this path — she read at 1.0 whatever the setting
+       * said, while the browser-voice path honoured it. Nothing errored, which
+       * is why it survived: a typo'd property on a JS object is not a fault.
+       * Fenced by scripts/voice-fallback-check.js. */
+      audio.playbackRate = self.rate;
       self._audio = audio;
 
       var done = function () {
-        URL.revokeObjectURL(url);
+        if (url) { URL.revokeObjectURL(url); url = null; }
         self.speaking = false;
         self._audio = null;
         self._doneSpeaking();
@@ -370,12 +409,8 @@
         /* The bytes arrived and would not decode. That is this path failing,
          * not the vendor, so it falls back — and latches, because a file the
          * browser cannot decode will not decode next time either. */
-        URL.revokeObjectURL(url);
-        self._audio = null;
-        self.remoteVoice = false;
-        self._fellBack('this browser could not decode the audio (' +
-          (blob && blob.type ? blob.type : 'unknown type') + ')');
-        self._speakLocal(text, onDone);
+        failOver('this browser could not decode the audio (' +
+          (blob && blob.type ? blob.type : 'unknown type') + ')', true);
       };
       audio.play().catch(function (err) {
         /* ‼️ An autoplay refusal is NOT a vendor failure and must not latch.
@@ -389,27 +424,20 @@
          *
          * So this falls back for THIS utterance only and tries again on the
          * next, by which time a gesture has almost certainly happened. */
-        URL.revokeObjectURL(url);
-        self._audio = null;
         if (err && err.name === 'NotAllowedError') {
-          self._fellBack('the browser blocked audio until you interact with the page — ' +
-            'click anywhere and she will use her own voice from the next reply');
-          self._speakLocal(text, onDone);
+          failOver('the browser blocked audio until you interact with the page — ' +
+            'click anywhere and she will use her own voice from the next reply', false);
           return;
         }
-        self.remoteVoice = false;
-        self._fellBack('playback failed: ' + (err && err.name ? err.name : 'unknown') +
-          (err && err.message ? ' — ' + err.message : ''));
-        self._speakLocal(text, onDone);
+        failOver('playback failed: ' + (err && err.name ? err.name : 'unknown') +
+          (err && err.message ? ' — ' + err.message : ''), true);
       });
     }).catch(function (err) {
       if (err && err.name === 'AbortError') return;   // interrupted, not failed
-      self._fellBack('could not fetch her voice: ' +
-        (err && err.message ? err.message : 'request failed'));
-      /* Remembered, so a deployment with no vendor pays one request per page
+      /* Latched, so a deployment with no vendor pays one request per page
        * rather than one per utterance. */
-      self.remoteVoice = false;
-      self._speakLocal(text, onDone);
+      failOver('could not fetch her voice: ' +
+        (err && err.message ? err.message : 'request failed'), true);
     });
   };
 
