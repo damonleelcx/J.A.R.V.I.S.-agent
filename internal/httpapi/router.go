@@ -248,6 +248,9 @@ func NewRouter(d Deps) http.Handler {
 	// creates, through the disposition endpoint above.
 	mux.Handle("POST /v1/geometry/{id}/adopt", authed(geo.Adopt))
 	mux.Handle("POST /v1/geometry/{id}/respec", authed(geo.Respec))
+	// The built solid's surface, so the viewport can draw what the kernel makes
+	// rather than the primitives it was assembled from.
+	mux.Handle("GET /v1/geometry/{id}/mesh", authed(geo.Mesh))
 	mux.Handle("GET /v1/geometry/{id}/export", authed(geo.Export))
 	mux.Handle("GET /v1/geometry/{id}/export/label", authed(geo.ExportLabel))
 

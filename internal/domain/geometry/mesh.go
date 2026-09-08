@@ -257,6 +257,21 @@ func partTriangles(p Part, unit Unit, infer func(string, ...any)) ([]Triangle, *
 			sizeOr(p, "height", 1, unit, infer),
 			sizeOr(p, "depth", 1, unit, infer)), nil
 
+	case "section":
+		// A drawing with no thickness, so a mesh file has nothing to put in it.
+		//
+		// Named and skipped rather than exported as a bounding box like the
+		// default below: a section is not a shape this exporter failed to
+		// understand, it is one that correctly has no volume. STL and OBJ carry
+		// solids, and a 1 mm cube standing in for a station would put a body in
+		// the file that the design does not contain.
+		//
+		// The blended solid a loft makes IS exportable — through STEP, which the
+		// kernel writes. That is where a lofted hull comes out.
+		infer("%s: a section is an outline with no thickness, so it is not in this mesh file. "+
+			"The solid its loft blends is in the parametric export.", p.Label())
+		return nil, nil
+
 	case "extrusion":
 		return extrusion(p, sizeOr(p, "depth", 1, unit, infer), unit, infer)
 

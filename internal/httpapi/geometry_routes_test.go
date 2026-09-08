@@ -32,6 +32,10 @@ func TestAPI_EveryGeometryRouteIsMountedAndRequiresASession(t *testing.T) {
 		// a conversation turn, and "show me this with an 80 mm plate" has no
 		// door into the product at all.
 		{"POST", "/v1/geometry/geo_1/respec"},
+		// The built solid's surface. Without this route the viewport can only
+		// ever draw the primitives, and a hole stays a cylinder standing in a
+		// plate — see docs/plan-2026-09-08-solids-the-viewport-can-show.md.
+		{"GET", "/v1/geometry/geo_1/mesh"},
 		{"GET", "/v1/geometry/geo_1/export"},
 		{"GET", "/v1/geometry/geo_1/export/label"},
 	} {

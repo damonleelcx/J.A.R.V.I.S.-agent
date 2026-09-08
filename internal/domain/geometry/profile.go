@@ -186,7 +186,14 @@ func minLoopPoints(loop []Point) int {
 // One table, because "does this shape read a profile" is asked in four places
 // and a shape that is in three of them is a part that resolves, draws, and then
 // exports as a bounding box.
-var outlineShapes = map[string]bool{"extrusion": true, "revolve": true, "sweep": true}
+// outlineShapes are the shapes whose drawing is read.
+//
+// "section" is a drawing and NOTHING ELSE: a closed outline with no depth, no
+// axis and no path. It exists so a loft has something to blend between, and it
+// deliberately reuses this whole validation — arcs, holes, corner radii,
+// parameter binding, self-intersection — rather than a loft carrying its own
+// list of outlines with a second, weaker set of rules.
+var outlineShapes = map[string]bool{"extrusion": true, "revolve": true, "sweep": true, "section": true}
 
 // resolvedProfiles evaluates every outline and every sweep path, and says what
 // is wrong with them.
@@ -256,8 +263,8 @@ func (d *Document) resolvedProfiles() (map[string]outline, map[string]polyline, 
 				carries = "a path"
 			}
 			add(label, "carries %s but its shape is %q; an outline and the holes in it are "+
-				"only used when the shape is \"extrusion\", \"revolve\" or \"sweep\", and a "+
-				"path only when it is \"sweep\"", carries, p.Shape)
+				"only used when the shape is \"extrusion\", \"revolve\", \"sweep\" or "+
+				"\"section\", and a path only when it is \"sweep\"", carries, p.Shape)
 			continue
 		}
 		if shape != "sweep" && (len(p.Path) > 0 || p.PathClosed) {
