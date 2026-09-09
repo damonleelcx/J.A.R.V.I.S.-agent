@@ -796,6 +796,8 @@ func (c *Conversation) Respond(ctx context.Context, projectID string, history []
 	if err := reply.resolveEdit(current); err != nil {
 		return nil, err
 	}
+	// The same repair the streamed path does, at the same point.
+	c.repairIfFaulty(ctx, &reply)
 	return &reply, nil
 }
 

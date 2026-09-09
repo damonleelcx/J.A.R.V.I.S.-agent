@@ -545,3 +545,137 @@ func TestLiveModelDesignsATurnedPart(t *testing.T) {
 		t.Log("no revolve: the model described this with primitives and cuts, which built")
 	}
 }
+
+// TestLiveGeometryRepair asks a real model to fix geometry a real model broke.
+//
+// # Why this is live and not stubbed
+//
+// georepair_test.go fences the mechanism with a stub that returns whatever the
+// test wants. That proves the plumbing and nothing about whether a model can do
+// the job when handed the builder's own words — which is the only question the
+// feature turns on. Every fixture below is output qwen3.7-plus actually produced
+// on 2026-09-09, not something invented for a test.
+//
+// # Two cases, because the interesting half is the refusal
+//
+// A model asked to fix a fault will sometimes fix it by DELETING the thing that
+// has it. Measured: asked to correct a wheel arch, it reached zero faults by
+// removing both arches — a valid document that no longer contains the wheel
+// wells somebody had just asked for. So one case checks a fault it can genuinely
+// mend, and the other checks that it is refused when the only fix it finds is a
+// deletion.
+//
+// Skipped without FORGE_LIVE_LLM_TESTS so CI stays hermetic and free.
+func TestLiveGeometryRepair(t *testing.T) {
+	if os.Getenv("FORGE_LIVE_LLM_TESTS") == "" || os.Getenv("FORGE_LLM_API_KEY") == "" {
+		t.Skip("set FORGE_LLM_API_KEY and FORGE_LIVE_LLM_TESTS=1 to run the live geometry repair")
+	}
+	log := logx.New(logx.Options{Level: slog.LevelError, Output: os.Stderr, Service: "repair-live-test"})
+	client := llm.NewOpenAICompatible(config.LLMConfig{
+		BaseURL:        envOrDefault("FORGE_LLM_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+		APIKey:         os.Getenv("FORGE_LLM_API_KEY"),
+		Converse:       envOrDefault("FORGE_LLM_CONVERSE_MODEL", "qwen-plus"),
+		RequestTimeout: 3 * time.Minute,
+		MaxRetries:     2,
+	}, log, clock.System{})
+	conv := agent.NewConversation(client, persona.DefaultCharacter())
+
+	// A spoiler wing whose outline is a LINE. This is mendable: the fix is to
+	// add points, and adding is not deleting.
+	t.Run("mends an outline that is a line", func(t *testing.T) {
+		broken := &geometry.Document{
+			Name: "Sports Car Concept", Units: "mm",
+			Parts: []geometry.Part{
+				{ID: "chassis-body", Name: "Main Body", Shape: "box",
+					Size:     map[string]float64{"width": 1900, "height": 800, "depth": 4500},
+					Position: []float64{0, 400, 0}, Rotation: []float64{0, 0, 0}},
+				{ID: "spoiler-wing", Name: "Spoiler Wing", Shape: "sweep",
+					Profile:  []geometry.Point{{X: -400, Y: 0}, {X: 400, Y: 0}},
+					Path:     []geometry.Point{{X: 0, Y: 0}, {X: 0, Y: 120, Z: -80}},
+					Position: []float64{0, 1200, -2100}, Rotation: []float64{0, 0, 0}},
+			},
+		}
+		faults := broken.Faults()
+		if len(faults) == 0 {
+			t.Fatal("the fixture builds cleanly, so this would pass without repairing anything")
+		}
+		t.Logf("builder said: %s", faults[0].Detail)
+
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+		defer cancel()
+		fixed, changed := agent.RepairForTest(ctx, conv, broken)
+		if !changed || fixed == nil {
+			t.Fatalf("the model could not add a point to an outline. It was told: %q", faults[0].Detail)
+		}
+		if got := fixed.Faults(); len(got) > 0 {
+			t.Errorf("still faulty after repair: %s", got[0].Detail)
+		}
+		if len(fixed.Parts) != 2 {
+			t.Fatalf("the repair changed the design: 2 parts became %d", len(fixed.Parts))
+		}
+		var wing *geometry.Part
+		for i := range fixed.Parts {
+			if fixed.Parts[i].ID == "spoiler-wing" {
+				wing = &fixed.Parts[i]
+			}
+		}
+		if wing == nil {
+			t.Fatal("the wing was removed rather than mended")
+		}
+		if len(wing.Profile) < 3 {
+			t.Errorf("the wing outline still has %d point(s)", len(wing.Profile))
+		}
+		t.Logf("mended: wing outline now has %d points, %d parts, no faults",
+			len(wing.Profile), len(fixed.Parts))
+	})
+
+	// A wheel arch drawn as a hole that opens at the body's bottom edge. This is
+	// NOT mendable by moving coordinates — an arch cut from an edge is part of
+	// the outline, not a hole in it — and the model's only route to zero faults
+	// is to delete the arches. It must be refused.
+	t.Run("refuses a fix that deletes the thing", func(t *testing.T) {
+		broken := &geometry.Document{
+			Name: "Sports Car Concept", Units: "mm",
+			Parts: []geometry.Part{
+				{ID: "chassis-body", Name: "Main Body", Shape: "extrusion",
+					Size:     map[string]float64{"depth": 1900},
+					Position: []float64{0, 400, 0}, Rotation: []float64{0, 0, 90},
+					Profile: []geometry.Point{
+						{X: -2250, Y: 0}, {X: -2250, Y: 800}, {X: 2250, Y: 800}, {X: 2250, Y: 0},
+					},
+					Holes: [][]geometry.Point{
+						{{X: -1900, Y: -50}, {X: -1600, Y: -50}, {X: -1600, Y: -50}, {X: -1300, Y: 350}},
+						{{X: 1300, Y: -50}, {X: 1600, Y: -50}, {X: 1900, Y: -50}, {X: 1600, Y: 350}},
+					}},
+				{ID: "cabin", Name: "Cabin", Shape: "box",
+					Size:     map[string]float64{"width": 1600, "height": 500, "depth": 2000},
+					Position: []float64{0, 1050, -200}, Rotation: []float64{0, 0, 0}},
+			},
+		}
+		if len(broken.Faults()) == 0 {
+			t.Fatal("the fixture builds cleanly")
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+		defer cancel()
+		fixed, _ := agent.RepairForTest(ctx, conv, broken)
+
+		// Whatever it did, the arches must still be there. A repair that reaches
+		// zero faults by removing them has removed the wheel wells somebody just
+		// asked for, and FORGE would then say the wells were made.
+		var body *geometry.Part
+		for i := range fixed.Parts {
+			if fixed.Parts[i].ID == "chassis-body" {
+				body = &fixed.Parts[i]
+			}
+		}
+		if body == nil {
+			t.Fatal("the body was removed by a repair")
+		}
+		if len(body.Holes) < 2 {
+			t.Errorf("the repair deleted %d of the 2 wheel arches instead of mending them",
+				2-len(body.Holes))
+		}
+		t.Logf("body keeps %d arches; faults remaining %d (a coordinate fix cannot make an "+
+			"edge-open arch into a hole)", len(body.Holes), len(fixed.Faults()))
+	})
+}
