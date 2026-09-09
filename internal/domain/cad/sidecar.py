@@ -41,6 +41,7 @@ try:
         Box, Cylinder, Cone, Sphere, Rectangle, Plane, Location, Vector,
         Compound, Axis, Polyline, export_step, extrude, fillet, chamfer, loft,
         make_face, revolve, sweep, Transition, Line, ThreePointArc, Wire, Face,
+        import_step,
     )
 except Exception as exc:  # pragma: no cover - reported to the caller, not raised
     sys.stdout.write(json.dumps({
@@ -321,6 +322,33 @@ def _apply(op, shapes):
         shapes[op["of"]] = target
         return
 
+    if kind == "step":
+        # A solid that was built somewhere else and arrived as STEP.
+        #
+        # This is how a model-written script becomes a PART. The script runs in
+        # its own sandboxed process (script.py) and hands back STEP, which is
+        # imported here so the result is an ordinary solid: it can be cut,
+        # filleted, fused and exported exactly like a box, and everything
+        # downstream — the panel, compare, prototype_edit, the repair pass —
+        # keeps working because the document still describes parts.
+        text = solid.get("step") or ""
+        if not text:
+            raise ValueError("this part carries no STEP to import")
+        with tempfile.NamedTemporaryFile("w", suffix=".step", delete=False) as fh:
+            fh.write(text)
+            path = fh.name
+        try:
+            imported = import_step(path)
+        finally:
+            try:
+                os.unlink(path)
+            except Exception:
+                pass
+        # Returned centred as every other shape is: the caller applies the
+        # part's own position and rotation on top, so a scripted part is placed
+        # by the same rule as a box.
+        return imported
+
     if kind == "loft":
         # The target is the first station and the named parts are the rest, in
         # the order they are named. Order is the shape: the same three sections
@@ -342,7 +370,12 @@ def _apply(op, shapes):
             faces.append(found[0])
         if len(faces) < 2:
             raise ValueError("a loft needs at least two stations to blend between")
-        blended = loft(faces)
+        # ruled=False is a SMOOTH surface through every station, which is what a
+        # sculpted body means by "loft" and why lofting beats extruding. ruled
+        # joins them with straight sides, for a shape that really is faceted —
+        # a hopper, a transition duct — where a smooth blend would round corners
+        # that exist. The document says which; the default is smooth.
+        blended = loft(faces, ruled=bool(op.get("ruled")))
         # ‼️ A loft of COPLANAR stations succeeds and encloses nothing.
         #
         # A section lies in its own XY plane, so two stations offset along X or Y

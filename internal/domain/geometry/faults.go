@@ -32,11 +32,18 @@ func (d *Document) Faults() []Problem {
 		return nil
 	}
 	var out []Problem
+	// Patterns are written out first, or a feature naming a repeated part reads
+	// as naming something that does not exist and this reports a fault in a
+	// document that builds perfectly well.
+	expanded, repeatProblems := expandRepeats(*d)
+	d = &expanded
+
 	// Both producers, because a part can be missing for either reason: an
 	// outline that cannot be read, or a feature naming something that is not
 	// there. A caller that consulted one of them would be blind to half of it.
 	_, _, profileProblems := d.resolvedProfiles()
 	_, featureProblems := d.Operations()
+	profileProblems = append(profileProblems, repeatProblems...)
 	for _, p := range append(profileProblems, featureProblems...) {
 		if p.Severity == Error {
 			out = append(out, p)

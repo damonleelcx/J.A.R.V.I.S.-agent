@@ -87,7 +87,7 @@ only source of false positives — it called a 1900 x 800 x 4500 car body "gross
 too short for a sports car". Sizes are checked by measurement in `turned.go` and
 do not need an opinion.
 
-### Stage 2 — Build across turns instead of all at once
+### Stage 2 — Build across turns instead of all at once — **DONE 2026-09-09**
 
 An agent loop that decomposes a model into subsystems and builds them one at a
 time, verifying each before the next.
@@ -97,10 +97,30 @@ time, verifying each before the next.
 - `planner.go` already decomposes goals into tasks; this extends the same idea to
   geometry rather than inventing a second planner.
 
-**Done when:** part count reachable without loss is measured, against the 6–13
-that a single reply manages today.
+**Measured live: 60 parts and 4 features, all buildable, in 25 minutes** — from a
+ceiling of 6. Every pass ran the same gauntlet a single turn faces, and the
+visual check from Stage 1 did real work inside it:
 
-### Stage 3 — The model writes CAD code
+| step | what looking caught |
+|---|---|
+| 4 | "the hub flange and brake assembly are floating in the air, completely detached from the chassis rails" |
+| 5 | "the tire is floating clear of the alloy wheel" — corrected |
+| 6 | "the steering column is oriented vertically, sticking straight up" |
+| 8 | "the wiring harness is a single straight line floating in the air" |
+
+Step 3 was refused outright because it would have broken the model, and the
+eleven parts built before it survived.
+
+**One defect, found live and worth keeping:** the build loop had its own copy of
+the reply parser AND its own step prompts, and neither carried the geometry
+contract. The model answered with a schema it invented —
+`{"type":"box_beam","dimensions":{"length":4200},"position":{"x":-400}}` — and
+SEVEN OF EIGHT steps produced nothing. The failure is silent in the worst way:
+each step reports "produced no geometry" and the build finishes, so it reads as a
+model that could not do the job rather than a prompt that never asked properly.
+There is now one parser and one contract, both shared.
+
+### Stage 3 — The model writes CAD code — **DONE 2026-09-09**
 
 Instead of a JSON parts list, the model emits build123d Python, which the sidecar
 already runs.
@@ -109,25 +129,69 @@ This is the stage that changes the ceiling by orders of magnitude: loops,
 variables, real sketch-and-feature workflow, fillets on selected edges. A
 60-spoke wheel becomes a `for` loop.
 
+**Built in two halves, because the first one turned out to cover most of it.**
+
+**`repeat`** (geometry/repeat.go) is the declarative half. What a loop actually
+buys in CAD is REPETITION — variables and expressions were already here, edge
+selection by rule was already here — so a wire wheel's sixty spokes are one part
+with a `repeat`, a flange's twelve bolt holes are one part, and a feature naming
+the part acts on every copy so one `fuse` welds all sixty spokes to the hub. No
+sandbox, and everything that reads a Document keeps working.
+
+**`script`** (cad/script.py, cad/script.go) is the executed half, for what a
+pattern cannot say: an involute gear tooth, a spiral, a lattice, a profile
+sampled from a formula. Proven with a real 20-tooth involute spur gear —
+43,345 mm³ and 1.6 MB of STEP, built from the involute formula.
+
+A scripted part is an ordinary part from that point on: the script runs in its
+own process, hands back STEP, and the kernel imports it, so it can be cut,
+filleted, fused and exported like a box. The Document stays the source of truth,
+which is what keeps `prototype_edit`, compare, the panel and the repair pass
+working.
+
 **Two costs, both real and neither hidden:**
 
-1. **It executes generated code.** The sidecar today runs a fixed program over
-   data. Stage 3 makes it run text a model wrote. That is a security boundary and
-   needs an explicit decision before it is built, not after — restricted
-   builtins, no imports, no filesystem, wall-clock and memory caps, and a
-   sandbox that is argued for rather than assumed.
+1. **It executes generated code**, and that decision was taken explicitly. OFF
+   unless `FORGE_ALLOW_SCRIPTS` is set, so a deployment that cannot accept it
+   does not have the feature at all rather than half-having it.
+
+   The sandbox is two layers. An AST whitelist refuses imports, dunder
+   attributes, and every NAME not on a list, before anything runs — nine escapes
+   are tested by trying them, starting with
+   `().__class__.__bases__[0].__subclasses__()`, which is the documented way out
+   of a restricted-builtins sandbox and the reason dunders are refused by name
+   rather than by blacklisting escapes that are not enumerable. Then a stripped,
+   short-lived process: no environment (this one holds a database URL and a
+   provider key), a temporary working directory, `python -I`, and CPU, memory,
+   file-descriptor and core limits.
+
+   It is defence in depth and NOT a container, and the code says so where
+   somebody changing it will read it. **Known gap: macOS cannot set the
+   address-space limit and skips it with a warning** — the CPU limit and the
+   wall clock still apply, and Linux gets both.
 2. **Everything downstream assumes a structured document.** `prototype_edit`,
    compare, the parts panel, the repair round-trip and every fence read
    `geometry.Document`. Generated code must produce the same named parts, or
    those features stop working. The bridge is the design problem, not the
    codegen.
 
-### Stage 4 — Freeform surfaces
+### Stage 4 — Freeform surfaces — **DONE 2026-09-09**
 
-NURBS and subdivision surfaces, so a sculpted body is expressible at all.
-OpenCASCADE supports them; getting a model to author control nets does not have a
-known good answer, so this stage carries research risk the others do not, and is
-last for that reason.
+Most of this turned out to already exist, which reading the kernel showed and
+guessing would not have. OCCT lofts SMOOTHLY through sections — a surface with
+continuous curvature is what `loft` already produced — and the viewport already
+draws the kernel's real blended surface rather than an approximation of it. A car
+body is a loft through six sections and always was.
+
+What was missing was the ability to SAY which you wanted, so a loft now carries
+`ruled`: smooth by default, because that is the reason to loft at all, and
+faceted on request for a shape that really is — a hopper, a transition duct —
+where a smooth blend would round corners that exist. With guidance that a
+sculpted body wants more stations rather than fewer cleverer outlines.
+
+Beyond that, `script` reaches build123d's whole surface API — Spline, Bezier,
+make_hull, sweeps with guide rails — which is the answer to "author a control
+net" that does not require inventing a way for a model to type control points.
 
 ## What is NOT promised
 

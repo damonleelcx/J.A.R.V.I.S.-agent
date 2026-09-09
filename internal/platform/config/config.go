@@ -225,6 +225,18 @@ type CADConfig struct {
 	// Python is the interpreter. Empty means no kernel, which is the default
 	// and is not an error.
 	Python string
+	// AllowScripts lets the model write build123d and have it RUN, for shapes
+	// the vocabulary cannot say: an involute gear tooth, a spiral, a lattice.
+	//
+	// OFF by default, and that is not timidity — it is the one feature here that
+	// executes text a model produced. The sandbox is described in full in
+	// internal/domain/cad/script.go: an AST whitelist that refuses imports,
+	// dunder attributes and every name not on a list before anything runs, and a
+	// stripped short-lived process with no environment, a temporary working
+	// directory and hard CPU and memory limits. It is defence in depth and not a
+	// container, and a deployment that cannot accept that should leave this
+	// unset — the feature then does not exist rather than half-existing.
+	AllowScripts bool
 }
 
 type SecurityConfig struct {
@@ -703,7 +715,10 @@ func Load(required ...Section) (*Config, []string, error) {
 	// product. That is the same discipline the vision model follows — an absent
 	// capability that says it is absent, rather than one that quietly
 	// substitutes something else.
-	cfg.CAD = CADConfig{Python: strings.TrimSpace(l.str("FORGE_CAD_PYTHON", ""))}
+	cfg.CAD = CADConfig{
+		Python:       strings.TrimSpace(l.str("FORGE_CAD_PYTHON", "")),
+		AllowScripts: l.boolVal("FORGE_ALLOW_SCRIPTS", false),
+	}
 
 	cfg.TTS = TTSConfig{
 		Provider: strings.ToLower(strings.TrimSpace(l.str("FORGE_TTS_PROVIDER", ""))),
@@ -836,7 +851,8 @@ func (c *Config) Redacted() map[string]any {
 		"llm_vision":         visionForPrint(c.LLM.Vision),
 		// A path, not a secret, and printed so an operator can see at a glance
 		// whether this deployment can write a parametric file at all.
-		"cad_kernel": cadForPrint(c.CAD.Python),
+		"cad_kernel":  cadForPrint(c.CAD.Python),
+		"cad_scripts": c.CAD.AllowScripts,
 		// The speech vendor and, separately, whether its backbone may be trained
 		// on what FORGE says. FORGE_DATA_BOUNDARY answers that question for the
 		// MODEL endpoint and not for this one, so a deployment that reads

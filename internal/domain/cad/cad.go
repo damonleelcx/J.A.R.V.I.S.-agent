@@ -82,6 +82,11 @@ const startTimeout = 60 * time.Second
 type Kernel struct {
 	python string
 	log    *logx.Logger
+	// scripts says whether this deployment runs model-written build123d.
+	// OFF unless a deployment turns it on, because it is the one feature here
+	// that executes text a model produced — see script.go for what the sandbox
+	// does and does not promise.
+	scripts bool
 
 	mu      sync.Mutex
 	cmd     *exec.Cmd
@@ -99,6 +104,21 @@ type Kernel struct {
 func New(python string, log *logx.Logger) *Kernel {
 	return &Kernel{python: strings.TrimSpace(python), log: log}
 }
+
+// WithScripts turns on running model-written build123d.
+//
+// Off unless a deployment asks, and asking is a decision: it is the one feature
+// here that executes text a model produced. script.go says exactly what the
+// sandbox does — an AST whitelist refusing imports and dunder attributes before
+// anything runs, and a stripped short-lived process with no environment and hard
+// CPU and memory limits — and, just as importantly, that it is a defence in
+// depth rather than a container.
+func (k *Kernel) WithScripts(on bool) *Kernel { k.scripts = on; return k }
+
+// ScriptsEnabled reports whether this deployment runs model-written scripts, so
+// a caller can leave the vocabulary out of a prompt rather than offering
+// something that will be refused.
+func (k *Kernel) ScriptsEnabled() bool { return k != nil && k.scripts }
 
 // Available reports whether this deployment has a kernel configured.
 //
@@ -237,6 +257,28 @@ type meshPart struct {
 // which is the behaviour this kernel was chosen for — so "could not build" is a
 // normal answer and arrives as an error the caller reports, not as a dead
 // process. The kernel restarts itself on the next call if the process died.
+// scriptFor finds a part's script by id.
+func scriptFor(doc geometry.Document, id string) string {
+	for _, p := range doc.Parts {
+		if p.ID == id {
+			return p.Script
+		}
+	}
+	return ""
+}
+
+// keepBuildable drops the parts marked unbuildable above, keeping order.
+func keepBuildable(in []geometry.Solid) []geometry.Solid {
+	out := in[:0]
+	for _, s := range in {
+		if s.Shape == "" {
+			continue
+		}
+		out = append(out, s)
+	}
+	return out
+}
+
 func (k *Kernel) BuildDocument(ctx context.Context, doc geometry.Document, unit geometry.Unit, format string) (*Build, error) {
 	const op = "cad.Kernel.BuildDocument"
 	if !k.Available() {
@@ -252,6 +294,39 @@ func (k *Kernel) BuildDocument(ctx context.Context, doc geometry.Document, unit 
 				"Restate the assembly in mm, cm, m or in.")
 	}
 	solids, inferred := geometry.Solids(doc, unit)
+
+	// Scripted parts are RUN here, and only here.
+	//
+	// The geometry package describes shapes and executes nothing — putting
+	// process execution inside it would make a pure description of geometry the
+	// thing that runs model-written code. So Solids marks a scripted part as
+	// "step" with nothing in it, and this fills it in.
+	//
+	// A script that will not run leaves its part out, with the reason, exactly
+	// like an outline that cannot be read: a part missing for a stated reason is
+	// something a reader can act on, and one that silently became a box is not.
+	for i := range solids {
+		if solids[i].Shape != "step" {
+			continue
+		}
+		source := scriptFor(doc, solids[i].ID)
+		if source == "" {
+			inferred = append(inferred, fmt.Sprintf(
+				"%s is a scripted part with no script, so it is not in this file.", solids[i].Label))
+			solids[i].Shape = ""
+			continue
+		}
+		res, err := k.RunScript(ctx, source)
+		if err != nil {
+			inferred = append(inferred, fmt.Sprintf(
+				"%s: %s, so it is not in this file.", solids[i].Label, errs.DetailOf(err)))
+			solids[i].Shape = ""
+			continue
+		}
+		solids[i].STEP = res.STEP
+	}
+	solids = keepBuildable(solids)
+
 	if len(solids) == 0 {
 		return nil, errs.New(op, errs.CodeValidationFailed).
 			WithDetail("this assembly has no parts FORGE can build, so there is nothing to export")
