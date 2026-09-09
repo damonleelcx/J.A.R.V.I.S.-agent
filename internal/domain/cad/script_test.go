@@ -208,3 +208,120 @@ func TestScript_StopsOneThatWillNotFinish(t *testing.T) {
 		t.Errorf("stopped for an unclear reason: %v", err)
 	}
 }
+
+// The two imports that grant nothing are tolerated; every other one is not.
+//
+// # Why tolerate any import at all
+//
+// Every build123d example opens with `import math` and `from build123d import
+// *`, and a model writes what it has read. Measured live on the deployed site,
+// 2026-09-09: the first script FORGE produced with this path working began with
+// exactly those two lines and was refused outright — a correct gear, rejected
+// for two no-ops.
+//
+// They ARE no-ops: both namespaces are populated before the script runs. So they
+// are accepted and dropped rather than executed. Nothing else is tolerated, and
+// the cases below are the ones that must stay refused.
+func TestScript_TheHarmlessImportsAndNoOthers(t *testing.T) {
+	k := scriptKernel(t)
+
+	t.Run("the two that every example opens with", func(t *testing.T) {
+		_, err := k.RunScript(context.Background(),
+			"import math\nfrom build123d import *\nresult = Box(10, 10, 10)")
+		if err != nil && strings.Contains(err.Error(), "not allowed") {
+			t.Fatalf("a correct script was refused for two no-op imports: %v", err)
+		}
+		if err != nil && strings.Contains(err.Error(), "No module named 'build123d'") {
+			t.Skip("build123d is not installed")
+		}
+		if err != nil {
+			t.Fatalf("unexpected: %v", err)
+		}
+	})
+
+	t.Run("math is usable as a module after the tolerated import", func(t *testing.T) {
+		_, err := k.RunScript(context.Background(),
+			"import math\nresult = Box(10, 10, math.floor(10.7))")
+		if err != nil && strings.Contains(err.Error(), "not available") {
+			t.Errorf("`import math` was tolerated and then math.floor did not exist. "+
+				"Tolerating an import that leaves the name unbound is worse than refusing "+
+				"it: the script parses and then dies on the first use.\n%v", err)
+		}
+	})
+
+	for _, bad := range []string{
+		"import os\nresult = 1",
+		"import sys, math\nresult = 1",
+		"import math as m\nresult = 1",
+		"from os import environ\nresult = 1",
+		"from subprocess import run\nresult = 1",
+		"from . import x\nresult = 1",
+	} {
+		t.Run("still refused: "+strings.SplitN(bad, "\n", 2)[0], func(t *testing.T) {
+			_, err := k.RunScript(context.Background(), bad)
+			if err == nil {
+				t.Fatalf("this ran:\n%s", bad)
+			}
+			if !strings.Contains(err.Error(), "not allowed") {
+				t.Errorf("refused for the wrong reason: %v", err)
+			}
+		})
+	}
+}
+
+// build123d's own builders are available; the modules it re-exports are not.
+//
+// # The hole this closes, which was nearly opened deliberately
+//
+// The first version of the whitelist named forty builders by hand. It refused
+// `cylinder`, and a real script from the live site died on it — a hand-list is a
+// guess about what a model will reach for, and the guess is always short.
+//
+// The obvious simplification was "allow everything build123d exports". That
+// would have been a serious hole: `from build123d import *` re-exports real
+// modules, and its public namespace contains **ctypes** — arbitrary memory and
+// arbitrary code — along with copy, contextvars and colorsys.
+//
+// So the rule is build123d's OWN classes and functions (what __module__ says),
+// never a module, minus its own file access. This test is the reason to trust
+// that sentence: it tries the module by name.
+func TestScript_HasTheBuildersButNotTheModules(t *testing.T) {
+	k := scriptKernel(t)
+
+	// Refused, and this is the important half.
+	for _, name := range []string{"ctypes", "copy", "contextvars", "colorsys"} {
+		t.Run("no "+name, func(t *testing.T) {
+			_, err := k.RunScript(context.Background(), "result = "+name)
+			if err == nil {
+				t.Fatalf("a script reached %s — build123d re-exports it, and allowing "+
+					"everything build123d exports would hand a script arbitrary memory", name)
+			}
+			if !strings.Contains(err.Error(), "not available") {
+				t.Errorf("refused for the wrong reason: %v", err)
+			}
+		})
+	}
+
+	// And build123d's own file access stays out, by rule rather than by list.
+	for _, name := range []string{"import_step", "export_stl", "available_fonts"} {
+		t.Run("no "+name, func(t *testing.T) {
+			if _, err := k.RunScript(context.Background(), "result = "+name); err == nil {
+				t.Fatalf("a script reached %s. A CAD library legitimately touches files; "+
+					"a script here must not", name)
+			}
+		})
+	}
+
+	// Available, including the ones the hand-list had missed.
+	res, err := k.RunScript(context.Background(),
+		"with BuildPart() as p:\n    Cylinder(radius=10, height=5)\nresult = p")
+	if err != nil && strings.Contains(err.Error(), "No module named 'build123d'") {
+		t.Skip("build123d is not installed")
+	}
+	if err != nil {
+		t.Fatalf("a plain cylinder did not build: %v", err)
+	}
+	if res.Volume <= 0 {
+		t.Error("the cylinder has no volume")
+	}
+}

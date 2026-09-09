@@ -39,21 +39,41 @@ import sys
 import tempfile
 import traceback
 
-# What a script may name. Everything else is refused, including anything this
-# file imports for its own use: the script's namespace is built from this list,
-# not from globals().
-ALLOWED_BUILDERS = [
-    "Box", "Cylinder", "Cone", "Sphere", "Torus", "Wedge",
-    "BuildPart", "BuildSketch", "BuildLine",
-    "Line", "Polyline", "Spline", "Bezier", "RadiusArc", "CenterArc",
-    "Rectangle", "Circle", "Ellipse", "Polygon", "RegularPolygon", "Text",
-    "extrude", "revolve", "loft", "sweep", "make_face", "make_hull",
-    "fillet", "chamfer", "offset", "mirror", "split", "scale",
-    "Plane", "Axis", "Location", "Locations", "PolarLocations", "GridLocations",
-    "Rot", "Pos", "Vector", "Compound", "Part", "Sketch", "Curve",
-    "Mode", "Align", "Kind", "Side", "Keep", "SortBy", "GeomType", "Select",
-    "add", "section", "project", "trace",
-]
+# What a script may name, from build123d.
+#
+# # Why a RULE and not a hand-written list
+#
+# The first version listed forty builders by hand. It refused `cylinder` — and
+# then a real script from the live site died on it, because a hand-list is a
+# guess about what a model will reach for and the guess is always short. A
+# correct script failing for no security gain is the worst kind of refusal: it
+# teaches nobody anything and it looks like the sandbox is broken.
+#
+# # Why NOT simply "everything build123d exports"
+#
+# Because `from build123d import *` re-exports real modules. Its public
+# namespace contains ctypes, copy, contextvars and colorsys — and ctypes is a
+# direct route to arbitrary memory and arbitrary code. Handing a script the
+# whole namespace would have been a hole, and it looked like the obvious
+# simplification.
+#
+# So: build123d's OWN classes and functions, which is what __module__ says, and
+# nothing that is a module. Then minus its own file access, listed below,
+# because a CAD library legitimately reads and writes files and a script here
+# must not.
+DENIED_BUILDERS = frozenset({
+    "available_fonts", "FontManager", "brep_from_stl", "RWStl", "StlAPI_Writer",
+    "ExportSVG", "export_to_pcbway", "svgpathtools",
+})
+
+
+def _is_denied(name):
+    """build123d's own file access, refused by rule so a new one is refused too."""
+    return (name in DENIED_BUILDERS
+            or name.startswith("import_")
+            or name.startswith("export_"))
+
+
 ALLOWED_MATH = ["pi", "tau", "e", "sin", "cos", "tan", "asin", "acos", "atan",
                 "atan2", "sqrt", "hypot", "radians", "degrees", "floor", "ceil",
                 "exp", "log", "pow", "fabs"]
@@ -76,7 +96,65 @@ ALLOWED_NODES = (
     ast.Is, ast.IsNot, ast.BitAnd, ast.BitOr, ast.BitXor, ast.LShift, ast.RShift,
     ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp, ast.comprehension,
     ast.Attribute, ast.keyword, ast.Starred,
+    # The child of an Import/ImportFrom. Listed because ast.walk yields it
+    # separately from its parent, and the parent is what decides: walk is
+    # breadth-first, so a refused import raises before its alias is reached.
+    ast.alias,
 )
+
+
+def _builder_names():
+    """Every build123d name a script may use, by the rule in namespace()."""
+    try:
+        import inspect
+
+        import build123d as _b123d
+    except Exception:  # noqa: BLE001 — no kernel installed; the rule still holds
+        return set()
+    out = set()
+    for name in dir(_b123d):
+        if name.startswith("_") or _is_denied(name):
+            continue
+        value = getattr(_b123d, name)
+        if inspect.ismodule(value):
+            continue
+        if not str(getattr(value, "__module__", "") or "").startswith("build123d"):
+            continue
+        out.add(name)
+    return out
+
+
+def _tolerated_import(node):
+    """Is this one of the two imports that grant nothing?
+
+    `import math` and `from build123d import *` only. Not `import math as m`,
+    not `import sys, math`, not a relative import — those are refused like any
+    other, because the tolerance is for two exact lines and not for importing.
+    """
+    if isinstance(node, ast.Import):
+        return all(a.name == "math" and a.asname is None for a in node.names)
+    if isinstance(node, ast.ImportFrom):
+        return node.module == "build123d" and node.level == 0
+    return False
+
+
+class _DropImports(ast.NodeTransformer):
+    """Removes the tolerated imports so they are never EXECUTED.
+
+    Accepting them at parse time is not enough: exec still runs the statement,
+    and __import__ is not in the restricted builtins, so a script opening with
+    the two most ordinary lines in build123d died with "ImportError: __import__
+    not found" — refused in a way that reads as a broken sandbox rather than a
+    rule. They are no-ops by construction, both namespaces being populated
+    before the script runs, so dropping them is exactly equivalent to running
+    them and considerably safer.
+    """
+
+    def visit_Import(self, node):  # noqa: N802 — ast's naming, not ours
+        return None if _tolerated_import(node) else node
+
+    def visit_ImportFrom(self, node):  # noqa: N802
+        return None if _tolerated_import(node) else node
 
 
 class Refused(Exception):
@@ -91,10 +169,35 @@ def check(source):
         raise Refused("line %s: %s" % (exc.lineno, exc.msg))
 
     for node in ast.walk(tree):
+        # The two imports that grant NOTHING, tolerated because refusing them
+        # refuses correct scripts for no gain.
+        #
+        # Every build123d example on earth opens with them, and a model writes
+        # what it has read. Measured live 2026-09-09: the first script FORGE
+        # produced with this path working began
+        #
+        #     import math
+        #     from build123d import *
+        #
+        # and was refused outright. Both are no-ops here: the builders and the
+        # maths functions are already in the namespace before the script runs.
+        # So they are ACCEPTED AND DROPPED — never executed — and nothing else
+        # is. `import os` is still refused, and so is `from math import *` from
+        # a module that is not one of these two.
+        if _tolerated_import(node):
+            continue
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            raise Refused(
+                "line %s: importing %s is not allowed. Everything you need is already "
+                "available: build123d's builders and the maths functions are in scope "
+                "before your script runs, so no import is needed for them, and nothing "
+                "else can be reached from here."
+                % (getattr(node, "lineno", "?"),
+                   getattr(node, "module", None) or ", ".join(a.name for a in node.names)))
         if not isinstance(node, ALLOWED_NODES):
             raise Refused(
                 "line %s: %s is not allowed here. This runs a drawing, not a program: "
-                "no imports, no classes, no exceptions, no file or network access."
+                "no classes, no exceptions, no file or network access."
                 % (getattr(node, "lineno", "?"), type(node).__name__))
 
         # Dunder attributes are the documented way out of a restricted namespace:
@@ -115,7 +218,10 @@ def check(source):
     # seconds later saying "open is not defined" — true, but it reads as a bug in
     # FORGE rather than a rule, and it costs a kernel load to say. Refusing at
     # parse time is faster, total, and can name what IS available.
-    known = set(ALLOWED_BUILDERS) | set(ALLOWED_MATH) | set(ALLOWED_BUILTINS)
+    # The SAME rule the namespace uses, so a name that will exist at run time is
+    # not refused at parse time and vice versa. Two lists would drift, and the
+    # drift would show up as a correct script refused for a name it is given.
+    known = _builder_names() | set(ALLOWED_MATH) | set(ALLOWED_BUILTINS) | {"math"}
     bound = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
@@ -138,6 +244,7 @@ def check(source):
                     "knows are build123d's builders, the maths functions, and plain Python "
                     "values. There is no file, network or system access of any kind."
                     % (getattr(node, "lineno", "?"), node.id))
+    tree = ast.fix_missing_locations(_DropImports().visit(tree))
     return tree
 
 
@@ -153,18 +260,40 @@ def namespace(uses_builders):
     import math as _math
 
     ns = {}
+    # Bound as a name too, because `import math` is tolerated above and a script
+    # that writes it goes on to write math.cos. Pure arithmetic: it reaches no
+    # file, no process and no network, and its dunders are refused by the AST
+    # check like every other attribute beginning with __.
+    ns["math"] = _math
     missing = []
     if uses_builders:
-        from build123d import __dict__ as _b123d
+        import inspect
 
-        for name in ALLOWED_BUILDERS:
-            if name in _b123d:
-                ns[name] = _b123d[name]
-            else:
-                missing.append(name)
+        import build123d as _b123d
+
+        for name in dir(_b123d):
+            if name.startswith("_") or _is_denied(name):
+                continue
+            value = getattr(_b123d, name)
+            if inspect.ismodule(value):
+                continue
+            # build123d's OWN, not what it re-exports.
+            #
+            # Doubled with the ismodule check above ON PURPOSE, and a drill
+            # showed why the pair is not redundant theatre: removing EITHER
+            # leaves ctypes out (a module has no __module__, and a module is a
+            # module), but removing BOTH lets a script reach it — and the only
+            # thing left stopping it is that a module is not a solid. That is
+            # luck, not a boundary.
+            if not str(getattr(value, "__module__", "") or "").startswith("build123d"):
+                continue
+            ns[name] = value
+
+    # The maths functions, bare, so `cos(x)` works as well as `math.cos(x)`.
     for name in ALLOWED_MATH:
         if hasattr(_math, name):
             ns[name] = getattr(_math, name)
+
     builtins = {}
     for name in ALLOWED_BUILTINS:
         builtins[name] = __builtins__[name] if isinstance(__builtins__, dict) else getattr(__builtins__, name)
@@ -203,7 +332,10 @@ def main():
     try:
         uses = {n.id for n in ast.walk(tree)
                 if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)}
-        ns, missing = namespace(bool(uses & set(ALLOWED_BUILDERS)))
+        # Only load OCCT when the script actually names one of its builders:
+        # it costs seconds, and the refusals and the limits must be exercisable
+        # on a machine with no kernel installed, which is where CI runs.
+        ns, missing = namespace(bool(uses & _builder_names()))
         if missing:
             sys.stderr.write("not in this build123d: %s\n" % ", ".join(missing))
         exec(compile(tree, "<script>", "exec"), ns)  # noqa: S102 — the point of this file
