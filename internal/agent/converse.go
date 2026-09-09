@@ -258,8 +258,12 @@ About "prototype":
 - "sweep" carries the same kind of outline along a PATH instead of a straight
   line, which is where everything that BENDS comes from: a pipe run, a handrail,
   a cable tray, a wire form, a tube routed around something. Give it a "profile"
-  and a "path" — an open line of at least two points, with "x", "y" and "z" in
-  the part's own frame. It needs no "depth": the path says how far it goes.
+  — a CLOSED outline of at least THREE points, like an extrusion's — and a
+  "path", which is an OPEN line of at least two points, with "x", "y" and "z" in
+  the part's own frame. The two minimums are different because the two things
+  are: an outline has to enclose an area, and a path only has to have a
+  direction. A two-point profile is a line, it encloses nothing, and the part is
+  left out of the model. It needs no "depth": the path says how far it goes.
   The outline's own origin RIDES the path and the outline starts square to the
   first segment, so a path of two points straight up local Z is exactly an
   extrusion. Draw the outline around (0, 0) when you want the path to run down

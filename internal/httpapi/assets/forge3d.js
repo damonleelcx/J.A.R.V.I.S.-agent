@@ -1209,8 +1209,8 @@
     var s = part.size || {};
     switch (shape) {
       case 'box':      return { geo: boxGeometry(num(s.width,1), num(s.height,1), num(s.depth,1)) };
-      case 'cylinder': return { geo: cylinderGeometry(num(s.radius,0.5), num(s.height,1), TESSELLATION.radial, num(s.radius_top, num(s.radius,0.5))) };
-      case 'cone':     return { geo: cylinderGeometry(num(s.radius,0.5), num(s.height,1), TESSELLATION.radial, 0) };
+      case 'cylinder': return { geo: cylinderGeometry(num(s.radius,0.5), cylinderLength(s), TESSELLATION.radial, num(s.radius_top, num(s.radius,0.5))) };
+      case 'cone':     return { geo: cylinderGeometry(num(s.radius,0.5), cylinderLength(s), TESSELLATION.radial, 0) };
       case 'sphere':   return { geo: sphereGeometry(num(s.radius,0.5), TESSELLATION.sphereRadial) };
       case 'plane':    return { geo: planeGeometry(num(s.width,1), num(s.depth,1)) };
       case 'extrusion': return extrusionGeometry(part.profile || [], num(s.depth, 1), part.holes);
@@ -1232,6 +1232,24 @@
                         'and is drawn as a bounding box'
         };
     }
+  }
+
+  /* A cylinder's length, reading "depth" when "height" is absent.
+   *
+   * Kept in step with sizeSynonyms in internal/domain/geometry/mesh.go — a
+   * reading that happened in the exporter and not here would draw a different
+   * solid from the one in the file, which is the single worst thing this
+   * viewport can do.
+   *
+   * A model asked for a wheel wrote {"depth": 250, "radius": 350} on a cylinder.
+   * A cylinder has no "depth" in this vocabulary, so 250 can only be its length;
+   * before this it was discarded and the height defaulted to 1, which is why the
+   * sports car's wheels were ⌀700 discs a millimetre wide.
+   * Fence: TestCylinderDepthIsReadTheSameWayInBothPlaces */
+  function cylinderLength(s) {
+    if (typeof s.height === 'number' && isFinite(s.height)) return s.height;
+    if (typeof s.depth === 'number' && isFinite(s.depth)) return s.depth;
+    return 1;
   }
 
   function num(v, d) { return (typeof v === 'number' && isFinite(v)) ? v : d; }
@@ -2219,6 +2237,13 @@
 
   global.Forge3D = {
     supportedShapes: SUPPORTED,
+    /* A cylinder's length, reading "depth" when "height" is absent.
+     *
+     * Exported so the Parts panel reads it the same way the stage draws it and
+     * the exporter builds it. Before this the panel had its OWN reading and
+     * showed "⌀700 mm" with no length for a wheel the other two agreed was
+     * 250 mm long — three consumers, three answers, from one document. */
+    cylinderLength: cylinderLength,
     /* Exported so a Go fence can read it. The browser and the exporter each
      * hold a copy of the retirement table, and the failure they guard against
      * is the two disagreeing about what a retired word means — which a test

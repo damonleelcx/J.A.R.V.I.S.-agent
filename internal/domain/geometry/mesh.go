@@ -232,9 +232,58 @@ func Tessellate(doc Document, unit Unit) *Mesh {
 // file: a defaulted 1 leaves this system indistinguishable from a stated 1, and
 // there is no banner attached to a download. So every default is recorded and
 // travels with the export.
+// sizeSynonyms are keys a model writes that can only mean a key this vocabulary
+// already has, per shape.
+//
+// # Why this exists
+//
+// A cylinder is `radius` + `height`, and a model asked for a wheel wrote
+//
+//	"shape": "cylinder", "size": {"depth": 250, "radius": 350}
+//
+// A cylinder has NO "depth" in this contract, so the 250 could not mean anything
+// else — and it was thrown away, `height` defaulted to 1 mm, and the note said
+// "no height was given" while the model had plainly given one under another
+// name. Observed on all four wheels of the sports car, 2026-09-09: ⌀700 discs a
+// millimetre wide, which is why the car rendered as a slab.
+//
+// # Why a reading and not a stricter prompt
+//
+// The same reasoning dimensionrepair.go records: the model is not wrong in any
+// way a person would recognise — it named a length and put a length there — and
+// telling it more firmly which word to use makes the failure rarer without
+// making it survivable, while the cost of the failure stays "a part with an
+// invented dimension". A reading fixes the documents that already exist too.
+//
+// # Why a table and why it is per shape
+//
+// "depth" is a REAL key on a box, so this cannot be a global alias list. Only
+// entries with an observed failure behind them belong here: an alias added on a
+// hunch would silently accept a spelling nobody uses and hide the day the
+// contract genuinely changed.
+var sizeSynonyms = map[string]map[string]string{
+	"cylinder": {"depth": "height"},
+	"cone":     {"depth": "height"},
+}
+
 func sizeOr(p Part, key string, fallback float64, unit Unit, infer func(string, ...any)) float64 {
 	if v, ok := p.Size[key]; ok {
 		return v
+	}
+	// A key the model used that can only mean this one. Reported, because a
+	// dimension read from a different word is still a reading and the person is
+	// entitled to know which word FORGE acted on.
+	shape, _ := resolveShape(p.Shape, p.Label())
+	for alias, means := range sizeSynonyms[shape] {
+		if means != key {
+			continue
+		}
+		if v, ok := p.Size[alias]; ok {
+			infer("%s: %q was read as its %s (%s). A %s has no %q, so that is the only thing "+
+				"it can mean — but it is a reading, not what was written.",
+				p.Label(), alias, key, NewQuantity(v, unit), shape, alias)
+			return v
+		}
 	}
 	infer("%s: no %s was given, so %s was used. This is a number FORGE chose, not one it was told.",
 		p.Label(), key, NewQuantity(fallback, unit))
