@@ -1203,7 +1203,11 @@
         state.builtSolid = {
           triangles: b.triangles || 0,
           simplified: !!b.simplified,
-          deflection: b.deflection || 0
+          deflection: b.deflection || 0,
+          /* Why a part of this document is not in the solid on screen. Kept
+           * because the count alone cannot say it: eight parts and seven bodies
+           * looks like a rendering choice until something names the eighth. */
+          notes: (b.inferred || []).concat(b.skipped || [], b.feature_failures || [])
         };
         studio.load(proto);
         studio.setOverlays(proto.overlays || [], state.measured);
@@ -1519,6 +1523,18 @@
     if (approx.length) {
       html += '<div style="margin-top:7px"><b>Drawn approximately:</b><ul>' +
         approx.map(function (a) { return '<li>' + esc(a) + '</li>'; }).join('') + '</ul></div>';
+    }
+    /* Parts of this document that are NOT in the solid on screen.
+     *
+     * A separate claim from "drawn approximately", and a stronger one: an
+     * approximation is the shape, less exactly; this is the shape MISSING a
+     * piece. Reported because the viewport cannot say it any other way — eight
+     * parts in the rail and seven bodies on the stage reads as a rendering
+     * choice until something names the eighth and says why. */
+    if (state.builtSolid && state.builtSolid.notes && state.builtSolid.notes.length) {
+      html += '<div style="margin-top:7px"><b>Not in the built solid:</b><ul>' +
+        state.builtSolid.notes.map(function (n) { return '<li>' + esc(n) + '</li>'; }).join('') +
+        '</ul></div>';
     }
     /* Sits with everything else this picture does not establish. A dimension
      * recalled from a standard is not a dimension that was looked up, and the
