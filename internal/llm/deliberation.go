@@ -42,16 +42,30 @@ import (
 // somebody reads a footnote. There is exactly one right answer per role, so the
 // table holds it.
 //
-// # Why only the conversation role
+// # Why the conversation and the vision roles
 //
-// Nothing else here is waited on by a person mid-sentence. The planner, the
-// executor and the verifier are all better for thinking, and the transcriber and
-// speaker are not chat models at all. A role added later gets thinking unless
-// somebody puts it in this table, which is the safe direction: the cost of
-// wrongly deliberating is latency, and the cost of wrongly not is a worse
-// answer.
+// The conversation is waited on by a person mid-sentence. Vision is waited on by
+// the SAME person, one step further back: the visual check runs inside a turn,
+// before the geometry is emitted, so every millisecond it spends is a
+// millisecond before the model appears on screen.
+//
+// Measured 2026-09-09 on the visual check's own contact sheet, qwen3.8-max
+// answering one closed question about a picture:
+//
+//	123000 ms thinking · 1500 ms not
+//
+// 6562 reasoning tokens against 29 tokens of answer, and the same answer either
+// way — correct in both. Deliberating turned a check worth having into one
+// nobody could afford to run.
+//
+// The planner, the executor and the verifier are all better for thinking, and
+// the transcriber and speaker are not chat models at all. A role added later
+// gets thinking unless somebody puts it in this table, which is the safe
+// direction: the cost of wrongly deliberating is latency, and the cost of
+// wrongly not is a worse answer.
 var latencyBound = map[Role]bool{
 	RoleConverse: true,
+	RoleVision:   true,
 }
 
 // deliberationField is the request field that turns deliberation off, per

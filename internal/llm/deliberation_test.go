@@ -212,3 +212,51 @@ func TestAModelListThatCannotBeReadSaysSo(t *testing.T) {
 		t.Errorf("a failed model listing was not reported as one: %s", err.Error())
 	}
 }
+
+// The vision role must not deliberate either.
+//
+// # What this closes
+//
+// The visual check runs INSIDE a turn, before the geometry is emitted, so every
+// millisecond it spends is a millisecond before the model appears on screen.
+// Measured 2026-09-09 against qwen3.8-max on the check's own contact sheet, one
+// closed question about a picture:
+//
+//	123000 ms thinking · 1500 ms not
+//
+// 6562 reasoning tokens against 29 tokens of answer, and the SAME answer either
+// way — correct in both. Deliberating turned a check worth having into one
+// nobody could afford to run, and it fails in the direction nothing notices: the
+// answer is right, it just arrives two minutes later.
+func TestTheVisionRoleIsToldNotToDeliberate(t *testing.T) {
+	var got map[string]any
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got = bodyOf(t, r)
+		okReply(w)
+	}))
+	defer srv.Close()
+
+	// A vision model is configured, as a deployment that uses the visual check
+	// must have one: clientAt leaves it empty, and an unconfigured role proves
+	// nothing about the role that ships.
+	c := NewOpenAICompatible(config.LLMConfig{
+		BaseURL: "https://dashscope.aliyuncs.com/compatible-mode/v1", APIKey: "test-key",
+		Converse: "converse-model", Vision: "vision-model",
+		RequestTimeout: 10 * time.Second,
+	}, logx.Discard(), clock.System{})
+	c.baseURL = strings.TrimRight(srv.URL, "/")
+
+	if _, err := c.Complete(context.Background(),
+		Request{Role: RoleVision, Messages: []Message{{Role: User, Content: "what is this"}}}); err != nil {
+		t.Fatal(err)
+	}
+	v, ok := got["enable_thinking"]
+	if !ok {
+		t.Fatal("the vision request carried no enable_thinking field. Measured 2026-09-09: " +
+			"without it one visual check takes 123 SECONDS instead of 1.5, for the same " +
+			"answer — and nothing fails, so nothing notices.")
+	}
+	if v != false {
+		t.Errorf("enable_thinking = %v; want false", v)
+	}
+}
