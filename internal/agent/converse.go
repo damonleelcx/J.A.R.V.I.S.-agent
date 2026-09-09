@@ -884,6 +884,7 @@ func (c *Conversation) Respond(ctx context.Context, projectID string, history []
 	// The same repair the streamed path does, at the same point.
 	c.repairIfFaulty(ctx, &reply)
 	c.repairIfTurned(ctx, &reply, current)
+	c.repairIfItLooksWrong(ctx, &reply, message)
 	noteVanished(&reply, current)
 	return &reply, nil
 }

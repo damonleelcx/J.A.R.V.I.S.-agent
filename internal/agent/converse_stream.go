@@ -285,6 +285,11 @@ func (c *Conversation) RespondStream(
 		 * attempts at saying this in the contract were measured and none beat
 		 * saying nothing, so it is checked — see turned.go. */
 		c.repairIfTurned(ctx, &reply, current)
+		/* And then LOOK at it. Everything measured says the model writes
+		 * coordinates blind: swapped axes, wheels inside the body, a quarter
+		 * turn read as 117 degrees. A person catches those in a glance and
+		 * FORGE had no glance — see look.go. */
+		c.repairIfItLooksWrong(ctx, &reply, message)
 		/* And say what the revision removed. A whole prototype deletes by
 		 * omission, so a part nobody discussed can disappear while the reply
 		 * talks about something else — see vanished.go. */
