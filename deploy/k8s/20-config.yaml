@@ -63,6 +63,26 @@ data:
   FORGE_LLM_BASE_URL: "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
   FORGE_LLM_PLANNER_MODEL: "qwen3.8-max"
 
+  # Vision reads images a person uploads AND the picture FORGE draws of its own
+  # geometry to check it before a turn is emitted (agent/look.go). Unset, both of
+  # those are off — which is what this deployment was until 2026-09-09, so the
+  # visual check shipped inert here.
+  #
+  # It must name a model THIS endpoint serves. `qwen-vl-max` is the obvious name
+  # and does not exist here: every call returns model_not_found. Measured on this
+  # endpoint 2026-09-09 — qwen3.8-max reads the picture correctly in ~1.5s (with
+  # deliberation off, which RoleVision now sets; with it on the same answer takes
+  # 123 SECONDS), qwen3.6-flash answers WRONGLY, and glm-5.2 cannot see images.
+  FORGE_LLM_VISION_MODEL: "qwen3.8-max"
+
+  # Running model-written build123d is OFF here, deliberately and by default.
+  # It is the one feature that executes text a model produced; the sandbox is
+  # described in internal/domain/cad/script.go and is defence in depth rather
+  # than a container. Turning it on is a decision for whoever owns this
+  # deployment, not a default:
+  #
+  #   FORGE_ALLOW_SCRIPTS: "1"
+
   # PRD SEC-05: an empty list denies every shell_run call. Deliberately narrower
   # than .env.example's development list — no `go`, no `make` — because nothing
   # on this deployment is meant to build code.
