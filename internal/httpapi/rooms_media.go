@@ -428,7 +428,11 @@ func (h *RoomHandlers) Ask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	reply, err := h.conv.Respond(r.Context(), room.ProjectID, roomHistory(room), req.Text, "", nil)
+	// The room revises the same project's model as the workbench does. A room
+	// that could only propose from scratch would be a second FORGE with a worse
+	// memory, in the same project, contradicting the one at the bench.
+	reply, err := h.conv.Respond(r.Context(), room.ProjectID, roomHistory(room), req.Text, "",
+		currentModelFor(r.Context(), h.deps, room.ProjectID), nil)
 	if err != nil {
 		WriteError(w, r, h.deps.Log, err)
 		return

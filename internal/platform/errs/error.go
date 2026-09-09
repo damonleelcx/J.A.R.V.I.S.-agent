@@ -100,6 +100,20 @@ func CodeOf(err error) Code {
 	return CodeInternal
 }
 
+// DetailOf extracts the human sentence from any error, or "" when it has none.
+//
+// The counterpart to CodeOf: a code answers "which status?", and this answers
+// "what do I put in front of a person?". Error() is deliberately not that — it
+// carries the operation and the code as well, which is right for a log and wrong
+// for a banner somebody reads while wondering what happened to their change.
+func DetailOf(err error) string {
+	var e *Error
+	if errors.As(err, &e) {
+		return e.Detail
+	}
+	return ""
+}
+
 // Is reports whether err carries the given code anywhere in its chain.
 func Is(err error, code Code) bool {
 	var e *Error

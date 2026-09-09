@@ -105,6 +105,25 @@ var featureOps = map[string]struct {
 	"chamfer": {NeedsRadius: true},
 }
 
+// knownOps names the operations, in a stable order, for the refusal above.
+//
+// Derived from featureOps rather than written out. A hand-written list is a
+// second place to add an operation to, and the one somebody forgets is the one
+// a person reads when they are already confused about why their document was
+// refused — which is exactly what happened when "loft" was added and the
+// sentence still offered four.
+func knownOps() string {
+	names := make([]string, 0, len(featureOps))
+	for op := range featureOps {
+		names = append(names, op)
+	}
+	sort.Strings(names)
+	if len(names) < 2 {
+		return strings.Join(names, "")
+	}
+	return strings.Join(names[:len(names)-1], ", ") + " or " + names[len(names)-1]
+}
+
 // edgeRules is how a fillet says WHICH edges, without ever naming an index.
 //
 // Y is up in this system, so "vertical" is the Y axis. The names are the ones a
@@ -174,7 +193,10 @@ func (d *Document) Operations() ([]Operation, []Problem) {
 		op := strings.ToLower(strings.TrimSpace(f.Op))
 		spec, known := featureOps[op]
 		if !known {
-			add(name, "%q is not an operation FORGE can perform; it can cut, fuse, fillet or chamfer", f.Op)
+			// The list is built from featureOps rather than typed out, because a
+			// typed one goes stale the moment an operation is added — as it did
+			// the day "loft" arrived and this sentence still named four.
+			add(name, "%q is not an operation FORGE can perform; it can %s", f.Op, knownOps())
 			continue
 		}
 		if !parts[f.Of] {

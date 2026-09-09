@@ -92,7 +92,7 @@ func TestBuildMessages_CarriesTheDomainConventions(t *testing.T) {
 	conv := NewConversation(&visionStub{reply: sawIt}, persona.DefaultCharacter())
 	civil := defOf(t, "civil")
 
-	built := conv.buildMessages(persona.DefaultCharacter(), civil, nil, "size this beam", "", nil)
+	built := conv.buildMessages(persona.DefaultCharacter(), civil, nil, "size this beam", "", nil, nil)
 	if len(built) == 0 {
 		t.Fatal("no messages were built")
 	}

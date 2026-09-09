@@ -322,6 +322,86 @@ func notVerifiedIsTheModelsOwn() Scorer {
 // every part reads as "only in column 1" beside "only in column 2" — two
 // unrelated designs where there was a revision. The matcher now falls back to
 // names and says so; this measures how often that fallback is load-bearing.
+// dimensionsSurviveARevision: the parts nobody asked about come back unchanged.
+//
+// # What this measures, and why it is separate from part ids
+//
+// partIDsSurviveARevision asks whether a revision is RECOGNISABLE as one. This
+// asks whether it is FAITHFUL. They come apart: a model can keep every id and
+// still retype every number, which produces a comparison that lines up neatly
+// and reports a dozen changes nobody requested.
+//
+// The cause was the same in both cases and was fixed the same way. Ids were
+// unstable until the agent was shown the ids; dimensions were unstable until the
+// agent was shown the DIMENSIONS — before wave 32 the note it received named the
+// parts and nothing else, so every number in a revision came from recall of its
+// own earlier prose. "Make the base plate thicker and add a rib" could move the
+// motor face, and nothing compared the two documents.
+//
+// Two things now work against that: the model on screen travels with the turn
+// (agent/currentmodel.go), and a change can be expressed as an EDIT that does
+// not restate untouched parts at all (geometry/edit.go). This is the number that
+// says whether either is working.
+//
+// Tracked with no floor: the capability is new and the first runs establish the
+// baseline — the same stance partIDsSurviveARevision took, and for the same
+// reason. A floor set from one good measurement is a target dressed as an
+// observation.
+func dimensionsSurviveARevision() Scorer {
+	return Scorer{
+		Name:    "parts nobody asked about keep their dimensions",
+		Asserts: "every part present in both proposals has the same size, unless the request named it",
+		Tracked: true,
+		FloorWhy: "TRACKED, no baseline yet: before wave 32 a revision retyped every dimension from " +
+			"recall, so this number could only have measured how good the model's memory of its own " +
+			"prose was. It becomes meaningful now that the document travels with the turn.",
+		Judge: func(o *Observation) (bool, string) {
+			first, second := o.Reply(0), o.Reply(1)
+			if first == nil || second == nil || first.Prototype == nil || second.Prototype == nil {
+				return false, "the revision produced no second prototype to compare"
+			}
+			was := map[string]map[string]float64{}
+			for _, p := range first.Prototype.Parts {
+				was[p.ID] = p.Size
+			}
+			var carried, drifted int
+			var examples []string
+			for _, p := range second.Prototype.Parts {
+				before, ok := was[p.ID]
+				if !ok {
+					continue // a part that was not there before cannot have drifted
+				}
+				for key, now := range p.Size {
+					old, had := before[key]
+					if !had {
+						continue
+					}
+					if old == now {
+						carried++
+						continue
+					}
+					drifted++
+					if len(examples) < 3 {
+						examples = append(examples,
+							fmt.Sprintf("%s.%s %g→%g", p.ID, key, old, now))
+					}
+				}
+			}
+			if carried+drifted == 0 {
+				return false, "no part survived the revision, so nothing could be compared"
+			}
+			detail := fmt.Sprintf("%d dimension(s) carried, %d drifted", carried, drifted)
+			if len(examples) > 0 {
+				detail += " (" + strings.Join(examples, ", ") + ")"
+			}
+			// The request named the base plate's thickness, so SOME drift is
+			// correct. What this catches is wholesale retyping: a revision where
+			// most numbers moved did not revise anything, it redrew it.
+			return drifted*2 <= carried, detail
+		},
+	}
+}
+
 func partIDsSurviveARevision() Scorer {
 	return Scorer{
 		Name:    "part ids are the same ids after a revision",

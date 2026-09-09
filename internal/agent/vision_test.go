@@ -41,7 +41,7 @@ func TestWithoutAVisionModelAnImageIsRefusedNotGuessedAt(t *testing.T) {
 	conv := NewConversation(stub, persona.DefaultCharacter())
 
 	_, err := conv.Respond(context.Background(), "", nil, "model this",
-		"", []string{"data:image/png;base64,AAAA"})
+		"", nil, []string{"data:image/png;base64,AAAA"})
 	if err == nil {
 		t.Fatal("an image was accepted by a deployment with no vision model")
 	}
@@ -65,7 +65,7 @@ func TestAnImageTurnGoesToTheVisionModel(t *testing.T) {
 	conv := NewConversation(stub, persona.DefaultCharacter())
 
 	if _, err := conv.Respond(context.Background(), "", nil, "model this",
-		"", []string{"data:image/png;base64,AAAA"}); err != nil {
+		"", nil, []string{"data:image/png;base64,AAAA"}); err != nil {
 		t.Fatal(err)
 	}
 	if stub.sawRole != llm.RoleVision {
@@ -82,7 +82,7 @@ func TestAnImageTurnGoesToTheVisionModel(t *testing.T) {
 	plain := &visionStub{reply: sawIt, models: map[llm.Role]string{
 		llm.RoleConverse: "text-only", llm.RoleVision: "sees-things"}}
 	conv2 := NewConversation(plain, persona.DefaultCharacter())
-	if _, err := conv2.Respond(context.Background(), "", nil, "make it taller", "", nil); err != nil {
+	if _, err := conv2.Respond(context.Background(), "", nil, "make it taller", "", nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if plain.sawRole != llm.RoleConverse {
@@ -101,7 +101,7 @@ func TestBothPathsBuildOneRequest(t *testing.T) {
 
 	history := []Turn{{Role: "user", Content: "hello"}, {Role: "forge", Content: "hi"}}
 	built := conv.buildMessages(persona.DefaultCharacter(), domainpack.Definition{}, history,
-		"model this", "a bracket is on screen", []string{"data:image/png;base64,AAAA"})
+		"model this", "a bracket is on screen", nil, []string{"data:image/png;base64,AAAA"})
 
 	last := built[len(built)-1]
 	if len(last.Images) != 1 {

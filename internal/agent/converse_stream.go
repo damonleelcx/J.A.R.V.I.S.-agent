@@ -131,6 +131,9 @@ func (c *Conversation) RespondStream(
 	history []Turn,
 	message string,
 	workspaceNote string,
+	// current is the model on screen, read from the server's own record. Nil on
+	// the first turn of a project, when there is nothing to revise.
+	current *Prototype,
 	images []string,
 	emit func(StreamEvent) error,
 ) error {
@@ -140,7 +143,7 @@ func (c *Conversation) RespondStream(
 	if !ok {
 		// Fall back to the buffered path rather than failing. A client that
 		// cannot stream still produces correct answers, just later.
-		reply, err := c.Respond(ctx, projectID, history, message, workspaceNote, images)
+		reply, err := c.Respond(ctx, projectID, history, message, workspaceNote, current, images)
 		if err != nil {
 			return err
 		}
@@ -203,7 +206,7 @@ func (c *Conversation) RespondStream(
 	}
 	messages := c.buildMessages(c.characters.For(ctx, projectID, c.char),
 		c.domains.For(ctx, projectID),
-		history, message, workspaceNote, images)
+		history, message, workspaceNote, current, images)
 
 	var accumulated strings.Builder
 	speechSent := false
@@ -265,6 +268,14 @@ func (c *Conversation) RespondStream(
 		if err := reply.validate(); err != nil {
 			return err
 		}
+		/* An edit becomes the document it describes BEFORE anything is emitted.
+		 * Downstream — the viewport, the store, compare, export — only ever sees
+		 * a whole prototype, which is what keeps this feature out of all of them.
+		 * A refusal is spoken rather than thrown away: the person was just told
+		 * their change was made. */
+		if err := reply.resolveEdit(current); err != nil {
+			return emit(StreamEvent{Kind: "error", Error: errs.DetailOf(err)})
+		}
 
 		if !speechSent && reply.Speech != "" {
 			if err := emit(StreamEvent{Kind: "speech", Text: reply.Speech, FirstTokenMS: firstTokenMS}); err != nil {
@@ -320,7 +331,7 @@ func (c *Conversation) RespondStream(
 // genuinely is. Respond used to keep its own copy of this, so the two ways into
 // a conversation built the same request separately.
 func (c *Conversation) buildMessages(char persona.Character, domain domainpack.Definition,
-	history []Turn, message, workspaceNote string, images []string) []llm.Message {
+	history []Turn, message, workspaceNote string, current *Prototype, images []string) []llm.Message {
 	messages := []llm.Message{
 		{Role: llm.System, Content: persona.SystemPrompt(char, framingFor(domain))},
 	}
@@ -335,7 +346,18 @@ func (c *Conversation) buildMessages(char persona.Character, domain domainpack.D
 		messages = append(messages, llm.Message{Role: role, Content: t.Content})
 	}
 	user := message
-	if workspaceNote != "" {
+	/* The model on screen, from the server's own record, beats the page's
+	 * summary of it.
+	 *
+	 * The summary named the parts and nothing else, so a revision retyped every
+	 * dimension from recall — see agent/currentmodel.go. The page's note is kept
+	 * as the fallback for a deployment with no database, where there is no record
+	 * to read and the summary is all there is. */
+	if model := CurrentModel(current); model != "" {
+		user = "[The model on screen right now, which you are revising. Reuse these part " +
+			"ids; change only what was asked for and copy every other dimension EXACTLY " +
+			"as it appears here:\n" + model + "]\n\n" + message
+	} else if workspaceNote != "" {
 		user = "[What is on screen right now: " + workspaceNote + "]\n\n" + message
 	}
 	// Images ride on the CURRENT turn only. A sketch from four turns ago is not
