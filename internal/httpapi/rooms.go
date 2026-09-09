@@ -81,6 +81,7 @@ func NewRoomHandlers(d Deps) *RoomHandlers {
 	}
 	if d.LLM != nil {
 		h.conv = agent.NewConversation(d.LLM, persona.DefaultCharacter()).
+			WithScripts(d.CAD.ScriptsEnabled()).
 			WithCharacters(agent.NewCharacterStore(d.Pool, d.Log)).
 			WithDomains(agent.NewDomainStore(d.Pool, d.Log))
 	}

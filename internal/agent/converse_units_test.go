@@ -1,6 +1,9 @@
 package agent
 
 import (
+	domainpack "github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/pack"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/llm"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/persona"
 	"strings"
 	"testing"
 
@@ -152,6 +155,66 @@ func TestValidate_AuthoredOverlaysSurvive(t *testing.T) {
 	for _, n := range r.Prototype.NotVerified {
 		if strings.Contains(n, "manufacturing decision") {
 			t.Fatal("the tolerance guard fired on an overlay that named its drawing")
+		}
+	}
+}
+
+// The contract says whether scripts are available — always, and unambiguously.
+//
+// # What this closes
+//
+// The script section said "only when this deployment offers it" and nothing
+// anywhere told the model whether it did. Live on 2026-09-09, asked for an
+// involute gear, the model hedged: it wrote in prose that the profile was
+// "generated via script" and then set shape "gear", a word that does not exist
+// in the vocabulary. An unknown shape is drawn as a bounding box, so the person
+// asked for a gear and got a rectangular block with the word "gear" beside it.
+//
+// A capability nothing announces is a capability nobody uses. Silence is the
+// defect, so BOTH answers are asserted here — a deployment with scripts off must
+// say so too, or the model is left guessing in the other direction.
+func TestScriptAvailabilityIsAlwaysStated(t *testing.T) {
+	on := scriptAvailability(true)
+	off := scriptAvailability(false)
+
+	if !strings.Contains(on, "DOES run scripts") {
+		t.Errorf("a deployment WITH scripts does not say so:\n%s", on)
+	}
+	if !strings.Contains(off, "does NOT run scripts") {
+		t.Errorf("a deployment WITHOUT scripts does not say so:\n%s", off)
+	}
+	// Both must warn against the failure that actually happened, because it
+	// happens in both directions: a model that cannot use "script" is exactly
+	// the one most tempted to invent a shape name instead.
+	for name, text := range map[string]string{"on": on, "off": off} {
+		if !strings.Contains(text, "bounding box") {
+			t.Errorf("the %q wording does not say what an invented shape name costs. "+
+				"That is the mistake this exists to prevent.\n%s", name, text)
+		}
+	}
+}
+
+// The availability line reaches the SYSTEM PROMPT the model reads.
+//
+// Stating it in a helper nobody calls is the same silence in a different place.
+// A drill proved the wording fences alone could not see the wiring being
+// removed: scriptAvailability could be perfect and never sent.
+func TestScriptAvailabilityReachesThePrompt(t *testing.T) {
+	for _, on := range []bool{true, false} {
+		c := &Conversation{scripts: on}
+		msgs := c.buildMessages(persona.DefaultCharacter(), domainpack.Definition{},
+			nil, "make me a gear", "", nil, nil)
+		if len(msgs) == 0 || msgs[0].Role != llm.System {
+			t.Fatal("the first message is not the system prompt")
+		}
+		want := "does NOT run scripts"
+		if on {
+			want = "DOES run scripts"
+		}
+		if !strings.Contains(msgs[0].Content, want) {
+			t.Errorf("scripts=%v: the system prompt never says whether scripts run. "+
+				"The model is left guessing, and what it does when it guesses is invent a "+
+				"shape name that gets drawn as a box", on)
 		}
 	}
 }

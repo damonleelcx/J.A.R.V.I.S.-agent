@@ -554,11 +554,32 @@ type Conversation struct {
 	// which carries no conventions and so asserts nothing about a domain nobody
 	// established.
 	domains *DomainStore
+	// scripts says whether this deployment RUNS model-written build123d. The
+	// contract has to say which, and say it plainly: the first live test of the
+	// script path had the prompt offering it "only when this deployment offers
+	// it" and nothing anywhere telling the model whether it did. The model
+	// hedged — it said in prose that it was "generated via script" and then
+	// wrote shape "gear", a name that does not exist, which was drawn as a
+	// bounding box. A capability nothing announces is a capability nobody uses.
+	scripts bool
 }
 
 // NewConversation returns the conversational surface.
 func NewConversation(client llm.Client, char persona.Character) *Conversation {
 	return &Conversation{client: client, char: char}
+}
+
+// WithScripts tells the conversation whether this deployment RUNS model-written
+// build123d, so the contract can say so either way rather than hedging.
+//
+// The first live test of the script path had the prompt offering it "only when
+// this deployment offers it" and nothing anywhere telling the model whether it
+// did. The model hedged: it said in prose the profile was "generated via script"
+// and then wrote shape "gear" — a word that does not exist — which was drawn as
+// a bounding box. A capability nothing announces is a capability nobody uses.
+func (c *Conversation) WithScripts(on bool) *Conversation {
+	c.scripts = on
+	return c
 }
 
 // WithCharacters makes conversation honour the project's critique intensity.
@@ -588,6 +609,22 @@ func (c *Conversation) WithDomains(s *DomainStore) *Conversation {
 // pack — so an unstated industry gets exactly the framing this had before packs
 // were read at all. That is the property that makes this safe to add: nothing
 // changes for a project that never chose a domain.
+// scriptAvailability is the one line that makes "script" usable, or refuses it
+// outright. Never absent: silence is what produced an invented shape name.
+func scriptAvailability(on bool) string {
+	if on {
+		return "\n\nThis deployment DOES run scripts. When a shape genuinely cannot be " +
+			"described by the vocabulary above — an involute gear tooth, a spiral, a " +
+			"lattice, a profile from a formula — give the part shape \"script\" and put the " +
+			"build123d in its \"script\" field. Do not invent a shape name: a word that is " +
+			"not in the list above is drawn as a bounding box, so a gear becomes a block."
+	}
+	return "\n\nThis deployment does NOT run scripts. Never use shape \"script\". If a shape " +
+		"cannot be described by the vocabulary above, say so plainly rather than inventing " +
+		"a shape name — a word that is not in the list is drawn as a bounding box, so a " +
+		"gear becomes a block and the reply says gear."
+}
+
 func framingFor(domain domainpack.Definition) string {
 	if strings.TrimSpace(domain.Conventions) == "" {
 		return converseFraming

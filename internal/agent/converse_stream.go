@@ -358,7 +358,8 @@ func (c *Conversation) RespondStream(
 func (c *Conversation) buildMessages(char persona.Character, domain domainpack.Definition,
 	history []Turn, message, workspaceNote string, current *Prototype, images []string) []llm.Message {
 	messages := []llm.Message{
-		{Role: llm.System, Content: persona.SystemPrompt(char, framingFor(domain))},
+		{Role: llm.System, Content: persona.SystemPrompt(char,
+			framingFor(domain)+scriptAvailability(c.scripts))},
 	}
 	if len(history) > HistoryWindow {
 		history = history[len(history)-HistoryWindow:]
