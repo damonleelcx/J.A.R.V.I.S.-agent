@@ -51,8 +51,61 @@ func TestResolveEdit_BecomesAWholeDocument(t *testing.T) {
 	}
 }
 
-// The three refusals. Each is a case where continuing produces a version that
-// looks deliberate and is not.
+// Both forms at once is RESOLVED, not refused.
+//
+// Refusing lost the whole turn. Measured on a real turn (2026-09-09, "add wheel
+// wells"): the model sent both, the reply was refused, and the person got
+// "I've added wheel arches to the body" with no geometry at all — strictly worse
+// than either reading, because the speech had already said the work was done.
+//
+// The edit wins when there is something to apply it to, because it is the form
+// that cannot drift. With nothing on screen only the whole prototype can be used.
+func TestResolveEdit_ChoosesAFormRatherThanLosingTheTurn(t *testing.T) {
+	t.Run("with a model on screen the edit wins", func(t *testing.T) {
+		r := &Reply{
+			Prototype: &geometry.Document{Name: "Wrong", Units: "mm",
+				Parts: []geometry.Part{{ID: "plate", Shape: "box",
+					Size: map[string]float64{"width": 999}}}},
+			PrototypeEdit: &geometry.Edit{Patch: &geometry.Document{
+				Parts: []geometry.Part{{ID: "rib", Name: "Rib", Shape: "box",
+					Size: map[string]float64{"width": 4}}}}},
+		}
+		if err := r.resolveEdit(onScreenModel()); err != nil {
+			t.Fatalf("a reply carrying both forms was refused, which loses the turn: %v", err)
+		}
+		if r.Prototype == nil {
+			t.Fatal("no geometry survived")
+		}
+		if len(r.Prototype.Parts) != 2 {
+			t.Fatalf("wanted the on-screen plate plus the rib, got %d parts", len(r.Prototype.Parts))
+		}
+		for _, p := range r.Prototype.Parts {
+			if p.ID == "plate" && p.Size["width"] != 60 {
+				t.Errorf("the plate is %g wide; the edit was supposed to win, leaving parts it "+
+					"does not mention exactly as they were", p.Size["width"])
+			}
+		}
+		if r.Repaired == "" {
+			t.Error("the reader was not told that one of the two forms was dropped")
+		}
+	})
+
+	t.Run("with nothing on screen the prototype wins", func(t *testing.T) {
+		r := &Reply{
+			Prototype:     onScreenModel(),
+			PrototypeEdit: &geometry.Edit{Remove: geometry.Removals{Parts: []string{"plate"}}},
+		}
+		if err := r.resolveEdit(nil); err != nil {
+			t.Fatalf("refused with nothing on screen: %v", err)
+		}
+		if r.Prototype == nil || len(r.Prototype.Parts) != 1 {
+			t.Error("the whole prototype should have been used; there was no base to edit")
+		}
+	})
+}
+
+// The remaining refusals. Each is a case where continuing produces a version
+// that looks deliberate and is not.
 func TestResolveEdit_RefusesTheThreeAmbiguousCases(t *testing.T) {
 	for _, tc := range []struct {
 		name    string
@@ -61,16 +114,6 @@ func TestResolveEdit_RefusesTheThreeAmbiguousCases(t *testing.T) {
 		wantIn  string
 		why     string
 	}{
-		{
-			name: "both forms at once",
-			reply: &Reply{
-				Prototype:     onScreenModel(),
-				PrototypeEdit: &geometry.Edit{Remove: geometry.Removals{Parts: []string{"plate"}}},
-			},
-			current: onScreenModel(),
-			wantIn:  "never both",
-			why:     "picking one would be a guess about which the agent meant",
-		},
 		{
 			name:    "an edit with nothing to edit",
 			reply:   &Reply{PrototypeEdit: &geometry.Edit{Remove: geometry.Removals{Parts: []string{"plate"}}}},

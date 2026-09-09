@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/geometry"
@@ -196,6 +197,7 @@ func (c *Conversation) repairIfFaulty(ctx context.Context, reply *Reply) bool {
 		return false
 	}
 	improved := false
+	first := reply.Prototype.Faults()
 	for i := 0; i < repairAttempts; i++ {
 		faults := reply.Prototype.Faults()
 		if len(faults) == 0 {
@@ -210,6 +212,26 @@ func (c *Conversation) repairIfFaulty(ctx context.Context, reply *Reply) bool {
 		}
 		reply.Prototype = fixed
 		improved = true
+	}
+	if improved {
+		// Said out loud, through the same channel a misread dimension uses.
+		//
+		// A correction the reader never hears about is a reply that was wrong
+		// once and is now quietly right, and the next thing they do is trust the
+		// first draft of the next one. It also states what is STILL wrong, so a
+		// partly-repaired document does not read as a fully repaired one — the
+		// wheel arch could be corrected in one respect and remain unbuildable in
+		// another, and the difference matters to somebody about to export it.
+		note := fmt.Sprintf("The geometry as first written had %d part(s) that could not be "+
+			"built. FORGE corrected it and re-checked.", len(first))
+		if left := reply.Prototype.Faults(); len(left) > 0 {
+			note += fmt.Sprintf(" %d could not be corrected: %s", len(left), left[0].Detail)
+		}
+		if reply.Repaired != "" {
+			reply.Repaired += " " + note
+		} else {
+			reply.Repaired = note
+		}
 	}
 	return improved
 }
