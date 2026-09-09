@@ -276,6 +276,11 @@ func (c *Conversation) RespondStream(
 		if err := reply.resolveEdit(current); err != nil {
 			return emit(StreamEvent{Kind: "error", Error: errs.DetailOf(err)})
 		}
+		/* Geometry that will not build gets one chance to be corrected, BEFORE
+		 * it is emitted or saved — a turn that says "I have added a spoiler"
+		 * and stores a document without one has already misled somebody by the
+		 * time anything downstream could notice. See georepair.go. */
+		c.repairIfFaulty(ctx, &reply)
 
 		if !speechSent && reply.Speech != "" {
 			if err := emit(StreamEvent{Kind: "speech", Text: reply.Speech, FirstTokenMS: firstTokenMS}); err != nil {
