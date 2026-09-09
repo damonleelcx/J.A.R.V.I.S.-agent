@@ -248,6 +248,16 @@ func (h *GeometryHandlers) Mesh(w http.ResponseWriter, r *http.Request) {
 		"skipped":          built.Skipped,
 		"feature_failures": built.FeatureFailures,
 		"mesh_error":       built.MeshError,
+		// ‼️ Why a part is NOT in the solid, which this reply used to drop.
+		//
+		// A part whose outline cannot be read is left out by the BUILDER, with
+		// the reason recorded here — "Spoiler Wing is a sweep with 2 point(s);
+		// an outline needs at least 3 to enclose anything". Without this field
+		// the viewport received seven bodies for an eight-part document and
+		// could say nothing about the eighth: `skipped` covers only what the
+		// KERNEL refused, and a part dropped before the kernel never reaches it.
+		// Observed while adding a spoiler to the sports car on 2026-09-09.
+		"inferred": built.Inferred,
 	})
 }
 

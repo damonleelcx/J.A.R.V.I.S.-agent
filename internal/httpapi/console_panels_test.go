@@ -3,6 +3,7 @@ package httpapi
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 )
@@ -79,5 +80,36 @@ func TestTheConsolePageHasEveryMountPoint(t *testing.T) {
 			t.Errorf("the console page has no element with id %q, so its panel cannot be filled "+
 				"however well the script works", id)
 		}
+	}
+}
+
+// The mesh reply says why a part is not in the solid.
+//
+// # What this closes
+//
+// The endpoint returned the bodies it built and three failure lists, none of
+// which covers the commonest case: a part dropped by the BUILDER before the
+// kernel ever saw it. `skipped` is what the kernel refused; a part whose outline
+// cannot be read never reaches the kernel to be refused.
+//
+// Observed live on 2026-09-09 while adding a spoiler to the sports car. The
+// model wrote a two-point profile for the wing, the builder correctly left it
+// out with the reason recorded — "Spoiler Wing is a sweep with 2 point(s); an
+// outline needs at least 3 to enclose anything" — and the endpoint dropped that
+// reason. The viewport received seven bodies for an eight-part document and
+// could say nothing at all about the eighth.
+//
+// Deliberately a string check on the handler: exercising it for real needs a
+// database, a project and a Python with build123d, and the realistic regression
+// is somebody tidying the field out of the response map.
+func TestTheMeshReplySaysWhyAPartIsMissing(t *testing.T) {
+	src, err := os.ReadFile("geometry.go")
+	if err != nil {
+		t.Fatalf("reading geometry.go: %v", err)
+	}
+	if !strings.Contains(string(src), `"inferred": built.Inferred`) {
+		t.Error("the mesh reply no longer carries built.Inferred, so a part left out by the " +
+			"builder vanishes with no reason given. `skipped` does not cover it: that is what " +
+			"the KERNEL refused, and a part with an unreadable outline never reaches the kernel.")
 	}
 }
