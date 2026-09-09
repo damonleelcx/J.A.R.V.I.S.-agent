@@ -594,6 +594,19 @@ type Prototype = geometry.Document
 // PrototypePart is one solid.
 type PrototypePart = geometry.Part
 
+// noteRepair appends to what the reader is told about corrections to this reply.
+//
+// The same channel a misread dimension uses, for the same reason: a reply that
+// was adjusted on its way out is not the reply the model wrote, and somebody
+// reading it is entitled to know which.
+func (r *Reply) noteRepair(note string) {
+	if r.Repaired != "" {
+		r.Repaired += " " + note
+		return
+	}
+	r.Repaired = note
+}
+
 // resolveEdit turns an edit into the document it describes.
 //
 // # Why it happens here and not downstream
@@ -623,11 +636,33 @@ func (r *Reply) resolveEdit(current *Prototype) error {
 	edit := *r.PrototypeEdit
 	r.PrototypeEdit = nil // consumed, whatever happens next
 
+	// ‼️ Both forms at once was a REFUSAL, and refusing lost the whole turn.
+	//
+	// The prompt says "never both". Measured on a real turn (2026-09-09, "add
+	// wheel wells"): the model sent both anyway, the turn was refused, and the
+	// person got "I've added wheel arches to the body" with NO GEOMETRY. That is
+	// strictly worse than either reading of an ambiguous reply — the speech had
+	// already told them the work was done.
+	//
+	// So one is chosen, and which one is not arbitrary. The EDIT wins whenever
+	// there is a model on screen to apply it to, because it is the form that
+	// cannot drift: parts it does not mention are not in the payload, so they
+	// come back exactly as they were. Taking the whole prototype would put every
+	// untouched dimension back through the model's typing, which is the failure
+	// this entire shape exists to prevent.
+	//
+	// With nothing on screen there is no base to apply an edit to, so the whole
+	// prototype is the only thing that can be used.
 	if r.Prototype != nil {
-		return errs.New(op, errs.CodeValidationFailed).
-			WithDetail("this reply carries both a whole prototype and an edit to one. " +
-				"Send the whole model when proposing something new, or an edit when changing " +
-				"what is already on screen — never both, because they cannot both be what you meant")
+		if current == nil || len(current.Parts) == 0 {
+			r.PrototypeEdit = nil
+			r.noteRepair("This reply carried both a whole model and an edit to one. There was " +
+				"nothing on screen to edit, so the whole model was used.")
+			return nil
+		}
+		r.Prototype = nil // the edit is applied below, to the model on screen
+		r.noteRepair("This reply carried both a whole model and an edit to one. The edit was " +
+			"applied, because it leaves every part it does not mention exactly as it was.")
 	}
 	if current == nil || len(current.Parts) == 0 {
 		return errs.New(op, errs.CodeValidationFailed).
