@@ -136,7 +136,7 @@ func run() error {
 	// on the first parametric export, so a deployment that never asks for one
 	// never pays the 2.5 s import, and a deployment with no interpreter
 	// configured simply refuses and says how to configure one.
-	cadKernel := cad.New(cfg.CAD.Python, log)
+	cadKernel := cad.New(cfg.CAD.Python, log).WithScripts(cfg.CAD.AllowScripts)
 	defer cadKernel.Close()
 
 	handler := httpapi.NewRouter(httpapi.Deps{

@@ -70,6 +70,13 @@ type Feature struct {
 	// Edges names which edges a fillet or chamfer touches, from the closed table
 	// below. Empty means every edge.
 	Edges string `json:"edges,omitempty"`
+	// Ruled makes a loft blend between its stations with STRAIGHT sides instead
+	// of a smooth surface. False — smooth — is the default and is what a
+	// sculpted body wants: the surface passes through every station with
+	// continuous curvature, which is the whole reason to loft rather than
+	// extrude. Set it for a shape that really is faceted, like a hopper or a
+	// transition duct, where a smooth blend would round corners that exist.
+	Ruled bool   `json:"ruled,omitempty"`
 	Note  string `json:"note,omitempty"`
 }
 
@@ -146,6 +153,7 @@ type Operation struct {
 	With   []string `json:"with,omitempty"`
 	Radius float64  `json:"radius,omitempty"`
 	Edges  string   `json:"edges"`
+	Ruled  bool     `json:"ruled,omitempty"`
 }
 
 // Operations resolves the document's features, and reports everything wrong.
@@ -277,7 +285,7 @@ func (d *Document) Operations() ([]Operation, []Problem) {
 		}
 		produced[f.Of] = true
 		out = append(out, Operation{ID: name, Op: op, Of: f.Of, With: tools,
-			Radius: radius, Edges: rule})
+			Radius: radius, Edges: rule, Ruled: f.Ruled})
 	}
 	sortProblems(problems)
 	return out, problems

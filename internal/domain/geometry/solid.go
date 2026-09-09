@@ -35,6 +35,11 @@ type Solid struct {
 	ID    string `json:"id"`
 	Label string `json:"label"`
 	Shape string `json:"shape"`
+	// STEP is the solid a model-written script built, already in STEP. Set only
+	// for a scripted part, and filled in by the caller that ran the script — the
+	// geometry package never runs anything. The kernel imports it and the result
+	// is an ordinary solid from that point on.
+	STEP string `json:"step,omitempty"`
 	// Dims are the dimensions this shape reads, defaults applied and converted
 	// to millimetres. Which keys are present depends on the shape and is the
 	// builder's contract.
@@ -116,6 +121,10 @@ type Solid struct {
 // same reason: a defaulted 1 is indistinguishable from a stated 1 once it is in
 // a file, and there is no provenance banner attached to a download.
 func Solids(d Document, unit Unit) ([]Solid, []string) {
+	// Patterns are written out before anything reads the parts, so every shape
+	// gets repetition for free and nothing downstream has to know about it.
+	d, repeatProblems := expandRepeats(d)
+
 	toMM, convertible := unit.toMM()
 	if !convertible {
 		return nil, []string{"This assembly declares no unit FORGE can convert, so nothing " +
@@ -124,6 +133,9 @@ func Solids(d Document, unit Unit) ([]Solid, []string) {
 	var inferred []string
 	infer := func(format string, args ...any) {
 		inferred = append(inferred, fmt.Sprintf(format, args...))
+	}
+	for _, p := range repeatProblems {
+		infer("%s %s.", p.Name, p.Detail)
 	}
 
 	profiles, paths, profileProblems := d.resolvedProfiles()
@@ -185,6 +197,14 @@ func Solids(d Document, unit Unit) ([]Solid, []string) {
 			// No dimension either, for the same reason and more so: a sweep's
 			// size is its outline and the path it follows, and a "depth" beside
 			// them would be a third opinion about how far it goes.
+		case "script":
+			// A scripted part carries no dimensions and no outline: its shape is
+			// whatever the script built. It reaches the kernel as "step", and
+			// the caller that ran the script fills that in — running it here
+			// would put process execution inside a package whose whole job is to
+			// be a pure description of geometry.
+			shape = "step"
+
 		case "section":
 			pts, ok := profiles[p.ID]
 			if !ok {

@@ -141,9 +141,24 @@ type Part struct {
 	// Axis is which way a "revolve" turns: "y" (the default, and up) or "x".
 	Axis     string    `json:"axis,omitempty"`
 	Rotation []float64 `json:"rotation"`
-	Color    string    `json:"color"`
-	Opacity  float64   `json:"opacity"`
-	Note     string    `json:"note"`
+	// Script is build123d the model wrote, for a shape this vocabulary cannot
+	// say: an involute gear tooth, a spiral, a lattice, a profile sampled from a
+	// formula. The script assigns `result`, and the kernel imports what it built
+	// as an ordinary solid — so a scripted part can be cut, filleted, fused and
+	// exported exactly like a box, and everything that reads a Document keeps
+	// working.
+	//
+	// Only when the deployment allows it. See internal/domain/cad/script.go for
+	// what the sandbox does and, as importantly, what it does not promise.
+	Script string `json:"script,omitempty"`
+	// Repeat says this part appears many times. Nil for the ordinary part that
+	// appears once. See repeat.go for why a pattern is a modifier on a part
+	// rather than a shape of its own, and why it is declarative rather than
+	// generated code.
+	Repeat  *Repeat `json:"repeat,omitempty"`
+	Color   string  `json:"color"`
+	Opacity float64 `json:"opacity"`
+	Note    string  `json:"note"`
 	// Material is what this part is made of (PRD VIS-02). Optional, and a claim
 	// when present: naming a material is a statement everything downstream
 	// depends on, so it carries how it was arrived at. Nil means nobody said,

@@ -146,6 +146,10 @@ type Deviation struct {
 // The unit is the assembly's, already resolved. Nothing here converts: the file
 // is written in the unit the geometry was authored in, and the label says which.
 func Tessellate(doc Document, unit Unit) *Mesh {
+	// Same expansion the solid builder does, for the same reason: the viewport
+	// and the exported file must agree about how many spokes there are.
+	doc, repeatProblems := expandRepeats(doc)
+
 	m := &Mesh{}
 	inferred := map[string]bool{}
 	infer := func(format string, args ...any) {
@@ -154,6 +158,9 @@ func Tessellate(doc Document, unit Unit) *Mesh {
 			inferred[s] = true
 			m.Inferences = append(m.Inferences, s)
 		}
+	}
+	for _, p := range repeatProblems {
+		infer("%s %s.", p.Name, p.Detail)
 	}
 
 	// What the features would have done, and did not.

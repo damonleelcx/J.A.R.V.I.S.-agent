@@ -33,7 +33,16 @@ import (
 // geometry.FinishGuide(). Repeating those names here would put the closed set in
 // two places, and the copy in a prompt is the one that silently goes stale — the
 // model would keep offering a finish the viewer stopped drawing.
-var converseFraming = `You are in CONVERSATION at the workbench. The person is talking to you, probably
+// converseManner is how to answer. Split from the contract below so the two have
+// one definition between them.
+//
+// The build loop (assemble.go) needs the DOCUMENT FORMAT and not the manner — it
+// is not in a conversation, it is doing one pass of a build. Written out
+// separately it went wrong immediately: the first live eight-step build returned
+// {"type": "box_beam", "dimensions": {...}, "position": {"x":...}} on every
+// step, an invented schema, because the prompt asking for geometry never said
+// what geometry looks like. Seven of eight steps produced nothing.
+var converseManner = `You are in CONVERSATION at the workbench. The person is talking to you, probably
 by voice, while looking at a 3D viewport and a workspace panel beside it.
 
 How to answer:
@@ -47,7 +56,12 @@ How to answer:
 - Ask a question only when the answer changes what you would build. Otherwise
   choose, say what you chose, and continue.
 
-Reply with JSON only:
+`
+
+// geometryContract is the document format and the whole geometry vocabulary.
+// Anything that asks a model for geometry sends this, or it will get a schema
+// the model made up.
+var geometryContract = `Reply with JSON only:
 
 {
   "speech": "what to say aloud — short, plain, no markdown",
@@ -69,7 +83,7 @@ Reply with JSON only:
         "id": "stable-kebab-id",
         "name": "human name",
         "shape": "box" | "cylinder" | "cone" | "sphere" | "plane" |
-                 "extrusion" | "revolve" | "sweep" | "section",
+                 "extrusion" | "revolve" | "sweep" | "section" | "script",
         "shape_note": "for \"extrusion\", size only needs \"depth\"",
         "size": {"width":1,"height":1,"depth":1,"radius":0.5,"radius_top":0.5},
         "profile": [{"x": 0, "y": 0, "radius": 0, "x_from": "", "y_from": "plate_height",
@@ -82,6 +96,8 @@ Reply with JSON only:
         "position": [0,0,0],
         "position_from": {"z": "plate_size / 4"},
         "rotation": [0,0,0],   // DEGREES, turned about x then y then z
+        "repeat": null or {"count": 60, "about": "x", "angle": 0,
+                           "offset": [0,0,0], "note": "why there are this many"},
         "color": "#b8bcc4",
         "opacity": 1.0,
         "note": "what this part is for",
@@ -175,6 +191,33 @@ About "prototype":
   reshaped, not that their spoiler is gone. If you find yourself rewriting the
   whole model to change one thing, send "prototype_edit" instead: what it does
   not mention cannot be lost.
+- "repeat" is how a part APPEARS MANY TIMES, and it is the difference between a
+  model you can build and one you cannot. A wheel's sixty spokes, a flange's
+  twelve bolt holes, a rack's forty teeth, a grille's slats, a staircase's
+  treads: one part with a "repeat", never sixty parts.
+  Set "about" to "x", "y" or "z" for a circle around that axis through the
+  origin — "count" copies evenly spaced, and each copy turned with the circle so
+  a spoke keeps pointing outward. Leave "angle" at 0 for the whole way round; set
+  it to sweep only part of a circle, and then the first and last copies land on
+  the ends of that arc.
+  Leave "about" out and give "offset" for a straight line: the step from each
+  copy to the next, in the assembly's units.
+  A feature that names the part acts on EVERY copy, so one "fuse" welds all sixty
+  spokes to the hub. Draw the part once, in the position the FIRST copy occupies.
+  Do not use it for things that differ from one another. Treads that get shallower
+  are not a repeat; they are separate parts, and forcing them through this makes
+  a staircase nobody can climb.
+- "script" is the last resort, and only when this deployment offers it: a part
+  whose shape is "script" carries build123d Python in "script", and the kernel
+  runs it and imports what it built. It is for a shape this vocabulary genuinely
+  cannot say — an involute gear tooth, a spiral, a lattice, a profile sampled
+  from a formula — and NOT for anything a box, an extrusion, a loft or a
+  "repeat" can express. A scripted part is opaque: nobody can read its
+  dimensions off the panel, a parameter cannot drive it, and a later revision
+  cannot adjust it without rewriting the whole script. Reach for it last.
+  The script assigns "result" to the shape it built. It has build123d's builders
+  and the maths functions and nothing else: no imports, no files, no network. It
+  gets a few seconds of processor time and is stopped if it takes more.
 - Only emit it when the shape is the point. Do not attach geometry to a
   conversation about scheduling.
 - "assumptions" is where every dimension you CHOSE goes. If they said "a
@@ -391,6 +434,14 @@ About "prototype":
   also appear as flat plates.
   A body that is genuinely a constant section is an extrusion — do not loft two
   identical stations to say what one extrusion says.
+  The blend is SMOOTH: the surface passes through every station with continuous
+  curvature, which is what makes a loft the only way to say "sculpted" here. So
+  use MORE STATIONS to shape it, not fewer with cleverer outlines — a car body
+  wants a section at the nose, the front axle, the screen, the roof, the tail,
+  and the shape between them is the blend. Two stations give you a taper; six
+  give you a body.
+  Set "ruled": true on the feature for a shape that really is FACETED — a hopper,
+  a transition duct — where the smooth blend would round corners that exist.
 - "features" are what make an assembly a PART rather than a pile of solids.
   A HOLE is not a part — it is the absence of one. Put a cylinder where the hole
   goes, size and place it like any other part, and then "cut" it from the thing
@@ -434,7 +485,9 @@ About "prototype":
   follow from it. If they told you, label it "observed" and quote them; if you
   chose it because a bracket is usually aluminium, label it "assumed" — that is
   a real answer and it is shown as one. "finish" is only how it catches light:
-  ` + geometry.FinishGuide() + `.
+  `
+
+var converseFraming = converseManner + geometryContract + geometry.FinishGuide() + `.
 - "states" are named configurations: which parts are shown, and where they sit.
   A state with "offsets" says these pieces separate along this path, and
   NOTHING here checks that they can — there is no interference, clearance or
@@ -644,6 +697,48 @@ type Prototype = geometry.Document
 // PrototypePart is one solid.
 type PrototypePart = geometry.Part
 
+// parseReply reads a model response into a Reply.
+//
+// # Why this is one function and not two
+//
+// The build loop (assemble.go) needs exactly what a turn needs: the same
+// markdown-fence stripping, the same dimension-repair fallback, the same
+// last-resort of keeping the words when the JSON is unusable. Written out a
+// second time it drifted immediately — the build loop's own copy used a
+// different extractor, skipped the fallback, and reported "came back
+// unreadable" on EVERY step of a live eight-step build while the ordinary path
+// handled the same replies without complaint.
+func parseReply(resp *llm.Response) (Reply, error) {
+	var reply Reply
+	body := []byte(extractJSON(resp.Content))
+	err := json.Unmarshal(body, &reply)
+	if err == nil {
+		return reply, nil
+	}
+	// An expression written where a number was expected is the commonest way a
+	// complete, correct reply fails to parse — the contract offers two slots per
+	// dimension and tells the model to prefer the one it then puts in the wrong
+	// place. Read rather than lost; see dimensionrepair.go for the measurement.
+	//
+	// Only after the strict parse has already failed, so a reply that parses is
+	// never rewritten.
+	if repaired, moved := repairDimensions(body); moved {
+		var second Reply
+		if json.Unmarshal(repaired, &second) == nil {
+			second.Repaired = "One or more dimensions arrived as expressions written in the " +
+				"place of a number. They were read as the expressions they are — the " +
+				"contract has a field for each — rather than the reply being discarded."
+			return second, nil
+		}
+	}
+	// Last resort: keep the words. A reply whose JSON is unusable often still
+	// said something true, and discarding it loses the whole turn.
+	if speech := unreadableReply(resp); speech != "" {
+		return Reply{Speech: speech}, nil
+	}
+	return Reply{}, err
+}
+
 // noteRepair appends to what the reader is told about corrections to this reply.
 //
 // The same channel a misread dimension uses, for the same reason: a reply that
@@ -834,39 +929,10 @@ func (c *Conversation) Respond(ctx context.Context, projectID string, history []
 		return nil, err
 	}
 
-	var reply Reply
-	body := []byte(extractJSON(resp.Content))
-	if err := json.Unmarshal(body, &reply); err != nil {
-		// An expression written where a number was expected is the commonest
-		// way a complete, correct reply fails to parse — the contract offers
-		// two slots per dimension and tells the model to prefer the one it then
-		// puts in the wrong place. Read rather than lost; see
-		// dimensionrepair.go for the measurement and the reasoning.
-		//
-		// Only after the strict parse has already failed, so a reply that
-		// parses is never rewritten.
-		repaired, moved := repairDimensions(body)
-		if moved {
-			var second Reply
-			if err2 := json.Unmarshal(repaired, &second); err2 == nil {
-				reply = second
-				// Said out loud, in the channel the person already reads for
-				// what FORGE assumed. A document silently different from the
-				// one the model sent is the same class of thing as a render
-				// that does not match its file.
-				reply.Repaired = "One or more dimensions arrived as expressions written in the " +
-					"place of a number. They were read as the expressions they are — the " +
-					"contract has a field for each — rather than the reply being discarded."
-				err = nil
-			}
-		}
-		if err != nil {
-			reply = Reply{Speech: unreadableReply(resp)}
-			if reply.Speech == "" {
-				return nil, errs.Wrap(op, errs.CodeExternalProtocol, err).
-					WithDetail("the model returned neither usable JSON nor any text")
-			}
-		}
+	reply, err := parseReply(resp)
+	if err != nil {
+		return nil, errs.Wrap(op, errs.CodeExternalProtocol, err).
+			WithDetail("the model returned neither usable JSON nor any text")
 	}
 	reply.Model = resp.Model
 	reply.Usage = resp.Usage
