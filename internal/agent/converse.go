@@ -297,6 +297,10 @@ About "prototype":
   (which no cylinder can cut, because it turns the corner with the tube), a box
   section, a hollow extrusion, a groove that goes all the way round a revolve.
   Each hole must be wholly inside the outline and must not CROSS another one.
+  A HOLE MUST LIE ENTIRELY INSIDE THE OUTLINE. A void that reaches the edge is
+  not a hole — it is a bite taken out of the shape, and the OUTLINE has to go
+  round it. If a loop's points sit outside the outline (below its lowest edge,
+  past its end), you meant one of the two things below instead.
   Two overlapping holes are one hole, and have to be drawn as one loop.
   A hole INSIDE another hole is an ISLAND: solid material standing in the void,
   like the post in an annular slot, the bar of a letter A, or a lug in the bottom
@@ -365,6 +369,25 @@ About "prototype":
   goes, size and place it like any other part, and then "cut" it from the thing
   it passes through. The cylinder is CONSUMED: it becomes the void, and does not
   also appear as a solid.
+  SO NEVER CUT WITH A PART YOU WANT TO KEEP. The tool stops being a body. If you
+  cut a recess using the very part that sits in it, that part is destroyed and
+  the assembly is left with the hollow and nothing in it. Make a SEPARATE cutter,
+  a little larger than the thing that has to fit, and give it its own id.
+  THIS IS ALSO HOW YOU REMOVE MATERIAL THAT IS NOT A HOLE. A recess, a pocket, a
+  slot, a scallop, an arch over a wheel, a notch in an edge — make the VOID as an
+  ordinary part shaped like the space you want gone (a cylinder for an arch or a
+  bore, a box for a pocket or a slot), place it so it overlaps the material, and
+  "cut" it. Reach for this before reshaping the body's own outline: it leaves the
+  part you already had intact, and it works the same whether the void is inside
+  the shape or open at its edge.
+  Worked example — wheel arches in a car body. The body is a box and the four
+  wheels are parts you are keeping. For each wheel add a NEW cylinder — its own
+  id, a little larger than the tyre, on the same axis and in the same place — and
+  "cut" those four from the body. The four new cylinders are consumed; the four
+  wheels survive and now sit in the arches. Cutting with the wheels themselves
+  would leave a body with four hollows and no wheels at all. And do NOT draw the
+  arches as "holes" in a profile: an arch opens at the bottom edge of the body,
+  so it is not inside the outline and is not a hole.
   "fuse" welds parts into one body. Say it only when they really are one piece;
   two parts touching are two parts, and fusing them is a claim about how the
   thing is made.
