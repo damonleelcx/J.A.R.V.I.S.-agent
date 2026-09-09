@@ -82,6 +82,9 @@ func Cases() []Case {
 			},
 			Scorers: []Scorer{
 				partIDsSurviveARevision(),
+				// Recognisable is not the same as faithful: a revision can keep
+				// every id and still retype every number. See wave 32.
+				dimensionsSurviveARevision(),
 				geometryDeclaresAConvertibleUnit(),
 				// Added when FORGE's own DETAIL started travelling into the next
 				// turn's history. That is the mechanism most likely to make

@@ -437,7 +437,12 @@ func (r *Runner) once(ctx context.Context, c Case, run int) Observation {
 		// reasoning does not carry over to it: a character is a per-deployment
 		// setting somebody can change, and a pack is a table in this repository,
 		// so pinning one cannot make a score drift with anybody's configuration.
-		reply, err := conv.Respond(ctx, "", history, message, onScreen(obs.Last()), nil)
+		// The previous turn's prototype travels with the turn, exactly as it does
+		// in the product: the server reads its own record and hands the agent the
+		// model being revised. An eval that gave the agent only the NAMES while
+		// the product gives it the whole document would be measuring a different
+		// system — the same reasoning that put onScreen here in the first place.
+		reply, err := conv.Respond(ctx, "", history, message, onScreen(obs.Last()), previousPrototype(obs.Last()), nil)
 		if err != nil {
 			obs.Err = err
 			break
@@ -519,6 +524,19 @@ func carryForward(message string, reply *agent.Reply) []agent.Turn {
 //
 // Reconstructed here rather than left empty: an eval that gives the model less
 // context than the product does is measuring a different system.
+// previousPrototype is the model the next turn revises, or nil on the first.
+//
+// Kept beside onScreen because the two answer the same question at different
+// fidelities and must be fed from the same place: if one is updated to read a
+// different turn than the other, the agent is told about one model and shown
+// another.
+func previousPrototype(prev *agent.Reply) *agent.Prototype {
+	if prev == nil {
+		return nil
+	}
+	return prev.Prototype
+}
+
 func onScreen(prev *agent.Reply) string {
 	if prev == nil || prev.Prototype == nil {
 		return ""

@@ -207,6 +207,12 @@ const (
 	EventGeometryExported Event = "forge.geometry.exported"
 	EventGeometryRefused  Event = "forge.geometry.export_refused"
 	EventGeometryCompared Event = "forge.geometry.compared"
+	// EventGeometryUnreadable is a turn answered WITHOUT the model on screen,
+	// because the record could not be read. Not fatal and not silent: the agent
+	// then restates dimensions from the conversation instead of copying them
+	// from the document, so a revision can drift — and a drift nobody logged is
+	// one nobody can explain afterwards.
+	EventGeometryUnreadable Event = "forge.geometry.unreadable"
 	// EventGeometryAdopted is an earlier variant brought forward so a person can
 	// rule on it. Logged because "we went back to v1" is a decision, and a
 	// decision that leaves no trace is one nobody can ask about later.
@@ -228,6 +234,7 @@ const (
 func init() {
 	allEvents = append(allEvents,
 		EventGeometrySaved, EventGeometryExported, EventGeometryRefused, EventGeometryCompared,
+		EventGeometryUnreadable,
 		EventGeometryAdopted, EventGeometryRespecified,
 		EventCADStarted, EventCADRestarted, EventCADRefused,
 	)

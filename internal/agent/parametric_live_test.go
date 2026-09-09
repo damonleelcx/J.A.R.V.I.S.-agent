@@ -70,7 +70,7 @@ func TestLiveParametricContract(t *testing.T) {
 	// follow the plate.
 	reply, err := conv.Respond(ctx, "", nil,
 		"Design a bracket that mounts a NEMA 17 stepper motor to a flat surface, with two "+
-			"stiffening ribs. Give me the parameters I can change.", "", nil)
+			"stiffening ribs. Give me the parameters I can change.", "", nil, nil)
 	if err != nil {
 		t.Fatalf("the live turn failed: %v", err)
 	}
@@ -244,7 +244,7 @@ func TestLiveModelOutputBuildsInTheKernel(t *testing.T) {
 	reply, err := conv.Respond(ctx, "", nil,
 		"Design a flat aluminium bracket that bolts a NEMA 17 stepper motor to a surface. "+
 			"It needs four clearance holes through the plate for the motor screws and a "+
-			"rounded outer edge.", "", nil)
+			"rounded outer edge.", "", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -315,7 +315,7 @@ func TestLiveModelDesignsWithAnOutline(t *testing.T) {
 	// An L-section is the canonical case: it cannot be a box, and it is concave.
 	reply, err := conv.Respond(ctx, "", nil,
 		"Design a steel angle bracket — an L-shaped cross section, 40 mm on each leg, "+
-			"8 mm thick, 60 mm long — with a bolt hole through each leg.", "", nil)
+			"8 mm thick, 60 mm long — with a bolt hole through each leg.", "", nil, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -395,7 +395,7 @@ func TestLiveModelDesignsABentPart(t *testing.T) {
 			"Design an aluminium coolant line for a machine tool: a 20 mm by 12 mm "+
 				"rectangular bar that runs 300 mm up from the pump, then turns and runs "+
 				"200 mm horizontally, then turns again and drops 150 mm into the manifold.",
-			"", nil)
+			"", nil, nil)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -495,7 +495,7 @@ func TestLiveModelDesignsATurnedPart(t *testing.T) {
 		r, err := conv.Respond(ctx, "", nil,
 			"Design a V-belt pulley: 80 mm outside diameter, 20 mm wide, with a vee groove "+
 				"cut all the way round the rim — 34 degrees included angle, 12 mm deep — and "+
-				"a 16 mm bore through the middle.", "", nil)
+				"a 16 mm bore through the middle.", "", nil, nil)
 		if err != nil {
 			t.Fatal(err)
 		}

@@ -348,7 +348,8 @@ func (h *ConverseHandlers) Converse(w http.ResponseWriter, r *http.Request) {
 	var spokeText string
 	var detailText []string
 
-	emitErr := h.conv.RespondStream(ctx, req.ProjectID, history, message, req.OnScreen, req.Images,
+	emitErr := h.conv.RespondStream(ctx, req.ProjectID, history, message, req.OnScreen,
+		currentModelFor(ctx, h.deps, req.ProjectID), req.Images,
 		func(ev agent.StreamEvent) error {
 			switch ev.Kind {
 			case "speech":
@@ -519,6 +520,61 @@ func (h *ConverseHandlers) Models(w http.ResponseWriter, r *http.Request) {
 // model could see when it drew this — and since the history is now the server's
 // own record, so is the count. A number taken from the request would be the
 // client describing a context the server assembled.
+// currentModel is the geometry on screen, read from this server's own record.
+//
+// # Why the server reads it rather than the page sending it
+//
+// The page used to send the conversation history and no longer does: the server
+// builds it from the record it wrote itself, so a client cannot put words in
+// FORGE's mouth by describing a conversation that never happened. The same
+// reasoning applies with more force to the geometry — a page that supplied the
+// current model could tell FORGE it had built something it never built, and the
+// reply would be a revision of a fiction that then gets SAVED as the next
+// version. So the page says nothing about this.
+//
+// # Why the newest variant that is not superseded
+//
+// It is the one the viewport draws (workbench.js drawRestoredVariant picks by
+// the same rule), so "the model on screen" means the same thing on both sides.
+// Two rules here would be two answers to "what am I revising", and the day they
+// disagreed the agent would edit something the person could not see.
+//
+// Nil is a normal answer and means there is nothing to revise yet — the first
+// turn of a project, or a deployment with no database.
+// Shared rather than a method, because the workbench and a collaboration room
+// both revise the same project's model and must agree on WHICH model that is.
+// Two copies of this rule would be two answers to "what am I revising", and the
+// day they disagreed the agent would edit something the person could not see.
+func currentModelFor(ctx context.Context, d Deps, projectID string) *agent.Prototype {
+	if d.Pool == nil || strings.TrimSpace(projectID) == "" {
+		return nil
+	}
+	variants, err := geometry.NewService(d.Pool, d.Clock, d.Log).List(ctx, projectID, currentModelWindow)
+	if err != nil {
+		// Never fatal. A turn without this context is the turn that shipped
+		// before it existed: the agent proposes from the conversation instead of
+		// revising from the record, which is worse and still works.
+		d.Log.WarnWith(ctx, logx.EventGeometryUnreadable, err,
+			"project_id", projectID,
+			"detail", "this turn was answered without the model on screen, so a revision "+
+				"restates dimensions from the conversation rather than copying them")
+		return nil
+	}
+	for i := range variants {
+		if string(variants[i].Disposition) == "superseded" {
+			continue
+		}
+		doc := variants[i].Document
+		return &doc
+	}
+	return nil
+}
+
+// currentModelWindow is how far back to look for a variant that is not
+// superseded. Small on purpose: List returns newest first, and a project whose
+// last dozen versions were all superseded has nothing on screen either.
+const currentModelWindow = 12
+
 func (h *ConverseHandlers) keepGeometry(r *http.Request, req converseRequest, proto *agent.Prototype, model string, historyTurns int) *agent.VariantSaved {
 	projectID := req.ProjectID
 	if h.geo == nil || h.deps.Pool == nil {

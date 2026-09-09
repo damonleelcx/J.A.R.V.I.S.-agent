@@ -130,6 +130,34 @@ Reply with JSON only:
   }
 }
 
+About "prototype_edit" — CHANGING the model already on screen:
+
+When a model is on screen and they ask for a CHANGE to it, send "prototype_edit"
+instead of "prototype". Never both.
+
+    "prototype_edit": {
+      "remove": {"parts": ["part-id"], "features": ["feature-id"]},
+      "patch": {
+        "parts": [ ...whole parts, by id... ],
+        "features": [ ...whole features, by id... ],
+        "parameters": [ ... ], "derived": [ ... ],
+        "assumptions": ["what you chose for THIS change"],
+        "not_verified": ["what this change does not establish"]
+      }
+    }
+
+- A part or feature in "patch" whose id ALREADY EXISTS replaces that one whole.
+  A new id is added. Anything you do not mention is left exactly as it is —
+  which is the point: you cannot mistype a dimension you did not send.
+- "remove" is how a part goes away. Leaving it out of a patch does NOT remove it.
+  That is deliberate: an edit only says what changes, so an omission means "not
+  changed" and never "delete". Naming something that is not there is an error.
+- Removing a part that a feature uses breaks that feature. Remove the feature too.
+- "assumptions" and "not_verified" in a patch are ADDED to what is already there.
+  The earlier ones still hold; do not restate them.
+- Send a whole "prototype" instead when there is nothing on screen yet, or when
+  they are asking for a different design rather than a change to this one.
+
 About "prototype":
 
 - Positions are in the stated units, Y is up, and the origin is the assembly's
@@ -562,6 +590,66 @@ type Prototype = geometry.Document
 // PrototypePart is one solid.
 type PrototypePart = geometry.Part
 
+// resolveEdit turns an edit into the document it describes.
+//
+// # Why it happens here and not downstream
+//
+// An edit is an input convenience. Everything after this point already consumes
+// a whole Document, so resolving it at the door means storage, rendering,
+// comparison and export are untouched by this feature — which is what keeps a
+// change to how FORGE is ASKED from becoming a change to what FORGE IS.
+//
+// # The three refusals
+//
+// Each is a case where continuing would produce a version that looks deliberate
+// and is not:
+//
+//   - Both forms at once. "Here is the whole model" and "here is a change to it"
+//     cannot both be authoritative, and picking one would be a guess about which
+//     the agent meant.
+//   - An edit with nothing to edit. The first turn of a project has no model on
+//     screen; applying a patch to nothing would invent a design from a fragment.
+//   - An edit that changes nothing. A version recording a change nobody made is
+//     a false entry in the history somebody will later try to interpret.
+func (r *Reply) resolveEdit(current *Prototype) error {
+	const op = "agent.Reply.resolveEdit"
+	if r == nil || r.PrototypeEdit == nil {
+		return nil
+	}
+	edit := *r.PrototypeEdit
+	r.PrototypeEdit = nil // consumed, whatever happens next
+
+	if r.Prototype != nil {
+		return errs.New(op, errs.CodeValidationFailed).
+			WithDetail("this reply carries both a whole prototype and an edit to one. " +
+				"Send the whole model when proposing something new, or an edit when changing " +
+				"what is already on screen — never both, because they cannot both be what you meant")
+	}
+	if current == nil || len(current.Parts) == 0 {
+		return errs.New(op, errs.CodeValidationFailed).
+			WithDetail("this reply edits the model on screen, and there is no model on screen. " +
+				"Send a whole prototype for the first shape in a project")
+	}
+	if edit.Empty() {
+		return errs.New(op, errs.CodeValidationFailed).
+			WithDetail("this edit changes nothing. Say in words that nothing changed rather " +
+				"than recording a version that did not")
+	}
+
+	applied, problems := edit.Apply(*current)
+	if len(problems) > 0 {
+		details := make([]string, 0, len(problems))
+		for _, p := range problems {
+			details = append(details, p.Detail)
+		}
+		return errs.New(op, errs.CodeValidationFailed).
+			WithDetail("this edit could not be applied to the model on screen: %s",
+				strings.Join(details, "; "))
+	}
+	r.Prototype = &applied
+	return nil
+}
+
 // ProposedGoal is work FORGE offers to do. Nothing runs until a human starts it.
 type ProposedGoal struct {
 	Title     string `json:"title"`
@@ -571,10 +659,17 @@ type ProposedGoal struct {
 
 // Reply is one response.
 type Reply struct {
-	Speech       string        `json:"speech"`
-	Detail       string        `json:"detail"`
-	Prototype    *Prototype    `json:"prototype"`
-	ProposedGoal *ProposedGoal `json:"proposed_goal"`
+	Speech    string     `json:"speech"`
+	Detail    string     `json:"detail"`
+	Prototype *Prototype `json:"prototype"`
+	// PrototypeEdit changes the model already on screen instead of restating it.
+	//
+	// Resolved into Prototype before this reply leaves the agent, so nothing
+	// downstream — the viewport, the store, compare, export, the CAD kernel —
+	// ever sees an edit. They all consume a whole Document and none of them
+	// should learn a second shape. See resolveEdit and geometry/edit.go.
+	PrototypeEdit *geometry.Edit `json:"prototype_edit,omitempty"`
+	ProposedGoal  *ProposedGoal  `json:"proposed_goal"`
 	// Claims is the epistemic ledger (PRD RSN-05): every statement in this reply
 	// together with how FORGE came to hold it. Derived from the reply, never
 	// asked of the model — see ClaimLedger.
@@ -611,7 +706,7 @@ type Reply struct {
 // part, a screenshot of a drawing (PRD VIS-01). They route the turn to the
 // vision model, and a deployment that has not configured one refuses rather
 // than sending a picture to a model that cannot see.
-func (c *Conversation) Respond(ctx context.Context, projectID string, history []Turn, message string, workspaceNote string, images []string) (*Reply, error) {
+func (c *Conversation) Respond(ctx context.Context, projectID string, history []Turn, message string, workspaceNote string, current *Prototype, images []string) (*Reply, error) {
 	const op = "agent.Conversation.Respond"
 
 	if strings.TrimSpace(message) == "" {
@@ -638,7 +733,7 @@ func (c *Conversation) Respond(ctx context.Context, projectID string, history []
 	// and the buffered path assembled the same request separately, and an image
 	// added to one would simply not exist in the other.
 	messages := c.buildMessages(c.characters.For(ctx, projectID, c.char),
-		c.domains.For(ctx, projectID), history, message, workspaceNote, images)
+		c.domains.For(ctx, projectID), history, message, workspaceNote, current, images)
 
 	resp, err := c.client.Complete(ctx, llm.Request{
 		Role:      role,
@@ -689,6 +784,12 @@ func (c *Conversation) Respond(ctx context.Context, projectID string, history []
 	reply.LatencyMS = resp.Latency.Milliseconds()
 
 	if err := reply.validate(); err != nil {
+		return nil, err
+	}
+	// The same resolution the streamed path does, at the same point. A rule
+	// enforced in one of two paths holds until somebody uses the other one —
+	// which is the reason validate() itself lives at this choke point.
+	if err := reply.resolveEdit(current); err != nil {
 		return nil, err
 	}
 	return &reply, nil
