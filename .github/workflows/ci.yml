@@ -42,6 +42,18 @@ jobs:
       - name: Vet
         run: make vet
 
+      # The browser-side fences. They run the SHIPPED asset against a stubbed
+      # browser and count what it does, which is the only way to catch a defect
+      # where each code path is individually well-formed — one failed audio load
+      # firing two handlers, or a panel that reports the one dimension it was
+      # handed and "?" for the two it was not.
+      #
+      # They lived only in `make check`, which nothing here calls, so from the
+      # day each was written until 2026-09-09 no run of CI had ever executed one.
+      # A fence that CAN go red is not a fence until something makes it.
+      - name: Browser-side fences
+        run: make test-echo test-voice-fallback test-extrusion-size
+
       # Integration tests run against the live Postgres service above. A schema
       # test against a hand-written CREATE TABLE proves nothing about the schema
       # that actually ships, so these are not optional in CI.

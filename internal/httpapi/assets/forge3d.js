@@ -87,7 +87,25 @@
     return m;
   }
 
-  function rotationXYZ(r) {
+  /* A document's rotation is in DEGREES; this matrix wants radians.
+   *
+   * Nothing used to convert, and nothing said which unit the document was in.
+   * A model asked for a wheel writes 90 for a quarter turn — every non-zero
+   * rotation ever stored in this deployment was [0, 0, 90] on a wheel, and read
+   * as radians that is 116.8 degrees, so the car's wheels sat tilted 27 degrees
+   * off vertical and looked like a modelling mistake.
+   *
+   * Kept in step with geometry.Part.RotationRadians by
+   * TestTheRendererTurnsDegreesLikeTheBuilderDoes: the stage and the exported
+   * file must not disagree about where a part is pointing. */
+  function rotationRadians(r) {
+    var out = [0, 0, 0];
+    for (var i = 0; i < 3; i++) out[i] = num(r && r[i], 0) * Math.PI / 180;
+    return out;
+  }
+
+  function rotationXYZ(deg) {
+    var r = rotationRadians(deg);
     var cx = Math.cos(r[0]), sx = Math.sin(r[0]);
     var cy = Math.cos(r[1]), sy = Math.sin(r[1]);
     var cz = Math.cos(r[2]), sz = Math.sin(r[2]);
@@ -772,6 +790,35 @@
     var flat = flattenDrawing(profile || [], true);
     if (!flat) return null;
     return flat.map(function (p) { return [p[0], p[1]]; });
+  }
+
+  /* An outline's own bounding rectangle, in the part's local X and Y.
+   *
+   * # Why the panel needs this
+   *
+   * An extrusion's "size" carries only its depth: the other two dimensions are
+   * in the drawing. The parts panel used to print those as "? × ? × 4500 mm",
+   * so a body that had quietly become 4500 mm wide looked exactly like one that
+   * had not. A model asked to make a car body less boxy drew the car's SIDE
+   * view (4500 long) and extruded it by 4500, giving a square slab — and the
+   * only number on screen was the one that was right.
+   *
+   * Measured from the FLATTENED outline for the same reason profileExtent does
+   * in geometry/overlay.go: a rounded corner sits inside the corner it replaced,
+   * so the drawn vertices would report a part bigger than the part.
+   *
+   * null when the outline cannot be resolved — the panel then says "?" as
+   * before, which is honest. A guess here would be a measurement. */
+  function outlineExtent(profile) {
+    var pts = outlinePoints(profile);
+    if (!pts || pts.length < 3) return null;
+    var lo = [Infinity, Infinity], hi = [-Infinity, -Infinity];
+    for (var i = 0; i < pts.length; i++) {
+      lo[0] = Math.min(lo[0], pts[i][0]); hi[0] = Math.max(hi[0], pts[i][0]);
+      lo[1] = Math.min(lo[1], pts[i][1]); hi[1] = Math.max(hi[1], pts[i][1]);
+    }
+    if (!isFinite(lo[0]) || !isFinite(lo[1])) return null;
+    return { width: hi[0] - lo[0], height: hi[1] - lo[1] };
   }
 
   function extrusionGeometry(profile, depth, holes) {
@@ -2244,6 +2291,8 @@
      * showed "⌀700 mm" with no length for a wheel the other two agreed was
      * 250 mm long — three consumers, three answers, from one document. */
     cylinderLength: cylinderLength,
+    outlineExtent: outlineExtent,
+    rotationRadians: rotationRadians,
     /* Exported so a Go fence can read it. The browser and the exporter each
      * hold a copy of the retirement table, and the failure they guard against
      * is the two disagreeing about what a retired word means — which a test

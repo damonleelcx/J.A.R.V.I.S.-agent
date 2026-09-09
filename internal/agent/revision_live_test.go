@@ -3,7 +3,9 @@ package agent_test
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"log/slog"
+	"math"
 	"os"
 	"sort"
 	"strconv"
@@ -67,10 +69,10 @@ func TestLiveRevisionKeepsTheRestOfTheModel(t *testing.T) {
 	if os.Getenv("FORGE_LIVE_LLM_TESTS") == "" || os.Getenv("FORGE_LLM_API_KEY") == "" {
 		t.Skip("set FORGE_LLM_API_KEY and FORGE_LIVE_LLM_TESTS=1 to run the live revision test")
 	}
-	base := loadPrototype(t, "testdata/finished-car.json")
-	if len(base.Parts) < 10 {
+	base := loadPrototype(t, "testdata/live-sports-car.json")
+	if len(base.Parts) < 5 {
 		t.Fatalf("the fixture has %d parts; this test is about what a revision does to the "+
-			"parts nobody mentioned, and needs a model with plenty of them", len(base.Parts))
+			"parts nobody mentioned, and needs a model with several of them", len(base.Parts))
 	}
 
 	log := logx.New(logx.Options{Level: slog.LevelError, Output: os.Stderr, Service: "revision-live-test"})
@@ -148,6 +150,28 @@ func revisionRun(t *testing.T, conv *agent.Conversation, base *geometry.Document
 		}
 	}
 
+	// The envelope must survive. "Less boxy" is a styling change; a body that
+	// comes back 2.4x wider has not been restyled, it has been misdrawn.
+	//
+	// Observed live 2026-09-09: the model drew the car's SIDE elevation as the
+	// outline (4500 mm long) and gave 4500 again as the extrusion depth, so a
+	// body that should have stayed 1900 mm wide became a 4.5 m square slab. The
+	// length was used twice and the width was thrown away. Nothing refused it,
+	// and the parts panel showed "? x ? x 4500 mm" — the one number that was
+	// right — so it looked exactly like a correct body.
+	// A resize is allowed to happen — the model does it and no wording stopped
+	// it (see turned.go). What is NOT allowed is for it to reach the reader
+	// unannounced, which is the same standard vanished.go is held to.
+	if grew := envelopeGrowth(base, after, "chassis-body"); grew > 1.5 {
+		if !strings.Contains(told, "Main Body") {
+			t.Errorf("run %d: the body came back %.1fx its size and the reply never says so.\n"+
+				"notice: %q\n%s", n, grew, told, describePart(after, "chassis-body"))
+		} else {
+			t.Logf("run %d: body resized %.1fx — repaired or reported\n%s",
+				n, grew, describePart(after, "chassis-body"))
+		}
+	}
+
 	faults := after.Faults()
 	for _, f := range faults {
 		// Logged, not failed: see the rate note on the parent test. The repair
@@ -182,6 +206,92 @@ func missingParts(before, after *geometry.Document) []string {
 	}
 	sort.Strings(gone)
 	return gone
+}
+
+// envelopeGrowth is how much bigger one part's bounding box got, on its worst
+// axis. 1.0 is unchanged. Zero when either side cannot be measured, which is a
+// miss rather than a wrong number.
+// describePart says exactly what the model wrote, so a failing run can be
+// diagnosed from the log instead of guessed at. The first attempt to fix this
+// aimed at "extrusion" because the reply said so; the documents were sweeps.
+func describePart(d *geometry.Document, id string) string {
+	for _, p := range d.Parts {
+		if p.ID != id {
+			continue
+		}
+		lo := [2]float64{math.Inf(1), math.Inf(1)}
+		hi := [2]float64{math.Inf(-1), math.Inf(-1)}
+		for _, pt := range p.Profile {
+			lo[0], hi[0] = math.Min(lo[0], pt.X), math.Max(hi[0], pt.X)
+			lo[1], hi[1] = math.Min(lo[1], pt.Y), math.Max(hi[1], pt.Y)
+		}
+		out := fmt.Sprintf("  shape=%s size=%v rotation=%v", p.Shape, p.Size, p.Rotation)
+		if len(p.Profile) > 0 {
+			out += fmt.Sprintf("\n  outline: %d pts spanning %.0f x %.0f",
+				len(p.Profile), hi[0]-lo[0], hi[1]-lo[1])
+		}
+		if len(p.Path) > 0 {
+			plo := [3]float64{math.Inf(1), math.Inf(1), math.Inf(1)}
+			phi := [3]float64{math.Inf(-1), math.Inf(-1), math.Inf(-1)}
+			for _, pt := range p.Path {
+				v := [3]float64{pt.X, pt.Y, pt.Z}
+				for i := 0; i < 3; i++ {
+					plo[i], phi[i] = math.Min(plo[i], v[i]), math.Max(phi[i], v[i])
+				}
+			}
+			out += fmt.Sprintf("\n  path: %d pts spanning %.0f x %.0f x %.0f",
+				len(p.Path), phi[0]-plo[0], phi[1]-plo[1], phi[2]-plo[2])
+		}
+		return out
+	}
+	return "  (the part is not in the document)"
+}
+
+func envelopeGrowth(before, after *geometry.Document, id string) float64 {
+	b, okB := partExtent(before, id)
+	a, okA := partExtent(after, id)
+	if !okB || !okA {
+		return 0
+	}
+	worst := 0.0
+	for i := 0; i < 3; i++ {
+		if b[i] <= 0 {
+			continue
+		}
+		if r := a[i] / b[i]; r > worst {
+			worst = r
+		}
+	}
+	return worst
+}
+
+// partExtent measures a part the way the viewport draws it: through the mesh
+// builder, so the outline of an extrusion counts and a stated size that the
+// shape does not use does not. Reading "size" alone would report the square
+// slab as 4500 deep and nothing else, which is exactly the blindness under test.
+func partExtent(d *geometry.Document, id string) ([3]float64, bool) {
+	m := geometry.Tessellate(*d, geometry.Millimetre)
+	lo := [3]float64{math.Inf(1), math.Inf(1), math.Inf(1)}
+	hi := [3]float64{math.Inf(-1), math.Inf(-1), math.Inf(-1)}
+	seen := false
+	for _, g := range m.Groups {
+		if g.PartID != id {
+			continue
+		}
+		for _, t := range g.Triangles {
+			for _, v := range [3][3]float64{t.A, t.B, t.C} {
+				for i := 0; i < 3; i++ {
+					lo[i] = math.Min(lo[i], v[i])
+					hi[i] = math.Max(hi[i], v[i])
+				}
+			}
+			seen = true
+		}
+	}
+	if !seen {
+		return [3]float64{}, false
+	}
+	return [3]float64{hi[0] - lo[0], hi[1] - lo[1], hi[2] - lo[2]}, true
 }
 
 func loadPrototype(t *testing.T, path string) *geometry.Document {

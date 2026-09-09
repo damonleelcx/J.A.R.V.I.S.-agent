@@ -418,8 +418,7 @@ func round(v float64, places int) float64 {
 // translate ∘ rotate. Anything else would put the exported part somewhere other
 // than where it was drawn.
 func place(ts []Triangle, p Part) []Triangle {
-	rot := [3]float64{}
-	copy(rot[:], padTo3(p.Rotation))
+	rot := p.RotationRadians()
 	pos := [3]float64{}
 	copy(pos[:], padTo3(p.Position))
 
