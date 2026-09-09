@@ -1103,11 +1103,11 @@
     var portrait = $('orb-portrait');
     if (portrait) portrait.src = '/v1/meta/portrait?state=' + encodeURIComponent(want);
 
+    /* Inlined, not <img>: the mark takes its colours and its state animation
+     * from avatar.css, and an SVG behind an <img> cannot see this page's
+     * stylesheet. See assets/sigil.js. */
     ['orb-badge', 'top-sigil'].forEach(function (id) {
-      var badge = $(id);
-      if (!badge) return;
-      badge.innerHTML = '<img src="/v1/meta/sigil?state=' + encodeURIComponent(want) +
-        '&size=64" alt="FORGE: ' + want + '">';
+      window.ForgeSigil.place($(id), want, 64);
     });
   }
 

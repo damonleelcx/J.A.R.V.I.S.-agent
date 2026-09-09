@@ -28,7 +28,7 @@ import (
 //go:embed assets/shell.css assets/avatar.css assets/console.css assets/workbench.css
 //go:embed assets/pages.js assets/console.js assets/workbench.js assets/forge3d.js
 //go:embed assets/password-reveal.js assets/portal-field.js assets/home.css
-//go:embed assets/theme.js
+//go:embed assets/theme.js assets/sigil.js
 //go:embed assets/stage.js assets/voice.js assets/orb.js
 //go:embed assets/audio-input.js assets/room.js assets/room-page.js assets/room.css
 //go:embed assets/portrait/*.png
@@ -431,7 +431,7 @@ func (p *PageHandlers) Assets(w http.ResponseWriter, r *http.Request) {
 		name == "forge3d.js", name == "voice.js", name == "orb.js",
 		name == "audio-input.js", name == "room.js", name == "room-page.js",
 		name == "stage.js", name == "password-reveal.js", name == "portal-field.js",
-		name == "theme.js":
+		name == "theme.js", name == "sigil.js":
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 	case name == "favicon.png":
 		w.Header().Set("Content-Type", "image/png")
@@ -885,6 +885,7 @@ const pageTemplates = `
 </div>
 
 <script src="{{asset "theme.js"}}"></script>
+<script src="{{asset "sigil.js"}}"></script>
 <script src="{{asset "forge3d.js"}}"></script>
 <script src="{{asset "voice.js"}}"></script>
 <script src="{{asset "orb.js"}}"></script>
@@ -1013,7 +1014,11 @@ const pageTemplates = `
 <div class="topbar">
   {{.Avatar}}
   <div class="wordmark">FORGE</div>
-  <div class="who"><span id="whoami"></span><a href="/">Home</a></div>
+  <!-- The workbench is where the work happens and this page is where it is
+       reviewed, so somebody lands here mid-task and needs to get back. Until
+       now the only route was Home and then a click, which is one hop more than
+       a return path should be. -->
+  <div class="who"><span id="whoami"></span><a href="/workbench">Workbench</a><a href="/">Home</a></div>
   {{template "themetoggle" .}}
 </div>
 <div id="err" class="note bad hidden" style="margin:16px 22px"></div>
@@ -1057,6 +1062,7 @@ const pageTemplates = `
   <div id="detail" class="hidden"></div>
 </div>
 <script src="{{asset "theme.js"}}"></script>
+<script src="{{asset "sigil.js"}}"></script>
 <script src="{{asset "password-reveal.js"}}"></script>
 <script src="{{asset "console.js"}}"></script>
 </body></html>{{end}}
