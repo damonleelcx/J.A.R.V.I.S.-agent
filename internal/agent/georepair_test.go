@@ -210,3 +210,14 @@ func TestRepair_DoesNothingWhenNothingIsWrong(t *testing.T) {
 			"that draws anything would pay for it", stub.calls)
 	}
 }
+
+// mustJSONInner renders a document as the bare "prototype" value, for tests
+// that need to embed it in a fuller reply.
+func mustJSONInner(t *testing.T, d *Prototype) string {
+	t.Helper()
+	b, err := json.Marshal(d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(b)
+}

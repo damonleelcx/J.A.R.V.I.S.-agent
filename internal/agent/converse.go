@@ -166,7 +166,15 @@ About "prototype":
   was "base-plate" stays "base-plate" — that is what lets somebody put the two
   versions side by side and see what changed rather than two unrelated designs.
   Reuse the id even when the dimensions change; use a new id only for a part
-  that was not there before.
+  that was not there before. RESHAPING A PART DOES NOT CHANGE ITS ID: a body
+  that becomes an extrusion is still the same body and keeps the name it had.
+- A REVISION KEEPS EVERY PART IT WAS NOT ASKED TO REMOVE. Asked to reshape the
+  body, send back the wheels, the spoiler and everything else exactly as they
+  were. Leaving a part out is how it is deleted, so a part you simply did not
+  mention is a part you destroyed — and the person is told their body was
+  reshaped, not that their spoiler is gone. If you find yourself rewriting the
+  whole model to change one thing, send "prototype_edit" instead: what it does
+  not mention cannot be lost.
 - Only emit it when the shape is the point. Do not attach geometry to a
   conversation about scheduling.
 - "assumptions" is where every dimension you CHOSE goes. If they said "a
@@ -856,6 +864,7 @@ func (c *Conversation) Respond(ctx context.Context, projectID string, history []
 	}
 	// The same repair the streamed path does, at the same point.
 	c.repairIfFaulty(ctx, &reply)
+	noteVanished(&reply, current)
 	return &reply, nil
 }
 
