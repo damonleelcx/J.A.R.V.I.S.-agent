@@ -159,6 +159,11 @@ test-echo: ## Check the hands-free echo guard against the transcripts that cause
 test-voice-fallback: ## Check one failed audio load falls back to the browser voice exactly once
 	@node scripts/voice-fallback-check.js
 
+.PHONY: cad-builders
+cad-builders: ## Regenerate the list of build123d names a script may use
+	@.cadvenv/bin/python internal/domain/cad/gen_builders.py > internal/domain/cad/builders.txt
+	@echo "wrote $$(grep -vc '^#' internal/domain/cad/builders.txt) names"
+
 .PHONY: test-extrusion-size
 test-extrusion-size: ## Check the parts panel reports how big an extrusion really is
 	@node scripts/extrusion-size-check.js
