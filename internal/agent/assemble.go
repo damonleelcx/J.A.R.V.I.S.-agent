@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 
@@ -259,4 +260,57 @@ func (c *Conversation) buildOneStep(ctx context.Context, doc *Prototype, asked s
 func AssembleForTest(ctx context.Context, c *Conversation, asked string, base *Prototype,
 	emit func(BuildStep) error) (*Prototype, []string, error) {
 	return c.assemble(ctx, asked, base, emit)
+}
+
+// buildInPasses runs a multi-pass build when the model asked for one.
+//
+// # Why the model decides and not a heuristic here
+//
+// Whether something fits in one document is a judgement about the thing being
+// built, and the model already makes it well: asked for a sports car it answered
+// "a sports car is too large and complex for a single parametric prototype here"
+// and returned six boxes. It was right. All that was missing was somewhere for
+// that judgement to go other than an apology.
+//
+// # Why it degrades rather than fails
+//
+// A build that cannot be planned, or that produces nothing, leaves the reply
+// exactly as it was — the model's own words, which already say what it meant to
+// do. Turning a slow path's failure into a lost turn would be strictly worse
+// than the six boxes this replaces.
+func (c *Conversation) buildInPasses(ctx context.Context, reply *Reply, asked string,
+	current *Prototype, onStep func(BuildStep) error) {
+
+	if reply == nil || !reply.BuildInPasses {
+		return
+	}
+	reply.BuildInPasses = false // consumed, whatever happens next
+
+	// A reply that carried geometry AND asked for a build has already answered:
+	// the geometry it sent is what it could do in one pass, and building over
+	// the top of it would throw that away for something nobody compared.
+	if reply.Prototype != nil || reply.PrototypeEdit != nil {
+		return
+	}
+
+	doc, notes, err := c.assemble(ctx, asked, current, onStep)
+	if err != nil || doc == nil || len(doc.Parts) == 0 {
+		if err != nil && !errors.Is(err, errNotWorthPlanning) {
+			reply.noteRepair("FORGE tried to build this a piece at a time and could not: " + err.Error())
+		}
+		return
+	}
+	reply.Prototype = doc
+	for _, n := range notes {
+		reply.noteRepair(n)
+	}
+}
+
+// describeStep is one line a person can read while a build runs.
+func describeStep(s BuildStep) string {
+	line := fmt.Sprintf("Step %d of %d — %s. %d part(s) so far.", s.N, s.Of, s.Name, s.Parts)
+	if s.Note != "" {
+		line += " " + s.Note
+	}
+	return line
 }

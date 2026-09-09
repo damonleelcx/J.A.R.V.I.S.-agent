@@ -207,3 +207,56 @@ func TestAssemble_EveryPassCarriesTheContract(t *testing.T) {
 		}
 	}
 }
+
+// The build loop is REACHABLE from a turn.
+//
+// # What this closes
+//
+// The loop was built, measured live at 60 parts, and fenced — and nothing in the
+// shipping binary called it. Only the test helper did, so the linker dropped it
+// and a deploy verified the running binary did not contain the planner's prompt
+// at all. A feature with no producer: built, tested, and absent.
+//
+// This drives a real turn and asserts geometry came back from the passes, so the
+// wiring cannot be removed without something going red.
+func TestAssemble_ATurnCanAskForABuild(t *testing.T) {
+	stub := &scriptedStub{replies: []string{
+		// The turn itself: no geometry, asks to build in passes.
+		`{"speech":"I'll build this a subsystem at a time.","build_in_passes":true}`,
+		`{"steps":[{"name":"a","what":"first"},{"name":"b","what":"second"}]}`,
+		wholeDoc("a", "A"),
+		addPart("b", "B"),
+	}}
+	c := &Conversation{client: stub}
+
+	reply, err := c.Respond(context.Background(), "", nil, "a sports car", "", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reply.Prototype == nil {
+		t.Fatal("the model asked for a multi-pass build and the turn came back with no " +
+			"geometry. The build loop is not connected to anything")
+	}
+	if len(reply.Prototype.Parts) != 2 {
+		t.Errorf("the build produced %d parts; two passes each added one", len(reply.Prototype.Parts))
+	}
+	if reply.BuildInPasses {
+		t.Error("the flag was not consumed, so a later reader would run the build again")
+	}
+}
+
+// A reply that already carried geometry is left alone.
+func TestAssemble_DoesNotBuildOverAnAnswerItAlreadyGave(t *testing.T) {
+	stub := &scriptedStub{replies: []string{
+		`{"speech":"here","build_in_passes":true,"prototype":{"name":"m","units":"mm","parts":[
+		  {"id":"x","name":"X","shape":"box","size":{"width":10,"height":10,"depth":10}}]}}`,
+	}}
+	c := &Conversation{client: stub}
+	reply, err := c.Respond(context.Background(), "", nil, "a bracket", "", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reply.Prototype.Parts) != 1 || reply.Prototype.Parts[0].ID != "x" {
+		t.Errorf("a reply that already answered was rebuilt over: %+v", reply.Prototype.Parts)
+	}
+}

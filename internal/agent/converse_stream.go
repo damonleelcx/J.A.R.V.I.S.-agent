@@ -284,6 +284,13 @@ func (c *Conversation) RespondStream(
 		/* And a revision that RESIZED what it was asked to restyle. Three
 		 * attempts at saying this in the contract were measured and none beat
 		 * saying nothing, so it is checked — see turned.go. */
+		/* A build the model says is too big for one reply. Run HERE, in the
+		 * streaming path, so each pass is reported as it lands: a build takes
+		 * minutes and a person watching a spinner has no way to tell it from a
+		 * hang. See assemble.go. */
+		c.buildInPasses(ctx, &reply, message, current, func(step BuildStep) error {
+			return emit(StreamEvent{Kind: "notice", Text: describeStep(step)})
+		})
 		c.repairIfTurned(ctx, &reply, current)
 		/* And then LOOK at it. Everything measured says the model writes
 		 * coordinates blind: swapped axes, wheels inside the body, a quarter
