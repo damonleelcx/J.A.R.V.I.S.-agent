@@ -281,6 +281,10 @@ func (c *Conversation) RespondStream(
 		 * and stores a document without one has already misled somebody by the
 		 * time anything downstream could notice. See georepair.go. */
 		c.repairIfFaulty(ctx, &reply)
+		/* And say what the revision removed. A whole prototype deletes by
+		 * omission, so a part nobody discussed can disappear while the reply
+		 * talks about something else — see vanished.go. */
+		noteVanished(&reply, current)
 
 		if !speechSent && reply.Speech != "" {
 			if err := emit(StreamEvent{Kind: "speech", Text: reply.Speech, FirstTokenMS: firstTokenMS}); err != nil {
