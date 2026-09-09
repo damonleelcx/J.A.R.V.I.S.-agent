@@ -1489,7 +1489,14 @@
     if (p.shape === 'cylinder' || p.shape === 'cone' || p.shape === 'tube') {
       if (s.radius != null) dims.push('⌀' + qty(s.radius * 2));
       if (s.radius_top != null && s.radius_top !== s.radius) dims.push('top ⌀' + qty(s.radius_top * 2));
-      if (s.height != null) dims.push('h ' + qty(s.height));
+      /* Through Forge3D so the panel, the stage and the exported file cannot
+       * disagree about how long a cylinder is. A model that writes "depth" on a
+       * cylinder means its length — see sizeSynonyms in geometry/mesh.go — and
+       * the panel used to be the one place that did not know it. */
+      var length = (window.Forge3D && window.Forge3D.cylinderLength)
+        ? window.Forge3D.cylinderLength(s)
+        : s.height;
+      if (length != null) dims.push('h ' + qty(length));
     } else if (p.shape === 'sphere') {
       if (s.radius != null) dims.push('⌀' + qty(s.radius * 2));
     } else if (s.width != null || s.height != null || s.depth != null) {

@@ -81,6 +81,13 @@ func Cases() []Case {
 				"Make the base plate thicker and add a stiffening rib.",
 			},
 			Scorers: []Scorer{
+				// A part the revision ADDS has to be buildable, like any other.
+				// Carried by every drawing-vocabulary case and not by this one
+				// until now — which is how "add a rear spoiler" produced a wing
+				// with a two-point outline that was silently left out of the
+				// model. The failure lived on the revision path, so the guard
+				// belongs here too. See 2026-09-09.
+				outlinesResolveIntoShapes(),
 				partIDsSurviveARevision(),
 				// Recognisable is not the same as faithful: a revision can keep
 				// every id and still retype every number. See wave 32.

@@ -1,6 +1,8 @@
 package geometry_test
 
 import (
+	"os"
+	"strings"
 	"testing"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/geometry"
@@ -139,5 +141,77 @@ func TestEdit_KnowsWhenItWouldChangeNothing(t *testing.T) {
 	}
 	if (geometry.Edit{Patch: &geometry.Document{Parts: []geometry.Part{{ID: "rib"}}}}).Empty() {
 		t.Error("a patch adding a part was reported as changing nothing")
+	}
+}
+
+// A cylinder's "depth" is read as its length, in Go and in the viewport alike.
+//
+// # What this closes
+//
+// A cylinder is `radius` + `height`. Asked for a wheel, the model wrote
+// `{"depth": 250, "radius": 350}` — and a cylinder has no "depth" in this
+// vocabulary, so 250 could not mean anything else. It was discarded, `height`
+// defaulted to 1 mm, and the note said "no height was given" while the model had
+// plainly given one under another name. All four wheels of the sports car were
+// ⌀700 discs a millimetre wide, which is why it rendered as a slab.
+//
+// The second half matters as much as the first: a reading that happened in the
+// exporter and not in the viewport would draw a different solid from the one in
+// the file. That is the worst thing this system can do, so the rule is asserted
+// in both places from one test.
+func TestCylinderDepthIsReadTheSameWayInBothPlaces(t *testing.T) {
+	doc := geometry.Document{
+		Name: "wheel", Units: "mm",
+		Parts: []geometry.Part{{ID: "wheel", Name: "Wheel", Shape: "cylinder",
+			Size: map[string]float64{"depth": 250, "radius": 350}}},
+	}
+	solids, notes := geometry.Solids(doc, geometry.Millimetre)
+	if len(solids) != 1 {
+		t.Fatalf("wanted one solid, got %d", len(solids))
+	}
+	if got := solids[0].Dims["height"]; got != 250 {
+		t.Errorf("the cylinder is %g long; the model wrote depth 250 and a cylinder has no "+
+			"depth, so that is the only thing it can mean. A 1mm wheel is what this fixes.", got)
+	}
+	// Said, not silently substituted: a dimension read from a different word is
+	// still a reading and the reader is entitled to know which word was acted on.
+	var told bool
+	for _, n := range notes {
+		if strings.Contains(n, "depth") && strings.Contains(n, "read as") {
+			told = true
+		}
+	}
+	if !told {
+		t.Errorf("the reading was not reported. Notes: %v", notes)
+	}
+
+	// The viewport must apply the same rule, or the picture and the file differ.
+	js, err := os.ReadFile("../../httpapi/assets/forge3d.js")
+	if err != nil {
+		t.Fatalf("reading forge3d.js: %v", err)
+	}
+	if !strings.Contains(string(js), "function cylinderLength(s)") {
+		t.Error("the viewport has no cylinderLength, so it still reads only `height` and will " +
+			"draw a 1mm wheel for a model the exporter builds 250mm long")
+	}
+	if !strings.Contains(string(js), "cylinderLength(s), TESSELLATION.radial") {
+		t.Error("the cylinder case does not use cylinderLength, so the helper exists and is " +
+			"not consulted — the drawing and the file disagree again")
+	}
+	if !strings.Contains(string(js), "cylinderLength: cylinderLength") {
+		t.Error("cylinderLength is no longer exported, so the Parts panel cannot share it and " +
+			"will grow its own reading — which is how the panel came to print a wheel with no " +
+			"length while the stage and the exporter both had one")
+	}
+
+	// The panel is the third consumer of that one document, and the one that
+	// silently disagreed: it printed "⌀700 mm" and no length at all.
+	wb, err := os.ReadFile("../../httpapi/assets/workbench.js")
+	if err != nil {
+		t.Fatalf("reading workbench.js: %v", err)
+	}
+	if !strings.Contains(string(wb), "window.Forge3D.cylinderLength(s)") {
+		t.Error("the Parts panel does not use the shared cylinderLength, so it can print a " +
+			"different length from the one drawn and exported")
 	}
 }
