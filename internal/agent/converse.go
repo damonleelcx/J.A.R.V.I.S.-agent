@@ -218,6 +218,12 @@ About "prototype":
   The script assigns "result" to the shape it built. It has build123d's builders
   and the maths functions and nothing else: no imports, no files, no network. It
   gets a few seconds of processor time and is stopped if it takes more.
+- "build_in_passes": true when what they asked for is too big for ONE document —
+  a car, an engine, a machine with subsystems. Do not return six boxes and call
+  it a concept: say what you are about to build in "speech", set this, and leave
+  "prototype" out. It is then built a subsystem at a time, each one checked
+  before the next, and you will be asked for each in turn. It takes minutes, so
+  do not set it for anything a single reply can honestly do.
 - Only emit it when the shape is the point. Do not attach geometry to a
   conversation about scheduling.
 - "assumptions" is where every dimension you CHOSE goes. If they said "a
@@ -853,7 +859,14 @@ type Reply struct {
 	// ever sees an edit. They all consume a whole Document and none of them
 	// should learn a second shape. See resolveEdit and geometry/edit.go.
 	PrototypeEdit *geometry.Edit `json:"prototype_edit,omitempty"`
-	ProposedGoal  *ProposedGoal  `json:"proposed_goal"`
+	// BuildInPasses asks for the thing to be built a subsystem at a time rather
+	// than in this one reply. The MODEL sets it, because the model is the only
+	// party that knows whether what was asked for fits in one document — and it
+	// already knew: asked for a sports car it answered "too large and complex
+	// for a single parametric prototype here" and returned six boxes. See
+	// assemble.go.
+	BuildInPasses bool          `json:"build_in_passes,omitempty"`
+	ProposedGoal  *ProposedGoal `json:"proposed_goal"`
 	// Claims is the epistemic ledger (PRD RSN-05): every statement in this reply
 	// together with how FORGE came to hold it. Derived from the reply, never
 	// asked of the model — see ClaimLedger.
@@ -949,6 +962,10 @@ func (c *Conversation) Respond(ctx context.Context, projectID string, history []
 	}
 	// The same repair the streamed path does, at the same point.
 	c.repairIfFaulty(ctx, &reply)
+	// A build the model says is too big for one reply. No progress to report on
+	// the buffered path, so it is silent until it finishes — which is one more
+	// reason the streaming path is the one people use.
+	c.buildInPasses(ctx, &reply, message, current, nil)
 	c.repairIfTurned(ctx, &reply, current)
 	c.repairIfItLooksWrong(ctx, &reply, message)
 	noteVanished(&reply, current)
