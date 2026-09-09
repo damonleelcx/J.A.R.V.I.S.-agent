@@ -322,6 +322,72 @@ func notVerifiedIsTheModelsOwn() Scorer {
 // every part reads as "only in column 1" beside "only in column 2" — two
 // unrelated designs where there was a revision. The matcher now falls back to
 // names and says so; this measures how often that fallback is load-bearing.
+// aRevisionDoesNotConsumeWhatItKeeps: cutting a recess must not destroy the part
+// that sits in it.
+//
+// # The failure this measures
+//
+// A cut CONSUMES its tool — that is the design, and it is what makes "a hole is
+// an existing part used as a tool" work. The trap is that the part shaped like
+// the void is often a part you already have. Asked to add wheel wells to a car,
+// the model cut each arch using the WHEEL, four times. Every document built,
+// every fault list was empty, and the car came back with four hollows and no
+// wheels in them. Measured 2026-09-09: 3 runs in 5 before the prompt said not
+// to, 0 in 5 after.
+//
+// Buildability cannot see this — the result is a perfectly valid solid. What
+// makes it wrong is that something the person already had stopped existing, so
+// that is what this counts.
+//
+// Tracked, not floored: consuming an existing part is sometimes exactly right —
+// a bore drawn in one turn and cut in the next is the documented pattern. What
+// is never right is consuming it while claiming to have made room for it, and no
+// scorer can tell those apart from the document alone. The rate is the signal.
+func aRevisionDoesNotConsumeWhatItKeeps() Scorer {
+	return Scorer{
+		Name:    "a revision does not consume the parts it is meant to keep",
+		Asserts: "no part that was a body before the revision is used as a cutting tool by it",
+		Tracked: true,
+		FloorWhy: "TRACKED. Measured against qwen3.7-plus on 'add wheel wells': 3 of 5 runs cut " +
+			"each arch with the wheel itself, leaving a body with four hollows and nothing in " +
+			"them, and 0 of 5 did so once the contract said the tool is destroyed. Tracked rather " +
+			"than floored because consuming an existing part is the documented way to make a hole; " +
+			"what the rate watches for is that distinction going dead.",
+		Judge: func(o *Observation) (bool, string) {
+			first, second := o.Reply(0), o.Reply(1)
+			if first == nil || second == nil || first.Prototype == nil || second.Prototype == nil {
+				return false, "the revision produced no second prototype to compare"
+			}
+			had := map[string]bool{}
+			for _, p := range first.Prototype.Parts {
+				had[p.ID] = true
+			}
+			consumed := map[string]bool{}
+			for _, f := range second.Prototype.Features {
+				if !strings.EqualFold(f.Op, "cut") && !strings.EqualFold(f.Op, "loft") {
+					continue
+				}
+				for _, id := range f.With {
+					consumed[id] = true
+				}
+			}
+			var lost []string
+			for id := range consumed {
+				if had[id] {
+					lost = append(lost, id)
+				}
+			}
+			sort.Strings(lost)
+			if len(lost) == 0 {
+				return true, fmt.Sprintf("%d tool(s) used, none of them a part that already existed",
+					len(consumed))
+			}
+			return false, fmt.Sprintf("consumed %d part(s) that were already in the model: %s",
+				len(lost), strings.Join(lost, ", "))
+		},
+	}
+}
+
 // dimensionsSurviveARevision: the parts nobody asked about come back unchanged.
 //
 // # What this measures, and why it is separate from part ids
