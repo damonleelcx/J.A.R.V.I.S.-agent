@@ -176,6 +176,13 @@ with BuildPart() as part:
 result = part
 `
 	res, err := k.RunScript(context.Background(), gear)
+	if err != nil && strings.Contains(err.Error(), "No module named 'build123d'") {
+		// A machine with Python but no CAD kernel — CI is one. Skipped by the
+		// EXACT reason rather than by guessing from a failure, so a real
+		// breakage can never wear this skip's clothes. Everything that does not
+		// need the kernel — the nine refusals, the limits — still runs here.
+		t.Skip("build123d is not installed, so a script cannot build anything")
+	}
 	if err != nil {
 		t.Fatalf("a script that a person could write by hand did not run: %v\n"+
 			"If build123d's own vocabulary cannot be driven from here, this sandbox costs "+

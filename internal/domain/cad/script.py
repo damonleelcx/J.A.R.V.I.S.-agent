@@ -141,18 +141,27 @@ def check(source):
     return tree
 
 
-def namespace():
-    """The only names a script can see, built from the list and nothing else."""
+def namespace(uses_builders):
+    """The only names a script can see, built from the list and nothing else.
+
+    build123d is imported ONLY when the script actually names one of its
+    builders. Loading OCCT costs seconds, and a script that is pure arithmetic —
+    or one about to be stopped by the CPU limit — should not pay for it. It also
+    means the refusals and the limits can be exercised on a machine that has no
+    kernel installed, which is where CI runs.
+    """
     import math as _math
-    from build123d import __dict__ as _b123d
 
     ns = {}
     missing = []
-    for name in ALLOWED_BUILDERS:
-        if name in _b123d:
-            ns[name] = _b123d[name]
-        else:
-            missing.append(name)
+    if uses_builders:
+        from build123d import __dict__ as _b123d
+
+        for name in ALLOWED_BUILDERS:
+            if name in _b123d:
+                ns[name] = _b123d[name]
+            else:
+                missing.append(name)
     for name in ALLOWED_MATH:
         if hasattr(_math, name):
             ns[name] = getattr(_math, name)
@@ -192,7 +201,9 @@ def main():
         return
 
     try:
-        ns, missing = namespace()
+        uses = {n.id for n in ast.walk(tree)
+                if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)}
+        ns, missing = namespace(bool(uses & set(ALLOWED_BUILDERS)))
         if missing:
             sys.stderr.write("not in this build123d: %s\n" % ", ".join(missing))
         exec(compile(tree, "<script>", "exec"), ns)  # noqa: S102 — the point of this file
