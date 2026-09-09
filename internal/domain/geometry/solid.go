@@ -230,8 +230,7 @@ func Solids(d Document, unit Unit) ([]Solid, []string) {
 
 		pos := [3]float64{}
 		copy(pos[:], padTo3(p.Position))
-		rot := [3]float64{}
-		copy(rot[:], padTo3(p.Rotation))
+		rot := p.RotationRadians()
 
 		// To millimetres. Every dimension here is a length, every position is a
 		// length and every drawn coordinate is a length — including a corner

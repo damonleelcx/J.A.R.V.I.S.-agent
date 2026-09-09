@@ -281,6 +281,10 @@ func (c *Conversation) RespondStream(
 		 * and stores a document without one has already misled somebody by the
 		 * time anything downstream could notice. See georepair.go. */
 		c.repairIfFaulty(ctx, &reply)
+		/* And a revision that RESIZED what it was asked to restyle. Three
+		 * attempts at saying this in the contract were measured and none beat
+		 * saying nothing, so it is checked — see turned.go. */
+		c.repairIfTurned(ctx, &reply, current)
 		/* And say what the revision removed. A whole prototype deletes by
 		 * omission, so a part nobody discussed can disappear while the reply
 		 * talks about something else — see vanished.go. */

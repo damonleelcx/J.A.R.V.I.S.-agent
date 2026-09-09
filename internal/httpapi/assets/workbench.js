@@ -1500,7 +1500,19 @@
     } else if (p.shape === 'sphere') {
       if (s.radius != null) dims.push('⌀' + qty(s.radius * 2));
     } else if (s.width != null || s.height != null || s.depth != null) {
-      dims.push([s.width, s.height, s.depth].map(qty).join(' × '));
+      var w = s.width, h = s.height;
+      /* An extrusion's other two dimensions live in its outline, not in "size",
+       * so this line used to read "? × ? × 4500 mm". A car body that had become
+       * 4500 mm wide — its length drawn into the outline AND used as the depth —
+       * showed only the one number that was right, and looked identical to a
+       * correct one. Through Forge3D so the panel and the stage cannot disagree
+       * about how big a part is, exactly as cylinderLength does above.
+       * Fence: TestAnExtrusionShowsTheSizeItsOutlineGivesIt */
+      if (w == null && h == null && p.profile && window.Forge3D && window.Forge3D.outlineExtent) {
+        var ext = window.Forge3D.outlineExtent(p.profile);
+        if (ext) { w = ext.width; h = ext.height; }
+      }
+      dims.push([w, h, s.depth].map(qty).join(' × '));
     }
     return dims.length ? ' · ' + esc(dims.join(' · ')) : '';
   }

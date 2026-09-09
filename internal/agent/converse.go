@@ -81,7 +81,7 @@ Reply with JSON only:
         "size_from": {"width": "plate_size", "height": "plate_thickness"},
         "position": [0,0,0],
         "position_from": {"z": "plate_size / 4"},
-        "rotation": [0,0,0],
+        "rotation": [0,0,0],   // DEGREES, turned about x then y then z
         "color": "#b8bcc4",
         "opacity": 1.0,
         "note": "what this part is for",
@@ -244,6 +244,25 @@ About "prototype":
   places the outline's origin. That is on purpose: it means a hole you place
   against a corner you drew stays against it. The depth IS centred, like a box's
   height.
+  AN OUTLINE IS DRAWN FACING YOU, AND THAT IS WHERE IT LANDS. Its own x is the
+  assembly's X and its own y is the assembly's Y, and the shape then travels
+  along Z — the extrusion's "depth", or the sweep's path. So whatever you draw
+  WIDE in the outline comes out wide ACROSS the assembly, not along it.
+  This is the one that goes wrong. A car is 1900 wide, 800 tall and 4500 long.
+  Its side elevation — the roofline, the bonnet, the taper — is 4500 across the
+  page, so drawing that as an outline makes a car 4500 WIDE and 1900 long: the
+  length and the width swapped. The reply says the body was reshaped and the
+  model on screen is a slab.
+  When the drawing you want IS the side elevation, say which way it faces:
+    - "extrusion": keep "depth" as the width it travels (1900) and give the part
+      "rotation": [0, 90, 0], which turns the drawing to face along the car.
+    - "sweep": send the PATH across the car instead of along it — from
+      {"x": -950, "y": 0, "z": 0} to {"x": 950, "y": 0, "z": 0} — because the
+      outline stands square to the path, so a path along X faces the outline
+      down the length. A path along Z leaves it facing the wrong way.
+  Before you send a reshaped part, check its three dimensions against the ones it
+  had. A restyle is not a resize: if the part was 1900 x 800 x 4500 and what you
+  have drawn is 4500 x 600 x 1900, you have turned it on its side.
   Prefer "x_from" and "y_from" with expressions over literal numbers, for the
   same reason every other dimension does — an outline whose points do not follow
   the parameters is a drawing that stops being true the first time somebody
@@ -864,6 +883,7 @@ func (c *Conversation) Respond(ctx context.Context, projectID string, history []
 	}
 	// The same repair the streamed path does, at the same point.
 	c.repairIfFaulty(ctx, &reply)
+	c.repairIfTurned(ctx, &reply, current)
 	noteVanished(&reply, current)
 	return &reply, nil
 }

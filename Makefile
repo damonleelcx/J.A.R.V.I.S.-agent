@@ -159,7 +159,11 @@ test-echo: ## Check the hands-free echo guard against the transcripts that cause
 test-voice-fallback: ## Check one failed audio load falls back to the browser voice exactly once
 	@node scripts/voice-fallback-check.js
 
-check: fmt-check vet test-integration test-echo test-voice-fallback drill ## Everything CI runs on every commit
+.PHONY: test-extrusion-size
+test-extrusion-size: ## Check the parts panel reports how big an extrusion really is
+	@node scripts/extrusion-size-check.js
+
+check: fmt-check vet test-integration test-echo test-voice-fallback test-extrusion-size drill ## Everything CI runs on every commit
 	@# The fence drills run LAST and from the recipe rather than as a
 	@# prerequisite, because they edit the source while they run. As a
 	@# prerequisite, `make -j check` could run them beside the test suite, and a
