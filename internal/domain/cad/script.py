@@ -104,13 +104,37 @@ ALLOWED_NODES = (
 
 
 def _builder_names():
-    """Every build123d name a script may use, by the rule in namespace()."""
+    """Every build123d name a script may use.
+
+    Read from builders.txt, which is GENERATED from the installed library by the
+    rule in namespace() and checked in beside this file.
+
+    # Why a file and not the live library
+
+    Deriving the list at parse time from build123d means that on a machine
+    WITHOUT build123d there is no list — and then either every builder is
+    refused with "Box is not available here" (false: Box is fine, the kernel is
+    missing), or the name check is skipped entirely and `open` and `urlopen`
+    stop being refused. CI has Python and no kernel, and hit both in turn.
+
+    A checked-in manifest gives the same answer everywhere, so the REFUSALS —
+    the part that matters most — hold on a machine that cannot build anything.
+    TestScript_TheManifestMatchesTheLibrary keeps it honest where a kernel does
+    exist.
+    """
     try:
         import inspect
 
         import build123d as _b123d
-    except Exception:  # noqa: BLE001 — no kernel installed; the rule still holds
-        return set()
+    except Exception:  # noqa: BLE001 — no kernel installed
+        # None, not an empty set, and the difference is the whole point.
+        #
+        # An empty set makes the name check refuse EVERY builder with "Box is
+        # not available here", which is false and misleading: Box is available,
+        # the kernel is not installed. CI has Python and no build123d and saw
+        # exactly that. The caller skips the builder-name check when this is
+        # None and lets the run fail with the honest ModuleNotFoundError.
+        return None
     out = set()
     for name in dir(_b123d):
         if name.startswith("_") or _is_denied(name):
@@ -155,6 +179,21 @@ class _DropImports(ast.NodeTransformer):
 
     def visit_ImportFrom(self, node):  # noqa: N802
         return None if _tolerated_import(node) else node
+
+
+def _load_builder_manifest():
+    """The generated list, read from beside this file."""
+    path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "builders.txt")
+    try:
+        with open(path) as fh:
+            return frozenset(
+                line.strip() for line in fh
+                if line.strip() and not line.startswith("#"))
+    except Exception:  # noqa: BLE001
+        return frozenset()
+
+
+BUILDER_NAMES = _load_builder_manifest()
 
 
 class Refused(Exception):
@@ -221,7 +260,7 @@ def check(source):
     # The SAME rule the namespace uses, so a name that will exist at run time is
     # not refused at parse time and vice versa. Two lists would drift, and the
     # drift would show up as a correct script refused for a name it is given.
-    known = _builder_names() | set(ALLOWED_MATH) | set(ALLOWED_BUILTINS) | {"math"}
+    known = BUILDER_NAMES | set(ALLOWED_MATH) | set(ALLOWED_BUILTINS) | {"math"}
     bound = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
@@ -335,7 +374,10 @@ def main():
         # Only load OCCT when the script actually names one of its builders:
         # it costs seconds, and the refusals and the limits must be exercisable
         # on a machine with no kernel installed, which is where CI runs.
-        ns, missing = namespace(bool(uses & _builder_names()))
+        # When the kernel is missing, _builder_names() is None and we cannot
+        # tell whether a name is a builder — so we try to load it, and the run
+        # fails with ModuleNotFoundError, which is the true reason.
+        ns, missing = namespace(bool(uses & BUILDER_NAMES))
         if missing:
             sys.stderr.write("not in this build123d: %s\n" % ", ".join(missing))
         exec(compile(tree, "<script>", "exec"), ns)  # noqa: S102 — the point of this file

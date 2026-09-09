@@ -17,6 +17,14 @@ import (
 //go:embed script.py
 var scriptSource []byte
 
+// builders.txt is the generated list of build123d names a script may use. It
+// travels with the runner because the runner reads it from beside itself: a
+// deployment is one binary, and the list must not be able to drift from the
+// Python that enforces it.
+//
+//go:embed builders.txt
+var builderManifest []byte
+
 // Running a build123d script the model wrote.
 //
 // # Why this is a separate process and not the sidecar
@@ -86,6 +94,9 @@ func (k *Kernel) RunScript(ctx context.Context, source string) (*ScriptResult, e
 
 	runner := filepath.Join(dir, "script.py")
 	if err := os.WriteFile(runner, scriptSource, 0o600); err != nil {
+		return nil, errs.Wrap(op, errs.CodeInternal, err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "builders.txt"), builderManifest, 0o600); err != nil {
 		return nil, errs.Wrap(op, errs.CodeInternal, err)
 	}
 

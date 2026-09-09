@@ -2,8 +2,10 @@ package cad_test
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"os/exec"
+	"sort"
 	"strings"
 	"testing"
 
@@ -324,4 +326,97 @@ func TestScript_HasTheBuildersButNotTheModules(t *testing.T) {
 	if res.Volume <= 0 {
 		t.Error("the cylinder has no volume")
 	}
+}
+
+// The checked-in manifest still matches the installed library.
+//
+// # Why the list is a file at all
+//
+// Deriving it live from build123d means a machine WITHOUT build123d has no
+// list — and then either every builder is refused with "Box is not available
+// here" (false: Box is fine, the kernel is missing) or the name check is skipped
+// and `open` and `urlopen` stop being refused. CI has Python and no kernel and
+// hit both in turn, in that order.
+//
+// A generated, checked-in manifest gives the same answer everywhere, so the
+// REFUSALS hold on a machine that cannot build anything. The cost is that it can
+// go stale, and this is what stops that: where a kernel does exist, the file must
+// still be what the rule produces.
+func TestScript_TheManifestMatchesTheLibrary(t *testing.T) {
+	py := kernelPython(t)
+	const prog = `
+import build123d as b, inspect, json
+DENY = {"available_fonts","FontManager","brep_from_stl","RWStl","StlAPI_Writer",
+        "ExportSVG","export_to_pcbway","svgpathtools"}
+def denied(n): return n in DENY or n.startswith("import_") or n.startswith("export_")
+out=[]
+for n in dir(b):
+    if n.startswith("_") or denied(n): continue
+    v=getattr(b,n)
+    if inspect.ismodule(v): continue
+    if not str(getattr(v,"__module__","") or "").startswith("build123d"): continue
+    out.append(n)
+print(json.dumps(sorted(out)))
+`
+	got, err := exec.Command(py, "-c", prog).Output()
+	if err != nil {
+		t.Skip("build123d is not installed, so there is nothing to compare against")
+	}
+	var live []string
+	if err := json.Unmarshal(got, &live); err != nil {
+		t.Fatalf("reading the library's names: %v", err)
+	}
+
+	raw, err := os.ReadFile("builders.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	have := map[string]bool{}
+	for _, line := range strings.Split(string(raw), "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		have[line] = true
+	}
+
+	var missing []string
+	for _, n := range live {
+		if !have[n] {
+			missing = append(missing, n)
+		}
+		delete(have, n)
+	}
+	if len(missing) > 0 {
+		t.Errorf("builders.txt is missing %d name(s) the library has, so correct scripts "+
+			"will be refused for names that exist: %s", len(missing), strings.Join(missing, ", "))
+	}
+	if len(have) > 0 {
+		var extra []string
+		for n := range have {
+			extra = append(extra, n)
+		}
+		sort.Strings(extra)
+		t.Errorf("builders.txt allows %d name(s) the rule would NOT: %s. This is the "+
+			"direction that matters — the rule is what keeps ctypes out",
+			len(extra), strings.Join(extra, ", "))
+	}
+}
+
+// kernelPython is the interpreter, or a skip.
+func kernelPython(t *testing.T) string {
+	t.Helper()
+	if py := os.Getenv("FORGE_CAD_KERNEL"); py != "" {
+		return py
+	}
+	for _, c := range []string{"../../../.cadvenv/bin/python", ".cadvenv/bin/python"} {
+		if _, err := os.Stat(c); err == nil {
+			return c
+		}
+	}
+	if p, err := exec.LookPath("python3"); err == nil {
+		return p
+	}
+	t.Skip("no python")
+	return ""
 }
