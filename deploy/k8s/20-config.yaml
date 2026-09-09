@@ -75,13 +75,36 @@ data:
   # 123 SECONDS), qwen3.6-flash answers WRONGLY, and glm-5.2 cannot see images.
   FORGE_LLM_VISION_MODEL: "qwen3.8-max"
 
-  # Running model-written build123d is OFF here, deliberately and by default.
-  # It is the one feature that executes text a model produced; the sandbox is
-  # described in internal/domain/cad/script.go and is defence in depth rather
-  # than a container. Turning it on is a decision for whoever owns this
-  # deployment, not a default:
+  # Running model-written build123d. ON here since 2026-09-09, by an explicit
+  # decision of whoever owns this deployment — it is off by default in the code
+  # and in .env.example, and it should stay off anywhere that has not made this
+  # decision deliberately.
   #
-  #   FORGE_ALLOW_SCRIPTS: "1"
+  # What it buys: shapes the vocabulary cannot say. An involute gear tooth, a
+  # spiral, a lattice, a profile sampled from a formula. "repeat" already covers
+  # repetition, which was most of the gap, so this is the last resort and the
+  # contract tells the model to treat it as one.
+  #
+  # What it costs, stated plainly because it is a security boundary:
+  #
+  #   - It executes text a model produced. That is the whole feature.
+  #   - The sandbox is TWO layers (internal/domain/cad/script.go). An AST
+  #     whitelist refuses imports, dunder attributes and every name not on a
+  #     list before anything runs — nine escapes are tested by trying them,
+  #     starting with ().__class__.__bases__[0].__subclasses__(), which is why
+  #     dunders are refused by NAME rather than by blacklisting escapes that
+  #     are not enumerable. Then a stripped short-lived process: python -I, no
+  #     environment (this deployment holds a database URL and a provider key in
+  #     its own), a temporary working directory, and hard CPU, memory,
+  #     file-descriptor and core limits.
+  #   - It is defence in depth, NOT a container. A CPython sandbox is escapable
+  #     in principle; the AST layer is the one that has to hold and the process
+  #     limits are what stands if it does not.
+  #
+  # To turn it off again, set this to "" and redeploy. Nothing else changes:
+  # a scripted part is then refused by name with the reason, and every other
+  # shape is unaffected.
+  FORGE_ALLOW_SCRIPTS: "1"
 
   # PRD SEC-05: an empty list denies every shell_run call. Deliberately narrower
   # than .env.example's development list — no `go`, no `make` — because nothing
