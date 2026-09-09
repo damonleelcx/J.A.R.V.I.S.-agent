@@ -16,6 +16,7 @@ import (
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/llm"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/persona"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/config"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/errs"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/logx"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/text"
@@ -51,7 +52,7 @@ func NewConverseHandlers(d Deps) *ConverseHandlers {
 	return &ConverseHandlers{
 		deps: d,
 		conv: agent.NewConversation(d.LLM, persona.DefaultCharacter()).
-			WithScripts(d.CAD.ScriptsEnabled()).
+			WithScripts(scriptRunner(d.CAD)).
 			WithCharacters(agent.NewCharacterStore(d.Pool, d.Log)).
 			WithDomains(agent.NewDomainStore(d.Pool, d.Log)),
 		geo:       geometry.NewService(d.Pool, d.Clock, d.Log),
@@ -240,13 +241,28 @@ func (h *ConverseHandlers) Converse(w http.ResponseWriter, r *http.Request) {
 
 	start := h.deps.Clock.Now()
 
-	// The deadline must be LONGER than the model client's own request timeout,
-	// not shorter. An earlier version used a flat 90s while the client was
-	// configured for 3m, so the handler always killed the call first — and
-	// killed it mid-backoff, producing a context-deadline error that pointed at
-	// the model rather than at the timeout hierarchy that caused it. Derived
-	// from configuration so the two cannot drift apart again.
-	budget := h.deps.Config.LLM.RequestTimeout + 15*time.Second
+	// The deadline bounds the TURN, not one model call.
+	//
+	// It must be LONGER than the model client's own request timeout, not shorter:
+	// an early version used a flat 90s while the client was configured for 3m, so
+	// the handler always killed the call first — and killed it mid-backoff,
+	// producing a context-deadline error that pointed at the model rather than at
+	// the timeout hierarchy that caused it.
+	//
+	// Deriving it from that timeout fixed the ordering and kept the wrong unit.
+	// A turn is not a call: it plans a build, runs a pass per subsystem, repairs
+	// geometry, runs and rewrites scripts, and looks at the render. A multi-pass
+	// build measured at 25 minutes in a live test could not finish here at all —
+	// it was cancelled at 3m15s, mid-stream, and a cancelled context from inside
+	// the turn is indistinguishable from a model that failed. See TurnBudget.
+	budget := h.deps.Config.LLM.TurnBudget
+	if budget <= 0 {
+		// Unset, not "no time". A Config assembled in code rather than loaded
+		// has this zero, and a zero deadline cancels the turn before its first
+		// call — every read inside it then fails and the person is told the
+		// database is unreachable, which is true and points at the wrong thing.
+		budget = config.DefaultTurnBudget
+	}
 	ctx, cancel := context.WithTimeout(r.Context(), budget)
 	defer cancel()
 	ctx = agent.WithTurnStart(ctx, start)
@@ -259,6 +275,24 @@ func (h *ConverseHandlers) Converse(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, r, h.deps.Log, errs.New("httpapi.Converse", errs.CodeInternal).
 			WithDetail("this server cannot flush a response, so it cannot stream"))
 		return
+	}
+
+	// And the CONNECTION's write deadline is cleared for this one request.
+	//
+	// http.Server.WriteTimeout is a deadline on the whole response, set when the
+	// request arrives — five minutes here, generous for a page and far too short
+	// for a stream a turn may spend half an hour filling. Raising the server-wide
+	// value instead would weaken the protection every ordinary handler gets from
+	// it, so the deadline is lifted HERE, on the one endpoint whose whole purpose
+	// is to stay open, and the turn's own budget above is what ends it.
+	//
+	// A server that cannot do this keeps its deadline. Said in the log rather
+	// than refused: the stream still works, it is simply cut at WriteTimeout, and
+	// losing the workbench over it would be worse than the limit.
+	if err := http.NewResponseController(w).SetWriteDeadline(time.Time{}); err != nil {
+		h.deps.Log.Warn(r.Context(), logx.EventHTTPRequest,
+			"detail", "could not lift the write deadline for this stream; a turn longer than "+
+				"the server write timeout will be cut off", "error", err.Error())
 	}
 
 	w.Header().Set("Content-Type", "text/event-stream")

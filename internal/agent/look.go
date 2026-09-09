@@ -89,13 +89,43 @@ func (c *Conversation) look(ctx context.Context, doc *Prototype, asked string) (
 	}
 
 	parts := make([]string, 0, len(doc.Parts))
+	var scripted []string
 	for _, p := range doc.Parts {
 		parts = append(parts, p.Label())
+		if strings.EqualFold(strings.TrimSpace(p.Shape), "script") {
+			scripted = append(scripted, p.Label())
+		}
 	}
 	// Told what it is looking at and what was asked for: questions 1-3 are much
 	// easier to answer about named parts than about coloured blobs.
 	prompt := "This was built in answer to: " + asked +
 		"\n\nThe parts are: " + strings.Join(parts, ", ")
+
+	// ‼️ And told which parts it CANNOT see.
+	//
+	// A scripted part's shape is whatever build123d makes when the script runs.
+	// The contact sheet is drawn from the DOCUMENT, and the document says
+	// nothing about that shape — so the renderer draws a bounding box, and every
+	// scripted part looks like a plain rectangular block no matter what it is.
+	//
+	// Without this line the vision model answers the only way it can: on the
+	// live deployment, 2026-09-09, it reported "The part is a rectangular block
+	// rather than a circular gear with teeth and a bore" about a gear whose
+	// script had just been RUN and had built a correct 12565.7 mm³ gear. That is
+	// a false positive by construction — it fires on every scripted part, on
+	// every turn, forever — and this file already warns what a repair driven by
+	// a wrong complaint does to a good model.
+	//
+	// Named rather than removed from the picture: they are still there, they
+	// still occupy space, and questions 1 and 2 — is something buried, is
+	// something floating — are answerable about a block and worth keeping.
+	if len(scripted) > 0 {
+		prompt += "\n\nThese parts are built by a script and are drawn here as a PLAIN BLOCK " +
+			"that is not their real shape: " + strings.Join(scripted, ", ") +
+			". Do not report that they are the wrong shape, or blocky, or not what was " +
+			"asked for — you cannot see their shape at all. You may still say whether one " +
+			"is buried inside another part or floating clear of everything."
+	}
 
 	resp, err := c.client.Complete(ctx, llm.Request{
 		Role:     llm.RoleVision,

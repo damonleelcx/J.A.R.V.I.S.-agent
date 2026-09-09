@@ -241,6 +241,9 @@ func (c *Conversation) buildOneStep(ctx context.Context, doc *Prototype, asked s
 	c.repairIfFaulty(ctx, &reply)
 	c.repairIfTurned(ctx, &reply, doc)
 	c.repairIfItLooksWrong(ctx, &reply, step.What)
+	// Last, for the reason the turn paths run it last: it is the only check that
+	// verifies itself, and a rewrite after it would leave an unrun script behind.
+	c.repairIfScriptsFail(ctx, &reply, doc, nil)
 
 	// A pass that BREAKS the model is refused and the previous state kept: ten
 	// good passes must not be lost to an eleventh bad one.

@@ -201,7 +201,13 @@ func TestScriptAvailabilityIsAlwaysStated(t *testing.T) {
 // removed: scriptAvailability could be perfect and never sent.
 func TestScriptAvailabilityReachesThePrompt(t *testing.T) {
 	for _, on := range []bool{true, false} {
-		c := &Conversation{scripts: on}
+		// Built through the constructor, because "does this deployment run
+		// scripts" is now the presence of a RUNNER rather than a flag beside
+		// one — the two were briefly separate and could disagree.
+		c := (&Conversation{}).WithScripts(nil)
+		if on {
+			c = c.WithScripts(stubScriptRunner(nil))
+		}
 		msgs := c.buildMessages(persona.DefaultCharacter(), domainpack.Definition{},
 			nil, "make me a gear", "", nil, nil)
 		if len(msgs) == 0 || msgs[0].Role != llm.System {

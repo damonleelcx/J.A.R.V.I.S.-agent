@@ -87,14 +87,32 @@ FILES=(
   internal/llm/deliberation.go
   internal/llm/stream.go
   internal/llm/openai_compatible.go
+  internal/agent/scriptrepair.go
+  internal/agent/converse.go
+  internal/agent/converse_stream.go
+  internal/agent/assemble.go
+  internal/httpapi/converse.go
+  internal/agent/look.go
 )
 
 BACKUP=""
+
+# saved is where a file's backup lives, mirroring its path under $BACKUP.
+#
+# ‼️ It used to be the BASENAME, and two files that share one — this repository
+# now has internal/agent/converse.go and internal/httpapi/converse.go — collided
+# silently. The second overwrote the first in the backup, and "restore" then
+# wrote the httpapi file over the agent one. The tree was left holding a Go file
+# whose package did not match its directory, and the run reported it as
+# "THE TREE WAS NOT RESTORED" rather than as the corruption it had just caused.
+# The whole safety argument for this script rests on the restore being exact.
+saved() { printf '%s/%s' "$BACKUP" "$1"; }
+
 restore() {
   [ -n "$BACKUP" ] || return 0
   local f
   for f in "${FILES[@]}"; do
-    [ -f "$BACKUP/$(basename "$f")" ] && cp "$BACKUP/$(basename "$f")" "$f"
+    [ -f "$(saved "$f")" ] && cp "$(saved "$f")" "$f"
   done
 }
 cleanup() {
@@ -118,7 +136,7 @@ drill() {
   # A file with no backup cannot be put back, so it is never touched. This is
   # the structural half of the note on FILES above: the list being wrong is now a
   # refusal to run rather than a permanent edit.
-  if [ "$MODE" != "list" ] && [ ! -f "$BACKUP/$(basename "$file")" ]; then
+  if [ "$MODE" != "list" ] && [ ! -f "$(saved "$file")" ]; then
     echo "  ⛔ NOT BACKED UP — $name"
     echo "        $file is not in FILES, so this drill would edit it and leave it edited."
     MOVED=$((MOVED + 1))
@@ -138,7 +156,7 @@ open(p, 'w').write(s)
     return
   fi
 
-  if cmp -s "$file" "$BACKUP/$(basename "$file")"; then
+  if cmp -s "$file" "$(saved "$file")"; then
     # The code this drill points at has been edited and the anchor no longer
     # matches. Reported loudly: a drill that changes nothing reports the fence
     # as red-worthy forever without ever testing it, which is the same failure
@@ -197,7 +215,7 @@ missing_tool() {
 if [ "$MODE" != "list" ]; then
   BACKUP=$(mktemp -d)
   trap cleanup EXIT INT TERM
-  for f in "${FILES[@]}"; do cp "$f" "$BACKUP/$(basename "$f")"; done
+  for f in "${FILES[@]}"; do mkdir -p "$(dirname "$(saved "$f")")" && cp "$f" "$(saved "$f")"; done
   shasum "${FILES[@]}" > "$BACKUP/before.sha"
 fi
 
@@ -490,13 +508,90 @@ drill "the renderer has no sweep case" internal/httpapi/assets/forge3d.js \
 
 echo
 echo "Latency and the model catalogue"
+# Anchored on the ENTRY, not on the whole map literal. It was written as the
+# literal and went stale the moment RoleVision joined the table (#42): the drill
+# then found nothing to replace and this fence went unproven for five commits
+# while the run still printed a summary. An anchor that names one line survives
+# the next role being added.
 drill "the conversation role is allowed to deliberate" internal/llm/deliberation.go \
-  's = s.replace("var latencyBound = map[Role]bool{\n\tRoleConverse: true,\n}", "var latencyBound = map[Role]bool{}", 1)' \
+  's = s.replace("\tRoleConverse: true,\n", "", 1)' \
   ./internal/llm 'TestTheConversationRoleIsToldNotToDeliberate|TestTheStreamingPathIsToldToo'
 
 drill "the STREAMING path forgets to say it" internal/llm/stream.go \
   's = s.replace("\tc.applyDeliberation(ctx, req.Role, body)\n", "", 1)' \
   ./internal/llm 'TestTheStreamingPathIsToldToo'
+
+echo
+echo "Running the scripts the model wrote"
+# Every fence below drives repairIfScriptsFail directly, so the WIRING drills are
+# the ones that matter most: the first run of them found both reply paths red and
+# the multi-pass build loop green, which is a twelve-pass build shipping scripts
+# nobody ran.
+drill "a verified fix is not kept" internal/agent/scriptrepair.go \
+  's = s.replace("\t\t\t\t\tpart.Script = source\n", "", 1)' \
+  ./internal/agent 'TestScripts_RewrittenUntilTheyBuild'
+
+drill "the builder's words never reach the model" internal/agent/scriptrepair.go \
+  's = s.replace(chr(43) + " refusal " + chr(43), chr(43) + " \"\" " + chr(43), 1)' \
+  ./internal/agent 'TestScripts_TheBuildersWordsReachTheModel'
+
+drill "a stuck model is asked the same thing forever" internal/agent/scriptrepair.go \
+  's = s.replace("\t\t\tif refusal == last {", "\t\t\tif false {", 1)' \
+  ./internal/agent 'TestScripts_StopsWhenTheModelIsNotMoving'
+
+drill "an unverified rewrite replaces the original" internal/agent/scriptrepair.go \
+  's = s.replace("\tfor _, o := range broken {", "\tfor _, o := range broken[:0] {", 1)' \
+  ./internal/agent 'TestScripts_UnfixableKeepsTheOriginalAndIsSaidOutLoud'
+
+drill "every pass re-runs every script it ever wrote" internal/agent/scriptrepair.go \
+  's = s.replace("\tparts := unverified(scriptedParts(reply.Prototype), previous)", "\tparts := scriptedParts(reply.Prototype)\n\t_ = previous", 1)' \
+  ./internal/agent 'TestScripts_UnchangedScriptsAreNotRerun'
+
+drill "a part is built and never verified" internal/agent/scriptrepair.go \
+  's = s.replace("strings.ToLower(strings.TrimSpace(p.Shape)) != \"script\"", "p.Shape != \"script\"", 1)' \
+  ./internal/agent 'TestScripts_SelectionAgreesWithTheBuilder'
+
+drill "the STREAMED turn never runs its scripts" internal/agent/converse_stream.go \
+  's = s.replace("\t\tc.repairIfScriptsFail(ctx, &reply, current, func(line string) {\n\t\t\t_ = emit(StreamEvent{Kind: \"notice\", Text: line})\n\t\t})\n", "", 1)' \
+  ./internal/agent 'TestScripts_TheTurnActuallyRunsThem'
+
+drill "the BUFFERED turn never runs its scripts" internal/agent/converse.go \
+  's = s.replace("\tc.repairIfScriptsFail(ctx, &reply, current, nil)\n", "", 1)' \
+  ./internal/agent 'TestScripts_TheTurnActuallyRunsThem'
+
+drill "a multi-pass build never runs its scripts" internal/agent/assemble.go \
+  's = s.replace("\tc.repairIfScriptsFail(ctx, &reply, doc, nil)\n", "", 1)' \
+  ./internal/agent 'TestScripts_MultiPassBuildRunsThemToo'
+
+drill "the contract offers scripts nothing can run" internal/agent/converse.go \
+  's = s.replace("return c != nil && c.runner != nil", "return true", 1)' \
+  ./internal/agent 'TestScripts_NoRunnerIsNotAQuietPass'
+
+# Puts the call back where it FIRST was — beside repairIfFaulty, before the two
+# repairs that hand back a whole new document. Deleting it is a different drill
+# (above); this one proves the ORDER is load-bearing, which is what the live run
+# on 2026-09-09 showed and what reading the code did not.
+drill "a later repair can undo the verification" internal/agent/converse.go \
+  's = s.replace("\tc.repairIfScriptsFail(ctx, &reply, current, nil)\n", "", 1); s = s.replace("\tc.repairIfFaulty(ctx, &reply)\n", "\tc.repairIfFaulty(ctx, &reply)\n\tc.repairIfScriptsFail(ctx, &reply, current, nil)\n", 1)' \
+  ./internal/agent 'TestScripts_TheScriptCheckHasTheLastWord'
+
+drill "the vision check is not told what it cannot see" internal/agent/look.go \
+  's = s.replace("\tif len(scripted) > 0 {", "\tif false {", 1)' \
+  ./internal/agent 'TestScripts_TheVisionCheckIsToldItCannotSeeThem'
+
+echo
+echo "How long a turn may take"
+drill "a turn is bounded by one model call's timeout" internal/httpapi/converse.go \
+  's = s.replace("budget := h.deps.Config.LLM.TurnBudget", "budget := h.deps.Config.LLM.RequestTimeout + 15*time.Second", 1)' \
+  ./internal/httpapi 'TestConverse_TurnBudgetBoundsTheTurnNotOneCall'
+
+drill "an unset budget is read as no time at all" internal/httpapi/converse.go \
+  's = s.replace("\tif budget <= 0 {", "\tif false {", 1)' \
+  ./internal/httpapi 'TestConverse_AnUnsetTurnBudgetIsNotAnExpiredOne'
+
+drill "the connection closes under a working turn" internal/httpapi/converse.go \
+  's = s.replace("http.NewResponseController(w).SetWriteDeadline(time.Time{})", "error(nil)", 1)' \
+  ./internal/httpapi 'TestConverse_AStreamOutlivesTheServerWriteTimeout'
 
 drill "the provider extension is sent to every endpoint" internal/llm/deliberation.go \
   's = s.replace("\tfor domain, field := range deliberationField {", "\treturn \"enable_thinking\", true\n\tfor domain, field := range deliberationField {", 1)' \

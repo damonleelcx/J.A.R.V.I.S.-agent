@@ -193,6 +193,54 @@ Beyond that, `script` reaches build123d's whole surface API — Spline, Bezier,
 make_hull, sweeps with guide rails — which is the answer to "author a control
 net" that does not require inventing a way for a model to type control points.
 
+### Stage 5 — The agent runs what it wrote, and keeps fixing it until it builds — **DONE 2026-09-09**
+
+Stages 1–4 raised the ceiling and left one hole under it. Every check in a turn
+reads the DOCUMENT — `Faults()` walks outlines, `turned.go` measures,
+`look.go` renders — and a scripted part's shape is not in the document. It is
+whatever build123d makes when the script runs, and the script did not run until
+somebody asked for the solid, after the turn was over.
+
+So the chain from Stage 3 worked to the last link and failed there, invisibly:
+
+| stage | result |
+|---|---|
+| the model chose `shape: "script"` | ✅ |
+| the sandbox accepted it, every builder name resolved, the script ran | ✅ |
+| **build123d built the gear** | ❌ `ValueError: A face or sketch must be provided` |
+
+The reader was told the gear was made. The reason it was not arrived later, on an
+export, phrased for a person — and never reached the model, which is the only
+party that could fix it.
+
+**What was built** (`agent/scriptrepair.go`): the turn runs each script it wrote,
+and on a refusal hands the model *one script and the builder's own words* and
+asks for a script back. The reply is accepted **only when the kernel builds it**
+— so this is the one check in a turn that cannot report a fix that did not work.
+Up to 4 rewrites a part, 8 a turn, 4 minutes; it stops early when the same
+message comes back twice, because a script is rebuilt from scratch each run and a
+repeated message means the same thing is still wrong.
+
+**And the turn was given a budget of its own.** It was bounded by
+`RequestTimeout + 15s` — one model call — so Stage 2's 25-minute build could
+never finish over HTTP: it was cancelled at 3m15s, mid-stream, and from inside
+the turn that is indistinguishable from a model that failed. `FORGE_TURN_BUDGET`
+(30m) bounds the turn; each call is still bounded by `FORGE_LLM_REQUEST_TIMEOUT`,
+so this allows more calls and never a longer one. The stream's write deadline is
+lifted on the one endpoint whose job is to stay open.
+
+**Measured live**, asking for a 20-tooth module-2 spur gear: **2 of 4 runs build**,
+kernel-verified, against 0 before — and the two that do not now say so **in the
+turn**, with the builder's sentence, instead of on an export hours later.
+
+**Two defects in this stage were found by the live run and not by reading it:**
+the verification did not have the last word (two later repairs hand back whole
+new documents), and the visual check reports every scripted part as "a
+rectangular block" because the renderer draws it as a bounding box — a false
+positive by construction, on a gear whose script had just built 12565.7 mm³. Both
+fixed; see
+`docs/bugfix/2026-09-09-the-scripts-error-never-reached-the-model.md`.
+
 ## What is NOT promised
 
 - The reference image. See the framing above.

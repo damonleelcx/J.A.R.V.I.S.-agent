@@ -554,14 +554,19 @@ type Conversation struct {
 	// which carries no conventions and so asserts nothing about a domain nobody
 	// established.
 	domains *DomainStore
-	// scripts says whether this deployment RUNS model-written build123d. The
-	// contract has to say which, and say it plainly: the first live test of the
-	// script path had the prompt offering it "only when this deployment offers
-	// it" and nothing anywhere telling the model whether it did. The model
-	// hedged — it said in prose that it was "generated via script" and then
-	// wrote shape "gear", a name that does not exist, which was drawn as a
-	// bounding box. A capability nothing announces is a capability nobody uses.
-	scripts bool
+	// runner runs model-written build123d, and nil means this deployment does
+	// not. It is BOTH halves of that fact — what the contract tells the model
+	// (scriptAvailability) and what verifies the answer (scriptrepair.go) — on
+	// purpose, because they were briefly two fields and two fields can disagree.
+	//
+	// The contract has to say which, and say it plainly: the first live test of
+	// the script path had the prompt offering scripts "only when this deployment
+	// offers it" and nothing anywhere telling the model whether it did. The
+	// model hedged — it said in prose that the part was "generated via script"
+	// and then wrote shape "gear", a name that does not exist, which was drawn
+	// as a bounding box. A capability nothing announces is a capability nobody
+	// uses; a capability nothing verifies is the gear that came after it.
+	runner ScriptRunner
 }
 
 // NewConversation returns the conversational surface.
@@ -569,18 +574,22 @@ func NewConversation(client llm.Client, char persona.Character) *Conversation {
 	return &Conversation{client: client, char: char}
 }
 
-// WithScripts tells the conversation whether this deployment RUNS model-written
-// build123d, so the contract can say so either way rather than hedging.
+// WithScripts gives the conversation the thing that RUNS model-written
+// build123d. nil is a deployment that does not run scripts.
 //
-// The first live test of the script path had the prompt offering it "only when
-// this deployment offers it" and nothing anywhere telling the model whether it
-// did. The model hedged: it said in prose the profile was "generated via script"
-// and then wrote shape "gear" — a word that does not exist — which was drawn as
-// a bounding box. A capability nothing announces is a capability nobody uses.
-func (c *Conversation) WithScripts(on bool) *Conversation {
-	c.scripts = on
+// It takes the runner rather than a bool because the two facts — "the contract
+// offers scripts" and "something can check the script builds" — must not be
+// able to differ. They were separate for one commit and the difference is
+// exactly the bug this closes: a contract that offers a capability while nothing
+// verifies the answer produces a confident reply about a part that is not there.
+func (c *Conversation) WithScripts(r ScriptRunner) *Conversation {
+	c.runner = r
 	return c
 }
+
+// scriptsAvailable reports whether this deployment runs scripts, for the one
+// line of the contract that has to say so.
+func (c *Conversation) scriptsAvailable() bool { return c != nil && c.runner != nil }
 
 // WithCharacters makes conversation honour the project's critique intensity.
 func (c *Conversation) WithCharacters(s *CharacterStore) *Conversation {
@@ -1005,6 +1014,11 @@ func (c *Conversation) Respond(ctx context.Context, projectID string, history []
 	c.buildInPasses(ctx, &reply, message, current, nil)
 	c.repairIfTurned(ctx, &reply, current)
 	c.repairIfItLooksWrong(ctx, &reply, message)
+	// And the same script run, at the same point: LAST, because it is the only
+	// check that verifies itself and anything that rewrites the document after
+	// it undoes that. No progress to report on this path, so it is silent while
+	// it works — one more reason the streaming path is the one people use.
+	c.repairIfScriptsFail(ctx, &reply, current, nil)
 	noteVanished(&reply, current)
 	return &reply, nil
 }

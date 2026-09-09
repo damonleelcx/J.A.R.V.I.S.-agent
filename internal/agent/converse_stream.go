@@ -297,6 +297,25 @@ func (c *Conversation) RespondStream(
 		 * turn read as 117 degrees. A person catches those in a glance and
 		 * FORGE had no glance — see look.go. */
 		c.repairIfItLooksWrong(ctx, &reply, message)
+		/* And LAST, run the scripts.
+		 *
+		 * A scripted part's shape is not written down anywhere, so every check
+		 * above is blind to it: the gear that reached a reader on 2026-09-09
+		 * passed all of them and then raised inside build123d, hours later, on
+		 * an export. See scriptrepair.go.
+		 *
+		 * ‼️ It runs LAST because it is the only check that VERIFIES — it
+		 * re-runs the kernel rather than re-reading the document — and a check
+		 * that verifies is worth nothing if something rewrites the document
+		 * after it. Placed before repairIfTurned and repairIfItLooksWrong, as it
+		 * first was, both of those could hand back a whole new document with an
+		 * unrun script in it and the turn would still say the script builds.
+		 * Observed on the live deployment the day it shipped: the visual check
+		 * "corrected" a gear it had just been told was correct, because the
+		 * renderer draws a scripted part as a bounding box. */
+		c.repairIfScriptsFail(ctx, &reply, current, func(line string) {
+			_ = emit(StreamEvent{Kind: "notice", Text: line})
+		})
 		/* And say what the revision removed. A whole prototype deletes by
 		 * omission, so a part nobody discussed can disappear while the reply
 		 * talks about something else — see vanished.go. */
@@ -359,7 +378,7 @@ func (c *Conversation) buildMessages(char persona.Character, domain domainpack.D
 	history []Turn, message, workspaceNote string, current *Prototype, images []string) []llm.Message {
 	messages := []llm.Message{
 		{Role: llm.System, Content: persona.SystemPrompt(char,
-			framingFor(domain)+scriptAvailability(c.scripts))},
+			framingFor(domain)+scriptAvailability(c.scriptsAvailable()))},
 	}
 	if len(history) > HistoryWindow {
 		history = history[len(history)-HistoryWindow:]
