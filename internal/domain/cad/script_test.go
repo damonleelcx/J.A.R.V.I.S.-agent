@@ -84,6 +84,14 @@ func TestScript_RefusesTheWayOut(t *testing.T) {
 			"f = lambda p: open(p).read()\nresult = f('/etc/passwd')", "not available"},
 		{"a lambda used to reach a dunder attribute of something given",
 			"f = lambda x: x.__class__\nresult = f(Box(1, 1, 1))", "__"},
+		// `@` was allowed on 2026-09-10. The price: the escape must still be
+		// refused when spelled through it, and the explicit dunder call it
+		// dispatches to must stay refused — or the widening moved a rule rather
+		// than removing a redundant one.
+		{"the documented escape, reached through an @ expression",
+			"e = Line((0, 0), (10, 0))\nresult = (e @ 0.5).__class__.__bases__[0].__subclasses__()", "__"},
+		{"calling the dunder that @ dispatches to, by name",
+			"e = Line((0, 0), (10, 0))\nresult = e.__matmul__(0.5)", "__"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -501,6 +509,13 @@ func TestScript_AnUnavailableNameSuggestsTheCloseOnes(t *testing.T) {
 			want:   []string{"Rotate is not available here.", "Did you mean", "Rotation"},
 		},
 		{
+			// Getting the CASE wrong is its own common miss, and a case-sensitive
+			// comparison scores it no better than a typo.
+			name:   "the right name in the wrong case",
+			source: "result = BOX(10, 10, 10)",
+			want:   []string{"BOX is not available here.", "Did you mean", "Box"},
+		},
+		{
 			name:   "a near-miss on a maths function",
 			source: "result = Box(sqrtt(4.0), 1, 1)",
 			want:   []string{"Did you mean", "sqrt"},
@@ -677,8 +692,10 @@ func TestScript_ReachingOutsideStillSaysNothingHelpful(t *testing.T) {
 // A message naming something the author never typed cannot be acted on.
 func TestScript_ARefusalNamesWhatWasWritten(t *testing.T) {
 	k := scriptKernel(t)
+	// No `@` case: it was the example that motivated this and is now ALLOWED
+	// (see ast.MatMult in script.py). The table entry for it stays, because the
+	// table is the general facility and a construct can be refused again.
 	cases := []struct{ name, source, want string }{
-		{"the @ operator", "result = Box(1, 1, 1)\nx = result @ 0.5", "`@`"},
 		{"a class", "class X:\n    pass\nresult = X", "`class`"},
 		{"try/except", "try:\n    result = Box(1, 1, 1)\nexcept Exception:\n    pass", "`try`"},
 		{"the walrus", "result = (n := Box(1, 1, 1))", "`:=`"},
@@ -701,5 +718,40 @@ func TestScript_ARefusalNamesWhatWasWritten(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// The `@` operator runs, and it is build123d's own idiom.
+//
+// # Why this is a fence and not a convenience
+//
+// `ast.MatMult` was absent while every other binary operator was present, and
+// all of them dispatch to a dunder method — Add to __add__, Mod to __mod__.
+// MatMult dispatches to __matmul__ and is not different in kind.
+//
+// Its sibling was already allowed and is the point: in build123d
+//
+//	edge @ 0.5   is the point half way along
+//	edge % 0.5   is the tangent there
+//
+// `%` is ast.Mod and has worked since the sandbox was written. Refusing the other
+// half of a documented pair was arbitrary, and it cost a real run — a model
+// reached for `@`, was refused, and spent repair attempts on it.
+func TestScript_TheAtOperatorRunsAndComputesTheRightPoint(t *testing.T) {
+	k := scriptKernel(t)
+	// The point half way along a 10mm line is (5,0,0); the box is then 5mm on a
+	// side. Asserted through the VOLUME, because an `@` that silently produced
+	// something else would still build a box.
+	source := `edge = Line((0, 0), (10, 0))
+mid = edge @ 0.5
+side = mid.X
+result = Box(side, side, side)`
+	res, err := k.RunScript(context.Background(), source)
+	if err != nil {
+		t.Fatalf("build123d's own `@` idiom did not run: %v\n%s", err, source)
+	}
+	if want := 125.0; res.Volume < want-1 || res.Volume > want+1 {
+		t.Errorf("volume %.1f, want %.1f — `@` ran but did not compute the point it says",
+			res.Volume, want)
 	}
 }

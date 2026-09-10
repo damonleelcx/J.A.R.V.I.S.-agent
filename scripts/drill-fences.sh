@@ -631,6 +631,10 @@ drill "a lambda's parameters are not bound" internal/domain/cad/script.py \
   's = s.replace("        elif isinstance(node, ast.Lambda):\n            # Parameters only", "        elif False:\n            # Parameters only", 1)' \
   ./internal/domain/cad 'TestScript_ALambdaRunsAndItsParameterResolves'
 
+drill "the suggestion is case-sensitive again" internal/domain/cad/script.py \
+  's = s.replace("difflib.get_close_matches(name.lower(), sorted(folded)", "difflib.get_close_matches(name, sorted(known)", 1)' \
+  ./internal/domain/cad 'TestScript_AnUnavailableNameSuggestsTheCloseOnes'
+
 drill "an unavailable name suggests nothing" internal/domain/cad/script.py \
   's = s.replace("_did_you_mean(node.id, known)", "\"\"", 1)' \
   ./internal/domain/cad 'TestScript_AnUnavailableNameSuggestsTheCloseOnes'
@@ -664,6 +668,18 @@ drill "a suggested name comes without its signature" internal/domain/cad/script.
 drill "a security refusal gains a signature lesson" internal/domain/cad/script.py \
   's = s.replace("cutoff=0.70", "cutoff=0.30", 1)' \
   ./internal/domain/cad 'TestScript_ReachingOutsideStillSaysNothingHelpful|TestScript_AnUnavailableNameSuggestsTheCloseOnes'
+
+# `@` was allowed on 2026-09-10 — every other binary operator on that line
+# dispatches to a dunder method and `%`, its sibling in build123d, was already
+# there. Two drills, as with lambda: that it runs, and that the escape is still
+# refused when spelled through it.
+drill "the @ operator is refused again" internal/domain/cad/script.py \
+  's = s.replace("    ast.MatMult,", "", 1)' \
+  ./internal/domain/cad 'TestScript_TheAtOperatorRunsAndComputesTheRightPoint'
+
+drill "the dunder rule does not reach through an @ expression" internal/domain/cad/script.py \
+  's = s.replace("if isinstance(node, ast.Attribute) and node.attr.startswith(", "if False and node.attr.startswith(", 1)' \
+  ./internal/domain/cad 'TestScript_RefusesTheWayOut'
 
 drill "a refusal names the parser's word, not the author's" internal/domain/cad/script.py \
   's = s.replace("_syntax_name(node)", "type(node).__name__", 1)' \

@@ -417,6 +417,38 @@ an unknown name. What is left is `Standard_TypeMismatch` and *"finished without
 assigning `result`"* — the model's own CAD logic and its own contract-following,
 which is where the boundary belongs.
 
+### Stage 8b — `@`, and the right name in the wrong case — **DONE 2026-09-10**
+
+**`@` is allowed.** `ast.MatMult` was absent while every other binary operator was
+present, and all of them dispatch to a dunder method — `Add` to `__add__`, `Mod`
+to `__mod__`. `MatMult` dispatches to `__matmul__` and is not different in kind:
+it binds no name, reaches no module, and cannot produce an object the script
+could not already hold.
+
+Its sibling was already allowed, which is the point. In build123d:
+
+```
+edge @ 0.5   is the point half way along
+edge % 0.5   is the tangent there
+```
+
+`%` is `ast.Mod` and has worked since the sandbox was written. Refusing the other
+half of a documented pair was arbitrary, and it cost a real run.
+
+The price is paid in fences: the documented escape is tried **through** an `@`
+expression, and `e.__matmul__(0.5)` — the dunder the operator dispatches to,
+written by name — is still refused.
+
+**And a suggestion now matches case-insensitively.** Getting the case wrong is
+its own common miss — `polyline` for `Polyline`, `BOX` for `Box` — and a
+case-sensitive comparison scores those no better than a typo. Measured against
+this manifest, folding adds `BOX -> Box` and costs nothing: the names that must
+suggest nothing (`urlopen`, `getattr`, `socket`, `exec`) still suggest nothing.
+
+**What string distance cannot reach.** A live run asked for `polarArray`; the real
+name is `PolarLocations`, and no edit distance bridges those. That is a semantic
+gap, not a spelling one, and nothing here closes it.
+
 ## What is NOT promised
 
 - The reference image. See the framing above.

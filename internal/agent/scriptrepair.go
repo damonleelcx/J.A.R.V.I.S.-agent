@@ -122,8 +122,10 @@ Rules:
   functions are already in scope. ` + "`import math`" + ` and
   ` + "`from build123d import *`" + ` are tolerated and do nothing; any other import,
   and any file, network or system access, is refused before the script runs.
-- ` + "`def`" + `, ` + "`lambda`" + `, loops and comprehensions are all allowed. Classes and
-  try/except are not, and neither is any attribute beginning with ` + "`__`" + `.
+- ` + "`def`" + `, ` + "`lambda`" + `, loops and comprehensions are all allowed, and so are
+  build123d's own operators: ` + "`edge @ 0.5`" + ` is the point half way along a curve and
+  ` + "`edge % 0.5`" + ` is the tangent there. Classes and try/except are not allowed, and
+  neither is any attribute beginning with ` + "`__`" + `.
 - Read the message. "A face or sketch must be provided" means a solid operation was
   handed a wire or an open curve — close the profile and make a face from it before
   extruding or revolving it.

@@ -115,6 +115,29 @@ ALLOWED_NODES = (
     ast.List, ast.Tuple, ast.Dict, ast.Set, ast.Subscript, ast.Slice, ast.Index,
     ast.BinOp, ast.UnaryOp, ast.BoolOp, ast.Compare, ast.IfExp,
     ast.Add, ast.Sub, ast.Mult, ast.Div, ast.FloorDiv, ast.Mod, ast.Pow,
+    # MatMult — the `@` operator — for the reason every operator on this line is
+    # here, and by the same argument that admitted Lambda.
+    #
+    # ‼️ A deliberate widening of the AST whitelist, taken on 2026-09-10 with the
+    # security decision made explicitly rather than by omission.
+    #
+    # EVERY binary operator already on this list dispatches to a dunder method:
+    # Add to __add__, Mod to __mod__, Mult to __mul__. MatMult dispatches to
+    # __matmul__ and is not different in kind. It binds no name, reaches no
+    # module, and cannot produce an object the script could not already hold —
+    # the operands are whatever it already has. Writing `x.__matmul__(y)` stays
+    # refused, by the dunder-attribute rule, exactly as `x.__add__(y)` is.
+    #
+    # And it is build123d's OWN idiom, whose sibling was already allowed:
+    #
+    #     edge @ 0.5   ->  Vector(5, 0, 0)   the point half way along
+    #     edge % 0.5   ->  Vector(1, 0, 0)   the tangent there
+    #
+    # `%` is ast.Mod, three names to the left of this comment, and has worked
+    # since the sandbox was written. Refusing the other half of a documented pair
+    # was arbitrary, and it cost a real run: a model reached for `@`, was refused,
+    # and spent repair attempts on it.
+    ast.MatMult,
     ast.USub, ast.UAdd, ast.Not, ast.And, ast.Or, ast.Invert,
     ast.Eq, ast.NotEq, ast.Lt, ast.LtE, ast.Gt, ast.GtE, ast.In, ast.NotIn,
     ast.Is, ast.IsNot, ast.BitAnd, ast.BitOr, ast.BitXor, ast.LShift, ast.RShift,
@@ -209,7 +232,21 @@ def _did_you_mean(name, known):
     there is no file, network or system access of any kind. What 0.70 buys is
     that the refusals which are ABOUT the boundary do not read as typos.
     """
-    near = difflib.get_close_matches(name, sorted(known), n=3, cutoff=0.70)
+    # Matched case-INSENSITIVELY, because getting the case wrong is its own
+    # common miss — `polyline` for `Polyline`, `BOX` for `Box` — and a
+    # case-sensitive comparison scores those no better than a typo. Measured
+    # against this manifest: case folding adds `BOX -> Box` and costs nothing,
+    # and the names that must suggest NOTHING (urlopen, getattr, socket, exec)
+    # still suggest nothing at this cutoff either way.
+    #
+    # The fold is built from the sorted list so two names differing only in case
+    # resolve the same way on every run; the one that sorts first wins, which is
+    # arbitrary but stable, and a suggestion is a hint rather than a ruling.
+    folded = {}
+    for real in sorted(known):
+        folded.setdefault(real.lower(), real)
+    near = [folded[k] for k in
+            difflib.get_close_matches(name.lower(), sorted(folded), n=3, cutoff=0.70)]
     if not near:
         return ""
     return " Did you mean %s?" % ", ".join(near)
