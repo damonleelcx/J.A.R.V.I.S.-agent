@@ -328,23 +328,21 @@ func (c *Conversation) sketchFirst(ctx context.Context, message string, notify f
 
 // matchesSketch asks what the built model has that the drawing does not, and
 // the other way round.
-func (c *Conversation) matchesSketch(ctx context.Context, doc *Prototype, s *Sketch) []geometry.Problem {
-	if s == nil || s.Image == "" || doc == nil {
+func (c *Conversation) matchesSketch(ctx context.Context, doc *Prototype, s *Sketch,
+	sheet builtSheet) []geometry.Problem {
+
+	if s == nil || s.Image == "" || doc == nil || sheet.Image == "" {
 		return nil
 	}
-	built := geometry.ContactSheet(*doc, geometry.Millimetre, sheetSize)
-	if built == "" {
-		return nil
-	}
-	said := "The first image is the reference. The second is what was built."
-	if tools := cuttingTools(doc); len(tools) > 0 {
-		said += toolsNote(tools)
-	}
+	// Shared with look.go rather than written again here — see render.go on why
+	// the same blind spot explained in two places becomes two explanations.
+	said := "The first image is the reference. The second is what was built." +
+		describedRenderNote(doc, sheet)
 	resp, err := c.client.Complete(ctx, llm.Request{
 		Role: llm.RoleVision,
 		Messages: []llm.Message{
 			{Role: llm.System, Content: sketchMatchSystem},
-			{Role: llm.User, Content: said, Images: []string{s.Image, built}},
+			{Role: llm.User, Content: said, Images: []string{s.Image, sheet.Image}},
 		},
 		JSONMode: true,
 		// Generous for the reason look.go's is: a reasoning model that spends
@@ -432,15 +430,6 @@ func cuttingTools(doc *Prototype) []string {
 	return out
 }
 
-// toolsNote tells the comparison what it is really looking at.
-func toolsNote(tools []string) string {
-	return "\n\nIn the second image these pieces are the TOOLS that cut material away: " +
-		strings.Join(tools, ", ") + ". This renderer cannot perform a cut, so it draws them as " +
-		"SOLIDS — a bolt hole appears as a peg standing on the plate. The holes are really " +
-		"there in the built model. Do not report them as extra material, as pegs or pins, or " +
-		"as a feature the drawing does not show."
-}
-
 // repairAgainstSketch brings the model closer to the drawing, and says what it
 // could not fix.
 //
@@ -449,12 +438,14 @@ func toolsNote(tools []string) string {
 // "does anything float or disappear" and should not pre-empt it; before, because
 // the script check must have the last word over anything that rewrites the
 // document (see scriptrepair.go).
-func (c *Conversation) repairAgainstSketch(ctx context.Context, reply *Reply, s *Sketch, notify func(string)) {
-	if reply == nil || reply.Prototype == nil || s == nil || s.Image == "" {
+func (c *Conversation) repairAgainstSketch(ctx context.Context, reply *Reply, s *Sketch,
+	sheet *builtSheet, notify func(string)) {
+
+	if reply == nil || reply.Prototype == nil || s == nil || s.Image == "" || sheet == nil {
 		return
 	}
 	for i := 0; i < sketchAttempts; i++ {
-		seen := c.matchesSketch(ctx, reply.Prototype, s)
+		seen := c.matchesSketch(ctx, reply.Prototype, s, *sheet)
 		if len(seen) == 0 {
 			if i > 0 {
 				reply.noteRepair("The model now matches the reference drawing.")
@@ -479,6 +470,9 @@ func (c *Conversation) repairAgainstSketch(ctx context.Context, reply *Reply, s 
 			return
 		}
 		reply.Prototype = fixed
+		// Re-drawn, or the next pass compares the reference against a picture of
+		// the document as it was BEFORE this correction.
+		*sheet = c.render(ctx, reply.Prototype)
 		reply.noteRepair("Comparing the model with the reference drawing, FORGE found a " +
 			"difference and corrected it: " + seen[0].Detail)
 	}
@@ -493,5 +487,5 @@ func SketchForTest(ctx context.Context, c *Conversation, message string) *Sketch
 
 // MatchForTest exposes the comparison for the same reason.
 func MatchForTest(ctx context.Context, c *Conversation, doc *Prototype, s *Sketch) []geometry.Problem {
-	return c.matchesSketch(ctx, doc, s)
+	return c.matchesSketch(ctx, doc, s, c.render(ctx, doc))
 }

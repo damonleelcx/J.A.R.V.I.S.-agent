@@ -76,97 +76,36 @@ you should not feel obliged to find something.`
 //
 // errNoVision is the one absence that is NOT a problem: this deployment ships
 // with vision deliberately unconfigured, and the caller stays quiet about that.
-func (c *Conversation) look(ctx context.Context, doc *Prototype, asked string) ([]geometry.Problem, error) {
+func (c *Conversation) look(ctx context.Context, doc *Prototype, asked string, sheet builtSheet) ([]geometry.Problem, error) {
 	if c == nil || c.client == nil || doc == nil {
 		return nil, errNoVision
 	}
 	if c.client.ModelFor(llm.RoleVision) == "" {
 		return nil, errNoVision
 	}
-	sheet := geometry.ContactSheet(*doc, geometry.Millimetre, sheetSize)
-	if sheet == "" {
+	if sheet.Image == "" {
 		return nil, errNothingToSee
 	}
 
 	parts := make([]string, 0, len(doc.Parts))
-	var scripted []string
 	for _, p := range doc.Parts {
 		parts = append(parts, p.Label())
-		if strings.EqualFold(strings.TrimSpace(p.Shape), "script") {
-			scripted = append(scripted, p.Label())
-		}
 	}
 	// Told what it is looking at and what was asked for: questions 1-3 are much
 	// easier to answer about named parts than about coloured blobs.
 	prompt := "This was built in answer to: " + asked +
 		"\n\nThe parts are: " + strings.Join(parts, ", ")
 
-	// ‼️ And told which parts it CANNOT see.
-	//
-	// A scripted part's shape is whatever build123d makes when the script runs.
-	// The contact sheet is drawn from the DOCUMENT, and the document says
-	// nothing about that shape — so the renderer draws a bounding box, and every
-	// scripted part looks like a plain rectangular block no matter what it is.
-	//
-	// Without this line the vision model answers the only way it can: on the
-	// live deployment, 2026-09-09, it reported "The part is a rectangular block
-	// rather than a circular gear with teeth and a bore" about a gear whose
-	// script had just been RUN and had built a correct 12565.7 mm³ gear. That is
-	// a false positive by construction — it fires on every scripted part, on
-	// every turn, forever — and this file already warns what a repair driven by
-	// a wrong complaint does to a good model.
-	//
-	// Named rather than removed from the picture: they are still there, they
-	// still occupy space, and questions 1 and 2 — is something buried, is
-	// something floating — are answerable about a block and worth keeping.
-	if len(scripted) > 0 {
-		prompt += "\n\nThese parts are built by a script and are drawn here as a PLAIN BLOCK " +
-			"that is not their real shape: " + strings.Join(scripted, ", ") +
-			". Do not report that they are the wrong shape, or blocky, or not what was " +
-			"asked for — you cannot see their shape at all. You may still say whether one " +
-			"is buried inside another part or floating clear of everything."
-	}
-
-	// ‼️ And the parts that are HOLES.
-	//
-	// geometry.Tessellate does not perform a cut. Its own inferences say so —
-	// "the material X removes is NOT removed in this file", "four solid POSTS
-	// standing on the plate" — because a boolean needs the CAD kernel and this is
-	// a triangle builder. So a bolt hole is drawn as a solid cylinder sitting
-	// inside the plate, which is question 1 word for word: "a part completely
-	// hidden inside another part".
-	//
-	// It is also exactly what a correct hole looks like here. Measured live,
-	// 2026-09-10, on a plate with one bolt hole: "Bolt Hole: The part is a solid
-	// cylinder protruding from the plate surface rather than a hole passing
-	// through it." A true statement about the picture, a false one about the
-	// model, and it fires on every mechanical part with a hole in it — which is
-	// most of them. This file already carries the scar tissue explaining what a
-	// repair driven by a wrong complaint does to a good model.
-	//
-	// # Why this does not simply exclude them
-	//
-	// Question 2 stays ON for a tool, deliberately. A cutting tool floating clear
-	// of the part it cuts removes nothing, so the hole is not there — a real
-	// defect, and the only reason anyone would notice is this check. It found
-	// exactly that on the live deployment the day this was written: "Bolt Hole 1:
-	// The part is floating clear of the L-Bracket … rather than being positioned
-	// within the upright." Suppressing tools wholesale would have thrown that
-	// away with the false positive.
-	if tools := cuttingTools(doc); len(tools) > 0 {
-		prompt += "\n\nThese parts are the TOOLS that cut material away: " +
-			strings.Join(tools, ", ") + ". This renderer cannot perform a cut, so it draws " +
-			"them as SOLIDS — a bolt hole appears as a solid cylinder sitting inside, or " +
-			"poking out of, the part it cuts. That is what a correct hole looks like here. " +
-			"Do not report them as hidden inside another part, as solid where a hole should " +
-			"be, or as extra material. DO still say if one is floating clear of the part it " +
-			"is meant to cut, or lying on an axis that would not pass through it: a tool " +
-			"that misses removes nothing, and then the hole really is absent."
-	}
+	// And, ONLY when this picture is the described one rather than the built
+	// one, what it is lying about. Both apologies used to live here in full; they
+	// are shared with the sketch comparison now (render.go), because the same
+	// blind spot explained in two places drifts into two different explanations,
+	// either of which can be fixed without the other.
+	prompt += describedRenderNote(doc, sheet)
 
 	resp, err := c.client.Complete(ctx, llm.Request{
 		Role:     llm.RoleVision,
-		Messages: []llm.Message{{Role: llm.System, Content: lookSystem}, {Role: llm.User, Content: prompt, Images: []string{sheet}}},
+		Messages: []llm.Message{{Role: llm.System, Content: lookSystem}, {Role: llm.User, Content: prompt, Images: []string{sheet.Image}}},
 		JSONMode: true,
 		// Generous, because a reasoning model spends its budget thinking and
 		// then has nothing left to answer with. Measured on qwen3.8-max, a
@@ -250,11 +189,11 @@ var (
 // will not build has a worse problem than one that looks wrong; and after
 // repairIfTurned, because a part turned on its side is measurable and does not
 // need an opinion.
-func (c *Conversation) repairIfItLooksWrong(ctx context.Context, reply *Reply, asked string) {
-	if reply == nil || reply.Prototype == nil {
+func (c *Conversation) repairIfItLooksWrong(ctx context.Context, reply *Reply, asked string, sheet *builtSheet) {
+	if reply == nil || reply.Prototype == nil || sheet == nil {
 		return
 	}
-	seen, err := c.look(ctx, reply.Prototype, asked)
+	seen, err := c.look(ctx, reply.Prototype, asked, *sheet)
 	if errors.Is(err, errNoVision) {
 		return // deliberate absence: see the config note in converse.go
 	}
@@ -272,6 +211,9 @@ func (c *Conversation) repairIfItLooksWrong(ctx context.Context, reply *Reply, a
 	if fixed := c.repairGeometry(ctx, before, seen); fixed != nil {
 		if len(fixed.Faults()) <= len(before.Faults()) && len(turnedOnItsSide(before, fixed)) == 0 {
 			reply.Prototype = fixed
+			// The picture is now of a document that no longer exists. Re-drawn
+			// so whatever runs next compares against what is actually there.
+			*sheet = c.render(ctx, reply.Prototype)
 			reply.noteRepair("Looking at the model it had just built, FORGE found " +
 				problemWord(len(seen)) + " and corrected it: " + seen[0].Detail)
 			return
@@ -294,5 +236,21 @@ func problemWord(n int) string {
 // the same reason RepairForTest exists: only a real vision model can answer
 // whether this premise holds, and it lives in the external test package.
 func LookForTest(ctx context.Context, c *Conversation, doc *Prototype, asked string) ([]geometry.Problem, error) {
-	return c.look(ctx, doc, asked)
+	return c.look(ctx, doc, asked, c.render(ctx, doc))
+}
+
+// AskVisionForTest puts one closed question to the vision model about one
+// picture, for the live test that has to show the SAME question answered
+// differently about two renders of the same document.
+func AskVisionForTest(ctx context.Context, c *Conversation, question, image string) (string, error) {
+	resp, err := c.client.Complete(ctx, llm.Request{
+		Role:      llm.RoleVision,
+		Messages:  []llm.Message{{Role: llm.User, Content: question, Images: []string{image}}},
+		JSONMode:  true,
+		MaxTokens: 500,
+	})
+	if err != nil {
+		return "", err
+	}
+	return resp.Content, nil
 }

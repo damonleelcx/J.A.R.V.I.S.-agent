@@ -240,7 +240,8 @@ func (c *Conversation) buildOneStep(ctx context.Context, doc *Prototype, asked s
 	// admitted on pass 2 is a fault the next ten passes build on top of.
 	c.repairIfFaulty(ctx, &reply)
 	c.repairIfTurned(ctx, &reply, doc)
-	c.repairIfItLooksWrong(ctx, &reply, step.What)
+	sheet := c.render(ctx, reply.Prototype)
+	c.repairIfItLooksWrong(ctx, &reply, step.What, &sheet)
 	// Last, for the reason the turn paths run it last: it is the only check that
 	// verifies itself, and a rewrite after it would leave an unrun script behind.
 	c.repairIfScriptsFail(ctx, &reply, doc, nil)

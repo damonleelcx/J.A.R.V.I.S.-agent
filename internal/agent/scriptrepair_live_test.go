@@ -324,3 +324,122 @@ func TestLiveSketchLoop(t *testing.T) {
 			"acceptance rule refuses a resize — but watch it: %s", rp[0].Detail)
 	}
 }
+
+// liveSolids is the real kernel behind the agent's render contract — the same
+// conversion httpapi uses, sharing geometry.TrianglesFrom rather than copying it.
+type liveSolids struct{ k *cad.Kernel }
+
+func (r liveSolids) BuildSurface(ctx context.Context, doc *geometry.Document) ([]geometry.RenderPart, error) {
+	unit, known := geometry.ParseUnit(doc.Units)
+	if !known {
+		unit = geometry.Millimetre
+	}
+	built, err := r.k.BuildMesh(ctx, *doc, unit)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]geometry.RenderPart, 0, len(built.Mesh))
+	for _, m := range built.Mesh {
+		if tris := geometry.TrianglesFrom(m.Vertices, m.Triangles); len(tris) > 0 {
+			out = append(out, geometry.RenderPart{ID: m.ID, Triangles: tris})
+		}
+	}
+	return out, nil
+}
+
+// TestLiveKernelRenderShowsTheHole is the whole point of rendering the kernel's
+// surface, put to a real kernel and a real vision model.
+//
+// # What it decides
+//
+// Every check that reads a picture used to read a render of the DESCRIPTION, in
+// which a cut is not performed — so a bolt hole is a solid post, and the vision
+// model said exactly that about a correct plate: "a solid cylinder protruding
+// from the plate surface rather than a hole passing through it." That was
+// patched by apologising for the picture. This renders the real surface instead.
+//
+// The claim to check is not "the code runs" — the stub fences cover that. It is
+// that the kernel's picture SHOWS THE HOLE, and that the same model asked the
+// same closed question about the same document answers differently depending on
+// which picture it is given. If both pictures read the same, this change bought
+// nothing and the apologies were the right answer after all.
+func TestLiveKernelRenderShowsTheHole(t *testing.T) {
+	if os.Getenv("FORGE_LIVE_LLM_TESTS") == "" || os.Getenv("FORGE_LLM_API_KEY") == "" {
+		t.Skip("set FORGE_LLM_API_KEY and FORGE_LIVE_LLM_TESTS=1")
+	}
+	python := os.Getenv("FORGE_CAD_PYTHON")
+	if python == "" {
+		t.Skip("set FORGE_CAD_PYTHON to a Python with build123d — a fake kernel cannot cut")
+	}
+	log := logx.New(logx.Options{Level: slog.LevelError, Output: os.Stderr, Service: "render-live-test"})
+	kernel := cad.New(python, log)
+	defer kernel.Close()
+
+	client := llm.NewOpenAICompatible(config.LLMConfig{
+		BaseURL:        envOrDefault("FORGE_LLM_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+		APIKey:         os.Getenv("FORGE_LLM_API_KEY"),
+		Converse:       envOrDefault("FORGE_LLM_CONVERSE_MODEL", "qwen3.7-plus"),
+		Vision:         envOrDefault("FORGE_LLM_VISION_MODEL", "qwen3.8-max"),
+		RequestTimeout: 3 * time.Minute,
+		MaxRetries:     2,
+	}, log, clock.System{})
+
+	// A plate with a bolt hole cut clean through it, and nothing else.
+	doc := &geometry.Document{
+		Name: "Plate", Units: "mm",
+		Parts: []geometry.Part{
+			{ID: "plate", Name: "Plate", Shape: "box", Color: "#8899aa",
+				Size: map[string]float64{"width": 120, "height": 10, "depth": 80}},
+			{ID: "hole", Name: "Bolt Hole", Shape: "cylinder", Color: "#222222",
+				Size: map[string]float64{"radius": 12, "height": 40}},
+		},
+		Features: []geometry.Feature{{ID: "drill", Op: "cut", Of: "plate", With: []string{"hole"}}},
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 6*time.Minute)
+	defer cancel()
+
+	described := agent.NewConversation(client, persona.DefaultCharacter())
+	fromKernel := agent.NewConversation(client, persona.DefaultCharacter()).
+		WithSolids(liveSolids{kernel})
+
+	dImg, dKernel := agent.RenderForTest(ctx, described, doc)
+	kImg, kKernel := agent.RenderForTest(ctx, fromKernel, doc)
+
+	if dKernel {
+		t.Fatal("the deployment with no kernel produced a kernel render")
+	}
+	if !kKernel {
+		t.Fatal("the kernel did not build the surface, so this test compares two copies of " +
+			"the same picture and proves nothing")
+	}
+	if dImg == kImg {
+		t.Fatal("‼️ the two pictures are byte-identical. The kernel render is not reaching " +
+			"the rasterizer, and every apology this change removes is still needed.")
+	}
+	t.Logf("described render %d bytes, kernel render %d bytes", len(dImg), len(kImg))
+
+	// The closed question, asked of both pictures with NO apology attached to
+	// either — so the only thing that differs is the picture.
+	const q = `Look at these four orthographic views of a metal plate. Answer JSON only:
+{"hole_through_plate": true|false, "solid_post_on_plate": true|false}
+"hole_through_plate" is true if you can see an opening passing through the plate.
+"solid_post_on_plate" is true if a solid cylinder stands on or sticks out of it.`
+
+	ask := func(img string) string {
+		resp, err := agent.AskVisionForTest(ctx, described, q, img)
+		if err != nil {
+			t.Fatalf("could not look: %v", err)
+		}
+		return resp
+	}
+	dSaw, kSaw := ask(dImg), ask(kImg)
+	t.Logf("described picture: %s", dSaw)
+	t.Logf("kernel picture:    %s", kSaw)
+
+	if !strings.Contains(strings.ToLower(kSaw), `"hole_through_plate": true`) &&
+		!strings.Contains(strings.ToLower(kSaw), `"hole_through_plate":true`) {
+		t.Errorf("the KERNEL's picture does not show a hole through the plate. That is the "+
+			"entire reason for building the surface rather than describing it:\n%s", kSaw)
+	}
+}

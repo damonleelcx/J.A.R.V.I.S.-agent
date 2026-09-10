@@ -154,8 +154,9 @@ func TestSketch_APictureCannotChangeANumber(t *testing.T) {
 		c := &Conversation{client: stub}
 
 		reply := &Reply{Prototype: bracketDoc(100)}
+		sheet := c.render(context.Background(), reply.Prototype)
 		c.repairAgainstSketch(context.Background(), reply,
-			&Sketch{Image: "https://example.invalid/ref.png", Form: "an L plate"}, nil)
+			&Sketch{Image: "https://example.invalid/ref.png", Form: "an L plate"}, &sheet, nil)
 
 		if got := reply.Prototype.Parts[0].Size["width"]; got != 100 {
 			t.Errorf("the drawing resized the plate from 100 to %v. It carries no dimensions "+
@@ -225,8 +226,9 @@ func TestSketch_BothPicturesAreSentInOrder(t *testing.T) {
 	spy := &imageOrderSpy{onImages: func(imgs []string) { sent = imgs }}
 	c := &Conversation{client: spy}
 
-	c.matchesSketch(context.Background(), bracketDoc(100),
-		&Sketch{Image: "https://example.invalid/ref.png"})
+	doc100 := bracketDoc(100)
+	c.matchesSketch(context.Background(), doc100, &Sketch{Image: "https://example.invalid/ref.png"},
+		c.render(context.Background(), doc100))
 
 	if len(sent) != 2 {
 		t.Fatalf("the comparison sent %d image(s), want 2 — the reference and the build", len(sent))
@@ -303,7 +305,7 @@ func TestSketch_TheComparisonIsToldACutIsDrawnAsASolid(t *testing.T) {
 		Size: map[string]float64{"radius": 4, "height": 20}})
 	doc.Features = []geometry.Feature{{ID: "drill", Op: "cut", Of: "plate", With: []string{"hole"}}}
 
-	c.matchesSketch(context.Background(), doc, &Sketch{Image: "https://example.invalid/ref.png"})
+	c.matchesSketch(context.Background(), doc, &Sketch{Image: "https://example.invalid/ref.png"}, c.render(context.Background(), doc))
 
 	if !strings.Contains(said, "Bolt hole") || !strings.Contains(said, "TOOLS that cut") {
 		t.Errorf("the comparison was not told that the bolt hole is drawn as a solid, so it "+
@@ -313,7 +315,7 @@ func TestSketch_TheComparisonIsToldACutIsDrawnAsASolid(t *testing.T) {
 	// And a document with no cut says nothing about tools — a note about a
 	// feature that is not there is noise that costs attention on every turn.
 	said = ""
-	c.matchesSketch(context.Background(), bracketDoc(100), &Sketch{Image: "https://example.invalid/ref.png"})
+	c.matchesSketch(context.Background(), bracketDoc(100), &Sketch{Image: "https://example.invalid/ref.png"}, c.render(context.Background(), bracketDoc(100)))
 	if strings.Contains(said, "TOOLS that cut") {
 		t.Errorf("a document with no cut was told about cutting tools:\n%s", said)
 	}
@@ -380,8 +382,9 @@ func TestSketch_TheComparisonActuallyFiltersCounts(t *testing.T) {
 		problems: `{"problems":[{"part":"arm","detail":"The drawing shows three bolt holes, but the built model has only two."}]}`,
 	}
 	c := &Conversation{client: stub}
-	got := c.matchesSketch(context.Background(), bracketDoc(100),
-		&Sketch{Image: "https://example.invalid/ref.png"})
+	doc := bracketDoc(100)
+	got := c.matchesSketch(context.Background(), doc,
+		&Sketch{Image: "https://example.invalid/ref.png"}, c.render(context.Background(), doc))
 	if len(got) != 0 {
 		t.Errorf("the comparison passed a complaint about a COUNT back to the repair loop. "+
 			"The drawing drew three, the person asked for two, and acting on it adds a hole "+
@@ -413,7 +416,7 @@ func TestLook_IsToldWhichPartsAreCuttingTools(t *testing.T) {
 		Size: map[string]float64{"radius": 5, "height": 30}})
 	doc.Features = []geometry.Feature{{ID: "drill", Op: "cut", Of: "plate", With: []string{"hole"}}}
 
-	if _, err := c.look(context.Background(), doc, "a plate with a bolt hole"); err != nil {
+	if _, err := c.look(context.Background(), doc, "a plate with a bolt hole", c.render(context.Background(), doc)); err != nil {
 		t.Fatalf("look failed: %v", err)
 	}
 	if !strings.Contains(spy.prompt, "Bolt Hole") || !strings.Contains(spy.prompt, "TOOLS that cut") {
@@ -431,7 +434,9 @@ func TestLook_IsToldWhichPartsAreCuttingTools(t *testing.T) {
 
 	// A document with no cut says nothing about tools.
 	spy.prompt = ""
-	if _, err := c.look(context.Background(), bracketDoc(100), "a plate"); err != nil {
+	plain := bracketDoc(100)
+	if _, err := c.look(context.Background(), plain, "a plate",
+		c.render(context.Background(), plain)); err != nil {
 		t.Fatalf("look failed: %v", err)
 	}
 	if strings.Contains(spy.prompt, "TOOLS that cut") {

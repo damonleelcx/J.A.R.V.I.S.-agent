@@ -96,6 +96,8 @@ FILES=(
   internal/domain/cad/script.py
   internal/agent/sketch.go
   internal/llm/illustrate.go
+  internal/agent/render.go
+  internal/domain/geometry/mesh.go
 )
 
 BACKUP=""
@@ -578,20 +580,40 @@ drill "a later repair can undo the verification" internal/agent/converse.go \
   's = s.replace("\tc.repairIfScriptsFail(ctx, &reply, current, nil)\n", "", 1); s = s.replace("\tc.repairIfFaulty(ctx, &reply)\n", "\tc.repairIfFaulty(ctx, &reply)\n\tc.repairIfScriptsFail(ctx, &reply, current, nil)\n", 1)' \
   ./internal/agent 'TestScripts_TheScriptCheckHasTheLastWord'
 
-# The same blind spot in look.go, and it was LIVE: a bolt hole is drawn as a
-# solid cylinder inside the plate, which is question 1 word for word. Two drills,
-# because suppressing the false positive must not take the true one with it — a
-# cutting tool floating clear of what it cuts removes nothing.
-drill "look is not told a cut is drawn as a solid" internal/agent/look.go \
-  's = s.replace("if tools := cuttingTools(doc); len(tools) > 0 {", "if tools := []string(nil); len(tools) > 0 {", 1)' \
+# The blind spots are now REMOVED by rendering the kernel's surface, and the
+# apology survives only for the fallback picture. Both halves are drilled: that
+# the kernel render is used at all, and that its picture carries no apology —
+# telling a checker "a solid where a hole should be is correct here" about a
+# picture in which holes are real teaches it to ignore a hole that failed to cut.
+drill "the kernel surface is never rendered" internal/agent/render.go \
+  's = s.replace("if c != nil && c.solids != nil {", "if false {", 1)' \
+  ./internal/agent 'TestRender_TheKernelPictureCarriesNoApology'
+
+drill "the kernel picture carries the apology anyway" internal/agent/render.go \
+  's = s.replace("if sheet.FromKernel || doc == nil {", "if doc == nil {", 1)' \
+  ./internal/agent 'TestRender_TheKernelPictureCarriesNoApology'
+
+drill "the described picture carries no apology" internal/agent/render.go \
+  's = s.replace("if tools := cuttingTools(doc); len(tools) > 0 {", "if false {", 1)' \
+  ./internal/agent 'TestRender_TheKernelPictureCarriesNoApology|TestLook_IsToldWhichPartsAreCuttingTools'
+
+# ‼️ This mutation must delete the phrase the fence looks for, not reword around
+# it. The first version replaced "DO still say if " and left "floating clear"
+# standing three words later, so the drill passed and proved nothing.
+drill "look is told to ignore cutting tools entirely" internal/agent/render.go \
+  's = s.replace("one is floating clear of the part it is meant to cut", "nothing", 1)' \
   ./internal/agent 'TestLook_IsToldWhichPartsAreCuttingTools'
 
-drill "look is told to ignore cutting tools entirely" internal/agent/look.go \
-  's = s.replace("DO still say if one is floating clear of the part it ", "Ignore them completely. ", 1)' \
-  ./internal/agent 'TestLook_IsToldWhichPartsAreCuttingTools'
+drill "the surface is rebuilt for every check" internal/agent/sketch.go \
+  's = s.replace("seen := c.matchesSketch(ctx, reply.Prototype, s, *sheet)", "seen := c.matchesSketch(ctx, reply.Prototype, s, c.render(ctx, reply.Prototype))", 1)' \
+  ./internal/agent 'TestRender_TheKernelIsAskedOncePerTurn'
 
-drill "the vision check is not told what it cannot see" internal/agent/look.go \
-  's = s.replace("\tif len(scripted) > 0 {", "\tif false {", 1)' \
+drill "a bad mesh index is trusted" internal/domain/geometry/mesh.go \
+  's = s.replace("if o < 0 || o+2 >= len(verts) {", "if false {", 1)' \
+  ./internal/domain/geometry 'TestTrianglesFrom'
+
+drill "the vision check is not told what it cannot see" internal/agent/render.go \
+  's = s.replace("if scripted := scriptedLabels(doc); len(scripted) > 0 {", "if false {", 1)' \
   ./internal/agent 'TestScripts_TheVisionCheckIsToldItCannotSeeThem'
 
 echo
@@ -646,7 +668,7 @@ drill "a drawing is made with nothing able to read it" internal/agent/sketch.go 
   ./internal/agent 'TestSketch_NoVisionMeansNoDrawing'
 
 drill "the reference is not sent first" internal/agent/sketch.go \
-  's = s.replace("[]string{s.Image, built}", "[]string{built, s.Image}", 1)' \
+  's = s.replace("[]string{s.Image, sheet.Image}", "[]string{sheet.Image, s.Image}", 1)' \
   ./internal/agent 'TestSketch_BothPicturesAreSentInOrder'
 
 # Three deterministic guards, each standing where a PROMPT rule was measured
@@ -668,8 +690,8 @@ drill "the count filter is not wired in" internal/agent/sketch.go \
   's = s.replace("return formOnly(parseLook(resp.Content))", "return parseLook(resp.Content)", 1)' \
   ./internal/agent 'TestSketch_TheComparisonActuallyFiltersCounts'
 
-drill "the comparison is not told a cut is drawn as a solid" internal/agent/sketch.go \
-  's = s.replace("if tools := cuttingTools(doc); len(tools) > 0 {", "if tools := []string(nil); len(tools) > 0 {", 1)' \
+drill "the comparison is not told what the picture is lying about" internal/agent/sketch.go \
+  's = s.replace("describedRenderNote(doc, sheet)", "\"\"", 1)' \
   ./internal/agent 'TestSketch_TheComparisonIsToldACutIsDrawnAsASolid'
 
 drill "a chat-shaped reply is read as a drawing" internal/llm/illustrate.go \

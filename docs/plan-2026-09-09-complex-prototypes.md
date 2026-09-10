@@ -324,6 +324,46 @@ signal with it, and two drills hold that pair apart.
 plus two vision calls, and a deployment that will not pay that has the feature
 absent rather than slow — the same discipline the CAD kernel and vision follow.
 
+### Stage 7 — Look at the solid that was built, not the one that was described — **DONE 2026-09-10**
+
+Two blind spots of the same shape had each been patched by APOLOGISING to the
+vision model for the picture:
+
+| what the checks saw | what it really was |
+|---|---|
+| *"a solid cylinder protruding from the plate surface rather than a hole"* | a correct plate with a bolt hole |
+| *"a rectangular block rather than a circular gear with teeth and a bore"* | a gear whose script had built 12565.7 mm³ |
+
+Both because `geometry.Tessellate` is a triangle builder: it performs no boolean
+and runs no script, and says so in its own inferences. The apologies worked and
+did not scale — one sentence per blind spot, each one a rule the model may
+ignore, and a third blind spot would have needed a third.
+
+**The kernel already builds the real surface.** `BuildMesh` returns triangles
+with the features applied and the scripts run. What was missing was a door
+between them: `ContactSheet` derived its groups internally, so nothing else could
+be drawn. It is now split — `ContactSheetOf` takes already-built surfaces, and
+`ContactSheet` is a thin wrapper over the tessellator — so both pictures go
+through the same rasterizer, in the same colours, from the same four viewpoints,
+and only their SOURCE differs.
+
+**Measured live, same document, same question, same model, two pictures:**
+
+| picture | hole through plate | solid post on plate |
+|---|---|---|
+| described | **false** | **true** |
+| kernel | **true** | **false** |
+
+The apology is not deleted — it is now conditional, shared by both checks in one
+place, and emitted only for the fallback render. That mattered enough to fence:
+telling a checker "a solid where a hole should be is correct here" about a
+picture in which holes are real would teach it to ignore a hole that genuinely
+failed to cut.
+
+**One render per turn**, not one per check: building the surface runs the kernel
+and, for a scripted part, the script. Each check re-draws it after a repair it
+accepts, so nothing downstream compares against a document that no longer exists.
+
 ## What is NOT promised
 
 - The reference image. See the framing above.

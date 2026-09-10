@@ -936,3 +936,54 @@ func faceNormal(a, b, c [3]float64) [3]float64 {
 		u[0]*v[1] - u[1]*v[0],
 	})
 }
+
+// TrianglesFrom turns a flat vertex buffer and an index buffer into triangles.
+//
+// # Why this lives here
+//
+// It is the shape a mesh has on a wire — a []float64 of coordinates and an
+// []int32 of indices — turned into the shape this package draws. Both ends
+// already speak Triangle, so the translation belongs beside it rather than in
+// whichever caller happens to need it first; it is now needed by the CAD
+// kernel's surface and by the tests that stand in for one.
+//
+// ‼️ An index outside the buffer is SKIPPED, not trusted. This data crosses a
+// process boundary from a Python sidecar, and an out-of-range index would panic
+// the rasterizer — on the path that draws a picture for an automated checker,
+// which is exactly where a crash would be least explicable and least expected.
+//
+// The normal is computed rather than read, because the kernel's mesh carries no
+// per-facet normal and the renderer shades by it. A zero normal draws every
+// facet in one flat colour, and a picture in one flat colour cannot answer the
+// question the checks exist to ask.
+func TrianglesFrom(verts []float64, idx []int32) []Triangle {
+	at := func(i int32) ([3]float64, bool) {
+		o := int(i) * 3
+		if o < 0 || o+2 >= len(verts) {
+			return [3]float64{}, false
+		}
+		return [3]float64{verts[o], verts[o+1], verts[o+2]}, true
+	}
+	out := make([]Triangle, 0, len(idx)/3)
+	for i := 0; i+2 < len(idx); i += 3 {
+		a, oka := at(idx[i])
+		b, okb := at(idx[i+1])
+		c, okc := at(idx[i+2])
+		if !oka || !okb || !okc {
+			continue
+		}
+		out = append(out, Triangle{A: a, B: b, C: c, Normal: faceNormalOf(a, b, c)})
+	}
+	return out
+}
+
+func faceNormalOf(a, b, c [3]float64) [3]float64 {
+	u := [3]float64{b[0] - a[0], b[1] - a[1], b[2] - a[2]}
+	v := [3]float64{c[0] - a[0], c[1] - a[1], c[2] - a[2]}
+	n := [3]float64{u[1]*v[2] - u[2]*v[1], u[2]*v[0] - u[0]*v[2], u[0]*v[1] - u[1]*v[0]}
+	l := math.Sqrt(n[0]*n[0] + n[1]*n[1] + n[2]*n[2])
+	if l == 0 {
+		return [3]float64{0, 0, 1}
+	}
+	return [3]float64{n[0] / l, n[1] / l, n[2] / l}
+}

@@ -572,6 +572,11 @@ type Conversation struct {
 	// is 30-60 seconds on top of a turn, and a deployment that will not pay that
 	// has the feature absent rather than slow. See sketch.go.
 	illustrator llm.Illustrator
+	// solids builds the real surface of a document, and nil means this
+	// deployment has no kernel — every render is then the DESCRIBED one, with
+	// the holes unfilled and the scripts unrun, and the checks are told so. See
+	// render.go.
+	solids SolidBuilder
 }
 
 // NewConversation returns the conversational surface.
@@ -596,6 +601,13 @@ func (c *Conversation) WithScripts(r ScriptRunner) *Conversation {
 // prototype is built against. nil is a deployment that does not draw one.
 func (c *Conversation) WithIllustrator(i llm.Illustrator) *Conversation {
 	c.illustrator = i
+	return c
+}
+
+// WithSolids gives the conversation the thing that BUILDS the surface the
+// checks look at. nil is a deployment with no kernel.
+func (c *Conversation) WithSolids(b SolidBuilder) *Conversation {
+	c.solids = b
 	return c
 }
 
@@ -1041,9 +1053,16 @@ func (c *Conversation) Respond(ctx context.Context, projectID string, history []
 	// reason the streaming path is the one people use.
 	c.buildInPasses(ctx, &reply, message, current, nil)
 	c.repairIfTurned(ctx, &reply, current)
-	c.repairIfItLooksWrong(ctx, &reply, message)
+	// One render, shared by both checks that read a picture.
+	//
+	// Built ONCE because building it runs the kernel — and, for a scripted part,
+	// the script — so rendering per check would pay that twice. Each check
+	// re-draws it after a repair it accepts, so nothing downstream compares
+	// against a document that no longer exists.
+	sheet := c.render(ctx, reply.Prototype)
+	c.repairIfItLooksWrong(ctx, &reply, message, &sheet)
 	// And against the drawing, at the same point the streamed path does it.
-	c.repairAgainstSketch(ctx, &reply, sketch, nil)
+	c.repairAgainstSketch(ctx, &reply, sketch, &sheet, nil)
 	// And the same script run, at the same point: LAST, because it is the only
 	// check that verifies itself and anything that rewrites the document after
 	// it undoes that. No progress to report on this path, so it is silent while

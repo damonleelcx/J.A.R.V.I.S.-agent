@@ -557,7 +557,7 @@ func TestScripts_TheVisionCheckIsToldItCannotSeeThem(t *testing.T) {
 			{ID: "gear", Name: "Gear Body", Shape: "script", Script: "result = something"},
 		},
 	}
-	if _, err := c.look(context.Background(), doc, "a gearbox"); err != nil {
+	if _, err := c.look(context.Background(), doc, "a gearbox", c.render(context.Background(), doc)); err != nil {
 		t.Fatalf("look failed: %v", err)
 	}
 	if !strings.Contains(seen.prompt, "Gear Body") ||

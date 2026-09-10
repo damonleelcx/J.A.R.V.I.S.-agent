@@ -312,13 +312,20 @@ func (c *Conversation) RespondStream(
 		 * coordinates blind: swapped axes, wheels inside the body, a quarter
 		 * turn read as 117 degrees. A person catches those in a glance and
 		 * FORGE had no glance — see look.go. */
-		c.repairIfItLooksWrong(ctx, &reply, message)
+		// One render, shared by both checks that read a picture.
+		//
+		// Built ONCE because building it runs the kernel — and, for a scripted part,
+		// the script — so rendering per check would pay that twice. Each check
+		// re-draws it after a repair it accepts, so nothing downstream compares
+		// against a document that no longer exists.
+		sheet := c.render(ctx, reply.Prototype)
+		c.repairIfItLooksWrong(ctx, &reply, message, &sheet)
 		/* And then against the DRAWING. After looking, because "does anything
 		 * float or disappear" is a stronger question than "does it resemble the
 		 * reference" and should not be pre-empted by it. Before the scripts, so
 		 * the script check still has the last word over a document this
 		 * rewrites. See sketch.go. */
-		c.repairAgainstSketch(ctx, &reply, sketch, func(line string) {
+		c.repairAgainstSketch(ctx, &reply, sketch, &sheet, func(line string) {
 			_ = emit(StreamEvent{Kind: "notice", Text: line})
 		})
 		/* And LAST, run the scripts.

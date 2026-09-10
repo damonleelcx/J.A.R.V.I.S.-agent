@@ -5,7 +5,9 @@ import (
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/agent"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/cad"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/geometry"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/llm"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/errs"
 )
 
 // Giving the agent something that can run a script, without giving it the kernel.
@@ -60,4 +62,53 @@ func illustrator(c llm.Client) llm.Illustrator {
 		return nil
 	}
 	return i
+}
+
+// kernelSolids builds the real surface of a document for the agent's checks.
+//
+// # Why the conversion lives here
+//
+// The kernel returns MeshPart — a flat []float64 of coordinates and an []int32
+// of indices, which is what a mesh looks like on a wire. The agent wants
+// geometry.Triangle, which is what a rasterizer looks at. Neither package should
+// learn the other's shape to get from one to the other, so the translation sits
+// where the two are already wired together.
+type kernelSolids struct{ k *cad.Kernel }
+
+func (r kernelSolids) BuildSurface(ctx context.Context, doc *geometry.Document) ([]geometry.RenderPart, error) {
+	const op = "httpapi.kernelSolids.BuildSurface"
+	if doc == nil {
+		return nil, errs.New(op, errs.CodeInvariantViolated).WithDetail("no document to build")
+	}
+	// The unit must be one the kernel can convert: BuildDocument refuses an
+	// unknown one outright, because a STEP file declares its own scale and
+	// writing one would put a guess about scale inside the file. A picture has
+	// no scale to get wrong — every view fits whatever it is given — so an
+	// unstated unit falls back to millimetres HERE rather than losing the render.
+	unit, known := geometry.ParseUnit(doc.Units)
+	if !known {
+		unit = geometry.Millimetre
+	}
+	built, err := r.k.BuildMesh(ctx, *doc, unit)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]geometry.RenderPart, 0, len(built.Mesh))
+	for _, m := range built.Mesh {
+		tris := geometry.TrianglesFrom(m.Vertices, m.Triangles)
+		if len(tris) == 0 {
+			continue
+		}
+		out = append(out, geometry.RenderPart{ID: m.ID, Triangles: tris})
+	}
+	return out, nil
+}
+
+// solidBuilder returns the thing that builds a surface, or nil when this
+// deployment has no kernel. Untyped nil, for the reason scriptRunner returns one.
+func solidBuilder(k *cad.Kernel) agent.SolidBuilder {
+	if k == nil || !k.Available() {
+		return nil
+	}
+	return kernelSolids{k: k}
 }
