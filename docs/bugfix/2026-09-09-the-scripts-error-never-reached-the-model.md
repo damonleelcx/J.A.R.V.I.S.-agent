@@ -267,15 +267,30 @@ was wanted. That is a question about the picture, and `look.go` is what asks it;
 it is fed by the rendered document, so the answer for a scripted part is only as
 good as its bounding shape. Named here rather than left as an assumption.
 
-**Two things that would raise 2-of-4.** Neither is done, and both are decisions
-rather than omissions:
+**Two things that might raise 2-of-4. One was done; it did not.**
 
-1. **`lambda` is refused while `def` is allowed.** `ast.Lambda` is absent from
-   `ALLOWED_NODES` and `ast.FunctionDef` is present. A lambda in this sandbox
-   cannot reach anything a def cannot — dunder attributes are refused by name,
-   separately — so this is an inconsistency rather than a boundary. It cost a
-   whole repair round on one live run. It is still a change to a security
-   surface, and belongs to whoever owns that decision.
-2. **An unavailable-name refusal names nothing available.** "Rotated is not
+1. ~~**`lambda` is refused while `def` is allowed.**~~ **Done 2026-09-09, on an
+   explicit decision.** `ast.Lambda` was absent from `ALLOWED_NODES` while
+   `ast.FunctionDef` was present — an inconsistency, not a boundary: a lambda's
+   body is one expression and every node in it was already allowed inside a def.
+   Binding its parameters is a separate rule from allowing the node, and shares
+   `_bind_arguments` with `FunctionDef`; without it, `lambda i: abs(i)` parses,
+   passes the whitelist, and is then refused with "i is not available here" — a
+   correct script rejected for using its own argument.
+
+   The price is paid in fences: `TestScript_RefusesTheWayOut` now tries the
+   documented escape, an unavailable builtin, and a dunder attribute of a given
+   object all from **inside a lambda**, and two drills go red.
+
+   ‼️ **It removed a failure mode and did not move the number.** Four live gear
+   requests after: **no Lambda refusal at all**, where one in four had one
+   before — and 1 of 4 built, against 2 of 4 before, which at n=4 is noise. The
+   three failures were `Rotate is not available here`,
+   `BuildSketch.__init__() got an unexpected keyword argument 'local_mode'`, and
+   `Standard_TypeMismatch: TopoDS::Face`. Two of the three are item 2 below.
+
+2. **An unavailable-name refusal names nothing available.** "Rotate is not
    available here" is precise about the mistake and gives the model nothing to
    move toward; the manifest has 223 names and the near ones are computable.
+   Now the dominant failure: the model is not writing bad Python, it is guessing
+   at build123d's API.
