@@ -215,9 +215,11 @@ About "prototype":
   "repeat" can express. A scripted part is opaque: nobody can read its
   dimensions off the panel, a parameter cannot drive it, and a later revision
   cannot adjust it without rewriting the whole script. Reach for it last.
-  The script assigns "result" to the shape it built. It has build123d's builders
-  and the maths functions and nothing else: no imports, no files, no network. It
-  gets a few seconds of processor time and is stopped if it takes more.
+  The script assigns "result" to the shape it built. It has build123d's builders,
+  the maths functions, and any of this part's own PARAMETERS that resolve, as
+  names — lengths in millimetres, whole numbers as integers. Nothing else: no
+  imports, no files, no network. It gets a few seconds of processor time and is
+  stopped if it takes more.
 - "build_in_passes": true when what they asked for is too big for ONE document —
   a car, an engine, a machine with subsystems. Do not return six boxes and call
   it a concept: say what you are about to build in "speech", set this, and leave

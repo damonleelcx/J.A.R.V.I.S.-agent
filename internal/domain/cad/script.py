@@ -421,8 +421,13 @@ class Refused(Exception):
     """A script that will not be run, and why, in words the model can act on."""
 
 
-def check(source):
-    """Refuse anything not on the list, naming what and where."""
+def check(source, parameters=None):
+    """Refuse anything not on the list, naming what and where.
+
+    `parameters` are the document's own numbers, which are in scope for the
+    script — see usable_parameters. They are added to the known names, or a
+    script reading a parameter it declared would be refused for using it.
+    """
     try:
         tree = ast.parse(source, mode="exec")
     except SyntaxError as exc:
@@ -482,6 +487,7 @@ def check(source):
     # not refused at parse time and vice versa. Two lists would drift, and the
     # drift would show up as a correct script refused for a name it is given.
     known = BUILDER_NAMES | set(ALLOWED_MATH) | set(ALLOWED_BUILTINS) | {"math"}
+    known |= set(parameters or ())
     bound = set()
     for node in ast.walk(tree):
         if isinstance(node, ast.Name) and isinstance(node.ctx, (ast.Store, ast.Del)):
@@ -503,8 +509,9 @@ def check(source):
             if node.id not in known and node.id not in bound:
                 raise Refused(
                     "line %s: %s is not available here.%s This runs a drawing: the names it "
-                    "knows are build123d's builders, the maths functions, and plain Python "
-                    "values. There is no file, network or system access of any kind."
+                    "knows are build123d's builders, the maths functions, this part's own "
+                    "parameters, and plain Python values. There is no file, network or "
+                    "system access of any kind."
                     % (getattr(node, "lineno", "?"), node.id,
                        _did_you_mean(node.id, known)))
     tree = ast.fix_missing_locations(_DropImports().visit(tree))
@@ -673,6 +680,87 @@ def signature_help(ns, source, exc):
     return " The builders on that line take: " + "; ".join(out) + "."
 
 
+# Python's own keywords, which cannot be names however well-formed they look.
+import keyword as _keyword
+
+
+def usable_parameters(parameters, taken):
+    """The document's numbers that may become names, and the ones that may not.
+
+    # Why a script gets these at all
+
+    A scripted part belongs to a document, and that document declares the numbers
+    the part is made of — the panel shows them, a person edits them, and every
+    other shape in the document is built from them. The script could not see any
+    of it. Measured live 2026-09-10, a model asked for a gear wrote
+
+        m = module
+        t = teeth_count
+        pa = pressure_angle_deg * math.pi / 180
+        thick = thickness
+
+    and every one of those was refused as an unavailable name. It is not an
+    unreasonable assumption: they ARE the part's parameters. Without them a
+    scripted part is the one shape in the document that cannot be parametric,
+    which is the opposite of why scripts exist.
+
+    # ‼️ What is refused, and why each one matters
+
+    A parameter name is text from a model, and this puts it straight into the
+    namespace a script executes in. So:
+
+      - not an identifier, or a Python keyword: it could not be read anyway, and
+        `for` or `class` as a key would simply be dead weight.
+      - starting with an underscore: the namespace holds `__builtins__`, and a
+        parameter called that would REPLACE the restricted builtins with a float
+        — or, worse, if it were ever a dict, with one somebody chose. The dunder
+        rule refuses these in source; this refuses them as names.
+      - already taken by a builder, a maths function or a builtin: the builder
+        WINS. A document with a parameter called `Box` must not turn `Box(...)`
+        into a call on a number, because that would let a document change the
+        language rather than use it.
+
+    Everything refused is RETURNED rather than dropped, so the runner can say so.
+    A parameter that silently is not there is the failure this whole feature
+    exists to remove, arriving from the other side.
+    """
+    usable, refused = {}, []
+    for name, value in sorted((parameters or {}).items()):
+        if not isinstance(name, str) or not name.isidentifier() or _keyword.iskeyword(name):
+            refused.append("%s (not a usable name)" % name)
+            continue
+        if name.startswith("_"):
+            refused.append("%s (names may not begin with an underscore)" % name)
+            continue
+        if name in taken:
+            refused.append("%s (a build123d name already)" % name)
+            continue
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            refused.append("%s (not a number)" % name)
+            continue
+        # ‼️ An integral value arrives as an INT.
+        #
+        # Measured live 2026-09-10, and it was a regression this feature caused:
+        # the first version handed every parameter over as a float, so
+        # `teeth_count` was 20.0 and `range(teeth_count)` raised
+        #
+        #     TypeError: 'float' object cannot be interpreted as an integer
+        #
+        # in 6 of 9 runs — worse than before the parameters existed, because the
+        # model had been writing `num_teeth = 20` as a literal and it worked.
+        # A count IS an integer, and the document has no type to say so; the
+        # value itself does.
+        #
+        # Safe in the other direction: build123d takes an int wherever it wants a
+        # float, and Python 3 division is true division, so `5 / 2` is 2.5 whether
+        # 5 arrived as an int or a float. Nothing downstream can tell except the
+        # places that REQUIRE an int, which is the whole point.
+        usable[name] = int(number) if number.is_integer() else number
+    return usable, refused
+
+
 def limits(cpu_seconds, address_space_bytes):
     resource.setrlimit(resource.RLIMIT_CPU, (cpu_seconds, cpu_seconds))
     resource.setrlimit(resource.RLIMIT_AS, (address_space_bytes, address_space_bytes))
@@ -685,6 +773,7 @@ def limits(cpu_seconds, address_space_bytes):
 def main():
     request = json.loads(sys.stdin.read())
     source = request.get("source") or ""
+    parameters = request.get("parameters") or {}
     cpu = int(request.get("cpu_seconds") or 10)
     mem = int(request.get("memory_bytes") or 1024 * 1024 * 1024)
 
@@ -695,8 +784,16 @@ def main():
 
     os.chdir(tempfile.mkdtemp(prefix="forge-script-"))
 
+    # Resolved BEFORE the check, because the check has to know these names — a
+    # script reading a parameter it declared would otherwise be refused for using
+    # it. `taken` is every name the language already owns; a builder wins.
+    taken = BUILDER_NAMES | set(ALLOWED_MATH) | set(ALLOWED_BUILTINS) | {"math"}
+    params, refused_params = usable_parameters(parameters, taken)
+    if refused_params:
+        sys.stderr.write("parameters not in scope: %s\n" % ", ".join(refused_params))
+
     try:
-        tree = check(source)
+        tree = check(source, params)
     except Refused as exc:
         # The signatures are attached HERE rather than inside check(), because
         # check() runs before the namespace exists — it is the thing that decides
@@ -721,6 +818,13 @@ def main():
         ns, missing = namespace(bool(uses & BUILDER_NAMES))
         if missing:
             sys.stderr.write("not in this build123d: %s\n" % ", ".join(missing))
+        # After the namespace is built, and only for names it does not already
+        # hold — usable_parameters has already refused the ones that collide, and
+        # this is the second half of that rule standing where it cannot be
+        # skipped. `__builtins__` is set inside namespace(); a parameter cannot
+        # be called that, because a leading underscore is refused above.
+        for name, value in params.items():
+            ns.setdefault(name, value)
         exec(compile(tree, "<script>", "exec"), ns)  # noqa: S102 — the point of this file
     except Exception as exc:  # noqa: BLE001
         print(json.dumps({"ok": False,

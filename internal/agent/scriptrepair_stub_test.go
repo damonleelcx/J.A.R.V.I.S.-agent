@@ -8,7 +8,7 @@ import "context"
 // the whole behaviour under test and cannot be expressed by a fixed answer.
 type stubScriptRunner func(source string) error
 
-func (f stubScriptRunner) RunScript(_ context.Context, source string) error {
+func (f stubScriptRunner) RunScript(_ context.Context, _ *Prototype, source string) error {
 	if f == nil {
 		return nil
 	}

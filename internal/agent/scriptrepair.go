@@ -77,7 +77,14 @@ import (
 // disagree — the earlier pair of them could, and a contract that offers a
 // capability nothing verifies is how the gear above reached a reader.
 type ScriptRunner interface {
-	RunScript(ctx context.Context, source string) error
+	// RunScript builds one scripted part IN THE CONTEXT of its document.
+	//
+	// The document is passed rather than a resolved parameter map because
+	// resolving it is geometry's job and is already done — walking the
+	// dependency graph, converting lengths, reporting what does not add up.
+	// Handing over a map would mean doing that here, in a package whose whole
+	// point is not to know how a document resolves.
+	RunScript(ctx context.Context, doc *Prototype, source string) error
 }
 
 const (
@@ -118,8 +125,13 @@ Rules:
   built, not choosing something simpler to build instead.
 - Assign the finished solid to ` + "`result`" + `. It must be a solid with volume,
   not a sketch, a wire or an empty compound.
-- This runs a DRAWING, not a program. build123d's builders and the maths
-  functions are already in scope. ` + "`import math`" + ` and
+- This runs a DRAWING, not a program. build123d's builders, the maths functions,
+  and this document's own PARAMETERS are already in scope by name — lengths in
+  millimetres, whole numbers as integers. Only values that RESOLVE are there: a
+  "derived" entry FORGE could not evaluate is absent, and "<name> is not
+  available here" for something you declared means exactly that. Expressions have
+  no sine or cosine, so compute anything trigonometric here in the script, where
+  cos, sin, tan and radians all work. ` + "`import math`" + ` and
   ` + "`from build123d import *`" + ` are tolerated and do nothing; any other import,
   and any file, network or system access, is refused before the script runs.
 - ` + "`def`" + `, ` + "`lambda`" + `, loops and comprehensions are all allowed, and so are
@@ -267,7 +279,7 @@ func (c *Conversation) repairIfScriptsFail(ctx context.Context, reply *Reply,
 		attempts := 0
 
 		for {
-			err := c.runner.RunScript(ctx, source)
+			err := c.runner.RunScript(ctx, reply.Prototype, source)
 			if err == nil {
 				if attempts > 0 {
 					// Accepted because it BUILT, not because the model said so.

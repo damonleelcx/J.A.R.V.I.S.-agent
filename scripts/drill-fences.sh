@@ -94,6 +94,7 @@ FILES=(
   internal/httpapi/converse.go
   internal/agent/look.go
   internal/domain/cad/script.py
+  internal/domain/cad/script.go
   internal/agent/sketch.go
   internal/llm/illustrate.go
   internal/agent/render.go
@@ -662,6 +663,39 @@ drill "an unavailable name suggests nothing" internal/domain/cad/script.py \
 # model guessing at the API behind a name that EXISTS — BuildSketch(local_mode=…),
 # Standard_TypeMismatch. The signature comes from the library that is installed,
 # at the moment of failure, which is the only place it is guaranteed right.
+# A scripted part could not see the document's own parameters — the numbers it is
+# made of. Measured live: a model wrote `m = module` and every name was refused.
+# The safety half matters as much: these names come from a model and go straight
+# into the namespace a script executes in.
+drill "the document's parameters are not in scope" internal/domain/cad/script.py \
+  's = s.replace("            ns.setdefault(name, value)", "            pass", 1)' \
+  ./internal/domain/cad 'TestScript_ReadsTheDocumentsParameters'
+
+# ‼️ These two mutate BOTH rules that hold the property, because each is held
+# twice: usable_parameters refuses the name, AND the injection is a setdefault
+# that will not overwrite what the namespace already has. Breaking one leaves the
+# other standing and the drill reports "not a fence" about something doubly
+# protected — the third time in this file that defence in depth has read that way
+# to a single-point mutation.
+drill "a parameter can shadow a builder" internal/domain/cad/script.py \
+  's = s.replace("        if name in taken:", "        if False:", 1); s = s.replace("ns.setdefault(name, value)", "ns[name] = value", 1)' \
+  ./internal/domain/cad 'TestScript_AParameterCannotHijackTheNamespace'
+
+drill "a parameter may begin with an underscore" internal/domain/cad/script.py \
+  'i = s.index("names may not begin with an underscore"); j = s.rindex("if name.startswith(", 0, i); s = s[:j] + "if False: #" + s[j + len("if name.startswith("):]' \
+  ./internal/domain/cad 'TestScript_AParameterCannotHijackTheNamespace'
+
+# The regression this feature caused before it worked: every parameter handed
+# over as a float, so range(teeth_count) raised in 6 of 9 live runs — worse than
+# having no parameters at all.
+drill "a whole-numbered parameter arrives as a float" internal/domain/cad/script.py \
+  's = s.replace("usable[name] = int(number) if number.is_integer() else number", "usable[name] = number", 1)' \
+  ./internal/domain/cad 'TestScript_AWholeNumberedParameterIsAnInt'
+
+drill "a length reaches the script in its authored unit" internal/domain/cad/script.go \
+  's = s.replace("if mm, converted := q.In(geometry.Millimetre); converted {", "if mm, converted := q.In(geometry.Millimetre); false {", 1)' \
+  ./internal/domain/cad 'TestScriptParameters_LengthsInMillimetresAndNothingElseTouched'
+
 drill "a failure does not say how the builder is called" internal/domain/cad/script.py \
   's = s.replace("signature_help(ns, source, exc)", "\"\"", 1)' \
   ./internal/domain/cad 'TestScript_AFailureSaysHowTheBuilderIsCalled'

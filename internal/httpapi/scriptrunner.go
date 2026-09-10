@@ -26,8 +26,12 @@ import (
 // would need Python and OpenCASCADE to check a prompt.
 type kernelScripts struct{ k *cad.Kernel }
 
-func (r kernelScripts) RunScript(ctx context.Context, source string) error {
-	_, err := r.k.RunScript(ctx, source)
+func (r kernelScripts) RunScript(ctx context.Context, doc *geometry.Document, source string) error {
+	var params map[string]float64
+	if doc != nil {
+		params = cad.ScriptParameters(*doc)
+	}
+	_, err := r.k.RunScript(ctx, source, params)
 	return err
 }
 

@@ -95,7 +95,7 @@ func TestScript_RefusesTheWayOut(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := k.RunScript(context.Background(), tc.source)
+			_, err := k.RunScript(context.Background(), tc.source, nil)
 			if err == nil {
 				t.Fatalf("this ran:\n%s\nEverything else this sandbox promises rests on it "+
 					"not running", tc.source)
@@ -119,7 +119,7 @@ func TestScript_TheChildHasNoEnvironment(t *testing.T) {
 	// print() is allowed, so a script CAN write to stdout; it must find nothing
 	// to write. Reaching os is refused by layer 1, so this asserts layer 2 by
 	// checking the runner's own view: any leak would appear in the error text.
-	_, err := k.RunScript(context.Background(), "result = 1")
+	_, err := k.RunScript(context.Background(), "result = 1", nil)
 	if err != nil && strings.Contains(err.Error(), "secret") {
 		t.Fatalf("the child could see this process's environment: %v", err)
 	}
@@ -132,7 +132,7 @@ func TestScript_OffByDefault(t *testing.T) {
 		t.Fatal("scripts are on by default. This is the one feature that runs text a model " +
 			"wrote and it must be a decision somebody made")
 	}
-	if _, err := k.RunScript(context.Background(), "result = 1"); err == nil {
+	if _, err := k.RunScript(context.Background(), "result = 1", nil); err == nil {
 		t.Fatal("a script ran on a kernel that has scripts disabled")
 	}
 }
@@ -140,10 +140,10 @@ func TestScript_OffByDefault(t *testing.T) {
 // A script that builds nothing says so, rather than yielding an empty part.
 func TestScript_RefusesAShapeWithNoVolume(t *testing.T) {
 	k := scriptKernel(t)
-	if _, err := k.RunScript(context.Background(), "result = 1"); err == nil {
+	if _, err := k.RunScript(context.Background(), "result = 1", nil); err == nil {
 		t.Error("a script that assigned a number produced a part")
 	}
-	if _, err := k.RunScript(context.Background(), "x = 1"); err == nil {
+	if _, err := k.RunScript(context.Background(), "x = 1", nil); err == nil {
 		t.Error("a script that never assigned `result` produced a part")
 	}
 }
@@ -196,7 +196,7 @@ with BuildPart() as part:
 
 result = part
 `
-	res, err := k.RunScript(context.Background(), gear)
+	res, err := k.RunScript(context.Background(), gear, nil)
 	if err != nil && strings.Contains(err.Error(), "No module named 'build123d'") {
 		// A machine with Python but no CAD kernel — CI is one. Skipped by the
 		// EXACT reason rather than by guessing from a failure, so a real
@@ -221,7 +221,7 @@ result = part
 // A script that never finishes is stopped, and told why.
 func TestScript_StopsOneThatWillNotFinish(t *testing.T) {
 	k := scriptKernel(t)
-	_, err := k.RunScript(context.Background(), "x = 0\nwhile True:\n    x = x + 1\nresult = x")
+	_, err := k.RunScript(context.Background(), "x = 0\nwhile True:\n    x = x + 1\nresult = x", nil)
 	if err == nil {
 		t.Fatal("an endless loop finished, which means nothing is bounding these")
 	}
@@ -248,7 +248,7 @@ func TestScript_TheHarmlessImportsAndNoOthers(t *testing.T) {
 
 	t.Run("the two that every example opens with", func(t *testing.T) {
 		_, err := k.RunScript(context.Background(),
-			"import math\nfrom build123d import *\nresult = Box(10, 10, 10)")
+			"import math\nfrom build123d import *\nresult = Box(10, 10, 10)", nil)
 		if err != nil && strings.Contains(err.Error(), "not allowed") {
 			t.Fatalf("a correct script was refused for two no-op imports: %v", err)
 		}
@@ -262,7 +262,7 @@ func TestScript_TheHarmlessImportsAndNoOthers(t *testing.T) {
 
 	t.Run("math is usable as a module after the tolerated import", func(t *testing.T) {
 		_, err := k.RunScript(context.Background(),
-			"import math\nresult = Box(10, 10, math.floor(10.7))")
+			"import math\nresult = Box(10, 10, math.floor(10.7))", nil)
 		if err != nil && strings.Contains(err.Error(), "not available") {
 			t.Errorf("`import math` was tolerated and then math.floor did not exist. "+
 				"Tolerating an import that leaves the name unbound is worse than refusing "+
@@ -279,7 +279,7 @@ func TestScript_TheHarmlessImportsAndNoOthers(t *testing.T) {
 		"from . import x\nresult = 1",
 	} {
 		t.Run("still refused: "+strings.SplitN(bad, "\n", 2)[0], func(t *testing.T) {
-			_, err := k.RunScript(context.Background(), bad)
+			_, err := k.RunScript(context.Background(), bad, nil)
 			if err == nil {
 				t.Fatalf("this ran:\n%s", bad)
 			}
@@ -312,7 +312,7 @@ func TestScript_HasTheBuildersButNotTheModules(t *testing.T) {
 	// Refused, and this is the important half.
 	for _, name := range []string{"ctypes", "copy", "contextvars", "colorsys"} {
 		t.Run("no "+name, func(t *testing.T) {
-			_, err := k.RunScript(context.Background(), "result = "+name)
+			_, err := k.RunScript(context.Background(), "result = "+name, nil)
 			if err == nil {
 				t.Fatalf("a script reached %s — build123d re-exports it, and allowing "+
 					"everything build123d exports would hand a script arbitrary memory", name)
@@ -326,7 +326,7 @@ func TestScript_HasTheBuildersButNotTheModules(t *testing.T) {
 	// And build123d's own file access stays out, by rule rather than by list.
 	for _, name := range []string{"import_step", "export_stl", "available_fonts"} {
 		t.Run("no "+name, func(t *testing.T) {
-			if _, err := k.RunScript(context.Background(), "result = "+name); err == nil {
+			if _, err := k.RunScript(context.Background(), "result = "+name, nil); err == nil {
 				t.Fatalf("a script reached %s. A CAD library legitimately touches files; "+
 					"a script here must not", name)
 			}
@@ -335,7 +335,7 @@ func TestScript_HasTheBuildersButNotTheModules(t *testing.T) {
 
 	// Available, including the ones the hand-list had missed.
 	res, err := k.RunScript(context.Background(),
-		"with BuildPart() as p:\n    Cylinder(radius=10, height=5)\nresult = p")
+		"with BuildPart() as p:\n    Cylinder(radius=10, height=5)\nresult = p", nil)
 	if err != nil && strings.Contains(err.Error(), "No module named 'build123d'") {
 		t.Skip("build123d is not installed")
 	}
@@ -465,7 +465,7 @@ nearest = min(range(len(pts)), key=lambda i: abs(pts[i][0] - 2.0))
 side = 10.0 + nearest
 result = Box(side, side, side)`
 
-	res, err := k.RunScript(context.Background(), source)
+	res, err := k.RunScript(context.Background(), source, nil)
 	if err != nil {
 		t.Fatalf("a lambda did not run: %v\n%s", err, source)
 	}
@@ -573,7 +573,7 @@ func TestScript_AnUnavailableNameSuggestsTheCloseOnes(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := k.RunScript(context.Background(), tc.source)
+			_, err := k.RunScript(context.Background(), tc.source, nil)
 			if err == nil {
 				t.Fatalf("this ran, and it must not:\n%s", tc.source)
 			}
@@ -642,7 +642,7 @@ func TestScript_AFailureSaysHowTheBuilderIsCalled(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := k.RunScript(context.Background(), tc.source)
+			_, err := k.RunScript(context.Background(), tc.source, nil)
 			if err == nil {
 				t.Fatalf("this built, so the test proves nothing:\n%s", tc.source)
 			}
@@ -664,7 +664,7 @@ func TestScript_AFailureSaysHowTheBuilderIsCalled(t *testing.T) {
 // budget. Both questions are answered in one refusal.
 func TestScript_ASuggestedNameComesWithItsSignature(t *testing.T) {
 	k := scriptKernel(t)
-	_, err := k.RunScript(context.Background(), "result = Cylindr(radius=5, height=10)")
+	_, err := k.RunScript(context.Background(), "result = Cylindr(radius=5, height=10)", nil)
 	if err == nil {
 		t.Fatal("Cylindr built, which it must not")
 	}
@@ -689,7 +689,7 @@ func TestScript_ReachingOutsideStillSaysNothingHelpful(t *testing.T) {
 		"result = getattr(1, 'real')",
 		"result = open('/etc/passwd').read()",
 	} {
-		_, err := k.RunScript(context.Background(), src)
+		_, err := k.RunScript(context.Background(), src, nil)
 		if err == nil {
 			t.Fatalf("this ran, and it must not:\n%s", src)
 		}
@@ -722,7 +722,7 @@ func TestScript_ARefusalNamesWhatWasWritten(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			_, err := k.RunScript(context.Background(), tc.source)
+			_, err := k.RunScript(context.Background(), tc.source, nil)
 			if err == nil {
 				t.Fatalf("this ran and must not:\n%s", tc.source)
 			}
@@ -766,7 +766,7 @@ func TestScript_TheAtOperatorRunsAndComputesTheRightPoint(t *testing.T) {
 mid = edge @ 0.5
 side = mid.X
 result = Box(side, side, side)`
-	res, err := k.RunScript(context.Background(), source)
+	res, err := k.RunScript(context.Background(), source, nil)
 	if err != nil {
 		t.Fatalf("build123d's own `@` idiom did not run: %v\n%s", err, source)
 	}
@@ -774,4 +774,158 @@ result = Box(side, side, side)`
 		t.Errorf("volume %.1f, want %.1f — `@` ran but did not compute the point it says",
 			res.Volume, want)
 	}
+}
+
+// A script can read the document's own parameters.
+//
+// # What this closes
+//
+// A scripted part belongs to a document, and that document declares the numbers
+// the part is made of — the panel shows them, a person edits them, every other
+// shape is built from them. The script could not see any of it. Measured live
+// 2026-09-10, a model asked for a gear wrote
+//
+//	m = module
+//	t = teeth_count
+//	pa = pressure_angle_deg * math.pi / 180
+//	thick = thickness
+//
+// and every one was refused as an unavailable name. Without them a scripted part
+// is the one shape in a document that cannot be parametric, which is the
+// opposite of why scripts exist.
+func TestScript_ReadsTheDocumentsParameters(t *testing.T) {
+	k := scriptKernel(t)
+	params := map[string]float64{"module": 2, "teeth_count": 20, "thickness": 6}
+
+	// The volume is asserted, not just "it built": a parameter that silently
+	// arrived as something else would still build a box.
+	res, err := k.RunScript(context.Background(),
+		"side = module * teeth_count\nresult = Box(side, side, thickness)", params)
+	if err != nil {
+		t.Fatalf("a script could not read its own document's parameters: %v", err)
+	}
+	if want := 40.0 * 40.0 * 6.0; res.Volume < want-1 || res.Volume > want+1 {
+		t.Errorf("volume %.1f, want %.1f — the parameters are in scope but did not carry "+
+			"their values", res.Volume, want)
+	}
+}
+
+// ‼️ A parameter cannot take a name the language already owns, or reach past it.
+//
+// The names come from a model, and they go straight into the namespace a script
+// executes in. Each of these is a way that could go wrong.
+func TestScript_AParameterCannotHijackTheNamespace(t *testing.T) {
+	k := scriptKernel(t)
+
+	t.Run("a builder wins over a parameter of the same name", func(t *testing.T) {
+		// A document with a parameter called Box must not turn Box(...) into a
+		// call on a number — that would let a document change the language
+		// rather than use it.
+		res, err := k.RunScript(context.Background(),
+			"result = Box(10, 10, 10)", map[string]float64{"Box": 3})
+		if err != nil {
+			t.Fatalf("a parameter named Box broke the builder: %v", err)
+		}
+		if want := 1000.0; res.Volume < want-1 || res.Volume > want+1 {
+			t.Errorf("volume %.1f, want %.1f — the parameter shadowed the builder",
+				res.Volume, want)
+		}
+	})
+
+	t.Run("a name beginning with an underscore never becomes a name", func(t *testing.T) {
+		// ‼️ Asserted as "the script cannot READ it", which is the property the
+		// underscore rule actually holds on its own.
+		//
+		// The first version of this asserted that a parameter called
+		// `__builtins__` could not open a file — and stayed green under a drill,
+		// because THREE rules stop that: this one, the setdefault that will not
+		// overwrite, and the AST check refusing `open` as an unavailable name
+		// before the namespace is even built. A test that cannot see its own
+		// rule break is not testing that rule.
+		//
+		// What the rule is really for: the namespace holds `__builtins__`, and a
+		// parameter able to take that name would replace the restricted builtins
+		// with a float. That grants nothing — the AST check stands in front of
+		// it — but it breaks the script in a way nobody could explain.
+		_, err := k.RunScript(context.Background(), "result = Box(_secret, 1, 1)",
+			map[string]float64{"_secret": 10})
+		if err == nil {
+			t.Fatal("a parameter beginning with an underscore became a readable name")
+		}
+		if !strings.Contains(err.Error(), "_secret is not available here") {
+			t.Errorf("refused for the wrong reason: %v", err)
+		}
+	})
+
+	t.Run("a name that is not an identifier is simply not there", func(t *testing.T) {
+		_, err := k.RunScript(context.Background(), "result = Box(1, 1, 1)",
+			map[string]float64{"not a name": 1, "class": 2, "": 3})
+		if err != nil {
+			t.Fatalf("unusable parameter names broke a correct script: %v", err)
+		}
+	})
+
+	t.Run("a maths function is not shadowed either", func(t *testing.T) {
+		res, err := k.RunScript(context.Background(),
+			"result = Box(sqrt(100), 10, 10)", map[string]float64{"sqrt": 2})
+		if err != nil {
+			t.Fatalf("a parameter named sqrt broke the maths function: %v", err)
+		}
+		if want := 1000.0; res.Volume < want-1 || res.Volume > want+1 {
+			t.Errorf("volume %.1f, want %.1f — the parameter shadowed sqrt", res.Volume, want)
+		}
+	})
+}
+
+// ‼️ A whole-numbered parameter arrives as an INT, not a float.
+//
+// # The regression this closes
+//
+// The first version of the parameter feature handed every value over as a float.
+// So `teeth_count` was 20.0, the model wrote `range(teeth_count)`, and Python
+// raised "'float' object cannot be interpreted as an integer" — in 6 of 9 live
+// runs. That is WORSE than before parameters existed, because the model had been
+// writing `num_teeth = 20` as a literal and it worked.
+//
+// A count is an integer. The document has no type field to say so; the value
+// does. Build123d takes an int wherever it wants a float, and Python 3 division
+// is true division, so nothing downstream can tell except the places that
+// require an int — which is exactly the point.
+func TestScript_AWholeNumberedParameterIsAnInt(t *testing.T) {
+	k := scriptKernel(t)
+
+	t.Run("range() over a count", func(t *testing.T) {
+		res, err := k.RunScript(context.Background(),
+			"total = 0\nfor i in range(teeth_count):\n    total = total + 1\nresult = Box(total, 1, 1)",
+			map[string]float64{"teeth_count": 20})
+		if err != nil {
+			t.Fatalf("a whole-numbered parameter could not be used as a count: %v", err)
+		}
+		if want := 20.0; res.Volume < want-0.5 || res.Volume > want+0.5 {
+			t.Errorf("volume %.1f, want %.1f", res.Volume, want)
+		}
+	})
+
+	t.Run("a fractional parameter stays fractional", func(t *testing.T) {
+		res, err := k.RunScript(context.Background(),
+			"result = Box(module, 10, 10)", map[string]float64{"module": 2.5})
+		if err != nil {
+			t.Fatalf("a fractional parameter failed: %v", err)
+		}
+		if want := 250.0; res.Volume < want-1 || res.Volume > want+1 {
+			t.Errorf("volume %.1f, want %.1f — 2.5 was rounded", res.Volume, want)
+		}
+	})
+
+	t.Run("division still behaves", func(t *testing.T) {
+		// Python 3 true division: 5/2 is 2.5 whether 5 arrived as int or float.
+		res, err := k.RunScript(context.Background(),
+			"side = teeth / 2\nresult = Box(side, 10, 10)", map[string]float64{"teeth": 5})
+		if err != nil {
+			t.Fatalf("division on an integral parameter failed: %v", err)
+		}
+		if want := 250.0; res.Volume < want-1 || res.Volume > want+1 {
+			t.Errorf("volume %.1f, want %.1f — 5/2 did not give 2.5", res.Volume, want)
+		}
+	})
 }

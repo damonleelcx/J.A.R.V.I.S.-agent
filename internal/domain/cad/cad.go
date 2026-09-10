@@ -316,7 +316,7 @@ func (k *Kernel) BuildDocument(ctx context.Context, doc geometry.Document, unit 
 			solids[i].Shape = ""
 			continue
 		}
-		res, err := k.RunScript(ctx, source)
+		res, err := k.RunScript(ctx, source, ScriptParameters(doc))
 		if err != nil {
 			inferred = append(inferred, fmt.Sprintf(
 				"%s: %s, so it is not in this file.", solids[i].Label, errs.DetailOf(err)))

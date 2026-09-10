@@ -88,7 +88,7 @@ result = extrude(profile, amount=5)`,
 
 			// It really does not build to begin with. Without this the test can
 			// pass by never exercising anything.
-			if _, err := kernel.RunScript(ctx, tc.script); err == nil {
+			if _, err := kernel.RunScript(ctx, tc.script, nil); err == nil {
 				t.Fatalf("the fixture builds as written, so this test proves nothing (%s)", tc.why)
 			} else {
 				t.Logf("build123d refuses it: %v", err)
@@ -110,7 +110,7 @@ result = extrude(profile, amount=5)`,
 			}
 			// The acceptance rule already ran the kernel. Running it once more
 			// here is the independent check that the rule means what it says.
-			if _, err := kernel.RunScript(ctx, reply.Prototype.Parts[0].Script); err != nil {
+			if _, err := kernel.RunScript(ctx, reply.Prototype.Parts[0].Script, nil); err != nil {
 				t.Fatalf("a script was accepted that does not build: %v", err)
 			}
 		})
@@ -122,8 +122,12 @@ result = extrude(profile, amount=5)`,
 // rather than a copy of the loop.
 type liveRunner struct{ k *cad.Kernel }
 
-func (r liveRunner) RunScript(ctx context.Context, source string) error {
-	_, err := r.k.RunScript(ctx, source)
+func (r liveRunner) RunScript(ctx context.Context, doc *geometry.Document, source string) error {
+	var params map[string]float64
+	if doc != nil {
+		params = cad.ScriptParameters(*doc)
+	}
+	_, err := r.k.RunScript(ctx, source, params)
 	return err
 }
 
@@ -186,7 +190,7 @@ func TestLiveGearTurn(t *testing.T) {
 			continue
 		}
 		scripted++
-		if _, err := kernel.RunScript(ctx, p.Script); err != nil {
+		if _, err := kernel.RunScript(ctx, p.Script, nil); err != nil {
 			t.Errorf("the turn kept a scripted part that does not build.\n"+
 				"part: %s\nerror: %v\nnotes: %s\nscript:\n%s",
 				p.Label(), err, reply.Repaired, p.Script)
