@@ -134,11 +134,15 @@
   }
 
   /* The sigil is fetched from the server rather than drawn here, so there is one
-   * implementation of FORGE's mark and one place the state rules live. */
+   * implementation of FORGE's mark and one place the state rules live.
+   *
+   * A placeholder rather than the markup, because these rows are built as
+   * strings and assigned in one go: ForgeSigil.hydrate fills every slot in the
+   * container once the assignment has happened. It must be inlined and not an
+   * <img> — the mark's colours and state animation come from avatar.css, which
+   * an SVG behind an <img> cannot see. See assets/sigil.js. */
   function sigil(stateName, size) {
-    return '<img class="sig" src="/v1/meta/sigil?state=' + encodeURIComponent(stateName) +
-           '&size=' + size + '" width="' + size + '" height="' + size +
-           '" alt="" aria-hidden="true">';
+    return window.ForgeSigil.slot(stateName, size, 'sig');
   }
 
   /* ---- your projects ---------------------------------------------------- */
@@ -321,6 +325,7 @@
              '<div><div class="t">' + esc(g.title) + '</div>' +
              '<div class="m">' + esc(g.state_label) + ' · ' + bits.join(' · ') + '</div></div></div>';
     }).join('');
+    window.ForgeSigil.hydrate(el);
 
     Array.prototype.forEach.call(el.querySelectorAll('.goal'), function (node) {
       function open() { select(node.getAttribute('data-id')); }
@@ -419,6 +424,7 @@
     $('detail').innerHTML = head +
       '<div class="card"><h2>Tasks</h2>' + (taskRows || '<div class="empty">No tasks yet.</div>') + '</div>' +
       '<div class="card"><h2>Timeline</h2>' + (timeline || '<div class="empty">Nothing has happened yet.</div>') + '</div>';
+    window.ForgeSigil.hydrate($('detail'));
   }
 
   /* ---- approvals -------------------------------------------------------- */
