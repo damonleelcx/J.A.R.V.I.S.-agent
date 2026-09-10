@@ -301,6 +301,25 @@ was right every time: it found the missing bolt holes, then the missing slot,
 then the pegs, then a count it should not have reported. That is the strongest
 evidence here that the loop works.
 
+**And the same blind spot was found and fixed in `look.go`**, where it had been
+live. `Tessellate` does not perform a cut, so a bolt hole is drawn as a solid
+cylinder inside the plate — which is question 1 of `lookSystem` word for word,
+"a part completely hidden inside another part". Confirmed against the real vision
+model before fixing:
+
+> Bolt Hole: The part is a solid cylinder protruding from the plate surface
+> rather than a hole passing through it.
+
+True about the picture, false about the model, firing on every mechanical part
+with a hole in it. The fix names the cutting tools and says a solid inside the
+part it cuts is what a correct hole looks like — but **deliberately keeps
+question 2 on for them**: a tool floating clear of what it cuts removes nothing,
+and that is a real defect only this check would notice. Both halves are measured
+live: the hole that is cut correctly now reports **nothing**, and a tool 300 mm
+above the plate reports *"floating high above the plate … so it does not
+intersect the material to cut a hole."* Suppressing the noise must not take the
+signal with it, and two drills hold that pair apart.
+
 **Off unless `FORGE_LLM_IMAGE_MODEL` is set.** It costs 30–60s per geometry turn
 plus two vision calls, and a deployment that will not pay that has the feature
 absent rather than slow — the same discipline the CAD kernel and vision follow.

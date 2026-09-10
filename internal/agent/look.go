@@ -127,6 +127,43 @@ func (c *Conversation) look(ctx context.Context, doc *Prototype, asked string) (
 			"is buried inside another part or floating clear of everything."
 	}
 
+	// ‼️ And the parts that are HOLES.
+	//
+	// geometry.Tessellate does not perform a cut. Its own inferences say so —
+	// "the material X removes is NOT removed in this file", "four solid POSTS
+	// standing on the plate" — because a boolean needs the CAD kernel and this is
+	// a triangle builder. So a bolt hole is drawn as a solid cylinder sitting
+	// inside the plate, which is question 1 word for word: "a part completely
+	// hidden inside another part".
+	//
+	// It is also exactly what a correct hole looks like here. Measured live,
+	// 2026-09-10, on a plate with one bolt hole: "Bolt Hole: The part is a solid
+	// cylinder protruding from the plate surface rather than a hole passing
+	// through it." A true statement about the picture, a false one about the
+	// model, and it fires on every mechanical part with a hole in it — which is
+	// most of them. This file already carries the scar tissue explaining what a
+	// repair driven by a wrong complaint does to a good model.
+	//
+	// # Why this does not simply exclude them
+	//
+	// Question 2 stays ON for a tool, deliberately. A cutting tool floating clear
+	// of the part it cuts removes nothing, so the hole is not there — a real
+	// defect, and the only reason anyone would notice is this check. It found
+	// exactly that on the live deployment the day this was written: "Bolt Hole 1:
+	// The part is floating clear of the L-Bracket … rather than being positioned
+	// within the upright." Suppressing tools wholesale would have thrown that
+	// away with the false positive.
+	if tools := cuttingTools(doc); len(tools) > 0 {
+		prompt += "\n\nThese parts are the TOOLS that cut material away: " +
+			strings.Join(tools, ", ") + ". This renderer cannot perform a cut, so it draws " +
+			"them as SOLIDS — a bolt hole appears as a solid cylinder sitting inside, or " +
+			"poking out of, the part it cuts. That is what a correct hole looks like here. " +
+			"Do not report them as hidden inside another part, as solid where a hole should " +
+			"be, or as extra material. DO still say if one is floating clear of the part it " +
+			"is meant to cut, or lying on an axis that would not pass through it: a tool " +
+			"that misses removes nothing, and then the hole really is absent."
+	}
+
 	resp, err := c.client.Complete(ctx, llm.Request{
 		Role:     llm.RoleVision,
 		Messages: []llm.Message{{Role: llm.System, Content: lookSystem}, {Role: llm.User, Content: prompt, Images: []string{sheet}}},

@@ -90,6 +90,50 @@ func TestLiveLook(t *testing.T) {
 			expect: false,
 			why:    "this is the shipped model; a checker that complains here will damage good work",
 		},
+		{
+			// ‼️ The blind spot. geometry.Tessellate does NOT perform a cut — its
+			// own inferences say "four solid POSTS standing on the plate" — so a
+			// bolt hole is drawn as a solid cylinder buried in the plate. That is
+			// question 1 exactly: "a part completely hidden inside another part".
+			//
+			// It is also CORRECT. A cutting tool belongs inside the thing it
+			// cuts. A checker that reports it fires on every mechanical part with
+			// a hole in it, which is most of them.
+			name:  "a bolt hole cut into a plate, which is what a hole looks like",
+			asked: "a steel plate with a bolt hole",
+			doc: `{"name":"Plate","units":"mm","parts":[
+			  {"id":"plate","name":"Plate","shape":"box","color":"#8899aa",
+			   "size":{"width":120,"height":10,"depth":80},"position":[0,0,0]},
+			  {"id":"hole","name":"Bolt Hole","shape":"cylinder","color":"#222222",
+			   "size":{"radius":5,"height":30},"position":[0,0,0]}],
+			 "features":[{"id":"drill","op":"cut","of":"plate","with":["hole"]}]}`,
+			expect: false,
+			why: "the bolt hole is the TOOL that makes the hole, and being inside the plate " +
+				"is what a hole is. Reporting it fires on every part with a hole in it",
+		},
+		{
+			// ‼️ The other half, and the reason tools are NOT simply excluded.
+			//
+			// A cutting tool that floats clear of the part it cuts removes
+			// nothing, so the hole is not there. That is a real defect and this
+			// check is the only thing that would notice. It found exactly this on
+			// the live deployment: "Bolt Hole 1: The part is floating clear of
+			// the L-Bracket … rather than being positioned within the upright."
+			//
+			// If suppressing the false positive above also silenced this, the fix
+			// would have traded a noisy check for a blind one.
+			name:  "a bolt hole that MISSES the plate, so there is no hole",
+			asked: "a steel plate with a bolt hole",
+			doc: `{"name":"Plate","units":"mm","parts":[
+			  {"id":"plate","name":"Plate","shape":"box","color":"#8899aa",
+			   "size":{"width":120,"height":10,"depth":80},"position":[0,0,0]},
+			  {"id":"hole","name":"Bolt Hole","shape":"cylinder","color":"#222222",
+			   "size":{"radius":5,"height":30},"position":[0,300,0]}],
+			 "features":[{"id":"drill","op":"cut","of":"plate","with":["hole"]}]}`,
+			expect: true,
+			why: "the tool is 300mm above the plate and cuts nothing, so the hole the " +
+				"person asked for does not exist",
+		},
 	}
 
 	for _, tc := range cases {

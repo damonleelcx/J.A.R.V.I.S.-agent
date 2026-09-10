@@ -578,6 +578,18 @@ drill "a later repair can undo the verification" internal/agent/converse.go \
   's = s.replace("\tc.repairIfScriptsFail(ctx, &reply, current, nil)\n", "", 1); s = s.replace("\tc.repairIfFaulty(ctx, &reply)\n", "\tc.repairIfFaulty(ctx, &reply)\n\tc.repairIfScriptsFail(ctx, &reply, current, nil)\n", 1)' \
   ./internal/agent 'TestScripts_TheScriptCheckHasTheLastWord'
 
+# The same blind spot in look.go, and it was LIVE: a bolt hole is drawn as a
+# solid cylinder inside the plate, which is question 1 word for word. Two drills,
+# because suppressing the false positive must not take the true one with it — a
+# cutting tool floating clear of what it cuts removes nothing.
+drill "look is not told a cut is drawn as a solid" internal/agent/look.go \
+  's = s.replace("if tools := cuttingTools(doc); len(tools) > 0 {", "if tools := []string(nil); len(tools) > 0 {", 1)' \
+  ./internal/agent 'TestLook_IsToldWhichPartsAreCuttingTools'
+
+drill "look is told to ignore cutting tools entirely" internal/agent/look.go \
+  's = s.replace("DO still say if one is floating clear of the part it ", "Ignore them completely. ", 1)' \
+  ./internal/agent 'TestLook_IsToldWhichPartsAreCuttingTools'
+
 drill "the vision check is not told what it cannot see" internal/agent/look.go \
   's = s.replace("\tif len(scripted) > 0 {", "\tif false {", 1)' \
   ./internal/agent 'TestScripts_TheVisionCheckIsToldItCannotSeeThem'

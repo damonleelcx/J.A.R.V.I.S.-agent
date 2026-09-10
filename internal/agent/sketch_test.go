@@ -388,3 +388,53 @@ func TestSketch_TheComparisonActuallyFiltersCounts(t *testing.T) {
 			"nobody asked for:\n%+v", got)
 	}
 }
+
+// look() is told which parts are cutting tools, for the reason the comparison is.
+//
+// # What this closes
+//
+// geometry.Tessellate does not perform a cut, so a bolt hole is drawn as a solid
+// cylinder inside the plate — which is question 1 of lookSystem word for word,
+// "a part completely hidden inside another part". Confirmed live before it was
+// fixed, on a plate with one bolt hole: "Bolt Hole: The part is a solid cylinder
+// protruding from the plate surface rather than a hole passing through it." True
+// about the picture, false about the model, and it fires on every mechanical
+// part with a hole in it.
+//
+// This is a UNIT fence on the wiring. Whether the vision model then behaves is
+// TestLiveLook's job, and it carries both cases: the hole that is cut correctly
+// and the tool that misses.
+func TestLook_IsToldWhichPartsAreCuttingTools(t *testing.T) {
+	spy := &visionPromptSpy{}
+	c := &Conversation{client: spy}
+
+	doc := bracketDoc(100)
+	doc.Parts = append(doc.Parts, geometry.Part{ID: "hole", Name: "Bolt Hole", Shape: "cylinder",
+		Size: map[string]float64{"radius": 5, "height": 30}})
+	doc.Features = []geometry.Feature{{ID: "drill", Op: "cut", Of: "plate", With: []string{"hole"}}}
+
+	if _, err := c.look(context.Background(), doc, "a plate with a bolt hole"); err != nil {
+		t.Fatalf("look failed: %v", err)
+	}
+	if !strings.Contains(spy.prompt, "Bolt Hole") || !strings.Contains(spy.prompt, "TOOLS that cut") {
+		t.Errorf("look was not told the bolt hole is a cutting tool drawn as a solid, so it "+
+			"will report a hole as a defect on every part that has one:\n%s", spy.prompt)
+	}
+	// ‼️ And it must NOT have been silenced wholesale. A tool floating clear of
+	// what it cuts removes nothing, and that is a real defect only this check
+	// would notice — it found exactly that on the live deployment.
+	if !strings.Contains(spy.prompt, "floating clear") {
+		t.Errorf("look was told to ignore cutting tools entirely. A tool that misses cuts "+
+			"nothing, and suppressing the false positive must not take that with it:\n%s",
+			spy.prompt)
+	}
+
+	// A document with no cut says nothing about tools.
+	spy.prompt = ""
+	if _, err := c.look(context.Background(), bracketDoc(100), "a plate"); err != nil {
+		t.Fatalf("look failed: %v", err)
+	}
+	if strings.Contains(spy.prompt, "TOOLS that cut") {
+		t.Errorf("a document with no cut was told about cutting tools:\n%s", spy.prompt)
+	}
+}
