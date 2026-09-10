@@ -521,6 +521,39 @@ whole numbers arrive as integers (the first version handed everything over as
 floats and `range(teeth_count)` raised in 6 of 9 runs), a builder always wins a
 name collision, and a name starting with `_` never becomes a name.
 
+### Stage 10 — Answer the USAGE question, not the spelling one — **DONE 2026-09-10**
+
+With names and signatures answered, what remained was build123d usage. Two kinds,
+both measured live and both now answered from the installed library at the moment
+of failure:
+
+- **`with Rotation(...)`** → *"'Rotation' object does not support the context
+  manager protocol"*. Its signature — `Rotation(*args, **kwargs)` — answers
+  nothing about that. It now says: *"That is not something you can use `with`.
+  The ones you can are: BuildLine, BuildPart, BuildSketch, Locations,
+  PolarLocations, …"*
+- **bare `rotate(b, 45)`** → refused, and the closest global name is `Rotation`,
+  a Location, so the spelling suggestion sent the repair somewhere useless.
+  `rotate` is real — it is `shape.rotate(...)`. The suggestion is now
+  **suppressed** and replaced by *"rotate is not a function here, but it IS a
+  method on Matrix or Shape — write shape.rotate(...)"*.
+
+The defining class is reported rather than the classes that merely have it: the
+first version answered *"a method on Airfoil and ArcArcTangentArc"* —
+alphabetically-first leaves inheriting from Shape. True and useless.
+
+**Measured: 5 of 10, against a 6 of 10 control.** No movement in the rate at this
+n, and both targeted failure modes are gone from the sample. What is left is the
+model reaching outside the sandbox (`globals()`, correctly refused) and genuine
+involute-geometry mistakes — `Standard_TypeMismatch`, `BRep_API: command not
+done`. Those are its CAD competence, which no error message will fix.
+
+⚠️ **The plateau is real.** Names, signatures, operators, usage and parameters
+have all been answered, and the rate has not moved off roughly six in ten. The
+one lever tried that was qualitatively different — telling the model more in the
+contract — measured 0 of 10. Whatever comes next should be measured before it is
+believed.
+
 ### The gap this closed
 
 Four of ten live runs failed, and the most informative one wrote:

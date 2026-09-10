@@ -592,6 +592,17 @@ def _signature_of(ns, name):
         return None
 
 
+def _refused_name(detail):
+    """The identifier a refusal is about, or "" when it is not that kind."""
+    m = re.search(r"line [^:]*: ([A-Za-z_][A-Za-z0-9_]*) is not available here", detail or "")
+    return m.group(1) if m else ""
+
+
+def _known_names():
+    """Every name the checker accepts, for un-saying a suggestion it made."""
+    return BUILDER_NAMES | set(ALLOWED_MATH) | set(ALLOWED_BUILTINS) | {"math"}
+
+
 def _names_in_message(text):
     """The builder names an exception message blames, in the order it blames them.
 
@@ -649,6 +660,55 @@ def _failing_line(exc):
 SIGNATURE_LIMIT = 4
 
 
+def _context_managers(ns):
+    """The names in scope that a `with` statement can actually take."""
+    out = []
+    for name, value in sorted(ns.items()):
+        if name.startswith("_"):
+            continue
+        if hasattr(type(value), "__enter__") or hasattr(value, "__enter__"):
+            out.append(name)
+    return out
+
+
+def _method_hint(ns, name):
+    """Whether a refused name is a METHOD on a shape rather than a function.
+
+    # Why this is worth saying
+
+    build123d has both forms and the model reaches for the wrong one. Measured
+    live: `rotate` was refused, and the closest global name is `Rotation` — which
+    is a Location, not what was wanted, so the suggestion sent the repair
+    somewhere useless. `rotate` is real; it is `shape.rotate(...)`.
+
+    Answered from the library itself: every class in scope is asked whether it
+    has an attribute of that name. Nothing here maintains a list of methods, so
+    nothing here can go stale against the build123d that is installed.
+    """
+    # ‼️ Reported by where the method is DEFINED, not by which classes have it.
+    #
+    # The first version listed the classes in scope carrying the attribute, and
+    # `rotate` came back as "a method on Airfoil and ArcArcTangentArc and
+    # ArcArcTangentLine" — alphabetically-first leaves that inherit it from
+    # Shape. True, and useless. __qualname__ names the class that actually
+    # defines it, which is the one worth telling somebody about.
+    owners = []
+    for owner, value in sorted(ns.items()):
+        if owner.startswith("_") or not isinstance(value, type):
+            continue
+        attr = getattr(value, name, None)
+        if attr is None or not callable(attr):
+            continue
+        qual = getattr(attr, "__qualname__", "")
+        defined = qual.split(".")[0] if "." in qual else owner
+        if defined and defined not in owners:
+            owners.append(defined)
+    if not owners:
+        return ""
+    return (" %s is not a function here, but it IS a method on %s — write "
+            "shape.%s(...) on the object you built." % (name, " or ".join(sorted(owners)[:2]), name))
+
+
 def signature_help(ns, source, exc):
     """What the failing call actually takes, appended to the error.
 
@@ -667,6 +727,18 @@ def signature_help(ns, source, exc):
     with the library, and a wrong signature is worse than none because it is
     read as authoritative.
     """
+    # ‼️ The `with` mistake gets a direct answer rather than a signature.
+    #
+    # Measured live: `with Rotation(...)` produced "'Rotation' object does not
+    # support the context manager protocol", and Rotation's signature —
+    # `Rotation(*args, **kwargs)` — answers nothing about it. What the model
+    # needs is which names a `with` can take, and the library knows.
+    if "context manager protocol" in str(exc):
+        managers = _context_managers(ns)
+        if managers:
+            return (" That is not something you can use `with`. The ones you can are: %s."
+                    % ", ".join(managers))
+
     wanted = _names_in_message(str(exc)) + _names_on_line(source, _failing_line(exc))
     out = []
     for name in wanted:
@@ -801,8 +873,16 @@ def main():
         # name can now also say how that name is called, and on a machine with no
         # kernel the namespace is empty and it simply says less.
         ns, _ = namespace(True)
-        print(json.dumps({"ok": False, "refused": True,
-                          "error": str(exc) + _suggestion_signatures(ns, str(exc))}))
+        detail = str(exc)
+        # A name that is a METHOD is answered as one, and the spelling suggestion
+        # is suppressed: `rotate` is real, and pointing at `Rotation` — a
+        # Location — sends the repair somewhere useless.
+        hint = _method_hint(ns, _refused_name(detail))
+        if hint:
+            detail = detail.replace(_did_you_mean(_refused_name(detail), _known_names()), "") + hint
+        else:
+            detail += _suggestion_signatures(ns, detail)
+        print(json.dumps({"ok": False, "refused": True, "error": detail}))
         return
 
     ns = {}

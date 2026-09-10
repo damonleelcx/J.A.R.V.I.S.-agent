@@ -929,3 +929,68 @@ func TestScript_AWholeNumberedParameterIsAnInt(t *testing.T) {
 		}
 	})
 }
+
+// A misused `with` is told which names it can actually use.
+//
+// # What this closes
+//
+// Measured live, twice in one ten-run batch: the model wrote
+// `with Rotation(...)` and got "'Rotation' object does not support the context
+// manager protocol". Rotation's SIGNATURE — Rotation(*args, **kwargs) — answers
+// nothing about that, so the general signature help was no help here. What the
+// model needs is which names a `with` can take, and the library knows.
+func TestScript_AMisusedWithIsToldWhatItCanUse(t *testing.T) {
+	k := scriptKernel(t)
+	_, err := k.RunScript(context.Background(),
+		"with Rotation(0, 0, 45) as r:\n    Box(1, 1, 1)\nresult = r", nil)
+	if err == nil {
+		t.Fatal("`with Rotation(...)` ran, which it cannot")
+	}
+	got := err.Error()
+	for _, want := range []string{"not something you can use `with`", "BuildPart", "BuildSketch"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the failure does not contain %q, so the model has to guess again.\n"+
+				"got: %s", want, got)
+		}
+	}
+}
+
+// A name that is a METHOD is answered as one, not as a spelling mistake.
+//
+// # What this closes
+//
+// `rotate` was refused live, and the closest global name is `Rotation` — which
+// is a Location, not what was wanted, so the suggestion sent the repair
+// somewhere useless. `rotate` is real; it is shape.rotate(...).
+//
+// The defining class is reported rather than the classes that merely have it:
+// the first version answered "a method on Airfoil and ArcArcTangentArc", which
+// are alphabetically-first leaves inheriting it from Shape. True and useless.
+func TestScript_AMethodIsNotASpellingMistake(t *testing.T) {
+	k := scriptKernel(t)
+	_, err := k.RunScript(context.Background(),
+		"b = Box(10, 10, 10)\nresult = rotate(b, 45)", nil)
+	if err == nil {
+		t.Fatal("a bare rotate() ran")
+	}
+	got := err.Error()
+	for _, want := range []string{"rotate is not a function here", "method on", "Shape",
+		"shape.rotate(...)"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the failure does not contain %q.\ngot: %s", want, got)
+		}
+	}
+	// ‼️ And the spelling suggestion is SUPPRESSED. Pointing at `Rotation` when
+	// the answer is `shape.rotate` is worse than saying nothing.
+	if strings.Contains(got, "Did you mean") {
+		t.Errorf("a method was offered a spelling correction as well, which sends the "+
+			"repair at the wrong answer:\n%s", got)
+	}
+	// The useless inherited leaves must not be what is named.
+	for _, leaf := range []string{"Airfoil", "ArcArcTangentArc"} {
+		if strings.Contains(got, leaf) {
+			t.Errorf("the failure names %q, an alphabetically-first leaf that merely "+
+				"inherits the method:\n%s", leaf, got)
+		}
+	}
+}

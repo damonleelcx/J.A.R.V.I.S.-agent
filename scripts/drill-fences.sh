@@ -727,6 +727,22 @@ drill "a length reaches the script in its authored unit" internal/domain/cad/scr
   's = s.replace("if mm, converted := q.In(geometry.Millimetre); converted {", "if mm, converted := q.In(geometry.Millimetre); false {", 1)' \
   ./internal/domain/cad 'TestScriptParameters_LengthsInMillimetresAndNothingElseTouched'
 
+# What was left after the names and signatures were answered: build123d USAGE.
+# Both of these are computed from the installed library at the moment of failure,
+# for the reason the signatures are — a list maintained here would go stale
+# against the build123d that is actually installed.
+drill "a misused with is not told what it can use" internal/domain/cad/script.py \
+  's = s.replace("if \"context manager protocol\" in str(exc):", "if False:", 1)' \
+  ./internal/domain/cad 'TestScript_AMisusedWithIsToldWhatItCanUse'
+
+drill "a method is offered a spelling correction instead" internal/domain/cad/script.py \
+  's = s.replace("hint = _method_hint(ns, _refused_name(detail))", "hint = \"\"", 1)' \
+  ./internal/domain/cad 'TestScript_AMethodIsNotASpellingMistake'
+
+drill "the method hint names the inherited leaves" internal/domain/cad/script.py \
+  's = s.replace("defined = qual.split(\".\")[0] if \".\" in qual else owner", "defined = owner", 1)' \
+  ./internal/domain/cad 'TestScript_AMethodIsNotASpellingMistake'
+
 drill "a failure does not say how the builder is called" internal/domain/cad/script.py \
   's = s.replace("signature_help(ns, source, exc)", "\"\"", 1)' \
   ./internal/domain/cad 'TestScript_AFailureSaysHowTheBuilderIsCalled'
@@ -736,7 +752,7 @@ drill "the failing LINE is not consulted" internal/domain/cad/script.py \
   ./internal/domain/cad 'TestScript_AFailureSaysHowTheBuilderIsCalled'
 
 drill "a suggested name comes without its signature" internal/domain/cad/script.py \
-  's = s.replace("_suggestion_signatures(ns, str(exc))", "\"\"", 1)' \
+  's = s.replace("detail += _suggestion_signatures(ns, detail)", "pass", 1)' \
   ./internal/domain/cad 'TestScript_ASuggestedNameComesWithItsSignature'
 
 # ‼️ And the other direction: the signature help must not turn a refusal about
