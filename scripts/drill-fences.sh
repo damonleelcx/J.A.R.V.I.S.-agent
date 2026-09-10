@@ -637,6 +637,38 @@ drill "an unavailable name suggests nothing" internal/domain/cad/script.py \
 
 # The other direction, and the one that actually caught something: at difflib's
 # default cutoff the refusal for `urlopen` came back "Did you mean len?".
+# Once the names resolved, what was left across four live gear requests was the
+# model guessing at the API behind a name that EXISTS — BuildSketch(local_mode=…),
+# Standard_TypeMismatch. The signature comes from the library that is installed,
+# at the moment of failure, which is the only place it is guaranteed right.
+drill "a failure does not say how the builder is called" internal/domain/cad/script.py \
+  's = s.replace("signature_help(ns, source, exc)", "\"\"", 1)' \
+  ./internal/domain/cad 'TestScript_AFailureSaysHowTheBuilderIsCalled'
+
+drill "the failing LINE is not consulted" internal/domain/cad/script.py \
+  's = s.replace("_names_in_message(str(exc)) + _names_on_line(source, _failing_line(exc))", "_names_in_message(str(exc))", 1)' \
+  ./internal/domain/cad 'TestScript_AFailureSaysHowTheBuilderIsCalled'
+
+drill "a suggested name comes without its signature" internal/domain/cad/script.py \
+  's = s.replace("_suggestion_signatures(ns, str(exc))", "\"\"", 1)' \
+  ./internal/domain/cad 'TestScript_ASuggestedNameComesWithItsSignature'
+
+# ‼️ And the other direction: the signature help must not turn a refusal about
+# reaching OUTSIDE the sandbox into an API tutorial.
+#
+# Mutating the "Did you mean" GUARD does not work — it makes the parse raise, the
+# runner dies, and a crashed run contains no signature either, so the fence stays
+# green while measuring nothing. The real lever is the cutoff: loosen it and
+# `urlopen` suggests a name again, and the suggestion then drags a signature in
+# behind it. Both tests are named because the two effects arrive together.
+drill "a security refusal gains a signature lesson" internal/domain/cad/script.py \
+  's = s.replace("cutoff=0.70", "cutoff=0.30", 1)' \
+  ./internal/domain/cad 'TestScript_ReachingOutsideStillSaysNothingHelpful|TestScript_AnUnavailableNameSuggestsTheCloseOnes'
+
+drill "a refusal names the parser's word, not the author's" internal/domain/cad/script.py \
+  's = s.replace("_syntax_name(node)", "type(node).__name__", 1)' \
+  ./internal/domain/cad 'TestScript_ARefusalNamesWhatWasWritten'
+
 drill "the suggestion cutoff is difflib's loose default" internal/domain/cad/script.py \
   's = s.replace("cutoff=0.70", "cutoff=0.60", 1)' \
   ./internal/domain/cad 'TestScript_AnUnavailableNameSuggestsTheCloseOnes'

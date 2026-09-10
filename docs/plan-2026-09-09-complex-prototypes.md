@@ -364,6 +364,59 @@ failed to cut.
 and, for a scripted part, the script. Each check re-draws it after a repair it
 accepts, so nothing downstream compares against a document that no longer exists.
 
+### Stage 8 — Tell it how the builder is called — **DONE 2026-09-10**
+
+Once "Did you mean Rotation, Rot?" fixed the NAMES, what remained across the live
+gear runs was the model guessing at the API behind a name that exists:
+
+```
+TypeError: BuildSketch.__init__() got an unexpected keyword argument 'local_mode'
+Standard_TypeMismatch: TopoDS::Face
+```
+
+The model has the 209 names it may use and **none of their signatures**, so the
+repair loop spent its budget re-guessing at an API rather than fixing geometry.
+"X is not available here" cannot help when X is available.
+
+**Where the signature comes from decides whether it is right.** It is produced in
+the sandbox, at the moment of failure, from the build123d that is actually
+installed. A list generated at build time would be a second artifact to keep in
+step with the library, and a wrong signature is worse than none because it reads
+as authoritative.
+
+Three sources, in order: the builder the exception **names**
+(`BuildSketch.__init__() got …`), the builders **called on the failing line**
+(which is the only thing that points back at Python when OCCT blames a C++ type),
+and the names a **"did you mean" already suggested** — because fixing the name
+and then guessing the call is the same failure one step later.
+
+```
+TypeError: BuildSketch.__init__() got an unexpected keyword argument 'local_mode'
+  The builders on that line take:
+  BuildSketch(*workplanes: 'Face | Plane | Location', mode: 'Mode' = <Mode.ADD>).
+
+line 1: Cylindr is not available here. Did you mean Cylinder? … They take:
+  Cylinder(radius: 'float', height: 'float', arc_size: 'float' = 360, …).
+```
+
+**And a refusal now names what was WRITTEN, not what the parser calls it.** A
+live run reached for build123d's own `@` idiom and was told *"MatMult is not
+allowed here"* — the parser's word, which the author never typed and cannot act
+on. It says ``the `@` operator`` now.
+
+**Measured, 20-tooth module-2 spur gear:**
+
+| | builds |
+|---|---|
+| before | 3 of 8 |
+| after | **8 of 12** (two independent batches of 4 of 6) |
+
+⚠️ At that n this is suggestive, not significant. The stronger evidence is that
+the failures **changed in kind**: no run since has failed on a wrong keyword or
+an unknown name. What is left is `Standard_TypeMismatch` and *"finished without
+assigning `result`"* — the model's own CAD logic and its own contract-following,
+which is where the boundary belongs.
+
 ## What is NOT promised
 
 - The reference image. See the framing above.

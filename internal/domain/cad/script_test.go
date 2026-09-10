@@ -557,3 +557,149 @@ func TestScript_AnUnavailableNameSuggestsTheCloseOnes(t *testing.T) {
 		})
 	}
 }
+
+// A failure says how the builder it blames is actually CALLED.
+//
+// # What this closes
+//
+// Once the "did you mean" suggestion fixed the NAMES, what remained across four
+// live gear requests was the model guessing at the API behind a name that
+// exists:
+//
+//	TypeError: BuildSketch.__init__() got an unexpected keyword argument 'local_mode'
+//	Standard_TypeMismatch: TopoDS::Face
+//
+// The model has the 209 names it may use and none of their signatures, so the
+// repair loop spent its whole budget re-guessing rather than fixing geometry.
+// "X is not available here" cannot help when X is available.
+//
+// The signature is produced at the moment of failure from the build123d that is
+// actually installed — the only place it is guaranteed right. A list generated
+// at build time would be a second artifact to keep in step with the library, and
+// a wrong signature is worse than none because it reads as authoritative.
+func TestScript_AFailureSaysHowTheBuilderIsCalled(t *testing.T) {
+	k := scriptKernel(t)
+	cases := []struct {
+		name, source string
+		want         []string
+	}{
+		{
+			// The live failure, verbatim in shape: a real builder, a keyword it
+			// does not take. The message names it, so the signature can be found
+			// from the message alone.
+			name:   "a keyword the builder does not take",
+			source: "with BuildSketch(local_mode=True) as sk:\n    Circle(radius=5)\nresult = extrude(sk.sketch, amount=3)",
+			want:   []string{"local_mode", "BuildSketch(", "workplanes"},
+		},
+		{
+			// The other live failure shape: the message blames a C++ type and
+			// names no Python at all, so the FAILING LINE is the only thing that
+			// points back at a builder.
+			name:   "an error that names no builder at all",
+			source: "profile = Polyline((0, 0), (10, 0), (10, 10))\nresult = make_face(profile)",
+			want:   []string{"make_face("},
+		},
+		{
+			name:   "a required argument that was not given",
+			source: "result = Cylinder(radius=5)",
+			want:   []string{"Cylinder(", "height"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := k.RunScript(context.Background(), tc.source)
+			if err == nil {
+				t.Fatalf("this built, so the test proves nothing:\n%s", tc.source)
+			}
+			got := err.Error()
+			for _, w := range tc.want {
+				if !strings.Contains(got, w) {
+					t.Errorf("the failure does not mention %q, so the model is left to guess "+
+						"how to call it again.\ngot: %s", w, got)
+				}
+			}
+		})
+	}
+}
+
+// A refusal that suggests a name also says how that name is called.
+//
+// "Did you mean Rotation, Rot?" fixes the NAME and leaves the call to be guessed
+// at — the same failure one step later, and a second round trip out of a small
+// budget. Both questions are answered in one refusal.
+func TestScript_ASuggestedNameComesWithItsSignature(t *testing.T) {
+	k := scriptKernel(t)
+	_, err := k.RunScript(context.Background(), "result = Cylindr(radius=5, height=10)")
+	if err == nil {
+		t.Fatal("Cylindr built, which it must not")
+	}
+	got := err.Error()
+	for _, w := range []string{"Did you mean", "Cylinder", "They take:", "radius", "height"} {
+		if !strings.Contains(got, w) {
+			t.Errorf("the refusal does not contain %q, so fixing the name still leaves the "+
+				"call to guess at.\ngot: %s", w, got)
+		}
+	}
+}
+
+// A refusal about reaching OUTSIDE the sandbox stays about that.
+//
+// The signature help must not turn a security refusal into an API tutorial, and
+// must not enumerate what is being protected. urlopen and getattr are close to
+// nothing, so they suggest nothing, so there is nothing to describe.
+func TestScript_ReachingOutsideStillSaysNothingHelpful(t *testing.T) {
+	k := scriptKernel(t)
+	for _, src := range []string{
+		"result = urlopen('http://example.com').read()",
+		"result = getattr(1, 'real')",
+		"result = open('/etc/passwd').read()",
+	} {
+		_, err := k.RunScript(context.Background(), src)
+		if err == nil {
+			t.Fatalf("this ran, and it must not:\n%s", src)
+		}
+		if got := err.Error(); strings.Contains(got, "They take:") {
+			t.Errorf("a refusal about reaching outside the sandbox came back with a "+
+				"signature lesson:\n%s", got)
+		}
+	}
+}
+
+// A refused construct is named in the words it was WRITTEN in.
+//
+// # What this closes
+//
+// The refusal named the AST class: "MatMult is not allowed here". That is the
+// parser's word for it and nobody else's. Measured live: a model reached for
+// build123d's own `@` idiom — `edge @ 0.5` is a point along a curve — was told
+// "MatMult", and had to guess what that referred to out of a small repair budget.
+//
+// A message naming something the author never typed cannot be acted on.
+func TestScript_ARefusalNamesWhatWasWritten(t *testing.T) {
+	k := scriptKernel(t)
+	cases := []struct{ name, source, want string }{
+		{"the @ operator", "result = Box(1, 1, 1)\nx = result @ 0.5", "`@`"},
+		{"a class", "class X:\n    pass\nresult = X", "`class`"},
+		{"try/except", "try:\n    result = Box(1, 1, 1)\nexcept Exception:\n    pass", "`try`"},
+		{"the walrus", "result = (n := Box(1, 1, 1))", "`:=`"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := k.RunScript(context.Background(), tc.source)
+			if err == nil {
+				t.Fatalf("this ran and must not:\n%s", tc.source)
+			}
+			got := err.Error()
+			if !strings.Contains(got, tc.want) {
+				t.Errorf("the refusal does not name %s in the words it was written in.\n"+
+					"got: %s", tc.want, got)
+			}
+			// And the AST class name must NOT be what the reader is handed.
+			for _, parser := range []string{"MatMult", "ClassDef", "NamedExpr"} {
+				if strings.Contains(got, parser) {
+					t.Errorf("the refusal hands back the parser's word %q:\n%s", parser, got)
+				}
+			}
+		})
+	}
+}

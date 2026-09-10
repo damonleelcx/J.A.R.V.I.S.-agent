@@ -35,6 +35,7 @@ import ast
 import difflib
 import json
 import os
+import re
 import resource
 import sys
 import tempfile
@@ -214,6 +215,33 @@ def _did_you_mean(name, known):
     return " Did you mean %s?" % ", ".join(near)
 
 
+def _suggestion_signatures(ns, detail):
+    """The signatures of the names a refusal suggested.
+
+    # Why the suggestion alone is not enough
+
+    "Did you mean Rotation, Rot?" fixes the NAME and leaves the call to be
+    guessed at, which is the same failure one step later — measured: once the
+    names resolved, what remained was
+    `BuildSketch.__init__() got an unexpected keyword argument 'local_mode'`.
+    Answering both questions in one refusal is one round trip instead of two, and
+    the budget for those rounds is small.
+
+    Empty when nothing was suggested, which is the ordinary case for a name that
+    was reaching outside the sandbox rather than misspelled.
+    """
+    if "Did you mean " not in detail:
+        return ""
+    tail = detail.split("Did you mean ", 1)[1].split("?", 1)[0]
+    out = []
+    for name in [n.strip() for n in tail.split(",")]:
+        if sig := _signature_of(ns, name):
+            out.append(sig)
+    if not out:
+        return ""
+    return " They take: " + "; ".join(out) + "."
+
+
 def _bind_arguments(args, bound):
     """Adds a def's or a lambda's parameter names to the bound set.
 
@@ -227,6 +255,46 @@ def _bind_arguments(args, bound):
         bound.add(args.vararg.arg)
     if args.kwarg:
         bound.add(args.kwarg.arg)
+
+
+# What a refused construct is called in the Python somebody WROTE.
+#
+# The refusal used to name the AST class — "MatMult is not allowed here" — which
+# is the parser's word for it and not anybody's. Measured live: a model reached
+# for build123d's own `@` idiom, was told "MatMult", and had to guess what that
+# referred to. A message that names a thing the author never typed cannot be
+# acted on, and the repair budget is small.
+#
+# Only the constructs a script plausibly reaches for. Anything absent falls back
+# to the class name, which is still better than nothing and is what an exotic
+# node deserves.
+SYNTAX_NAMES = {
+    "MatMult": "the `@` operator",
+    "Lambda": "a `lambda`",
+    "ClassDef": "a `class`",
+    "Try": "`try` / `except`",
+    "Raise": "`raise`",
+    "Assert": "`assert`",
+    "Global": "`global`",
+    "Nonlocal": "`nonlocal`",
+    "Yield": "`yield`",
+    "YieldFrom": "`yield from`",
+    "Await": "`await`",
+    "AsyncFunctionDef": "an `async def`",
+    "AsyncFor": "an `async for`",
+    "AsyncWith": "an `async with`",
+    "Delete": "`del`",
+    "NamedExpr": "the `:=` operator",
+    "JoinedStr": "an f-string",
+    "FormattedValue": "an f-string",
+    "Lambda_": "a `lambda`",
+}
+
+
+def _syntax_name(node):
+    """What to call a refused construct, in the words it was written in."""
+    kind = type(node).__name__
+    return SYNTAX_NAMES.get(kind, kind)
 
 
 def _tolerated_import(node):
@@ -318,7 +386,7 @@ def check(source):
             raise Refused(
                 "line %s: %s is not allowed here. This runs a drawing, not a program: "
                 "no classes, no exceptions, no file or network access."
-                % (getattr(node, "lineno", "?"), type(node).__name__))
+                % (getattr(node, "lineno", "?"), _syntax_name(node)))
 
         # Dunder attributes are the documented way out of a restricted namespace:
         # ().__class__.__bases__[0].__subclasses__() reaches every loaded class in
@@ -424,6 +492,115 @@ def namespace(uses_builders):
     return ns, missing
 
 
+def _signature_of(ns, name):
+    """The real signature of a builder, from the library that is loaded.
+
+    None when the name is not a builder here, or when it has no introspectable
+    signature — six of build123d's names do not, and inventing one for them would
+    be worse than saying nothing.
+    """
+    value = ns.get(name)
+    if value is None:
+        return None
+    # Imported here rather than at the top, matching the two other uses in this
+    # file: nothing on the ordinary path needs it, and this one runs only when a
+    # script has already failed.
+    import inspect
+
+    try:
+        return "%s%s" % (name, inspect.signature(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _names_in_message(text):
+    """The builder names an exception message blames, in the order it blames them.
+
+    Python names the callable in the shapes that matter here:
+
+        BuildSketch.__init__() got an unexpected keyword argument 'local_mode'
+        extrude() takes from 0 to 9 positional arguments but 10 were given
+        Circle() missing 1 required positional argument: 'radius'
+    """
+    out = []
+    for m in re.finditer(r"\b([A-Za-z_][A-Za-z0-9_]*)(?:\.__init__)?\(\)", text or ""):
+        if m.group(1) not in out:
+            out.append(m.group(1))
+    return out
+
+
+def _names_on_line(source, lineno):
+    """The builders CALLED on one line of the script.
+
+    The traceback says where it went wrong; this says what was being called
+    there. It is what covers the errors that name nothing — an OCCT
+    Standard_TypeMismatch blames a C++ type and not the Python that reached it,
+    and the failing line is the only thing that points back at a builder.
+    """
+    lines = (source or "").splitlines()
+    if lineno is None or lineno < 1 or lineno > len(lines):
+        return []
+    out = []
+    for m in re.finditer(r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\(", lines[lineno - 1]):
+        if m.group(1) not in out:
+            out.append(m.group(1))
+    return out
+
+
+def _failing_line(exc):
+    """The line number in the SCRIPT where it went wrong.
+
+    The deepest frame belonging to "<script>", because the top of the traceback
+    is usually somewhere inside build123d and the script's own line is what the
+    author can act on.
+    """
+    tb = exc.__traceback__
+    lineno = None
+    while tb is not None:
+        if tb.tb_frame.f_code.co_filename == "<script>":
+            lineno = tb.tb_lineno
+        tb = tb.tb_next
+    return lineno
+
+
+# How many signatures one failure is worth. The point is to answer "how is this
+# called", not to paste the library: a line calling four builders is answered by
+# four, and a script that fails on a line calling twenty is not being helped by
+# a wall of text it has to read past.
+SIGNATURE_LIMIT = 4
+
+
+def signature_help(ns, source, exc):
+    """What the failing call actually takes, appended to the error.
+
+    # Why this is here and not in the caller
+
+    The model that wrote the script has the 209 NAMES it may use and none of
+    their signatures, so it guesses — and the guesses were measured: 
+    `BuildSketch.__init__() got an unexpected keyword argument 'local_mode'`,
+    `Standard_TypeMismatch: TopoDS::Face`. Once the name exists, "not available
+    here" cannot help, and the repair loop spends its budget re-guessing at an
+    API rather than fixing geometry.
+
+    The signature is produced HERE, at the moment of failure, from the build123d
+    that is actually installed. That is the only place it is guaranteed correct:
+    a list generated at build time would be a second artifact to keep in step
+    with the library, and a wrong signature is worse than none because it is
+    read as authoritative.
+    """
+    wanted = _names_in_message(str(exc)) + _names_on_line(source, _failing_line(exc))
+    out = []
+    for name in wanted:
+        sig = _signature_of(ns, name)
+        if sig and sig not in out:
+            out.append(sig)
+        if len(out) >= SIGNATURE_LIMIT:
+            break
+    if not out:
+        return ""
+    return " The builders on that line take: " + "; ".join(out) + "."
+
+
 def limits(cpu_seconds, address_space_bytes):
     resource.setrlimit(resource.RLIMIT_CPU, (cpu_seconds, cpu_seconds))
     resource.setrlimit(resource.RLIMIT_AS, (address_space_bytes, address_space_bytes))
@@ -449,9 +626,17 @@ def main():
     try:
         tree = check(source)
     except Refused as exc:
-        print(json.dumps({"ok": False, "refused": True, "error": str(exc)}))
+        # The signatures are attached HERE rather than inside check(), because
+        # check() runs before the namespace exists — it is the thing that decides
+        # whether build123d is worth loading at all. A refusal that suggested a
+        # name can now also say how that name is called, and on a machine with no
+        # kernel the namespace is empty and it simply says less.
+        ns, _ = namespace(True)
+        print(json.dumps({"ok": False, "refused": True,
+                          "error": str(exc) + _suggestion_signatures(ns, str(exc))}))
         return
 
+    ns = {}
     try:
         uses = {n.id for n in ast.walk(tree)
                 if isinstance(n, ast.Name) and isinstance(n.ctx, ast.Load)}
@@ -466,7 +651,9 @@ def main():
             sys.stderr.write("not in this build123d: %s\n" % ", ".join(missing))
         exec(compile(tree, "<script>", "exec"), ns)  # noqa: S102 — the point of this file
     except Exception as exc:  # noqa: BLE001
-        print(json.dumps({"ok": False, "error": "%s: %s" % (type(exc).__name__, exc),
+        print(json.dumps({"ok": False,
+                          "error": "%s: %s%s" % (type(exc).__name__, exc,
+                                                 signature_help(ns, source, exc)),
                           "trace": traceback.format_exc()[-1500:]}))
         return
 
