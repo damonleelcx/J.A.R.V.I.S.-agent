@@ -201,3 +201,126 @@ func TestLiveGearTurn(t *testing.T) {
 			"script path. Not a defect — but not evidence for it either.")
 	}
 }
+
+// TestLiveSketchLoop draws a REAL reference, reads it, builds against it, and
+// compares the built model back to it.
+//
+// # Why this cannot be a stub
+//
+// Every fence in sketch_test.go controls both ends of the exchange, which proves
+// the loop, the caps, the ordering and the safety rule — and nothing about the
+// premise. The premise is that a generated picture is a useful reference for a
+// CAD model. The spike says it is useful for FORM and wrong about NUMBERS
+// (28-30 teeth for 20, no dimensions), and this is what checks that the code
+// actually holds that line against a real generator.
+func TestLiveSketchLoop(t *testing.T) {
+	if os.Getenv("FORGE_LIVE_LLM_TESTS") == "" || os.Getenv("FORGE_LLM_API_KEY") == "" {
+		t.Skip("set FORGE_LLM_API_KEY and FORGE_LIVE_LLM_TESTS=1 to run the live sketch loop")
+	}
+	image := envOrDefault("FORGE_LLM_IMAGE_MODEL", "wan2.7-image")
+	log := logx.New(logx.Options{Level: slog.LevelError, Output: os.Stderr, Service: "sketch-live-test"})
+	client := llm.NewOpenAICompatible(config.LLMConfig{
+		BaseURL:        envOrDefault("FORGE_LLM_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+		APIKey:         os.Getenv("FORGE_LLM_API_KEY"),
+		Converse:       envOrDefault("FORGE_LLM_CONVERSE_MODEL", "qwen3.7-plus"),
+		Vision:         envOrDefault("FORGE_LLM_VISION_MODEL", "qwen3.8-max"),
+		Illustrator:    image,
+		RequestTimeout: 3 * time.Minute,
+		MaxRetries:     2,
+	}, log, clock.System{})
+	conv := agent.NewConversation(client, persona.DefaultCharacter()).WithIllustrator(client)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 12*time.Minute)
+	defer cancel()
+
+	const asked = "an L-shaped steel bracket, 80mm tall and 120mm long, 6mm thick, " +
+		"with two 8mm bolt holes in the upright and a slot in the base"
+
+	sketch := agent.SketchForTest(ctx, conv, asked)
+	if sketch == nil {
+		t.Fatal("nothing was drawn for a request that is plainly about an object. " +
+			"That is the premise of this whole path.")
+	}
+	t.Logf("reference drawn: %s", sketch.Image)
+	t.Logf("read as form:    %s", sketch.Form)
+
+	if sketch.Form == "" {
+		t.Fatal("the drawing was made and could not be read, so nothing would reach the prompt")
+	}
+	// ‼️ The reading must carry no numbers. A generated picture's counts are
+	// wrong and its dimensions do not exist; a number here would be written into
+	// the geometry prompt as if the person had asked for it.
+	for _, digit := range "0123456789" {
+		if strings.ContainsRune(sketch.Form, digit) {
+			t.Errorf("the form read out of the drawing contains a NUMBER, and a generated "+
+				"picture has no authority over any number:\n%s", sketch.Form)
+			break
+		}
+	}
+
+	// And the comparison, against a model that plainly matches and one that
+	// plainly does not. The second is the one that decides whether this is
+	// usable: a checker that finds nothing wrong with the wrong model is an
+	// expensive way to add latency.
+	// ‼️ The holes and the slot are HERE on purpose, and this fixture took three
+	// attempts to write. Version one was two plain boxes, and the comparison
+	// reported "the mounting holes clearly shown in the drawing are entirely
+	// absent". Version two added the holes, and it reported "the elongated slot
+	// shown in the drawing is entirely absent from the built model". Both were
+	// RIGHT — the request names two bolt holes AND a slot, and the fixture had
+	// neither and then only one.
+	//
+	// That is the strongest evidence this loop works that the repository has: the
+	// checker found a real missing feature twice, unprompted, against a fixture
+	// its author believed was correct. A fixture that does not match is not a
+	// test of a false positive; it is a true positive wearing the wrong label.
+	right := &geometry.Document{
+		Name: "Bracket", Units: "mm",
+		Parts: []geometry.Part{
+			{ID: "upright", Name: "Upright", Shape: "box", Color: "#8899aa",
+				Size: map[string]float64{"width": 6, "height": 80, "depth": 60}, Position: []float64{0, 40, 0}},
+			{ID: "base", Name: "Base", Shape: "box", Color: "#aa8899",
+				Size: map[string]float64{"width": 120, "height": 6, "depth": 60}, Position: []float64{60, 3, 0}},
+			{ID: "hole-a", Name: "Bolt hole A", Shape: "cylinder", Color: "#222222",
+				Size: map[string]float64{"radius": 4, "height": 20}, Position: []float64{0, 60, -15}, Rotation: []float64{0, 0, 90}},
+			{ID: "hole-b", Name: "Bolt hole B", Shape: "cylinder", Color: "#222222",
+				Size: map[string]float64{"radius": 4, "height": 20}, Position: []float64{0, 60, 15}, Rotation: []float64{0, 0, 90}},
+			{ID: "slot", Name: "Slot", Shape: "box", Color: "#222222",
+				Size: map[string]float64{"width": 70, "height": 20, "depth": 12}, Position: []float64{65, 3, 0}},
+		},
+		Features: []geometry.Feature{
+			{ID: "drill", Op: "cut", Of: "upright", With: []string{"hole-a", "hole-b"}},
+			{ID: "mill", Op: "cut", Of: "base", With: []string{"slot"}},
+		},
+	}
+	wrong := &geometry.Document{
+		Name: "Sphere", Units: "mm",
+		Parts: []geometry.Part{
+			{ID: "ball", Name: "Ball", Shape: "sphere", Color: "#8899aa",
+				Size: map[string]float64{"radius": 50}},
+		},
+	}
+	rp := agent.MatchForTest(ctx, conv, right, sketch)
+	wp := agent.MatchForTest(ctx, conv, wrong, sketch)
+	t.Logf("against an L bracket: %d problem(s)", len(rp))
+	for _, p := range rp {
+		t.Logf("   %s", p.Detail)
+	}
+	t.Logf("against a sphere:     %d problem(s)", len(wp))
+	for _, p := range wp {
+		t.Logf("   %s", p.Detail)
+	}
+	if len(wp) == 0 {
+		t.Error("the comparison found nothing wrong with a SPHERE built for an L bracket. " +
+			"A checker that passes the wrong model is an expensive way to add latency.")
+	}
+	if len(rp) > 0 {
+		// Not a failure on its own — a false positive here is survivable because
+		// the acceptance rule refuses a damaging correction. Logged loudly
+		// because a checker that complains about the right answer drives repairs
+		// that make it worse, and this repository has already deleted one rule
+		// for exactly that.
+		t.Logf("‼️ the comparison complained about a model that matches. Survivable — the "+
+			"acceptance rule refuses a resize — but watch it: %s", rp[0].Detail)
+	}
+}

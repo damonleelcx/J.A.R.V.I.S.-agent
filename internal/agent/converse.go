@@ -567,6 +567,11 @@ type Conversation struct {
 	// as a bounding box. A capability nothing announces is a capability nobody
 	// uses; a capability nothing verifies is the gear that came after it.
 	runner ScriptRunner
+	// illustrator draws the reference a prototype is built against, and nil
+	// means this deployment does not draw one. Absent by default: a generation
+	// is 30-60 seconds on top of a turn, and a deployment that will not pay that
+	// has the feature absent rather than slow. See sketch.go.
+	illustrator llm.Illustrator
 }
 
 // NewConversation returns the conversational surface.
@@ -584,6 +589,13 @@ func NewConversation(client llm.Client, char persona.Character) *Conversation {
 // verifies the answer produces a confident reply about a part that is not there.
 func (c *Conversation) WithScripts(r ScriptRunner) *Conversation {
 	c.runner = r
+	return c
+}
+
+// WithIllustrator gives the conversation the thing that DRAWS the reference a
+// prototype is built against. nil is a deployment that does not draw one.
+func (c *Conversation) WithIllustrator(i llm.Illustrator) *Conversation {
+	c.illustrator = i
 	return c
 }
 
@@ -975,8 +987,24 @@ func (c *Conversation) Respond(ctx context.Context, projectID string, history []
 	// paths" and this function had its own copy of it — so the streaming path
 	// and the buffered path assembled the same request separately, and an image
 	// added to one would simply not exist in the other.
+	/* The reference drawing, BEFORE the geometry is written.
+	 *
+	 * Injected into the message rather than added as a parameter to
+	 * buildMessages: that signature is threaded through sixteen call sites and
+	 * `go vet` reports a wrong arity one at a time, so it looks nearly done
+	 * twice. The framing here is the whole safety property — the drawing decides
+	 * FORM and never a number. See sketch.go for what was measured. */
+	sketch := c.sketchFirst(ctx, message, nil)
+	prompt := message
+	if sketch != nil && sketch.Form != "" {
+		prompt = "[A reference drawing of what they asked for was generated and read. " +
+			"Build to this FORM. It is a drawing and NOT a specification: every count and " +
+			"every dimension comes from what they asked for, never from the drawing, which " +
+			"carries none and gets them wrong.\n" + sketch.Form + "]\n\n" + message
+	}
+
 	messages := c.buildMessages(c.characters.For(ctx, projectID, c.char),
-		c.domains.For(ctx, projectID), history, message, workspaceNote, current, images)
+		c.domains.For(ctx, projectID), history, prompt, workspaceNote, current, images)
 
 	resp, err := c.client.Complete(ctx, llm.Request{
 		Role:      role,
@@ -1014,6 +1042,8 @@ func (c *Conversation) Respond(ctx context.Context, projectID string, history []
 	c.buildInPasses(ctx, &reply, message, current, nil)
 	c.repairIfTurned(ctx, &reply, current)
 	c.repairIfItLooksWrong(ctx, &reply, message)
+	// And against the drawing, at the same point the streamed path does it.
+	c.repairAgainstSketch(ctx, &reply, sketch, nil)
 	// And the same script run, at the same point: LAST, because it is the only
 	// check that verifies itself and anything that rewrites the document after
 	// it undoes that. No progress to report on this path, so it is silent while

@@ -316,7 +316,17 @@ type LLMConfig struct {
 	Speaker string
 	// Voice is which synthesised voice FORGE speaks in. One per deployment, so
 	// the character sounds the same in every room.
-	Voice          string
+	Voice string
+	// Illustrator draws the reference picture a prototype is built against.
+	//
+	// UNSET IS THE DEFAULT, and the feature is then absent rather than broken:
+	// no picture is drawn, nothing is compared against one, and a turn behaves
+	// exactly as it did before this existed. The same discipline the CAD kernel
+	// and the vision model follow — an absent capability that says it is absent.
+	//
+	// It also costs real time: one generation is 30–60 seconds on top of a turn.
+	// A deployment that does not want to pay that leaves this empty.
+	Illustrator    string
 	RequestTimeout time.Duration
 	MaxRetries     int
 	// TurnBudget bounds ONE CONVERSATIONAL TURN, which is a different thing from
@@ -741,6 +751,7 @@ func Load(required ...Section) (*Config, []string, error) {
 		Transcriber:    l.str("FORGE_LLM_TRANSCRIBER_MODEL", "qwen3-asr-flash-2026-02-10"),
 		Speaker:        l.str("FORGE_LLM_SPEAKER_MODEL", "qwen3-omni-flash"),
 		Voice:          l.str("FORGE_LLM_VOICE", "Cherry"),
+		Illustrator:    strings.TrimSpace(l.str("FORGE_LLM_IMAGE_MODEL", "")),
 		RequestTimeout: l.dur("FORGE_LLM_REQUEST_TIMEOUT", 3*time.Minute),
 		TurnBudget:     l.dur("FORGE_TURN_BUDGET", DefaultTurnBudget),
 		MaxRetries:     l.intVal("FORGE_LLM_MAX_RETRIES", 3),

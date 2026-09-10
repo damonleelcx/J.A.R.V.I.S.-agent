@@ -94,6 +94,8 @@ FILES=(
   internal/httpapi/converse.go
   internal/agent/look.go
   internal/domain/cad/script.py
+  internal/agent/sketch.go
+  internal/llm/illustrate.go
 )
 
 BACKUP=""
@@ -604,6 +606,63 @@ drill "an unavailable name suggests nothing" internal/domain/cad/script.py \
 drill "the suggestion cutoff is difflib's loose default" internal/domain/cad/script.py \
   's = s.replace("cutoff=0.70", "cutoff=0.60", 1)' \
   ./internal/domain/cad 'TestScript_AnUnavailableNameSuggestsTheCloseOnes'
+
+echo
+echo "Drawing the thing before building it"
+drill "the drawing is made but never reaches the prompt" internal/agent/converse.go \
+  's = s.replace("history, prompt, workspaceNote, current, images)", "history, message, workspaceNote, current, images)", 1)' \
+  ./internal/agent 'TestSketch_DrawnFirstAndItsFormReachesTheGeometryPrompt'
+
+# The safety property. A generated picture has no dimensions and gets counts
+# wrong (28-30 teeth for 20, measured), so it must never be the reason a number
+# changed. Both halves are drilled: the prompt that forbids it, and the
+# acceptance rule that refuses a resize whatever the complaint claimed.
+drill "the comparison may report counts and sizes" internal/agent/sketch.go \
+  's = s.replace("- Do NOT count anything", "- You may count things", 1)' \
+  ./internal/agent 'TestSketch_APictureCannotChangeANumber'
+
+drill "a resizing correction is accepted" internal/agent/sketch.go \
+  's = s.replace("len(turnedOnItsSide(before, fixed)) != 0", "false", 1)' \
+  ./internal/agent 'TestSketch_APictureCannotChangeANumber'
+
+drill "every turn pays for a drawing" internal/agent/sketch.go \
+  's = s.replace("if prompt == \"\" {\n\t\treturn nil\n\t}", "if false {\n\t\treturn nil\n\t}\n\tprompt = prompt + \" a shape\"", 1)' \
+  ./internal/agent 'TestSketch_NotEveryTurnIsDrawn'
+
+drill "a drawing is made with nothing able to read it" internal/agent/sketch.go \
+  's = s.replace("c.client.ModelFor(llm.RoleVision) == \"\"", "false", 1)' \
+  ./internal/agent 'TestSketch_NoVisionMeansNoDrawing'
+
+drill "the reference is not sent first" internal/agent/sketch.go \
+  's = s.replace("[]string{s.Image, built}", "[]string{built, s.Image}", 1)' \
+  ./internal/agent 'TestSketch_BothPicturesAreSentInOrder'
+
+# Three deterministic guards, each standing where a PROMPT rule was measured
+# being ignored: the reading said "Two circular holes", the comparison reported
+# pegs on a part whose holes are cut, and it reported "three bolt holes ... only
+# two" as a defect. A prompt states an intention; these enforce it.
+drill "numbers from the drawing reach the geometry prompt" internal/agent/sketch.go \
+  's = s.replace("func withoutNumbers(s string) string {", "func withoutNumbers(s string) string {\n\treturn s", 1)' \
+  ./internal/agent 'TestSketch_NumbersAreStrippedFromWhatTheDrawingSays'
+
+# Two drills, because the unit fence calls formOnly DIRECTLY and stays green if
+# the call site is deleted — which the first run of this drill proved. One breaks
+# the filter, the other unhooks it.
+drill "the count filter does nothing" internal/agent/sketch.go \
+  's = s.replace("func formOnly(problems []geometry.Problem) []geometry.Problem {", "func formOnly(problems []geometry.Problem) []geometry.Problem {\n\treturn problems", 1)' \
+  ./internal/agent 'TestSketch_ComplaintsAboutCountsAreDropped'
+
+drill "the count filter is not wired in" internal/agent/sketch.go \
+  's = s.replace("return formOnly(parseLook(resp.Content))", "return parseLook(resp.Content)", 1)' \
+  ./internal/agent 'TestSketch_TheComparisonActuallyFiltersCounts'
+
+drill "the comparison is not told a cut is drawn as a solid" internal/agent/sketch.go \
+  's = s.replace("if tools := cuttingTools(doc); len(tools) > 0 {", "if tools := []string(nil); len(tools) > 0 {", 1)' \
+  ./internal/agent 'TestSketch_TheComparisonIsToldACutIsDrawnAsASolid'
+
+drill "a chat-shaped reply is read as a drawing" internal/llm/illustrate.go \
+  's = s.replace("part.Type == \"image\" && strings.HasPrefix(part.Image, \"https://\")", "true", 1)' \
+  ./internal/llm 'TestDecodeDrawing'
 
 echo
 echo "How long a turn may take"

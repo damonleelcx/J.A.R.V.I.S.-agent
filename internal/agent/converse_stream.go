@@ -204,9 +204,25 @@ func (c *Conversation) RespondStream(
 		}
 		role = llm.RoleVision
 	}
+	/* The reference drawing, BEFORE the geometry is written.
+	 *
+	 * Injected into the message rather than added as a parameter to
+	 * buildMessages: that signature is threaded through sixteen call sites and
+	 * `go vet` reports a wrong arity one at a time, so it looks nearly done
+	 * twice. The framing here is the whole safety property — the drawing decides
+	 * FORM and never a number. See sketch.go for what was measured. */
+	sketch := c.sketchFirst(ctx, message, func(line string) { _ = emit(StreamEvent{Kind: "notice", Text: line}) })
+	prompt := message
+	if sketch != nil && sketch.Form != "" {
+		prompt = "[A reference drawing of what they asked for was generated and read. " +
+			"Build to this FORM. It is a drawing and NOT a specification: every count and " +
+			"every dimension comes from what they asked for, never from the drawing, which " +
+			"carries none and gets them wrong.\n" + sketch.Form + "]\n\n" + message
+	}
+
 	messages := c.buildMessages(c.characters.For(ctx, projectID, c.char),
 		c.domains.For(ctx, projectID),
-		history, message, workspaceNote, current, images)
+		history, prompt, workspaceNote, current, images)
 
 	var accumulated strings.Builder
 	speechSent := false
@@ -297,6 +313,14 @@ func (c *Conversation) RespondStream(
 		 * turn read as 117 degrees. A person catches those in a glance and
 		 * FORGE had no glance — see look.go. */
 		c.repairIfItLooksWrong(ctx, &reply, message)
+		/* And then against the DRAWING. After looking, because "does anything
+		 * float or disappear" is a stronger question than "does it resemble the
+		 * reference" and should not be pre-empted by it. Before the scripts, so
+		 * the script check still has the last word over a document this
+		 * rewrites. See sketch.go. */
+		c.repairAgainstSketch(ctx, &reply, sketch, func(line string) {
+			_ = emit(StreamEvent{Kind: "notice", Text: line})
+		})
 		/* And LAST, run the scripts.
 		 *
 		 * A scripted part's shape is not written down anywhere, so every check

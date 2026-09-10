@@ -246,6 +246,65 @@ positive by construction, on a gear whose script had just built 12565.7 mm³. Bo
 fixed; see
 `docs/bugfix/2026-09-09-the-scripts-error-never-reached-the-model.md`.
 
+### Stage 6 — Draw it first, and build against the drawing — **DONE 2026-09-10**
+
+Asked for: FORGE should sketch a 2D image first, analyse it, build the complete
+document from it, build the 3D from the document, and keep working until the 3D
+matches the 2D. Then: *"maybe not just one image but many from different angles."*
+
+**What was built.** `agent/sketch.go` and `llm/illustrate.go`. Before any
+geometry is written, a reference picture is generated from the request, read by
+the vision model into a description of its FORM, and that description goes into
+the prompt that writes the document. When the solid exists it is compared back
+against the same picture, and a difference is a repair.
+
+Generating it AFTER the geometry would make it a picture of what was already
+decided, and comparing a model's work against a picture drawn from that same work
+is a check that cannot fail.
+
+**Two measurements decided the design, and both came from a spike against the
+real generator** (`docs/spikes/2026-09-09-generated-reference-images/`):
+
+| what was asked | what came back |
+|---|---|
+| a 20-tooth involute spur gear | **28–30 teeth**, petal lobes not involute flanks, **no dimensions at all** |
+| front, side and top in three calls | `distinct_viewing_directions: 1` — all three were the front |
+| front, side and top in ONE call | same object in every panel, 2 distinct directions, still not a projection |
+
+So the picture is authoritative for **form** and the request stays authoritative
+for every **count and dimension** — otherwise "keep working until the 3D matches
+the 2D" repairs a correct kernel-verified gear into a 28-tooth petal shape. And
+it is **one call carrying several panels**, never one call per angle: three calls
+buy three times the cost, one viewing direction and three different objects.
+
+**The pattern this stage is really about.** Four times a rule was stated in a
+prompt and not obeyed, and each one needed a deterministic guard behind it:
+
+| the prompt said | what came back | what enforces it now |
+|---|---|---|
+| "Do NOT report any number" | *"**Two** circular holes are drilled…"* | `withoutNumbers` strips them |
+| — the same, spelled out | *"**twenty-eight** teeth"* | hyphen-split word match |
+| "Do NOT comment on…" a solid tool | *"protruding **pins or pegs** sticking out"* | the render's cut tools are named |
+| "Do NOT count anything" | *"three bolt holes … only **two**"* | `formOnly` discards it |
+
+A prompt states an intention; a filter is a guarantee. Every one of those was
+found by running it, not by reading it.
+
+**Measured live, end to end:** against an L-bracket that matches the drawing,
+**0 problems**; against a sphere built for the same request, **1**, correctly
+describing total absence. Passing the right model matters as much as catching the
+wrong one — a checker that complains about a correct model drives repairs that
+damage it, and this repository has already deleted one rule for exactly that.
+
+The live test's own fixture had to be corrected **four times**, and the checker
+was right every time: it found the missing bolt holes, then the missing slot,
+then the pegs, then a count it should not have reported. That is the strongest
+evidence here that the loop works.
+
+**Off unless `FORGE_LLM_IMAGE_MODEL` is set.** It costs 30–60s per geometry turn
+plus two vision calls, and a deployment that will not pay that has the feature
+absent rather than slow — the same discipline the CAD kernel and vision follow.
+
 ## What is NOT promised
 
 - The reference image. See the framing above.

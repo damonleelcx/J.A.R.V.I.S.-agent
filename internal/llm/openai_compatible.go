@@ -77,6 +77,7 @@ func NewOpenAICompatible(cfg config.LLMConfig, log *logx.Logger, clk clock.Clock
 			RoleConverse:    cfg.Converse,
 			RoleTranscriber: cfg.Transcriber,
 			RoleSpeaker:     cfg.Speaker,
+			RoleIllustrator: cfg.Illustrator,
 		},
 		client:     &http.Client{Timeout: cfg.RequestTimeout},
 		log:        log,

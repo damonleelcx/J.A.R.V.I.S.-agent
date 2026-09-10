@@ -53,6 +53,7 @@ func NewConverseHandlers(d Deps) *ConverseHandlers {
 		deps: d,
 		conv: agent.NewConversation(d.LLM, persona.DefaultCharacter()).
 			WithScripts(scriptRunner(d.CAD)).
+			WithIllustrator(illustrator(d.LLM)).
 			WithCharacters(agent.NewCharacterStore(d.Pool, d.Log)).
 			WithDomains(agent.NewDomainStore(d.Pool, d.Log)),
 		geo:       geometry.NewService(d.Pool, d.Clock, d.Log),
