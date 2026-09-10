@@ -93,6 +93,7 @@ FILES=(
   internal/agent/assemble.go
   internal/httpapi/converse.go
   internal/agent/look.go
+  internal/domain/cad/script.py
 )
 
 BACKUP=""
@@ -578,6 +579,21 @@ drill "a later repair can undo the verification" internal/agent/converse.go \
 drill "the vision check is not told what it cannot see" internal/agent/look.go \
   's = s.replace("\tif len(scripted) > 0 {", "\tif false {", 1)' \
   ./internal/agent 'TestScripts_TheVisionCheckIsToldItCannotSeeThem'
+
+echo
+echo "The sandbox, after lambda was allowed"
+# Widening the AST whitelist is the one change in this repository that can only
+# make the sandbox weaker. These two drills are the price: one says the escape is
+# still refused inside a lambda, the other says a lambda's parameter is bound —
+# the half that is a SEPARATE rule from allowing the node, and whose absence
+# refuses a correct script for using its own argument.
+drill "the dunder rule does not reach inside a lambda" internal/domain/cad/script.py \
+  's = s.replace("if isinstance(node, ast.Attribute) and node.attr.startswith(", "if False and node.attr.startswith(", 1)' \
+  ./internal/domain/cad 'TestScript_RefusesTheWayOut'
+
+drill "a lambda's parameters are not bound" internal/domain/cad/script.py \
+  's = s.replace("        elif isinstance(node, ast.Lambda):\n            # Parameters only", "        elif False:\n            # Parameters only", 1)' \
+  ./internal/domain/cad 'TestScript_ALambdaRunsAndItsParameterResolves'
 
 echo
 echo "How long a turn may take"

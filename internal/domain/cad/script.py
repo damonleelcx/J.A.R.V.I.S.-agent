@@ -87,6 +87,28 @@ ALLOWED_NODES = (
     ast.Module, ast.Expr, ast.Assign, ast.AugAssign, ast.AnnAssign,
     ast.For, ast.While, ast.If, ast.Break, ast.Continue, ast.Pass,
     ast.With, ast.withitem, ast.Return, ast.FunctionDef, ast.arguments, ast.arg,
+    # Lambda, for the reason FunctionDef is here and by the same argument.
+    #
+    # ‼️ This is a deliberate widening of the AST whitelist, taken on 2026-09-09
+    # with the security decision made explicitly rather than by omission.
+    #
+    # A lambda's body is a single EXPRESSION, and every node it can contain —
+    # Call, Attribute, Subscript, Name, the operators — is already allowed inside
+    # a `def`, which this list has always permitted. It introduces no node type
+    # that is not reachable without it, binds no name the caller could not bind
+    # with an assignment, and reaches no name the known-names rule does not
+    # already gate. The escape a restricted namespace actually has is dunder
+    # attribute access, and that is refused BY NAME below, inside a lambda body
+    # exactly as anywhere else — TestScript_RefusesTheWayOut proves that with a
+    # lambda now, not only at the top level.
+    #
+    # So refusing Lambda while allowing FunctionDef was an inconsistency, not a
+    # boundary: it withheld the shorter spelling of something already permitted.
+    # It cost real work — on a live run a model wrote
+    # `min(range(n), key=lambda i: abs(...))` inside an involute gear and spent a
+    # whole repair round being told "Lambda is not allowed here", which reads as
+    # a broken sandbox rather than a rule because there is no rule behind it.
+    ast.Lambda,
     ast.Call, ast.Name, ast.Load, ast.Store, ast.Del, ast.Constant,
     ast.List, ast.Tuple, ast.Dict, ast.Set, ast.Subscript, ast.Slice, ast.Index,
     ast.BinOp, ast.UnaryOp, ast.BoolOp, ast.Compare, ast.IfExp,
@@ -146,6 +168,21 @@ def _builder_names():
             continue
         out.add(name)
     return out
+
+
+def _bind_arguments(args, bound):
+    """Adds a def's or a lambda's parameter names to the bound set.
+
+    Every kind, because a parameter this misses is a name the script was GIVEN
+    and would then be refused as unavailable — a correct script rejected for
+    using its own argument.
+    """
+    for a in list(args.args) + list(args.posonlyargs) + list(args.kwonlyargs):
+        bound.add(a.arg)
+    if args.vararg:
+        bound.add(args.vararg.arg)
+    if args.kwarg:
+        bound.add(args.kwarg.arg)
 
 
 def _tolerated_import(node):
@@ -267,12 +304,14 @@ def check(source):
             bound.add(node.id)
         elif isinstance(node, ast.FunctionDef):
             bound.add(node.name)
-            for a in list(node.args.args) + list(node.args.posonlyargs) + list(node.args.kwonlyargs):
-                bound.add(a.arg)
-            if node.args.vararg:
-                bound.add(node.args.vararg.arg)
-            if node.args.kwarg:
-                bound.add(node.args.kwarg.arg)
+            _bind_arguments(node.args, bound)
+        elif isinstance(node, ast.Lambda):
+            # Parameters only: a lambda has no name to bind. Shared with
+            # FunctionDef rather than copied, because a parameter kind handled in
+            # one and not the other would refuse a correct script for a name it
+            # was given — which is the exact failure the comment above this loop
+            # warns two lists would produce.
+            _bind_arguments(node.args, bound)
         elif isinstance(node, ast.withitem) and isinstance(node.optional_vars, ast.Name):
             bound.add(node.optional_vars.id)
     for node in ast.walk(tree):

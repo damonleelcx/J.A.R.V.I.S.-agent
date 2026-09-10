@@ -73,6 +73,17 @@ func TestScript_RefusesTheWayOut(t *testing.T) {
 			"class X: pass\nresult = X", "not allowed"},
 		{"catching the refusal to hide it",
 			"try:\n    import os\nexcept Exception:\n    pass\nresult = 1", "not allowed"},
+		// Lambda was allowed on 2026-09-09. These three are the price of that:
+		// the escape must still be refused when it is spelled inside one, or the
+		// widening moved a rule instead of removing a redundant one. The dunder
+		// check walks every node and does not care where it is, and these say so
+		// by trying it rather than by asserting that it does.
+		{"the documented escape, inside a lambda",
+			"f = lambda: ().__class__.__bases__[0].__subclasses__()\nresult = f()", "__"},
+		{"an unavailable builtin, inside a lambda",
+			"f = lambda p: open(p).read()\nresult = f('/etc/passwd')", "not available"},
+		{"a lambda used to reach a dunder attribute of something given",
+			"f = lambda x: x.__class__\nresult = f(Box(1, 1, 1))", "__"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -419,4 +430,42 @@ func kernelPython(t *testing.T) string {
 	}
 	t.Skip("no python")
 	return ""
+}
+
+// A lambda runs, and its parameter is a name the script was given.
+//
+// # Why this is a fence and not a convenience
+//
+// `ast.Lambda` was absent from ALLOWED_NODES while `ast.FunctionDef` was present
+// — an inconsistency rather than a boundary, since a lambda's body is one
+// expression and every node in it is already allowed inside a def. It was
+// removed deliberately on 2026-09-09 (see the note beside ast.Lambda).
+//
+// The second half matters as much as the first: binding the PARAMETERS is a
+// separate rule from allowing the node. Without it `lambda i: abs(i)` parses,
+// passes the whitelist, and is then refused with "i is not available here" — a
+// correct script rejected for using its own argument, and a refusal that reads
+// as a broken sandbox because no rule stands behind it.
+//
+// The source is the shape a real model wrote: on a live run, an involute gear
+// script used min(range(n), key=lambda i: ...) and spent a whole repair round
+// being told Lambda was not allowed.
+func TestScript_ALambdaRunsAndItsParameterResolves(t *testing.T) {
+	k := scriptKernel(t)
+	source := `pts = [(3.0, 0.0), (1.0, 0.0), (2.0, 0.0)]
+nearest = min(range(len(pts)), key=lambda i: abs(pts[i][0] - 2.0))
+side = 10.0 + nearest
+result = Box(side, side, side)`
+
+	res, err := k.RunScript(context.Background(), source)
+	if err != nil {
+		t.Fatalf("a lambda did not run: %v\n%s", err, source)
+	}
+	// nearest is index 2, so the box is 12mm on a side. Asserted rather than
+	// "it built", because a lambda whose parameter silently resolved to
+	// something else would still build a box.
+	if want := 12.0 * 12.0 * 12.0; res.Volume < want-1 || res.Volume > want+1 {
+		t.Errorf("volume %.1f, want %.1f — the lambda ran but did not compute what it says",
+			res.Volume, want)
+	}
 }
