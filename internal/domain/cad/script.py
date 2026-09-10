@@ -32,6 +32,7 @@ escape. Layer 2 is what stands if layer 1 is ever wrong.
 """
 
 import ast
+import difflib
 import json
 import os
 import resource
@@ -168,6 +169,49 @@ def _builder_names():
             continue
         out.add(name)
     return out
+
+
+def _did_you_mean(name, known):
+    """The available names closest to one that does not exist.
+
+    # Why a refusal should name the alternatives
+
+    "Rotate is not available here" is precise about the mistake and gives the
+    reader nothing to move toward. The reader here is usually a MODEL being asked
+    to correct its own script, and it has no way to enumerate what it may use —
+    so it guesses again. Measured live 2026-09-09: four gear requests failed with
+    `Rotate is not available here` (the name is `Rotation`, or `Rot`),
+    `InvoluteGear is not available here`, and similar. The repair loop spent its
+    whole budget re-guessing at an API rather than fixing geometry.
+
+    # Why close matches and not the whole list
+
+    The known set is 253 names. Pasting it into every refusal buries the sentence
+    that matters and costs tokens on a path that can run several times a turn. A
+    typo or a near-miss is what a suggestion can actually fix, and a name close to
+    nothing gets no suggestion at all — which is both the honest answer and the
+    one that keeps a refusal about reaching outside the sandbox from reading like
+    a spelling correction.
+
+    # Why the cutoff is 0.70 and not difflib's 0.60
+
+    ‼️ Measured against this deployment's own manifest. At 0.60 the refusal for
+    `urlopen` — a script trying to reach the network — came back "Did you mean
+    len?", because difflib scores 2*3/(7+3) = 0.6 for the three shared letters.
+    `socket` suggested `set` and `exec` suggested `Select` on the same rule. At
+    0.70 all three suggest nothing, and `Rotate -> Rotation`, the failure this
+    exists for, survives at 0.857.
+
+    This is a threshold, not a guarantee: `input` still suggests `int`. That
+    costs nothing — `int` IS available, so it discloses nothing and misleads
+    nobody — and the sentence after the suggestion is unchanged and still says
+    there is no file, network or system access of any kind. What 0.70 buys is
+    that the refusals which are ABOUT the boundary do not read as typos.
+    """
+    near = difflib.get_close_matches(name, sorted(known), n=3, cutoff=0.70)
+    if not near:
+        return ""
+    return " Did you mean %s?" % ", ".join(near)
 
 
 def _bind_arguments(args, bound):
@@ -318,10 +362,11 @@ def check(source):
         if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load):
             if node.id not in known and node.id not in bound:
                 raise Refused(
-                    "line %s: %s is not available here. This runs a drawing: the names it "
+                    "line %s: %s is not available here.%s This runs a drawing: the names it "
                     "knows are build123d's builders, the maths functions, and plain Python "
                     "values. There is no file, network or system access of any kind."
-                    % (getattr(node, "lineno", "?"), node.id))
+                    % (getattr(node, "lineno", "?"), node.id,
+                       _did_you_mean(node.id, known)))
     tree = ast.fix_missing_locations(_DropImports().visit(tree))
     return tree
 

@@ -595,6 +595,16 @@ drill "a lambda's parameters are not bound" internal/domain/cad/script.py \
   's = s.replace("        elif isinstance(node, ast.Lambda):\n            # Parameters only", "        elif False:\n            # Parameters only", 1)' \
   ./internal/domain/cad 'TestScript_ALambdaRunsAndItsParameterResolves'
 
+drill "an unavailable name suggests nothing" internal/domain/cad/script.py \
+  's = s.replace("_did_you_mean(node.id, known)", "\"\"", 1)' \
+  ./internal/domain/cad 'TestScript_AnUnavailableNameSuggestsTheCloseOnes'
+
+# The other direction, and the one that actually caught something: at difflib's
+# default cutoff the refusal for `urlopen` came back "Did you mean len?".
+drill "the suggestion cutoff is difflib's loose default" internal/domain/cad/script.py \
+  's = s.replace("cutoff=0.70", "cutoff=0.60", 1)' \
+  ./internal/domain/cad 'TestScript_AnUnavailableNameSuggestsTheCloseOnes'
+
 echo
 echo "How long a turn may take"
 drill "a turn is bounded by one model call's timeout" internal/httpapi/converse.go \

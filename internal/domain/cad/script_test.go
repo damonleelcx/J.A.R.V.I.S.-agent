@@ -469,3 +469,91 @@ result = Box(side, side, side)`
 			res.Volume, want)
 	}
 }
+
+// A refusal that names an unavailable builder says which ones are close.
+//
+// # What this closes
+//
+// "Rotate is not available here" is precise about the mistake and gives the
+// reader nothing to move toward. The reader is usually a MODEL correcting its
+// own script, and it cannot enumerate the 209 names it may use — so it guesses
+// again. Measured live 2026-09-09: after the script-repair loop shipped, the
+// remaining gear failures were `Rotate is not available here` and
+// `InvoluteGear is not available here`, and the loop spent its whole budget
+// re-guessing at an API instead of fixing geometry.
+//
+// # Why the second half matters as much
+//
+// A name that is close to NOTHING must get no suggestion. `urlopen` and
+// `getattr` are refusals about reaching outside the sandbox, and a "did you
+// mean" on one would read as a spelling correction — and would be the first step
+// toward a refusal that helpfully enumerates what it is protecting.
+func TestScript_AnUnavailableNameSuggestsTheCloseOnes(t *testing.T) {
+	k := scriptKernel(t)
+	cases := []struct {
+		name, source string
+		want         []string // must appear
+		absent       []string // must not
+	}{
+		{
+			name:   "the live failure: Rotate, when the name is Rotation",
+			source: "result = Rotate(Box(1, 1, 1), 90)",
+			want:   []string{"Rotate is not available here.", "Did you mean", "Rotation"},
+		},
+		{
+			name:   "a near-miss on a maths function",
+			source: "result = Box(sqrtt(4.0), 1, 1)",
+			want:   []string{"Did you mean", "sqrt"},
+		},
+		{
+			// The other live failure. Nothing in the manifest is close to it, so
+			// the refusal says so and stops — a suggestion invented for a name
+			// with no neighbour would be worse than none.
+			name:   "a builder that was never a builder suggests nothing",
+			source: "result = InvoluteGear(module=2, teeth=20, thickness=6)",
+			want:   []string{"InvoluteGear is not available here."},
+			absent: []string{"Did you mean"},
+		},
+		{
+			// ‼️ At difflib's default cutoff of 0.60 this came back "Did you
+			// mean len?" — three shared letters out of ten. The fence caught it
+			// before it shipped; see the note on the cutoff in script.py.
+			name:   "reaching the network suggests nothing",
+			source: "result = urlopen('http://example.com').read()",
+			want:   []string{"urlopen is not available here."},
+			absent: []string{"Did you mean"},
+		},
+		{
+			name:   "a module name suggests nothing",
+			source: "result = socket.socket()",
+			want:   []string{"socket is not available here."},
+			absent: []string{"Did you mean"},
+		},
+		{
+			name:   "a builtin that is not on the list suggests nothing",
+			source: "result = getattr(1, 'real')",
+			want:   []string{"getattr is not available here."},
+			absent: []string{"Did you mean"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := k.RunScript(context.Background(), tc.source)
+			if err == nil {
+				t.Fatalf("this ran, and it must not:\n%s", tc.source)
+			}
+			got := err.Error()
+			for _, w := range tc.want {
+				if !strings.Contains(got, w) {
+					t.Errorf("the refusal does not contain %q.\ngot: %s", w, got)
+				}
+			}
+			for _, a := range tc.absent {
+				if strings.Contains(got, a) {
+					t.Errorf("the refusal contains %q and must not — a refusal about reaching "+
+						"outside the sandbox is not a spelling mistake.\ngot: %s", a, got)
+				}
+			}
+		})
+	}
+}
