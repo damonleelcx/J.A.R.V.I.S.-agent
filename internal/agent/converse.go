@@ -61,7 +61,17 @@ How to answer:
 // geometryContract is the document format and the whole geometry vocabulary.
 // Anything that asks a model for geometry sends this, or it will get a schema
 // the model made up.
-var geometryContract = `Reply with JSON only:
+// geometryContract is the shape a reply must take.
+//
+// The list of expression functions is SUBSTITUTED from geometry's own table
+// rather than written out here. The two were separate strings, and the contract
+// went on telling the model "there is no sine or cosine here" — a rule the model
+// reads, describing a grammar that had changed underneath it, which is worse
+// than no rule at all. ExpressionFunctionsAreNamedInTheContract fences it.
+var geometryContract = fmt.Sprintf(geometryContractTemplate,
+	strings.Join(geometry.ExpressionFunctions(), ", "))
+
+var geometryContractTemplate = `Reply with JSON only:
 
 {
   "speech": "what to say aloud — short, plain, no markdown",
@@ -215,11 +225,9 @@ About "prototype":
   "repeat" can express. A scripted part is opaque: nobody can read its
   dimensions off the panel, a parameter cannot drive it, and a later revision
   cannot adjust it without rewriting the whole script. Reach for it last.
-  The script assigns "result" to the shape it built. It has build123d's builders,
-  the maths functions, and any of this part's own PARAMETERS that resolve, as
-  names — lengths in millimetres, whole numbers as integers. Nothing else: no
-  imports, no files, no network. It gets a few seconds of processor time and is
-  stopped if it takes more.
+  The script assigns "result" to the shape it built. It has build123d's builders
+  and the maths functions and nothing else: no imports, no files, no network. It
+  gets a few seconds of processor time and is stopped if it takes more.
 - "build_in_passes": true when what they asked for is too big for ONE document —
   a car, an engine, a machine with subsystems. Do not return six boxes and call
   it a concept: say what you are about to build in "speech", set this, and leave
@@ -269,9 +277,11 @@ About "prototype":
   when your number and your own expression disagree — so a rib bound to
   plate_size - 2 * fillet_radius on a 60 mm plate should say 54, not 52.
   An expression may use + - * / ^, brackets, the other parameter names, the
-  constant pi, and sqrt, abs, min, max, floor, ceil and round. There is no sine
-  or cosine here: half the world writes them in degrees and half in radians, so
-  carry an already-resolved length as a parameter instead.
+  constant pi, and these functions: %s.
+  The trigonometric ones are in DEGREES and say so in their name — there is no
+  bare "sin" or "cos", because a document that does not state the convention gets
+  a plausible wrong number rather than an error. Inside a script you have
+  Python's own math and may use radians there.
 - There is NO "tube" shape. A hollow tube is a cylinder with a cylinder cut from
   it when the bore runs straight, and an outline with a "holes" loop when the
   bore follows the part — which is the only one of the two that can turn a

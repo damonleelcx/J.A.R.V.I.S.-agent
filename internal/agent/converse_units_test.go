@@ -224,3 +224,46 @@ func TestScriptAvailabilityReachesThePrompt(t *testing.T) {
 		}
 	}
 }
+
+// The contract names exactly the functions an expression really has.
+//
+// # What this closes
+//
+// The two were separate strings. The contract said "There is no sine or cosine
+// here" and would have gone on saying it after cos_deg was added — a rule the
+// model reads, describing a grammar that had changed underneath it, which is
+// worse than no rule at all: it makes a correct expression look forbidden and
+// sends the model to write something worse instead.
+//
+// The list is now substituted from geometry's own table, so this fence is what
+// proves the substitution actually happened rather than that somebody retyped it
+// accurately today.
+func TestExpressionFunctionsAreNamedInTheContract(t *testing.T) {
+	fns := geometry.ExpressionFunctions()
+	if len(fns) == 0 {
+		t.Fatal("there are no expression functions at all, so this fence measures nothing")
+	}
+	for _, name := range fns {
+		if !strings.Contains(geometryContract, name) {
+			t.Errorf("the contract never mentions %q, so the model cannot know it may use it",
+				name)
+		}
+	}
+	// And the other direction: a function the contract offers must exist.
+	for _, claimed := range []string{"sqrt", "cos_deg", "atan2_deg"} {
+		var found bool
+		for _, name := range fns {
+			if name == claimed {
+				found = true
+			}
+		}
+		if !found && strings.Contains(geometryContract, claimed) {
+			t.Errorf("the contract offers %q and no such function exists", claimed)
+		}
+	}
+	// The ambiguous spellings must not appear as offerings.
+	if strings.Contains(geometryContract, "There is no sine or cosine here") {
+		t.Error("the contract still says there is no sine or cosine, which stopped being " +
+			"true when the degree-named forms were added")
+	}
+}

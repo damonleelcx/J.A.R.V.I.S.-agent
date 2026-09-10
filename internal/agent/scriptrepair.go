@@ -63,6 +63,37 @@ import (
 // kernel built it" — so this loop cannot report a fix that did not work, and it
 // is the only check in the turn that can say that.
 
+// ‼️ The contract does NOT tell the model that a part's parameters are in scope,
+// and that is measured rather than an oversight.
+//
+// A/B against the live endpoint, ten runs each, run in the same hour so the
+// endpoint could not have drifted between them:
+//
+//	parameters absent (the control)          6 of 10 gears build
+//	parameters present and ANNOUNCED          0 of 10
+//	parameters present and not announced      4 of 10
+//
+// Announcing them is what does the damage. Told its parameters are available,
+// the model commits to a parametric document and writes a script that leans on
+// it, and those scripts fail on build123d usage — `with Rotation(...)`,
+// `BRep_API: command not done` — where the literal script it writes otherwise
+// builds. Told nothing, it behaves as it always did.
+//
+// # Why this is not a hidden capability
+//
+// This file's neighbours say, correctly, that a capability nothing announces is a
+// capability nobody uses. That argument does not apply here, because the model
+// ALREADY believes it has this. The very first live run of the script path wrote
+//
+//	m = module
+//	t = teeth_count
+//
+// unprompted, and every one of those names was refused. So the parameters are not
+// an unadvertised feature; they are an assumption the model makes anyway, and
+// what changed is that the assumption is now TRUE instead of an error. Saying so
+// out loud turns a safety net into an invitation, and the invitation measures
+// worse than silence.
+
 // ScriptRunner runs one model-written script and says whether it built.
 //
 // Narrow on purpose. The only thing this needs from the CAD kernel is a verdict
@@ -125,13 +156,8 @@ Rules:
   built, not choosing something simpler to build instead.
 - Assign the finished solid to ` + "`result`" + `. It must be a solid with volume,
   not a sketch, a wire or an empty compound.
-- This runs a DRAWING, not a program. build123d's builders, the maths functions,
-  and this document's own PARAMETERS are already in scope by name — lengths in
-  millimetres, whole numbers as integers. Only values that RESOLVE are there: a
-  "derived" entry FORGE could not evaluate is absent, and "<name> is not
-  available here" for something you declared means exactly that. Expressions have
-  no sine or cosine, so compute anything trigonometric here in the script, where
-  cos, sin, tan and radians all work. ` + "`import math`" + ` and
+- This runs a DRAWING, not a program. build123d's builders and the maths
+  functions are already in scope. ` + "`import math`" + ` and
   ` + "`from build123d import *`" + ` are tolerated and do nothing; any other import,
   and any file, network or system access, is refused before the script runs.
 - ` + "`def`" + `, ` + "`lambda`" + `, loops and comprehensions are all allowed, and so are

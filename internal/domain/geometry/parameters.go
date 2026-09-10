@@ -350,7 +350,10 @@ func (d *Document) Resolve() Resolution {
 				progress = true
 				continue
 			}
-			unit, mixed := inheritedUnit(p.refs, res.Values)
+			// The refs whose unit it INHERITS, which is not the same set as the
+			// refs it depends on: a trigonometric function eats its argument's
+			// unit. See UnitReferences.
+			unit, mixed := inheritedUnit(p.node.UnitReferences(), res.Values)
 			if mixed != "" {
 				add(Error, p.name, "mixes units: %s. A derived value cannot inherit a "+
 					"unit from parameters that disagree, so it is reported without one", mixed)

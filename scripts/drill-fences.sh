@@ -95,6 +95,8 @@ FILES=(
   internal/agent/look.go
   internal/domain/cad/script.py
   internal/domain/cad/script.go
+  internal/domain/geometry/expression.go
+  internal/domain/geometry/parameters.go
   internal/agent/sketch.go
   internal/llm/illustrate.go
   internal/agent/render.go
@@ -526,6 +528,35 @@ drill "the conversation role is allowed to deliberate" internal/llm/deliberation
 drill "the STREAMING path forgets to say it" internal/llm/stream.go \
   's = s.replace("\tc.applyDeliberation(ctx, req.Role, body)\n", "", 1)' \
   ./internal/llm 'TestTheStreamingPathIsToldToo'
+
+echo
+echo "Trigonometry in expressions"
+# Added 2026-09-10 because its absence had a measured cost: a gear's base_radius
+# could not resolve, so it was not in scope for the part's script, so the script
+# naming it was refused. The naming is the whole safety argument, and the unit
+# rule is what makes it usable at all.
+drill "the degree-named trigonometry is gone again" internal/domain/geometry/expression.go \
+  's = s.replace(chr(34) + "cos_deg" + chr(34) + ": {1,", chr(34) + "cos_deg_disabled" + chr(34) + ": {1,", 1)' \
+  ./internal/domain/geometry 'TestExpression_TrigonometryInDegrees'
+
+drill "the ambiguous spelling is offered too" internal/domain/geometry/expression.go \
+  's = s.replace(chr(34) + "sin_deg" + chr(34) + ": {1,", chr(34) + "cos" + chr(34) + ": {1,", 1)' \
+  ./internal/domain/geometry 'TestExpression_BareTrigonometryIsStillAbsent|TestExpression_UnstatedConventionTrigonometryIsRefusedOnPurpose'
+
+drill "a right angle's tangent is a very large number" internal/domain/geometry/expression.go \
+  's = s.replace("if math.Mod(math.Abs(a[0])-90, 180) == 0 {", "if false {", 1)' \
+  ./internal/domain/geometry 'TestExpression_TrigonometryRefusesTheUndefined'
+
+# ‼️ Without this, adding cos_deg MOVES the failure rather than removing it:
+# `pitch_radius * cos_deg(pressure_angle)` reads mm and deg, and the value is
+# refused for mixing units. The fence caught that on the first run.
+drill "a trig function lends its argument's unit to the result" internal/domain/geometry/parameters.go \
+  's = s.replace("inheritedUnit(p.node.UnitReferences(), res.Values)", "inheritedUnit(p.refs, res.Values)", 1)' \
+  ./internal/domain/geometry 'TestExpression_TrigonometryInDegrees'
+
+drill "the contract stops naming the real function list" internal/agent/converse.go \
+  's = s.replace("strings.Join(geometry.ExpressionFunctions(), \", \")", chr(34) + "sqrt, abs" + chr(34), 1)' \
+  ./internal/agent 'TestExpressionFunctionsAreNamedInTheContract'
 
 echo
 echo "Running the scripts the model wrote"

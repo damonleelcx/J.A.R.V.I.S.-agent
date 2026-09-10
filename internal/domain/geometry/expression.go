@@ -42,13 +42,31 @@ import (
 //
 // # What is deliberately NOT here
 //
-// TRIGONOMETRY. sin/cos/tan are absent, and their absence is the feature. Half
-// the engineering world writes them in degrees and half in radians, the two
-// agree only at zero, and a wrong one produces a plausible number rather than an
-// error. That is precisely the failure mode this phase exists to catch, and
-// adding a function whose meaning depends on a convention nobody stated would be
-// building it in. If a model needs an angle it can carry the resolved length as
-// a parameter, where a person can see the figure.
+// AMBIGUOUS TRIGONOMETRY. Bare sin/cos/tan are absent, and their absence is
+// still the feature. Half the engineering world writes them in degrees and half
+// in radians, the two agree only at zero, and a wrong one produces a plausible
+// number rather than an error — precisely the failure mode this phase exists to
+// catch. A function whose meaning depends on a convention nobody stated would be
+// building that in.
+//
+// # ‼️ What answered that, 2026-09-10, and why the argument above still holds
+//
+// The convention is now stated IN THE NAME. `cos_deg` cannot be read two ways,
+// so there is no unstated convention left to get wrong, and the ambiguous
+// spellings are deliberately NOT offered — adding `cos` beside `cos_deg` would
+// hand the ambiguity straight back.
+//
+// Degrees rather than radians because this is a drawing: a pressure angle is
+// 20°, a draft is 3°, a chamfer is 45°. Nobody writes a document in radians, and
+// the one place radians are wanted — inside a script — has Python's own `math`.
+//
+// It was added because the absence had a measured cost. A model asked for a gear
+// declares `base_radius = pitch_radius * cos(pressure_angle)`, which could not
+// resolve, so the value was not in scope for the part's script, so the script
+// naming it was refused: six of nine failures in one live run. Carrying "the
+// resolved length as a parameter instead" is what the old advice said, and a
+// model does not do it — it writes the relationship, which is the whole point of
+// Derived existing.
 //
 // UNIT ALGEBRA. Resolve tracks the unit a derived value inherits (see
 // resolution.go) but does not multiply or divide units. `a * b` of two lengths
@@ -77,6 +95,60 @@ var exprFuncs = map[string]struct {
 	"round": {1, func(a []float64) (float64, error) { return math.Round(a[0]), nil }},
 	"min":   {2, func(a []float64) (float64, error) { return math.Min(a[0], a[1]), nil }},
 	"max":   {2, func(a []float64) (float64, error) { return math.Max(a[0], a[1]), nil }},
+
+	// Trigonometry, in DEGREES, and saying so in the name. See the header on why
+	// the bare spellings are not here and must not be added.
+	//
+	// finite() guards each one, because the interesting failures here are values
+	// rather than errors: tan_deg(90) is a vertical line and Go returns 1.6e16
+	// for it rather than an error, and a document that quietly carried 1.6e16 mm
+	// would draw a part the size of the solar system. A number that is not
+	// finite is a broken relationship, not a big one.
+	"sin_deg": {1, func(a []float64) (float64, error) {
+		return finite("sin_deg", math.Sin(a[0]*math.Pi/180))
+	}},
+	"cos_deg": {1, func(a []float64) (float64, error) {
+		return finite("cos_deg", math.Cos(a[0]*math.Pi/180))
+	}},
+	"tan_deg": {1, func(a []float64) (float64, error) {
+		// 90° and every 180° after it. Named, because "tan_deg produced +Inf"
+		// tells a reader nothing about their document and this does.
+		if math.Mod(math.Abs(a[0])-90, 180) == 0 {
+			return 0, fmt.Errorf("tan_deg(%g) has no value: the tangent of a right angle is "+
+				"undefined", a[0])
+		}
+		return finite("tan_deg", math.Tan(a[0]*math.Pi/180))
+	}},
+	// The inverse, so an angle can be DERIVED from two lengths — a taper, a
+	// chamfer, the lead of a helix. Two arguments rather than one because
+	// atan2 is the form that works in every quadrant and needs no sign rules.
+	"atan2_deg": {2, func(a []float64) (float64, error) {
+		return finite("atan2_deg", math.Atan2(a[0], a[1])*180/math.Pi)
+	}},
+}
+
+// finite refuses a result that is not a number a document can carry.
+func finite(name string, v float64) (float64, error) {
+	if math.IsNaN(v) || math.IsInf(v, 0) {
+		return 0, fmt.Errorf("%s produced a value that is not a finite number", name)
+	}
+	return v, nil
+}
+
+// ExpressionFunctions is every function a derived expression may call, sorted.
+//
+// Exported so the model's contract can be BUILT from this table rather than
+// repeating it. The two were written separately and the contract said "there is
+// no sine or cosine here" for as long as that was true and would have gone on
+// saying it — a rule the model reads, describing a grammar that had changed
+// underneath it, is worse than no rule.
+func ExpressionFunctions() []string {
+	out := make([]string, 0, len(exprFuncs))
+	for name := range exprFuncs {
+		out = append(out, name)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // exprConsts are the names that resolve without a parameter.
@@ -131,6 +203,67 @@ func parseExpression(src string) (*exprNode, error) {
 // trustworthy as the parameters underneath it, so provenance has to travel along
 // these edges — see standards.go, which propagates a "quoted from a standard"
 // claim from a parameter to every derived value that reads it.
+// unitConsuming are the functions whose RESULT does not carry the unit of what
+// they read.
+//
+// # Why this is not the beginning of unit algebra
+//
+// The header says this file does not multiply or divide units, and that is still
+// true: `a * b` of two lengths is still reported as a length. This is a much
+// smaller statement — that a trigonometric function EATS its argument's unit. A
+// cosine of an angle is a ratio and carries no unit at all; an atan2 of two
+// lengths is an angle and carries neither of theirs.
+//
+// It is here because without it degree trigonometry is unusable. The live case:
+//
+//	base_radius = pitch_radius * cos_deg(pressure_angle)
+//
+// reads a parameter in mm and one in deg, and inheritedUnit reported "mixes
+// units: deg and mm" and refused the whole value — so adding cos_deg without
+// this would have moved the failure rather than removed it, which the fence
+// caught on the first run.
+//
+// Only unit INHERITANCE is affected. References() is untouched, so the
+// dependency edges are unchanged and a standards claim still propagates along
+// them: pressure_angle is still a thing base_radius depends on, and is still
+// checkable, it just does not lend it "deg".
+var unitConsuming = map[string]bool{
+	"sin_deg": true, "cos_deg": true, "tan_deg": true, "atan2_deg": true,
+}
+
+// UnitReferences are the references whose unit this expression INHERITS.
+//
+// The same walk as References, skipping the arguments of a unit-consuming
+// function. A value that reads nothing but those inherits no unit and is
+// reported without one, which is the honest answer: nobody said what a ratio is
+// measured in, because nothing is.
+func (n *exprNode) UnitReferences() []string {
+	seen := map[string]bool{}
+	var walk func(*exprNode)
+	walk = func(x *exprNode) {
+		if x == nil {
+			return
+		}
+		if x.kind == "ref" {
+			seen[x.name] = true
+		}
+		if x.kind == "call" && unitConsuming[x.name] {
+			return
+		}
+		walk(x.child)
+		for _, a := range x.args {
+			walk(a)
+		}
+	}
+	walk(n)
+	out := make([]string, 0, len(seen))
+	for k := range seen {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
 func (n *exprNode) References() []string {
 	seen := map[string]bool{}
 	var walk func(*exprNode)

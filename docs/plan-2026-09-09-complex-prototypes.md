@@ -468,7 +468,60 @@ parameter, and was pointed at build123d's `Mode` enum.
 name is `PolarLocations`, and no edit distance bridges those. That is a semantic
 gap, not a spelling one, and nothing here closes it.
 
-### ‼️ The largest remaining gap: a script cannot see the document's parameters
+### Stage 9 — Degree trigonometry, and parameters a script can read — **DONE 2026-09-10**
+
+**Trigonometry in expressions, with the convention in the name.** `sin_deg`,
+`cos_deg`, `tan_deg`, `atan2_deg`. The old absence was a documented decision —
+half the world writes sine in degrees and half in radians, they agree only at
+zero, and the wrong one gives a plausible number rather than an error — and that
+argument is answered by naming rather than ignored. The bare spellings are still
+refused, and a fence holds them out: offering `cos` beside `cos_deg` hands the
+ambiguity straight back.
+
+Two things it needed beyond the table:
+
+- `tan_deg(90)` returns 1.6e16 in Go rather than an error, and a document quietly
+  carrying 1.6e16 mm would draw a part the size of the solar system. Refused by
+  name.
+- ‼️ **A trig function eats its argument's unit.** Without that, adding `cos_deg`
+  MOVES the failure instead of removing it: `pitch_radius * cos_deg(pressure_angle)`
+  reads mm and deg, and the value was refused for *"mixes units: deg and mm"*.
+  The fence caught it on the first run. Dependency edges are untouched, so a
+  standards claim still propagates — `pressure_angle` is still something
+  `base_radius` depends on, it just does not lend it a unit.
+
+The contract's function list is now **substituted from geometry's own table**. The
+two were separate strings, and the contract went on saying *"There is no sine or
+cosine here"* — a rule the model reads, describing a grammar that had changed
+underneath it, which is worse than no rule at all.
+
+**Parameters are in a script's scope — and deliberately not announced.**
+
+| | gears that build |
+|---|---|
+| parameters absent (control) | **6 of 10** |
+| parameters present and ANNOUNCED | **0 of 10** |
+| parameters present, contract silent | **4 of 10** |
+
+All three measured against the live endpoint, and the control re-run in the same
+hour as the others so drift could not explain it. Announcing them is what does
+the damage: told its parameters are available, the model commits to a parametric
+document and writes a script leaning on it, and those fail on build123d usage
+where the literal script it writes otherwise builds.
+
+This is not a hidden capability. The model already believes it has this — the
+first live run of the script path wrote `m = module`, `t = teeth_count`
+unprompted and every name was refused. What changed is that the assumption is now
+true instead of an error. Saying it out loud turns a safety net into an
+invitation, and the invitation measures worse than silence.
+
+Lengths arrive in millimetres (a `cm` parameter injected raw builds a part ten
+times too small, silently, in the one shape whose dimensions nobody can read),
+whole numbers arrive as integers (the first version handed everything over as
+floats and `range(teeth_count)` raised in 6 of 9 runs), a builder always wins a
+name collision, and a name starting with `_` never becomes a name.
+
+### The gap this closed
 
 Four of ten live runs failed, and the most informative one wrote:
 
