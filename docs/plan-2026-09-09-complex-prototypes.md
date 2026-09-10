@@ -233,6 +233,11 @@ lifted on the one endpoint whose job is to stay open.
 kernel-verified, against 0 before — and the two that do not now say so **in the
 turn**, with the builder's sentence, instead of on an export hours later.
 
+A second live turn after both fixes landed asked for a 16-tooth m2.5 gear
+alongside the first: no shape complaint from the visual check, a *true* overlap
+complaint instead, corrected — and both scripts in the stored document still
+built when pulled from Postgres and run in the pod (12565.7 and 10176.6 mm³).
+
 **Two defects in this stage were found by the live run and not by reading it:**
 the verification did not have the last word (two later repairs hand back whole
 new documents), and the visual check reports every scripted part as "a

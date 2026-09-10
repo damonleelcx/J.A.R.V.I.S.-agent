@@ -218,6 +218,32 @@ floating" are answerable about a block and worth keeping.
 Neither of these was findable by reading. Both came from one turn on the real
 deployment.
 
+### Both fixes confirmed on the deployment
+
+Redeployed as `forge@sha256:1b803b25…` (`deploy/verify.sh` 8/8) and asked for a
+second gear in the same project: *"a 16-tooth involute spur gear, module 2.5,
+8mm thick, with a 10mm bore"*.
+
+- **No shape complaint.** The visual check no longer reports the scripted part as
+  a block. What it said instead was
+  *"Gear Body: The part is completely hidden inside the Gear Body 16T part, as
+  only one block is visible in the views despite two parts being listed"* — which
+  is question 1, is answerable about a block, was **true** (both gears sat at the
+  origin), and was corrected.
+- **The verification survived that correction.** The visual repair handed back a
+  whole new document and the script check ran after it. Both scripts were then
+  pulled out of Postgres and run against the kernel in the running pod:
+
+  | part | volume |
+  |---|---|
+  | `gear-body` (20-tooth, m2) | 12565.7 mm³ |
+  | `gear-body-16t` (16-tooth, m2.5) | 10176.6 mm³ |
+
+  10176.6 is the right *number*, not merely a non-zero one: a plain m2.5 16-tooth
+  pitch disc 8mm thick is 10053 mm³, plus teeth, minus a 10mm bore.
+
+Under the old ordering that second document would have been stored unverified.
+
 ## How often it works now
 
 Measured against `qwen3.7-plus` with a real build123d, asking for a 20-tooth
