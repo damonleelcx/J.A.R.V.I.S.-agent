@@ -631,8 +631,20 @@ drill "a lambda's parameters are not bound" internal/domain/cad/script.py \
   's = s.replace("        elif isinstance(node, ast.Lambda):\n            # Parameters only", "        elif False:\n            # Parameters only", 1)' \
   ./internal/domain/cad 'TestScript_ALambdaRunsAndItsParameterResolves'
 
+# ‼️ No cutoff separates the good suggestions from the bad: Rotate -> Rotation
+# scores 0.714 while module -> Mode scores 0.800. The shared-prefix requirement
+# is what does it, and both directions are drilled — dropping it lets `module`
+# suggest `Mode` again, and tightening it drops the suggestion this exists for.
+drill "a suggestion need not share the start of the word" internal/domain/cad/script.py \
+  's = s.replace("if shared_prefix(typed, candidate) >= 0.70 * len(typed):", "if True:", 1)' \
+  ./internal/domain/cad 'TestScript_AnUnavailableNameSuggestsTheCloseOnes'
+
+drill "the prefix requirement is tight enough to lose Rotation" internal/domain/cad/script.py \
+  's = s.replace("0.70 * len(typed)", "1.00 * len(typed)", 1)' \
+  ./internal/domain/cad 'TestScript_AnUnavailableNameSuggestsTheCloseOnes'
+
 drill "the suggestion is case-sensitive again" internal/domain/cad/script.py \
-  's = s.replace("difflib.get_close_matches(name.lower(), sorted(folded)", "difflib.get_close_matches(name, sorted(known)", 1)' \
+  's = s.replace("difflib.get_close_matches(typed, sorted(folded)", "difflib.get_close_matches(name, sorted(folded)", 1)' \
   ./internal/domain/cad 'TestScript_AnUnavailableNameSuggestsTheCloseOnes'
 
 drill "an unavailable name suggests nothing" internal/domain/cad/script.py \
@@ -641,6 +653,11 @@ drill "an unavailable name suggests nothing" internal/domain/cad/script.py \
 
 # The other direction, and the one that actually caught something: at difflib's
 # default cutoff the refusal for `urlopen` came back "Did you mean len?".
+#
+# ‼️ Mutates BOTH the cutoff and the shared-prefix rule. Two rules now stop this
+# independently, so breaking one leaves the other standing and the drill reports
+# "not a fence" about a property that is doubly held — which is how defence in
+# depth reads to a single-point mutation.
 # Once the names resolved, what was left across four live gear requests was the
 # model guessing at the API behind a name that EXISTS — BuildSketch(local_mode=…),
 # Standard_TypeMismatch. The signature comes from the library that is installed,
@@ -666,7 +683,7 @@ drill "a suggested name comes without its signature" internal/domain/cad/script.
 # `urlopen` suggests a name again, and the suggestion then drags a signature in
 # behind it. Both tests are named because the two effects arrive together.
 drill "a security refusal gains a signature lesson" internal/domain/cad/script.py \
-  's = s.replace("cutoff=0.70", "cutoff=0.30", 1)' \
+  's = s.replace("cutoff=0.70", "cutoff=0.30", 1); s = s.replace("if shared_prefix(typed, candidate) >= 0.70 * len(typed):", "if True:", 1)' \
   ./internal/domain/cad 'TestScript_ReachingOutsideStillSaysNothingHelpful|TestScript_AnUnavailableNameSuggestsTheCloseOnes'
 
 # `@` was allowed on 2026-09-10 — every other binary operator on that line
@@ -686,7 +703,7 @@ drill "a refusal names the parser's word, not the author's" internal/domain/cad/
   ./internal/domain/cad 'TestScript_ARefusalNamesWhatWasWritten'
 
 drill "the suggestion cutoff is difflib's loose default" internal/domain/cad/script.py \
-  's = s.replace("cutoff=0.70", "cutoff=0.60", 1)' \
+  's = s.replace("cutoff=0.70", "cutoff=0.60", 1); s = s.replace("if shared_prefix(typed, candidate) >= 0.70 * len(typed):", "if True:", 1)' \
   ./internal/domain/cad 'TestScript_AnUnavailableNameSuggestsTheCloseOnes'
 
 echo

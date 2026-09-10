@@ -445,9 +445,49 @@ case-sensitive comparison scores those no better than a typo. Measured against
 this manifest, folding adds `BOX -> Box` and costs nothing: the names that must
 suggest nothing (`urlopen`, `getattr`, `socket`, `exec`) still suggest nothing.
 
+**And a suggestion must share the START of the typed name** — which is the rule
+that actually works, and no cutoff does. Measured against this manifest:
+
+| typed | suggested | score |
+|---|---|---|
+| `Rotate` | `Rotation` | **0.714** — the suggestion this feature exists for |
+| `module` | `Mode` | 0.800 — nonsense: a gear term and an enum |
+| `thickness` | `thicken` | 0.750 — nonsense: a parameter and an operation |
+| `input` | `int` | 0.750 — nonsense |
+
+The one that matters scores **lower** than the three that mislead, so any
+threshold keeping it keeps them. A misspelling preserves the start of a word —
+`Cylindr`, `polyline`, `BOX`, `sqrtt`, `make_facee` all do — and a wrong word does
+not. Requiring 70% of the typed name to match as a prefix separates the two sets
+completely, and drops the `input -> int` junk the cutoff alone had let through.
+
+`module -> Mode` was **live**: a model wrote `m = module`, reaching for the gear
+parameter, and was pointed at build123d's `Mode` enum.
+
 **What string distance cannot reach.** A live run asked for `polarArray`; the real
 name is `PolarLocations`, and no edit distance bridges those. That is a semantic
 gap, not a spelling one, and nothing here closes it.
+
+### ‼️ The largest remaining gap: a script cannot see the document's parameters
+
+Four of ten live runs failed, and the most informative one wrote:
+
+```python
+m = module
+t = teeth_count
+pa = pressure_angle_deg * math.pi / 180
+thick = thickness
+```
+
+Every one of those is a **parameter of the document the script belongs to** — the
+panel shows them, `geometry.Parameters` resolves them, and the script's namespace
+has none of them. The model assumes they are in scope because they are part of
+the same part, and it is not an unreasonable assumption.
+
+Nothing here closes that, and it is not a spelling problem: no suggester can turn
+`module` into a number the document already holds. It needs the parameters put
+into the script namespace, which is a change to what a script can SEE — a contract
+decision, not a bug fix, and it is not taken here.
 
 ## What is NOT promised
 

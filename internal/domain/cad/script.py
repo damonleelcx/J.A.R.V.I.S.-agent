@@ -245,8 +245,43 @@ def _did_you_mean(name, known):
     folded = {}
     for real in sorted(known):
         folded.setdefault(real.lower(), real)
-    near = [folded[k] for k in
-            difflib.get_close_matches(name.lower(), sorted(folded), n=3, cutoff=0.70)]
+
+    # ‼️ And the candidate must share the START of the typed name.
+    #
+    # # Why edit distance alone is not enough
+    #
+    # A cutoff cannot separate the good suggestions from the bad ones here, and
+    # that is measured rather than assumed. Against this manifest:
+    #
+    #     Rotate     -> Rotation   0.714   the suggestion this feature exists for
+    #     module     -> Mode       0.800   nonsense: a gear term and an enum
+    #     thickness  -> thicken    0.750   nonsense: a parameter and an operation
+    #     input      -> int        0.750   nonsense
+    #
+    # The one that matters scores LOWER than the three that mislead, so any
+    # threshold that keeps it keeps them. `module -> Mode` was live: a model
+    # wrote `m = module`, reaching for a gear parameter, and was told to consider
+    # build123d's Mode enum.
+    #
+    # A misspelling preserves the START of a word — `Cylindr`, `polyline`, `BOX`,
+    # `sqrtt`, `make_facee` all do — and a wrong word does not. Requiring 70% of
+    # the typed name to match as a prefix separates the two sets completely on
+    # this manifest, and it drops the junk the cutoff alone let through.
+    def shared_prefix(a, b):
+        n = 0
+        for x, y in zip(a, b):
+            if x != y:
+                break
+            n += 1
+        return n
+
+    typed = name.lower()
+    near = []
+    for candidate in difflib.get_close_matches(typed, sorted(folded), n=5, cutoff=0.70):
+        if shared_prefix(typed, candidate) >= 0.70 * len(typed):
+            near.append(folded[candidate])
+        if len(near) == 3:
+            break
     if not near:
         return ""
     return " Did you mean %s?" % ", ".join(near)

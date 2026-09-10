@@ -530,6 +530,26 @@ func TestScript_AnUnavailableNameSuggestsTheCloseOnes(t *testing.T) {
 			absent: []string{"Did you mean"},
 		},
 		{
+			// ‼️ The live one. A model wrote `m = module`, reaching for the gear
+			// parameter, and was told to consider build123d's `Mode` enum — an
+			// edit-distance score of 0.800, HIGHER than Rotate -> Rotation at
+			// 0.714, which is why no cutoff can separate them and the suggestion
+			// has to share the start of the word instead.
+			name:   "a word that is not a misspelling of anything",
+			source: "m = module\nresult = Box(m, m, m)",
+			want:   []string{"module is not available here."},
+			absent: []string{"Did you mean"},
+		},
+		{
+			// The same shape, and the reason it happens: these are the DOCUMENT's
+			// parameters, which a script cannot see. Suggesting `thicken` for
+			// `thickness` sends the repair somewhere useless.
+			name:   "another of the document's parameters",
+			source: "result = Box(thickness, thickness, thickness)",
+			want:   []string{"thickness is not available here."},
+			absent: []string{"Did you mean"},
+		},
+		{
 			// ‼️ At difflib's default cutoff of 0.60 this came back "Did you
 			// mean len?" — three shared letters out of ten. The fence caught it
 			// before it shipped; see the note on the cutoff in script.py.
