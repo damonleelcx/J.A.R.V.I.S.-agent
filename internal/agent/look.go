@@ -76,15 +76,14 @@ you should not feel obliged to find something.`
 //
 // errNoVision is the one absence that is NOT a problem: this deployment ships
 // with vision deliberately unconfigured, and the caller stays quiet about that.
-func (c *Conversation) look(ctx context.Context, doc *Prototype, asked string) ([]geometry.Problem, error) {
+func (c *Conversation) look(ctx context.Context, doc *Prototype, asked string, sheet builtSheet) ([]geometry.Problem, error) {
 	if c == nil || c.client == nil || doc == nil {
 		return nil, errNoVision
 	}
 	if c.client.ModelFor(llm.RoleVision) == "" {
 		return nil, errNoVision
 	}
-	sheet := geometry.ContactSheet(*doc, geometry.Millimetre, sheetSize)
-	if sheet == "" {
+	if sheet.Image == "" {
 		return nil, errNothingToSee
 	}
 
@@ -97,9 +96,16 @@ func (c *Conversation) look(ctx context.Context, doc *Prototype, asked string) (
 	prompt := "This was built in answer to: " + asked +
 		"\n\nThe parts are: " + strings.Join(parts, ", ")
 
+	// And, ONLY when this picture is the described one rather than the built
+	// one, what it is lying about. Both apologies used to live here in full; they
+	// are shared with the sketch comparison now (render.go), because the same
+	// blind spot explained in two places drifts into two different explanations,
+	// either of which can be fixed without the other.
+	prompt += describedRenderNote(doc, sheet)
+
 	resp, err := c.client.Complete(ctx, llm.Request{
 		Role:     llm.RoleVision,
-		Messages: []llm.Message{{Role: llm.System, Content: lookSystem}, {Role: llm.User, Content: prompt, Images: []string{sheet}}},
+		Messages: []llm.Message{{Role: llm.System, Content: lookSystem}, {Role: llm.User, Content: prompt, Images: []string{sheet.Image}}},
 		JSONMode: true,
 		// Generous, because a reasoning model spends its budget thinking and
 		// then has nothing left to answer with. Measured on qwen3.8-max, a
@@ -183,11 +189,11 @@ var (
 // will not build has a worse problem than one that looks wrong; and after
 // repairIfTurned, because a part turned on its side is measurable and does not
 // need an opinion.
-func (c *Conversation) repairIfItLooksWrong(ctx context.Context, reply *Reply, asked string) {
-	if reply == nil || reply.Prototype == nil {
+func (c *Conversation) repairIfItLooksWrong(ctx context.Context, reply *Reply, asked string, sheet *builtSheet) {
+	if reply == nil || reply.Prototype == nil || sheet == nil {
 		return
 	}
-	seen, err := c.look(ctx, reply.Prototype, asked)
+	seen, err := c.look(ctx, reply.Prototype, asked, *sheet)
 	if errors.Is(err, errNoVision) {
 		return // deliberate absence: see the config note in converse.go
 	}
@@ -205,6 +211,9 @@ func (c *Conversation) repairIfItLooksWrong(ctx context.Context, reply *Reply, a
 	if fixed := c.repairGeometry(ctx, before, seen); fixed != nil {
 		if len(fixed.Faults()) <= len(before.Faults()) && len(turnedOnItsSide(before, fixed)) == 0 {
 			reply.Prototype = fixed
+			// The picture is now of a document that no longer exists. Re-drawn
+			// so whatever runs next compares against what is actually there.
+			*sheet = c.render(ctx, reply.Prototype)
 			reply.noteRepair("Looking at the model it had just built, FORGE found " +
 				problemWord(len(seen)) + " and corrected it: " + seen[0].Detail)
 			return
@@ -227,5 +236,21 @@ func problemWord(n int) string {
 // the same reason RepairForTest exists: only a real vision model can answer
 // whether this premise holds, and it lives in the external test package.
 func LookForTest(ctx context.Context, c *Conversation, doc *Prototype, asked string) ([]geometry.Problem, error) {
-	return c.look(ctx, doc, asked)
+	return c.look(ctx, doc, asked, c.render(ctx, doc))
+}
+
+// AskVisionForTest puts one closed question to the vision model about one
+// picture, for the live test that has to show the SAME question answered
+// differently about two renders of the same document.
+func AskVisionForTest(ctx context.Context, c *Conversation, question, image string) (string, error) {
+	resp, err := c.client.Complete(ctx, llm.Request{
+		Role:      llm.RoleVision,
+		Messages:  []llm.Message{{Role: llm.User, Content: question, Images: []string{image}}},
+		JSONMode:  true,
+		MaxTokens: 500,
+	})
+	if err != nil {
+		return "", err
+	}
+	return resp.Content, nil
 }

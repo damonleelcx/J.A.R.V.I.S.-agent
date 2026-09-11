@@ -90,18 +90,25 @@ func TestExpression_RefusalsAreNamedAndPositioned(t *testing.T) {
 	}
 }
 
-// The absence of trigonometry is a feature, and this is what keeps it absent.
+// The absence of UNSTATED-CONVENTION trigonometry is a feature, and this keeps
+// it absent.
 //
 // sin/cos/tan are written in degrees by half the engineering world and radians
 // by the other half; the two agree only at zero, and the wrong one produces a
 // plausible number rather than an error. Adding them without stating a
 // convention would build the exact failure this phase exists to catch.
-func TestExpression_TrigonometryIsRefusedOnPurpose(t *testing.T) {
-	for _, fn := range []string{"sin", "cos", "tan", "asin", "atan2"} {
+//
+// ‼️ 2026-09-10: the degree-named forms — cos_deg and friends — WERE added, and
+// this fence was renamed rather than deleted, because its argument is the reason
+// the naming was chosen. What must stay absent is the bare spelling: offering
+// `cos` beside `cos_deg` hands the ambiguity straight back.
+// TestExpression_BareTrigonometryIsStillAbsent is the same claim from the other
+// side, over the exported function list.
+func TestExpression_UnstatedConventionTrigonometryIsRefusedOnPurpose(t *testing.T) {
+	for _, fn := range []string{"sin", "cos", "tan", "asin", "atan2", "radians"} {
 		_, res := evalOne(t, fn+"(a)")
 		if res.OK() {
-			t.Fatalf("%s() resolved; it must stay absent until a document can state "+
-				"degrees or radians", fn)
+			t.Fatalf("%s() resolved; only the forms that NAME their convention may exist", fn)
 		}
 	}
 }
@@ -161,5 +168,108 @@ func TestExpression_AStrayCharacterIsNeverDropped(t *testing.T) {
 	}
 	if !found {
 		t.Errorf("the message names neither the character nor its position: %+v", res.Problems)
+	}
+}
+
+// Trigonometry, in degrees, named so nobody has to guess the convention.
+//
+// # Why this exists at all
+//
+// The absence of sin/cos was a documented decision — half the engineering world
+// writes them in degrees, half in radians, they agree only at zero, and a wrong
+// one produces a plausible number rather than an error. That argument still
+// stands, and is answered by putting the convention in the NAME rather than by
+// ignoring it. The bare spellings are deliberately still absent.
+//
+// It was added because the absence had a measured cost: a model asked for a gear
+// declares base_radius = pitch_radius * cos(pressure_angle), which could not
+// resolve, so the value was not in scope for the part's script, so the script
+// naming it was refused — six of nine failures in one live run.
+func TestExpression_TrigonometryInDegrees(t *testing.T) {
+	doc := &geometry.Document{
+		Units: "mm",
+		Parameters: []geometry.Parameter{
+			{Name: "pressure_angle", Value: 20, Unit: "deg"},
+			{Name: "pitch_radius", Value: 20, Unit: "mm"},
+			{Name: "rise", Value: 3, Unit: "mm"},
+			{Name: "run", Value: 4, Unit: "mm"},
+		},
+		Derived: []geometry.Derived{
+			// The live case, verbatim in shape.
+			{Name: "base_radius", Expression: "pitch_radius * cos_deg(pressure_angle)"},
+			{Name: "half", Expression: "sin_deg(30)"},
+			{Name: "slope", Expression: "tan_deg(45)"},
+			{Name: "taper", Expression: "atan2_deg(rise, run)"},
+		},
+	}
+	res := doc.Resolve()
+	for _, p := range res.Problems {
+		if p.Severity == geometry.Error {
+			t.Fatalf("a document using degree trigonometry did not resolve: %s: %s", p.Name, p.Detail)
+		}
+	}
+	for _, tc := range []struct {
+		name string
+		want float64
+	}{
+		{"base_radius", 18.7938}, // 20 * cos 20°
+		{"half", 0.5},
+		{"slope", 1.0},
+		{"taper", 36.8699}, // atan2(3,4)
+	} {
+		got, ok := res.Values[tc.name]
+		if !ok {
+			t.Errorf("%s did not resolve at all", tc.name)
+			continue
+		}
+		if got.Number < tc.want-0.001 || got.Number > tc.want+0.001 {
+			t.Errorf("%s = %v, want %v", tc.name, got.Number, tc.want)
+		}
+	}
+}
+
+// ‼️ The AMBIGUOUS spellings are still refused.
+//
+// Adding `cos` beside `cos_deg` would hand the ambiguity straight back, which is
+// the whole thing the naming was chosen to avoid.
+func TestExpression_BareTrigonometryIsStillAbsent(t *testing.T) {
+	available := map[string]bool{}
+	for _, n := range geometry.ExpressionFunctions() {
+		available[n] = true
+	}
+	for _, name := range []string{"sin", "cos", "tan", "atan", "atan2", "radians", "degrees"} {
+		if available[name] {
+			t.Errorf("%q is callable in an expression. The convention it uses is unstated, "+
+				"and an unstated convention produces a plausible wrong number rather than an "+
+				"error — which is what naming the degree forms exists to prevent", name)
+		}
+	}
+	doc := &geometry.Document{
+		Units:      "mm",
+		Parameters: []geometry.Parameter{{Name: "angle", Value: 20, Unit: "deg"}},
+		Derived:    []geometry.Derived{{Name: "x", Expression: "cos(angle)"}},
+	}
+	if res := doc.Resolve(); res.OK() {
+		t.Error("an expression calling bare cos() resolved")
+	}
+}
+
+// A value that is not finite is a broken relationship, not a big number.
+//
+// tan_deg(90) is a vertical line; Go returns 1.6e16 for it rather than an error,
+// and a document quietly carrying 1.6e16 mm would draw a part the size of the
+// solar system.
+func TestExpression_TrigonometryRefusesTheUndefined(t *testing.T) {
+	for _, expr := range []string{"tan_deg(90)", "tan_deg(-90)", "tan_deg(270)"} {
+		doc := &geometry.Document{
+			Units:      "mm",
+			Parameters: []geometry.Parameter{{Name: "a", Value: 1, Unit: "mm"}},
+			Derived:    []geometry.Derived{{Name: "x", Expression: expr + " * a"}},
+		}
+		res := doc.Resolve()
+		if res.OK() {
+			t.Errorf("%s resolved to %v; the tangent of a right angle is undefined",
+				expr, res.Values["x"].Number)
+		}
 	}
 }

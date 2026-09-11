@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/geometry"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/errs"
 )
 
@@ -73,8 +74,43 @@ const (
 	scriptMemoryBytes = 1 << 30 // 1 GiB, which OCCT wants for a large tessellation
 )
 
+// ScriptParameters is the document's own numbers, in millimetres, ready to be
+// names in a script.
+//
+// # Why the document is resolved here rather than passed whole
+//
+// A script needs NUMBERS. The document carries parameters, derived expressions,
+// units and provenance, and resolving all of that is geometry's job and is
+// already done — Resolve walks the dependency graph and reports what does not
+// add up. This takes the answer and nothing else, so the sandbox never learns
+// what a Provenance is.
+//
+// ‼️ Lengths are converted to MILLIMETRES, and that is not a detail. A script
+// hands back STEP, which build123d writes in millimetres, and every other part
+// in the document has its dimensions converted the same way before the kernel
+// sees them. A parameter authored in cm injected as its raw number would build a
+// part ten times too small, silently, in the one shape nobody can read
+// dimensions off. Anything that is not a length — a count, an angle, a ratio —
+// is passed through untouched, because there is nothing to convert it to.
+func ScriptParameters(doc geometry.Document) map[string]float64 {
+	out := map[string]float64{}
+	for name, v := range doc.Resolve().Values {
+		number := v.Number
+		if q, ok := v.Quantity(); ok {
+			if mm, converted := q.In(geometry.Millimetre); converted {
+				number = mm.Value()
+			}
+		}
+		out[name] = number
+	}
+	return out
+}
+
 // RunScript executes a script and returns the solid it built.
-func (k *Kernel) RunScript(ctx context.Context, source string) (*ScriptResult, error) {
+//
+// The parameters are the document's own numbers (see ScriptParameters), in scope
+// as names. nil is a script with none, which is what every script had before.
+func (k *Kernel) RunScript(ctx context.Context, source string, parameters map[string]float64) (*ScriptResult, error) {
 	const op = "cad.Kernel.RunScript"
 	if !k.Available() {
 		return nil, Unavailable(op)
@@ -105,6 +141,7 @@ func (k *Kernel) RunScript(ctx context.Context, source string) (*ScriptResult, e
 
 	request, err := json.Marshal(map[string]any{
 		"source": source, "cpu_seconds": scriptCPUSeconds, "memory_bytes": scriptMemoryBytes,
+		"parameters": parameters,
 	})
 	if err != nil {
 		return nil, errs.Wrap(op, errs.CodeSerializationFail, err)

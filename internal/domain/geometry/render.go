@@ -57,7 +57,50 @@ func StandardViews() []View {
 // must be able to tell those apart.
 func ContactSheet(d Document, unit Unit, size int) string {
 	m := Tessellate(d, unit)
-	if len(m.Triangles()) == 0 || size <= 0 {
+	parts := make([]RenderPart, 0, len(m.Groups))
+	for _, g := range m.Groups {
+		parts = append(parts, RenderPart{ID: g.PartID, Triangles: g.Triangles})
+	}
+	return ContactSheetOf(d, parts, size)
+}
+
+// RenderPart is one part's surface, from wherever it was produced.
+//
+// The ID is what colours it: the part's own colour is looked up in the document,
+// so a sheet drawn from the CAD kernel's mesh and one drawn from the local
+// tessellation put the same part in the same colour, and neither differs from
+// what the reader sees in the workbench.
+type RenderPart struct {
+	ID        string
+	Triangles []Triangle
+}
+
+// ContactSheetOf draws already-built surfaces, whatever built them.
+//
+// # Why this exists separately from ContactSheet
+//
+// ContactSheet draws what the document DESCRIBES. That is a triangle builder,
+// and it performs no boolean and runs no script — so a bolt hole is a solid post
+// and a scripted part is a bounding box, and it says so in its own inferences.
+// Both were live defects in the checks that read this picture: the vision model
+// reported "a solid cylinder protruding from the plate surface rather than a
+// hole" about a correct plate, and "a rectangular block rather than a circular
+// gear" about a gear whose script had just built a correct 12565.7 mm³ solid.
+//
+// The CAD kernel builds the real surface — features applied, scripts run — and
+// hands back triangles. This is the door that lets those be drawn by the same
+// rasterizer, in the same colours, from the same viewpoints, so the two pictures
+// are comparable and only their SOURCE differs.
+//
+// Empty string when there is nothing to draw. A model with no buildable part is
+// not a picture of an empty room, it is the absence of a picture, and a caller
+// must be able to tell those apart.
+func ContactSheetOf(d Document, parts []RenderPart, size int) string {
+	total := 0
+	for _, p := range parts {
+		total += len(p.Triangles)
+	}
+	if total == 0 || size <= 0 {
 		return ""
 	}
 	// Grouped by part and coloured by the part's OWN colour — the same one the
@@ -66,8 +109,8 @@ func ContactSheet(d Document, unit Unit, size int) string {
 	// because every surface looks like the same surface. And a colour invented
 	// here would put the agent and the reader in front of different pictures.
 	var groups []shadedGroup
-	for _, g := range m.Groups {
-		groups = append(groups, shadedGroup{tris: g.Triangles, col: partColour(d, g.PartID)})
+	for _, p := range parts {
+		groups = append(groups, shadedGroup{tris: p.Triangles, col: partColour(d, p.ID)})
 	}
 	views := StandardViews()
 	sheet := image.NewRGBA(image.Rect(0, 0, size*len(views), size))

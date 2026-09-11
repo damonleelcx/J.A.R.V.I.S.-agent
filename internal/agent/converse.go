@@ -61,7 +61,17 @@ How to answer:
 // geometryContract is the document format and the whole geometry vocabulary.
 // Anything that asks a model for geometry sends this, or it will get a schema
 // the model made up.
-var geometryContract = `Reply with JSON only:
+// geometryContract is the shape a reply must take.
+//
+// The list of expression functions is SUBSTITUTED from geometry's own table
+// rather than written out here. The two were separate strings, and the contract
+// went on telling the model "there is no sine or cosine here" — a rule the model
+// reads, describing a grammar that had changed underneath it, which is worse
+// than no rule at all. ExpressionFunctionsAreNamedInTheContract fences it.
+var geometryContract = fmt.Sprintf(geometryContractTemplate,
+	strings.Join(geometry.ExpressionFunctions(), ", "))
+
+var geometryContractTemplate = `Reply with JSON only:
 
 {
   "speech": "what to say aloud — short, plain, no markdown",
@@ -83,7 +93,7 @@ var geometryContract = `Reply with JSON only:
         "id": "stable-kebab-id",
         "name": "human name",
         "shape": "box" | "cylinder" | "cone" | "sphere" | "plane" |
-                 "extrusion" | "revolve" | "sweep" | "section" | "script",
+                 "extrusion" | "revolve" | "sweep" | "section" | "gear" | "script",
         "shape_note": "for \"extrusion\", size only needs \"depth\"",
         "size": {"width":1,"height":1,"depth":1,"radius":0.5,"radius_top":0.5},
         "profile": [{"x": 0, "y": 0, "radius": 0, "x_from": "", "y_from": "plate_height",
@@ -207,12 +217,26 @@ About "prototype":
   Do not use it for things that differ from one another. Treads that get shallower
   are not a repeat; they are separate parts, and forcing them through this makes
   a staircase nobody can climb.
+- "gear" is an involute SPUR gear, and it is how every spur gear is made: never
+  draw a gear's outline and never script one. Give only its numbers —
+    "size": {"module": 2, "teeth": 20, "depth": 6, "bore_radius": 4}
+  "module" is a length in the assembly's units, "teeth" a whole number, "depth"
+  the face width, and "bore_radius" the hole for the shaft (leave it out for a
+  solid blank). "pressure_angle" is in degrees and means 20 when it is left out;
+  send it only when it is something else. FORGE draws the teeth from these.
+  The outside diameter is module * (teeth + 2) and the pitch diameter is
+  module * teeth, so two gears that mesh have the SAME module and their centres
+  sit module * (teeth_a + teeth_b) / 2 apart. The teeth face you, like an
+  outline, and the axle runs along the part's own Z — "rotation": [90, 0, 0]
+  lays a gear flat with its axle upright. A hub, a keyway or spokes are ordinary
+  parts, fused or cut. Helical, bevel and internal gears and racks are not this
+  shape.
 - "script" is the last resort, and only when this deployment offers it: a part
   whose shape is "script" carries build123d Python in "script", and the kernel
   runs it and imports what it built. It is for a shape this vocabulary genuinely
-  cannot say — an involute gear tooth, a spiral, a lattice, a profile sampled
-  from a formula — and NOT for anything a box, an extrusion, a loft or a
-  "repeat" can express. A scripted part is opaque: nobody can read its
+  cannot say — a spiral, a lattice, a helical or bevel gear, a profile sampled
+  from a formula — and NOT for anything a box, an extrusion, a loft, a "gear"
+  or a "repeat" can express. A scripted part is opaque: nobody can read its
   dimensions off the panel, a parameter cannot drive it, and a later revision
   cannot adjust it without rewriting the whole script. Reach for it last.
   The script assigns "result" to the shape it built. It has build123d's builders
@@ -267,9 +291,11 @@ About "prototype":
   when your number and your own expression disagree — so a rib bound to
   plate_size - 2 * fillet_radius on a 60 mm plate should say 54, not 52.
   An expression may use + - * / ^, brackets, the other parameter names, the
-  constant pi, and sqrt, abs, min, max, floor, ceil and round. There is no sine
-  or cosine here: half the world writes them in degrees and half in radians, so
-  carry an already-resolved length as a parameter instead.
+  constant pi, and these functions: %s.
+  The trigonometric ones are in DEGREES and say so in their name — there is no
+  bare "sin" or "cos", because a document that does not state the convention gets
+  a plausible wrong number rather than an error. Inside a script you have
+  Python's own math and may use radians there.
 - There is NO "tube" shape. A hollow tube is a cylinder with a cylinder cut from
   it when the bore runs straight, and an outline with a "holes" loop when the
   bore follows the part — which is the only one of the two that can turn a
@@ -554,14 +580,29 @@ type Conversation struct {
 	// which carries no conventions and so asserts nothing about a domain nobody
 	// established.
 	domains *DomainStore
-	// scripts says whether this deployment RUNS model-written build123d. The
-	// contract has to say which, and say it plainly: the first live test of the
-	// script path had the prompt offering it "only when this deployment offers
-	// it" and nothing anywhere telling the model whether it did. The model
-	// hedged — it said in prose that it was "generated via script" and then
-	// wrote shape "gear", a name that does not exist, which was drawn as a
-	// bounding box. A capability nothing announces is a capability nobody uses.
-	scripts bool
+	// runner runs model-written build123d, and nil means this deployment does
+	// not. It is BOTH halves of that fact — what the contract tells the model
+	// (scriptAvailability) and what verifies the answer (scriptrepair.go) — on
+	// purpose, because they were briefly two fields and two fields can disagree.
+	//
+	// The contract has to say which, and say it plainly: the first live test of
+	// the script path had the prompt offering scripts "only when this deployment
+	// offers it" and nothing anywhere telling the model whether it did. The
+	// model hedged — it said in prose that the part was "generated via script"
+	// and then wrote shape "gear", a name that does not exist, which was drawn
+	// as a bounding box. A capability nothing announces is a capability nobody
+	// uses; a capability nothing verifies is the gear that came after it.
+	runner ScriptRunner
+	// illustrator draws the reference a prototype is built against, and nil
+	// means this deployment does not draw one. Absent by default: a generation
+	// is 30-60 seconds on top of a turn, and a deployment that will not pay that
+	// has the feature absent rather than slow. See sketch.go.
+	illustrator llm.Illustrator
+	// solids builds the real surface of a document, and nil means this
+	// deployment has no kernel — every render is then the DESCRIBED one, with
+	// the holes unfilled and the scripts unrun, and the checks are told so. See
+	// render.go.
+	solids SolidBuilder
 }
 
 // NewConversation returns the conversational surface.
@@ -569,18 +610,36 @@ func NewConversation(client llm.Client, char persona.Character) *Conversation {
 	return &Conversation{client: client, char: char}
 }
 
-// WithScripts tells the conversation whether this deployment RUNS model-written
-// build123d, so the contract can say so either way rather than hedging.
+// WithScripts gives the conversation the thing that RUNS model-written
+// build123d. nil is a deployment that does not run scripts.
 //
-// The first live test of the script path had the prompt offering it "only when
-// this deployment offers it" and nothing anywhere telling the model whether it
-// did. The model hedged: it said in prose the profile was "generated via script"
-// and then wrote shape "gear" — a word that does not exist — which was drawn as
-// a bounding box. A capability nothing announces is a capability nobody uses.
-func (c *Conversation) WithScripts(on bool) *Conversation {
-	c.scripts = on
+// It takes the runner rather than a bool because the two facts — "the contract
+// offers scripts" and "something can check the script builds" — must not be
+// able to differ. They were separate for one commit and the difference is
+// exactly the bug this closes: a contract that offers a capability while nothing
+// verifies the answer produces a confident reply about a part that is not there.
+func (c *Conversation) WithScripts(r ScriptRunner) *Conversation {
+	c.runner = r
 	return c
 }
+
+// WithIllustrator gives the conversation the thing that DRAWS the reference a
+// prototype is built against. nil is a deployment that does not draw one.
+func (c *Conversation) WithIllustrator(i llm.Illustrator) *Conversation {
+	c.illustrator = i
+	return c
+}
+
+// WithSolids gives the conversation the thing that BUILDS the surface the
+// checks look at. nil is a deployment with no kernel.
+func (c *Conversation) WithSolids(b SolidBuilder) *Conversation {
+	c.solids = b
+	return c
+}
+
+// scriptsAvailable reports whether this deployment runs scripts, for the one
+// line of the contract that has to say so.
+func (c *Conversation) scriptsAvailable() bool { return c != nil && c.runner != nil }
 
 // WithCharacters makes conversation honour the project's critique intensity.
 func (c *Conversation) WithCharacters(s *CharacterStore) *Conversation {
@@ -613,16 +672,20 @@ func (c *Conversation) WithDomains(s *DomainStore) *Conversation {
 // outright. Never absent: silence is what produced an invented shape name.
 func scriptAvailability(on bool) string {
 	if on {
+		// A spur gear is NOT offered here as a script's example any more: it is
+		// the "gear" shape, and naming it as the canonical script case is what
+		// sent the model into writing involute geometry it got wrong four times
+		// in ten (gear.go).
 		return "\n\nThis deployment DOES run scripts. When a shape genuinely cannot be " +
-			"described by the vocabulary above — an involute gear tooth, a spiral, a " +
-			"lattice, a profile from a formula — give the part shape \"script\" and put the " +
+			"described by the vocabulary above — a spiral, a lattice, a helical gear, a " +
+			"profile from a formula — give the part shape \"script\" and put the " +
 			"build123d in its \"script\" field. Do not invent a shape name: a word that is " +
-			"not in the list above is drawn as a bounding box, so a gear becomes a block."
+			"not in the list above is drawn as a bounding box, so a spring becomes a block."
 	}
 	return "\n\nThis deployment does NOT run scripts. Never use shape \"script\". If a shape " +
 		"cannot be described by the vocabulary above, say so plainly rather than inventing " +
 		"a shape name — a word that is not in the list is drawn as a bounding box, so a " +
-		"gear becomes a block and the reply says gear."
+		"spring becomes a block and the reply says spring."
 }
 
 func framingFor(domain domainpack.Definition) string {
@@ -873,7 +936,12 @@ func (r *Reply) resolveEdit(current *Prototype) error {
 			WithDetail("this edit could not be applied to the model on screen: %s",
 				strings.Join(details, "; "))
 	}
-	r.Prototype = &applied
+	// ‼️ Settled HERE. validate() runs before this on both reply paths and saw
+	// no prototype at all, so an edit's document used to be installed exactly
+	// as typed — never bound, defaulted or noted.
+	// docs/bugfix/2026-09-11-edited-and-repaired-documents-were-never-settled.md
+	// Fence: TestEdit_TheEditedDocumentIsBound.
+	r.Prototype = settleDocument(&applied)
 	return nil
 }
 
@@ -966,8 +1034,24 @@ func (c *Conversation) Respond(ctx context.Context, projectID string, history []
 	// paths" and this function had its own copy of it — so the streaming path
 	// and the buffered path assembled the same request separately, and an image
 	// added to one would simply not exist in the other.
+	/* The reference drawing, BEFORE the geometry is written.
+	 *
+	 * Injected into the message rather than added as a parameter to
+	 * buildMessages: that signature is threaded through sixteen call sites and
+	 * `go vet` reports a wrong arity one at a time, so it looks nearly done
+	 * twice. The framing here is the whole safety property — the drawing decides
+	 * FORM and never a number. See sketch.go for what was measured. */
+	sketch := c.sketchFirst(ctx, message, nil)
+	prompt := message
+	if sketch != nil && sketch.Form != "" {
+		prompt = "[A reference drawing of what they asked for was generated and read. " +
+			"Build to this FORM. It is a drawing and NOT a specification: every count and " +
+			"every dimension comes from what they asked for, never from the drawing, which " +
+			"carries none and gets them wrong.\n" + sketch.Form + "]\n\n" + message
+	}
+
 	messages := c.buildMessages(c.characters.For(ctx, projectID, c.char),
-		c.domains.For(ctx, projectID), history, message, workspaceNote, current, images)
+		c.domains.For(ctx, projectID), history, prompt, workspaceNote, current, images)
 
 	resp, err := c.client.Complete(ctx, llm.Request{
 		Role:      role,
@@ -1004,7 +1088,21 @@ func (c *Conversation) Respond(ctx context.Context, projectID string, history []
 	// reason the streaming path is the one people use.
 	c.buildInPasses(ctx, &reply, message, current, nil)
 	c.repairIfTurned(ctx, &reply, current)
-	c.repairIfItLooksWrong(ctx, &reply, message)
+	// One render, shared by both checks that read a picture.
+	//
+	// Built ONCE because building it runs the kernel — and, for a scripted part,
+	// the script — so rendering per check would pay that twice. Each check
+	// re-draws it after a repair it accepts, so nothing downstream compares
+	// against a document that no longer exists.
+	sheet := c.render(ctx, reply.Prototype)
+	c.repairIfItLooksWrong(ctx, &reply, message, &sheet)
+	// And against the drawing, at the same point the streamed path does it.
+	c.repairAgainstSketch(ctx, &reply, sketch, &sheet, nil)
+	// And the same script run, at the same point: LAST, because it is the only
+	// check that verifies itself and anything that rewrites the document after
+	// it undoes that. No progress to report on this path, so it is silent while
+	// it works — one more reason the streaming path is the one people use.
+	c.repairIfScriptsFail(ctx, &reply, current, nil)
 	noteVanished(&reply, current)
 	return &reply, nil
 }
@@ -1028,138 +1126,11 @@ func (r *Reply) validate() error {
 	r.Recalled = FindStandardsClaims(r)
 	r.Claims = r.ClaimLedger()
 	if r.Prototype != nil {
-		if len(r.Prototype.Parts) == 0 {
-			// An empty prototype renders as a blank viewport, which reads as a
-			// failure. Dropping it is more honest than showing nothing.
-			r.Prototype = nil
-			return nil
-		}
-		/* PRD WRK-05: a dimension without its unit will eventually be read in
-		 * the wrong one.
-		 *
-		 * The units field is free text from a model, so it can be missing,
-		 * misspelled, or something we cannot convert. An unrecognised unit is NOT
-		 * quietly treated as millimetres — a wrong guess about scale is the
-		 * difference between a bracket and a building. It is recorded as
-		 * unspecified, every dimension then renders as "60 (unit not stated)",
-		 * and the reader is told in the one place they are already looking. */
-		if _, known := geometry.ParseUnit(r.Prototype.Units); !known && len(r.Prototype.Parts) > 0 {
-			declared := strings.TrimSpace(r.Prototype.Units)
-			note := "No unit was stated for these dimensions, so every number here is unitless."
-			if declared != "" {
-				note = fmt.Sprintf("The unit %q is not one FORGE can convert, so every number here is unitless.", declared)
-			}
-			r.Prototype.Units = ""
-			r.Prototype.NotVerified = append(r.Prototype.NotVerified, note)
-		}
-		// PRD VIS-03. Overlays arrive from the model like everything else here,
-		// and a dimension line with a tolerance on it is the most authoritative
-		// mark that can appear on a render. The storage door refuses a bad one
-		// outright; this door drops it and says so, because refusing the whole
-		// turn would throw away the shape somebody is waiting on — the same
-		// treatment the unrecognised unit gets above.
-		//
-		// Appended to NotVerified rather than logged, because that is the one
-		// place the reader is already looking, and "FORGE tried to state a
-		// tolerance and it was removed" is exactly what they need to know about
-		// what is in front of them.
-		if len(r.Prototype.Overlays) > 0 {
-			kept, dropped := geometry.DrawableOverlays(r.Prototype.Overlays)
-			r.Prototype.Overlays = kept
-			r.Prototype.NotVerified = append(r.Prototype.NotVerified, dropped...)
-		}
-		// PRD VIS-02. Materials and states arrive from the model like everything
-		// else here. A material with an unusable finish keeps its NAME and loses
-		// its look — the name is the claim — and a state referring to a part
-		// that does not exist is dropped, because the viewer would show the
-		// assembly unchanged and a reader would take that for the state making
-		// no difference.
-		for i := range r.Prototype.Parts {
-			if m := r.Prototype.Parts[i].Material; m != nil {
-				if err := m.Validate(); err != nil {
-					r.Prototype.Parts[i].Material = nil
-					r.Prototype.NotVerified = append(r.Prototype.NotVerified,
-						"A material FORGE named could not be read and was dropped: "+err.Error())
-				}
-			}
-		}
-		if err := geometry.ValidateStates(r.Prototype.States, r.Prototype.Parts); err != nil {
-			r.Prototype.States = nil
-			r.Prototype.NotVerified = append(r.Prototype.NotVerified,
-				"The assembly states FORGE proposed referred to parts that are not in this "+
-					"assembly, so none of them is shown. "+err.Error())
-		}
-		if note := geometry.StatesNotVerified(r.Prototype.States); note != "" {
-			r.Prototype.NotVerified = append(r.Prototype.NotVerified, note)
-		}
-		// PRD VIS-06 as an invariant rather than an instruction: geometry
-		// without a statement of what it does not establish is exactly the
-		// render that gets mistaken for an analysis.
-		if len(r.Prototype.NotVerified) == 0 {
-			r.Prototype.NotVerified = []string{NotVerifiedFallback}
-		}
-		for i := range r.Prototype.Parts {
-			p := &r.Prototype.Parts[i]
-			if p.ID == "" {
-				p.ID = fmt.Sprintf("part-%d", i+1)
-			}
-			if len(p.Position) != 3 {
-				p.Position = []float64{0, 0, 0}
-			}
-			if len(p.Rotation) != 3 {
-				p.Rotation = []float64{0, 0, 0}
-			}
-			if p.Opacity <= 0 || p.Opacity > 1 {
-				p.Opacity = 1
-			}
-			if p.Color == "" {
-				p.Color = "#b8bcc4"
-			}
-		}
-		/* The parametric model, resolved and APPLIED (waves 10 and 11).
-		 *
-		 * Bind evaluates the document's expressions and writes the results into
-		 * the numbers the renderer reads, so a part whose width follows
-		 * plate_size actually follows it. It returns everything Resolve would
-		 * have reported plus anything wrong with the bindings themselves, which
-		 * is why there is one call here and not two.
-		 *
-		 * It runs LAST in this block because it needs what the loop above
-		 * guarantees: every part has an id (Bind names parts by their label) and
-		 * a three-element position to write an axis into.
-		 *
-		 * None of what it reports changes a pixel — a document whose parameters
-		 * do not resolve renders exactly like one whose parameters do — which is
-		 * precisely why it has to be said. Appended to NotVerified for the same
-		 * reason as the dropped tolerances and the unconvertible unit above: it
-		 * is the one place the reader is already looking. */
-		for _, problem := range r.Prototype.Bind() {
-			r.Prototype.NotVerified = append(r.Prototype.NotVerified, parameterNote(problem))
-		}
-		/* Features, and the one place the picture and the file disagree.
-		 *
-		 * A feature that does not check out is dropped by the kernel rather than
-		 * approximated, so the reader has to be told which — an assembly missing
-		 * a hole somebody asked for is not something the render will show.
-		 *
-		 * And the viewport has no boolean operations, so it cannot make the
-		 * void. It draws the tool as a faint ghost rather than as a solid post
-		 * — which is the opposite of what a hole is — and says so here. A real
-		 * divergence between two things this product shows the same person,
-		 * stated for the same reason "Drawn approximately" is. */
-		/* An outline nothing could read is a part that is simply NOT THERE, and
-		 * the render looks like a design with a piece missing rather than like
-		 * an error. Its own voice, because "a number is missing" and "a whole
-		 * part is absent" are different things to be told. */
-		for _, problem := range r.Prototype.ProfileProblems() {
-			r.Prototype.NotVerified = append(r.Prototype.NotVerified, profileNote(problem))
-		}
-		if _, featureProblems := r.Prototype.Operations(); len(featureProblems) > 0 {
-			for _, problem := range featureProblems {
-				r.Prototype.NotVerified = append(r.Prototype.NotVerified, featureNote(problem))
-			}
-		}
-		r.Prototype.NotVerified = append(r.Prototype.NotVerified, r.Prototype.FeatureNotes()...)
+		// The document rules live in settleDocument, because a reply is not the
+		// only thing that produces a turn's document: an edit, a repair and a
+		// build pass each install one after this has run, and each settles it
+		// the same way. See settledoc.go.
+		r.Prototype = settleDocument(r.Prototype)
 	}
 	return nil
 }

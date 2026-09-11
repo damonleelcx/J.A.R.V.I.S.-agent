@@ -74,6 +74,13 @@ data:
   # deliberation off, which RoleVision now sets; with it on the same answer takes
   # 123 SECONDS), qwen3.6-flash answers WRONGLY, and glm-5.2 cannot see images.
   FORGE_LLM_VISION_MODEL: "qwen3.8-max"
+  # Draws the reference a prototype is built against (agent/sketch.go). Adds
+  # 30-60s to a geometry turn; unset would turn the feature off entirely.
+  #
+  # The drawing decides FORM only. Measured: asked for a 20-tooth gear it drew
+  # 28-30 petal teeth and no dimensions, so counts and sizes come from the
+  # request and a complaint about a number is discarded before it is acted on.
+  FORGE_LLM_IMAGE_MODEL: "wan2.7-image"
 
   # Running model-written build123d. ON here since 2026-09-09, by an explicit
   # decision of whoever owns this deployment — it is off by default in the code

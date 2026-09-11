@@ -316,7 +316,7 @@ func (k *Kernel) BuildDocument(ctx context.Context, doc geometry.Document, unit 
 			solids[i].Shape = ""
 			continue
 		}
-		res, err := k.RunScript(ctx, source)
+		res, err := k.RunScript(ctx, source, ScriptParameters(doc))
 		if err != nil {
 			inferred = append(inferred, fmt.Sprintf(
 				"%s: %s, so it is not in this file.", solids[i].Label, errs.DetailOf(err)))
@@ -366,6 +366,15 @@ func (k *Kernel) BuildDocument(ctx context.Context, doc geometry.Document, unit 
 		}
 		if res.Trace != "" {
 			k.log.Warn(ctx, logx.EventCADRefused, "detail", detail, "trace", res.Trace)
+		}
+		// ‼️ The sidecar names every part it refused, and why, in Skipped. This
+		// error used to drop them and say only "no part could be built" — which
+		// is how "unsupported shape 'step'" stayed hidden while every scripted
+		// part was left out of every export
+		// (docs/bugfix/2026-09-10-scripted-parts-never-exported.md).
+		// Fence: TestKernel_ARefusedAssemblyNamesWhatItRefused.
+		if len(res.Skipped) > 0 {
+			detail += " — " + strings.Join(res.Skipped, "; ")
 		}
 		return nil, errs.New(op, errs.CodeValidationFailed).
 			WithDetail("the CAD kernel could not build this assembly: %s", detail)

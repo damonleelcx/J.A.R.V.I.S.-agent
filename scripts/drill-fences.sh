@@ -82,19 +82,50 @@ FILES=(
   internal/domain/geometry/profile.go
   internal/domain/geometry/solid.go
   internal/domain/geometry/retired.go
+  internal/domain/geometry/gear.go
+  internal/domain/geometry/faults.go
   internal/httpapi/assets/forge3d.js
   internal/domain/cad/sidecar.py
+  internal/domain/cad/cad.go
   internal/llm/deliberation.go
   internal/llm/stream.go
   internal/llm/openai_compatible.go
+  internal/agent/scriptrepair.go
+  internal/agent/converse.go
+  internal/agent/converse_stream.go
+  internal/agent/assemble.go
+  internal/agent/georepair.go
+  internal/agent/settledoc.go
+  internal/httpapi/converse.go
+  internal/agent/look.go
+  internal/domain/cad/script.py
+  internal/domain/cad/script.go
+  internal/domain/geometry/expression.go
+  internal/domain/geometry/parameters.go
+  internal/agent/sketch.go
+  internal/llm/illustrate.go
+  internal/agent/render.go
+  internal/domain/geometry/mesh.go
 )
 
 BACKUP=""
+
+# saved is where a file's backup lives, mirroring its path under $BACKUP.
+#
+# ‼️ It used to be the BASENAME, and two files that share one — this repository
+# now has internal/agent/converse.go and internal/httpapi/converse.go — collided
+# silently. The second overwrote the first in the backup, and "restore" then
+# wrote the httpapi file over the agent one. The tree was left holding a Go file
+# whose package did not match its directory, and the run reported it as
+# "THE TREE WAS NOT RESTORED" rather than as the corruption it had just caused.
+# The whole safety argument for this script rests on the restore being exact.
+saved() { printf '%s/%s' "$BACKUP" "$1"; }
+
 restore() {
   [ -n "$BACKUP" ] || return 0
   local f
   for f in "${FILES[@]}"; do
-    [ -f "$BACKUP/$(basename "$f")" ] && cp "$BACKUP/$(basename "$f")" "$f"
+    [ -f "$(saved "$f")" ] && cp "$(saved "$f")" "$f"
   done
 }
 cleanup() {
@@ -118,7 +149,7 @@ drill() {
   # A file with no backup cannot be put back, so it is never touched. This is
   # the structural half of the note on FILES above: the list being wrong is now a
   # refusal to run rather than a permanent edit.
-  if [ "$MODE" != "list" ] && [ ! -f "$BACKUP/$(basename "$file")" ]; then
+  if [ "$MODE" != "list" ] && [ ! -f "$(saved "$file")" ]; then
     echo "  ⛔ NOT BACKED UP — $name"
     echo "        $file is not in FILES, so this drill would edit it and leave it edited."
     MOVED=$((MOVED + 1))
@@ -138,7 +169,7 @@ open(p, 'w').write(s)
     return
   fi
 
-  if cmp -s "$file" "$BACKUP/$(basename "$file")"; then
+  if cmp -s "$file" "$(saved "$file")"; then
     # The code this drill points at has been edited and the anchor no longer
     # matches. Reported loudly: a drill that changes nothing reports the fence
     # as red-worthy forever without ever testing it, which is the same failure
@@ -197,7 +228,7 @@ missing_tool() {
 if [ "$MODE" != "list" ]; then
   BACKUP=$(mktemp -d)
   trap cleanup EXIT INT TERM
-  for f in "${FILES[@]}"; do cp "$f" "$BACKUP/$(basename "$f")"; done
+  for f in "${FILES[@]}"; do mkdir -p "$(dirname "$(saved "$f")")" && cp "$f" "$(saved "$f")"; done
   shasum "${FILES[@]}" > "$BACKUP/before.sha"
 fi
 
@@ -297,6 +328,67 @@ drill "a retired word resolves silently" internal/domain/geometry/retired.go \
 drill "the renderer does not retire what Go retires" internal/httpapi/assets/forge3d.js \
   "s = s.replace('var RETIRED = {', 'var RETIRED = {}; var UNUSED_RETIRED = {', 1)" \
   ./internal/httpapi 'TestTheRendererRetiresTheSameShapeWords'
+
+echo
+echo "Every document a turn installs is settled"
+# Added 2026-09-11. validate() was the only place a document was bound, defaulted
+# and noted, and it ran once, before the three other producers of a turn's
+# document: resolveEdit, repairGeometry (all four repairs) and a build pass. Each
+# installed what the model typed. See
+# docs/bugfix/2026-09-11-edited-and-repaired-documents-were-never-settled.md.
+drill "a repair installs an unsettled document" internal/agent/georepair.go \
+  's = s.replace("\tout.Prototype = settleDocument(out.Prototype)\n", "\n", 1)' \
+  ./internal/agent 'TestRepair_TheRepairedDocumentIsBound'
+
+drill "an edit installs an unsettled document" internal/agent/converse.go \
+  's = s.replace("\tr.Prototype = settleDocument(&applied)\n", "\tr.Prototype = &applied\n", 1)' \
+  ./internal/agent 'TestEdit_TheEditedDocumentIsBound'
+
+drill "a build pass installs an unsettled document" internal/agent/assemble.go \
+  's = s.replace("\treply.Prototype = settleDocument(reply.Prototype)\n", "\n", 1)' \
+  ./internal/agent 'TestAssemble_APassIsSettled'
+
+drill "settling a document twice repeats its notes" internal/agent/settledoc.go \
+  's = s.replace("\td.NotVerified = distinctNotes(d.NotVerified)\n", "\n", 1)' \
+  ./internal/agent 'TestSettle_IsIdempotent'
+
+drill "a second settle rewords the unit note" internal/agent/settledoc.go \
+  's = s.replace("\t\tif !saysUnitless(d.NotVerified) {\n", "\t\tif true {\n", 1)' \
+  ./internal/agent 'TestSettle_IsIdempotent'
+
+echo
+echo "The gear shape"
+# Added 2026-09-10 with the shape. The involute is worked out in gear.go and
+# mirrored in forge3d.js, and every reader of a document has to expand a gear
+# before it reads the part — a reader that forgot would see a word it has no case
+# for, which the exporter skips and the viewport draws as a box.
+drill "a gear reaches the kernel as the word" internal/domain/geometry/solid.go \
+  's = s.replace("\td, gearProblems := expandGears(d)", "\tgearProblems := []Problem(nil)", 1)' \
+  ./internal/domain/geometry 'TestTheKernelIsSentAGearAsAnExtrusion'
+
+drill "the mesh does not expand a gear" internal/domain/geometry/mesh.go \
+  's = s.replace("\tdoc, gearProblems := expandGears(doc)", "\tgearProblems := []Problem(nil)", 1)' \
+  ./internal/domain/geometry 'TestAGearIsDrawnAndMeasuredAtItsOwnSize'
+
+drill "a gear that cannot exist never reaches the repair loop" internal/domain/geometry/faults.go \
+  's = s.replace("\texpanded, gearProblems := expandGears(*d)\n\texpanded, repeatProblems := expandRepeats(expanded)", "\tgearProblems := []Problem(nil)\n\texpanded, repeatProblems := expandRepeats(*d)", 1)' \
+  ./internal/domain/geometry 'TestAGearThatCannotExistIsAFaultNotABox'
+
+drill "a gear flank is not an involute" internal/domain/geometry/gear.go \
+  's = s.replace("func flankTurn(t float64) float64 { return t - math.Atan(t) }", "func flankTurn(t float64) float64 { return t }", 1)' \
+  ./internal/domain/geometry 'TestAGearHasInvoluteTeeth'
+
+drill "the renderer draws a different tooth" internal/httpapi/assets/forge3d.js \
+  "s = s.replace('function turn(t) { return t - Math.atan(t); }', 'function turn(t) { return t - Math.atan(t) * 0.99; }', 1)" \
+  ./internal/httpapi 'TestRendererDrawsTheSameGearAsTheExporter'
+
+drill "the renderer has no gear" internal/httpapi/assets/forge3d.js \
+  "s = s.replace(\"case 'gear': {\", \"case 'gear-unused': {\", 1)" \
+  ./internal/httpapi 'TestRendererDrawsTheSameGearAsTheExporter'
+
+drill "the contract still sends a spur gear to a script" internal/agent/converse.go \
+  's = s.replace("above — a spiral, a lattice, a helical gear, a \"", "above — an involute gear tooth, a spiral, a \"", 1)' \
+  ./internal/agent 'TestTheContractNoLongerSendsASpurGearToAScript'
 
 echo
 echo "Islands"
@@ -490,13 +582,347 @@ drill "the renderer has no sweep case" internal/httpapi/assets/forge3d.js \
 
 echo
 echo "Latency and the model catalogue"
+# Anchored on the ENTRY, not on the whole map literal. It was written as the
+# literal and went stale the moment RoleVision joined the table (#42): the drill
+# then found nothing to replace and this fence went unproven for five commits
+# while the run still printed a summary. An anchor that names one line survives
+# the next role being added.
 drill "the conversation role is allowed to deliberate" internal/llm/deliberation.go \
-  's = s.replace("var latencyBound = map[Role]bool{\n\tRoleConverse: true,\n}", "var latencyBound = map[Role]bool{}", 1)' \
+  's = s.replace("\tRoleConverse: true,\n", "", 1)' \
   ./internal/llm 'TestTheConversationRoleIsToldNotToDeliberate|TestTheStreamingPathIsToldToo'
 
 drill "the STREAMING path forgets to say it" internal/llm/stream.go \
   's = s.replace("\tc.applyDeliberation(ctx, req.Role, body)\n", "", 1)' \
   ./internal/llm 'TestTheStreamingPathIsToldToo'
+
+echo
+echo "Trigonometry in expressions"
+# Added 2026-09-10 because its absence had a measured cost: a gear's base_radius
+# could not resolve, so it was not in scope for the part's script, so the script
+# naming it was refused. The naming is the whole safety argument, and the unit
+# rule is what makes it usable at all.
+drill "the degree-named trigonometry is gone again" internal/domain/geometry/expression.go \
+  's = s.replace(chr(34) + "cos_deg" + chr(34) + ": {1,", chr(34) + "cos_deg_disabled" + chr(34) + ": {1,", 1)' \
+  ./internal/domain/geometry 'TestExpression_TrigonometryInDegrees'
+
+drill "the ambiguous spelling is offered too" internal/domain/geometry/expression.go \
+  's = s.replace(chr(34) + "sin_deg" + chr(34) + ": {1,", chr(34) + "cos" + chr(34) + ": {1,", 1)' \
+  ./internal/domain/geometry 'TestExpression_BareTrigonometryIsStillAbsent|TestExpression_UnstatedConventionTrigonometryIsRefusedOnPurpose'
+
+drill "a right angle's tangent is a very large number" internal/domain/geometry/expression.go \
+  's = s.replace("if math.Mod(math.Abs(a[0])-90, 180) == 0 {", "if false {", 1)' \
+  ./internal/domain/geometry 'TestExpression_TrigonometryRefusesTheUndefined'
+
+# ‼️ Without this, adding cos_deg MOVES the failure rather than removing it:
+# `pitch_radius * cos_deg(pressure_angle)` reads mm and deg, and the value is
+# refused for mixing units. The fence caught that on the first run.
+drill "a trig function lends its argument's unit to the result" internal/domain/geometry/parameters.go \
+  's = s.replace("inheritedUnit(p.node.UnitReferences(), res.Values)", "inheritedUnit(p.refs, res.Values)", 1)' \
+  ./internal/domain/geometry 'TestExpression_TrigonometryInDegrees'
+
+drill "the contract stops naming the real function list" internal/agent/converse.go \
+  's = s.replace("strings.Join(geometry.ExpressionFunctions(), \", \")", chr(34) + "sqrt, abs" + chr(34), 1)' \
+  ./internal/agent 'TestExpressionFunctionsAreNamedInTheContract'
+
+echo
+echo "Running the scripts the model wrote"
+# Every fence below drives repairIfScriptsFail directly, so the WIRING drills are
+# the ones that matter most: the first run of them found both reply paths red and
+# the multi-pass build loop green, which is a twelve-pass build shipping scripts
+# nobody ran.
+drill "a verified fix is not kept" internal/agent/scriptrepair.go \
+  's = s.replace("\t\t\t\t\tpart.Script = source\n", "", 1)' \
+  ./internal/agent 'TestScripts_RewrittenUntilTheyBuild'
+
+drill "the builder's words never reach the model" internal/agent/scriptrepair.go \
+  's = s.replace(chr(43) + " refusal " + chr(43), chr(43) + " \"\" " + chr(43), 1)' \
+  ./internal/agent 'TestScripts_TheBuildersWordsReachTheModel'
+
+drill "a stuck model is asked the same thing forever" internal/agent/scriptrepair.go \
+  's = s.replace("\t\t\tif refusal == last {", "\t\t\tif false {", 1)' \
+  ./internal/agent 'TestScripts_StopsWhenTheModelIsNotMoving'
+
+drill "an unverified rewrite replaces the original" internal/agent/scriptrepair.go \
+  's = s.replace("\tfor _, o := range broken {", "\tfor _, o := range broken[:0] {", 1)' \
+  ./internal/agent 'TestScripts_UnfixableKeepsTheOriginalAndIsSaidOutLoud'
+
+drill "every pass re-runs every script it ever wrote" internal/agent/scriptrepair.go \
+  's = s.replace("\tparts := unverified(scriptedParts(reply.Prototype), previous)", "\tparts := scriptedParts(reply.Prototype)\n\t_ = previous", 1)' \
+  ./internal/agent 'TestScripts_UnchangedScriptsAreNotRerun'
+
+drill "a part is built and never verified" internal/agent/scriptrepair.go \
+  's = s.replace("strings.ToLower(strings.TrimSpace(p.Shape)) != \"script\"", "p.Shape != \"script\"", 1)' \
+  ./internal/agent 'TestScripts_SelectionAgreesWithTheBuilder'
+
+drill "the STREAMED turn never runs its scripts" internal/agent/converse_stream.go \
+  's = s.replace("\t\tc.repairIfScriptsFail(ctx, &reply, current, func(line string) {\n\t\t\t_ = emit(StreamEvent{Kind: \"notice\", Text: line})\n\t\t})\n", "", 1)' \
+  ./internal/agent 'TestScripts_TheTurnActuallyRunsThem'
+
+drill "the BUFFERED turn never runs its scripts" internal/agent/converse.go \
+  's = s.replace("\tc.repairIfScriptsFail(ctx, &reply, current, nil)\n", "", 1)' \
+  ./internal/agent 'TestScripts_TheTurnActuallyRunsThem'
+
+drill "a multi-pass build never runs its scripts" internal/agent/assemble.go \
+  's = s.replace("\tc.repairIfScriptsFail(ctx, &reply, doc, nil)\n", "", 1)' \
+  ./internal/agent 'TestScripts_MultiPassBuildRunsThemToo'
+
+drill "the contract offers scripts nothing can run" internal/agent/converse.go \
+  's = s.replace("return c != nil && c.runner != nil", "return true", 1)' \
+  ./internal/agent 'TestScripts_NoRunnerIsNotAQuietPass'
+
+# Puts the call back where it FIRST was — beside repairIfFaulty, before the two
+# repairs that hand back a whole new document. Deleting it is a different drill
+# (above); this one proves the ORDER is load-bearing, which is what the live run
+# on 2026-09-09 showed and what reading the code did not.
+drill "a later repair can undo the verification" internal/agent/converse.go \
+  's = s.replace("\tc.repairIfScriptsFail(ctx, &reply, current, nil)\n", "", 1); s = s.replace("\tc.repairIfFaulty(ctx, &reply)\n", "\tc.repairIfFaulty(ctx, &reply)\n\tc.repairIfScriptsFail(ctx, &reply, current, nil)\n", 1)' \
+  ./internal/agent 'TestScripts_TheScriptCheckHasTheLastWord'
+
+# The blind spots are now REMOVED by rendering the kernel's surface, and the
+# apology survives only for the fallback picture. Both halves are drilled: that
+# the kernel render is used at all, and that its picture carries no apology —
+# telling a checker "a solid where a hole should be is correct here" about a
+# picture in which holes are real teaches it to ignore a hole that failed to cut.
+drill "the kernel surface is never rendered" internal/agent/render.go \
+  's = s.replace("if c != nil && c.solids != nil {", "if false {", 1)' \
+  ./internal/agent 'TestRender_TheKernelPictureCarriesNoApology'
+
+drill "the kernel picture carries the apology anyway" internal/agent/render.go \
+  's = s.replace("if sheet.FromKernel || doc == nil {", "if doc == nil {", 1)' \
+  ./internal/agent 'TestRender_TheKernelPictureCarriesNoApology'
+
+drill "the described picture carries no apology" internal/agent/render.go \
+  's = s.replace("if tools := cuttingTools(doc); len(tools) > 0 {", "if false {", 1)' \
+  ./internal/agent 'TestRender_TheKernelPictureCarriesNoApology|TestLook_IsToldWhichPartsAreCuttingTools'
+
+# ‼️ This mutation must delete the phrase the fence looks for, not reword around
+# it. The first version replaced "DO still say if " and left "floating clear"
+# standing three words later, so the drill passed and proved nothing.
+drill "look is told to ignore cutting tools entirely" internal/agent/render.go \
+  's = s.replace("one is floating clear of the part it is meant to cut", "nothing", 1)' \
+  ./internal/agent 'TestLook_IsToldWhichPartsAreCuttingTools'
+
+drill "the surface is rebuilt for every check" internal/agent/sketch.go \
+  's = s.replace("seen := c.matchesSketch(ctx, reply.Prototype, s, *sheet)", "seen := c.matchesSketch(ctx, reply.Prototype, s, c.render(ctx, reply.Prototype))", 1)' \
+  ./internal/agent 'TestRender_TheKernelIsAskedOncePerTurn'
+
+drill "a bad mesh index is trusted" internal/domain/geometry/mesh.go \
+  's = s.replace("if o < 0 || o+2 >= len(verts) {", "if false {", 1)' \
+  ./internal/domain/geometry 'TestTrianglesFrom'
+
+drill "the vision check is not told what it cannot see" internal/agent/render.go \
+  's = s.replace("if scripted := scriptedLabels(doc); len(scripted) > 0 {", "if false {", 1)' \
+  ./internal/agent 'TestScripts_TheVisionCheckIsToldItCannotSeeThem'
+
+echo
+echo "The sandbox, after lambda was allowed"
+# Widening the AST whitelist is the one change in this repository that can only
+# make the sandbox weaker. These two drills are the price: one says the escape is
+# still refused inside a lambda, the other says a lambda's parameter is bound —
+# the half that is a SEPARATE rule from allowing the node, and whose absence
+# refuses a correct script for using its own argument.
+drill "the dunder rule does not reach inside a lambda" internal/domain/cad/script.py \
+  's = s.replace("if isinstance(node, ast.Attribute) and node.attr.startswith(", "if False and node.attr.startswith(", 1)' \
+  ./internal/domain/cad 'TestScript_RefusesTheWayOut'
+
+drill "a lambda's parameters are not bound" internal/domain/cad/script.py \
+  's = s.replace("        elif isinstance(node, ast.Lambda):\n            # Parameters only", "        elif False:\n            # Parameters only", 1)' \
+  ./internal/domain/cad 'TestScript_ALambdaRunsAndItsParameterResolves'
+
+# ‼️ No cutoff separates the good suggestions from the bad: Rotate -> Rotation
+# scores 0.714 while module -> Mode scores 0.800. The shared-prefix requirement
+# is what does it, and both directions are drilled — dropping it lets `module`
+# suggest `Mode` again, and tightening it drops the suggestion this exists for.
+drill "a suggestion need not share the start of the word" internal/domain/cad/script.py \
+  's = s.replace("if shared_prefix(typed, candidate) >= 0.70 * len(typed):", "if True:", 1)' \
+  ./internal/domain/cad 'TestScript_AnUnavailableNameSuggestsTheCloseOnes'
+
+drill "the prefix requirement is tight enough to lose Rotation" internal/domain/cad/script.py \
+  's = s.replace("0.70 * len(typed)", "1.00 * len(typed)", 1)' \
+  ./internal/domain/cad 'TestScript_AnUnavailableNameSuggestsTheCloseOnes'
+
+drill "the suggestion is case-sensitive again" internal/domain/cad/script.py \
+  's = s.replace("difflib.get_close_matches(typed, sorted(folded)", "difflib.get_close_matches(name, sorted(folded)", 1)' \
+  ./internal/domain/cad 'TestScript_AnUnavailableNameSuggestsTheCloseOnes'
+
+drill "an unavailable name suggests nothing" internal/domain/cad/script.py \
+  's = s.replace("_did_you_mean(node.id, known)", "\"\"", 1)' \
+  ./internal/domain/cad 'TestScript_AnUnavailableNameSuggestsTheCloseOnes'
+
+# The other direction, and the one that actually caught something: at difflib's
+# default cutoff the refusal for `urlopen` came back "Did you mean len?".
+#
+# ‼️ Mutates BOTH the cutoff and the shared-prefix rule. Two rules now stop this
+# independently, so breaking one leaves the other standing and the drill reports
+# "not a fence" about a property that is doubly held — which is how defence in
+# depth reads to a single-point mutation.
+# Once the names resolved, what was left across four live gear requests was the
+# model guessing at the API behind a name that EXISTS — BuildSketch(local_mode=…),
+# Standard_TypeMismatch. The signature comes from the library that is installed,
+# at the moment of failure, which is the only place it is guaranteed right.
+# A scripted part could not see the document's own parameters — the numbers it is
+# made of. Measured live: a model wrote `m = module` and every name was refused.
+# The safety half matters as much: these names come from a model and go straight
+# into the namespace a script executes in.
+drill "the document's parameters are not in scope" internal/domain/cad/script.py \
+  's = s.replace("            ns.setdefault(name, value)", "            pass", 1)' \
+  ./internal/domain/cad 'TestScript_ReadsTheDocumentsParameters'
+
+# ‼️ These two mutate BOTH rules that hold the property, because each is held
+# twice: usable_parameters refuses the name, AND the injection is a setdefault
+# that will not overwrite what the namespace already has. Breaking one leaves the
+# other standing and the drill reports "not a fence" about something doubly
+# protected — the third time in this file that defence in depth has read that way
+# to a single-point mutation.
+drill "a parameter can shadow a builder" internal/domain/cad/script.py \
+  's = s.replace("        if name in taken:", "        if False:", 1); s = s.replace("ns.setdefault(name, value)", "ns[name] = value", 1)' \
+  ./internal/domain/cad 'TestScript_AParameterCannotHijackTheNamespace'
+
+drill "a parameter may begin with an underscore" internal/domain/cad/script.py \
+  'i = s.index("names may not begin with an underscore"); j = s.rindex("if name.startswith(", 0, i); s = s[:j] + "if False: #" + s[j + len("if name.startswith("):]' \
+  ./internal/domain/cad 'TestScript_AParameterCannotHijackTheNamespace'
+
+# The regression this feature caused before it worked: every parameter handed
+# over as a float, so range(teeth_count) raised in 6 of 9 live runs — worse than
+# having no parameters at all.
+drill "a whole-numbered parameter arrives as a float" internal/domain/cad/script.py \
+  's = s.replace("usable[name] = int(number) if number.is_integer() else number", "usable[name] = number", 1)' \
+  ./internal/domain/cad 'TestScript_AWholeNumberedParameterIsAnInt'
+
+drill "a length reaches the script in its authored unit" internal/domain/cad/script.go \
+  's = s.replace("if mm, converted := q.In(geometry.Millimetre); converted {", "if mm, converted := q.In(geometry.Millimetre); false {", 1)' \
+  ./internal/domain/cad 'TestScriptParameters_LengthsInMillimetresAndNothingElseTouched'
+
+# What was left after the names and signatures were answered: build123d USAGE.
+# Both of these are computed from the installed library at the moment of failure,
+# for the reason the signatures are — a list maintained here would go stale
+# against the build123d that is actually installed.
+drill "a misused with is not told what it can use" internal/domain/cad/script.py \
+  's = s.replace("if \"context manager protocol\" in str(exc):", "if False:", 1)' \
+  ./internal/domain/cad 'TestScript_AMisusedWithIsToldWhatItCanUse'
+
+drill "a method is offered a spelling correction instead" internal/domain/cad/script.py \
+  's = s.replace("hint = _method_hint(ns, _refused_name(detail))", "hint = \"\"", 1)' \
+  ./internal/domain/cad 'TestScript_AMethodIsNotASpellingMistake'
+
+drill "the method hint names the inherited leaves" internal/domain/cad/script.py \
+  's = s.replace("defined = qual.split(\".\")[0] if \".\" in qual else owner", "defined = owner", 1)' \
+  ./internal/domain/cad 'TestScript_AMethodIsNotASpellingMistake'
+
+drill "a failure does not say how the builder is called" internal/domain/cad/script.py \
+  's = s.replace("signature_help(ns, source, exc)", "\"\"", 1)' \
+  ./internal/domain/cad 'TestScript_AFailureSaysHowTheBuilderIsCalled'
+
+drill "the failing LINE is not consulted" internal/domain/cad/script.py \
+  's = s.replace("_names_in_message(str(exc)) + _names_on_line(source, _failing_line(exc))", "_names_in_message(str(exc))", 1)' \
+  ./internal/domain/cad 'TestScript_AFailureSaysHowTheBuilderIsCalled'
+
+drill "a suggested name comes without its signature" internal/domain/cad/script.py \
+  's = s.replace("detail += _suggestion_signatures(ns, detail)", "pass", 1)' \
+  ./internal/domain/cad 'TestScript_ASuggestedNameComesWithItsSignature'
+
+# ‼️ And the other direction: the signature help must not turn a refusal about
+# reaching OUTSIDE the sandbox into an API tutorial.
+#
+# Mutating the "Did you mean" GUARD does not work — it makes the parse raise, the
+# runner dies, and a crashed run contains no signature either, so the fence stays
+# green while measuring nothing. The real lever is the cutoff: loosen it and
+# `urlopen` suggests a name again, and the suggestion then drags a signature in
+# behind it. Both tests are named because the two effects arrive together.
+drill "a security refusal gains a signature lesson" internal/domain/cad/script.py \
+  's = s.replace("cutoff=0.70", "cutoff=0.30", 1); s = s.replace("if shared_prefix(typed, candidate) >= 0.70 * len(typed):", "if True:", 1)' \
+  ./internal/domain/cad 'TestScript_ReachingOutsideStillSaysNothingHelpful|TestScript_AnUnavailableNameSuggestsTheCloseOnes'
+
+# `@` was allowed on 2026-09-10 — every other binary operator on that line
+# dispatches to a dunder method and `%`, its sibling in build123d, was already
+# there. Two drills, as with lambda: that it runs, and that the escape is still
+# refused when spelled through it.
+drill "the @ operator is refused again" internal/domain/cad/script.py \
+  's = s.replace("    ast.MatMult,", "", 1)' \
+  ./internal/domain/cad 'TestScript_TheAtOperatorRunsAndComputesTheRightPoint'
+
+drill "the dunder rule does not reach through an @ expression" internal/domain/cad/script.py \
+  's = s.replace("if isinstance(node, ast.Attribute) and node.attr.startswith(", "if False and node.attr.startswith(", 1)' \
+  ./internal/domain/cad 'TestScript_RefusesTheWayOut'
+
+drill "a refusal names the parser's word, not the author's" internal/domain/cad/script.py \
+  's = s.replace("_syntax_name(node)", "type(node).__name__", 1)' \
+  ./internal/domain/cad 'TestScript_ARefusalNamesWhatWasWritten'
+
+drill "the suggestion cutoff is difflib's loose default" internal/domain/cad/script.py \
+  's = s.replace("cutoff=0.70", "cutoff=0.60", 1); s = s.replace("if shared_prefix(typed, candidate) >= 0.70 * len(typed):", "if True:", 1)' \
+  ./internal/domain/cad 'TestScript_AnUnavailableNameSuggestsTheCloseOnes'
+
+echo
+echo "Drawing the thing before building it"
+drill "the drawing is made but never reaches the prompt" internal/agent/converse.go \
+  's = s.replace("history, prompt, workspaceNote, current, images)", "history, message, workspaceNote, current, images)", 1)' \
+  ./internal/agent 'TestSketch_DrawnFirstAndItsFormReachesTheGeometryPrompt'
+
+# The safety property. A generated picture has no dimensions and gets counts
+# wrong (28-30 teeth for 20, measured), so it must never be the reason a number
+# changed. Both halves are drilled: the prompt that forbids it, and the
+# acceptance rule that refuses a resize whatever the complaint claimed.
+drill "the comparison may report counts and sizes" internal/agent/sketch.go \
+  's = s.replace("- Do NOT count anything", "- You may count things", 1)' \
+  ./internal/agent 'TestSketch_APictureCannotChangeANumber'
+
+drill "a resizing correction is accepted" internal/agent/sketch.go \
+  's = s.replace("len(turnedOnItsSide(before, fixed)) != 0", "false", 1)' \
+  ./internal/agent 'TestSketch_APictureCannotChangeANumber'
+
+drill "every turn pays for a drawing" internal/agent/sketch.go \
+  's = s.replace("if prompt == \"\" {\n\t\treturn nil\n\t}", "if false {\n\t\treturn nil\n\t}\n\tprompt = prompt + \" a shape\"", 1)' \
+  ./internal/agent 'TestSketch_NotEveryTurnIsDrawn'
+
+drill "a drawing is made with nothing able to read it" internal/agent/sketch.go \
+  's = s.replace("c.client.ModelFor(llm.RoleVision) == \"\"", "false", 1)' \
+  ./internal/agent 'TestSketch_NoVisionMeansNoDrawing'
+
+drill "the reference is not sent first" internal/agent/sketch.go \
+  's = s.replace("[]string{s.Image, sheet.Image}", "[]string{sheet.Image, s.Image}", 1)' \
+  ./internal/agent 'TestSketch_BothPicturesAreSentInOrder'
+
+# Three deterministic guards, each standing where a PROMPT rule was measured
+# being ignored: the reading said "Two circular holes", the comparison reported
+# pegs on a part whose holes are cut, and it reported "three bolt holes ... only
+# two" as a defect. A prompt states an intention; these enforce it.
+drill "numbers from the drawing reach the geometry prompt" internal/agent/sketch.go \
+  's = s.replace("func withoutNumbers(s string) string {", "func withoutNumbers(s string) string {\n\treturn s", 1)' \
+  ./internal/agent 'TestSketch_NumbersAreStrippedFromWhatTheDrawingSays'
+
+# Two drills, because the unit fence calls formOnly DIRECTLY and stays green if
+# the call site is deleted — which the first run of this drill proved. One breaks
+# the filter, the other unhooks it.
+drill "the count filter does nothing" internal/agent/sketch.go \
+  's = s.replace("func formOnly(problems []geometry.Problem) []geometry.Problem {", "func formOnly(problems []geometry.Problem) []geometry.Problem {\n\treturn problems", 1)' \
+  ./internal/agent 'TestSketch_ComplaintsAboutCountsAreDropped'
+
+drill "the count filter is not wired in" internal/agent/sketch.go \
+  's = s.replace("return formOnly(parseLook(resp.Content))", "return parseLook(resp.Content)", 1)' \
+  ./internal/agent 'TestSketch_TheComparisonActuallyFiltersCounts'
+
+drill "the comparison is not told what the picture is lying about" internal/agent/sketch.go \
+  's = s.replace("describedRenderNote(doc, sheet)", "\"\"", 1)' \
+  ./internal/agent 'TestSketch_TheComparisonIsToldACutIsDrawnAsASolid'
+
+drill "a chat-shaped reply is read as a drawing" internal/llm/illustrate.go \
+  's = s.replace("part.Type == \"image\" && strings.HasPrefix(part.Image, \"https://\")", "true", 1)' \
+  ./internal/llm 'TestDecodeDrawing'
+
+echo
+echo "How long a turn may take"
+drill "a turn is bounded by one model call's timeout" internal/httpapi/converse.go \
+  's = s.replace("budget := h.deps.Config.LLM.TurnBudget", "budget := h.deps.Config.LLM.RequestTimeout + 15*time.Second", 1)' \
+  ./internal/httpapi 'TestConverse_TurnBudgetBoundsTheTurnNotOneCall'
+
+drill "an unset budget is read as no time at all" internal/httpapi/converse.go \
+  's = s.replace("\tif budget <= 0 {", "\tif false {", 1)' \
+  ./internal/httpapi 'TestConverse_AnUnsetTurnBudgetIsNotAnExpiredOne'
+
+drill "the connection closes under a working turn" internal/httpapi/converse.go \
+  's = s.replace("http.NewResponseController(w).SetWriteDeadline(time.Time{})", "error(nil)", 1)' \
+  ./internal/httpapi 'TestConverse_AStreamOutlivesTheServerWriteTimeout'
 
 drill "the provider extension is sent to every endpoint" internal/llm/deliberation.go \
   's = s.replace("\tfor domain, field := range deliberationField {", "\treturn \"enable_thinking\", true\n\tfor domain, field := range deliberationField {", 1)' \
@@ -519,6 +945,19 @@ drill "the kernel uses OCCT's default transition" internal/domain/cad/sidecar.py
 drill "the kernel ignores the section frame it was sent" internal/domain/cad/sidecar.py \
   "s = s.replace('x_dir=Vector(m[0], m[3], m[6]),\n                      z_dir=Vector(m[2], m[5], m[8]))', 'x_dir=Vector(1, 0, 0),\n                      z_dir=Vector(0, 0, 1))', 1)" \
   ./internal/domain/cad 'TestKernel_ASweptSolidIsTheOneTheRendererDrew'
+
+# Added 2026-09-10. The STEP import that makes a script's solid a part was first
+# written into _apply, after a return, and every scripted part was left out of
+# every export and built mesh for a whole release — while the turn said it built.
+# Every script test stopped at RunScript. See
+# docs/bugfix/2026-09-10-scripted-parts-never-exported.md.
+drill "a scripted part is unreachable in the shape dispatch" internal/domain/cad/sidecar.py \
+  's = s.replace("    if kind == \"step\":\n        # A solid that was built somewhere else", "    if kind == \"step-unreachable\":\n        # A solid that was built somewhere else", 1)' \
+  ./internal/domain/cad 'TestKernel_AScriptedPartIsExportedAndMeshed'
+
+drill "a refused assembly hides which part it refused" internal/domain/cad/cad.go \
+  's = s.replace("\t\tif len(res.Skipped) > 0 {\n\t\t\tdetail +=", "\t\tif false {\n\t\t\tdetail +=", 1)' \
+  ./internal/domain/cad 'TestKernel_ARefusedAssemblyNamesWhatItRefused'
 
 if [ "$MODE" = "list" ]; then
   exit 0

@@ -68,6 +68,15 @@ const (
 	// model family, and routing speech through the conversation model would
 	// produce a reply rather than a reading.
 	RoleSpeaker Role = "speaker"
+	// RoleIllustrator draws the reference picture a prototype is built against.
+	//
+	// Its own role for the reason the transcriber and the speaker have theirs:
+	// it is a different model family — image synthesis, not chat — and it does
+	// not even share the reply format (see illustrate.go). It is deliberately
+	// NOT in AllRoles(): those are the CHAT roles that Complete and Stream
+	// accept, and a drawing request routed through Complete would be decoded by
+	// a parser that cannot read its answer.
+	RoleIllustrator Role = "illustrator"
 )
 
 // AllRoles returns every role, for configuration and the coherence fence.

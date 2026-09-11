@@ -85,6 +85,23 @@ type TTSConfig struct {
 // Configured reports whether a speech vendor was asked for.
 func (t TTSConfig) Configured() bool { return strings.TrimSpace(t.Provider) != "" }
 
+// DefaultTurnBudget is how long one conversational turn may take.
+//
+// Long enough for the longest thing a turn is allowed to do — a multi-pass build
+// is twelve passes, each a model call plus repairs and a script run, and was
+// measured at 25 minutes. A turn that exceeds even this is stopped, because a
+// person waiting on a workbench is owed an end.
+//
+// Exported because a zero must never be taken literally. A Config assembled in
+// code rather than loaded from the environment has this field zero, and a turn
+// given a zero deadline is cancelled before its first call — every database read
+// inside it then fails, and what surfaces is "the database could not be
+// reached", which points at the wrong thing entirely. That is not hypothetical:
+// it is what two existing tests reported the moment the handler started reading
+// this field. So the reader of the field falls back to this, and there is still
+// only one number.
+const DefaultTurnBudget = 30 * time.Minute
+
 // HTTPConfig covers the public API and console surface.
 type HTTPConfig struct {
 	// Addr is the listen address, e.g. ":8080".
@@ -299,9 +316,46 @@ type LLMConfig struct {
 	Speaker string
 	// Voice is which synthesised voice FORGE speaks in. One per deployment, so
 	// the character sounds the same in every room.
-	Voice          string
+	Voice string
+	// Illustrator draws the reference picture a prototype is built against.
+	//
+	// UNSET IS THE DEFAULT, and the feature is then absent rather than broken:
+	// no picture is drawn, nothing is compared against one, and a turn behaves
+	// exactly as it did before this existed. The same discipline the CAD kernel
+	// and the vision model follow — an absent capability that says it is absent.
+	//
+	// It also costs real time: one generation is 30–60 seconds on top of a turn.
+	// A deployment that does not want to pay that leaves this empty.
+	Illustrator    string
 	RequestTimeout time.Duration
 	MaxRetries     int
+	// TurnBudget bounds ONE CONVERSATIONAL TURN, which is a different thing from
+	// RequestTimeout and must never again be derived from it.
+	//
+	// # Why this exists
+	//
+	// The turn handler used `RequestTimeout + 15s`, on the reasoning that a
+	// deadline shorter than the model client's own would kill a call mid-backoff
+	// and blame the model for a timeout hierarchy. That reasoning is right and
+	// the arithmetic was wrong: it bounds a turn by the cost of ONE model call,
+	// and a turn has not been one call for some time. A turn plans a build, runs
+	// a pass for each subsystem, repairs geometry that will not build, runs and
+	// rewrites scripts, and looks at the render — dozens of calls, plus kernel
+	// time that is not a model call at all.
+	//
+	// So a multi-pass build measured at 25 minutes in a live test could not
+	// finish over HTTP: the handler cancelled it at 3m15s, mid-stream, and the
+	// person saw a build stop moving. Nothing reported it as a timeout, because
+	// from inside the turn a cancelled context looks like a model that failed.
+	//
+	// # Why a separate number rather than a bigger one
+	//
+	// RequestTimeout still bounds each individual call, so a hung provider still
+	// fails in three minutes and this does not make one call wait longer. It only
+	// allows MORE of them. The two are separate because they answer different
+	// questions — "how long may one call take" and "how long may FORGE work" —
+	// and folding them together is what produced the bug above.
+	TurnBudget time.Duration
 }
 
 // MediaConfig is the realtime audio plane (PRD COL-01, AUD-03, NFR-04).
@@ -697,8 +751,22 @@ func Load(required ...Section) (*Config, []string, error) {
 		Transcriber:    l.str("FORGE_LLM_TRANSCRIBER_MODEL", "qwen3-asr-flash-2026-02-10"),
 		Speaker:        l.str("FORGE_LLM_SPEAKER_MODEL", "qwen3-omni-flash"),
 		Voice:          l.str("FORGE_LLM_VOICE", "Cherry"),
+		Illustrator:    strings.TrimSpace(l.str("FORGE_LLM_IMAGE_MODEL", "")),
 		RequestTimeout: l.dur("FORGE_LLM_REQUEST_TIMEOUT", 3*time.Minute),
+		TurnBudget:     l.dur("FORGE_TURN_BUDGET", DefaultTurnBudget),
 		MaxRetries:     l.intVal("FORGE_LLM_MAX_RETRIES", 3),
+	}
+	// A turn budget below one call's timeout puts the old bug back: the turn is
+	// cancelled while a single model call is still inside its own retry window,
+	// and the error that surfaces names the model rather than this setting.
+	// Refused rather than silently raised, because a deployment that set it low
+	// on purpose is making a choice it should be told is incoherent.
+	if cfg.LLM.TurnBudget < cfg.LLM.RequestTimeout {
+		l.fail("FORGE_TURN_BUDGET", fmt.Sprintf(
+			"is %s, shorter than FORGE_LLM_REQUEST_TIMEOUT (%s). A turn makes many model calls, "+
+				"so its budget must be at least one call's timeout — otherwise a turn is killed "+
+				"mid-call and the failure is reported as the model's.",
+			cfg.LLM.TurnBudget, cfg.LLM.RequestTimeout))
 	}
 	if set.has(SectionLLM) && modelFamily(cfg.LLM.Verifier) == modelFamily(cfg.LLM.Executor) {
 		l.warnings = append(l.warnings, fmt.Sprintf(

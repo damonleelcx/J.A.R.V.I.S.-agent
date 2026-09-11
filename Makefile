@@ -149,7 +149,13 @@ drill-fences: ## Break each sweep fence on purpose and check it goes red (edits 
 	@# way out, including on an interrupt, and says whether the tree came back
 	@# byte-identical. Do not run it beside another build: while a mutation is
 	@# applied, the tree on disk is the mutated one.
-	scripts/drill-fences.sh
+	@#
+	@# The database URL is passed because three of the drills point at the turn
+	@# handler, whose fences need one. Without it those tests SKIP, and a skipped
+	@# test is reported as UNPROVEN — which is the honest answer and not the one
+	@# worth settling for. Not a dependency on db-wait: the other 82 drills need
+	@# no database and must still run on a machine without one.
+	FORGE_TEST_DATABASE_URL="$(DB_URL)" scripts/drill-fences.sh
 
 .PHONY: check
 test-echo: ## Check the hands-free echo guard against the transcripts that caused the loop

@@ -204,9 +204,25 @@ func (c *Conversation) RespondStream(
 		}
 		role = llm.RoleVision
 	}
+	/* The reference drawing, BEFORE the geometry is written.
+	 *
+	 * Injected into the message rather than added as a parameter to
+	 * buildMessages: that signature is threaded through sixteen call sites and
+	 * `go vet` reports a wrong arity one at a time, so it looks nearly done
+	 * twice. The framing here is the whole safety property — the drawing decides
+	 * FORM and never a number. See sketch.go for what was measured. */
+	sketch := c.sketchFirst(ctx, message, func(line string) { _ = emit(StreamEvent{Kind: "notice", Text: line}) })
+	prompt := message
+	if sketch != nil && sketch.Form != "" {
+		prompt = "[A reference drawing of what they asked for was generated and read. " +
+			"Build to this FORM. It is a drawing and NOT a specification: every count and " +
+			"every dimension comes from what they asked for, never from the drawing, which " +
+			"carries none and gets them wrong.\n" + sketch.Form + "]\n\n" + message
+	}
+
 	messages := c.buildMessages(c.characters.For(ctx, projectID, c.char),
 		c.domains.For(ctx, projectID),
-		history, message, workspaceNote, current, images)
+		history, prompt, workspaceNote, current, images)
 
 	var accumulated strings.Builder
 	speechSent := false
@@ -296,7 +312,41 @@ func (c *Conversation) RespondStream(
 		 * coordinates blind: swapped axes, wheels inside the body, a quarter
 		 * turn read as 117 degrees. A person catches those in a glance and
 		 * FORGE had no glance — see look.go. */
-		c.repairIfItLooksWrong(ctx, &reply, message)
+		// One render, shared by both checks that read a picture.
+		//
+		// Built ONCE because building it runs the kernel — and, for a scripted part,
+		// the script — so rendering per check would pay that twice. Each check
+		// re-draws it after a repair it accepts, so nothing downstream compares
+		// against a document that no longer exists.
+		sheet := c.render(ctx, reply.Prototype)
+		c.repairIfItLooksWrong(ctx, &reply, message, &sheet)
+		/* And then against the DRAWING. After looking, because "does anything
+		 * float or disappear" is a stronger question than "does it resemble the
+		 * reference" and should not be pre-empted by it. Before the scripts, so
+		 * the script check still has the last word over a document this
+		 * rewrites. See sketch.go. */
+		c.repairAgainstSketch(ctx, &reply, sketch, &sheet, func(line string) {
+			_ = emit(StreamEvent{Kind: "notice", Text: line})
+		})
+		/* And LAST, run the scripts.
+		 *
+		 * A scripted part's shape is not written down anywhere, so every check
+		 * above is blind to it: the gear that reached a reader on 2026-09-09
+		 * passed all of them and then raised inside build123d, hours later, on
+		 * an export. See scriptrepair.go.
+		 *
+		 * ‼️ It runs LAST because it is the only check that VERIFIES — it
+		 * re-runs the kernel rather than re-reading the document — and a check
+		 * that verifies is worth nothing if something rewrites the document
+		 * after it. Placed before repairIfTurned and repairIfItLooksWrong, as it
+		 * first was, both of those could hand back a whole new document with an
+		 * unrun script in it and the turn would still say the script builds.
+		 * Observed on the live deployment the day it shipped: the visual check
+		 * "corrected" a gear it had just been told was correct, because the
+		 * renderer draws a scripted part as a bounding box. */
+		c.repairIfScriptsFail(ctx, &reply, current, func(line string) {
+			_ = emit(StreamEvent{Kind: "notice", Text: line})
+		})
 		/* And say what the revision removed. A whole prototype deletes by
 		 * omission, so a part nobody discussed can disappear while the reply
 		 * talks about something else — see vanished.go. */
@@ -359,7 +409,7 @@ func (c *Conversation) buildMessages(char persona.Character, domain domainpack.D
 	history []Turn, message, workspaceNote string, current *Prototype, images []string) []llm.Message {
 	messages := []llm.Message{
 		{Role: llm.System, Content: persona.SystemPrompt(char,
-			framingFor(domain)+scriptAvailability(c.scripts))},
+			framingFor(domain)+scriptAvailability(c.scriptsAvailable()))},
 	}
 	if len(history) > HistoryWindow {
 		history = history[len(history)-HistoryWindow:]
