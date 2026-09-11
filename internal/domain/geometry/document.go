@@ -142,8 +142,9 @@ type Part struct {
 	Axis     string    `json:"axis,omitempty"`
 	Rotation []float64 `json:"rotation"`
 	// Script is build123d the model wrote, for a shape this vocabulary cannot
-	// say: an involute gear tooth, a spiral, a lattice, a profile sampled from a
-	// formula. The script assigns `result`, and the kernel imports what it built
+	// say: a spiral, a lattice, a helical gear, a profile sampled from a formula.
+	// A SPUR gear is not one of those any more — it is the "gear" shape, whose
+	// teeth FORGE draws (gear.go). The script assigns `result`, and the kernel imports what it built
 	// as an ordinary solid — so a scripted part can be cut, filleted, fused and
 	// exported exactly like a box, and everything that reads a Document keeps
 	// working.

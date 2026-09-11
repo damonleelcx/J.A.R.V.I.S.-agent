@@ -1499,6 +1499,17 @@
       if (length != null) dims.push('h ' + qty(length));
     } else if (p.shape === 'sphere') {
       if (s.radius != null) dims.push('⌀' + qty(s.radius * 2));
+    } else if (p.shape === 'gear') {
+      /* The numbers a gear is specified by, and what they work out to — through
+       * Forge3D, so a face width written as "thickness" shows as the width the
+       * stage drew. Same line as Dimensions in geometry/units.go. */
+      var gear = (window.Forge3D && window.Forge3D.gearOutline) ? window.Forge3D.gearOutline(s) : null;
+      if (s.teeth != null) dims.push(s.teeth + ' teeth');
+      if (s.module != null) dims.push('module ' + qty(s.module));
+      if (gear) {
+        dims.push('⌀' + qty(gear.outsideDiameter));
+        dims.push(qty(gear.depth) + ' thick');
+      }
     } else if (s.width != null || s.height != null || s.depth != null) {
       var w = s.width, h = s.height;
       /* An extrusion's other two dimensions live in its outline, not in "size",

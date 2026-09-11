@@ -246,6 +246,16 @@ func Dimensions(p Part, unit Unit) string {
 			return "⌀" + q(r*2)
 		}
 		return ""
+	case gearShape:
+		// The numbers a gear is specified by, and the outside diameter it works
+		// out to — read through gear.go, so a face width written as "thickness"
+		// summarises as the width the file was built with.
+		g, problems := readGear(p)
+		if anyError(problems) {
+			return ""
+		}
+		return fmt.Sprintf("%d teeth · module %s · ⌀%s · %s thick",
+			g.Teeth, q(g.Module), q(g.tipRadius()*2), q(g.Depth))
 	default:
 		w, hasW := get("width")
 		h, hasH := get("height")

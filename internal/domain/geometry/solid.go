@@ -121,6 +121,12 @@ type Solid struct {
 // same reason: a defaulted 1 is indistinguishable from a stated 1 once it is in
 // a file, and there is no provenance banner attached to a download.
 func Solids(d Document, unit Unit) ([]Solid, []string) {
+	// A gear is written out as the extrusion it is before anything reads the
+	// parts, and before patterns, so a repeated gear is a repeated extrusion and
+	// the kernel never sees the word (gear.go). Its facet notes are taken first,
+	// from the gear's own numbers, which the expansion does not keep.
+	gearNotes := gearFacetNotes(d, unit)
+	d, gearProblems := expandGears(d)
 	// Patterns are written out before anything reads the parts, so every shape
 	// gets repetition for free and nothing downstream has to know about it.
 	d, repeatProblems := expandRepeats(d)
@@ -137,6 +143,14 @@ func Solids(d Document, unit Unit) ([]Solid, []string) {
 	for _, p := range repeatProblems {
 		infer("%s %s.", p.Name, p.Detail)
 	}
+	for _, p := range gearProblems {
+		if p.Severity == Error {
+			infer("%s %s, so it is not in this file.", p.Name, p.Detail)
+			continue
+		}
+		infer("%s %s.", p.Name, p.Detail)
+	}
+	inferred = append(inferred, gearNotes...)
 
 	profiles, paths, profileProblems := d.resolvedProfiles()
 	for _, problem := range profileProblems {

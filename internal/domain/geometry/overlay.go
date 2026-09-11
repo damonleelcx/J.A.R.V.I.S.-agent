@@ -408,6 +408,17 @@ func localBox(p Part) (min, max [3]float64) {
 		return [3]float64{-h[0], -h[1], -h[2]}, h
 	}
 	switch strings.ToLower(p.Shape) {
+	case gearShape:
+		// The tip circle's box. Exact along an axis a tooth points down, and at
+		// most one tooth depth generous along one it does not — the gear's teeth
+		// are read from its numbers, not from an outline this reads.
+		g, problems := readGear(p)
+		if anyError(problems) {
+			// No gear, no extent: see profileExtent on why nothing beats a guess.
+			return [3]float64{}, [3]float64{}
+		}
+		r := g.tipRadius()
+		return sym([3]float64{r, r, g.Depth / 2})
 	case "sphere":
 		r := get("radius", 0.5)
 		return sym([3]float64{r, r, r})

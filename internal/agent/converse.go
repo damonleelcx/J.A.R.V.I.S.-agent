@@ -93,7 +93,7 @@ var geometryContractTemplate = `Reply with JSON only:
         "id": "stable-kebab-id",
         "name": "human name",
         "shape": "box" | "cylinder" | "cone" | "sphere" | "plane" |
-                 "extrusion" | "revolve" | "sweep" | "section" | "script",
+                 "extrusion" | "revolve" | "sweep" | "section" | "gear" | "script",
         "shape_note": "for \"extrusion\", size only needs \"depth\"",
         "size": {"width":1,"height":1,"depth":1,"radius":0.5,"radius_top":0.5},
         "profile": [{"x": 0, "y": 0, "radius": 0, "x_from": "", "y_from": "plate_height",
@@ -217,12 +217,26 @@ About "prototype":
   Do not use it for things that differ from one another. Treads that get shallower
   are not a repeat; they are separate parts, and forcing them through this makes
   a staircase nobody can climb.
+- "gear" is an involute SPUR gear, and it is how every spur gear is made: never
+  draw a gear's outline and never script one. Give only its numbers —
+    "size": {"module": 2, "teeth": 20, "depth": 6, "bore_radius": 4}
+  "module" is a length in the assembly's units, "teeth" a whole number, "depth"
+  the face width, and "bore_radius" the hole for the shaft (leave it out for a
+  solid blank). "pressure_angle" is in degrees and means 20 when it is left out;
+  send it only when it is something else. FORGE draws the teeth from these.
+  The outside diameter is module * (teeth + 2) and the pitch diameter is
+  module * teeth, so two gears that mesh have the SAME module and their centres
+  sit module * (teeth_a + teeth_b) / 2 apart. The teeth face you, like an
+  outline, and the axle runs along the part's own Z — "rotation": [90, 0, 0]
+  lays a gear flat with its axle upright. A hub, a keyway or spokes are ordinary
+  parts, fused or cut. Helical, bevel and internal gears and racks are not this
+  shape.
 - "script" is the last resort, and only when this deployment offers it: a part
   whose shape is "script" carries build123d Python in "script", and the kernel
   runs it and imports what it built. It is for a shape this vocabulary genuinely
-  cannot say — an involute gear tooth, a spiral, a lattice, a profile sampled
-  from a formula — and NOT for anything a box, an extrusion, a loft or a
-  "repeat" can express. A scripted part is opaque: nobody can read its
+  cannot say — a spiral, a lattice, a helical or bevel gear, a profile sampled
+  from a formula — and NOT for anything a box, an extrusion, a loft, a "gear"
+  or a "repeat" can express. A scripted part is opaque: nobody can read its
   dimensions off the panel, a parameter cannot drive it, and a later revision
   cannot adjust it without rewriting the whole script. Reach for it last.
   The script assigns "result" to the shape it built. It has build123d's builders
@@ -658,16 +672,20 @@ func (c *Conversation) WithDomains(s *DomainStore) *Conversation {
 // outright. Never absent: silence is what produced an invented shape name.
 func scriptAvailability(on bool) string {
 	if on {
+		// A spur gear is NOT offered here as a script's example any more: it is
+		// the "gear" shape, and naming it as the canonical script case is what
+		// sent the model into writing involute geometry it got wrong four times
+		// in ten (gear.go).
 		return "\n\nThis deployment DOES run scripts. When a shape genuinely cannot be " +
-			"described by the vocabulary above — an involute gear tooth, a spiral, a " +
-			"lattice, a profile from a formula — give the part shape \"script\" and put the " +
+			"described by the vocabulary above — a spiral, a lattice, a helical gear, a " +
+			"profile from a formula — give the part shape \"script\" and put the " +
 			"build123d in its \"script\" field. Do not invent a shape name: a word that is " +
-			"not in the list above is drawn as a bounding box, so a gear becomes a block."
+			"not in the list above is drawn as a bounding box, so a spring becomes a block."
 	}
 	return "\n\nThis deployment does NOT run scripts. Never use shape \"script\". If a shape " +
 		"cannot be described by the vocabulary above, say so plainly rather than inventing " +
 		"a shape name — a word that is not in the list is drawn as a bounding box, so a " +
-		"gear becomes a block and the reply says gear."
+		"spring becomes a block and the reply says spring."
 }
 
 func framingFor(domain domainpack.Definition) string {

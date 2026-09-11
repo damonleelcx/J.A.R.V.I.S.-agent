@@ -82,6 +82,8 @@ FILES=(
   internal/domain/geometry/profile.go
   internal/domain/geometry/solid.go
   internal/domain/geometry/retired.go
+  internal/domain/geometry/gear.go
+  internal/domain/geometry/faults.go
   internal/httpapi/assets/forge3d.js
   internal/domain/cad/sidecar.py
   internal/llm/deliberation.go
@@ -323,6 +325,40 @@ drill "a retired word resolves silently" internal/domain/geometry/retired.go \
 drill "the renderer does not retire what Go retires" internal/httpapi/assets/forge3d.js \
   "s = s.replace('var RETIRED = {', 'var RETIRED = {}; var UNUSED_RETIRED = {', 1)" \
   ./internal/httpapi 'TestTheRendererRetiresTheSameShapeWords'
+
+echo
+echo "The gear shape"
+# Added 2026-09-10 with the shape. The involute is worked out in gear.go and
+# mirrored in forge3d.js, and every reader of a document has to expand a gear
+# before it reads the part — a reader that forgot would see a word it has no case
+# for, which the exporter skips and the viewport draws as a box.
+drill "a gear reaches the kernel as the word" internal/domain/geometry/solid.go \
+  's = s.replace("\td, gearProblems := expandGears(d)", "\tgearProblems := []Problem(nil)", 1)' \
+  ./internal/domain/geometry 'TestTheKernelIsSentAGearAsAnExtrusion'
+
+drill "the mesh does not expand a gear" internal/domain/geometry/mesh.go \
+  's = s.replace("\tdoc, gearProblems := expandGears(doc)", "\tgearProblems := []Problem(nil)", 1)' \
+  ./internal/domain/geometry 'TestAGearIsDrawnAndMeasuredAtItsOwnSize'
+
+drill "a gear that cannot exist never reaches the repair loop" internal/domain/geometry/faults.go \
+  's = s.replace("\texpanded, gearProblems := expandGears(*d)\n\texpanded, repeatProblems := expandRepeats(expanded)", "\tgearProblems := []Problem(nil)\n\texpanded, repeatProblems := expandRepeats(*d)", 1)' \
+  ./internal/domain/geometry 'TestAGearThatCannotExistIsAFaultNotABox'
+
+drill "a gear flank is not an involute" internal/domain/geometry/gear.go \
+  's = s.replace("func flankTurn(t float64) float64 { return t - math.Atan(t) }", "func flankTurn(t float64) float64 { return t }", 1)' \
+  ./internal/domain/geometry 'TestAGearHasInvoluteTeeth'
+
+drill "the renderer draws a different tooth" internal/httpapi/assets/forge3d.js \
+  "s = s.replace('function turn(t) { return t - Math.atan(t); }', 'function turn(t) { return t - Math.atan(t) * 0.99; }', 1)" \
+  ./internal/httpapi 'TestRendererDrawsTheSameGearAsTheExporter'
+
+drill "the renderer has no gear" internal/httpapi/assets/forge3d.js \
+  "s = s.replace(\"case 'gear': {\", \"case 'gear-unused': {\", 1)" \
+  ./internal/httpapi 'TestRendererDrawsTheSameGearAsTheExporter'
+
+drill "the contract still sends a spur gear to a script" internal/agent/converse.go \
+  's = s.replace("above — a spiral, a lattice, a helical gear, a \"", "above — an involute gear tooth, a spiral, a \"", 1)' \
+  ./internal/agent 'TestTheContractNoLongerSendsASpurGearToAScript'
 
 echo
 echo "Islands"

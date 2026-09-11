@@ -146,8 +146,10 @@ type Deviation struct {
 // The unit is the assembly's, already resolved. Nothing here converts: the file
 // is written in the unit the geometry was authored in, and the label says which.
 func Tessellate(doc Document, unit Unit) *Mesh {
-	// Same expansion the solid builder does, for the same reason: the viewport
-	// and the exported file must agree about how many spokes there are.
+	// Same expansions the solid builder does, in the same order and for the same
+	// reason: the viewport and the exported file must agree about how many
+	// spokes there are, and what shape a tooth is.
+	doc, gearProblems := expandGears(doc)
 	doc, repeatProblems := expandRepeats(doc)
 
 	m := &Mesh{}
@@ -160,6 +162,13 @@ func Tessellate(doc Document, unit Unit) *Mesh {
 		}
 	}
 	for _, p := range repeatProblems {
+		infer("%s %s.", p.Name, p.Detail)
+	}
+	for _, p := range gearProblems {
+		if p.Severity == Error {
+			infer("%s %s, so it is not in this file.", p.Name, p.Detail)
+			continue
+		}
 		infer("%s %s.", p.Name, p.Detail)
 	}
 
@@ -271,6 +280,12 @@ func Tessellate(doc Document, unit Unit) *Mesh {
 var sizeSynonyms = map[string]map[string]string{
 	"cylinder": {"depth": "height"},
 	"cone":     {"depth": "height"},
+	// A gear's face width. "thickness" is the word the model reached for when it
+	// had no gear shape and guessed one — `InvoluteGear(module=2, teeth=20,
+	// thickness=6)`, on a live run (scriptrepair_live_test.go) — and "face_width"
+	// is the gear standards' own name for it. Read by gear.go, and by gearSize in
+	// forge3d.js, which holds the same list.
+	"gear": {"thickness": "depth", "face_width": "depth"},
 }
 
 func sizeOr(p Part, key string, fallback float64, unit Unit, infer func(string, ...any)) float64 {

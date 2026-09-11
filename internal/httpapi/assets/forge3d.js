@@ -259,7 +259,97 @@
    * which makes a list called "supported shapes" say the opposite of the truth
    * about three of them. */
   var SUPPORTED = ['box', 'cylinder', 'cone', 'sphere', 'plane',
-                   'extrusion', 'revolve', 'sweep', 'section'];
+                   'extrusion', 'revolve', 'sweep', 'section', 'gear'];
+
+  /* ---- gears ------------------------------------------------------------
+   *
+   * The browser's copy of internal/domain/geometry/gear.go: a spur gear's
+   * numbers turned into an extrusion's outline. Mirrored step for step, down to
+   * the order of the arithmetic, because the exported file is built from Go's
+   * copy and this one is what the person looks at.
+   *
+   * # Why a copy rather than an outline sent from the server
+   *
+   * A turn's repairs install a replacement document without binding it, so an
+   * outline written onto the stored part would be missing on exactly the turns
+   * that were repaired — and those gears would be drawn as unit boxes.
+   *
+   * Fence: TestRendererDrawsTheSameGearAsTheExporter */
+  var GEAR = { flankSegments: 8, addendum: 1, dedendum: 1.25, pressureAngle: 20, maxTeeth: 512 };
+  /* sizeSynonyms["gear"] in geometry/mesh.go, in the sorted order Go reads them. */
+  var GEAR_SYNONYMS = { depth: ['face_width', 'thickness'] };
+
+  function gearSize(s, key) {
+    if (typeof s[key] === 'number') return s[key];
+    var aliases = GEAR_SYNONYMS[key] || [];
+    for (var i = 0; i < aliases.length; i++) {
+      if (typeof s[aliases[i]] === 'number') return s[aliases[i]];
+    }
+    return undefined;
+  }
+
+  /* gearOutline returns { profile, holes, depth, outsideDiameter }, or null when
+   * the numbers do not describe a gear — the same gears readGear refuses, whose
+   * reasons the document's own notes carry. */
+  function gearOutline(size) {
+    var s = size || {};
+    var module = gearSize(s, 'module'), teethRaw = gearSize(s, 'teeth');
+    if (!(typeof module === 'number' && isFinite(module) && module > 0)) return null;
+    if (!(typeof teethRaw === 'number' && isFinite(teethRaw)) ||
+        Math.abs(teethRaw - Math.round(teethRaw)) > 1e-9 ||
+        Math.round(teethRaw) > GEAR.maxTeeth) return null;
+    var teeth = Math.round(teethRaw);
+    var pa = gearSize(s, 'pressure_angle');
+    if (pa === undefined) pa = GEAR.pressureAngle;
+    if (!(isFinite(pa) && pa > 0 && pa < 45)) return null;
+    var depth = gearSize(s, 'depth');
+    if (depth === undefined) depth = 1;
+    if (!(isFinite(depth) && depth > 0)) return null;
+    var bore = gearSize(s, 'bore_radius');
+    if (bore === undefined) bore = 0;
+
+    var a = pa * Math.PI / 180;
+    var pitchR = module * teeth / 2;
+    var tip = pitchR + GEAR.addendum * module;
+    var root = pitchR - GEAR.dedendum * module;
+    var base = pitchR * Math.cos(a);
+    var halfBase = Math.PI / (2 * teeth) + (Math.tan(a) - a);
+    function roll(r) { return r <= base ? 0 : Math.sqrt((r / base) * (r / base) - 1); }
+    function turn(t) { return t - Math.atan(t); }
+    var tStart = roll(Math.max(root, base)), tTip = roll(tip);
+    function flankRoll(i) { return tStart + (tTip - tStart) * i / GEAR.flankSegments; }
+
+    if (root <= 0) return null;
+    var tipPressure = Math.acos(base / tip);
+    if (halfBase - (Math.tan(tipPressure) - tipPressure) <= 0) return null;
+    if (Math.PI / teeth - (halfBase - turn(flankRoll(0))) <= 0) return null;
+    if (!isFinite(bore) || bore < 0 || bore >= root) return null;
+
+    function at(r, angle) { return { x: r * Math.cos(angle), y: r * Math.sin(angle) }; }
+    var radial = root < base, pitch = 2 * Math.PI / teeth, profile = [];
+    for (var k = 0; k < teeth; k++) {
+      var centre = Math.PI / 2 + pitch * k, first = profile.length, i, t, pt;
+      if (radial) profile.push(at(root, centre - halfBase));
+      for (i = 0; i <= GEAR.flankSegments; i++) {
+        t = flankRoll(i);
+        profile.push(at(base * Math.sqrt(1 + t * t), centre - (halfBase - turn(t))));
+      }
+      for (i = GEAR.flankSegments; i >= 0; i--) {
+        t = flankRoll(i);
+        pt = at(base * Math.sqrt(1 + t * t), centre + (halfBase - turn(t)));
+        if (i === GEAR.flankSegments) pt.via = at(tip, centre);
+        profile.push(pt);
+      }
+      if (radial) profile.push(at(root, centre + halfBase));
+      profile[first].via = at(root, centre - pitch / 2);
+    }
+    var holes = [];
+    if (bore > 0) {
+      holes = [[{ x: bore, y: 0, via: { x: 0, y: -bore } },
+                { x: -bore, y: 0, via: { x: 0, y: bore } }]];
+    }
+    return { profile: profile, holes: holes, depth: depth, outsideDiameter: 2 * tip };
+  }
 
   /* Shape words the document vocabulary no longer offers, and what a document
    * that already uses one is read as. The browser's copy of the table in
@@ -1272,6 +1362,20 @@
        * does not, the document's own feature notes say the body between the
        * stations is not on screen. */
       case 'section':   return extrusionGeometry(part.profile || [], 0, part.holes);
+      /* A spur gear: its numbers become an extrusion's outline, the way the
+       * exporter builds it (gear.go). Any outline the part carries is ignored,
+       * as it is there. */
+      case 'gear': {
+        var gear = gearOutline(s);
+        if (!gear) {
+          return {
+            geo: boxGeometry(1, 1, 1),
+            approximated: 'the numbers on this gear do not describe one that can be drawn — ' +
+                          'the notes say which — so it is drawn as a unit box'
+          };
+        }
+        return extrusionGeometry(gear.profile, gear.depth, gear.holes);
+      }
       default:
         return {
           geo: boxGeometry(num(s.width,1), num(s.height,1), num(s.depth,1)),
@@ -2292,6 +2396,10 @@
      * 250 mm long — three consumers, three answers, from one document. */
     cylinderLength: cylinderLength,
     outlineExtent: outlineExtent,
+    /* Exported for the Parts panel, which reads a gear's face width and outside
+     * diameter the way the stage draws it, and for the fence that holds this copy
+     * of gear.go to Go's answer point for point. */
+    gearOutline: gearOutline,
     rotationRadians: rotationRadians,
     /* Exported so a Go fence can read it. The browser and the exporter each
      * hold a copy of the retirement table, and the failure they guard against

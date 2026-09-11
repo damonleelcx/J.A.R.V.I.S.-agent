@@ -35,7 +35,12 @@ func (d *Document) Faults() []Problem {
 	// Patterns are written out first, or a feature naming a repeated part reads
 	// as naming something that does not exist and this reports a fault in a
 	// document that builds perfectly well.
-	expanded, repeatProblems := expandRepeats(*d)
+	//
+	// Gears before that, in the same order Solids does it: a gear whose numbers
+	// do not describe one is a part that is NOT in the model, and this is the
+	// check that hands it to the repair loop.
+	expanded, gearProblems := expandGears(*d)
+	expanded, repeatProblems := expandRepeats(expanded)
 	d = &expanded
 
 	// Both producers, because a part can be missing for either reason: an
@@ -44,6 +49,7 @@ func (d *Document) Faults() []Problem {
 	_, _, profileProblems := d.resolvedProfiles()
 	_, featureProblems := d.Operations()
 	profileProblems = append(profileProblems, repeatProblems...)
+	profileProblems = append(profileProblems, gearProblems...)
 	for _, p := range append(profileProblems, featureProblems...) {
 		if p.Severity == Error {
 			out = append(out, p)

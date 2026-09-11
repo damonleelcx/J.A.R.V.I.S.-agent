@@ -593,8 +593,16 @@ func firstOf(errs ...error) error {
 // a part that is simply NOT THERE, and the render looks like a design with a
 // piece missing rather than like an error.
 func (d *Document) ProfileProblems() []Problem {
-	_, _, problems := d.resolvedProfiles()
-	return problems
+	if d == nil {
+		return nil
+	}
+	// A gear's outline is one FORGE draws rather than one the model wrote, so
+	// what is wrong with its numbers is an outline problem too — and read without
+	// expanding, a gear is a shape with no outline and would be skipped here,
+	// hiding a part that is not in the model.
+	expanded, gearProblems := expandGears(*d)
+	_, _, problems := expanded.resolvedProfiles()
+	return append(gearProblems, problems...)
 }
 
 func coordinate(literal float64, expr string, lookup func(string) (float64, bool)) (float64, error) {
