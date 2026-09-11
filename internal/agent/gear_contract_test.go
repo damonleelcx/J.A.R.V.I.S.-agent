@@ -66,9 +66,9 @@ func TestTheContractNoLongerSendsASpurGearToAScript(t *testing.T) {
 		paragraph = paragraph[:end+1]
 	}
 	for name, text := range map[string]string{
-		"the script paragraph":             paragraph,
-		"the line when scripts are on":     scriptAvailability(true),
-		"the line when scripts are off":    scriptAvailability(false),
+		"the script paragraph":          paragraph,
+		"the line when scripts are on":  scriptAvailability(true),
+		"the line when scripts are off": scriptAvailability(false),
 	} {
 		if strings.Contains(strings.ToLower(text), "involute") {
 			t.Errorf("%s still names an involute gear as a reason to script:\n%s", name, text)
