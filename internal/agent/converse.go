@@ -936,7 +936,12 @@ func (r *Reply) resolveEdit(current *Prototype) error {
 			WithDetail("this edit could not be applied to the model on screen: %s",
 				strings.Join(details, "; "))
 	}
-	r.Prototype = &applied
+	// ‼️ Settled HERE. validate() runs before this on both reply paths and saw
+	// no prototype at all, so an edit's document used to be installed exactly
+	// as typed — never bound, defaulted or noted.
+	// docs/bugfix/2026-09-11-edited-and-repaired-documents-were-never-settled.md
+	// Fence: TestEdit_TheEditedDocumentIsBound.
+	r.Prototype = settleDocument(&applied)
 	return nil
 }
 
@@ -1121,138 +1126,11 @@ func (r *Reply) validate() error {
 	r.Recalled = FindStandardsClaims(r)
 	r.Claims = r.ClaimLedger()
 	if r.Prototype != nil {
-		if len(r.Prototype.Parts) == 0 {
-			// An empty prototype renders as a blank viewport, which reads as a
-			// failure. Dropping it is more honest than showing nothing.
-			r.Prototype = nil
-			return nil
-		}
-		/* PRD WRK-05: a dimension without its unit will eventually be read in
-		 * the wrong one.
-		 *
-		 * The units field is free text from a model, so it can be missing,
-		 * misspelled, or something we cannot convert. An unrecognised unit is NOT
-		 * quietly treated as millimetres — a wrong guess about scale is the
-		 * difference between a bracket and a building. It is recorded as
-		 * unspecified, every dimension then renders as "60 (unit not stated)",
-		 * and the reader is told in the one place they are already looking. */
-		if _, known := geometry.ParseUnit(r.Prototype.Units); !known && len(r.Prototype.Parts) > 0 {
-			declared := strings.TrimSpace(r.Prototype.Units)
-			note := "No unit was stated for these dimensions, so every number here is unitless."
-			if declared != "" {
-				note = fmt.Sprintf("The unit %q is not one FORGE can convert, so every number here is unitless.", declared)
-			}
-			r.Prototype.Units = ""
-			r.Prototype.NotVerified = append(r.Prototype.NotVerified, note)
-		}
-		// PRD VIS-03. Overlays arrive from the model like everything else here,
-		// and a dimension line with a tolerance on it is the most authoritative
-		// mark that can appear on a render. The storage door refuses a bad one
-		// outright; this door drops it and says so, because refusing the whole
-		// turn would throw away the shape somebody is waiting on — the same
-		// treatment the unrecognised unit gets above.
-		//
-		// Appended to NotVerified rather than logged, because that is the one
-		// place the reader is already looking, and "FORGE tried to state a
-		// tolerance and it was removed" is exactly what they need to know about
-		// what is in front of them.
-		if len(r.Prototype.Overlays) > 0 {
-			kept, dropped := geometry.DrawableOverlays(r.Prototype.Overlays)
-			r.Prototype.Overlays = kept
-			r.Prototype.NotVerified = append(r.Prototype.NotVerified, dropped...)
-		}
-		// PRD VIS-02. Materials and states arrive from the model like everything
-		// else here. A material with an unusable finish keeps its NAME and loses
-		// its look — the name is the claim — and a state referring to a part
-		// that does not exist is dropped, because the viewer would show the
-		// assembly unchanged and a reader would take that for the state making
-		// no difference.
-		for i := range r.Prototype.Parts {
-			if m := r.Prototype.Parts[i].Material; m != nil {
-				if err := m.Validate(); err != nil {
-					r.Prototype.Parts[i].Material = nil
-					r.Prototype.NotVerified = append(r.Prototype.NotVerified,
-						"A material FORGE named could not be read and was dropped: "+err.Error())
-				}
-			}
-		}
-		if err := geometry.ValidateStates(r.Prototype.States, r.Prototype.Parts); err != nil {
-			r.Prototype.States = nil
-			r.Prototype.NotVerified = append(r.Prototype.NotVerified,
-				"The assembly states FORGE proposed referred to parts that are not in this "+
-					"assembly, so none of them is shown. "+err.Error())
-		}
-		if note := geometry.StatesNotVerified(r.Prototype.States); note != "" {
-			r.Prototype.NotVerified = append(r.Prototype.NotVerified, note)
-		}
-		// PRD VIS-06 as an invariant rather than an instruction: geometry
-		// without a statement of what it does not establish is exactly the
-		// render that gets mistaken for an analysis.
-		if len(r.Prototype.NotVerified) == 0 {
-			r.Prototype.NotVerified = []string{NotVerifiedFallback}
-		}
-		for i := range r.Prototype.Parts {
-			p := &r.Prototype.Parts[i]
-			if p.ID == "" {
-				p.ID = fmt.Sprintf("part-%d", i+1)
-			}
-			if len(p.Position) != 3 {
-				p.Position = []float64{0, 0, 0}
-			}
-			if len(p.Rotation) != 3 {
-				p.Rotation = []float64{0, 0, 0}
-			}
-			if p.Opacity <= 0 || p.Opacity > 1 {
-				p.Opacity = 1
-			}
-			if p.Color == "" {
-				p.Color = "#b8bcc4"
-			}
-		}
-		/* The parametric model, resolved and APPLIED (waves 10 and 11).
-		 *
-		 * Bind evaluates the document's expressions and writes the results into
-		 * the numbers the renderer reads, so a part whose width follows
-		 * plate_size actually follows it. It returns everything Resolve would
-		 * have reported plus anything wrong with the bindings themselves, which
-		 * is why there is one call here and not two.
-		 *
-		 * It runs LAST in this block because it needs what the loop above
-		 * guarantees: every part has an id (Bind names parts by their label) and
-		 * a three-element position to write an axis into.
-		 *
-		 * None of what it reports changes a pixel — a document whose parameters
-		 * do not resolve renders exactly like one whose parameters do — which is
-		 * precisely why it has to be said. Appended to NotVerified for the same
-		 * reason as the dropped tolerances and the unconvertible unit above: it
-		 * is the one place the reader is already looking. */
-		for _, problem := range r.Prototype.Bind() {
-			r.Prototype.NotVerified = append(r.Prototype.NotVerified, parameterNote(problem))
-		}
-		/* Features, and the one place the picture and the file disagree.
-		 *
-		 * A feature that does not check out is dropped by the kernel rather than
-		 * approximated, so the reader has to be told which — an assembly missing
-		 * a hole somebody asked for is not something the render will show.
-		 *
-		 * And the viewport has no boolean operations, so it cannot make the
-		 * void. It draws the tool as a faint ghost rather than as a solid post
-		 * — which is the opposite of what a hole is — and says so here. A real
-		 * divergence between two things this product shows the same person,
-		 * stated for the same reason "Drawn approximately" is. */
-		/* An outline nothing could read is a part that is simply NOT THERE, and
-		 * the render looks like a design with a piece missing rather than like
-		 * an error. Its own voice, because "a number is missing" and "a whole
-		 * part is absent" are different things to be told. */
-		for _, problem := range r.Prototype.ProfileProblems() {
-			r.Prototype.NotVerified = append(r.Prototype.NotVerified, profileNote(problem))
-		}
-		if _, featureProblems := r.Prototype.Operations(); len(featureProblems) > 0 {
-			for _, problem := range featureProblems {
-				r.Prototype.NotVerified = append(r.Prototype.NotVerified, featureNote(problem))
-			}
-		}
-		r.Prototype.NotVerified = append(r.Prototype.NotVerified, r.Prototype.FeatureNotes()...)
+		// The document rules live in settleDocument, because a reply is not the
+		// only thing that produces a turn's document: an edit, a repair and a
+		// build pass each install one after this has run, and each settles it
+		// the same way. See settledoc.go.
+		r.Prototype = settleDocument(r.Prototype)
 	}
 	return nil
 }

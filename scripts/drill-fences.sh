@@ -94,6 +94,8 @@ FILES=(
   internal/agent/converse.go
   internal/agent/converse_stream.go
   internal/agent/assemble.go
+  internal/agent/georepair.go
+  internal/agent/settledoc.go
   internal/httpapi/converse.go
   internal/agent/look.go
   internal/domain/cad/script.py
@@ -326,6 +328,33 @@ drill "a retired word resolves silently" internal/domain/geometry/retired.go \
 drill "the renderer does not retire what Go retires" internal/httpapi/assets/forge3d.js \
   "s = s.replace('var RETIRED = {', 'var RETIRED = {}; var UNUSED_RETIRED = {', 1)" \
   ./internal/httpapi 'TestTheRendererRetiresTheSameShapeWords'
+
+echo
+echo "Every document a turn installs is settled"
+# Added 2026-09-11. validate() was the only place a document was bound, defaulted
+# and noted, and it ran once, before the three other producers of a turn's
+# document: resolveEdit, repairGeometry (all four repairs) and a build pass. Each
+# installed what the model typed. See
+# docs/bugfix/2026-09-11-edited-and-repaired-documents-were-never-settled.md.
+drill "a repair installs an unsettled document" internal/agent/georepair.go \
+  's = s.replace("\tout.Prototype = settleDocument(out.Prototype)\n", "\n", 1)' \
+  ./internal/agent 'TestRepair_TheRepairedDocumentIsBound'
+
+drill "an edit installs an unsettled document" internal/agent/converse.go \
+  's = s.replace("\tr.Prototype = settleDocument(&applied)\n", "\tr.Prototype = &applied\n", 1)' \
+  ./internal/agent 'TestEdit_TheEditedDocumentIsBound'
+
+drill "a build pass installs an unsettled document" internal/agent/assemble.go \
+  's = s.replace("\treply.Prototype = settleDocument(reply.Prototype)\n", "\n", 1)' \
+  ./internal/agent 'TestAssemble_APassIsSettled'
+
+drill "settling a document twice repeats its notes" internal/agent/settledoc.go \
+  's = s.replace("\td.NotVerified = distinctNotes(d.NotVerified)\n", "\n", 1)' \
+  ./internal/agent 'TestSettle_IsIdempotent'
+
+drill "a second settle rewords the unit note" internal/agent/settledoc.go \
+  's = s.replace("\t\tif !saysUnitless(d.NotVerified) {\n", "\t\tif true {\n", 1)' \
+  ./internal/agent 'TestSettle_IsIdempotent'
 
 echo
 echo "The gear shape"

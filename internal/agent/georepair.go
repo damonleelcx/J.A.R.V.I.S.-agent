@@ -118,6 +118,17 @@ func (c *Conversation) repairGeometry(ctx context.Context, proto *Prototype, fau
 	if err := json.Unmarshal([]byte(extractJSON(resp.Content)), &out); err != nil || out.Prototype == nil {
 		return nil
 	}
+	// ‼️ Settled before it is judged or installed. A repaired document used to be
+	// installed exactly as the model typed it — never bound, defaulted or noted —
+	// because validate() had already run. This is the one producer behind all
+	// four repairs, so settling here means the checks below, and every check that
+	// runs after this repair, read bound numbers.
+	// docs/bugfix/2026-09-11-edited-and-repaired-documents-were-never-settled.md
+	// Fence: TestRepair_TheRepairedDocumentIsBound.
+	out.Prototype = settleDocument(out.Prototype)
+	if out.Prototype == nil {
+		return nil
+	}
 	// It must not be WORSE, and it must be different. Faults cascade one at a
 	// time — the validator reports the first thing wrong with a loop and stops —
 	// so a pass that removes the repeated point and reveals a containment
