@@ -595,9 +595,11 @@ exactly the repaired gears would reach the viewport with no outline and draw as
 unit boxes. So `forge3d.js` mirrors `gear.go` step for step, held point for point
 by `TestRendererDrawsTheSameGearAsTheExporter` in node.
 
-‼️ The unbound-repair gap is wider than gears — a repaired document's `size_from`
-values are never re-evaluated either. It was found here and filed as its own
-task, not fixed here.
+‼️ The unbound-repair gap was wider than gears — a repaired document's `size_from`
+values were never re-evaluated either, and neither were an edit's or a build
+pass's. Found here, fixed separately in ec7ae16:
+`docs/bugfix/2026-09-11-edited-and-repaired-documents-were-never-settled.md`. The
+browser copy stays: it does not depend on any server path settling the document.
 
 **A gear that cannot exist is a fault, never a box:** no module or teeth, a
 fractional tooth, fewer than 3 teeth, a bore reaching the roots, a pressure angle
@@ -648,9 +650,9 @@ up on involutes and drawn trapezoidal teeth. The fair reading:
 | is an involute gear | at most 6, and not always | 10 of 10, by construction |
 | reaches the export and the kernel-built viewport today | **0 of 10** | 10 of 10 |
 
-The export defect is filed as its own task and **not fixed here**: it is a
-one-function move in the sidecar, but it changes what every scripted part in
-production does, and it needs its own kernel fence first.
+The export defect was fixed separately, with its own kernel fence first, in
+b73bcaa: `docs/bugfix/2026-09-10-scripted-parts-never-exported.md`. The control
+row above is what production did before that commit.
 
 Harness: `TestLiveGearMeasure` (`internal/agent/gear_measure_live_test.go`), one
 `GEAR-VERDICT` line per run; anything but `builds-as-asked` fails.
