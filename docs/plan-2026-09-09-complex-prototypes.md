@@ -554,6 +554,118 @@ one lever tried that was qualitatively different — telling the model more in t
 contract — measured 0 of 10. Whatever comes next should be measured before it is
 believed.
 
+### Stage 11 — A gear in the vocabulary — **DONE 2026-09-10**
+
+**Why.** Stage 10 ended on a plateau: every failure an error message could name
+had been answered, and the script path still built roughly six gears in ten.
+What remained was the model *deriving an involute* and getting the geometry
+wrong. The lever left was structural: stop asking it to derive the curve.
+
+**What.** `"gear"` is a shape. A part gives only the numbers a spur gear is
+specified by, and FORGE draws the teeth:
+
+| key | meaning | when absent |
+|---|---|---|
+| `module` | tooth size, a length in the assembly's units | **refused** — a module FORGE chose is a different gear |
+| `teeth` | a whole number | **refused** |
+| `depth` | face width, along local Z; `thickness` and `face_width` are read as it, and that is said | 1, reported |
+| `pressure_angle` | degrees | 20, **not** reported — the contract defines what the absence means |
+| `bore_radius` | the shaft hole | none: a solid blank |
+
+A standard full-depth tooth (addendum 1 m, dedendum 1.25 m), no profile shift, no
+backlash, sharp root. Tooth 0 points up +Y and the axle runs along local Z, like
+every outline. Not helical, bevel, internal, rack or worm — those are still
+scripts. A hub, a keyway or spokes are ordinary parts cut or fused, and the
+kernel fence cuts a keyway by the gear's id.
+
+**How — one involute, every reader.** `geometry/gear.go` turns the numbers into
+the extrusion a spur gear *is*, **before anything reads the part**, exactly as
+`repeat.go` writes out a pattern. Solids, Tessellate, Faults and ProfileProblems
+all expand first, so the kernel, the mesh export, the contact sheet, measurement
+and the repair loop see an ordinary extrusion they already build and fence.
+`sidecar.py` has no gear case and must not grow one. Tip land, root land and bore
+are true arcs; each flank is 8 straight segments (≈0.008 mm off the involute on
+m2 × 20) and the STEP export's notes say so.
+
+**The browser holds a copy, and that is a decision.** The obvious alternative —
+write Go's outline onto the stored part at bind time — fails on repaired turns:
+`repairIfFaulty`, `repairIfTurned`, `repairIfItLooksWrong` and
+`repairAgainstSketch` install a replacement document **without calling Bind**, so
+exactly the repaired gears would reach the viewport with no outline and draw as
+unit boxes. So `forge3d.js` mirrors `gear.go` step for step, held point for point
+by `TestRendererDrawsTheSameGearAsTheExporter` in node.
+
+‼️ The unbound-repair gap is wider than gears — a repaired document's `size_from`
+values are never re-evaluated either. It was found here and filed as its own
+task, not fixed here.
+
+**A gear that cannot exist is a fault, never a box:** no module or teeth, a
+fractional tooth, fewer than 3 teeth, a bore reaching the roots, a pressure angle
+outside (0°, 45°), teeth that come to a point before the tip, more than 512 teeth
+(the `maxRepeat` budget — measured at 512: Faults 0.24 s, Tessellate 0.45 s,
+Solids 0.25 s). The part is left out with the reason, which is what hands it to
+the repair loop. Fewer teeth than 2 / sin²α (17 at 20°) draws, with a note that
+a cut gear would be undercut and this one is not.
+
+**Contract.** Offers `"gear"` with an example that a fence unmarshals and builds.
+The script paragraph and the availability line no longer give *"an involute gear
+tooth"* as the reason to write a script: left in, they told the model to do the
+one thing this shape removes.
+
+**Measured.** Same prompt as every earlier stage, same endpoint and model, both
+arms run **concurrently** so drift cannot explain the difference. The rule is
+stricter than Stages 8–10, which counted a script that *ran*: here the whole
+reply must build in the real kernel with nothing left out, at 44 × 44 × 6. So the
+control was re-run under the same rule rather than compared with the old 6 of 10.
+
+| arm | built as asked | per turn |
+|---|---|---|
+| control — `0b46025`, script path | **0 of 10** — 6 scripts ran, none reached the model (below) | 42–98 s |
+| `"gear"` shape | **10 of 10** — one `"gear"` part every time, 44 × 44 × 6, 7354 mm³ | 8–11 s |
+
+‼️ **The control's zero is structural, not a verdict on the model — and the cause
+predates this stage.** Every control failure was traced:
+
+- **4 of 10** — the script never built (`BuildSketch doesn't have a Polyline`,
+  `Standard_TypeMismatch: TopoDS::Face`, no `result`). The model's CAD, as in
+  Stages 8–10.
+- **6 of 10** — the script **ran** (the turn's own check said *"it builds now"*)
+  and the export refused the part: **`unsupported shape 'step'`**. The
+  `kind == "step"` import that c92d775 (#43) added to `sidecar.py` sits in
+  `_apply` — the feature function, after a `return` — not in `_shape`, so it is
+  unreachable. No kernel test builds a scripted part through `BuildDocument`;
+  they all stop at `RunScript`. Reproduced outside the harness: one such script
+  builds a valid 7344.95 mm³ solid and survives a STEP round trip, and the
+  sidecar's own `_build` refuses it.
+
+So under the old rule — does the script run — the control is **6 of 10**, the
+same as every earlier stage; and the one of those scripts read in full had given
+up on involutes and drawn trapezoidal teeth. The fair reading:
+
+| | script path | `"gear"` shape |
+|---|---|---|
+| builds in the turn | 6 of 10 | 10 of 10 |
+| is an involute gear | at most 6, and not always | 10 of 10, by construction |
+| reaches the export and the kernel-built viewport today | **0 of 10** | 10 of 10 |
+
+The export defect is filed as its own task and **not fixed here**: it is a
+one-function move in the sidecar, but it changes what every scripted part in
+production does, and it needs its own kernel fence first.
+
+Harness: `TestLiveGearMeasure` (`internal/agent/gear_measure_live_test.go`), one
+`GEAR-VERDICT` line per run; anything but `builds-as-asked` fails.
+
+**Fences and drills.** `TestAGearHasInvoluteTeeth` (tip and root circles, tooth
+count, and tooth thickness π·m/2 at the pitch circle — the property a wrong curve
+does not keep), `TestTheKernelIsSentAGearAsAnExtrusion`,
+`TestAGearIsDrawnAndMeasuredAtItsOwnSize`, `TestAGearThatCannotExistIsAFaultNotABox`,
+`TestAGearIsReadFromTheWordsAModelWrites`, `TestAGearFollowsItsParameters`,
+`TestARepeatedGearIsRepeatedGears`, `TestKernel_BuildsAnInvoluteGear`,
+`TestRendererDrawsTheSameGearAsTheExporter`,
+`TestTheContractOffersAGearAndItsExampleBuilds`,
+`TestTheContractNoLongerSendsASpurGearToAScript`. Seven drills under "The gear
+shape" in `scripts/drill-fences.sh`.
+
 ### The gap this closed
 
 Four of ten live runs failed, and the most informative one wrote:
