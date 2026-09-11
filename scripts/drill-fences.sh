@@ -86,6 +86,7 @@ FILES=(
   internal/domain/geometry/faults.go
   internal/httpapi/assets/forge3d.js
   internal/domain/cad/sidecar.py
+  internal/domain/cad/cad.go
   internal/llm/deliberation.go
   internal/llm/stream.go
   internal/llm/openai_compatible.go
@@ -915,6 +916,19 @@ drill "the kernel uses OCCT's default transition" internal/domain/cad/sidecar.py
 drill "the kernel ignores the section frame it was sent" internal/domain/cad/sidecar.py \
   "s = s.replace('x_dir=Vector(m[0], m[3], m[6]),\n                      z_dir=Vector(m[2], m[5], m[8]))', 'x_dir=Vector(1, 0, 0),\n                      z_dir=Vector(0, 0, 1))', 1)" \
   ./internal/domain/cad 'TestKernel_ASweptSolidIsTheOneTheRendererDrew'
+
+# Added 2026-09-10. The STEP import that makes a script's solid a part was first
+# written into _apply, after a return, and every scripted part was left out of
+# every export and built mesh for a whole release — while the turn said it built.
+# Every script test stopped at RunScript. See
+# docs/bugfix/2026-09-10-scripted-parts-never-exported.md.
+drill "a scripted part is unreachable in the shape dispatch" internal/domain/cad/sidecar.py \
+  's = s.replace("    if kind == \"step\":\n        # A solid that was built somewhere else", "    if kind == \"step-unreachable\":\n        # A solid that was built somewhere else", 1)' \
+  ./internal/domain/cad 'TestKernel_AScriptedPartIsExportedAndMeshed'
+
+drill "a refused assembly hides which part it refused" internal/domain/cad/cad.go \
+  's = s.replace("\t\tif len(res.Skipped) > 0 {\n\t\t\tdetail +=", "\t\tif false {\n\t\t\tdetail +=", 1)' \
+  ./internal/domain/cad 'TestKernel_ARefusedAssemblyNamesWhatItRefused'
 
 if [ "$MODE" = "list" ]; then
   exit 0

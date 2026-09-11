@@ -279,6 +279,41 @@ def _shape(solid):
         # will not print, machine, or hold a volume. It is exported because it is
         # part of what was drawn, and the label says what it is.
         return Plane.XZ * Rectangle(d["width"], d["depth"])
+    if kind == "step":
+        # A solid that was built somewhere else and arrived as STEP.
+        #
+        # This is how a model-written script becomes a PART. The script runs in
+        # its own sandboxed process (script.py) and hands back STEP, which is
+        # imported here so the result is an ordinary solid: it can be cut,
+        # filleted, fused and exported exactly like a box, and everything
+        # downstream — the panel, compare, prototype_edit, the repair pass —
+        # keeps working because the document still describes parts.
+        #
+        # ‼️ It belongs HERE, in the shape dispatch. It was first written into
+        # _apply (the feature function), after a return, where it could never
+        # run — so this function refused every scripted part as "unsupported
+        # shape 'step'" and every export and built mesh left it out, while the
+        # turn's own check (RunScript) said it built. No test built a scripted
+        # part past RunScript. See
+        # docs/bugfix/2026-09-10-scripted-parts-never-exported.md;
+        # fence: TestKernel_AScriptedPartIsExportedAndMeshed.
+        text = solid.get("step") or ""
+        if not text:
+            raise ValueError("this part carries no STEP to import")
+        with tempfile.NamedTemporaryFile("w", suffix=".step", delete=False) as fh:
+            fh.write(text)
+            path = fh.name
+        try:
+            imported = import_step(path)
+        finally:
+            try:
+                os.unlink(path)
+            except Exception:
+                pass
+        # Returned centred as every other shape is: the caller applies the
+        # part's own position and rotation on top, so a scripted part is placed
+        # by the same rule as a box.
+        return imported
     raise ValueError("unsupported shape %r" % kind)
 
 
@@ -321,33 +356,6 @@ def _apply(op, shapes):
             target = (target - tool) if kind == "cut" else (target + tool)
         shapes[op["of"]] = target
         return
-
-    if kind == "step":
-        # A solid that was built somewhere else and arrived as STEP.
-        #
-        # This is how a model-written script becomes a PART. The script runs in
-        # its own sandboxed process (script.py) and hands back STEP, which is
-        # imported here so the result is an ordinary solid: it can be cut,
-        # filleted, fused and exported exactly like a box, and everything
-        # downstream — the panel, compare, prototype_edit, the repair pass —
-        # keeps working because the document still describes parts.
-        text = solid.get("step") or ""
-        if not text:
-            raise ValueError("this part carries no STEP to import")
-        with tempfile.NamedTemporaryFile("w", suffix=".step", delete=False) as fh:
-            fh.write(text)
-            path = fh.name
-        try:
-            imported = import_step(path)
-        finally:
-            try:
-                os.unlink(path)
-            except Exception:
-                pass
-        # Returned centred as every other shape is: the caller applies the
-        # part's own position and rotation on top, so a scripted part is placed
-        # by the same rule as a box.
-        return imported
 
     if kind == "loft":
         # The target is the first station and the named parts are the rest, in
