@@ -2,11 +2,26 @@
  *
  * # The composition
  *
- * A fixed canvas carries a white organic mass and a field of wavefronts behind
- * it. The sections scroll over that; the subject drifts and shrinks as they go,
- * so it hands the stage to the copy instead of following it down the page. The
- * reference is a product plate: display serif with an italic counterpart, exact
- * data set small beside it, and a great deal of empty space doing the work.
+ * FORGE herself stands at the right, fixed, full length. A canvas behind her
+ * carries a field of wavefronts and a white organic mass, which orbits as the
+ * page scrolls. Both recede as the reader goes down, so the page hands the
+ * stage to the copy instead of following it down. The reference is a product
+ * plate: display serif with an italic counterpart, exact data set small beside
+ * it, and a great deal of empty space doing the work.
+ *
+ * Three things — the copy, the mass, the figure — and they may not overlap each
+ * other. On a wide window they sit left to right. On a phone there is no room
+ * to sit side by side, so the page STACKS them instead: the mass above, the
+ * copy over it on its scrim, and her at the foot of the first screen.
+ *
+ * The room between them is not a constant in either arrangement. Her width comes
+ * from her height, so what is left for the mass depends on the window's
+ * proportions and not just its width. So the page MEASURES the free rectangle:
+ * see the band function where portal-field.js is mounted, and the .home-figure
+ * rules below that decide her size. The mass is given whatever is left, shrinks
+ * to fit its tighter axis, and clips its scroll orbit to its height; when
+ * nothing is left it is not drawn. Change her size here and the mass follows on
+ * its own.
  *
  * # Why the serif is scoped
  *
@@ -54,6 +69,83 @@
   transition: opacity 900ms ease;
 }
 #field.is-live { opacity: 1; }
+
+/* --- the figure --------------------------------------------------------- */
+/* FORGE, full length, standing in the page's empty half.
+ *
+ * # Why fixed rather than in the first section
+ *
+ * The composition above is five sections scrolling over ONE persistent subject.
+ * Putting her in the hero would make her the first section's illustration and
+ * leave the other four with a background; fixed, she is what the copy is being
+ * said in front of, which is the thing the page was laid out for.
+ *
+ * # Why she is behind the copy and cannot be clicked
+ *
+ * Below .home-scroll in the stack and pointer-events: none. At a wide width she
+ * and the 560px copy column do not overlap, but the reader's window is not ours
+ * to choose — and a decoration that can take a click intended for a link, or
+ * cover the first line of a paragraph, is worse than one that is simply behind.
+ *
+ * # Why the height is capped
+ *
+ * The asset is 1280px tall; scaling it past that is resampling detail that does
+ * not exist and reads as soft. On a very tall window she stops growing and the
+ * page gets more air instead, which is the better failure.
+ */
+.home-figure {
+  position: fixed;
+  right: clamp(8px, 3vw, 76px);
+  bottom: 0;
+  z-index: 0;
+  pointer-events: none;
+  /* Reserved before the image decodes, so the field behind it is not repainted
+   * at a different size a moment later. */
+  height: min(90vh, 1280px);
+  height: min(90dvh, 1280px);
+}
+.home-figure img {
+  height: 100%;
+  width: auto;
+  display: block;
+  /* Two shadows, doing two different jobs.
+   *
+   * The second grounds her: wide blur, small offset, because she is standing on
+   * the page rather than floating above it — a tight shadow reads as a sticker
+   * lifted off the paper. See --figure-shadow in shell.css.
+   *
+   * The first is a backlight. She is white, and the field's wavefronts pass
+   * behind her at full brightness — a violet ribbon crossing her silhouette
+   * leaves that edge with nothing between two bright things. A zero-offset
+   * shadow darkens the few pixels immediately around her outline: invisible
+   * against the near-black ground, and the edge that separates her from
+   * whatever the field is doing at that moment. The light theme needs it most,
+   * where she is white on paper. */
+  filter:
+    drop-shadow(0 0 26px var(--figure-halo))
+    drop-shadow(0 18px 44px var(--figure-shadow));
+}
+
+/* She drifts back as the reader goes down, the same way the field does: the
+ * page hands the stage to the copy rather than keeping a figure at full
+ * strength beside the last section's call to action.
+ *
+ * The base state is FULLY VISIBLE, and the motion is added only where
+ * `animation-timeline` is supported — for the same reason the sections do it
+ * that way: an element that starts at opacity 0 waiting for an animation that
+ * never runs is an element nobody ever sees. */
+@supports (animation-timeline: scroll()) {
+  @media (prefers-reduced-motion: no-preference) {
+    .home-figure {
+      animation: figure-recede linear both;
+      animation-timeline: scroll();
+    }
+    @keyframes figure-recede {
+      from { opacity: 1; transform: none; }
+      to   { opacity: .55; transform: translateY(4%) scale(.94); }
+    }
+  }
+}
 
 /* --- masthead ----------------------------------------------------------- */
 .home-mast {
@@ -257,8 +349,72 @@
   }
 }
 
+/* On a narrow window she stands at the foot of the first screen instead.
+ *
+ * # Why she moves rather than leaves
+ *
+ * She was simply not drawn here at first, which left a phone with no figure —
+ * and, because the mass was then given the whole width where the scrim covers
+ * it, with no mass either. Both of them present is the requirement; a phone is
+ * not an exception to it.
+ *
+ * # Why the foot of the first screen, and why she scrolls away
+ *
+ * At 560px the copy column is the whole window, so there is no gap beside it to
+ * stand in — the free room on a phone runs the OTHER way. She takes the bottom
+ * of the opening screen, the mass takes the space above her (measured: see the
+ * band function where portal-field.js is mounted), and the copy sits over both
+ * on its scrim.
+ *
+ * Fixed here too, so she stays with the reader through all five sections rather
+ * than belonging to the opening screen. She was absolute at first — the argument
+ * was that a phone has no room to park a figure over four more sections of body
+ * copy — and that is the wrong trade: a subject that appears once and leaves is
+ * decoration, and the copy has a scrim for precisely this. It costs some text
+ * crossing her lower half on the longest sections, which the scroll-driven fade
+ * softens as the reader goes.
+ *
+ * # The height
+ *
+ * 46dvh of a 812px phone is about 374px tall and 147px wide: large enough to
+ * read as a figure rather than as an ornament, and low enough that the call to
+ * action sits above her rather than behind her. dvh rather than vh because the
+ * number is measured against the browser's real viewport, which on a phone
+ * changes as the address bar goes.
+ *
+ * Note what may NOT be used to adjust her here: the fade above is an ANIMATION,
+ * and an animated property beats every normal declaration in the cascade however
+ * specific the selector. An earlier attempt to dim her at narrow widths had no
+ * effect whatsoever for exactly that reason. Anything responsive must change a
+ * property the animation does not touch — position, height, or display. */
+@media (max-width: 920px) {
+  .home-figure {
+    height: 46dvh;
+    right: clamp(4px, 2vw, 20px);
+  }
+}
+
 @media (max-width: 720px) {
   .sec { max-width: none; padding-top: 110px; }
+  /* The scrim turns through ninety degrees here, because the composition does.
+   *
+   * At a wide width the page is columns — copy left, mass beside it, figure
+   * right — so the scrim runs left to right and clears by 88%, leaving the right
+   * of the composition to be looked at rather than veiled.
+   *
+   * At this width the page is STACKED: the mass above, the figure at the foot of
+   * the first screen, the copy full-bleed over both. A horizontal scrim would
+   * veil the wrong things — it left the display type sitting on the mass at the
+   * right edge, and it dulled the figure, who is the one thing here that should
+   * not be behind anything. Running it top to bottom protects the type where the
+   * mass actually is and clears where she stands. */
+  .sec::before {
+    background: linear-gradient(to bottom,
+      var(--scrim-1) 0%,
+      var(--scrim-2) 42%,
+      var(--scrim-3) 68%,
+      var(--scrim-0) 100%);
+  }
   /* The call to action goes, not the identity.
    *
    * There is a full-size "Open the workbench" button in the first section,

@@ -257,7 +257,7 @@ func TestAssetsServeOnlyWhatIsEmbedded(t *testing.T) {
 	for _, path := range embedded {
 		name := strings.TrimPrefix(path, "assets/")
 		if name == "portrait" {
-			continue // a directory, covered by isPortraitAsset below
+			continue // a directory, covered by isCharacterArt below
 		}
 		checked++
 		rr := httptest.NewRecorder()
