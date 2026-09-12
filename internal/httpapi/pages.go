@@ -221,6 +221,15 @@ type pageData struct {
 	// rendered rather than written into the template so it cannot go stale.
 	Year    int
 	RepoURL string
+	// Figure is the content-hashed URL of the landing page's full-length figure.
+	//
+	// Rendered rather than written into the template as `{{asset "…"}}` so the
+	// file is named in exactly one place — persona.FigureFile, beside the rest of
+	// the character art — instead of in a template string that nothing checks
+	// against it. Hashed because it is half a megabyte: it is the one asset on
+	// that page where being served a previous build's copy for five minutes is
+	// worth the difference between `immutable` and `no-cache`.
+	Figure string
 
 	// Panels are the workbench stage's views (PRD WRK-01). Rendered rather than
 	// fetched for the reason given in stage.go: two of them are empty in this
@@ -250,6 +259,7 @@ func (p *PageHandlers) render(w http.ResponseWriter, r *http.Request, name strin
 	data.Theme = readTheme(r)
 	data.Year = time.Now().Year()
 	data.RepoURL = repoURL
+	data.Figure = assetURL(persona.FigureFile)
 
 	w.Header().Set("Content-Type", "text/html; charset=utf-8")
 	// These pages carry a live credential in their URL. Caching one — in the
@@ -435,7 +445,7 @@ func (p *PageHandlers) Assets(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/javascript; charset=utf-8")
 	case name == "favicon.png":
 		w.Header().Set("Content-Type", "image/png")
-	case isPortraitAsset(name):
+	case isCharacterArt(name):
 		w.Header().Set("Content-Type", "image/png")
 	default:
 		notFound(p.d.Log)(w, r)
@@ -465,12 +475,18 @@ func (p *PageHandlers) Assets(w http.ResponseWriter, r *http.Request) {
 	http.ServeContent(w, r, name, time.Time{}, strings.NewReader(string(body)))
 }
 
-// isPortraitAsset reports whether name is one of the character portraits.
+// isCharacterArt reports whether name is one of the character art files.
 //
-// Matched against the manifest rather than by extension, so the handler can only
-// ever serve the four files the persona package declares — there is no path to
-// traverse and no directory to enumerate.
-func isPortraitAsset(name string) bool {
+// Matched against what the persona package DECLARES rather than by extension, so
+// the handler can only ever serve the files that package names — there is no
+// path to traverse and no directory to enumerate. It was called isPortraitAsset
+// while the expressions were the only art there was; the landing page's figure
+// is character art that is not an expression, which is why the manifest is no
+// longer the whole answer.
+func isCharacterArt(name string) bool {
+	if name == persona.FigureFile {
+		return true
+	}
 	for _, a := range persona.PortraitManifest() {
 		if a.File == name {
 			return true
@@ -1082,6 +1098,29 @@ const pageTemplates = `
 <!-- Decoration only: it carries no information and the page reads identically
      without it. Fixed, so one subject carries all five sections. -->
 <canvas id="field" aria-hidden="true"></canvas>
+
+<!-- FORGE herself, full length.
+
+     The page was built around "one persistent subject" and the field was
+     standing in for one. She is the subject it was composed for: fixed like the
+     field, so she holds all five sections rather than scrolling past with the
+     first, and to the RIGHT because the copy column is left-aligned at 560px and
+     the composition's empty half is the one she was drawn facing into.
+
+     Decorative in the strict sense. aria-hidden with an empty alt: the page's
+     identity is already stated by the masthead's avatar and wordmark, and a
+     screen reader announcing a second "FORGE" here would be repeating itself for
+     something nobody using it can see. Nothing on this page depends on her
+     loading — if the request fails, the field and the copy are exactly as they
+     were.
+
+     width and height are stated so the space is reserved before the bytes
+     arrive; the image is half a megabyte and the page must not reflow around it.
+     It is not lazy-loaded: it is visible at the top of the page, and deferring
+     an image already in the viewport only delays it past first paint. -->
+<div class="home-figure" aria-hidden="true">
+  <img src="{{.Figure}}" alt="" width="505" height="1280" decoding="async">
+</div>
 
 <header class="home-mast">{{.Avatar}}<div class="wordmark">FORGE</div>
   <!-- The year is rendered, not written into the template, so it cannot go

@@ -2,11 +2,21 @@
  *
  * # The composition
  *
- * A fixed canvas carries a white organic mass and a field of wavefronts behind
- * it. The sections scroll over that; the subject drifts and shrinks as they go,
- * so it hands the stage to the copy instead of following it down the page. The
- * reference is a product plate: display serif with an italic counterpart, exact
- * data set small beside it, and a great deal of empty space doing the work.
+ * FORGE herself stands at the right, fixed, full length. A canvas behind her
+ * carries a field of wavefronts and a white organic mass, which orbits as the
+ * page scrolls. Both recede as the reader goes down, so the page hands the
+ * stage to the copy instead of following it down. The reference is a product
+ * plate: display serif with an italic counterpart, exact data set small beside
+ * it, and a great deal of empty space doing the work.
+ *
+ * Three things, left to right: the copy, the mass, the figure. They may not
+ * overlap each other, and the gaps between them are not constants — her width
+ * comes from her height, so the room left for the mass depends on the window's
+ * proportions, not just its width. So the page MEASURES it: see the band
+ * function where portal-field.js is mounted, and the .home-figure rules below
+ * that decide her size. The mass is given whatever is left and shrinks to fit;
+ * when nothing is left it is not drawn. Change her height or the copy column's
+ * width and the mass follows on its own.
  *
  * # Why the serif is scoped
  *
@@ -54,6 +64,83 @@
   transition: opacity 900ms ease;
 }
 #field.is-live { opacity: 1; }
+
+/* --- the figure --------------------------------------------------------- */
+/* FORGE, full length, standing in the page's empty half.
+ *
+ * # Why fixed rather than in the first section
+ *
+ * The composition above is five sections scrolling over ONE persistent subject.
+ * Putting her in the hero would make her the first section's illustration and
+ * leave the other four with a background; fixed, she is what the copy is being
+ * said in front of, which is the thing the page was laid out for.
+ *
+ * # Why she is behind the copy and cannot be clicked
+ *
+ * Below .home-scroll in the stack and pointer-events: none. At a wide width she
+ * and the 560px copy column do not overlap, but the reader's window is not ours
+ * to choose — and a decoration that can take a click intended for a link, or
+ * cover the first line of a paragraph, is worse than one that is simply behind.
+ *
+ * # Why the height is capped
+ *
+ * The asset is 1280px tall; scaling it past that is resampling detail that does
+ * not exist and reads as soft. On a very tall window she stops growing and the
+ * page gets more air instead, which is the better failure.
+ */
+.home-figure {
+  position: fixed;
+  right: clamp(8px, 3vw, 76px);
+  bottom: 0;
+  z-index: 0;
+  pointer-events: none;
+  /* Reserved before the image decodes, so the field behind it is not repainted
+   * at a different size a moment later. */
+  height: min(90vh, 1280px);
+  height: min(90dvh, 1280px);
+}
+.home-figure img {
+  height: 100%;
+  width: auto;
+  display: block;
+  /* Two shadows, doing two different jobs.
+   *
+   * The second grounds her: wide blur, small offset, because she is standing on
+   * the page rather than floating above it — a tight shadow reads as a sticker
+   * lifted off the paper. See --figure-shadow in shell.css.
+   *
+   * The first is a backlight. She is white, and the field's wavefronts pass
+   * behind her at full brightness — a violet ribbon crossing her silhouette
+   * leaves that edge with nothing between two bright things. A zero-offset
+   * shadow darkens the few pixels immediately around her outline: invisible
+   * against the near-black ground, and the edge that separates her from
+   * whatever the field is doing at that moment. The light theme needs it most,
+   * where she is white on paper. */
+  filter:
+    drop-shadow(0 0 26px var(--figure-halo))
+    drop-shadow(0 18px 44px var(--figure-shadow));
+}
+
+/* She drifts back as the reader goes down, the same way the field does: the
+ * page hands the stage to the copy rather than keeping a figure at full
+ * strength beside the last section's call to action.
+ *
+ * The base state is FULLY VISIBLE, and the motion is added only where
+ * `animation-timeline` is supported — for the same reason the sections do it
+ * that way: an element that starts at opacity 0 waiting for an animation that
+ * never runs is an element nobody ever sees. */
+@supports (animation-timeline: scroll()) {
+  @media (prefers-reduced-motion: no-preference) {
+    .home-figure {
+      animation: figure-recede linear both;
+      animation-timeline: scroll();
+    }
+    @keyframes figure-recede {
+      from { opacity: 1; transform: none; }
+      to   { opacity: .55; transform: translateY(4%) scale(.94); }
+    }
+  }
+}
 
 /* --- masthead ----------------------------------------------------------- */
 .home-mast {
@@ -257,8 +344,44 @@
   }
 }
 
+/* She leaves before she can crowd the copy, and she leaves by not being drawn.
+ *
+ * # Where the number comes from
+ *
+ * It is measured, not chosen. She is 90vh tall and the asset is 505x1280, so she
+ * is about 0.355 x 90vh wide — roughly 290px on a laptop — and she sits
+ * clamp(8px, 3vw, 76px) off the right edge. The copy column is 560px. Below
+ * about 880px of viewport those two start to overlap, and the first thing a
+ * reader loses is the left edge of a paragraph.
+ *
+ * # Why display and not opacity
+ *
+ * Because the fade above is an ANIMATION, and an animated property beats every
+ * normal declaration in the cascade no matter how specific the selector. An
+ * earlier version of this rule dimmed her to .38 at narrow widths and had no
+ * effect whatsoever — the scroll-driven opacity simply overrode it, silently, on
+ * every browser that supports scroll timelines. Anything responsive here must
+ * therefore change a property the animation does not touch. */
+@media (max-width: 920px) {
+  .home-figure { display: none; }
+}
+
 @media (max-width: 720px) {
   .sec { max-width: none; padding-top: 110px; }
+  /* The scrim has to reach the right edge here, and only here.
+   *
+   * At a wide width it clears to nothing by 88% on purpose: the copy stops at
+   * 560px and the right of the composition is meant to be looked at, not veiled.
+   * At this width the copy is full-bleed, so that clear band is now BEHIND THE
+   * DISPLAY TYPE — and the field's mass passes through it, which puts a pale
+   * mass under grey italic serif. The type does not get to depend on where the
+   * animation happens to be. */
+  .sec::before {
+    background: linear-gradient(100deg,
+      var(--scrim-1) 0%,
+      var(--scrim-2) 58%,
+      var(--scrim-3) 100%);
+  }
   /* The call to action goes, not the identity.
    *
    * There is a full-size "Open the workbench" button in the first section,

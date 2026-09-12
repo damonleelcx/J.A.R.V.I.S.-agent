@@ -201,6 +201,20 @@
   --display-shadow: 0 6px 40px rgba(0, 0, 0, .6);
   --display-shadow: light-dark(0 4px 24px rgba(244, 244, 247, .85), 0 6px 40px rgba(0, 0, 0, .6));
 
+  /* Under the home page's figure. She is white on both themes, so on the light
+   * ground she is white on near-white and needs a shadow to sit in the page at
+   * all; on the dark one the same shadow would be invisible and what separates
+   * her is the ground itself. A colour rather than a whole filter value because
+   * light-dark() takes colours, and home.css composes the drop-shadow from it. */
+  --figure-shadow: rgba(0, 0, 0, .55);
+  --figure-shadow: light-dark(rgba(24, 26, 44, .22), rgba(0, 0, 0, .55));
+  /* The halo immediately around her outline, which separates her from the
+   * field's white mass where it passes behind her. Darker and more opaque on
+   * the light theme than the ground shadow above, because there the mass is a
+   * mid-grey and she is white: the edge has to survive being drawn on paper. */
+  --figure-halo: rgba(8, 8, 12, .62);
+  --figure-halo: light-dark(rgba(24, 26, 44, .30), rgba(8, 8, 12, .62));
+
   /* Scrims. Written as whole colours rather than as an RGB triple plus an alpha,
    * because `light-dark()` takes colours and not arbitrary value lists. */
   --scrim-1: rgba(10, 10, 13, .93);

@@ -44,6 +44,15 @@
     /* 0 = the field as designed: light on a near-black ground. 1 = the same
      * field printed as ink on paper. See the branch at the tone map. */
     'uniform float uLight;',
+    /* The free band the mass is allowed to occupy, measured from the page's own
+     * layout and handed in: x is its centre as an offset from screen centre, y
+     * its half-width, both in viewport HEIGHTS because that is the unit the ray
+     * below works in. See measureBand() — the mass must never touch the figure,
+     * and the gap between the copy column and her is not a constant: it depends
+     * on the window's width AND its height, since her width comes from her
+     * height. A tuned offset is correct at one aspect ratio and wrong at the
+     * next one somebody opens. */
+    'uniform vec2  uBand;',
 
     'float hash(vec2 v){ return fract(sin(dot(v, vec2(127.1, 311.7))) * 43758.5453123); }',
 
@@ -208,7 +217,34 @@
     /* Screen-space ray. The subject drifts up and shrinks as the page scrolls,
      * so it hands the stage to the copy instead of following it down. */
     '  vec2 sp = (gl_FragCoord.xy - 0.5 * uRes) / uRes.y;',
-    '  sp.x -= 0.46;',
+    /* Left of centre, and it used to be right of centre.
+     *
+     * The mass was parked in the page's empty half (sp.x -= 0.46) because that
+     * half WAS empty: the copy column is 560px on the left and there was
+     * nothing on the right for it to collide with. The landing page now stands
+     * FORGE's figure there, so that offset put a raymarched white mass directly
+     * behind a white figure — two subjects in one place, each spoiling the
+     * other's silhouette.
+     *
+     * The mass and the figure may not overlap, so the mass no longer chooses
+     * where it goes: it is given the room that is left. uBand is the gap between
+     * the copy column and the figure, measured from the DOM, and the two lines
+     * below put the mass in the middle of it and shrink it until it fits.
+     *
+     * Two other arrangements were tried and are recorded here so they are not
+     * tried again: staging them in depth, with the mass behind her shoulder and
+     * a backlight keeping her silhouette off it — they still touch, which this
+     * page does not want — and parking the mass on the left, where the section
+     * scrim turns it into a grey lump under the display type. Both were
+     * judgement calls about where a thing looks best. This is an arithmetic one
+     * about where it FITS, which is the only kind that stays true on a window
+     * nobody tested.
+     *
+     * When the band is too narrow to hold a mass worth drawing, it is not drawn
+     * at all — see the guard below. That is deliberate: at those widths the
+     * page has a copy column and a figure and no room for a third thing, and a
+     * mass squeezed into the last eighty pixels reads as a rendering fault. */
+    '  sp.x -= uBand.x;',
 
     /* The subject ORBITS as the page scrolls: it rises, passes behind, comes
      * back up from below, and ends where it started. Exactly one revolution
@@ -253,14 +289,29 @@
     '  const float TAU  = 6.28318530718;',
     '  const float RISE = 0.78;',   // peak height, in viewport heights
     '  const float AWAY = 0.62;',   // how much further it is at the back of the turn
+    /* SPAN is the mass's apparent half-width at zoom 1, in viewport heights.
+     * The metaballs travel within 0.40 world units of the origin and blend out
+     * to about 0.75; the camera sits at z 6.4 looking down -3.20, so a world
+     * radius r lands at about r/2 on screen. Rounded up, because the shape
+     * breathes and a bound that is right on average is wrong half the time. */
+    '  const float SPAN = 0.40;',
+    /* Shrink until it fits the band, never grow to fill it: on a wide screen
+     * there is room for the mass at its natural size, and stretching it to the
+     * width of the gap would make the composition depend on the window. */
+    '  float fit = max(1.0, SPAN / max(uBand.y, 0.001));',
     '  float turn = clamp(uScroll, 0.0, 1.0) * TAU;',
     '  sp.y += 0.02 - RISE * sin(turn);',
     /* A quarter turn behind the height, so the extremes do not coincide. Larger
      * zoom is further away: sp is the ray's screen offset, so scaling it up
      * widens the view and the subject occupies less of it. */
-    '  float zoom = 1.0 + AWAY * 0.5 * (1.0 - cos(turn));',
+    '  float zoom = fit + AWAY * 0.5 * (1.0 - cos(turn));',
     '  sp *= zoom;',
 
+    /* No band, no mass. Below about 0.10 viewport heights of half-width the
+     * mass would be a pebble wedged between the copy and the figure, and the
+     * raymarch below is the expensive half of this shader — so this skips the
+     * work as well as the drawing. */
+    '  if (uBand.y > 0.10) {',
     '  vec3 ro = vec3(0.0, 0.0, 6.4);',
     '  vec3 rd = normalize(vec3(sp, -3.20));',
     '  float bt = uTime * uSpeed * 0.85;',
@@ -300,6 +351,7 @@
     '    float fog = exp(-max(dist - 5.2, 0.0) * 0.50);',
     '    lit = mix(col, lit, clamp(fog, 0.0, 1.0));',
     '    col = lit;',
+    '  }',
     '  }',
 
     '  gl_FragColor = vec4(col, 1.0);',
@@ -359,6 +411,7 @@
     var uBright = gl.getUniformLocation(prog, 'uBright');
     var uScroll = gl.getUniformLocation(prog, 'uScroll');
     var uLight  = gl.getUniformLocation(prog, 'uLight');
+    var uBand   = gl.getUniformLocation(prog, 'uBand');
 
     gl.uniform1f(uSpeed,  opts.speed  === undefined ? 1.0 : opts.speed);
     gl.uniform1f(uScale,  opts.scale  === undefined ? 1.0 : opts.scale);
@@ -378,9 +431,61 @@
       gl.uniform2f(uRes, canvas.width, canvas.height);
     }
 
+    /* How much room the mass is allowed, measured from the page rather than
+     * assumed by the shader.
+     *
+     * # Why this is measured and not a constant
+     *
+     * The mass may not touch the figure, and the gap between the copy column
+     * and the figure is not fixed: her width comes from her height, so the gap
+     * depends on the window's height as much as its width — and she is not
+     * drawn at all below a breakpoint, at which point the whole right side is
+     * free again. Every one of those is a layout fact, and layout facts belong
+     * to the layout. The shader is told the answer.
+     *
+     * # Why offsetLeft/offsetWidth and not getBoundingClientRect
+     *
+     * The figure carries a scroll-driven transform that scales her down as the
+     * reader goes. getBoundingClientRect would report the SCALED box, so the
+     * band measured half way down the page would be wider than the one at the
+     * top — and the mass sized to it would overlap her the moment somebody
+     * scrolled back up. offset* are layout boxes and ignore transforms, which
+     * is exactly the guarantee this needs. A hidden figure has offsetWidth 0
+     * and is treated as absent.
+     *
+     * # Units
+     *
+     * Viewport heights, and the centre as an offset from the middle of the
+     * screen, because that is the frame the ray in the shader works in.
+     */
+    var GUTTER = 18; // px of air on each side, so nothing ever looks tangent
+
+    function measureBand() {
+      var vw = global.innerWidth || 1, vh = global.innerHeight || 1;
+      var left = 0, right = vw;
+      if (opts.band) {
+        var b = opts.band();
+        if (b) {
+          left = b.left + GUTTER;
+          right = b.right - GUTTER;
+        }
+      }
+      var half = Math.max(right - left, 0) / 2;
+      gl.uniform2f(uBand, ((left + right) / 2 - vw / 2) / vh, half / vh);
+    }
+
     /* Scroll drives the subject. Read once per frame from a value the scroll
      * listener only stores — reading layout inside the listener would force a
      * reflow on every scroll event. */
+    var lastW = 0, lastH = 0;
+    function onViewport() {
+      if (global.innerWidth === lastW && global.innerHeight === lastH) return;
+      lastW = global.innerWidth;
+      lastH = global.innerHeight;
+      measureBand();
+    }
+    onViewport();
+
     var scroll = 0;
     function onScroll() {
       var max = (document.documentElement.scrollHeight - global.innerHeight) || 1;
@@ -388,6 +493,7 @@
     }
     global.addEventListener('scroll', onScroll, { passive: true });
     global.addEventListener('resize', onScroll);
+    global.addEventListener('resize', onViewport);
     onScroll();
 
     var running = true, raf = 0, t0 = (global.performance || Date).now();
@@ -463,7 +569,56 @@
   function auto() {
     var c = document.getElementById('field');
     if (!c) return;
-    var live = mount(c, { speed: 0.55, scale: 1.0, brightness: 1.0 });
+    var live = mount(c, {
+      speed: 0.55,
+      scale: 1.0,
+      brightness: 1.0,
+      /* The room left for the mass. Which elements matter is the PAGE's
+       * knowledge, so it is stated here rather than inside the field module —
+       * the module is told a pair of numbers and knows nothing about this
+       * page's class names.
+       *
+       * # The two exclusions are not the same kind
+       *
+       * The FIGURE is hard: the mass may not touch her at any width, which is
+       * the whole reason this is measured instead of tuned.
+       *
+       * The COPY is soft. Type over the mass is not a collision, it is what the
+       * per-section scrim in home.css exists to handle, and it is what this page
+       * did before the figure arrived. So the copy column is avoided when doing
+       * so still leaves a band worth drawing in, and ignored when it does not —
+       * which is what happens at the widths where the copy goes full-bleed and
+       * at the middle widths where the figure is drawn but the gap beside her is
+       * too narrow. Treating it as hard is what made the mass disappear entirely
+       * on a phone: full-bleed copy leaves no "right of the copy" at all.
+       *
+       * A figure that is not displayed has no layout box, so at the widths where
+       * home.css hides her the band runs to the edge of the window and the mass
+       * has the right half back, at the size it was drawn for.
+       */
+      band: function () {
+        var i, copyRight = 0;
+        var secs = document.querySelectorAll('.sec');
+        for (i = 0; i < secs.length; i++) {
+          copyRight = Math.max(copyRight, secs[i].offsetLeft + secs[i].offsetWidth);
+        }
+        var fig = document.querySelector('.home-figure');
+        var right = (fig && fig.offsetWidth) ? fig.offsetLeft : global.innerWidth;
+        /* How wide the gap beside the figure has to be before the mass is put
+         * in it rather than given the whole run to her left.
+         *
+         * Well above the shader's own "not worth drawing" cutoff, and for a
+         * different reason: the shader's floor is about a mass too small to be
+         * anything, while this is about a mass too small to be GOOD. At 1100px
+         * the gap measures a little over 200px, which passed a lower threshold
+         * and rendered the mass as a dark pebble wedged between the copy and
+         * her. Below this it takes the wider run instead, overlapping the copy
+         * the way the page did before the figure existed — which the section
+         * scrim already handles, and which the figure never touches either way. */
+        var worthIt = 0.34 * (global.innerHeight || 1);
+        return { left: (right - copyRight >= worthIt) ? copyRight : 0, right: right };
+      }
+    });
     /* Only reveal the canvas once it has actually rendered. If it never does,
      * the CSS gradient underneath is the design rather than a fallback. */
     if (live) c.classList.add('is-live');

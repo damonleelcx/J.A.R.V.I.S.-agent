@@ -198,6 +198,31 @@ func PortraitManifest() []PortraitAsset {
 	}
 }
 
+// FigureFile is the full-length study of the character, under
+// internal/httpapi/assets/portrait/. It is the landing page's subject.
+//
+// # Why it is not in PortraitManifest
+//
+// That manifest answers one question — which face does this state wear — and
+// every entry in it is reachable from an AvatarState. The figure answers no
+// question about state: it is the same image whatever FORGE is doing, and
+// adding it there would put an entry in the table that no state can ever select
+// and that TestEveryExpressionHasAPortraitEntry would have to be taught to
+// ignore. It is character art, so it is declared here beside the rest of it; it
+// is not an expression, so it is declared separately.
+//
+// # Why it is cut differently
+//
+// The expression portraits are opaque squares shown inside a circle, so the
+// character sheet's ground is simply hidden by the frame. The figure stands on
+// the page itself with nothing masking it, so its ground — and the shadow it
+// casts on the sheet's floor — are keyed out when the asset is produced. See
+// tools/portraitcrop.
+//
+// Optional at runtime like every other portrait: the landing page reads the same
+// without it.
+const FigureFile = "portrait/figure.png"
+
 // AvatarSVG renders the sigil at the given state and pixel size.
 //
 // # The design
