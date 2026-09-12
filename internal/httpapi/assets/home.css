@@ -9,14 +9,19 @@
  * plate: display serif with an italic counterpart, exact data set small beside
  * it, and a great deal of empty space doing the work.
  *
- * Three things, left to right: the copy, the mass, the figure. They may not
- * overlap each other, and the gaps between them are not constants — her width
- * comes from her height, so the room left for the mass depends on the window's
- * proportions, not just its width. So the page MEASURES it: see the band
- * function where portal-field.js is mounted, and the .home-figure rules below
- * that decide her size. The mass is given whatever is left and shrinks to fit;
- * when nothing is left it is not drawn. Change her height or the copy column's
- * width and the mass follows on its own.
+ * Three things — the copy, the mass, the figure — and they may not overlap each
+ * other. On a wide window they sit left to right. On a phone there is no room
+ * to sit side by side, so the page STACKS them instead: the mass above, the
+ * copy over it on its scrim, and her at the foot of the first screen.
+ *
+ * The room between them is not a constant in either arrangement. Her width comes
+ * from her height, so what is left for the mass depends on the window's
+ * proportions and not just its width. So the page MEASURES the free rectangle:
+ * see the band function where portal-field.js is mounted, and the .home-figure
+ * rules below that decide her size. The mass is given whatever is left, shrinks
+ * to fit its tighter axis, and clips its scroll orbit to its height; when
+ * nothing is left it is not drawn. Change her size here and the mass follows on
+ * its own.
  *
  * # Why the serif is scoped
  *
@@ -344,43 +349,71 @@
   }
 }
 
-/* She leaves before she can crowd the copy, and she leaves by not being drawn.
+/* On a narrow window she stands at the foot of the first screen instead.
  *
- * # Where the number comes from
+ * # Why she moves rather than leaves
  *
- * It is measured, not chosen. She is 90vh tall and the asset is 505x1280, so she
- * is about 0.355 x 90vh wide — roughly 290px on a laptop — and she sits
- * clamp(8px, 3vw, 76px) off the right edge. The copy column is 560px. Below
- * about 880px of viewport those two start to overlap, and the first thing a
- * reader loses is the left edge of a paragraph.
+ * She was simply not drawn here at first, which left a phone with no figure —
+ * and, because the mass was then given the whole width where the scrim covers
+ * it, with no mass either. Both of them present is the requirement; a phone is
+ * not an exception to it.
  *
- * # Why display and not opacity
+ * # Why the foot of the first screen, and why she scrolls away
  *
- * Because the fade above is an ANIMATION, and an animated property beats every
- * normal declaration in the cascade no matter how specific the selector. An
- * earlier version of this rule dimmed her to .38 at narrow widths and had no
- * effect whatsoever — the scroll-driven opacity simply overrode it, silently, on
- * every browser that supports scroll timelines. Anything responsive here must
- * therefore change a property the animation does not touch. */
+ * At 560px the copy column is the whole window, so there is no gap beside it to
+ * stand in — the free room on a phone runs the OTHER way. She takes the bottom
+ * of the opening screen, the mass takes the space above her (measured: see the
+ * band function where portal-field.js is mounted), and the copy sits over both
+ * on its scrim.
+ *
+ * Fixed here too, so she stays with the reader through all five sections rather
+ * than belonging to the opening screen. She was absolute at first — the argument
+ * was that a phone has no room to park a figure over four more sections of body
+ * copy — and that is the wrong trade: a subject that appears once and leaves is
+ * decoration, and the copy has a scrim for precisely this. It costs some text
+ * crossing her lower half on the longest sections, which the scroll-driven fade
+ * softens as the reader goes.
+ *
+ * # The height
+ *
+ * 46dvh of a 812px phone is about 374px tall and 147px wide: large enough to
+ * read as a figure rather than as an ornament, and low enough that the call to
+ * action sits above her rather than behind her. dvh rather than vh because the
+ * number is measured against the browser's real viewport, which on a phone
+ * changes as the address bar goes.
+ *
+ * Note what may NOT be used to adjust her here: the fade above is an ANIMATION,
+ * and an animated property beats every normal declaration in the cascade however
+ * specific the selector. An earlier attempt to dim her at narrow widths had no
+ * effect whatsoever for exactly that reason. Anything responsive must change a
+ * property the animation does not touch — position, height, or display. */
 @media (max-width: 920px) {
-  .home-figure { display: none; }
+  .home-figure {
+    height: 46dvh;
+    right: clamp(4px, 2vw, 20px);
+  }
 }
 
 @media (max-width: 720px) {
   .sec { max-width: none; padding-top: 110px; }
-  /* The scrim has to reach the right edge here, and only here.
+  /* The scrim turns through ninety degrees here, because the composition does.
    *
-   * At a wide width it clears to nothing by 88% on purpose: the copy stops at
-   * 560px and the right of the composition is meant to be looked at, not veiled.
-   * At this width the copy is full-bleed, so that clear band is now BEHIND THE
-   * DISPLAY TYPE — and the field's mass passes through it, which puts a pale
-   * mass under grey italic serif. The type does not get to depend on where the
-   * animation happens to be. */
+   * At a wide width the page is columns — copy left, mass beside it, figure
+   * right — so the scrim runs left to right and clears by 88%, leaving the right
+   * of the composition to be looked at rather than veiled.
+   *
+   * At this width the page is STACKED: the mass above, the figure at the foot of
+   * the first screen, the copy full-bleed over both. A horizontal scrim would
+   * veil the wrong things — it left the display type sitting on the mass at the
+   * right edge, and it dulled the figure, who is the one thing here that should
+   * not be behind anything. Running it top to bottom protects the type where the
+   * mass actually is and clears where she stands. */
   .sec::before {
-    background: linear-gradient(100deg,
+    background: linear-gradient(to bottom,
       var(--scrim-1) 0%,
-      var(--scrim-2) 58%,
-      var(--scrim-3) 100%);
+      var(--scrim-2) 42%,
+      var(--scrim-3) 68%,
+      var(--scrim-0) 100%);
   }
   /* The call to action goes, not the identity.
    *

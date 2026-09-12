@@ -97,17 +97,19 @@ quietly.
 
 ## Where the figure is placed
 
-The landing page reads left to right as copy, then the field's raymarched white
-mass, then her — and none of the three may overlap another.
+On a wide window the landing page reads left to right as copy, then the field's
+raymarched white mass, then her. On a phone there is no room for that, so it
+stacks: the mass above, the copy over it on its scrim, and her at the foot of the
+first screen. Either way none of the three may overlap another.
 
-That cannot be a tuned offset. Her width comes from her height, so the gap
-between the copy column and her depends on the window's proportions and not just
-its width; and below a breakpoint she is not drawn at all, at which point the
-whole right side is free again. So the page measures the free band from its own
-layout and hands it to the shader (the `band` function where `portal-field.js`
-is mounted, and `uBand` inside it). The mass is placed in the middle of that
-band and shrinks until it fits; if there is no band worth drawing in, it is not
-drawn.
+That cannot be a tuned offset. Her width comes from her height, so the room left
+for the mass depends on the window's proportions and not just its width — and on
+a phone the free room runs the other way entirely. So the page measures the free
+*rectangle* from its own layout and hands it to the shader (the `band` function
+where `portal-field.js` is mounted, and `uBand` inside it). The mass is placed at
+its centre, shrunk to fit its tighter axis, and its scroll orbit is clipped to
+its height so it cannot swing down through her; if there is no room worth drawing
+in, it is not drawn.
 
 Her own outline carries a small zero-offset shadow (`--figure-halo`) so that a
 bright wavefront passing behind her never leaves that edge with nothing between

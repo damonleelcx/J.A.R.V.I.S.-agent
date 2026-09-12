@@ -210,11 +210,19 @@ func TestTheFigureKeepsItsEdgeAgainstTheField(t *testing.T) {
 // at all and the whole right side is free again — a third case the same constant
 // would have to be right about.
 //
+// Nor is the room always in the same DIRECTION. On a wide window it is the gap
+// beside her; on a phone the copy is full-bleed, she stands at the foot of the
+// first screen, and the room is the space ABOVE her — so the band is a
+// rectangle and both of its axes constrain the mass, its size and its orbit.
+// Treating it as a horizontal interval is what left a phone showing neither of
+// them: the mass fell back to the full width where the scrim hid it, and the
+// figure was not drawn at all.
+//
 // So the page measures its own layout and the shader is told the answer. This
 // asserts the couplings that carry it, because the behaviour itself needs a
 // browser: there is no JavaScript test harness in this repository, and the
-// arrangement was verified in one across four viewport sizes and both themes
-// when it landed.
+// arrangement was verified in one at 1920, 1440, 1100 and 375 wide, on both
+// themes, when it landed.
 func TestTheFieldsMassIsFittedToMeasuredRoom(t *testing.T) {
 	src, err := assetFS.ReadFile("assets/portal-field.js")
 	if err != nil {
@@ -223,17 +231,25 @@ func TestTheFieldsMassIsFittedToMeasuredRoom(t *testing.T) {
 	js := string(src)
 
 	for _, c := range []struct{ needle, why string }{
-		{"uniform vec2  uBand;",
-			"the shader no longer declares uBand, so it cannot be told where the free band is"},
-		{"sp.x -= uBand.x;",
+		{"uniform vec4  uBand;",
+			"the shader no longer declares uBand as a rectangle, so it cannot be told where " +
+				"the free room is or which way it runs"},
+		{"sp -= uBand.xy;",
 			"the mass is no longer placed at the measured band's centre — it is back to a " +
 				"fixed offset, which is right at one window size and wrong at the next"},
-		{"SPAN / max(uBand.y",
+		{"SPAN / max(room",
 			"the mass is no longer shrunk to fit the measured band, so on a narrower window it " +
 				"keeps its size and grows through whatever is beside it"},
-		{"if (uBand.y > 0.10)",
+		{"min(uBand.z, uBand.w)",
+			"the fit considers only one axis. On a phone the room is the space ABOVE the " +
+				"figure, and a mass sized by width alone hangs straight down through her"},
+		{"min(RISE, uBand.w",
+			"the scroll orbit is no longer clipped to the band's height, so on a phone the " +
+				"mass swings down through the figure a quarter of the way through the page — " +
+				"a collision nobody sees in a screenshot of the top of the page"},
+		{"if (room > 0.10)",
 			"the mass is drawn even when the layout leaves no room for it"},
-		{"gl.uniform2f(uBand",
+		{"gl.uniform4f(uBand",
 			"the measurement is never handed to the shader, so uBand stays at its default and " +
 				"the mass sits in the middle of the page on top of the copy"},
 		{"document.querySelector('.home-figure')",

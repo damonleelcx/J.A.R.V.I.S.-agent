@@ -44,15 +44,20 @@
     /* 0 = the field as designed: light on a near-black ground. 1 = the same
      * field printed as ink on paper. See the branch at the tone map. */
     'uniform float uLight;',
-    /* The free band the mass is allowed to occupy, measured from the page's own
-     * layout and handed in: x is its centre as an offset from screen centre, y
-     * its half-width, both in viewport HEIGHTS because that is the unit the ray
-     * below works in. See measureBand() — the mass must never touch the figure,
-     * and the gap between the copy column and her is not a constant: it depends
-     * on the window's width AND its height, since her width comes from her
-     * height. A tuned offset is correct at one aspect ratio and wrong at the
-     * next one somebody opens. */
-    'uniform vec2  uBand;',
+    /* The free RECTANGLE the mass is allowed to occupy, measured from the page's
+     * own layout and handed in: xy is its centre as an offset from the centre of
+     * the screen, zw its half-width and half-height, all in viewport HEIGHTS
+     * because that is the unit the ray below works in.
+     *
+     * See measureBand(). The mass must never touch the figure, and where the
+     * room is depends on the shape of the window: on a wide one it is the gap
+     * beside her, on a phone it is the space above her. A tuned offset is
+     * correct at one aspect ratio and wrong at the next one somebody opens.
+     *
+     * An axis that is not constrained is passed as a large half-extent rather
+     * than as a flag, so the arithmetic below has no special case: the wide
+     * layout leaves the vertical unconstrained and its orbit is unchanged. */
+    'uniform vec4  uBand;',
 
     'float hash(vec2 v){ return fract(sin(dot(v, vec2(127.1, 311.7))) * 43758.5453123); }',
 
@@ -244,7 +249,7 @@
      * at all — see the guard below. That is deliberate: at those widths the
      * page has a copy column and a figure and no room for a third thing, and a
      * mass squeezed into the last eighty pixels reads as a rendering fault. */
-    '  sp.x -= uBand.x;',
+    '  sp -= uBand.xy;',
 
     /* The subject ORBITS as the page scrolls: it rises, passes behind, comes
      * back up from below, and ends where it started. Exactly one revolution
@@ -288,6 +293,12 @@
      */
     '  const float TAU  = 6.28318530718;',
     '  const float RISE = 0.78;',   // peak height, in viewport heights
+    /* The orbit is clipped to the band's height for the same reason the size is
+     * clipped to its width: on a phone the mass is given the space ABOVE the
+     * figure, and an orbit that ignored that would carry it down through her at
+     * three quarters of a turn. On a wide screen the vertical is unconstrained,
+     * uBand.w is large, and this resolves to RISE exactly as before. */
+    '  float rise = min(RISE, uBand.w * 0.9);',
     '  const float AWAY = 0.62;',   // how much further it is at the back of the turn
     /* SPAN is the mass's apparent half-width at zoom 1, in viewport heights.
      * The metaballs travel within 0.40 world units of the origin and blend out
@@ -295,12 +306,14 @@
      * radius r lands at about r/2 on screen. Rounded up, because the shape
      * breathes and a bound that is right on average is wrong half the time. */
     '  const float SPAN = 0.40;',
-    /* Shrink until it fits the band, never grow to fill it: on a wide screen
-     * there is room for the mass at its natural size, and stretching it to the
-     * width of the gap would make the composition depend on the window. */
-    '  float fit = max(1.0, SPAN / max(uBand.y, 0.001));',
+    /* Shrink until it fits the band's TIGHTER axis, never grow to fill it: on a
+     * wide screen there is room for the mass at its natural size, and stretching
+     * it to the width of the gap would make the composition depend on the
+     * window. */
+    '  float room = min(uBand.z, uBand.w);',
+    '  float fit = max(1.0, SPAN / max(room, 0.001));',
     '  float turn = clamp(uScroll, 0.0, 1.0) * TAU;',
-    '  sp.y += 0.02 - RISE * sin(turn);',
+    '  sp.y += 0.02 - rise * sin(turn);',
     /* A quarter turn behind the height, so the extremes do not coincide. Larger
      * zoom is further away: sp is the ray's screen offset, so scaling it up
      * widens the view and the subject occupies less of it. */
@@ -311,7 +324,7 @@
      * mass would be a pebble wedged between the copy and the figure, and the
      * raymarch below is the expensive half of this shader — so this skips the
      * work as well as the drawing. */
-    '  if (uBand.y > 0.10) {',
+    '  if (room > 0.10) {',
     '  vec3 ro = vec3(0.0, 0.0, 6.4);',
     '  vec3 rd = normalize(vec3(sp, -3.20));',
     '  float bt = uTime * uSpeed * 0.85;',
@@ -456,22 +469,35 @@
      * # Units
      *
      * Viewport heights, and the centre as an offset from the middle of the
-     * screen, because that is the frame the ray in the shader works in.
+     * screen, because that is the frame the ray in the shader works in. Note the
+     * vertical sign: the shader's y runs UP from the middle of the screen and
+     * the page's runs DOWN from the top, so the two disagree and the conversion
+     * below is where that is settled, once.
      */
-    var GUTTER = 18; // px of air on each side, so nothing ever looks tangent
+    var GUTTER = 18;    // px of air on each side, so nothing ever looks tangent
+    var UNBOUNDED = 9;  // viewport heights: "this axis constrains nothing"
 
     function measureBand() {
       var vw = global.innerWidth || 1, vh = global.innerHeight || 1;
-      var left = 0, right = vw;
+      var left = 0, right = vw, top = null, bottom = null;
       if (opts.band) {
         var b = opts.band();
         if (b) {
           left = b.left + GUTTER;
           right = b.right - GUTTER;
+          if (b.top !== null && b.top !== undefined) top = b.top + GUTTER;
+          if (b.bottom !== null && b.bottom !== undefined) bottom = b.bottom - GUTTER;
         }
       }
-      var half = Math.max(right - left, 0) / 2;
-      gl.uniform2f(uBand, ((left + right) / 2 - vw / 2) / vh, half / vh);
+      var cx = ((left + right) / 2 - vw / 2) / vh;
+      var halfW = Math.max(right - left, 0) / 2 / vh;
+
+      var cy = 0, halfH = UNBOUNDED;
+      if (top !== null && bottom !== null) {
+        cy = (vh / 2 - (top + bottom) / 2) / vh;
+        halfH = Math.max(bottom - top, 0) / 2 / vh;
+      }
+      gl.uniform4f(uBand, cx, cy, halfW, halfH);
     }
 
     /* Scroll drives the subject. Read once per frame from a value the scroll
@@ -580,21 +606,25 @@
        *
        * # The two exclusions are not the same kind
        *
-       * The FIGURE is hard: the mass may not touch her at any width, which is
-       * the whole reason this is measured instead of tuned.
+       * The FIGURE is hard: the mass may not touch her at any size of window,
+       * which is the whole reason this is measured instead of tuned.
        *
        * The COPY is soft. Type over the mass is not a collision, it is what the
        * per-section scrim in home.css exists to handle, and it is what this page
-       * did before the figure arrived. So the copy column is avoided when doing
-       * so still leaves a band worth drawing in, and ignored when it does not —
-       * which is what happens at the widths where the copy goes full-bleed and
-       * at the middle widths where the figure is drawn but the gap beside her is
-       * too narrow. Treating it as hard is what made the mass disappear entirely
-       * on a phone: full-bleed copy leaves no "right of the copy" at all.
+       * did before the figure arrived.
        *
-       * A figure that is not displayed has no layout box, so at the widths where
-       * home.css hides her the band runs to the edge of the window and the mass
-       * has the right half back, at the size it was drawn for.
+       * # Which way the room runs depends on the window
+       *
+       * On a wide window the free room is the GAP BESIDE her and the vertical is
+       * unconstrained, so the orbit is untouched.
+       *
+       * On a narrow one there is no gap beside anything — the copy is full-bleed
+       * and she stands at the foot of the first screen — so the free room is the
+       * space ABOVE her, and the vertical is what constrains both her size and
+       * her orbit. Treating the layout as one horizontal interval is what left a
+       * phone with neither of them visible: no gap beside the copy meant the
+       * mass fell back to the whole width, where the scrim hid it, and the
+       * figure was simply not drawn.
        */
       band: function () {
         var i, copyRight = 0;
@@ -603,20 +633,32 @@
           copyRight = Math.max(copyRight, secs[i].offsetLeft + secs[i].offsetWidth);
         }
         var fig = document.querySelector('.home-figure');
-        var right = (fig && fig.offsetWidth) ? fig.offsetLeft : global.innerWidth;
-        /* How wide the gap beside the figure has to be before the mass is put
-         * in it rather than given the whole run to her left.
+        var drawn = !!(fig && fig.offsetWidth);
+
+        /* How wide the gap beside the figure has to be before the mass is put in
+         * it rather than sent above her.
          *
          * Well above the shader's own "not worth drawing" cutoff, and for a
          * different reason: the shader's floor is about a mass too small to be
          * anything, while this is about a mass too small to be GOOD. At 1100px
          * the gap measures a little over 200px, which passed a lower threshold
          * and rendered the mass as a dark pebble wedged between the copy and
-         * her. Below this it takes the wider run instead, overlapping the copy
-         * the way the page did before the figure existed — which the section
-         * scrim already handles, and which the figure never touches either way. */
-        var worthIt = 0.34 * (global.innerHeight || 1);
-        return { left: (right - copyRight >= worthIt) ? copyRight : 0, right: right };
+         * her. */
+        var vh = global.innerHeight || 1;
+        var gap = (drawn ? fig.offsetLeft : global.innerWidth) - copyRight;
+
+        if (gap >= 0.34 * vh) {
+          /* Beside her, floor to ceiling. */
+          return { left: copyRight, right: drawn ? fig.offsetLeft : global.innerWidth };
+        }
+        if (drawn) {
+          /* Above her: the full width, from the top of the window down to the
+           * top of her layout box. offsetTop rather than a rect for the same
+           * reason as offsetLeft — her transform must not move the band. */
+          return { left: 0, right: global.innerWidth, top: 0, bottom: fig.offsetTop };
+        }
+        /* She is not drawn: the mass has the window, as it did before her. */
+        return { left: 0, right: global.innerWidth };
       }
     });
     /* Only reveal the canvas once it has actually rendered. If it never does,
