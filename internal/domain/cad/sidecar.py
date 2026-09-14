@@ -746,13 +746,48 @@ def _interferences(solids, ids, labels):
     return found, truncated
 
 
+# The fields that decide what a solid IS, before it is placed. Everything else a
+# solid carries is its identity (id, label) or its place (matrix, position).
+#
+# Phase 4, stage K1 of docs/plan-2026-09-13-millions-of-parts.md: each distinct
+# shape is built ONCE per request and every occurrence of it is a located copy.
+# A located copy shares the underlying B-rep (TShape) - measured in
+# docs/spikes/2026-09-13-exact-instancing - so it is exact, and a feature applied
+# to one occurrence makes a new shape rather than changing the shared one.
+# "mirrored" is part of the key: a reflected solid is a different solid.
+_SHAPE_KEYS = ("shape", "dims", "outline", "holes", "hole_parents", "path",
+               "section_frame", "axis", "step", "mirrored")
+
+
+def _shape_key(solid):
+    return json.dumps({k: solid.get(k) for k in _SHAPE_KEYS}, sort_keys=True, separators=(",", ":"))
+
+
 def _build(request):
     solids = request.get("solids") or []
     if not solids:
         return {"ok": False, "error": "no parts to build"}
 
     built, names, ids, skipped = [], [], [], []
+    # shape key -> (the built, mirrored shape, or None; why it could not be built)
+    built_once = {}
+    # Counted where _shape is CALLED, not read back as len(built_once): the cache's
+    # own size cannot show the cache being bypassed, because a rebuilt copy lands
+    # on the same key and the dict still holds one entry. A mutation drill that
+    # rebuilt every occurrence stayed green against len(built_once).
+    shape_builds = 0
     for s in solids:
+        key = _shape_key(s)
+        if key in built_once:
+            shape, reason = built_once[key]
+            if shape is None:
+                skipped.append("%s: %s" % (s.get("label") or s.get("id"), reason))
+                continue
+            built.append(_placement(s) * shape)
+            names.append(s.get("label") or s.get("id"))
+            ids.append(s.get("id"))
+            continue
+        shape_builds += 1
         try:
             shape = _shape(s)
         except Exception as exc:
@@ -765,6 +800,7 @@ def _build(request):
             # no text at all, and "Plate: " tells a reader nothing. Measured
             # 2026-09-05 against build123d 0.11.1.
             reason = str(exc).strip() or type(exc).__name__
+            built_once[key] = (None, reason)
             skipped.append("%s: %s" % (s.get("label") or s.get("id"), reason))
             continue
         if s.get("mirrored"):
@@ -784,6 +820,7 @@ def _build(request):
             # Fence: TestKernel_MirrorsAPartBeforePlacingIt.
             # Phase 1, stage D1c of docs/plan-2026-09-13-millions-of-parts.md.
             shape = shape.mirror(Plane.YZ)
+        built_once[key] = (shape, None)
         built.append(_placement(s) * shape)
         names.append(s.get("label") or s.get("id"))
         ids.append(s.get("id"))
@@ -850,6 +887,7 @@ def _build(request):
     # deployment that needed it, and the broad phase makes the usual case free.
     clashes, clash_truncated = _interferences(built, ids, names)
     out = {
+        "shape_builds": shape_builds,
         "ok": True,
         "parts": len(built),
         "interferences": clashes,
