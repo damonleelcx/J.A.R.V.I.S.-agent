@@ -241,7 +241,7 @@ func init() {
 	allEvents = append(allEvents,
 		EventGeometrySaved, EventGeometryExported, EventGeometryMeshed, EventGeometryRefused, EventGeometryCompared,
 		EventGeometryUnreadable,
-		EventGeometryAdopted, EventGeometryRespecified,
+		EventGeometryAdopted, EventGeometryRespecified, EventGeometryTooLarge,
 		EventCADStarted, EventCADRestarted, EventCADRefused,
 	)
 }
