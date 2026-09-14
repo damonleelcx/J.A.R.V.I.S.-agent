@@ -246,7 +246,15 @@ func (n *NewVariant) Validate() error {
 		}
 	}
 	seen := map[string]bool{}
-	for _, p := range placed {
+	// Read from EVERY part the document builds, repeats written out, not from
+	// `placed`. A repeat names its copies "<id>-n" only when it is expanded, and
+	// `placed` expands the tree but not a top-level part's repeat, so a copy that
+	// took an id another part already had ("rail" x3 beside "rail-2") was stored
+	// with one of the two unreachable. Only the input changed: this is still the
+	// one rule for an id placed twice. The checks around it keep reading `placed`,
+	// because a state may name a repeated part by its authored id.
+	// docs/bugfix/2026-09-14-a-repeat-copy-could-take-another-parts-id.md
+	for _, p := range n.Document.Expanded().Parts {
 		if seen[p.ID] {
 			// Comparison matches parts across variants BY ID. Two parts sharing
 			// one inside a single variant makes that matching ambiguous, and a

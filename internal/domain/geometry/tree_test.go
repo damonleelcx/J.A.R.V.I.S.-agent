@@ -335,3 +335,15 @@ func TestTree_BindEvaluatesADefinitionsSizesForEveryPlacement(t *testing.T) {
 		}
 	}
 }
+
+// The door checks the parts a tree PLACES, not only the top-level ones: a
+// definition with no shape is refused once a child places it. This is what keeps
+// the "reads only top-level parts" drill honest now that the duplicate-id check
+// reads every expanded part and would catch a tree clash on its own.
+func TestTree_TheStorageDoorChecksThePartsATreePlaces(t *testing.T) {
+	d := Document{Definitions: []Part{{ID: "blank", Size: map[string]float64{"width": 1}}},
+		Assemblies: []Assembly{{ID: "root", Children: []Child{{ID: "slot", Ref: "blank"}}}}, Root: "root"}
+	if err := store(d); err == nil || !strings.Contains(err.Error(), `part "slot" has no shape`) {
+		t.Errorf("a placed definition with no shape was stored: %v", err)
+	}
+}
