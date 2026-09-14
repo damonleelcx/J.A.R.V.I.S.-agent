@@ -514,7 +514,7 @@ type Span struct {
 // A group needs at least two parts at DIFFERENT positions: one part is not a
 // pattern, and several parts at the same coordinate span nothing.
 func (d *Document) Spans() []Span {
-	if d == nil || len(d.Parts) == 0 {
+	if d == nil || !d.HasGeometry() {
 		return nil
 	}
 	res := d.Resolve()
@@ -533,29 +533,34 @@ func (d *Document) Spans() []Span {
 	groups := map[string][]placed{}
 	order := []string{}
 
-	for _, axis := range []string{"x", "y", "z"} {
-		for _, p := range d.Parts {
-			expr, bound := p.PositionFrom[axis]
-			if !bound {
-				continue
+	// Top-level parts and definitions are measured SEPARATELY (stage D1f): a
+	// definition's position is in its own frame, so grouping it with a top-level
+	// part would report a distance between two frames that nothing measured.
+	for frame, parts := range [][]Part{d.Parts, d.Definitions} {
+		for _, axis := range []string{"x", "y", "z"} {
+			for _, p := range parts {
+				expr, bound := p.PositionFrom[axis]
+				if !bound {
+					continue
+				}
+				node, err := parseExpression(expr)
+				if err != nil {
+					continue
+				}
+				value, err := node.Eval(lookup)
+				if err != nil || math.IsNaN(value) || math.IsInf(value, 0) {
+					continue
+				}
+				depends := dependenciesOf(node.References(), res.Values)
+				if len(depends) == 0 {
+					continue
+				}
+				key := string(rune('0'+frame)) + "|" + axis + "|" + strings.Join(depends, ",")
+				if _, seen := groups[key]; !seen {
+					order = append(order, key)
+				}
+				groups[key] = append(groups[key], placed{part: p.ID, value: value, depends: depends})
 			}
-			node, err := parseExpression(expr)
-			if err != nil {
-				continue
-			}
-			value, err := node.Eval(lookup)
-			if err != nil || math.IsNaN(value) || math.IsInf(value, 0) {
-				continue
-			}
-			depends := dependenciesOf(node.References(), res.Values)
-			if len(depends) == 0 {
-				continue
-			}
-			key := axis + "|" + strings.Join(depends, ",")
-			if _, seen := groups[key]; !seen {
-				order = append(order, key)
-			}
-			groups[key] = append(groups[key], placed{part: p.ID, value: value, depends: depends})
 		}
 	}
 
@@ -588,7 +593,7 @@ func (d *Document) Spans() []Span {
 		sort.Strings(ids)
 		unit, _ := inheritedUnit(members[0].depends, res.Values)
 		out = append(out, Span{
-			Axis: strings.SplitN(key, "|", 2)[0], Parts: ids,
+			Axis: strings.Split(key, "|")[1], Parts: ids,
 			Extent: hi - lo, Unit: unit, Depends: members[0].depends,
 		})
 	}

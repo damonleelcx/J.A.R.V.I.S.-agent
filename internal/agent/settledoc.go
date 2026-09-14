@@ -34,7 +34,10 @@ func settleDocument(d *Prototype) *Prototype {
 	if d == nil {
 		return nil
 	}
-	if len(d.Parts) == 0 {
+	// HasGeometry, not len(Parts): a design written as definitions and assemblies
+	// has no top-level parts and is not empty (stage D1f). Dropping it here threw
+	// away every tree a model wrote.
+	if !d.HasGeometry() {
 		// An empty prototype renders as a blank viewport, which reads as a
 		// failure. Dropping it is more honest than showing nothing.
 		return nil

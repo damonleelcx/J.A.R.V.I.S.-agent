@@ -51,6 +51,11 @@ type currentModel struct {
 	Derived    []geometry.Derived   `json:"derived,omitempty"`
 	Parts      []geometry.Part      `json:"parts"`
 	Features   []geometry.Feature   `json:"features,omitempty"`
+	// The tree (stage D1f): a revision of a design written as definitions and
+	// assemblies has to see them, or it can only restate the design from recall.
+	Definitions []geometry.Part     `json:"definitions,omitempty"`
+	Assemblies  []geometry.Assembly `json:"assemblies,omitempty"`
+	Root        string              `json:"root,omitempty"`
 }
 
 // CurrentModel renders the model being revised, or "" when there is none.
@@ -58,13 +63,14 @@ type currentModel struct {
 // Empty for the first turn of a project, which is correct: there is nothing on
 // screen to revise and the agent is being asked to propose rather than change.
 func CurrentModel(d *Prototype) string {
-	if d == nil || len(d.Parts) == 0 {
+	if d == nil || !d.HasGeometry() {
 		return ""
 	}
 	body, err := json.Marshal(currentModel{
 		Name: d.Name, Units: d.Units,
 		Parameters: d.Parameters, Derived: d.Derived,
 		Parts: d.Parts, Features: d.Features,
+		Definitions: d.Definitions, Assemblies: d.Assemblies, Root: d.Root,
 	})
 	if err != nil {
 		// Never fatal: a turn without this context is the turn that shipped
