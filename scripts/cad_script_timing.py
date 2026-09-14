@@ -53,20 +53,40 @@ def machine():
         print(var + ":", os.environ.get(var, "(unset)"))
 
 
-def run(script_py, request, label):
+def run(script_py, request, label, env=None, patience=60):
+    """Run script.py once. A run still alive after 20 s is sampled from /proc —
+    threads and address space — and one past `patience` is killed and reported as
+    a hang, which is itself the answer this probe exists to find."""
     t = time.time()
-    proc = subprocess.run([sys.executable, script_py], input=json.dumps(request),
-                          capture_output=True, text=True, timeout=180)
+    proc = subprocess.Popen([sys.executable, script_py], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE, text=True, env=env)
+    proc.stdin.write(json.dumps(request))
+    proc.stdin.close()
+    sample = ""
+    while proc.poll() is None and time.time() - t < patience:
+        time.sleep(0.5)
+        if not sample and time.time() - t > 20:
+            status = "/proc/%d/status" % proc.pid
+            if os.path.exists(status):
+                fields = dict(line.split(":", 1) for line in open(status) if ":" in line)
+                sample = "at 20 s: threads %s, VmSize %s, VmPeak %s, state %s" % tuple(
+                    fields.get(k, "?").strip() for k in ("Threads", "VmSize", "VmPeak", "State"))
     wall = time.time() - t
-    last = (proc.stdout.strip().splitlines() or ["(no output)"])[-1]
+    if proc.poll() is None:
+        proc.kill()
+        proc.wait()
+        print("%-48s HUNG: still running after %.0f s  %s" % (label, wall, sample))
+        return
+    out, err = proc.stdout.read(), proc.stderr.read()
+    last = (out.strip().splitlines() or ["(no output)"])[-1]
     try:
         reply = json.loads(last)
         verdict = "ok" if reply.get("ok") else "error: " + str(reply.get("error"))[:200]
     except ValueError:
         verdict = "no JSON reply: " + last[:200]
-    print("%-38s %6.1f s  exit %s  %s" % (label, wall, proc.returncode, verdict))
-    if proc.stderr.strip():
-        print("    stderr:", proc.stderr.strip()[-400:])
+    print("%-48s %6.1f s  exit %s  %s  %s" % (label, wall, proc.returncode, verdict, sample))
+    if err.strip():
+        print("    stderr:", err.strip()[-300:])
 
 
 def main():
@@ -77,13 +97,17 @@ def main():
     print("import build123d alone: %.1f s" % (time.time() - t))
     source = gear_source(test_go)
     cpu, mem = limits(script_go)
-    run(script_py, {"source": source, "cpu_seconds": cpu, "memory_bytes": mem},
-        "gear, FORGE limits (cpu %d s, AS %d MiB)" % (cpu, mem >> 20))
-    run(script_py, {"source": source, "cpu_seconds": 600, "memory_bytes": 64 << 30},
-        "gear, limits lifted")
+    lifted_cpu, lifted_mem = 600, 64 << 30
+    one_thread = dict(os.environ, OMP_NUM_THREADS="1", OPENBLAS_NUM_THREADS="1", TBB_NUM_THREADS="1",
+                      MKL_NUM_THREADS="1")
+    gear = lambda c, m: {"source": source, "cpu_seconds": c, "memory_bytes": m}
+    run(script_py, gear(cpu, mem), "gear, FORGE limits (cpu %d s, AS %d MiB)" % (cpu, mem >> 20))
+    run(script_py, gear(lifted_cpu, mem), "gear, address-space cap only")
+    run(script_py, gear(cpu, lifted_mem), "gear, CPU limit only")
+    run(script_py, gear(lifted_cpu, lifted_mem), "gear, limits lifted")
+    run(script_py, gear(cpu, mem), "gear, FORGE limits, one thread", env=one_thread)
     run(script_py, {"source": "result = Box(10, 10, 10)", "cpu_seconds": cpu, "memory_bytes": mem},
         "a single box, FORGE limits")
-
 
 if __name__ == "__main__":
     main()
