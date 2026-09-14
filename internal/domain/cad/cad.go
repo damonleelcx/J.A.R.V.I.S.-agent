@@ -188,6 +188,12 @@ type Build struct {
 	// is a count a test and a budget can read, not a claim.
 	ShapeBuilds int
 	ScriptRuns  int
+	// Phases is where the kernel spent this build. Reported so a slow build says
+	// which step was slow, in the log and to a test, without timing the whole
+	// build: the assembly and export steps are fenced to grow linearly
+	// (TestKernel_ExportingManyOccurrencesGrowsLinearly, Phase 4 stage K2) while
+	// the interference check is still quadratic until stage K2b.
+	Phases Phases
 	// Mesh is the built solid's surface, one entry per surviving part, empty
 	// unless it was asked for.
 	//
@@ -242,16 +248,17 @@ type request struct {
 }
 
 type reply struct {
-	OK             bool       `json:"ok"`
-	Ready          bool       `json:"ready"`
-	Error          string     `json:"error,omitempty"`
-	Trace          string     `json:"trace,omitempty"`
-	Parts          int        `json:"parts"`
-	Volume         float64    `json:"volume"`
-	Bounds         [6]float64 `json:"bounds"`
-	Skipped        []string   `json:"skipped,omitempty"`
-	FeaturesFailed []string   `json:"features_failed,omitempty"`
-	ShapeBuilds    int        `json:"shape_builds"`
+	OK             bool         `json:"ok"`
+	Ready          bool         `json:"ready"`
+	Error          string       `json:"error,omitempty"`
+	Trace          string       `json:"trace,omitempty"`
+	Parts          int          `json:"parts"`
+	Volume         float64      `json:"volume"`
+	Bounds         [6]float64   `json:"bounds"`
+	Skipped        []string     `json:"skipped,omitempty"`
+	FeaturesFailed []string     `json:"features_failed,omitempty"`
+	ShapeBuilds    int          `json:"shape_builds"`
+	Phases         phaseSeconds `json:"phases"`
 
 	Interferences          []geometry.Interference `json:"interferences,omitempty"`
 	InterferencesTruncated bool                    `json:"interferences_truncated,omitempty"`
@@ -264,11 +271,53 @@ type reply struct {
 	MeshError      string     `json:"mesh_error,omitempty"`
 }
 
+// phaseSeconds is the reply's "phases": seconds per phase of a build, written by
+// _lap in sidecar.py. A phase the build never reached is absent and reads as zero.
+type phaseSeconds struct {
+	Shapes        float64 `json:"shapes"`
+	Features      float64 `json:"features"`
+	Assembly      float64 `json:"assembly"`
+	Interferences float64 `json:"interferences"`
+	Export        float64 `json:"export"`
+	Mesh          float64 `json:"mesh"`
+}
+
+func (p phaseSeconds) durations() Phases {
+	d := func(seconds float64) time.Duration { return time.Duration(seconds * float64(time.Second)) }
+	return Phases{Shapes: d(p.Shapes), Features: d(p.Features), Assembly: d(p.Assembly),
+		Interferences: d(p.Interferences), Export: d(p.Export), Mesh: d(p.Mesh)}
+}
+
 type meshPart struct {
 	ID        string    `json:"id"`
 	Label     string    `json:"label"`
 	Vertices  []float64 `json:"vertices"`
 	Triangles []int32   `json:"triangles"`
+}
+
+// Phases is the kernel's time per phase of one build. Scripts run before the
+// kernel is asked and are not in it.
+type Phases struct {
+	// Shapes is building each distinct shape and placing every occurrence.
+	Shapes time.Duration
+	// Features is applying the document's operations.
+	Features time.Duration
+	// Assembly is gathering the kept solids and measuring their volume and extent.
+	Assembly time.Duration
+	// Interferences is the check for parts that share material.
+	Interferences time.Duration
+	// Export is writing the STEP file, zero unless one was asked for.
+	Export time.Duration
+	// Mesh is tessellating, zero unless a mesh was asked for.
+	Mesh time.Duration
+}
+
+// LogFields is the phases as structured log fields, in milliseconds.
+func (p Phases) LogFields() []any {
+	ms := func(d time.Duration) int64 { return d.Milliseconds() }
+	return []any{"kernel_shapes_ms", ms(p.Shapes), "kernel_features_ms", ms(p.Features),
+		"kernel_assembly_ms", ms(p.Assembly), "kernel_interferences_ms", ms(p.Interferences),
+		"kernel_export_ms", ms(p.Export), "kernel_mesh_ms", ms(p.Mesh)}
 }
 
 // BuildDocument builds a document and, when format is "step", exports it.
@@ -426,7 +475,7 @@ func (k *Kernel) BuildDocument(ctx context.Context, doc geometry.Document, unit 
 	out := &Build{Parts: res.Parts, Volume: res.Volume, Bounds: res.Bounds,
 		Skipped: res.Skipped, FeatureFailures: res.FeaturesFailed, Inferred: inferred,
 		Interferences: res.Interferences, InterferencesTruncated: res.InterferencesTruncated,
-		ShapeBuilds: res.ShapeBuilds, ScriptRuns: scriptRuns}
+		ShapeBuilds: res.ShapeBuilds, ScriptRuns: scriptRuns, Phases: res.Phases.durations()}
 	if res.STEP != "" {
 		decoded, err := base64.StdEncoding.DecodeString(res.STEP)
 		if err != nil {
