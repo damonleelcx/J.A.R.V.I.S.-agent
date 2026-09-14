@@ -114,6 +114,7 @@ FILES=(
   internal/domain/geometry/tree.go
   internal/domain/geometry/binding.go
   internal/domain/geometry/variant.go
+  internal/domain/geometry/frame.go
 )
 
 BACKUP=""
@@ -529,7 +530,7 @@ drill "a clone shares the tree with its original" internal/domain/geometry/bindi
   ./internal/domain/geometry 'TestTree_ACloneSharesNothingWithTheOriginal'
 
 drill "a placement ignores the definition's own frame" internal/domain/geometry/tree.go \
-  's = s.replace("\t\t\t\tq.Position, q.Rotation = placeInFrame(cpos, crot, lp.Position, lp.Rotation)\n", "\t\t\t\tq.Position, q.Rotation = cpos, crot\n", 1)' \
+  's = s.replace("\t\t\t\tq.Position, q.Rotation, q.Mirrored = childFrame.then(placementOf(lp.Position, lp.Rotation, lp.Mirrored)).stored()\n", "\t\t\t\tq.Position, q.Rotation, q.Mirrored = childFrame.stored()\n", 1)' \
   ./internal/domain/geometry 'TestTree_APartIsPlacedThroughEveryFrameAboveIt'
 
 drill "the storage door reads only top-level parts" internal/domain/geometry/variant.go \
@@ -544,11 +545,55 @@ echo
 echo "The browser flattens a tree like the exporter"
 # Added 2026-09-14 (Phase 1, stage D1b). forge3d.js holds a copy of tree.go and frame.go.
 drill "the browser places a definition ignoring its own frame" internal/httpapi/assets/forge3d.js \
-  "s = s.replace('          var pl = placeInFrame(cp.position, cp.rotation, lp.position, lp.rotation);\n', '          var pl = { position: cp.position, rotation: cp.rotation };\n', 1)" \
+  "s = s.replace('          var st = storedPlacement(thenPlacement(childFrame, placementOf(lp.position, lp.rotation, !!lp.mirrored)));\n', '          var st = storedPlacement(childFrame);\n', 1)" \
   ./internal/httpapi 'TestRendererFlattensATreeLikeTheExporter'
 
 drill "the browser reads a rotation back with the wrong sign" internal/httpapi/assets/forge3d.js \
   "s = s.replace('      x = Math.atan2(-m[5], m[8]);\n', '      x = Math.atan2(m[5], m[8]);\n', 1)" \
+  ./internal/httpapi 'TestRendererFlattensATreeLikeTheExporter'
+
+echo
+echo "Mirror is a reflection"
+# Added 2026-09-14 (Phase 1, stage D1c). A reflection cannot be a rotation, so a
+# placed part stores one flag, and every reader has to honour it.
+drill "the mesh does not reflect a mirrored part" internal/domain/geometry/mesh.go \
+  's = s.replace("\t\tif p.Mirrored {\n\t\t\tt = mirrorTriangle(t)\n\t\t}\n", "", 1)' \
+  ./internal/domain/geometry 'TestMirror_TheMeshOfAMirroredPartIsItsReflectionFacingOut'
+
+drill "a mirrored mesh keeps its winding and faces in" internal/domain/geometry/mesh.go \
+  's = s.replace("return Triangle{A: flip(t.A), B: flip(t.C), C: flip(t.B), Normal: flip(t.Normal)}", "return Triangle{A: flip(t.A), B: flip(t.B), C: flip(t.C), Normal: flip(t.Normal)}", 1)' \
+  ./internal/domain/geometry 'TestMirror_TheMeshOfAMirroredPartIsItsReflectionFacingOut'
+
+drill "the stored form ignores a reflection" internal/domain/geometry/frame.go \
+  's = s.replace("\tif det3(m) < 0 {\n", "\tif false {\n", 1)' \
+  ./internal/domain/geometry 'TestPlacement_TheStoredFormRebuildsTheSamePlacement'
+
+drill "the tree ignores a child's mirror" internal/domain/geometry/tree.go \
+  's = s.replace("\t\t\tlocal.m = mulMat3(local.m, reflect)\n", "\t\t\t_ = reflect\n", 1)' \
+  ./internal/domain/geometry 'TestMirror_AChildMirroredAcrossYIsReflectedNotTurned'
+
+drill "measurement ignores mirror" internal/domain/geometry/overlay.go \
+  's = s.replace("\t\tif p.Mirrored {\n\t\t\t// A reflected part reaches", "\t\tif false {\n\t\t\t// A reflected part reaches", 1)' \
+  ./internal/domain/geometry 'TestMirror_MeasurementFlipsAnAsymmetricExtent'
+
+drill "the kernel is not told to mirror" internal/domain/geometry/solid.go \
+  's = s.replace("Script: script, Mirrored: p.Mirrored,", "Script: script,", 1)' \
+  ./internal/domain/geometry 'TestMirror_TheKernelIsToldToMirror'
+
+drill "the sidecar never mirrors" internal/domain/cad/sidecar.py \
+  "s = s.replace('        if s.get(\"mirrored\"):\n', '        if False:\n', 1)" \
+  ./internal/domain/cad 'TestKernel_MirrorsAPartBeforePlacingIt'
+
+drill "the browser does not reflect a mirrored primitive" internal/httpapi/assets/forge3d.js \
+  "s = s.replace('    if (s.mirrored) sc = [-sc[0], sc[1], sc[2]];\n', '', 1)" \
+  ./internal/httpapi 'TestRendererPlacesAMirroredPartLikeTheExporter'
+
+drill "the browser tree ignores a child's mirror" internal/httpapi/assets/forge3d.js \
+  "s = s.replace('        local.m = mulMat3(local.m, reflect);\n', '', 1)" \
+  ./internal/httpapi 'TestRendererFlattensATreeLikeTheExporter'
+
+drill "the browser stores no reflection" internal/httpapi/assets/forge3d.js \
+  "s = s.replace('    if (det3(m) < 0) {\n', '    if (false) {\n', 1)" \
   ./internal/httpapi 'TestRendererFlattensATreeLikeTheExporter'
 
 echo

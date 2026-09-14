@@ -376,6 +376,11 @@ func bounds(doc Document) (min, max [3]float64) {
 	for _, p := range withCopies.Parts {
 		pos := padTo3(p.Position)
 		loLocal, hiLocal := localBox(p)
+		if p.Mirrored {
+			// A reflected part reaches the other way along its own x: an L drawn
+			// from 0 to 40 reaches from -40 to 0. Fence: TestMirror_MeasurementFlipsAnAsymmetricExtent.
+			loLocal[0], hiLocal[0] = -hiLocal[0], -loLocal[0]
+		}
 		for i := 0; i < 3; i++ {
 			if lo := pos[i] + loLocal[i]; lo < min[i] {
 				min[i] = lo

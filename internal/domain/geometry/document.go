@@ -151,6 +151,15 @@ type Part struct {
 	// Axis is which way a "revolve" turns: "y" (the default, and up) or "x".
 	Axis     string    `json:"axis,omitempty"`
 	Rotation []float64 `json:"rotation"`
+	// Mirrored reflects the part's own x before it is rotated and placed: the one
+	// way a stored part carries a reflection (see placement in frame.go). A
+	// reflection cannot be written as a rotation — a mirrored left control arm has
+	// the opposite handedness from the right one — so without this a symmetric
+	// assembly has to write every asymmetric part twice. Every reader honours it:
+	// the kernel mirrors the solid, the mesh flips its winding, the browser flips
+	// its front faces, measurement flips the x extent.
+	// Phase 1, stage D1c of docs/plan-2026-09-13-millions-of-parts.md.
+	Mirrored bool `json:"mirrored,omitempty"`
 	// Script is build123d the model wrote, for a shape this vocabulary cannot
 	// say: a spiral, a lattice, a helical gear, a profile sampled from a formula.
 	// A SPUR gear is not one of those any more — it is the "gear" shape, whose

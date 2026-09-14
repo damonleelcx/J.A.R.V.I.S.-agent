@@ -1478,15 +1478,51 @@
     return [x * deg, y * deg, z * deg];
   }
 
-  /* geometry placeInFrame: a child at childPos/childRot inside a frame at
-   * parentPos/parentRot, in the frame's parent. */
-  function placeInFrame(parentPos, parentRot, childPos, childRot) {
-    var rp = degreesToRadians3(parentRot);
-    var moved = rotateLikeTheExporter(pad3(childPos), rp), pp = pad3(parentPos);
-    return {
-      position: [moved[0] + pp[0], moved[1] + pp[1], moved[2] + pp[2]],
-      rotation: eulerDegreesFromMatrix(mulMat3(rowMajor(rp), rowMajor(degreesToRadians3(childRot))))
-    };
+  /* ---- Placements with reflection, mirroring geometry/frame.go ------------------
+   *
+   * A placement is a position and a 3x3 matrix that may include one reflection. A
+   * part STORES it as a rotation plus one flag, mirrored: "negate local x, then
+   * rotate" (Phase 1, stage D1c). */
+  var MIRROR_X = [-1, 0, 0, 0, 1, 0, 0, 0, 1];
+
+  function reflectionAcross(axis) {
+    if (axis === '') return [1, 0, 0, 0, 1, 0, 0, 0, 1];
+    if (axis === 'x') return MIRROR_X;
+    if (axis === 'y') return [1, 0, 0, 0, -1, 0, 0, 0, 1];
+    if (axis === 'z') return [1, 0, 0, 0, 1, 0, 0, 0, -1];
+    return null;
+  }
+
+  function placementOf(pos, rotDeg, mirrored) {
+    var m = rowMajor(degreesToRadians3(rotDeg));
+    if (mirrored) m = mulMat3(m, MIRROR_X);
+    return { pos: pad3(pos), m: m };
+  }
+
+  function applyPlacement(p, v) {
+    var m = p.m;
+    return [m[0] * v[0] + m[1] * v[1] + m[2] * v[2] + p.pos[0],
+            m[3] * v[0] + m[4] * v[1] + m[5] * v[2] + p.pos[1],
+            m[6] * v[0] + m[7] * v[1] + m[8] * v[2] + p.pos[2]];
+  }
+
+  function thenPlacement(p, child) {
+    return { pos: applyPlacement(p, child.pos), m: mulMat3(p.m, child.m) };
+  }
+
+  function det3(m) {
+    return m[0] * (m[4] * m[8] - m[5] * m[7]) - m[1] * (m[3] * m[8] - m[5] * m[6]) +
+           m[2] * (m[3] * m[7] - m[4] * m[6]);
+  }
+
+  /* geometry placement.stored */
+  function storedPlacement(p) {
+    var m = p.m, mirrored = false;
+    if (det3(m) < 0) {
+      m = mulMat3(m, MIRROR_X);
+      mirrored = true;
+    }
+    return { position: p.pos.slice(), rotation: eulerDegreesFromMatrix(m), mirrored: mirrored };
   }
 
   /* geometry expandAssemblies: top-level parts, then every part the tree places.
@@ -1513,7 +1549,7 @@
     if (!root) return { parts: parts, definitionOf: definitionOf };
 
     var placed = 0;
-    function walk(a, path, onPath, pos, rot) {
+    function walk(a, path, onPath, frame) {
       if (path.length >= MAX_TREE_DEPTH) return true;
       var ids = {}, children = a.children || [];
       for (var i = 0; i < children.length; i++) {
@@ -1523,12 +1559,16 @@
         ids[cid] = true;
         var childPath = path.concat([cid]);
         var name = childPath.join(PATH_SEPARATOR);
-        var cp = placeInFrame(pos, rot, c.position, c.rotation);
+        var reflect = reflectionAcross(c.mirror || '');
+        if (!reflect) continue;   // refused by the exporter, left out here too
+        var local = placementOf(c.position, c.rotation, false);
+        local.m = mulMat3(local.m, reflect);
+        var childFrame = thenPlacement(frame, local);
         var sub = asms[c.ref];
         if (sub) {
           if (onPath[sub.id]) continue;
           onPath[sub.id] = true;
-          var stop = walk(sub, childPath, onPath, cp.position, cp.rotation);
+          var stop = walk(sub, childPath, onPath, childFrame);
           delete onPath[sub.id];
           if (stop) return true;
           continue;
@@ -1536,16 +1576,17 @@
         var def = defs[c.ref];
         if (!def) continue;
         // The definition's own repeat, in the DEFINITION's frame (see tree.go).
-        var local = expandRepeats([def], []).parts;
-        for (var j = 0; j < local.length; j++) {
+        var copies = expandRepeats([def], []).parts;
+        for (var j = 0; j < copies.length; j++) {
           if (placed >= MAX_TREE_PARTS) return true;
-          var lp = local[j], q = shallowCopy(lp);
+          var lp = copies[j], q = shallowCopy(lp);
           var suffix = lp.id.indexOf(def.id) === 0 ? lp.id.slice(def.id.length) : lp.id;
           q.id = name + suffix;
           if (c.name) q.name = suffix ? c.name + ' ' + suffix.replace(/^-/, '') : c.name;
-          var pl = placeInFrame(cp.position, cp.rotation, lp.position, lp.rotation);
-          q.position = pl.position;
-          q.rotation = pl.rotation;
+          var st = storedPlacement(thenPlacement(childFrame, placementOf(lp.position, lp.rotation, !!lp.mirrored)));
+          q.position = st.position;
+          q.rotation = st.rotation;
+          q.mirrored = st.mirrored;
           parts.push(q);
           definitionOf[q.id] = def.id;
           placed++;
@@ -1555,7 +1596,7 @@
     }
     var onPath = {};
     onPath[root.id] = true;
-    walk(root, [], onPath, null, null);
+    walk(root, [], onPath, placementOf(null, null, false));
     return { parts: parts, definitionOf: definitionOf };
   }
 
@@ -2150,9 +2191,13 @@
     var d = displacement || [0, 0, 0];
     if (part.fromKernel) return translation(d);
     var s = part.spec;
+    /* A mirrored primitive reflects its own x first (Part.Mirrored) — the same
+     * rule the kernel and the Go mesh follow. draw() flips its front face, because
+     * a reflection turns every triangle inside out. */
+    var sc = s.scale || [1, 1, 1];
+    if (s.mirrored) sc = [-sc[0], sc[1], sc[2]];
     return multiply(translation(add(s.position || [0, 0, 0], d)),
-             multiply(rotationXYZ(s.rotation || [0, 0, 0]),
-                      scaling(s.scale || [1, 1, 1])));
+             multiply(rotationXYZ(s.rotation || [0, 0, 0]), scaling(sc)));
   }
 
   /* A drawn part carrying its kernel mesh, without writing the mesh into the
@@ -2345,8 +2390,13 @@
       gl.enableVertexAttribArray(loc.nrm);
       gl.vertexAttribPointer(loc.nrm, 3, gl.FLOAT, false, 0, 0);
       gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, part.buffers.index);
+      /* A reflected primitive's triangles wind the other way, so with back faces
+       * culled it would be drawn inside out. A kernel mesh arrives already
+       * reflected with its winding intact, so only the primitive flips. */
+      gl.frontFace(s.mirrored && !part.fromKernel ? gl.CW : gl.CCW);
       gl.drawElements(gl.TRIANGLES, part.count, part.indexType || gl.UNSIGNED_SHORT, 0);
     });
+    gl.frontFace(gl.CCW);
 
     /* PRD VIS-03, drawn last so the marks sit over the model rather than
      * inside it, and placed last so the numbers follow the same camera the
