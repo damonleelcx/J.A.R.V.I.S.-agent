@@ -1652,6 +1652,65 @@
     return null;
   }
 
+  /* ---- Interfaces, mirroring geometry/interface.go --------------------------
+   *
+   * Phase 1, stage D1d. A child attached `at` an interface is measured in that
+   * interface's frame. The path names the parent's own interface ("mount") or one
+   * on a sibling's placement ("front-left/hub", "bolt-3/seat"). reference answers
+   * null where Go refuses the attachment, so the child is left out here too.
+   * TestRendererFlattensATreeLikeTheExporter holds this to Go's answer. */
+  function makeAttachments(asms) {
+    var resolving = {};
+    function interfaceIn(a, at) {
+      var segs = String(at).split(PATH_SEPARATOR);
+      for (var i = 0; i < segs.length; i++) if (!segs[i].trim()) return null;
+      if (segs.length === 1) {
+        var faces = a.interfaces || [];
+        for (var k = 0; k < faces.length; k++) {
+          var f = faces[k] || {};
+          if (f.id === at) return placementOf(f.position, f.rotation, false);
+        }
+        return null;
+      }
+      var hit = childFrameIn(a, segs[0]);
+      if (!hit) return null;
+      var rest = interfaceIn(hit.sub, segs.slice(1).join(PATH_SEPARATOR));
+      return rest ? thenPlacement(hit.frame, rest) : null;
+    }
+    /* A patterned sibling named without a copy id falls through to null, as an
+     * unknown child does: Go words the two refusals differently, the outcome is
+     * the same, so there is nothing for the browser to tell apart. */
+    function childFrameIn(a, seg) {
+      var children = a.children || [];
+      for (var i = 0; i < children.length; i++) {
+        var c = children[i] || {};
+        var slots = patternCopies(c.pattern);
+        if (!slots) continue;
+        for (var s = 0; s < slots.length; s++) {
+          if (String(c.id || '') + slots[s].suffix !== seg) continue;
+          var sub = asms[c.ref];
+          if (!sub) return null;
+          var reflect = reflectionAcross(c.mirror || '');
+          if (!reflect) return null;
+          var ref = reference(a, c);
+          if (!ref) return null;
+          var local = placementOf(c.position, c.rotation, false);
+          local.m = mulMat3(local.m, reflect);
+          return { frame: thenPlacement(ref, thenPlacement(slots[s].at, local)), sub: sub };
+        }
+      }
+      return null;
+    }
+    function reference(a, c) {
+      if (!c.at) return placementOf(null, null, false);
+      var key = a.id + '\u0000' + c.id;
+      if (resolving[key]) return null;   // attachments that lead back to themselves
+      resolving[key] = true;
+      try { return interfaceIn(a, c.at); } finally { delete resolving[key]; }
+    }
+    return { reference: reference };
+  }
+
   /* geometry expandAssemblies: top-level parts, then every part the tree places.
    * definitionOf maps each placed part's id to the definition it came from. A
    * placement Go refuses is left out here too; Go says why, in the export notes. */
@@ -1675,7 +1734,7 @@
     var root = asms[spec.root];
     if (!root) return { parts: parts, definitionOf: definitionOf };
 
-    var placed = 0;
+    var placed = 0, attach = makeAttachments(asms);
     function walk(a, path, onPath, frame) {
       if (path.length >= MAX_TREE_DEPTH) return true;
       var ids = {}, children = a.children || [];
@@ -1693,6 +1752,9 @@
         if (!sub && !def) continue;
         var slots = patternCopies(c.pattern);
         if (!slots) continue;
+        // Measured in the interface's frame when attached (interface.go).
+        var reference = attach.reference(a, c);
+        if (!reference) continue;   // refused by the exporter, left out here too
         // The definition's own repeat, once, in the DEFINITION's frame (see tree.go).
         var defCopies = sub ? [] : expandRepeats([def], []).parts;
         for (var s = 0; s < slots.length; s++) {
@@ -1700,7 +1762,7 @@
           var childPath = path.concat([cid + slot.suffix]);
           var slotName = childPath.join(PATH_SEPARATOR);
           var childName = c.name && slot.number ? c.name + ' ' + slot.number : c.name;
-          var childFrame = thenPlacement(frame, thenPlacement(slot.at, local));
+          var childFrame = thenPlacement(frame, thenPlacement(reference, thenPlacement(slot.at, local)));
           if (sub) {
             onPath[sub.id] = true;
             var stop = walk(sub, childPath, onPath, childFrame);

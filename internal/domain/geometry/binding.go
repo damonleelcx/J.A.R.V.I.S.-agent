@@ -369,6 +369,14 @@ func cloneAssemblies(in []Assembly) []Assembly {
 	out := make([]Assembly, len(in))
 	for i, a := range in {
 		b := a
+		if a.Interfaces != nil {
+			b.Interfaces = make([]Interface, len(a.Interfaces))
+			for k, f := range a.Interfaces {
+				f.Position = append([]float64(nil), f.Position...)
+				f.Rotation = append([]float64(nil), f.Rotation...)
+				b.Interfaces[k] = f
+			}
+		}
 		b.Children = make([]Child, len(a.Children))
 		for j, c := range a.Children {
 			c.Position = append([]float64(nil), c.Position...)

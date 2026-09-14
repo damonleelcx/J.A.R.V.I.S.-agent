@@ -116,6 +116,7 @@ FILES=(
   internal/domain/geometry/variant.go
   internal/domain/geometry/frame.go
   internal/domain/geometry/pattern.go
+  internal/domain/geometry/interface.go
 )
 
 BACKUP=""
@@ -590,7 +591,7 @@ drill "the browser does not reflect a mirrored primitive" internal/httpapi/asset
   ./internal/httpapi 'TestRendererPlacesAMirroredPartLikeTheExporter'
 
 drill "the browser tree ignores a child's mirror" internal/httpapi/assets/forge3d.js \
-  "s = s.replace('        local.m = mulMat3(local.m, reflect);\n', '', 1)" \
+  "s = s.replace('        local.m = mulMat3(local.m, reflect);\n        var sub = asms[c.ref], def = defs[c.ref];\n', '        var sub = asms[c.ref], def = defs[c.ref];\n', 1)" \
   ./internal/httpapi 'TestRendererFlattensATreeLikeTheExporter'
 
 drill "the browser stores no reflection" internal/httpapi/assets/forge3d.js \
@@ -626,7 +627,7 @@ drill "a path corner radius is silently ignored" internal/domain/geometry/patter
   ./internal/domain/geometry 'TestPattern_RefusesWhatItCannotPlace'
 
 drill "the pattern moves the child inside its own frame" internal/domain/geometry/tree.go \
-  's = s.replace("childFrame := frame.then(slot.at.then(local))", "childFrame := frame.then(local.then(slot.at))", 1)' \
+  's = s.replace("childFrame := frame.then(reference.then(slot.at.then(local)))", "childFrame := frame.then(reference.then(local.then(slot.at)))", 1)' \
   ./internal/domain/geometry 'TestPattern_Linear'
 
 drill "the storage door accepts an id placed twice" internal/domain/geometry/variant.go \
@@ -673,7 +674,60 @@ drill "the browser draws a path with a corner radius" internal/httpapi/assets/fo
   ./internal/httpapi 'TestRendererFlattensATreeLikeTheExporter'
 
 drill "the browser moves the child inside its own frame" internal/httpapi/assets/forge3d.js \
-  "s = s.replace('thenPlacement(frame, thenPlacement(slot.at, local))', 'thenPlacement(frame, thenPlacement(local, slot.at))', 1)" \
+  "s = s.replace('thenPlacement(reference, thenPlacement(slot.at, local)))', 'thenPlacement(reference, thenPlacement(local, slot.at)))', 1)" \
+  ./internal/httpapi 'TestRendererFlattensATreeLikeTheExporter'
+
+echo
+echo "Interfaces"
+# Added 2026-09-14 (Phase 1, stage D1d). A child attached `at` an interface is
+# measured in that interface's frame; each drill breaks one term of the resolution
+# in Go and in the browser's copy of it.
+drill "a child ignores the interface it is attached at" internal/domain/geometry/tree.go \
+  's = s.replace("childFrame := frame.then(reference.then(slot.at.then(local)))", "childFrame := frame.then(slot.at.then(local)); _ = reference", 1)' \
+  ./internal/domain/geometry 'TestInterface_AChildSitsOnItsParentsInterface'
+
+drill "a pattern at an interface turns about the parent's axis" internal/domain/geometry/tree.go \
+  's = s.replace("childFrame := frame.then(reference.then(slot.at.then(local)))", "childFrame := frame.then(slot.at.then(reference.then(local)))", 1)' \
+  ./internal/domain/geometry 'TestInterface_APatternIsMeasuredInTheInterfacesFrame'
+
+drill "a sibling's interface ignores where the sibling is placed" internal/domain/geometry/interface.go \
+  's = s.replace("\t\t\treturn ref.then(slot.at.then(local)), sub, \"\"\n", "\t\t\t_ = local\n\t\t\treturn ref.then(slot.at), sub, \"\"\n", 1)' \
+  ./internal/domain/geometry 'TestInterface_APartMatesToASiblingsInterfaceThroughAMirror'
+
+drill "a sibling's own attachment is ignored" internal/domain/geometry/interface.go \
+  's = s.replace("ref, problem := r.reference(a, c, whole)", "ref, problem := placementOf(nil, nil, false), \"\"", 1)' \
+  ./internal/domain/geometry 'TestInterface_AChainOfAttachmentsTwoLevelsDown'
+
+drill "a patterned sibling named without a copy is not refused" internal/domain/geometry/interface.go \
+  's = s.replace("if c.ID == seg && len(slots) > 1 {", "if false {", 1)' \
+  ./internal/domain/geometry 'TestInterface_RefusesWhatItCannotAttach'
+
+drill "interfaces are not checked where they are declared" internal/domain/geometry/tree.go \
+  's = s.replace("for _, detail := range interfaceProblems(a) {", "for _, detail := range interfaceProblems(Assembly{}) {", 1)' \
+  ./internal/domain/geometry 'TestInterface_RefusesWhatItCannotAttach'
+
+drill "a clone shares its interfaces with the original" internal/domain/geometry/binding.go \
+  's = s.replace("f.Position = append([]float64(nil), f.Position...)", "f.Position = f.Position", 1)' \
+  ./internal/domain/geometry 'TestInterface_ACloneDoesNotShareAnInterface'
+
+drill "the kernel is sent an attached child without its interface" internal/domain/geometry/tree.go \
+  's = s.replace("childFrame := frame.then(reference.then(slot.at.then(local)))", "childFrame := frame.then(slot.at.then(local)); _ = reference", 1)' \
+  ./internal/domain/cad 'TestKernel_MovingAnInterfaceMovesWhatIsAttachedToIt'
+
+drill "the browser ignores the interface a child is attached at" internal/httpapi/assets/forge3d.js \
+  "s = s.replace('thenPlacement(frame, thenPlacement(reference, thenPlacement(slot.at, local)))', 'thenPlacement(frame, thenPlacement(slot.at, local))', 1)" \
+  ./internal/httpapi 'TestRendererFlattensATreeLikeTheExporter'
+
+drill "the browser turns a pattern at an interface about the parent's axis" internal/httpapi/assets/forge3d.js \
+  "s = s.replace('thenPlacement(frame, thenPlacement(reference, thenPlacement(slot.at, local)))', 'thenPlacement(frame, thenPlacement(slot.at, thenPlacement(reference, local)))', 1)" \
+  ./internal/httpapi 'TestRendererFlattensATreeLikeTheExporter'
+
+drill "the browser ignores where a sibling is placed" internal/httpapi/assets/forge3d.js \
+  "s = s.replace('return { frame: thenPlacement(ref, thenPlacement(slots[s].at, local)), sub: sub };', 'return { frame: thenPlacement(ref, slots[s].at), sub: sub };', 1)" \
+  ./internal/httpapi 'TestRendererFlattensATreeLikeTheExporter'
+
+drill "the browser ignores a sibling's own attachment" internal/httpapi/assets/forge3d.js \
+  "s = s.replace('          var ref = reference(a, c);\n', '          var ref = placementOf(null, null, false);\n', 1)" \
   ./internal/httpapi 'TestRendererFlattensATreeLikeTheExporter'
 
 echo
