@@ -1098,6 +1098,11 @@ func (c *Conversation) Respond(ctx context.Context, projectID string, history []
 	c.repairIfItLooksWrong(ctx, &reply, message, &sheet)
 	// And against the drawing, at the same point the streamed path does it.
 	c.repairAgainstSketch(ctx, &reply, sketch, &sheet, nil)
+	// And whether any two parts are in the same place. After the picture checks
+	// and before the scripts, for the reason they are ordered that way: this one
+	// reads the kernel numbers the render already produced, and the script check
+	// keeps the last word. See interference.go.
+	c.repairIfPartsOverlap(ctx, &reply, &sheet)
 	// And the same script run, at the same point: LAST, because it is the only
 	// check that verifies itself and anything that rewrites the document after
 	// it undoes that. No progress to report on this path, so it is silent while

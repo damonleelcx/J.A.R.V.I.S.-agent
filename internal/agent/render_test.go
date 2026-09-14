@@ -11,14 +11,15 @@ import (
 
 // solidsStub builds a surface a test decides.
 type solidsStub struct {
-	parts []geometry.RenderPart
-	err   error
-	calls int
+	parts   []geometry.RenderPart
+	clashes []geometry.Interference
+	err     error
+	calls   int
 }
 
-func (s *solidsStub) BuildSurface(context.Context, *Prototype) ([]geometry.RenderPart, error) {
+func (s *solidsStub) BuildSurface(context.Context, *Prototype) (Built, error) {
 	s.calls++
-	return s.parts, s.err
+	return Built{Parts: s.parts, Interferences: s.clashes}, s.err
 }
 
 // cube returns one part's surface, enough for the rasterizer to draw something.

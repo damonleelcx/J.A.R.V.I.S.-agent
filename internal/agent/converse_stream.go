@@ -328,6 +328,11 @@ func (c *Conversation) RespondStream(
 		c.repairAgainstSketch(ctx, &reply, sketch, &sheet, func(line string) {
 			_ = emit(StreamEvent{Kind: "notice", Text: line})
 		})
+		// And whether any two parts are in the same place. After the picture checks
+		// and before the scripts, for the reason they are ordered that way: this one
+		// reads the kernel numbers the render already produced, and the script check
+		// keeps the last word. See interference.go.
+		c.repairIfPartsOverlap(ctx, &reply, &sheet)
 		/* And LAST, run the scripts.
 		 *
 		 * A scripted part's shape is not written down anywhere, so every check
