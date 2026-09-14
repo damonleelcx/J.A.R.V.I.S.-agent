@@ -536,7 +536,7 @@ drill "a placement ignores the definition's own frame" internal/domain/geometry/
 
 drill "the storage door reads only top-level parts" internal/domain/geometry/variant.go \
   's = s.replace("\tplaced := n.Document.PlacedParts()\n", "\tplaced := n.Document.Parts\n", 1)' \
-  ./internal/domain/geometry 'TestTree_TheStorageDoorReadsThePlacedParts'
+  ./internal/domain/geometry 'TestTree_TheStorageDoorReadsThePlacedParts|TestTree_TheStorageDoorChecksThePartsATreePlaces'
 
 drill "Bind skips definitions" internal/domain/geometry/binding.go \
   's = s.replace("\tif len(d.Definitions) > 0 {\n", "\tif false {\n", 1)' \
@@ -631,7 +631,14 @@ drill "the pattern moves the child inside its own frame" internal/domain/geometr
 
 drill "the storage door accepts an id placed twice" internal/domain/geometry/variant.go \
   's = s.replace("if seen[p.ID] {\n\t\t\t// Comparison matches", "if false {\n\t\t\t// Comparison matches", 1)' \
-  ./internal/domain/geometry 'TestPattern_ACopyThatTakesASiblingsIdIsRefusedAtTheStorageDoor|TestTree_TheStorageDoorReadsThePlacedParts'
+  ./internal/domain/geometry 'TestPattern_ACopyThatTakesASiblingsIdIsRefusedAtTheStorageDoor|TestTree_TheStorageDoorReadsThePlacedParts|TestNewVariant_AnIdPlacedTwiceIsRefusedHoweverItWasMade'
+
+# Added 2026-09-14. The duplicate check read the placed parts, which expand the tree
+# but not a top-level repeat, so a repeat copy could take another part's id.
+# docs/bugfix/2026-09-14-a-repeat-copy-could-take-another-parts-id.md
+drill "the storage door checks ids before repeats are written out" internal/domain/geometry/variant.go \
+  's = s.replace("\tfor _, p := range n.Document.Expanded().Parts {\n\t\tif seen[p.ID] {", "\tfor _, p := range placed {\n\t\tif seen[p.ID] {", 1)' \
+  ./internal/domain/geometry 'TestNewVariant_AnIdPlacedTwiceIsRefusedHoweverItWasMade'
 
 drill "a clone shares its pattern with the original" internal/domain/geometry/binding.go \
   's = s.replace("c.Pattern = &p", "_ = p", 1)' \
