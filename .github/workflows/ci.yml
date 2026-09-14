@@ -88,3 +88,40 @@ jobs:
 
       - name: Build
         run: make build
+
+  # The real CAD kernel. Until 2026-09-14 no CI run had ever executed a kernel
+  # test: they need build123d, and the check job has none, so every one of them
+  # skipped — green. Volumes, fillets, interference, mirrors and STEP export are
+  # properties of OpenCASCADE, so they are only proven where OpenCASCADE runs.
+  # Python 3.13 and the pinned list are what the production image uses.
+  kernel:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: internal/domain/cad/requirements.txt
+
+      # The same X/GL libraries deploy/Dockerfile installs: OpenCASCADE links
+      # against them even though it never opens a window.
+      - name: System libraries for OpenCASCADE
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            libgl1 libglx-mesa0 libglu1-mesa libx11-6 libxext6 libxrender1 libxi6 \
+            libsm6 libice6 libfontconfig1 libfreetype6
+
+      - name: Kernel venv (pinned)
+        run: make cad-venv
+
+      - name: Kernel tests (real build123d)
+        run: make test-cad

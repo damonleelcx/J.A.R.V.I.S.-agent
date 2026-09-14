@@ -89,7 +89,9 @@ var formats = []Format{
 		// else here is a property of the build; this is a property of the
 		// deployment, and Formats is told which it is (wave 14).
 		Reason: "This deployment has no CAD kernel configured, so there is no B-Rep to write. " +
-			"Set FORGE_CAD_PYTHON to a Python interpreter with build123d installed. " +
+			"Set FORGE_CAD_PYTHON to a Python interpreter with the pinned kernel packages installed: " +
+			"in the FORGE image that is /opt/cad/venv/bin/python; from a checkout, `make cad-venv` builds " +
+			"one from internal/domain/cad/requirements.txt. " +
 			"Until then, a STEP file containing tessellated facets would be a mesh with a " +
 			"parametric extension, which is worse than no file: everything downstream would " +
 			"treat it as an exact solid.",
