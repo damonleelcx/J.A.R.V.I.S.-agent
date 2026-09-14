@@ -53,38 +53,48 @@ def machine():
         print(var + ":", os.environ.get(var, "(unset)"))
 
 
+def sample(pid):
+    """Threads and address space of a running process, from /proc (Linux only)."""
+    status = "/proc/%d/status" % pid
+    if not os.path.exists(status):
+        return ""
+    fields = dict(line.split(":", 1) for line in open(status) if ":" in line)
+    return "at 20 s: threads %s, VmSize %s, VmPeak %s, state %s" % tuple(
+        fields.get(k, "?").strip() for k in ("Threads", "VmSize", "VmPeak", "State"))
+
+
 def run(script_py, request, label, env=None, patience=60):
-    """Run script.py once. A run still alive after 20 s is sampled from /proc —
-    threads and address space — and one past `patience` is killed and reported as
-    a hang, which is itself the answer this probe exists to find."""
+    """Run script.py once.
+
+    communicate() drains stdout and stderr WHILE it waits. Reading only after the
+    process exits deadlocks as soon as the reply outgrows a pipe buffer: a built
+    solid's reply does, a box's does not, and the first version of this probe
+    reported every gear as hung on a laptop where it builds in 2 s. A run still
+    alive at 20 s is sampled; one alive at `patience` is killed and reported HUNG.
+    """
     t = time.time()
     proc = subprocess.Popen([sys.executable, script_py], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                             stderr=subprocess.PIPE, text=True, env=env)
-    proc.stdin.write(json.dumps(request))
-    proc.stdin.close()
-    sample = ""
-    while proc.poll() is None and time.time() - t < patience:
-        time.sleep(0.5)
-        if not sample and time.time() - t > 20:
-            status = "/proc/%d/status" % proc.pid
-            if os.path.exists(status):
-                fields = dict(line.split(":", 1) for line in open(status) if ":" in line)
-                sample = "at 20 s: threads %s, VmSize %s, VmPeak %s, state %s" % tuple(
-                    fields.get(k, "?").strip() for k in ("Threads", "VmSize", "VmPeak", "State"))
+    note = ""
+    try:
+        out, err = proc.communicate(json.dumps(request), timeout=20)
+    except subprocess.TimeoutExpired:
+        note = sample(proc.pid)
+        try:
+            out, err = proc.communicate(timeout=max(1, patience - 20))
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.communicate()
+            print("%-48s HUNG: still running after %.0f s  %s" % (label, time.time() - t, note))
+            return
     wall = time.time() - t
-    if proc.poll() is None:
-        proc.kill()
-        proc.wait()
-        print("%-48s HUNG: still running after %.0f s  %s" % (label, wall, sample))
-        return
-    out, err = proc.stdout.read(), proc.stderr.read()
     last = (out.strip().splitlines() or ["(no output)"])[-1]
     try:
         reply = json.loads(last)
         verdict = "ok" if reply.get("ok") else "error: " + str(reply.get("error"))[:200]
     except ValueError:
         verdict = "no JSON reply: " + last[:200]
-    print("%-48s %6.1f s  exit %s  %s  %s" % (label, wall, proc.returncode, verdict, sample))
+    print("%-48s %6.1f s  exit %s  %s  %s" % (label, wall, proc.returncode, verdict, note))
     if err.strip():
         print("    stderr:", err.strip()[-300:])
 
