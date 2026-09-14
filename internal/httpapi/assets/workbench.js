@@ -1191,11 +1191,19 @@
 
         var byID = {};
         b.parts.forEach(function (m) { byID[m.id] = m; });
+        /* Joined by the DRAWN id, onto the part it was drawn from. The kernel
+         * answers "spoke-3", which no authored part is called; joining against the
+         * authored list left every copy of a repeat as its primitive.
+         * docs/bugfix/2026-09-13-repeat-copies-were-invisible-to-most-readers.md */
+        var authored = {};
+        (proto.parts || []).forEach(function (part) { authored[part.id] = part; });
         var drawn = 0;
-        (proto.parts || []).forEach(function (part) {
-          var m = byID[part.id];
-          if (!m) return;
-          part.mesh = { vertices: m.vertices, triangles: m.triangles };
+        window.Forge3D.partsToDraw(proto).forEach(function (d) {
+          var m = byID[d.spec.id];
+          var source = authored[d.repeatOf || d.spec.id];
+          if (!m || !source) return;
+          source.meshes = source.meshes || {};
+          source.meshes[d.spec.id] = { vertices: m.vertices, triangles: m.triangles };
           drawn++;
         });
         if (!drawn) return;

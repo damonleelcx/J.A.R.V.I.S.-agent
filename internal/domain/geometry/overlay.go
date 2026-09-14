@@ -359,7 +359,20 @@ func bounds(doc Document) (min, max [3]float64) {
 	min = [3]float64{math.Inf(1), math.Inf(1), math.Inf(1)}
 	max = [3]float64{math.Inf(-1), math.Inf(-1), math.Inf(-1)}
 
-	for _, p := range doc.Parts {
+	// Every copy of a repeated part, not the part as written. Reading the authored
+	// list measured five boxes 100 mm apart as one 10 mm box, while the mesh and
+	// the STEP file both held all five.
+	// docs/bugfix/2026-09-13-repeat-copies-were-invisible-to-most-readers.md
+	// Fence: TestMeasure_IncludesEveryCopyOfARepeatedPart.
+	//
+	// ‼️ REPEATS only, not Expanded(). Expanding gears as well turns a gear into the
+	// extrusion it is drawn as, and localBox would then measure its faceted outline
+	// (±21.989 on a module-2, 20-tooth gear) instead of its exact tip circle (±22),
+	// which is what the gear case below exists for. A copy of a gear is still a
+	// gear, so it keeps that exact case too.
+	// Fences: TestAGearIsDrawnAndMeasuredAtItsOwnSize, TestAGearFollowsItsParameters.
+	withCopies, _ := expandRepeats(doc)
+	for _, p := range withCopies.Parts {
 		pos := padTo3(p.Position)
 		loLocal, hiLocal := localBox(p)
 		for i := 0; i < 3; i++ {
