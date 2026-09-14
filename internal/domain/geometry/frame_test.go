@@ -30,53 +30,76 @@ func TestEulerDegreesFromMatrix_IsTheInverseOfRotationMatrix(t *testing.T) {
 	}
 }
 
-// Placing through the composed frame is placing through the child, then the parent.
-func TestPlaceInFrame_ComposesChildThenParent(t *testing.T) {
-	rng := rand.New(rand.NewSource(7))
-	r := func() []float64 {
-		return []float64{rng.Float64()*720 - 360, rng.Float64()*720 - 360, rng.Float64()*720 - 360}
+func randomPlacement(rng *rand.Rand) placement {
+	deg := []float64{rng.Float64()*720 - 360, rng.Float64()*720 - 360, rng.Float64()*720 - 360}
+	pos := []float64{rng.Float64()*400 - 200, rng.Float64()*400 - 200, rng.Float64()*400 - 200}
+	p := placementOf(pos, deg, false)
+	// Any of the three reflections, or none, applied in the local frame.
+	if axis := []string{"", "x", "y", "z"}[rng.Intn(4)]; axis != "" {
+		r, _ := reflectionAcross(axis)
+		p.m = mulMat3(p.m, r)
 	}
-	p := func() []float64 {
-		return []float64{rng.Float64()*400 - 200, rng.Float64()*400 - 200, rng.Float64()*400 - 200}
-	}
+	return p
+}
+
+// Composing placements, reflections included, is placing through one then the other.
+func TestPlacement_ComposingIsApplyingInTurn(t *testing.T) {
+	rng := rand.New(rand.NewSource(42))
 	for i := 0; i < 5000; i++ {
-		parentPos, parentRot, childPos, childRot := p(), r(), p(), r()
+		parent, child := randomPlacement(rng), randomPlacement(rng)
 		v := [3]float64{rng.Float64()*50 - 25, rng.Float64()*50 - 25, rng.Float64()*50 - 25}
-
-		// Child first, then parent.
-		var cp, pp [3]float64
-		copy(cp[:], childPos)
-		copy(pp[:], parentPos)
-		inFrame := translate(rotate(v, degreesToRadians3(childRot)), cp)
-		want := translate(rotate(inFrame, degreesToRadians3(parentRot)), pp)
-
-		pos, rot := placeInFrame(parentPos, parentRot, childPos, childRot)
-		var wp [3]float64
-		copy(wp[:], pos)
-		got := translate(rotate(v, degreesToRadians3(rot)), wp)
+		want := parent.apply(child.apply(v))
+		got := parent.then(child).apply(v)
 		for k := 0; k < 3; k++ {
 			if math.Abs(got[k]-want[k]) > 1e-7 {
-				t.Fatalf("case %d: point %v lands at %v through the composed frame, %v through child then parent",
-					i, v, got, want)
+				t.Fatalf("case %d: %v lands at %v composed, %v in turn", i, v, got, want)
 			}
 		}
 	}
 }
 
-// A frame with no position and no rotation changes nothing.
-func TestPlaceInFrame_TheIdentityFrameChangesNothing(t *testing.T) {
-	pos, rot := placeInFrame(nil, nil, []float64{12, -3, 7}, []float64{10, 20, 30})
-	for i, w := range []float64{12, -3, 7} {
-		if math.Abs(pos[i]-w) > 1e-12 {
-			t.Errorf("position %v, want [12 -3 7]", pos)
+// What a part stores rebuilds the same placement — the reflection included.
+func TestPlacement_TheStoredFormRebuildsTheSamePlacement(t *testing.T) {
+	rng := rand.New(rand.NewSource(99))
+	mirrored := 0
+	for i := 0; i < 5000; i++ {
+		p := randomPlacement(rng)
+		pos, rot, m := p.stored()
+		if m {
+			mirrored++
+		}
+		if (det3(p.m) < 0) != m {
+			t.Fatalf("case %d: determinant %v but mirrored=%v", i, det3(p.m), m)
+		}
+		back := placementOf(pos, rot, m)
+		for k := range p.m {
+			if math.Abs(back.m[k]-p.m[k]) > 1e-9 {
+				t.Fatalf("case %d: stored as rot %v mirror %v, rebuilt entry %d %v, want %v", i, rot, m, k, back.m[k], p.m[k])
+			}
+		}
+		for k := range p.pos {
+			if back.pos[k] != p.pos[k] {
+				t.Fatalf("case %d: position changed", i)
+			}
 		}
 	}
-	want := RotationMatrix(degreesToRadians3([]float64{10, 20, 30}))
-	got := RotationMatrix(degreesToRadians3(rot))
-	for i := range want {
-		if math.Abs(got[i]-want[i]) > 1e-12 {
-			t.Errorf("rotation %v does not match [10 20 30]", rot)
-			break
-		}
+	if mirrored < 3000 || mirrored > 4500 {
+		t.Errorf("only %d of 5000 random placements were reflections; the generator is not exercising mirror", mirrored)
+	}
+}
+
+// Two reflections cancel: mirroring a mirrored child stores no mirror.
+func TestPlacement_TwoMirrorsCancel(t *testing.T) {
+	ry, _ := reflectionAcross("y")
+	rz, _ := reflectionAcross("z")
+	a := placementOf([]float64{10, 0, 0}, []float64{0, 30, 0}, false)
+	a.m = mulMat3(a.m, ry)
+	b := placementOf([]float64{0, 5, 0}, []float64{0, 0, 45}, false)
+	b.m = mulMat3(b.m, rz)
+	if _, _, m := a.then(b).stored(); m {
+		t.Error("a reflection inside a reflection was stored as mirrored")
+	}
+	if _, _, m := a.stored(); !m {
+		t.Error("a single reflection was stored as not mirrored")
 	}
 }

@@ -69,18 +69,90 @@ func mulMat3(a, b [9]float64) [9]float64 {
 	return out
 }
 
-// placeInFrame is where a child placed at childPos / childRot (degrees) inside a
-// frame at parentPos / parentRot (degrees) ends up in the frame's parent.
+// placement is where something is and how it is turned — and, since D1c, whether
+// it is REFLECTED. A position plus a 3×3 matrix that is a rotation, or a rotation
+// composed with one reflection.
 //
-// A point v of the child lands at R_child·v + p_child inside the frame, and the
-// frame puts that at R_parent·(R_child·v + p_child) + p_parent. So the child's
-// rotation there is R_parent·R_child, and its position is R_parent·p_child + p_parent.
-func placeInFrame(parentPos, parentRot, childPos, childRot []float64) (pos, rot []float64) {
-	rp := degreesToRadians3(parentRot)
-	var cp, pp [3]float64
-	copy(cp[:], padTo3(childPos))
-	copy(pp[:], padTo3(parentPos))
-	moved := translate(rotate(cp, rp), pp)
-	turned := EulerDegreesFromMatrix(mulMat3(RotationMatrix(rp), RotationMatrix(degreesToRadians3(childRot))))
-	return []float64{moved[0], moved[1], moved[2]}, []float64{turned[0], turned[1], turned[2]}
+// # Why a matrix and not three angles
+//
+// A reflection cannot be written as a rotation: a mirrored left control arm has
+// the opposite handedness from the right one, and no Euler angles turn one into
+// the other. Composing frames through a tree that mirrors a corner onto the other
+// side of a car therefore has to carry the reflection through every level, and a
+// matrix does that for free: two reflections multiply back into a rotation.
+//
+// A part STORES the result as a rotation plus one flag (Part.Mirror): "negate
+// local x, then rotate". Every reflection-with-rotation can be written that way —
+// a mirror across y is the flag plus a half turn about z — so there is exactly one
+// stored spelling, and every reader honours one rule.
+type placement struct {
+	pos [3]float64
+	m   [9]float64
+}
+
+// mirrorX negates local x: the one reflection a stored part carries.
+var mirrorX = [9]float64{-1, 0, 0, 0, 1, 0, 0, 0, 1}
+
+// reflectionAcross is the reflection through the plane normal to axis, or the
+// identity for "". ok is false for anything else.
+func reflectionAcross(axis string) (m [9]float64, ok bool) {
+	switch axis {
+	case "":
+		return [9]float64{1, 0, 0, 0, 1, 0, 0, 0, 1}, true
+	case "x":
+		return mirrorX, true
+	case "y":
+		return [9]float64{1, 0, 0, 0, -1, 0, 0, 0, 1}, true
+	case "z":
+		return [9]float64{1, 0, 0, 0, 1, 0, 0, 0, -1}, true
+	}
+	return [9]float64{}, false
+}
+
+// placementOf is a stored position and rotation (degrees), with local x reflected
+// first when mirrored — exactly how a Part is placed.
+func placementOf(pos, rotDeg []float64, mirrored bool) placement {
+	var p placement
+	copy(p.pos[:], padTo3(pos))
+	p.m = RotationMatrix(degreesToRadians3(rotDeg))
+	if mirrored {
+		p.m = mulMat3(p.m, mirrorX)
+	}
+	return p
+}
+
+func mulMatVec(m [9]float64, v [3]float64) [3]float64 {
+	return [3]float64{
+		m[0]*v[0] + m[1]*v[1] + m[2]*v[2],
+		m[3]*v[0] + m[4]*v[1] + m[5]*v[2],
+		m[6]*v[0] + m[7]*v[1] + m[8]*v[2],
+	}
+}
+
+func det3(m [9]float64) float64 {
+	return m[0]*(m[4]*m[8]-m[5]*m[7]) - m[1]*(m[3]*m[8]-m[5]*m[6]) + m[2]*(m[3]*m[7]-m[4]*m[6])
+}
+
+// apply places a point.
+func (p placement) apply(v [3]float64) [3]float64 {
+	return translate(mulMatVec(p.m, v), p.pos)
+}
+
+// then is this placement's frame holding child: a point placed by child and then
+// by p lands where p.then(child) places it.
+func (p placement) then(child placement) placement {
+	return placement{pos: p.apply(child.pos), m: mulMat3(p.m, child.m)}
+}
+
+// stored is the placement as a Part stores it: position, rotation in degrees, and
+// whether local x is reflected first. placementOf(stored()) is this placement.
+func (p placement) stored() (pos, rot []float64, mirrored bool) {
+	m := p.m
+	if det3(m) < 0 {
+		// m = R·Mx for a proper rotation R, so R = m·Mx (Mx is its own inverse).
+		m = mulMat3(m, mirrorX)
+		mirrored = true
+	}
+	e := EulerDegreesFromMatrix(m)
+	return []float64{p.pos[0], p.pos[1], p.pos[2]}, []float64{e[0], e[1], e[2]}, mirrored
 }

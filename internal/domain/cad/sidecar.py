@@ -767,6 +767,23 @@ def _build(request):
             reason = str(exc).strip() or type(exc).__name__
             skipped.append("%s: %s" % (s.get("label") or s.get("id"), reason))
             continue
+        if s.get("mirrored"):
+            # Part.Mirrored: reflect the solid's OWN x, then place it — the order the
+            # document, the Go mesh and the browser all use. Confirmed against this
+            # kernel before it was written: an L drawn from x 0..40 mirrors to -40..0
+            # with its volume unchanged, and mirror-then-place matched "reflect local
+            # x, rotate, translate" to the micron. A reflection is not in "matrix",
+            # which is read as a rotation, so it travels as its own flag.
+            #
+            # ‼️ The METHOD, not the mirror() operation. Measured against build123d
+            # 0.11.1: a part mirrored with the operation is a valid 6000 mm³ solid on its
+            # own, but the assembly Compound built from it reports volume 0 — so the
+            # file's volume, and every number summed from it, came out wrong. The
+            # method, transform_geometry and OCCT's copying transforms all give 6000;
+            # all five give the same STEP and the same overlap with a neighbour.
+            # Fence: TestKernel_MirrorsAPartBeforePlacingIt.
+            # Phase 1, stage D1c of docs/plan-2026-09-13-millions-of-parts.md.
+            shape = shape.mirror(Plane.YZ)
         built.append(_placement(s) * shape)
         names.append(s.get("label") or s.get("id"))
         ids.append(s.get("id"))

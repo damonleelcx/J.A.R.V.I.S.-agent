@@ -54,6 +54,10 @@ type Child struct {
 	// a part uses, so nothing about a child's placement reads differently.
 	Position []float64 `json:"position,omitempty"`
 	Rotation []float64 `json:"rotation,omitempty"`
+	// Mirror reflects the child across the plane normal to "x", "y" or "z" in its
+	// own frame, before it is rotated and placed — a whole sub-assembly included.
+	// Two mirrors on the way down cancel. Empty means no reflection.
+	Mirror string `json:"mirror,omitempty"`
 }
 
 // PathSeparator joins child ids into the id of a flattened part.
@@ -156,8 +160,10 @@ func expandAssemblies(d Document) (Document, []Problem) {
 	}
 
 	placed := 0
-	var walk func(a Assembly, path []string, onPath map[string]bool, pos, rot []float64) (stop bool)
-	walk = func(a Assembly, path []string, onPath map[string]bool, pos, rot []float64) bool {
+	// The frame is a placement (frame.go), not a position and three angles, so a
+	// reflection anywhere above a part reaches the part.
+	var walk func(a Assembly, path []string, onPath map[string]bool, frame placement) (stop bool)
+	walk = func(a Assembly, path []string, onPath map[string]bool, frame placement) bool {
 		if len(path) >= maxTreeDepth {
 			fail(strings.Join(path, PathSeparator), "nests more than %d assemblies deep", maxTreeDepth)
 			return true
@@ -176,7 +182,14 @@ func expandAssemblies(d Document) (Document, []Problem) {
 			ids[c.ID] = true
 			childPath := append(append([]string(nil), path...), c.ID)
 			name := strings.Join(childPath, PathSeparator)
-			cpos, crot := placeInFrame(pos, rot, c.Position, c.Rotation)
+			reflect, ok := reflectionAcross(c.Mirror)
+			if !ok {
+				fail(name, "mirrors across %q; a mirror is across \"x\", \"y\" or \"z\"", c.Mirror)
+				continue
+			}
+			local := placementOf(c.Position, c.Rotation, false)
+			local.m = mulMat3(local.m, reflect)
+			childFrame := frame.then(local)
 
 			if sub, isAsm := asms[c.Ref]; isAsm {
 				if onPath[sub.ID] {
@@ -184,7 +197,7 @@ func expandAssemblies(d Document) (Document, []Problem) {
 					continue
 				}
 				onPath[sub.ID] = true
-				stop := walk(sub, childPath, onPath, cpos, crot)
+				stop := walk(sub, childPath, onPath, childFrame)
 				delete(onPath, sub.ID)
 				if stop {
 					return true
@@ -199,12 +212,12 @@ func expandAssemblies(d Document) (Document, []Problem) {
 			// The definition's own repeat is written out in the DEFINITION's frame
 			// first, so a pattern "about the origin" turns about the part's own origin
 			// wherever the part is then placed.
-			local, repeatProblems := expandRepeats(Document{Parts: []Part{def}})
+			copies, repeatProblems := expandRepeats(Document{Parts: []Part{def}})
 			for _, rp := range repeatProblems {
 				rp.Name = name
 				problems = append(problems, rp)
 			}
-			for _, lp := range local.Parts {
+			for _, lp := range copies.Parts {
 				if placed >= maxTreeParts {
 					fail(d.Root, "places more than %d parts, which is the most one tree may place until "+
 						"instanced drawing and one build per design land", maxTreeParts)
@@ -221,7 +234,7 @@ func expandAssemblies(d Document) (Document, []Problem) {
 						q.Name = c.Name + " " + strings.TrimPrefix(suffix, "-")
 					}
 				}
-				q.Position, q.Rotation = placeInFrame(cpos, crot, lp.Position, lp.Rotation)
+				q.Position, q.Rotation, q.Mirrored = childFrame.then(placementOf(lp.Position, lp.Rotation, lp.Mirrored)).stored()
 				q.Size = cloneSize(lp.Size)
 				out.Parts = append(out.Parts, q)
 				placed++
@@ -229,6 +242,6 @@ func expandAssemblies(d Document) (Document, []Problem) {
 		}
 		return false
 	}
-	walk(root, nil, map[string]bool{root.ID: true}, nil, nil)
+	walk(root, nil, map[string]bool{root.ID: true}, placementOf(nil, nil, false))
 	return out, problems
 }
