@@ -155,6 +155,10 @@ func Solids(d Document, unit Unit) ([]Solid, []string) {
 // Fences: TestRepeat_TheKernelIsSentFeaturesNamingTheCopiesItIsSent,
 // TestKernel_AFeatureNamingARepeatedPartIsApplied.
 func SolidsAndOperations(d Document, unit Unit) ([]Solid, []Operation, []Problem, []string) {
+	// Refused whole, before any expansion (limits.go).
+	if refusal := d.DrawRefusal(); refusal != "" {
+		return nil, nil, nil, []string{refusal}
+	}
 	// A gear is written out as the extrusion it is before anything reads the
 	// parts, and before patterns, so a repeated gear is a repeated extrusion and
 	// the kernel never sees the word (gear.go). Its facet notes are taken first,

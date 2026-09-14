@@ -303,6 +303,11 @@ func (k *Kernel) BuildDocument(ctx context.Context, doc geometry.Document, unit 
 	// authored document — so a feature naming a repeated part named an id the
 	// kernel had never been sent, and was dropped from every export.
 	// docs/bugfix/2026-09-13-features-on-repeated-parts-were-never-applied.md
+	// A design too large to build is refused as an error, not built as nothing
+	// (geometry/limits.go, Phase 3 stage S0).
+	if refusal := doc.DrawRefusal(); refusal != "" {
+		return nil, errs.New(op, errs.CodeValidationFailed).WithDetail("%s", refusal)
+	}
 	solids, operations, featureProblems, inferred := geometry.SolidsAndOperations(doc, unit)
 
 	// Scripted parts are RUN here, and only here.

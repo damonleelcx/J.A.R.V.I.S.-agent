@@ -43,10 +43,10 @@ func TestRendererFlattensATreeLikeTheExporter(t *testing.T) {
       vm.runInContext(fs.readFileSync(process.argv[2], 'utf8'), sandbox);
       const F = sandbox.window.Forge3D;
       const spec = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
-      process.stdout.write(JSON.stringify(F.partsToDraw(spec).map(function (p) {
+      process.stdout.write(JSON.stringify({ refusal: F.drawRefusal(spec), parts: F.partsToDraw(spec).map(function (p) {
         return { id: p.spec.id, label: p.spec.name || p.spec.id,
                  position: p.spec.position, rotation: p.spec.rotation, mirrored: !!p.spec.mirrored, removed: !!p.removed };
-      })));
+      }) }));
     `
 	if err := os.WriteFile(harness, []byte(script), 0o600); err != nil {
 		t.Fatal(err)
@@ -243,7 +243,19 @@ func TestRendererFlattensATreeLikeTheExporter(t *testing.T) {
 			return geometry.Document{Name: "deep", Units: "mm", Definitions: []geometry.Part{box("damper")},
 				Assemblies: asms, Root: id(0)}
 		}()},
-		{"the part ceiling stops", func() geometry.Document {
+		// Carried over the ceiling by a PATTERN: the first refusal case reaches it through
+		// repeats alone, so the browser could forget to multiply by a pattern's copies
+		// and still agree with Go there.
+		{"a pattern that carries a design over the ceiling is refused whole", func() geometry.Document {
+			return geometry.Document{Name: "panel", Units: "mm", Root: "panel",
+				Definitions: []geometry.Part{{ID: "rivet", Shape: "cylinder",
+					Size:   map[string]float64{"radius": 1, "height": 2},
+					Repeat: &geometry.Repeat{Count: 500, Offset: []float64{3, 0, 0}}}},
+				Assemblies: []geometry.Assembly{{ID: "panel", Children: []geometry.Child{
+					{ID: "row", Ref: "rivet", Pattern: &geometry.Pattern{Kind: "linear", Count: 10, Offset: []float64{0, 5, 0}}},
+				}}}}
+		}()},
+		{"a design too large to draw is refused whole, in Go's words", func() geometry.Document {
 			d := geometry.Document{Name: "rivets", Units: "mm",
 				Definitions: []geometry.Part{{ID: "rivet", Shape: "cylinder",
 					Size:   map[string]float64{"radius": 1, "height": 2},
@@ -271,17 +283,28 @@ func TestRendererFlattensATreeLikeTheExporter(t *testing.T) {
 			if err != nil {
 				t.Fatalf("the renderer could not be driven: %v %s", err, stderr.String())
 			}
-			var got []struct {
-				ID, Label          string
-				Position, Rotation []float64
-				Mirrored           bool
-				Removed            bool
+			var drawn struct {
+				Refusal string
+				Parts   []struct {
+					ID, Label          string
+					Position, Rotation []float64
+					Mirrored           bool
+					Removed            bool
+				}
 			}
-			if err := json.Unmarshal(out, &got); err != nil {
+			if err := json.Unmarshal(out, &drawn); err != nil {
 				t.Fatalf("unreadable renderer output: %v", err)
 			}
+			got := drawn.Parts
 			expanded := tc.doc.Expanded()
 			want := expanded.Parts
+			// A design too large to draw draws nothing, and says why in Go's words (S0).
+			if refusal := tc.doc.DrawRefusal(); refusal != "" || drawn.Refusal != "" {
+				if drawn.Refusal != refusal {
+					t.Fatalf("the browser refuses with %q, the exporter with %q", drawn.Refusal, refusal)
+				}
+				want = nil
+			}
 			// Material being removed is drawn ghosted: the tools of a cut or a loft,
 			// including those an assembly's own features name (D1e).
 			removed := map[string]bool{}

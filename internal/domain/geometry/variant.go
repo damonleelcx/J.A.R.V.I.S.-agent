@@ -208,6 +208,11 @@ func (n *NewVariant) Validate() error {
 		return errs.New(op, errs.CodeValidationFailed).
 			WithDetail("this geometry has no parts, so there is nothing to draw, compare, or export")
 	}
+	// What one stored design may describe (limits.go, Phase 3 stage S0), counted
+	// before the tree checks below expand it.
+	if p := occurrenceProblem(n.Document); p != nil {
+		return errs.New(op, errs.CodeValidationFailed).WithDetail("%s %s", p.Name, p.Detail)
+	}
 	// A tree that cannot be placed is refused at the same door as a part with no
 	// shape: storing it would store a model whose parts nobody can find.
 	for _, p := range n.Document.TreeProblems() {
