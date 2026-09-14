@@ -1718,9 +1718,9 @@
     var definitionOf = {};
     var hasTree = !!(spec.root || (spec.assemblies && spec.assemblies.length) ||
                      (spec.definitions && spec.definitions.length));
-    if (!hasTree) return { parts: spec.parts || [], definitionOf: definitionOf };
-    var parts = (spec.parts || []).slice();
-    if (!spec.root) return { parts: parts, definitionOf: definitionOf };
+    if (!hasTree) return { parts: spec.parts || [], definitionOf: definitionOf, features: [] };
+    var parts = (spec.parts || []).slice(), features = [];
+    if (!spec.root) return { parts: parts, definitionOf: definitionOf, features: features };
 
     var defs = {}, asms = {};
     (spec.definitions || []).forEach(function (p) {
@@ -1732,10 +1732,39 @@
       asms[a.id] = a;
     });
     var root = asms[spec.root];
-    if (!root) return { parts: parts, definitionOf: definitionOf };
+    if (!root) return { parts: parts, definitionOf: definitionOf, features: features };
 
     var placed = 0, attach = makeAttachments(asms);
-    function walk(a, path, onPath, frame) {
+    /* geometry occurrenceFeatures (tree_features.go): an assembly's features in one
+     * occurrence, naming the parts its placements wrote out. `of` takes a group's
+     * first part, `with` all of them; a path that places nothing is left out. */
+    function occurrenceFeatures(a, path, index) {
+      var prefix = path.join(PATH_SEPARATOR);
+      var placedIDs = function (p) {
+        var r = index[p];
+        if (!r || r[1] <= r[0]) return [];
+        return parts.slice(r[0], r[1]).map(function (q) { return q.id; });
+      };
+      (a.features || []).forEach(function (f, n) {
+        if (!f) return;
+        var id = String(f.id || '').trim() || ('feature-' + (n + 1));
+        var of = placedIDs(f.of);
+        if (!of.length) return;   // refused by the exporter
+        var tools = [], refused = false;
+        (f.with || []).forEach(function (w) {
+          var got = placedIDs(w);
+          if (!got.length) refused = true;
+          tools = tools.concat(got);
+        });
+        if (refused) return;
+        var q = shallowCopy(f);
+        q.id = prefix ? prefix + PATH_SEPARATOR + id : id;
+        q.of = of[0];
+        q.with = tools;
+        features.push(q);
+      });
+    }
+    function walk(a, path, onPath, frame, index) {
       if (path.length >= MAX_TREE_DEPTH) return true;
       var ids = {}, children = a.children || [];
       for (var i = 0; i < children.length; i++) {
@@ -1757,22 +1786,26 @@
         if (!reference) continue;   // refused by the exporter, left out here too
         // The definition's own repeat, once, in the DEFINITION's frame (see tree.go).
         var defCopies = sub ? [] : expandRepeats([def], []).parts;
+        var childStart = parts.length;
         for (var s = 0; s < slots.length; s++) {
-          var slot = slots[s];
+          var slot = slots[s], slotStart = parts.length;
           var childPath = path.concat([cid + slot.suffix]);
           var slotName = childPath.join(PATH_SEPARATOR);
           var childName = c.name && slot.number ? c.name + ' ' + slot.number : c.name;
           var childFrame = thenPlacement(frame, thenPlacement(reference, thenPlacement(slot.at, local)));
           if (sub) {
             onPath[sub.id] = true;
-            var stop = walk(sub, childPath, onPath, childFrame);
+            var subIndex = {};
+            var stop = walk(sub, childPath, onPath, childFrame, subIndex);
             delete onPath[sub.id];
+            for (var rel in subIndex) index[cid + slot.suffix + PATH_SEPARATOR + rel] = subIndex[rel];
+            index[cid + slot.suffix] = [slotStart, parts.length];
             if (stop) return true;
             continue;
           }
           for (var j = 0; j < defCopies.length; j++) {
             if (placed >= MAX_TREE_PARTS) return true;
-            var lp = defCopies[j], q = shallowCopy(lp);
+            var lp = defCopies[j], q = shallowCopy(lp), partStart = parts.length;
             var suffix = lp.id.indexOf(def.id) === 0 ? lp.id.slice(def.id.length) : lp.id;
             q.id = slotName + suffix;
             if (childName) q.name = suffix ? childName + ' ' + suffix.replace(/^-/, '') : childName;
@@ -1783,15 +1816,19 @@
             parts.push(q);
             definitionOf[q.id] = def.id;
             placed++;
+            if (suffix) index[cid + slot.suffix + suffix] = [partStart, parts.length];
           }
+          index[cid + slot.suffix] = [slotStart, parts.length];
         }
+        if (slots.length > 1) index[cid] = [childStart, parts.length];
       }
+      occurrenceFeatures(a, path, index);
       return false;
     }
     var onPath = {};
     onPath[root.id] = true;
-    walk(root, [], onPath, placementOf(null, null, false));
-    return { parts: parts, definitionOf: definitionOf };
+    walk(root, [], onPath, placementOf(null, null, false), {});
+    return { parts: parts, definitionOf: definitionOf, features: features };
   }
 
   /* partsToDraw is the list Studio.load draws: every part as the exporter builds
@@ -1803,7 +1840,8 @@
     spec = spec || {};
     // The tree first, then repeats — the exporter's order (geometry.Expanded).
     var tree = expandAssemblies(spec);
-    var expanded = expandRepeats(tree.parts, spec.features);
+    // Top-level features first, then the tree's, as the exporter orders them.
+    var expanded = expandRepeats(tree.parts, (spec.features || []).concat(tree.features));
     var removed = {};
     expanded.features.forEach(function (f) {
       if (!f) return;
