@@ -1,6 +1,6 @@
 # Millions of parts: implementation plan
 
-**Status: in progress. B0, B0b, S1–S3, D1a, the kernel-mesh placement bug, D1b and D1c-1 (mirror) are in PRs #51–#58; D1c-2 (patterns) is in progress; K0 is next after it.**
+**Status: in progress. B0, B0b, S1–S3, D1a, the kernel-mesh placement bug, D1b, D1c-1 (mirror) and D1c-2 (patterns) are in PRs #51–#59; K0 is next.**
 Written 2026-09-13. Checklist and background:
 [`research-2026-09-13-millions-of-parts.md`](research-2026-09-13-millions-of-parts.md).
 Live car measurement: [`spikes/2026-09-12-car-ceiling/`](spikes/2026-09-12-car-ceiling/README.md).
@@ -267,8 +267,8 @@ decisions D1–D4
 | carried to D1f | recorded | the agent's own "no parts" checks (`CurrentModel`, `assemble`, `resolveEdit`, `settleDocument`) and `Spans` — they matter once the model can write a tree |
 | D1c decisions | ✅ taken 2026-09-14 | mirror = **true reflection**; child patterns = **new `pattern` object now** (linear, polar, grid, path) |
 | D1c-1 mirror | ✅ PR #58 (stacked on #57) | commit `0a82e65`; placements carry a reflection; stored as `Part.Mirrored` ("negate local x, then rotate"); every reader honours it; found: build123d's `mirror()` operation makes the assembly Compound report volume 0 — the sidecar uses `shape.mirror(Plane.YZ)`; 11 drills red; live browser before/after |
-| D1c-2 pattern object | in progress | linear / polar (repeat's spacing rule) / grid (row-major) / path (equal arc length, `align` = minimal rotation of local +X onto the tangent, outgoing segment at a corner); copy ids `childID-n` |
-| K0 kernel in CI + pinned build123d | next, in parallel with D1c | branches from #54 (it changes `Makefile` and `ci.yml`) |
+| D1c-2 pattern object | ✅ PR #59 (stacked on #58) | commit `a63b265`; `Child.pattern` linear / polar (repeat's `sweepAngle`) / grid (row-major) / path (equal arc length; `align` = smallest turn of local +X onto the outgoing segment); each copy = pattern transform in the PARENT frame ∘ the child's own placement, so sub-assemblies pattern whole; copy ids `child-n`; refuses kind/offset/axis/grid offsets/short or zero-length path/corner radius/`via`/expressions/>512; pattern of one = warning, drawn once. Duplicate ids: the storage door (`variant.go`) stays the ONE owner — a second rule in the walk was written and removed. Kernel: 2×3 grid + ring of four = 10 cubes, 10000 mm³. 17 drills red; live browser 4 → 32 parts. **Found, pre-existing, flagged as its own task:** a flat `repeat` can emit an id a sibling part already has, and nothing refuses it (the door reads tree placements, not repeat copies). Not yet: the model contract does not describe `pattern` (D1f) |
+| K0 kernel in CI + pinned build123d | next | branches from #54 (it changes `Makefile` and `ci.yml`) |
 | everything else | not started | |
 
 ## What this plan does NOT claim
