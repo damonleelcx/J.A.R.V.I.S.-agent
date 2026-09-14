@@ -118,6 +118,8 @@ FILES=(
   internal/domain/geometry/pattern.go
   internal/domain/geometry/interface.go
   internal/domain/geometry/tree_features.go
+  internal/domain/geometry/edit.go
+  internal/agent/currentmodel.go
 )
 
 BACKUP=""
@@ -790,6 +792,55 @@ drill "the browser cannot name a path into a child" internal/httpapi/assets/forg
 drill "the browser keeps a feature whose tool names nothing" internal/httpapi/assets/forge3d.js \
   "s = s.replace('if (!got.length) refused = true;', '', 1)" \
   ./internal/httpapi 'TestRendererFlattensATreeLikeTheExporter'
+
+echo
+echo "The contract and the agent read trees"
+# Added 2026-09-14 (Phase 1, stage D1f). An edit changes a tree through its design,
+# the agent's readers see a tree as a model, and the contract's example is a tree
+# FORGE builds.
+drill "an edit cannot patch a definition" internal/domain/geometry/edit.go \
+  's = s.replace("out.Definitions = upsertPart(out.Definitions, in)", "_ = in", 1)' \
+  ./internal/domain/geometry 'TestEdit_ADefinitionPatchedByIDChangesEveryPlacement'
+
+drill "an edit cannot patch an assembly" internal/domain/geometry/edit.go \
+  's = s.replace("out.Assemblies = upsertAssembly(out.Assemblies, in)", "_ = in", 1)' \
+  ./internal/domain/geometry 'TestEdit_AnAssemblyPatchedByIDIsReplacedWhole'
+
+drill "removing a child rewrites the base's children" internal/domain/geometry/edit.go \
+  's = s.replace("kept := make([]Child, 0, len(list[i].Children))", "kept := list[i].Children[:0]", 1)' \
+  ./internal/domain/geometry 'TestEdit_RemovesOneChildWithoutTouchingTheBase'
+
+drill "a tree change counts as an empty edit" internal/domain/geometry/edit.go \
+  's = s.replace("len(e.Remove.Definitions) == 0 && len(e.Remove.Assemblies) == 0 && len(e.Remove.Children) == 0 &&", "true &&", 1)' \
+  ./internal/domain/geometry 'TestEdit_ATreeChangeIsNotAnEmptyEdit'
+
+drill "Spans ignore definitions" internal/domain/geometry/binding.go \
+  's = s.replace("range [][]Part{d.Parts, d.Definitions}", "range [][]Part{d.Parts}", 1)' \
+  ./internal/domain/geometry 'TestSpans_MeasuresDefinitionsInTheirOwnFrame'
+
+drill "Spans group a definition with a top-level part" internal/domain/geometry/binding.go \
+  's = s.replace("string(rune(\x270\x27+frame))", "string(rune(\x270\x27+frame*0))", 1)' \
+  ./internal/domain/geometry 'TestSpans_MeasuresDefinitionsInTheirOwnFrame'
+
+drill "settling drops a design written as a tree" internal/agent/settledoc.go \
+  's = s.replace("\tif !d.HasGeometry() {\n", "\tif len(d.Parts) == 0 {\n", 1)' \
+  ./internal/agent 'TestSettle_KeepsADesignWrittenAsATree'
+
+drill "the current model hides the tree" internal/agent/currentmodel.go \
+  's = s.replace("\t\tDefinitions: d.Definitions, Assemblies: d.Assemblies, Root: d.Root,\n", "", 1)' \
+  ./internal/agent 'TestCurrentModel_ShowsTheTreeItIsRevising'
+
+drill "an edit to a tree on screen is refused" internal/agent/converse.go \
+  's = s.replace("\tif current == nil || !current.HasGeometry() {\n\t\treturn errs.New(op", "\tif current == nil || len(current.Parts) == 0 {\n\t\treturn errs.New(op", 1)' \
+  ./internal/agent 'TestResolveEdit_EditsATreeOnScreenThroughItsDesign'
+
+drill "the contract's tree example drifts from the schema" internal/agent/converse.go \
+  's = s.replace("\"at\": \"left-end\"", "\"attach\": \"left-end\"", 1)' \
+  ./internal/agent 'TestTheContractOffersATreeAndItsExampleBuilds'
+
+drill "the contract's remove names a field an edit does not have" internal/agent/converse.go \
+  's = s.replace("\"children\": [\"assembly-id/child-id\"]}", "\"kids\": [\"assembly-id/child-id\"]}", 1)' \
+  ./internal/agent 'TestTheContractNamesTheTreeEditFieldsAnEditHas'
 
 echo
 echo "Islands"
