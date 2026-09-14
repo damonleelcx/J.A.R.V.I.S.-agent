@@ -34,7 +34,11 @@ DB_URL       := postgres://$(DB_USER):$(DB_PASS)@localhost:$(DB_PORT)/$(DB_NAME)
 # release: an unpinned server is how a test that passed yesterday fails today
 # for a reason nobody changed. Development credentials only.
 BLOB_CONTAINER := forge-minio
-BLOB_IMAGE     ?= minio/minio:RELEASE.2025-09-07T16-13-09Z
+# quay.io, not Docker Hub: MinIO no longer publishes minio/minio there (the repository
+# answers 404), so CI could not pull it. Same tag, same image: its manifest digest is
+# sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e on both.
+# docs/bugfix/2026-09-14-minio-could-not-be-pulled-in-ci.md
+BLOB_IMAGE     ?= quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
 BLOB_PORT      ?= 55841
 BLOB_USER      ?= forge
 BLOB_PASS      ?= forge_dev_minio
