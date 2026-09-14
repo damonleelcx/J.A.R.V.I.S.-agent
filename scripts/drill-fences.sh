@@ -108,6 +108,9 @@ FILES=(
   internal/domain/geometry/mesh.go
   internal/domain/geometry/interference.go
   internal/agent/interference.go
+  internal/domain/geometry/render.go
+  internal/domain/geometry/assembly.go
+  internal/agent/turned.go
 )
 
 BACKUP=""
@@ -469,6 +472,37 @@ drill "the kernel builds a cm fillet ten times too small again" internal/domain/
 drill "the kernel quotes radii without a unit" internal/domain/cad/sidecar.py \
   "s = s.replace('cannot take a %s of %g mm here. The largest that DOES build on these \"\n            \"edges is %g mm,', 'cannot take a %s of %g here. The largest that DOES build on these \"\n            \"edges is %g,', 1)" \
   ./internal/domain/cad 'TestKernel_ARadiusThatDoesNotFitIsReportedInMillimetres'
+
+echo
+echo "Every reader sees repeat copies"
+# Added 2026-09-13. Only the kernel, the mesh and Faults expanded a repeat; every
+# other reader read the parts as written: Measure left copies out, the contact
+# sheet drew them grey, states could not name one, the resize check reported them
+# without a name, and the browser drew each pattern once.
+# docs/bugfix/2026-09-13-repeat-copies-were-invisible-to-most-readers.md
+drill "Measure reads the parts as written again" internal/domain/geometry/overlay.go \
+  's = s.replace("\twithCopies, _ := expandRepeats(doc)\n", "\twithCopies := doc\n", 1)' \
+  ./internal/domain/geometry 'TestMeasure_IncludesEveryCopyOfARepeatedPart'
+
+drill "copies are coloured from the authored list again" internal/domain/geometry/render.go \
+  's = s.replace("\t\tfor _, q := range (Document{Parts: []Part{p}}).Expanded().Parts {\n", "\t\tfor _, q := range []Part{p} {\n", 1)' \
+  ./internal/domain/geometry 'TestContactSheet_ColoursACopyLikeItsPart'
+
+drill "a state cannot name a copy again" internal/domain/geometry/assembly.go \
+  's = s.replace("\tfor _, p := range (Document{Parts: parts}).Expanded().Parts {\n", "\tfor _, p := range parts {\n", 1)' \
+  ./internal/domain/geometry 'TestValidateStates_NamesACopyOrThePattern'
+
+drill "a resized copy is reported without its name again" internal/agent/turned.go \
+  's = s.replace("\tfor _, p := range after.Expanded().Parts {\n", "\tfor _, p := range after.Parts {\n", 1)' \
+  ./internal/agent 'TestTurned_NamesACopyOfARepeatedPart'
+
+drill "the browser draws each repeated part once again" internal/httpapi/assets/forge3d.js \
+  "s = s.replace('      var r = p.repeat;\n', '      var r = null;\n', 1)" \
+  ./internal/httpapi 'TestRendererExpandsARepeatLikeTheExporter'
+
+drill "the browser turns a copy differently from the exporter" internal/httpapi/assets/forge3d.js \
+  "s = s.replace('var a = repeatSweep(r) * k * 180 / Math.PI;', 'var a = repeatSweep(r) * k;', 1)" \
+  ./internal/httpapi 'TestRendererExpandsARepeatLikeTheExporter'
 
 echo
 echo "Islands"

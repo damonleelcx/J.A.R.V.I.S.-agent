@@ -1324,6 +1324,146 @@
     return { geo: { positions: positions, normals: normals, indices: indices }, fromKernel: true };
   }
 
+  /* ---- Repeats, mirroring geometry/repeat.go step for step -----------------
+   *
+   * Until 2026-09-13 this file had no repeat expansion at all. A part carrying
+   * "repeat" was drawn ONCE, at its authored position, while the exporter, the
+   * kernel and the contact sheet all built every copy — a sixty-spoke wheel on
+   * screen had one spoke. The browser cannot call Go, so like the gear it holds a
+   * copy of the rule, and TestRendererExpandsARepeatLikeTheExporter holds that
+   * copy to Go's answer: ids, names, positions, rotations, dropped patterns and
+   * which copies are tools being removed.
+   * docs/bugfix/2026-09-13-repeat-copies-were-invisible-to-most-readers.md */
+  var MAX_REPEAT = 512;   // geometry/repeat.go maxRepeat
+
+  function repeatSweep(r) {
+    var angle = r.angle || 0;
+    if (angle === 0 || Math.abs(angle) >= 360) return 2 * Math.PI / r.count;
+    return (angle * Math.PI / 180) / (r.count - 1);
+  }
+
+  /* geometry.RotationMatrix + rotate: row-major, RADIANS, term for term. */
+  function rotateLikeTheExporter(v, r) {
+    var cx = Math.cos(r[0]), sx = Math.sin(r[0]);
+    var cy = Math.cos(r[1]), sy = Math.sin(r[1]);
+    var cz = Math.cos(r[2]), sz = Math.sin(r[2]);
+    var m = [cy * cz, -cy * sz, sy,
+             sx * sy * cz + cx * sz, -sx * sy * sz + cx * cz, -sx * cy,
+             -cx * sy * cz + sx * sz, cx * sy * sz + sx * cz, cx * cy];
+    return [m[0] * v[0] + m[1] * v[1] + m[2] * v[2],
+            m[3] * v[0] + m[4] * v[1] + m[5] * v[2],
+            m[6] * v[0] + m[7] * v[1] + m[8] * v[2]];
+  }
+
+  function pad3(v) {
+    return [(v && v[0]) || 0, (v && v[1]) || 0, (v && v[2]) || 0];
+  }
+
+  /* placeCopy */
+  function repeatPosition(p, r, k) {
+    var pos = pad3(p.position);
+    if (!r.about) {
+      var step = pad3(r.offset);
+      return [pos[0] + step[0] * k, pos[1] + step[1] * k, pos[2] + step[2] * k];
+    }
+    var a = repeatSweep(r) * k;
+    var rot = r.about === 'x' ? [a, 0, 0] : r.about === 'y' ? [0, a, 0] : [0, 0, a];
+    return rotateLikeTheExporter(pos, rot);
+  }
+
+  /* turnCopy — a straight pattern keeps the part's own rotation untouched. */
+  function repeatRotation(p, r, k) {
+    if (!r.about) return p.rotation;
+    var base = pad3(p.rotation);
+    var a = repeatSweep(r) * k * 180 / Math.PI;   // rotation is in DEGREES
+    if (r.about === 'x') return [base[0] + a, base[1], base[2]];
+    if (r.about === 'y') return [base[0], base[1] + a, base[2]];
+    return [base[0], base[1], base[2] + a];
+  }
+
+  function shallowCopy(o) {
+    var out = {};
+    for (var key in o) if (Object.prototype.hasOwnProperty.call(o, key)) out[key] = o[key];
+    return out;
+  }
+
+  /* expandRepeats: every repeated part written out as its copies, features
+   * retargeted to them. copyOf maps each copy's id to the part it came from. */
+  function expandRepeats(parts, features) {
+    var out = [], copies = {}, copyOf = {};
+    (parts || []).forEach(function (p) {
+      if (!p) return;
+      var r = p.repeat;
+      if (!r) { out.push(p); return; }
+      if (!(r.count >= 2)) {
+        var once = shallowCopy(p);
+        delete once.repeat;
+        out.push(once);
+        return;
+      }
+      if (r.count > MAX_REPEAT) return;   // refused, as the exporter refuses it
+      var label = p.name || p.id, made = [];
+      for (var k = 0; k < r.count; k++) {
+        var q = shallowCopy(p);
+        delete q.repeat;
+        q.id = p.id + '-' + (k + 1);
+        q.name = label + ' ' + (k + 1);
+        q.position = repeatPosition(p, r, k);
+        q.rotation = repeatRotation(p, r, k);
+        out.push(q);
+        made.push(q.id);
+        copyOf[q.id] = p.id;
+      }
+      copies[p.id] = made;
+    });
+    var retargeted = (features || []).map(function (f) {
+      if (!f) return f;
+      var g = shallowCopy(f);
+      if (copies[f.of] && copies[f.of].length) g.of = copies[f.of][0];
+      var withIDs = [];
+      (f.with || []).forEach(function (id) {
+        if (copies[id]) withIDs.push.apply(withIDs, copies[id]);
+        else withIDs.push(id);
+      });
+      g.with = withIDs;
+      return g;
+    });
+    return { parts: out, features: retargeted, copyOf: copyOf };
+  }
+
+  /* partsToDraw is the list Studio.load draws: every part as the exporter builds
+   * it, each marked with whether it is material being removed and, for a copy,
+   * which part it is a copy of — so a state or a selection that names the part
+   * applies to every copy. A kernel mesh is found by the DRAWN id on the part it
+   * came from, and travels on the wrapper, never written into the document. */
+  function partsToDraw(spec) {
+    spec = spec || {};
+    var expanded = expandRepeats(spec.parts, spec.features);
+    var removed = {};
+    expanded.features.forEach(function (f) {
+      if (!f) return;
+      var op = String(f.op).toLowerCase();
+      /* A cut's tool is material being removed. A loft's stations are consumed
+       * too — the kernel blends them into one body and they cease to exist as
+       * parts — so they are ghosted for the same reason: drawn solid, two
+       * stations read as two flat plates somebody meant to keep. */
+      if (op !== 'cut' && op !== 'loft') return;
+      (f.with || []).forEach(function (id) { removed[id] = true; });
+    });
+    var authored = {};
+    (spec.parts || []).forEach(function (p) { if (p) authored[p.id] = p; });
+    return expanded.parts.map(function (part) {
+      var repeatOf = expanded.copyOf[part.id] || '';
+      var source = authored[repeatOf || part.id] || part;
+      return {
+        spec: part,
+        removed: !!removed[part.id],
+        repeatOf: repeatOf,
+        mesh: (source.meshes && source.meshes[part.id]) || part.mesh || null
+      };
+    });
+  }
+
   function buildGeometry(part) {
     /* The built solid wins over the primitive that approximated it. */
     if (part.mesh && part.mesh.triangles && part.mesh.triangles.length) {
@@ -1791,22 +1931,15 @@
      * a post: a tool is drawn as a ghost, and the provenance banner says which
      * shape the exported file has. Same stance as "Drawn approximately" — say
      * what was done instead of hiding it. */
-    var removed = {};
-    (this.spec.features || []).forEach(function (f) {
-      if (!f) return;
-      var op = String(f.op).toLowerCase();
-      /* A cut's tool is material being removed. A loft's stations are consumed
-       * too — the kernel blends them into one body and they cease to exist as
-       * parts — so they are ghosted for the same reason: drawn solid, two
-       * stations read as two flat plates somebody meant to keep. */
-      if (op !== 'cut' && op !== 'loft') return;
-      (f.with || []).forEach(function (id) { removed[id] = true; });
-    });
+    /* Which parts are removed material, and every copy of every repeat, are
+     * decided in ONE place — partsToDraw — so what the parity fence checks is
+     * what is drawn. */
 
     var wide = !!gl.getExtension('OES_element_index_uint');
 
-    this.parts = (this.spec.parts || []).map(function (part) {
-      var built = buildGeometry(part);
+    this.parts = partsToDraw(this.spec).map(function (drawn) {
+      var part = drawn.spec;
+      var built = buildGeometry(drawn.mesh ? withMesh(part, drawn.mesh) : part);
       /* A tessellation this browser cannot index. Drawn as its primitive
        * instead, and named — truncating to 65,535 vertices would draw a shape
        * nobody built, which is worse than drawing the approximation everybody
@@ -1843,7 +1976,10 @@
         // Held on the WRAPPER and never written into spec: the document on
         // screen has to stay the document that was stored, so a presentation
         // decision must not become a value the model appears to have stated.
-        removed: !!removed[part.id]
+        removed: drawn.removed,
+        // The part this is a copy of, so a state or a selection naming the
+        // pattern reaches every copy. Empty for a part that is not a copy.
+        repeatOf: drawn.repeatOf
       };
     });
 
@@ -1851,6 +1987,14 @@
     this.draw();
     return this.parts.length;
   };
+
+  /* A drawn part carrying its kernel mesh, without writing the mesh into the
+   * document the part belongs to. */
+  function withMesh(part, mesh) {
+    var out = shallowCopy(part);
+    out.mesh = mesh;
+    return out;
+  }
 
   function makeBuffer(gl, target, data) {
     var b = gl.createBuffer();
@@ -2008,7 +2152,7 @@
        * applied here rather than baked into the loaded geometry so that
        * switching states costs a redraw instead of a rebuild, and so the
        * document on screen stays the document that was stored. */
-      var st = self._stateFor(s.id);
+      var st = self._stateFor(s.id, part.repeatOf);
       if (st.hidden) return;
       if (st.offset) pos = add(pos, st.offset);
 
@@ -2019,7 +2163,8 @@
       gl.uniformMatrix3fv(loc.nmat, false, normalMatrix(model));
       gl.uniform3fv(loc.color, hexToRGB(part.removed ? g.removed : (s.color || g.part)));
       gl.uniform1f(loc.opacity, alphaOf(part));
-      gl.uniform1f(loc.highlight, self.selected === s.id ? 1 : 0);
+      gl.uniform1f(loc.highlight,
+        (self.selected === s.id || (part.repeatOf && self.selected === part.repeatOf)) ? 1 : 0);
       /* The finish, as the document declared it. Not looked up from the material
        * NAME: that table would have to exist here and in Go, and this codebase
        * has already recorded what two copies of one rule cost. */
@@ -2117,11 +2262,16 @@
   }
 
   /* _stateFor resolves what the active assembly state does to one part. */
-  Studio.prototype._stateFor = function (id) {
+  Studio.prototype._stateFor = function (id, repeatOf) {
     var st = this.state;
     if (!st) return {};
-    if (st.hidden && st.hidden.indexOf(id) >= 0) return { hidden: true };
-    var off = st.offsets && st.offsets[id];
+    /* A state names a part as written ("spoke": every copy) or one copy
+     * ("spoke-3"), exactly the ids geometry.ValidateStates accepts. */
+    var names = function (list) {
+      return list && (list.indexOf(id) >= 0 || (repeatOf && list.indexOf(repeatOf) >= 0));
+    };
+    if (names(st.hidden)) return { hidden: true };
+    var off = st.offsets && (st.offsets[id] || (repeatOf && st.offsets[repeatOf]));
     return off && off.length === 3 ? { offset: off } : {};
   };
 
@@ -2400,6 +2550,10 @@
      * diameter the way the stage draws it, and for the fence that holds this copy
      * of gear.go to Go's answer point for point. */
     gearOutline: gearOutline,
+    /* The list Studio.load draws, exported so TestRendererExpandsARepeatLikeTheExporter
+     * holds the browser's copies to the exporter's, and so the workbench attaches a
+     * kernel mesh to the copy it belongs to. */
+    partsToDraw: partsToDraw,
     rotationRadians: rotationRadians,
     /* Exported so a Go fence can read it. The browser and the exporter each
      * hold a copy of the retirement table, and the failure they guard against
