@@ -99,6 +99,7 @@ FILES=(
   internal/httpapi/converse.go
   internal/agent/look.go
   internal/domain/cad/script.py
+  internal/domain/cad/script_test.go
   internal/domain/cad/script.go
   internal/domain/geometry/expression.go
   internal/domain/geometry/parameters.go
@@ -958,6 +959,19 @@ drill "a scripted part is unreachable in the shape dispatch" internal/domain/cad
 drill "a refused assembly hides which part it refused" internal/domain/cad/cad.go \
   's = s.replace("\t\tif len(res.Skipped) > 0 {\n\t\t\tdetail +=", "\t\tif false {\n\t\t\tdetail +=", 1)' \
   ./internal/domain/cad 'TestKernel_ARefusedAssemblyNamesWhatItRefused'
+
+echo
+echo "Script refusals without a kernel"
+# Added 2026-09-14. CI's check job has Python and no build123d on purpose; a refusal
+# must still say why there, and a test that needs the kernel must skip there.
+# docs/bugfix/2026-09-14-script-refusals-needed-a-kernel-to-say-why.md
+drill "the refusal hint imports the kernel again" internal/domain/cad/script.py \
+  's = s.replace("ns, _ = namespace(importlib.util.find_spec(\"build123d\") is not None)", "ns, _ = namespace(True)", 1)' \
+  ./internal/domain/cad 'TestScript_RefusalsSayWhyWithoutAKernel'
+
+drill "a test that needs the kernel runs without it" internal/domain/cad/script_test.go \
+  's = s.replace("\tif !hasBuild123d(py) {\n\t\tt.Skip(", "\tif false {\n\t\tt.Skip(", 1)' \
+  ./internal/domain/cad 'TestScript_ATestThatNeedsTheKernelSkipsWithoutIt'
 
 if [ "$MODE" = "list" ]; then
   exit 0
