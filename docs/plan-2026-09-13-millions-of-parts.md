@@ -1,6 +1,6 @@
 # Millions of parts: implementation plan
 
-**Status: in progress. B0, B0b, S1–S3, D1a, the kernel-mesh placement bug and D1b are in PRs #51–#57; D1c waits on two decisions; K0 proceeds in parallel.**
+**Status: in progress. B0, B0b, S1–S3, D1a, the kernel-mesh placement bug, D1b and D1c-1 (mirror) are in PRs #51–#58; D1c-2 (patterns) is in progress; K0 is next after it.**
 Written 2026-09-13. Checklist and background:
 [`research-2026-09-13-millions-of-parts.md`](research-2026-09-13-millions-of-parts.md).
 Live car measurement: [`spikes/2026-09-12-car-ceiling/`](spikes/2026-09-12-car-ceiling/README.md).
@@ -265,7 +265,9 @@ decisions D1–D4
 | D1b-3 storage round trip | ✅ PR #57 | real Postgres: tree unchanged after save/load; flat document gains no fields; broken tree refused |
 | ‼️ new limit | recorded | `maxTreeParts = 4096` — a PRE-INSTANCING ceiling; raise on measured numbers after K1 (one build per design) and W1 (instanced drawing) |
 | carried to D1f | recorded | the agent's own "no parts" checks (`CurrentModel`, `assemble`, `resolveEdit`, `settleDocument`) and `Spans` — they matter once the model can write a tree |
-| D1c patterns + mirror on children | ⏳ waiting on two decisions | mirror representation (a reflection cannot be a rotation); pattern vocabulary (reuse `repeat` vs a new `pattern` object) |
+| D1c decisions | ✅ taken 2026-09-14 | mirror = **true reflection**; child patterns = **new `pattern` object now** (linear, polar, grid, path) |
+| D1c-1 mirror | ✅ PR #58 (stacked on #57) | commit `0a82e65`; placements carry a reflection; stored as `Part.Mirrored` ("negate local x, then rotate"); every reader honours it; found: build123d's `mirror()` operation makes the assembly Compound report volume 0 — the sidecar uses `shape.mirror(Plane.YZ)`; 11 drills red; live browser before/after |
+| D1c-2 pattern object | in progress | linear / polar (repeat's spacing rule) / grid (row-major) / path (equal arc length, `align` = minimal rotation of local +X onto the tangent, outgoing segment at a corner); copy ids `childID-n` |
 | K0 kernel in CI + pinned build123d | next, in parallel with D1c | branches from #54 (it changes `Makefile` and `ci.yml`) |
 | everything else | not started | |
 
