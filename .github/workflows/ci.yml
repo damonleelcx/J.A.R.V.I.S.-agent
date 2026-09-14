@@ -94,8 +94,15 @@ jobs:
   # skipped — green. Volumes, fillets, interference, mirrors and STEP export are
   # properties of OpenCASCADE, so they are only proven where OpenCASCADE runs.
   # Python 3.13 and the pinned list are what the production image uses.
+  #
+  # arm64, because FORGE deploys on arm64 (the image is built for it): this job
+  # proves the kernel production runs. Decided 2026-09-14 after its first two runs
+  # on ubuntu-latest (x86_64) both timed out TestScript_BuildsWhatTheVocabularyCannot
+  # at the 30 s script limit, while every other kernel test there was ~1.6x slower
+  # than a laptop and the same script took 3.1 s in the arm64 image capped to one
+  # CPU. That x86 behaviour is OPEN, not fixed: see the plan's execution record.
   kernel:
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04-arm
 
     steps:
       - uses: actions/checkout@v4
