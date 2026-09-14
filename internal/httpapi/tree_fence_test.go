@@ -144,6 +144,54 @@ func TestRendererFlattensATreeLikeTheExporter(t *testing.T) {
 			d.Assemblies[1].Children[1].ID = "damper-2"
 			return d
 		}()},
+		{"a child on its parent's interface", func() geometry.Document {
+			d := corner()
+			d.Assemblies[1].Interfaces = []geometry.Interface{{ID: "hub", Position: []float64{0, 120, -30}, Rotation: []float64{20, 0, -35}}}
+			d.Assemblies[1].Children[1].At = "hub"
+			return d
+		}()},
+		{"a part on a sibling's interface, through a mirror", func() geometry.Document {
+			d := corner()
+			d.Assemblies[1].Interfaces = []geometry.Interface{{ID: "hub", Position: []float64{10, 60, 5}, Rotation: []float64{0, 70, 15}}}
+			d.Assemblies[0].Children[1].Mirror = "y"
+			d.Assemblies[0].Children = append(d.Assemblies[0].Children,
+				geometry.Child{ID: "wheel", Ref: "damper", At: "front-right/hub", Position: []float64{0, 0, 15}, Rotation: []float64{0, 0, 45}})
+			return d
+		}()},
+		{"a chain of attachments two levels down", func() geometry.Document {
+			d := corner()
+			d.Assemblies[1].Interfaces = []geometry.Interface{{ID: "strut", Position: []float64{0, 0, 70}, Rotation: []float64{0, 45, 0}}}
+			d.Assemblies[1].Children = append(d.Assemblies[1].Children,
+				geometry.Child{ID: "knuckle", Ref: "knuckle", At: "strut", Position: []float64{1, 2, 3}, Rotation: []float64{-10, 0, 5}})
+			d.Assemblies = append(d.Assemblies, geometry.Assembly{ID: "knuckle",
+				Interfaces: []geometry.Interface{{ID: "hub", Position: []float64{5, 6, 7}, Rotation: []float64{0, 30, 0}}},
+				Children:   []geometry.Child{{ID: "pin", Ref: "damper"}}})
+			d.Assemblies[0].Children = append(d.Assemblies[0].Children,
+				geometry.Child{ID: "wheel", Ref: "damper", At: "front-left/knuckle/hub", Position: []float64{0, 0, 9}})
+			return d
+		}()},
+		{"a pattern around an interface, and a part on one copy", func() geometry.Document {
+			d := corner()
+			d.Assemblies[0].Interfaces = []geometry.Interface{{ID: "axle", Position: []float64{0, 0, 300}, Rotation: []float64{90, 0, 0}}}
+			d.Assemblies[1].Interfaces = []geometry.Interface{{ID: "hub", Position: []float64{0, 50, 0}, Rotation: []float64{0, 0, 30}}}
+			d.Assemblies[0].Children = append(d.Assemblies[0].Children,
+				geometry.Child{ID: "bolt", Ref: "corner", At: "axle", Position: []float64{40, 0, 0},
+					Pattern: &geometry.Pattern{Kind: "polar", Count: 3, About: "z"}},
+				geometry.Child{ID: "cap", Ref: "damper", At: "bolt-2/hub", Position: []float64{0, 4, 0}})
+			return d
+		}()},
+		{"refused attachments are left out, their siblings are not", func() geometry.Document {
+			d := corner()
+			d.Assemblies[1].Interfaces = []geometry.Interface{{ID: "hub", Position: []float64{0, 50, 0}}}
+			d.Assemblies[0].Children = append(d.Assemblies[0].Children,
+				geometry.Child{ID: "lost", Ref: "damper", At: "front-left/nowhere"},
+				geometry.Child{ID: "x", Ref: "corner", At: "y/hub"},
+				geometry.Child{ID: "y", Ref: "corner", At: "x/hub"},
+				geometry.Child{ID: "bolt", Ref: "corner", Pattern: &geometry.Pattern{Kind: "linear", Count: 2, Offset: []float64{0, 0, 90}}},
+				geometry.Child{ID: "vague", Ref: "damper", At: "bolt/hub"},
+				geometry.Child{ID: "kept", Ref: "damper", At: "bolt-1/hub"})
+			return d
+		}()},
 		{"top-level parts beside the tree", func() geometry.Document {
 			d := corner()
 			d.Parts = []geometry.Part{box("frame")}
