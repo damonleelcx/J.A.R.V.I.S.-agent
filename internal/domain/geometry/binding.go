@@ -377,6 +377,13 @@ func cloneAssemblies(in []Assembly) []Assembly {
 				b.Interfaces[k] = f
 			}
 		}
+		if a.Features != nil {
+			b.Features = make([]Feature, len(a.Features))
+			for k, f := range a.Features {
+				f.With = append([]string(nil), f.With...)
+				b.Features[k] = f
+			}
+		}
 		b.Children = make([]Child, len(a.Children))
 		for j, c := range a.Children {
 			c.Position = append([]float64(nil), c.Position...)

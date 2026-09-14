@@ -41,7 +41,10 @@ type Assembly struct {
 	// Interfaces are named mounting frames a child may be attached at, here or
 	// from a sibling ("front-left/hub"). See interface.go.
 	Interfaces []Interface `json:"interfaces,omitempty"`
-	Children   []Child     `json:"children"`
+	// Features are cuts, fuses and fillets between the parts this assembly places,
+	// named by path from here and applied in every occurrence (tree_features.go).
+	Features []Feature `json:"features,omitempty"`
+	Children []Child   `json:"children"`
 }
 
 // Child places a definition, or another assembly, inside an assembly.
@@ -127,6 +130,9 @@ func expandAssemblies(d Document) (Document, []Problem) {
 	out := d
 	out.Parts = append([]Part(nil), d.Parts...)
 	out.Definitions, out.Assemblies, out.Root = nil, nil, ""
+	// A copy, not the caller's slice: the tree's features are appended to it below,
+	// and appending to a slice with spare capacity writes into the caller's array.
+	out.Features = append([]Feature(nil), d.Features...)
 
 	var problems []Problem
 	fail := func(name, format string, args ...any) {
@@ -179,11 +185,16 @@ func expandAssemblies(d Document) (Document, []Problem) {
 	attach := newAttachments(asms)
 	// The frame is a placement (frame.go), not a position and three angles, so a
 	// reflection anywhere above a part reaches the part.
-	var walk func(a Assembly, path []string, onPath map[string]bool, frame placement) (stop bool)
-	walk = func(a Assembly, path []string, onPath map[string]bool, frame placement) bool {
+	//
+	// It also returns where each placement's parts landed in out.Parts, by path from
+	// the assembly walked, so that assembly's features can name them
+	// (tree_features.go). Depth first, so everything one placement writes is contiguous.
+	var walk func(a Assembly, path []string, onPath map[string]bool, frame placement) (index map[string]partRange, stop bool)
+	walk = func(a Assembly, path []string, onPath map[string]bool, frame placement) (map[string]partRange, bool) {
+		index := map[string]partRange{}
 		if len(path) >= maxTreeDepth {
 			fail(strings.Join(path, PathSeparator), "nests more than %d assemblies deep", maxTreeDepth)
-			return true
+			return index, true
 		}
 		ids := map[string]bool{}
 		for _, c := range a.Children {
@@ -247,7 +258,9 @@ func expandAssemblies(d Document) (Document, []Problem) {
 				}
 				defCopies = expanded.Parts
 			}
+			childStart := len(out.Parts)
 			for _, slot := range slots {
+				slotStart := len(out.Parts)
 				childPath := append(append([]string(nil), path...), c.ID+slot.suffix)
 				slotName := strings.Join(childPath, PathSeparator)
 				childName := c.Name
@@ -257,10 +270,14 @@ func expandAssemblies(d Document) (Document, []Problem) {
 				childFrame := frame.then(reference.then(slot.at.then(local)))
 				if isAsm {
 					onPath[sub.ID] = true
-					stop := walk(sub, childPath, onPath, childFrame)
+					subIndex, stop := walk(sub, childPath, onPath, childFrame)
 					delete(onPath, sub.ID)
+					for rel, r := range subIndex {
+						index[c.ID+slot.suffix+PathSeparator+rel] = r
+					}
+					index[c.ID+slot.suffix] = partRange{slotStart, len(out.Parts)}
 					if stop {
-						return true
+						return index, true
 					}
 					continue
 				}
@@ -268,8 +285,9 @@ func expandAssemblies(d Document) (Document, []Problem) {
 					if placed >= maxTreeParts {
 						fail(d.Root, "places more than %d parts, which is the most one tree may place until "+
 							"instanced drawing and one build per design land", maxTreeParts)
-						return true
+						return index, true
 					}
+					partStart := len(out.Parts)
 					q := lp
 					// "" for the definition itself, "-k" for its k-th copy: read off the
 					// expansion's own answer rather than restating its naming rule.
@@ -285,10 +303,22 @@ func expandAssemblies(d Document) (Document, []Problem) {
 					q.Size = cloneSize(lp.Size)
 					out.Parts = append(out.Parts, q)
 					placed++
+					// A definition's own repeat copy, by its copy id ("rivet-2").
+					if suffix != "" {
+						index[c.ID+slot.suffix+suffix] = partRange{partStart, len(out.Parts)}
+					}
 				}
+				index[c.ID+slot.suffix] = partRange{slotStart, len(out.Parts)}
+			}
+			// A patterned child named by its own id is every copy, as a repeated part's is.
+			if len(slots) > 1 {
+				index[c.ID] = partRange{childStart, len(out.Parts)}
 			}
 		}
-		return false
+		// This assembly's own features, in THIS occurrence, after its children's:
+		// the inner assembly's welds are made before the outer one's (tree_features.go).
+		out.Features = append(out.Features, occurrenceFeatures(a, path, index, out.Parts, fail)...)
+		return index, false
 	}
 	walk(root, nil, map[string]bool{root.ID: true}, placementOf(nil, nil, false))
 	return out, problems
