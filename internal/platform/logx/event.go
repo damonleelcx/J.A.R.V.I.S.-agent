@@ -473,3 +473,16 @@ func init() {
 		EventAssumptionUnfiled,
 	)
 }
+
+// Blob storage (millions-of-parts plan, Phase 3): content-addressed bulk that can
+// be rebuilt from the document. Stored is info; a failed store is a warning
+// because the caller still has the bytes and can retry or rebuild; a corrupt
+// read is an ERROR because bytes that do not hash to their key mean the bucket
+// is not holding what was put in it.
+const (
+	EventBlobStored      Event = "forge.blob.stored"
+	EventBlobStoreFailed Event = "forge.blob.store_failed"
+	EventBlobCorrupt     Event = "forge.blob.corrupt"
+)
+
+func init() { allEvents = append(allEvents, EventBlobStored, EventBlobStoreFailed, EventBlobCorrupt) }

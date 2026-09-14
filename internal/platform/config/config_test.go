@@ -413,3 +413,51 @@ func TestTheSecurityDeclarationsAreVisibleInConfigPrint(t *testing.T) {
 		t.Errorf("an unrestricted shell does not say so in config output: %s", printed)
 	}
 }
+
+// Blob storage is all or nothing: each half-configuration stops the process at
+// boot, naming the variable, instead of failing on the first large model.
+func TestBlobStorageHalfConfiguredIsRefused(t *testing.T) {
+	for name, tc := range map[string]struct {
+		set   map[string]string
+		names string
+	}{
+		"bucket without region":   {map[string]string{"FORGE_BLOB_BUCKET": "b"}, "FORGE_BLOB_REGION"},
+		"endpoint without bucket": {map[string]string{"FORGE_BLOB_ENDPOINT": "http://localhost:55841"}, "FORGE_BLOB_BUCKET"},
+		"region without bucket":   {map[string]string{"FORGE_BLOB_REGION": "us-east-1"}, "FORGE_BLOB_BUCKET"},
+	} {
+		env := minimalEnv()
+		for k, v := range tc.set {
+			env[k] = v
+		}
+		_, _, err := loadWith(t, env)
+		if err == nil {
+			t.Errorf("%s: loaded; a half-configured blob store must be refused", name)
+			continue
+		}
+		if !strings.Contains(err.Error(), tc.names) {
+			t.Errorf("%s: the refusal does not name %s: %v", name, tc.names, err)
+		}
+	}
+
+	env := minimalEnv()
+	cfg, _, err := loadWith(t, env)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Blob.Configured() {
+		t.Error("with nothing set, blob storage reports configured")
+	}
+	if got := cfg.Redacted()["blob_store"]; !strings.Contains(fmt.Sprint(got), "FORGE_BLOB_BUCKET") {
+		t.Errorf("config print for no blob store is %v; it must name the setting", got)
+	}
+
+	env["FORGE_BLOB_BUCKET"] = "forge-geometry-test"
+	env["FORGE_BLOB_REGION"] = "us-east-1"
+	cfg, _, err = loadWith(t, env)
+	if err != nil {
+		t.Fatalf("a complete blob configuration was refused: %v", err)
+	}
+	if !cfg.Blob.Configured() || cfg.Blob.Bucket != "forge-geometry-test" {
+		t.Errorf("blob config = %+v", cfg.Blob)
+	}
+}
