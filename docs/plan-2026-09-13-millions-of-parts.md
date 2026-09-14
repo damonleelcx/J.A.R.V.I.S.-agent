@@ -1,6 +1,6 @@
 # Millions of parts: implementation plan
 
-**Status: not executed. Decisions D1–D4 and the S3 questions are taken (2026-09-13); B0 is next.**
+**Status: in progress. Decisions D1–D4 and the S3 questions taken 2026-09-13; B0, B0b, S1–S3, D1a and one bug found in D1a are in PRs #51–#56; D1b is next.**
 Written 2026-09-13. Checklist and background:
 [`research-2026-09-13-millions-of-parts.md`](research-2026-09-13-millions-of-parts.md).
 Live car measurement: [`spikes/2026-09-12-car-ceiling/`](spikes/2026-09-12-car-ceiling/README.md).
@@ -254,10 +254,15 @@ decisions D1–D4
 | B0 | ✅ PR #52 (stacked on #51) | commit `baa7aba`; 4 fences, 3 drills proven red, whole-suite dry run 0 anchors moved |
 | B0b radius units | in progress, branch `fix/feature-radius-units` | confirmed live: a cm model's 1 cm fillet reaches the kernel as 1 mm (999,744 vs 975,587 mm³); branches from B0 (both touch `solid.go`) |
 | S3 AWS bootstrap | ✅ applied 2026-09-13 (damon approved the dry run) | bucket `forge-geometry-373468206837`: Block Public Access all on, ACLs off, SSE-S3, TLS-only; inline `ForgeGeometryBlobs` on role `heros-vm` (Get/Put under `blobs/`, List on that prefix). Re-run converged. IMDS hop limit already 2 — no node change. Script not yet committed (lands with S1). |
-| B0b radius units | ✅ PR opened (stacked on #52) | 3 fences, 3 drills proven red, full kernel suite ok |
+| B0b radius units | ✅ PR #53 (stacked on #52) | commit `08b9f9b`; 3 fences, 3 drills proven red, full kernel suite ok |
 | S1 blob store | ✅ this PR | `internal/platform/blob`: content-addressed `Store`, S3 adapter (conditional write, SHA-256 checksum, verifying reads), refusing store when unconfigured; `FORGE_BLOB_*` config, half-configurations refused at boot; 12 tests incl. 5 against a real MinIO |
 | S2 MinIO in CI | ✅ this PR | `make blob-up blob-wait` in CI, image pinned `RELEASE.2025-09-07T16-13-09Z` |
 | S4 deploy wiring | not started | ConfigMap values, NetworkPolicy egress to S3, `verify.sh` blob round trip from both pods |
+| D1a one expansion for every reader | ✅ PR #55 (stacked on #53) | commit `6aa0b37`; `Document.Expanded()`, readers + browser `partsToDraw`; 6 fences confirmed failing first, 6 drills red; live browser: 2 parts drawn before, 13 after |
+| B1 kernel mesh placed twice (found in D1a) | ✅ PR #56 (stacked on #55) | commit `52bc542`; confirmed with the real kernel mesh; `modelMatrix`; fence + drill red at (186.6, 50, 0) vs (100, 0, 0); live browser before/after |
+| D1b-1 schema + flattening (Go) | next | `definitions` + `assemblies` + `root`; validation; flatten to parts with `a/b/c` ids; rotation composition in the stored degrees-XYZ convention |
+| D1b-2 browser mirror | not started | JS flattening in `partsToDraw` + node parity fence |
+| D1b-3 storage round trip | not started | real Postgres `Save`/`Find` of a tree document; a flat document unchanged in storage |
 | everything else | not started | |
 
 ## What this plan does NOT claim
