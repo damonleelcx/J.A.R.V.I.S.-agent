@@ -522,8 +522,12 @@ def _with_a_way_out(op, shapes, reason):
     if fits is None:
         return ("%s; these edges take no %s at all, so this one cannot be rounded here — "
                 "remove the %s, or change the shape it is applied to" % (reason, kind, kind))
-    return ("%s; the geometry cannot take a %s of %g here. The largest that DOES build on these "
-            "edges is %g, found by asking the kernel" % (reason, what, op["radius"], fits))
+    # The unit is stated because the numbers are the KERNEL's, in millimetres,
+    # and the reader may have written the model in cm or inches. Printing a bare
+    # number would offer them "10" for a radius they typed as "1".
+    # docs/bugfix/2026-09-13-feature-radii-were-sent-in-the-documents-units.md
+    return ("%s; the geometry cannot take a %s of %g mm here. The largest that DOES build on these "
+            "edges is %g mm, found by asking the kernel" % (reason, what, op["radius"], fits))
 
 
 # --- tessellation ----------------------------------------------------------

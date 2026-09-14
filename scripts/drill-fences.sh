@@ -454,6 +454,23 @@ drill "a copy of a scripted part reaches the kernel without its script" internal
   ./internal/domain/geometry 'TestRepeat_EveryCopyOfAScriptedPartCarriesItsScript'
 
 echo
+echo "Feature radii are lengths"
+# Added 2026-09-13. A fillet or chamfer radius was sent in the document's units
+# while every other length was converted to mm, so a cm model's 1 cm fillet was
+# built as 1 mm. docs/bugfix/2026-09-13-feature-radii-were-sent-in-the-documents-units.md
+drill "a feature radius is sent in the document's units again" internal/domain/geometry/solid.go \
+  's = s.replace("\t\toperations[i].Radius *= toMM\n", "", 1)' \
+  ./internal/domain/geometry 'TestSolids_ConvertsAFeatureRadiusToMillimetres'
+
+drill "the kernel builds a cm fillet ten times too small again" internal/domain/geometry/solid.go \
+  's = s.replace("\t\toperations[i].Radius *= toMM\n", "", 1)' \
+  ./internal/domain/cad 'TestKernel_AFilletIsTheSameSizeInEveryUnit'
+
+drill "the kernel quotes radii without a unit" internal/domain/cad/sidecar.py \
+  "s = s.replace('cannot take a %s of %g mm here. The largest that DOES build on these \"\n            \"edges is %g mm,', 'cannot take a %s of %g here. The largest that DOES build on these \"\n            \"edges is %g,', 1)" \
+  ./internal/domain/cad 'TestKernel_ARadiusThatDoesNotFitIsReportedInMillimetres'
+
+echo
 echo "Islands"
 drill "an island is cut away with its hole" internal/domain/geometry/triangulate.go \
   's = s.replace("\t\tif depth[i]%2 != 0 {\n\t\t\tcontinue // a void, and it belongs to whatever contains it\n\t\t}", "\t\tif i != 0 {\n\t\t\tcontinue\n\t\t}", 1)' \
