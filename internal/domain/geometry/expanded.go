@@ -21,7 +21,10 @@ package geometry
 // would turn three independent guarantees into one. Readers outside this package
 // have no other way in.
 func (d Document) Expanded() Document {
-	e, _ := expandGears(d)
+	// A tree first (tree.go), so the gears and patterns inside its definitions are
+	// written out like any other part's.
+	e, _ := expandAssemblies(d)
+	e, _ = expandGears(e)
 	e, _ = expandRepeats(e)
 	return e
 }

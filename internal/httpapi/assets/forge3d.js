@@ -1342,14 +1342,20 @@
     return (angle * Math.PI / 180) / (r.count - 1);
   }
 
-  /* geometry.RotationMatrix + rotate: row-major, RADIANS, term for term. */
-  function rotateLikeTheExporter(v, r) {
+  /* geometry.RotationMatrix: row-major, RADIANS, term for term. The one copy of
+   * the formula in this file; rotating a point and composing frames both read it. */
+  function rowMajor(r) {
     var cx = Math.cos(r[0]), sx = Math.sin(r[0]);
     var cy = Math.cos(r[1]), sy = Math.sin(r[1]);
     var cz = Math.cos(r[2]), sz = Math.sin(r[2]);
-    var m = [cy * cz, -cy * sz, sy,
-             sx * sy * cz + cx * sz, -sx * sy * sz + cx * cz, -sx * cy,
-             -cx * sy * cz + sx * sz, cx * sy * sz + sx * cz, cx * cy];
+    return [cy * cz, -cy * sz, sy,
+            sx * sy * cz + cx * sz, -sx * sy * sz + cx * cz, -sx * cy,
+            -cx * sy * cz + sx * sz, cx * sy * sz + sx * cz, cx * cy];
+  }
+
+  /* geometry rotate: a point turned by RotationMatrix. */
+  function rotateLikeTheExporter(v, r) {
+    var m = rowMajor(r);
     return [m[0] * v[0] + m[1] * v[1] + m[2] * v[2],
             m[3] * v[0] + m[4] * v[1] + m[5] * v[2],
             m[6] * v[0] + m[7] * v[1] + m[8] * v[2]];
@@ -1431,6 +1437,128 @@
     return { parts: out, features: retargeted, copyOf: copyOf };
   }
 
+  /* ---- Designs placed inside assemblies, mirroring geometry/tree.go + frame.go ---
+   *
+   * Phase 1, stage D1b of docs/plan-2026-09-13-millions-of-parts.md. A document may
+   * place definitions through assemblies from a root; the exporter flattens that tree
+   * into ordinary parts whose ids are the path of child ids ("front-left/damper"),
+   * and this does the same, term for term, so the browser draws what the file holds.
+   * TestRendererFlattensATreeLikeTheExporter holds it to Go's answer. */
+  var MAX_TREE_DEPTH = 16;     // geometry/tree.go maxTreeDepth
+  var MAX_TREE_PARTS = 4096;   // geometry/tree.go maxTreeParts
+  var PATH_SEPARATOR = '/';
+
+  function degreesToRadians3(r) {
+    var p = pad3(r);
+    return [p[0] * Math.PI / 180, p[1] * Math.PI / 180, p[2] * Math.PI / 180];
+  }
+
+  function mulMat3(a, b) {
+    var out = new Array(9);
+    for (var r = 0; r < 3; r++) {
+      for (var c = 0; c < 3; c++) {
+        out[r * 3 + c] = a[r * 3] * b[c] + a[r * 3 + 1] * b[3 + c] + a[r * 3 + 2] * b[6 + c];
+      }
+    }
+    return out;
+  }
+
+  /* geometry.EulerDegreesFromMatrix: the inverse of RotationMatrix, in degrees. */
+  function eulerDegreesFromMatrix(m) {
+    var sy = Math.max(-1, Math.min(1, m[2]));
+    var y = Math.asin(sy), cy = Math.cos(y), x, z;
+    if (cy > 1e-9) {
+      x = Math.atan2(-m[5], m[8]);
+      z = Math.atan2(-m[1], m[0]);
+    } else {
+      z = 0;
+      x = Math.atan2(m[3] * sy, m[4]);
+    }
+    var deg = 180 / Math.PI;
+    return [x * deg, y * deg, z * deg];
+  }
+
+  /* geometry placeInFrame: a child at childPos/childRot inside a frame at
+   * parentPos/parentRot, in the frame's parent. */
+  function placeInFrame(parentPos, parentRot, childPos, childRot) {
+    var rp = degreesToRadians3(parentRot);
+    var moved = rotateLikeTheExporter(pad3(childPos), rp), pp = pad3(parentPos);
+    return {
+      position: [moved[0] + pp[0], moved[1] + pp[1], moved[2] + pp[2]],
+      rotation: eulerDegreesFromMatrix(mulMat3(rowMajor(rp), rowMajor(degreesToRadians3(childRot))))
+    };
+  }
+
+  /* geometry expandAssemblies: top-level parts, then every part the tree places.
+   * definitionOf maps each placed part's id to the definition it came from. A
+   * placement Go refuses is left out here too; Go says why, in the export notes. */
+  function expandAssemblies(spec) {
+    var definitionOf = {};
+    var hasTree = !!(spec.root || (spec.assemblies && spec.assemblies.length) ||
+                     (spec.definitions && spec.definitions.length));
+    if (!hasTree) return { parts: spec.parts || [], definitionOf: definitionOf };
+    var parts = (spec.parts || []).slice();
+    if (!spec.root) return { parts: parts, definitionOf: definitionOf };
+
+    var defs = {}, asms = {};
+    (spec.definitions || []).forEach(function (p) {
+      if (!p || !String(p.id || '').trim() || defs[p.id]) return;
+      defs[p.id] = p;
+    });
+    (spec.assemblies || []).forEach(function (a) {
+      if (!a || !String(a.id || '').trim() || asms[a.id] || defs[a.id]) return;
+      asms[a.id] = a;
+    });
+    var root = asms[spec.root];
+    if (!root) return { parts: parts, definitionOf: definitionOf };
+
+    var placed = 0;
+    function walk(a, path, onPath, pos, rot) {
+      if (path.length >= MAX_TREE_DEPTH) return true;
+      var ids = {}, children = a.children || [];
+      for (var i = 0; i < children.length; i++) {
+        var c = children[i] || {};
+        var cid = String(c.id || '');
+        if (!cid.trim() || cid.indexOf(PATH_SEPARATOR) >= 0 || ids[cid]) continue;
+        ids[cid] = true;
+        var childPath = path.concat([cid]);
+        var name = childPath.join(PATH_SEPARATOR);
+        var cp = placeInFrame(pos, rot, c.position, c.rotation);
+        var sub = asms[c.ref];
+        if (sub) {
+          if (onPath[sub.id]) continue;
+          onPath[sub.id] = true;
+          var stop = walk(sub, childPath, onPath, cp.position, cp.rotation);
+          delete onPath[sub.id];
+          if (stop) return true;
+          continue;
+        }
+        var def = defs[c.ref];
+        if (!def) continue;
+        // The definition's own repeat, in the DEFINITION's frame (see tree.go).
+        var local = expandRepeats([def], []).parts;
+        for (var j = 0; j < local.length; j++) {
+          if (placed >= MAX_TREE_PARTS) return true;
+          var lp = local[j], q = shallowCopy(lp);
+          var suffix = lp.id.indexOf(def.id) === 0 ? lp.id.slice(def.id.length) : lp.id;
+          q.id = name + suffix;
+          if (c.name) q.name = suffix ? c.name + ' ' + suffix.replace(/^-/, '') : c.name;
+          var pl = placeInFrame(cp.position, cp.rotation, lp.position, lp.rotation);
+          q.position = pl.position;
+          q.rotation = pl.rotation;
+          parts.push(q);
+          definitionOf[q.id] = def.id;
+          placed++;
+        }
+      }
+      return false;
+    }
+    var onPath = {};
+    onPath[root.id] = true;
+    walk(root, [], onPath, null, null);
+    return { parts: parts, definitionOf: definitionOf };
+  }
+
   /* partsToDraw is the list Studio.load draws: every part as the exporter builds
    * it, each marked with whether it is material being removed and, for a copy,
    * which part it is a copy of — so a state or a selection that names the part
@@ -1438,7 +1566,9 @@
    * came from, and travels on the wrapper, never written into the document. */
   function partsToDraw(spec) {
     spec = spec || {};
-    var expanded = expandRepeats(spec.parts, spec.features);
+    // The tree first, then repeats — the exporter's order (geometry.Expanded).
+    var tree = expandAssemblies(spec);
+    var expanded = expandRepeats(tree.parts, spec.features);
     var removed = {};
     expanded.features.forEach(function (f) {
       if (!f) return;
@@ -1450,14 +1580,21 @@
       if (op !== 'cut' && op !== 'loft') return;
       (f.with || []).forEach(function (id) { removed[id] = true; });
     });
-    var authored = {};
+    var authored = {}, definitions = {};
     (spec.parts || []).forEach(function (p) { if (p) authored[p.id] = p; });
+    (spec.definitions || []).forEach(function (p) { if (p && !definitions[p.id]) definitions[p.id] = p; });
     return expanded.parts.map(function (part) {
       var repeatOf = expanded.copyOf[part.id] || '';
-      var source = authored[repeatOf || part.id] || part;
+      // The object this drawn part came from: a top-level part, the part a copy
+      // was written out from, or the definition a placement names. Its kernel mesh
+      // is kept there, keyed by the DRAWN id, so every placement keeps its own.
+      var placedID = repeatOf || part.id;
+      var definitionID = tree.definitionOf[placedID] || '';
+      var source = (definitionID ? definitions[definitionID] : authored[placedID]) || part;
       var mesh = (source.meshes && source.meshes[part.id]) || part.mesh || null;
       return {
         spec: part,
+        source: source,
         removed: !!removed[part.id],
         repeatOf: repeatOf,
         mesh: mesh,
