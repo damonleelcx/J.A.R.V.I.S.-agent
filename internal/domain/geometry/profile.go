@@ -600,7 +600,9 @@ func (d *Document) ProfileProblems() []Problem {
 	// what is wrong with its numbers is an outline problem too — and read without
 	// expanding, a gear is a shape with no outline and would be skipped here,
 	// hiding a part that is not in the model.
-	expanded, gearProblems := expandGears(*d)
+	// Through the tree first, so a definition's outline is checked like a part's.
+	tree, _ := expandAssemblies(*d)
+	expanded, gearProblems := expandGears(tree)
 	_, _, problems := expanded.resolvedProfiles()
 	return append(gearProblems, problems...)
 }

@@ -111,81 +111,103 @@ func (d *Document) bind(compareToAuthored bool) []Problem {
 	profiles, paths, _ := d.resolvedProfiles()
 
 	for i := range d.Parts {
-		p := &d.Parts[i]
-		label := p.Label()
-
-		if section, ok := profiles[p.ID]; ok {
-			writeBack(p.Profile, section.Outer)
-			for j := range p.Holes {
-				if j < len(section.Holes) {
-					writeBack(p.Holes[j], section.Holes[j])
-				}
-			}
-		}
-		// A sweep's PATH is bound for exactly the same reason its outline is:
-		// the renderer and the measurement path read a stored document with no
-		// parameter context, and a path coordinate they cannot read would become
-		// a zero that quietly moves the bend somewhere else.
-		if route, ok := paths[p.ID]; ok && len(route.Points) == len(p.Path) {
-			for j := range p.Path {
-				p.Path[j].X = route.Points[j][0]
-				p.Path[j].Y = route.Points[j][1]
-				p.Path[j].Z = route.Points[j][2]
-				p.Path[j].Radius = route.Radii[j]
-			}
-		}
-
-		for _, key := range sortedKeys(p.SizeFrom) {
-			expr := p.SizeFrom[key]
-			value, prob := evalBinding(expr, label, key, lookup)
-			if prob != nil {
-				problems = append(problems, *prob)
-				continue
-			}
-			if p.Size == nil {
-				p.Size = map[string]float64{}
-			}
-			if was, had := p.Size[key]; compareToAuthored && had && !nearlyEqual(was, value) {
-				problems = append(problems, Problem{
-					Severity: Warning, Name: label,
-					Detail: fmt.Sprintf("states %s = %g but its own expression %q works out to %g; "+
-						"the expression was used, because it is the relationship and the number is "+
-						"only a snapshot of it", key, was, expr, value),
-				})
-			}
-			p.Size[key] = value
-		}
-
-		for _, axis := range sortedKeys(p.PositionFrom) {
-			expr := p.PositionFrom[axis]
-			index, ok := axisIndex(axis)
-			if !ok {
-				problems = append(problems, Problem{
-					Severity: Error, Name: label,
-					Detail: fmt.Sprintf("binds position %q, which is not an axis; use x, y or z", axis),
-				})
-				continue
-			}
-			value, prob := evalBinding(expr, label, "position "+axis, lookup)
-			if prob != nil {
-				problems = append(problems, *prob)
-				continue
-			}
-			for len(p.Position) < 3 {
-				p.Position = append(p.Position, 0)
-			}
-			if was := p.Position[index]; compareToAuthored && !nearlyEqual(was, value) && was != 0 {
-				problems = append(problems, Problem{
-					Severity: Warning, Name: label,
-					Detail: fmt.Sprintf("states position %s = %g but its own expression %q works out "+
-						"to %g; the expression was used", axis, was, expr, value),
-				})
-			}
-			p.Position[index] = value
+		problems = append(problems, bindPart(&d.Parts[i], profiles, paths, lookup, compareToAuthored)...)
+	}
+	// Definitions are bound exactly like parts (tree.go): their sizes and local
+	// positions are what every placement of them reads, so a definition whose radius
+	// follows a parameter moves every damper placed from it. Resolved against their
+	// OWN list, so a definition and a top-level part that share an id cannot pick up
+	// each other's outline.
+	// Fence: TestTree_BindEvaluatesADefinitionsSizesForEveryPlacement.
+	if len(d.Definitions) > 0 {
+		defs := Document{Parts: d.Definitions, Parameters: d.Parameters, Derived: d.Derived}
+		defProfiles, defPaths, _ := defs.resolvedProfiles()
+		for i := range d.Definitions {
+			problems = append(problems, bindPart(&d.Definitions[i], defProfiles, defPaths, lookup, compareToAuthored)...)
 		}
 	}
 
 	sortProblems(problems)
+	return problems
+}
+
+// bindPart writes one part's outline, path, sizes and position from their
+// expressions, and reports what could not be bound. Split out of bind unchanged so
+// top-level parts and definitions are bound by the same code.
+func bindPart(p *Part, profiles map[string]outline, paths map[string]polyline,
+	lookup func(string) (float64, bool), compareToAuthored bool) []Problem {
+	var problems []Problem
+	label := p.Label()
+
+	if section, ok := profiles[p.ID]; ok {
+		writeBack(p.Profile, section.Outer)
+		for j := range p.Holes {
+			if j < len(section.Holes) {
+				writeBack(p.Holes[j], section.Holes[j])
+			}
+		}
+	}
+	// A sweep's PATH is bound for exactly the same reason its outline is:
+	// the renderer and the measurement path read a stored document with no
+	// parameter context, and a path coordinate they cannot read would become
+	// a zero that quietly moves the bend somewhere else.
+	if route, ok := paths[p.ID]; ok && len(route.Points) == len(p.Path) {
+		for j := range p.Path {
+			p.Path[j].X = route.Points[j][0]
+			p.Path[j].Y = route.Points[j][1]
+			p.Path[j].Z = route.Points[j][2]
+			p.Path[j].Radius = route.Radii[j]
+		}
+	}
+
+	for _, key := range sortedKeys(p.SizeFrom) {
+		expr := p.SizeFrom[key]
+		value, prob := evalBinding(expr, label, key, lookup)
+		if prob != nil {
+			problems = append(problems, *prob)
+			continue
+		}
+		if p.Size == nil {
+			p.Size = map[string]float64{}
+		}
+		if was, had := p.Size[key]; compareToAuthored && had && !nearlyEqual(was, value) {
+			problems = append(problems, Problem{
+				Severity: Warning, Name: label,
+				Detail: fmt.Sprintf("states %s = %g but its own expression %q works out to %g; "+
+					"the expression was used, because it is the relationship and the number is "+
+					"only a snapshot of it", key, was, expr, value),
+			})
+		}
+		p.Size[key] = value
+	}
+
+	for _, axis := range sortedKeys(p.PositionFrom) {
+		expr := p.PositionFrom[axis]
+		index, ok := axisIndex(axis)
+		if !ok {
+			problems = append(problems, Problem{
+				Severity: Error, Name: label,
+				Detail: fmt.Sprintf("binds position %q, which is not an axis; use x, y or z", axis),
+			})
+			continue
+		}
+		value, prob := evalBinding(expr, label, "position "+axis, lookup)
+		if prob != nil {
+			problems = append(problems, *prob)
+			continue
+		}
+		for len(p.Position) < 3 {
+			p.Position = append(p.Position, 0)
+		}
+		if was := p.Position[index]; compareToAuthored && !nearlyEqual(was, value) && was != 0 {
+			problems = append(problems, Problem{
+				Severity: Warning, Name: label,
+				Detail: fmt.Sprintf("states position %s = %g but its own expression %q works out "+
+					"to %g; the expression was used", axis, was, expr, value),
+			})
+		}
+		p.Position[index] = value
+	}
 	return problems
 }
 
@@ -309,8 +331,22 @@ func (d *Document) clone() *Document {
 	out.Overlays = append([]Overlay(nil), d.Overlays...)
 	out.States = append([]AssemblyState(nil), d.States...)
 
-	out.Parts = make([]Part, len(d.Parts))
-	for i, p := range d.Parts {
+	out.Parts = clonePartList(d.Parts)
+	// ‼️ The tree too. Before D1b there was nothing else to copy; with definitions a
+	// shallow copy shares their size maps, so re-specifying parameters on a tree
+	// document would write new sizes into the ORIGINAL's definitions.
+	// Fence: TestTree_ACloneSharesNothingWithTheOriginal.
+	out.Definitions = clonePartList(d.Definitions)
+	out.Assemblies = cloneAssemblies(d.Assemblies)
+	return &out
+}
+
+func clonePartList(parts []Part) []Part {
+	if parts == nil {
+		return nil
+	}
+	out := make([]Part, len(parts))
+	for i, p := range parts {
 		q := p
 		q.Size = copyFloatMap(p.Size)
 		q.SizeFrom = copyStringMap(p.SizeFrom)
@@ -321,9 +357,27 @@ func (d *Document) clone() *Document {
 			m := *p.Material
 			q.Material = &m
 		}
-		out.Parts[i] = q
+		out[i] = q
 	}
-	return &out
+	return out
+}
+
+func cloneAssemblies(in []Assembly) []Assembly {
+	if in == nil {
+		return nil
+	}
+	out := make([]Assembly, len(in))
+	for i, a := range in {
+		b := a
+		b.Children = make([]Child, len(a.Children))
+		for j, c := range a.Children {
+			c.Position = append([]float64(nil), c.Position...)
+			c.Rotation = append([]float64(nil), c.Rotation...)
+			b.Children[j] = c
+		}
+		out[i] = b
+	}
+	return out
 }
 
 func copyFloatMap(in map[string]float64) map[string]float64 {

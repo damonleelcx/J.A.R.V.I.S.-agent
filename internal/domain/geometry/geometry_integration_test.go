@@ -755,3 +755,79 @@ func TestRespec_ABreakingValueIsShownWithItsCaveat(t *testing.T) {
 		t.Errorf("the division by zero was not reported: %+v", caveats)
 	}
 }
+
+// An assembly tree is stored and read back unchanged, and still places the same
+// parts. Phase 1, stage D1b of docs/plan-2026-09-13-millions-of-parts.md.
+func TestSave_ATreeDocumentSurvivesTheRoundTrip(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+
+	n := h.proposal("cart")
+	n.Document.Parts = nil
+	n.Document.Definitions = []geometry.Part{{ID: "wheel", Name: "Wheel", Shape: "cylinder",
+		Size:     map[string]float64{"radius": 40, "height": 16},
+		Position: []float64{0, 0, 0}, Rotation: []float64{90, 0, 0}, Color: "#3a3f48", Opacity: 1}}
+	n.Document.Assemblies = []geometry.Assembly{
+		{ID: "cart", Children: []geometry.Child{
+			{ID: "front-left", Ref: "corner", Position: []float64{110, 40, 78}},
+			{ID: "front-right", Ref: "corner", Position: []float64{110, 40, -78}, Rotation: []float64{0, 180, 0}},
+		}},
+		{ID: "corner", Name: "Corner", Children: []geometry.Child{{ID: "wheel", Ref: "wheel"}}},
+	}
+	n.Document.Root = "cart"
+
+	saved, err := h.svc.Save(ctx, n)
+	if err != nil {
+		t.Fatalf("a document that is only a tree was not stored: %v", err)
+	}
+	read, err := h.svc.Find(ctx, saved.VersionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want, _ := json.Marshal(n.Document)
+	got, _ := json.Marshal(read.Document)
+	if string(want) != string(got) {
+		t.Fatalf("the tree changed in storage.\n want: %s\n  got: %s", want, got)
+	}
+	placed := read.Document.Expanded().Parts
+	if len(placed) != 2 || placed[0].ID != "front-left/wheel" || placed[1].ID != "front-right/wheel" {
+		t.Errorf("the stored tree places %+v", placed)
+	}
+}
+
+// A flat document gains nothing in storage: no tree fields appear.
+func TestSave_AFlatDocumentStoresNoTreeFields(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	saved, err := h.svc.Save(ctx, h.proposal("bracket", plate("p", 60)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	read, err := h.svc.Find(ctx, saved.VersionID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := json.Marshal(read.Document)
+	for _, key := range []string{`"definitions"`, `"assemblies"`, `"root"`} {
+		if strings.Contains(string(body), key) {
+			t.Errorf("a flat document was stored with %s: %s", key, body)
+		}
+	}
+}
+
+// A tree that cannot be placed is refused at the storage door, not stored.
+func TestSave_ABrokenTreeIsNotStored(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	n := h.proposal("cart")
+	n.Document.Parts = nil
+	n.Document.Assemblies = []geometry.Assembly{{ID: "cart", Children: []geometry.Child{{ID: "c", Ref: "nowhere"}}}}
+	n.Document.Root = "cart"
+	_, err := h.svc.Save(ctx, n)
+	if errs.CodeOf(err) != errs.CodeValidationFailed {
+		t.Fatalf("a tree that places nothing that exists was stored, or refused wrongly: %v", err)
+	}
+	if !strings.Contains(errs.DetailOf(err), "neither a definition nor an assembly") {
+		t.Errorf("the refusal does not say what is wrong: %s", errs.DetailOf(err))
+	}
+}

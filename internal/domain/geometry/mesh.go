@@ -149,6 +149,7 @@ func Tessellate(doc Document, unit Unit) *Mesh {
 	// Same expansions the solid builder does, in the same order and for the same
 	// reason: the viewport and the exported file must agree about how many
 	// spokes there are, and what shape a tooth is.
+	doc, treeProblems := expandAssemblies(doc)
 	doc, gearProblems := expandGears(doc)
 	doc, repeatProblems := expandRepeats(doc)
 
@@ -163,6 +164,9 @@ func Tessellate(doc Document, unit Unit) *Mesh {
 	}
 	for _, p := range repeatProblems {
 		infer("%s %s.", p.Name, p.Detail)
+	}
+	for _, p := range treeProblems {
+		infer("%s %s, so it is not in this file.", p.Name, p.Detail)
 	}
 	for _, p := range gearProblems {
 		if p.Severity == Error {

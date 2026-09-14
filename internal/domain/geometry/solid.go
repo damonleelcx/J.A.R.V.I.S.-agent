@@ -155,6 +155,10 @@ func SolidsAndOperations(d Document, unit Unit) ([]Solid, []Operation, []Problem
 	// parts, and before patterns, so a repeated gear is a repeated extrusion and
 	// the kernel never sees the word (gear.go). Its facet notes are taken first,
 	// from the gear's own numbers, which the expansion does not keep.
+	// A tree first (tree.go): definitions placed through assemblies become the
+	// parts they place, so everything below reads ordinary parts — including the
+	// gear notes, which must see gears that live inside a definition.
+	d, treeProblems := expandAssemblies(d)
 	gearNotes := gearFacetNotes(d, unit)
 	d, gearProblems := expandGears(d)
 	// Patterns are written out before anything reads the parts, so every shape
@@ -172,6 +176,11 @@ func SolidsAndOperations(d Document, unit Unit) ([]Solid, []Operation, []Problem
 	}
 	for _, p := range repeatProblems {
 		infer("%s %s.", p.Name, p.Detail)
+	}
+	for _, p := range treeProblems {
+		// A placement that cannot be made is a part that is not in the file, and
+		// the file says so rather than being quietly smaller.
+		infer("%s %s, so it is not in this file.", p.Name, p.Detail)
 	}
 	for _, p := range gearProblems {
 		if p.Severity == Error {

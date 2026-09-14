@@ -72,6 +72,16 @@ type Document struct {
 	// are shown, and where they sit. A state that moves anything is a claim
 	// about how the thing comes apart, and nothing here checks it.
 	States []AssemblyState `json:"states,omitempty"`
+	// Definitions, Assemblies and Root describe the assembly as designs placed
+	// inside assemblies (tree.go; Phase 1 of plan-2026-09-13-millions-of-parts.md).
+	//
+	// Optional and additive, like Parameters before them: a document with none of
+	// them is exactly the flat document this package has always held, and stores
+	// byte-identically. When Root is set, every reader sees the parts the tree
+	// places, flattened before anything reads a part, after any top-level Parts.
+	Definitions []Part     `json:"definitions,omitempty"`
+	Assemblies  []Assembly `json:"assemblies,omitempty"`
+	Root        string     `json:"root,omitempty"`
 }
 
 // Part is one solid.

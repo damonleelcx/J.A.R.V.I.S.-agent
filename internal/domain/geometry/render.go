@@ -163,8 +163,9 @@ var unknownPartColour = [3]float64{0.7, 0.7, 0.72}
 // repeated part was drawn in the grey kept for "no such part" — in the picture the
 // vision check reads. docs/bugfix/2026-09-13-repeat-copies-were-invisible-to-most-readers.md
 func partColours(d Document) map[string][3]float64 {
-	out := make(map[string][3]float64, len(d.Parts))
-	for i, p := range d.Parts {
+	placed := d.PlacedParts()
+	out := make(map[string][3]float64, len(placed))
+	for i, p := range placed {
 		c, ok := parseHexColour(p.Color)
 		if !ok {
 			// Golden-ratio hue stepping: adjacent parts land far apart on the wheel.

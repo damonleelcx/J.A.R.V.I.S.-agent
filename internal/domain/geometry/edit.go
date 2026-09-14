@@ -91,6 +91,10 @@ func (e Edit) Apply(base Document) (Document, []Problem) {
 	out.NotVerified = append([]string(nil), base.NotVerified...)
 	out.Overlays = append([]Overlay(nil), base.Overlays...)
 	out.States = append([]AssemblyState(nil), base.States...)
+	// The tree is carried, not shared: an edit result that aliased the base's
+	// definitions would let a later bind of the result change the base.
+	out.Definitions = append([]Part(nil), base.Definitions...)
+	out.Assemblies = append([]Assembly(nil), base.Assemblies...)
 
 	for _, id := range e.Remove.Parts {
 		kept := out.Parts[:0]
