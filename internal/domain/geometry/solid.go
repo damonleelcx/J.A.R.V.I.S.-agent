@@ -40,6 +40,13 @@ type Solid struct {
 	// geometry package never runs anything. The kernel imports it and the result
 	// is an ordinary solid from that point on.
 	STEP string `json:"step,omitempty"`
+	// Script is the source a scripted solid is built from, carried ON the solid so
+	// the caller that runs it cannot look it up by id in a document at a
+	// different expansion level. That lookup is what dropped every script on a
+	// repeated part: the solid was "part-2", the authored document only knew
+	// "part". Never sent to the sidecar — the sidecar receives the STEP.
+	// docs/bugfix/2026-09-13-features-on-repeated-parts-were-never-applied.md
+	Script string `json:"-"`
 	// Dims are the dimensions this shape reads, defaults applied and converted
 	// to millimetres. Which keys are present depends on the shape and is the
 	// builder's contract.
@@ -121,6 +128,29 @@ type Solid struct {
 // same reason: a defaulted 1 is indistinguishable from a stated 1 once it is in
 // a file, and there is no provenance banner attached to a download.
 func Solids(d Document, unit Unit) ([]Solid, []string) {
+	solids, _, _, inferred := SolidsAndOperations(d, unit)
+	return solids, inferred
+}
+
+// SolidsAndOperations is everything the kernel is sent about a document: the
+// solids AND the operations on them, read from ONE expansion of it.
+//
+// # Why these come out of one function
+//
+// They used to come from two. The kernel's caller took the solids from Solids,
+// which writes patterns out as "spoke-1" … "spoke-60", and took the operations
+// from the AUTHORED document, where a fuse still names "spoke". The sidecar keys
+// its shapes by the solids it was sent, so it reported "spoke could not be built,
+// so this was not applied" and every feature naming a repeated part was left out
+// of every export and every kernel-built view — while Faults, which expands
+// before it reads the features, reported the same document as sound.
+//
+// Returning both from the same expanded value makes that disagreement
+// impossible rather than merely fixed: there is no second document to read.
+// docs/bugfix/2026-09-13-features-on-repeated-parts-were-never-applied.md
+// Fences: TestRepeat_TheKernelIsSentFeaturesNamingTheCopiesItIsSent,
+// TestKernel_AFeatureNamingARepeatedPartIsApplied.
+func SolidsAndOperations(d Document, unit Unit) ([]Solid, []Operation, []Problem, []string) {
 	// A gear is written out as the extrusion it is before anything reads the
 	// parts, and before patterns, so a repeated gear is a repeated extrusion and
 	// the kernel never sees the word (gear.go). Its facet notes are taken first,
@@ -133,7 +163,7 @@ func Solids(d Document, unit Unit) ([]Solid, []string) {
 
 	toMM, convertible := unit.toMM()
 	if !convertible {
-		return nil, []string{"This assembly declares no unit FORGE can convert, so nothing " +
+		return nil, nil, nil, []string{"This assembly declares no unit FORGE can convert, so nothing " +
 			"could be built: a file that states a scale must state the right one."}
 	}
 	var inferred []string
@@ -171,6 +201,7 @@ func Solids(d Document, unit Unit) ([]Solid, []string) {
 		dims := map[string]float64{}
 		var section *outline
 		var route *polyline
+		var script string
 		// Resolved through the one table every reader uses (retired.go), so the
 		// exported file and the viewport cannot disagree about what a retired
 		// word means. The kernel is then sent the RESOLVED word and has no case
@@ -218,6 +249,7 @@ func Solids(d Document, unit Unit) ([]Solid, []string) {
 			// would put process execution inside a package whose whole job is to
 			// be a pure description of geometry.
 			shape = "step"
+			script = p.Script
 
 		case "section":
 			pts, ok := profiles[p.ID]
@@ -359,11 +391,14 @@ func Solids(d Document, unit Unit) ([]Solid, []string) {
 		out = append(out, Solid{
 			ID: p.ID, Label: p.Label(), Shape: shape, Dims: dims, HoleParents: holeParents,
 			Outline: outlineCurve, Holes: holeCurves, Path: pathCurve, SectionFrame: frame,
-			Axis: axisOf(p), Matrix: RotationMatrix(rot), Position: pos,
+			Axis: axisOf(p), Matrix: RotationMatrix(rot), Position: pos, Script: script,
 		})
 	}
+	// ‼️ From `d` as expanded above, never from the caller's document. See the
+	// note on SolidsAndOperations for what reading the authored one cost.
+	operations, featureProblems := d.Operations()
 	sort.SliceStable(inferred, func(i, j int) bool { return inferred[i] < inferred[j] })
-	return out, inferred
+	return out, operations, featureProblems, inferred
 }
 
 // axisOf names a revolve's axis and nothing else's, so a box does not arrive at
