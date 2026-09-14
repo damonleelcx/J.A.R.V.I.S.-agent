@@ -1,6 +1,6 @@
 # Millions of parts: implementation plan
 
-**Status: in progress. Decisions D1–D4 and the S3 questions taken 2026-09-13; B0, B0b, S1–S3, D1a and one bug found in D1a are in PRs #51–#56; D1b is next.**
+**Status: in progress. B0, B0b, S1–S3, D1a, the kernel-mesh placement bug and D1b are in PRs #51–#57; D1c waits on two decisions; K0 proceeds in parallel.**
 Written 2026-09-13. Checklist and background:
 [`research-2026-09-13-millions-of-parts.md`](research-2026-09-13-millions-of-parts.md).
 Live car measurement: [`spikes/2026-09-12-car-ceiling/`](spikes/2026-09-12-car-ceiling/README.md).
@@ -260,9 +260,13 @@ decisions D1–D4
 | S4 deploy wiring | not started | ConfigMap values, NetworkPolicy egress to S3, `verify.sh` blob round trip from both pods |
 | D1a one expansion for every reader | ✅ PR #55 (stacked on #53) | commit `6aa0b37`; `Document.Expanded()`, readers + browser `partsToDraw`; 6 fences confirmed failing first, 6 drills red; live browser: 2 parts drawn before, 13 after |
 | B1 kernel mesh placed twice (found in D1a) | ✅ PR #56 (stacked on #55) | commit `52bc542`; confirmed with the real kernel mesh; `modelMatrix`; fence + drill red at (186.6, 50, 0) vs (100, 0, 0); live browser before/after |
-| D1b-1 schema + flattening (Go) | next | `definitions` + `assemblies` + `root`; validation; flatten to parts with `a/b/c` ids; rotation composition in the stored degrees-XYZ convention |
-| D1b-2 browser mirror | not started | JS flattening in `partsToDraw` + node parity fence |
-| D1b-3 storage round trip | not started | real Postgres `Save`/`Find` of a tree document; a flat document unchanged in storage |
+| D1b-1 schema + flattening (Go) | ✅ PR #57 (stacked on #56) | commit `b8a3078`; `definitions`/`assemblies`/`root`; `EulerDegreesFromMatrix` + `placeInFrame` (5,000 random round trips exact); flattened ids are child-id paths; refusals as faults and at the storage door; `clone`/`Edit.Apply` deep-copy the tree (found: a respec would have written into the original's definitions); `bindPart` binds definitions; real kernel builds a nested tree |
+| D1b-2 browser mirror | ✅ PR #57 | term-for-term JS port; 7 parity cases, rotations compared as matrices; live browser: 1 part before, 29 after |
+| D1b-3 storage round trip | ✅ PR #57 | real Postgres: tree unchanged after save/load; flat document gains no fields; broken tree refused |
+| ‼️ new limit | recorded | `maxTreeParts = 4096` — a PRE-INSTANCING ceiling; raise on measured numbers after K1 (one build per design) and W1 (instanced drawing) |
+| carried to D1f | recorded | the agent's own "no parts" checks (`CurrentModel`, `assemble`, `resolveEdit`, `settleDocument`) and `Spans` — they matter once the model can write a tree |
+| D1c patterns + mirror on children | ⏳ waiting on two decisions | mirror representation (a reflection cannot be a rotation); pattern vocabulary (reuse `repeat` vs a new `pattern` object) |
+| K0 kernel in CI + pinned build123d | next, in parallel with D1c | branches from #54 (it changes `Makefile` and `ci.yml`) |
 | everything else | not started | |
 
 ## What this plan does NOT claim
