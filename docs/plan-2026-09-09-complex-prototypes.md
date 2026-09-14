@@ -138,6 +138,12 @@ with a `repeat`, a flange's twelve bolt holes are one part, and a feature naming
 the part acts on every copy so one `fuse` welds all sixty spokes to the hub. No
 sandbox, and everything that reads a Document keeps working.
 
+> ‼️ **Corrected 2026-09-13:** true of `Faults` and `Tessellate`, **never true in the kernel** until
+> then. `cad.BuildDocument` expanded the solids but read the operations from the authored document,
+> so the fuse named `spoke` while the sidecar held `spoke-1…` — the feature was dropped from every
+> export and every kernel-built view. See
+> [`bugfix/2026-09-13-features-on-repeated-parts-were-never-applied.md`](bugfix/2026-09-13-features-on-repeated-parts-were-never-applied.md).
+
 **`script`** (cad/script.py, cad/script.go) is the executed half, for what a
 pattern cannot say: an involute gear tooth, a spiral, a lattice, a profile
 sampled from a formula. Proven with a real 20-tooth involute spur gear —

@@ -165,3 +165,61 @@ func TestLoft_SaysWhetherItIsFaceted(t *testing.T) {
 		t.Error("a loft defaulted to faceted; smooth is the reason to loft at all")
 	}
 }
+
+// The kernel is sent operations that name the solids it is sent.
+//
+// Runs without a kernel, so CI holds it even though CI has no build123d. The
+// real-kernel half is TestKernel_AFeatureNamingARepeatedPartIsApplied.
+// docs/bugfix/2026-09-13-features-on-repeated-parts-were-never-applied.md
+func TestRepeat_TheKernelIsSentFeaturesNamingTheCopiesItIsSent(t *testing.T) {
+	d := spokedWheel(8)
+	d.Features = []geometry.Feature{{ID: "weld", Op: "fuse", Of: "hub", With: []string{"spoke"}}}
+
+	solids, ops, problems, _ := geometry.SolidsAndOperations(d, geometry.Millimetre)
+	for _, p := range problems {
+		if p.Severity == geometry.Error {
+			t.Fatalf("the operations did not resolve: %s — %s", p.Name, p.Detail)
+		}
+	}
+	sent := map[string]bool{}
+	for _, s := range solids {
+		sent[s.ID] = true
+	}
+	if len(ops) != 1 {
+		t.Fatalf("got %d operations, want 1", len(ops))
+	}
+	op := ops[0]
+	if !sent[op.Of] {
+		t.Errorf("the weld applies to %q, which is not a solid the kernel is sent", op.Of)
+	}
+	if len(op.With) != 8 {
+		t.Errorf("the weld names %d tools, want the 8 copies: %v", len(op.With), op.With)
+	}
+	for _, id := range op.With {
+		if !sent[id] {
+			t.Errorf("the weld names %q, which is not a solid the kernel is sent — the sidecar "+
+				"will report it could not be built and leave the feature out", id)
+		}
+	}
+}
+
+// Every copy of a repeated scripted part carries its script, so the caller that
+// runs scripts never has to find it by an id the authored document does not have.
+func TestRepeat_EveryCopyOfAScriptedPartCarriesItsScript(t *testing.T) {
+	const source = "result = Box(4, 4, 4)\n"
+	d := geometry.Document{Name: "blocks", Units: "mm", Parts: []geometry.Part{{
+		ID: "block", Name: "Block", Shape: "script", Script: source,
+		Position: []float64{0, 0, 0}, Rotation: []float64{0, 0, 0},
+		Repeat: &geometry.Repeat{Count: 3, Offset: []float64{20, 0, 0}}}}}
+
+	solids, _, _, _ := geometry.SolidsAndOperations(d, geometry.Millimetre)
+	if len(solids) != 3 {
+		t.Fatalf("got %d solids, want 3", len(solids))
+	}
+	for _, s := range solids {
+		if s.Shape != "step" || s.Script != source {
+			t.Errorf("%s: shape %q, script %q — a copy that reaches the kernel without its "+
+				"script is left out of the file", s.ID, s.Shape, s.Script)
+		}
+	}
+}
