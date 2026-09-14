@@ -1455,11 +1455,16 @@
     return expanded.parts.map(function (part) {
       var repeatOf = expanded.copyOf[part.id] || '';
       var source = authored[repeatOf || part.id] || part;
+      var mesh = (source.meshes && source.meshes[part.id]) || part.mesh || null;
       return {
         spec: part,
         removed: !!removed[part.id],
         repeatOf: repeatOf,
-        mesh: (source.meshes && source.meshes[part.id]) || part.mesh || null
+        mesh: mesh,
+        // Whether this part will be drawn from the kernel's mesh, which is already
+        // in assembly coordinates — see modelMatrix. Load clears it when it falls
+        // back to the primitive.
+        fromKernel: !!(mesh && mesh.triangles && mesh.triangles.length)
       };
     });
   }
@@ -1979,7 +1984,10 @@
         removed: drawn.removed,
         // The part this is a copy of, so a state or a selection naming the
         // pattern reaches every copy. Empty for a part that is not a copy.
-        repeatOf: drawn.repeatOf
+        repeatOf: drawn.repeatOf,
+        // From what was BUILT, not what was asked for: a mesh this browser cannot
+        // index falls back to its primitive, and a primitive must be placed.
+        fromKernel: !!built.fromKernel
       };
     });
 
@@ -1987,6 +1995,28 @@
     this.draw();
     return this.parts.length;
   };
+
+  /* modelMatrix is where one drawn part goes on screen, given the displacement the
+   * view adds to it (an exploded view's gap, an assembly state's offset).
+   *
+   * A primitive is built in its own frame, so it is turned by its rotation and
+   * moved to its position. A KERNEL mesh is not: the sidecar tessellates each solid
+   * after placing it, so the vertices arrive already in assembly coordinates — a
+   * 20 mm box at x=100 turned 30 degrees arrives spanning x 86.34 to 113.66. Until
+   * 2026-09-13 it was placed and turned AGAIN, so every kernel-built part away from
+   * the origin was drawn somewhere it is not: that box at about (187, 50), turned
+   * 60 degrees, outside the frame. The contact sheet the vision check reads was
+   * right all along; only what a person saw was wrong.
+   * docs/bugfix/2026-09-13-kernel-built-parts-were-placed-twice.md
+   * Fence: TestRendererDoesNotPlaceAKernelMeshTwice. */
+  function modelMatrix(part, displacement) {
+    var d = displacement || [0, 0, 0];
+    if (part.fromKernel) return translation(d);
+    var s = part.spec;
+    return multiply(translation(add(s.position || [0, 0, 0], d)),
+             multiply(rotationXYZ(s.rotation || [0, 0, 0]),
+                      scaling(s.scale || [1, 1, 1])));
+  }
 
   /* A drawn part carrying its kernel mesh, without writing the mesh into the
    * document the part belongs to. */
@@ -2138,7 +2168,8 @@
 
     order.forEach(function (part) {
       var s = part.spec;
-      var pos = (s.position || [0, 0, 0]).slice();
+      var base = (s.position || [0, 0, 0]).slice();
+      var pos = base.slice();
 
       // Exploded view: parts move outward from the assembly centre, so the
       // relationship between them stays readable while the gap opens.
@@ -2156,9 +2187,7 @@
       if (st.hidden) return;
       if (st.offset) pos = add(pos, st.offset);
 
-      var model = multiply(translation(pos),
-                    multiply(rotationXYZ(s.rotation || [0,0,0]),
-                             scaling(s.scale || [1,1,1])));
+      var model = modelMatrix(part, sub(pos, base));
       gl.uniformMatrix4fv(loc.model, false, model);
       gl.uniformMatrix3fv(loc.nmat, false, normalMatrix(model));
       gl.uniform3fv(loc.color, hexToRGB(part.removed ? g.removed : (s.color || g.part)));
@@ -2554,6 +2583,9 @@
      * holds the browser's copies to the exporter's, and so the workbench attaches a
      * kernel mesh to the copy it belongs to. */
     partsToDraw: partsToDraw,
+    /* Where a drawn part goes, exported so TestRendererDoesNotPlaceAKernelMeshTwice
+     * can hold a kernel mesh to the position the exporter gives it. */
+    modelMatrix: modelMatrix,
     rotationRadians: rotationRadians,
     /* Exported so a Go fence can read it. The browser and the exporter each
      * hold a copy of the retirement table, and the failure they guard against
