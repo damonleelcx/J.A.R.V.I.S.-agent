@@ -959,6 +959,14 @@ drill "a refused assembly hides which part it refused" internal/domain/cad/cad.g
   's = s.replace("\t\tif len(res.Skipped) > 0 {\n\t\t\tdetail +=", "\t\tif false {\n\t\t\tdetail +=", 1)' \
   ./internal/domain/cad 'TestKernel_ARefusedAssemblyNamesWhatItRefused'
 
+echo
+echo "Scripts run their kernel on one thread"
+# Added 2026-09-14. Under the 1 GiB address-space cap a multi-threaded build hung
+# on 4+ CPU machines. docs/bugfix/2026-09-14-scripts-hung-on-machines-with-four-or-more-cores.md
+drill "a script's kernel starts a thread per core again" internal/domain/cad/script.go \
+  's = s.replace("\"OMP_NUM_THREADS=1\", ", "", 1)' \
+  ./internal/domain/cad 'TestScriptEnv_RunsTheKernelOnOneThread'
+
 if [ "$MODE" = "list" ]; then
   exit 0
 fi
