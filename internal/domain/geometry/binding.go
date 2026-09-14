@@ -373,6 +373,14 @@ func cloneAssemblies(in []Assembly) []Assembly {
 		for j, c := range a.Children {
 			c.Position = append([]float64(nil), c.Position...)
 			c.Rotation = append([]float64(nil), c.Rotation...)
+			if c.Pattern != nil {
+				p := *c.Pattern
+				p.Offset = append([]float64(nil), p.Offset...)
+				p.RowOffset = append([]float64(nil), p.RowOffset...)
+				p.ColumnOffset = append([]float64(nil), p.ColumnOffset...)
+				p.Path = append([]Point(nil), p.Path...)
+				c.Pattern = &p
+			}
 			b.Children[j] = c
 		}
 		out[i] = b

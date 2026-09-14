@@ -105,6 +105,45 @@ func TestRendererFlattensATreeLikeTheExporter(t *testing.T) {
 			d.Assemblies[1].Children[1].Mirror = "sideways"
 			return d
 		}()},
+		{"a sub-assembly patterned in a line, turned and mirrored", func() geometry.Document {
+			d := corner()
+			d.Assemblies[0].Children[0].Mirror = "y"
+			d.Assemblies[0].Children[0].Pattern = &geometry.Pattern{Kind: "linear", Count: 3, Offset: []float64{0, 350, -40}}
+			return d
+		}()},
+		{"a polar pattern over a repeated definition", func() geometry.Document {
+			d := corner()
+			d.Definitions[0].Repeat = &geometry.Repeat{Count: 3, Offset: []float64{0, 0, 12}}
+			d.Assemblies[1].Children[1].Pattern = &geometry.Pattern{Kind: "polar", Count: 5, About: "x", Angle: 130}
+			return d
+		}()},
+		{"a named grid", func() geometry.Document {
+			d := corner()
+			d.Assemblies[1].Children[0].Name = "Bolt"
+			d.Assemblies[1].Children[0].Pattern = &geometry.Pattern{Kind: "grid", Rows: 3, Columns: 2,
+				RowOffset: []float64{0, 0, 25}, ColumnOffset: []float64{18, 4, 0}}
+			return d
+		}()},
+		{"an aligned path in three dimensions, doubling back", func() geometry.Document {
+			d := corner()
+			d.Assemblies[1].Children[1].Pattern = &geometry.Pattern{Kind: "path", Count: 9, Align: true,
+				Path: []geometry.Point{{X: 0, Y: 0, Z: 0}, {X: 30, Y: 40, Z: -20}, {X: 30, Y: 40, Z: -20}, {X: -50, Y: 40, Z: -20}, {X: -50, Y: 90, Z: 60}}}
+			return d
+		}()},
+		{"refused patterns are left out, a pattern of one is drawn once", func() geometry.Document {
+			d := corner()
+			d.Assemblies[1].Children[0].Pattern = &geometry.Pattern{Kind: "spiral", Count: 4}
+			d.Assemblies[1].Children[1].Pattern = &geometry.Pattern{Kind: "path", Count: 4,
+				Path: []geometry.Point{{X: 0}, {X: 10, Radius: 2}, {X: 10, Y: 10}}}
+			d.Assemblies[0].Children[1].Pattern = &geometry.Pattern{Kind: "polar", Count: 1, About: "z"}
+			return d
+		}()},
+		{"a copy that shares a sibling's id is drawn as Go places it", func() geometry.Document {
+			d := corner()
+			d.Assemblies[1].Children[0].Pattern = &geometry.Pattern{Kind: "linear", Count: 3, Offset: []float64{5, 0, 0}}
+			d.Assemblies[1].Children[1].ID = "damper-2"
+			return d
+		}()},
 		{"top-level parts beside the tree", func() geometry.Document {
 			d := corner()
 			d.Parts = []geometry.Part{box("frame")}
