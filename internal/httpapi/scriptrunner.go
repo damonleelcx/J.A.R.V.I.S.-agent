@@ -79,10 +79,10 @@ func illustrator(c llm.Client) llm.Illustrator {
 // where the two are already wired together.
 type kernelSolids struct{ k *cad.Kernel }
 
-func (r kernelSolids) BuildSurface(ctx context.Context, doc *geometry.Document) ([]geometry.RenderPart, error) {
+func (r kernelSolids) BuildSurface(ctx context.Context, doc *geometry.Document) (agent.Built, error) {
 	const op = "httpapi.kernelSolids.BuildSurface"
 	if doc == nil {
-		return nil, errs.New(op, errs.CodeInvariantViolated).WithDetail("no document to build")
+		return agent.Built{}, errs.New(op, errs.CodeInvariantViolated).WithDetail("no document to build")
 	}
 	// The unit must be one the kernel can convert: BuildDocument refuses an
 	// unknown one outright, because a STEP file declares its own scale and
@@ -95,7 +95,7 @@ func (r kernelSolids) BuildSurface(ctx context.Context, doc *geometry.Document) 
 	}
 	built, err := r.k.BuildMesh(ctx, *doc, unit)
 	if err != nil {
-		return nil, err
+		return agent.Built{}, err
 	}
 	out := make([]geometry.RenderPart, 0, len(built.Mesh))
 	for _, m := range built.Mesh {
@@ -105,7 +105,11 @@ func (r kernelSolids) BuildSurface(ctx context.Context, doc *geometry.Document) 
 		}
 		out = append(out, geometry.RenderPart{ID: m.ID, Triangles: tris})
 	}
-	return out, nil
+	// The interferences come from the SAME build that produced these triangles —
+	// the kernel computed them while it held the solids, and throwing them away
+	// here would cost a second build per turn to get them back.
+	return agent.Built{Parts: out, Interferences: built.Interferences,
+		Truncated: built.InterferencesTruncated}, nil
 }
 
 // solidBuilder returns the thing that builds a surface, or nil when this

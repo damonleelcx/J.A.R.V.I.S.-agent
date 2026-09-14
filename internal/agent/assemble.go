@@ -252,6 +252,11 @@ func (c *Conversation) buildOneStep(ctx context.Context, doc *Prototype, asked s
 	c.repairIfTurned(ctx, &reply, doc)
 	sheet := c.render(ctx, reply.Prototype)
 	c.repairIfItLooksWrong(ctx, &reply, step.What, &sheet)
+	// And whether any two parts are in the same place. After the picture checks
+	// and before the scripts, for the reason they are ordered that way: this one
+	// reads the kernel numbers the render already produced, and the script check
+	// keeps the last word. See interference.go.
+	c.repairIfPartsOverlap(ctx, &reply, &sheet)
 	// Last, for the reason the turn paths run it last: it is the only check that
 	// verifies itself, and a rewrite after it would leave an unrun script behind.
 	c.repairIfScriptsFail(ctx, &reply, doc, nil)
