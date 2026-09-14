@@ -920,6 +920,22 @@ drill "the browser refuses in other words than the exporter" internal/httpapi/as
   ./internal/httpapi 'TestRendererFlattensATreeLikeTheExporter'
 
 echo
+echo "A tree part is named by its occurrence path"
+# Added 2026-09-14. A part a tree places is named by every child above it, then its
+# own name (docs/bugfix/2026-09-14-tree-copies-shared-display-names.md).
+drill "a tree part is named by its own label only" internal/domain/geometry/tree.go \
+  "s = s.replace('q.Name = strings.Join(append(append([]string(nil), childNames...), lp.Label()), NameSeparator)', 'q.Name = lp.Label()', 1)" \
+  ./internal/domain/geometry 'TestTree_EveryPartItPlacesIsNamedByItsOccurrence'
+
+drill "an unnamed child adds nothing to the name" internal/domain/geometry/tree.go \
+  "s = s.replace('\t\t\t\t\tchildLabel = c.ID\n', '', 1)" \
+  ./internal/domain/geometry 'TestTree_EveryPartItPlacesIsNamedByItsOccurrence'
+
+drill "the browser names a tree part by its own label only" internal/httpapi/assets/forge3d.js \
+  "s = s.replace('q.name = childNames.concat([lp.name || lp.id]).join(NAME_SEPARATOR);', 'q.name = lp.name || lp.id;', 1)" \
+  ./internal/httpapi 'TestRendererFlattensATreeLikeTheExporter'
+
+echo
 echo "Islands"
 drill "an island is cut away with its hole" internal/domain/geometry/triangulate.go \
   's = s.replace("\t\tif depth[i]%2 != 0 {\n\t\t\tcontinue // a void, and it belongs to whatever contains it\n\t\t}", "\t\tif i != 0 {\n\t\t\tcontinue\n\t\t}", 1)' \
