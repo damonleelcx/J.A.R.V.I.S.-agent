@@ -397,6 +397,21 @@ func SolidsAndOperations(d Document, unit Unit) ([]Solid, []Operation, []Problem
 	// ‼️ From `d` as expanded above, never from the caller's document. See the
 	// note on SolidsAndOperations for what reading the authored one cost.
 	operations, featureProblems := d.Operations()
+	// ‼️ A feature's radius is a LENGTH, and the kernel works in millimetres like
+	// every Dims value above. Operations resolves it in the document's own units
+	// (a cm model's fillet_radius = 1 is 1), and it used to reach the kernel
+	// exactly like that: a 1 cm fillet built as 1 mm, a 1 in chamfer as 1 mm — in
+	// a STEP file that declares millimetres. Measured before the fix: the same
+	// 100 mm cube with a 10 mm fillet was 975,587 mm³ described in mm and
+	// 999,744 mm³ described in cm.
+	// Converted HERE and nowhere else: Tessellate draws in the authored unit and
+	// does not read a radius at all, so the viewport never needed it.
+	// docs/bugfix/2026-09-13-feature-radii-were-sent-in-the-documents-units.md
+	// Fences: TestSolids_ConvertsAFeatureRadiusToMillimetres,
+	// TestKernel_AFilletIsTheSameSizeInEveryUnit.
+	for i := range operations {
+		operations[i].Radius *= toMM
+	}
 	sort.SliceStable(inferred, func(i, j int) bool { return inferred[i] < inferred[j] })
 	return out, operations, featureProblems, inferred
 }
