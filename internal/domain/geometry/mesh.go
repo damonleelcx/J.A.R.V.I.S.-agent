@@ -146,6 +146,11 @@ type Deviation struct {
 // The unit is the assembly's, already resolved. Nothing here converts: the file
 // is written in the unit the geometry was authored in, and the label says which.
 func Tessellate(doc Document, unit Unit) *Mesh {
+	// Refused whole, before any expansion (limits.go): the first 4096 parts of a car
+	// would pass for the car.
+	if refusal := doc.DrawRefusal(); refusal != "" {
+		return &Mesh{Inferences: []string{refusal}}
+	}
 	// Same expansions the solid builder does, in the same order and for the same
 	// reason: the viewport and the exported file must agree about how many
 	// spokes there are, and what shape a tooth is.

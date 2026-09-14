@@ -80,6 +80,13 @@ func expandRepeats(d Document) (Document, []Problem) {
 	if !need {
 		return d, nil
 	}
+	// Counted before anything is written out (limits.go): a flat document can ask
+	// for 512 copies of every part it holds.
+	if p := occurrenceProblem(d); p != nil {
+		out := d
+		out.Parts = nil
+		return out, []Problem{*p}
+	}
 
 	var problems []Problem
 	out := d

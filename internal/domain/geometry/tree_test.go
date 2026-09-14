@@ -208,26 +208,6 @@ func TestTree_RefusesNestingDeeperThanTheLimit(t *testing.T) {
 	t.Fatalf("a tree %d deep was not refused: %+v", maxTreeDepth+2, d.TreeProblems())
 }
 
-func TestTree_RefusesMorePartsThanTheCeiling(t *testing.T) {
-	def := Part{ID: "rivet", Shape: "cylinder", Size: map[string]float64{"radius": 1, "height": 2},
-		Repeat: &Repeat{Count: maxRepeat, Offset: []float64{3, 0, 0}}}
-	var children []Child
-	for i := 0; i*maxRepeat <= maxTreeParts; i++ {
-		children = append(children, Child{ID: "row" + strings.Repeat("i", i+1), Ref: "rivet", Position: []float64{0, float64(i) * 5, 0}})
-	}
-	d := Document{Definitions: []Part{def}, Assemblies: []Assembly{{ID: "panel", Children: children}}, Root: "panel"}
-	e, problems := expandAssemblies(d)
-	if len(e.Parts) > maxTreeParts {
-		t.Errorf("placed %d parts, over the ceiling of %d", len(e.Parts), maxTreeParts)
-	}
-	for _, p := range problems {
-		if strings.Contains(p.Detail, "places more than") {
-			return
-		}
-	}
-	t.Errorf("going over the ceiling was not reported: %+v", problems)
-}
-
 // Every reader sees what the tree places.
 func TestTree_EveryReaderSeesTheTree(t *testing.T) {
 	d := carWithOneCorner()
