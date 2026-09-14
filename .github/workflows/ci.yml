@@ -131,5 +131,10 @@ jobs:
       - name: Kernel venv (pinned)
         run: make cad-venv
 
+      # A measurement, not a check: it never fails the job. It is here to find why
+      # one scripted gear times out on runners and not locally (plan, open item).
+      - name: Script timing probe
+        run: make cad-script-timing
+
       - name: Kernel tests (real build123d)
         run: make test-cad

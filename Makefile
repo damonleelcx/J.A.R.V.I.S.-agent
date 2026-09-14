@@ -131,6 +131,12 @@ cad-venv: ## Create the Python venv the CAD kernel runs in (PRD VIS-05)
 	@echo
 	@echo "export FORGE_CAD_PYTHON=$(abspath $(CAD_VENV))/bin/python"
 
+.PHONY: cad-script-timing
+cad-script-timing: ## Time a scripted part end to end under FORGE's limits, and describe the machine (never fails)
+	@# Diagnosis for the open script timeout on CI runners; see scripts/cad_script_timing.py.
+	@test -x $(CAD_VENV)/bin/python || { echo "no CAD venv: run \`make cad-venv\` first"; exit 1; }
+	@$(CAD_VENV)/bin/python scripts/cad_script_timing.py internal/domain/cad/script.py internal/domain/cad/script_test.go internal/domain/cad/script.go || true
+
 .PHONY: test-cad
 test-cad: ## Run the CAD kernel tests against the real kernel (needs `make cad-venv`)
 	@# These cannot be faked. Every property they check — that the solid is
