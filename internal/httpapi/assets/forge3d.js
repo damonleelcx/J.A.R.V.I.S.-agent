@@ -1525,6 +1525,133 @@
     return { position: p.pos.slice(), rotation: eulerDegreesFromMatrix(m), mirrored: mirrored };
   }
 
+  /* ---- Patterns on a placed child, mirroring geometry/pattern.go ---------------
+   *
+   * Phase 1, stage D1c-2 of docs/plan-2026-09-13-millions-of-parts.md. A child may
+   * carry "pattern" (linear, polar, grid, path); each copy is the child's own
+   * placement carried by the pattern's transform in the parent's frame. patternCopies
+   * answers null where Go refuses the pattern (an Error), and one unnamed slot where
+   * Go draws it once with a warning. TestRendererFlattensATreeLikeTheExporter holds
+   * this to Go's answer. */
+  function patternSlot(n, at) {
+    return { suffix: '-' + n, number: String(n), at: at };
+  }
+
+  function movedBy(v) {
+    var at = placementOf(null, null, false);
+    at.pos = v;
+    return at;
+  }
+
+  function usableVector(v) {
+    if (!v || !v.length) return null;
+    var p = pad3(v);
+    for (var i = 0; i < 3; i++) if (!isFinite(p[i])) return null;
+    return p;
+  }
+
+  /* geometry pathStations */
+  function pathStations(pts, count) {
+    var segs = [], total = 0;
+    for (var i = 0; i + 1 < pts.length; i++) {
+      var d = [pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1], pts[i + 1][2] - pts[i][2]];
+      var l = Math.sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+      if (l === 0) continue;
+      segs.push({ from: pts[i], dir: [d[0] / l, d[1] / l, d[2] / l], start: total, length: l });
+      total += l;
+    }
+    if (!segs.length) return null;
+    if (count < 2) return [{ point: segs[0].from, direction: segs[0].dir }];
+    var out = [];
+    for (var n = 0; n < count; n++) {
+      var s = total * n / (count - 1), k = segs.length - 1;
+      for (var j = 0; j < segs.length; j++) {
+        if (s < segs[j].start + segs[j].length) { k = j; break; }
+      }
+      var sg = segs[k], t = Math.min(s - sg.start, sg.length);
+      out.push({ point: [sg.from[0] + sg.dir[0] * t, sg.from[1] + sg.dir[1] * t, sg.from[2] + sg.dir[2] * t],
+                 direction: sg.dir });
+    }
+    return out;
+  }
+
+  /* geometry rotationTaking: the smallest turn taking +X onto d (Rodrigues). */
+  function rotationTaking(d) {
+    var ay = -d[2], az = d[1];
+    var s = Math.sqrt(ay * ay + az * az), c = d[0];
+    if (s < 1e-12) return c > 0 ? [1, 0, 0, 0, 1, 0, 0, 0, 1] : [-1, 0, 0, 0, -1, 0, 0, 0, 1];
+    var kx = 0, ky = ay / s, kz = az / s, v = 1 - c;
+    return [c + kx * kx * v, kx * ky * v - kz * s, kx * kz * v + ky * s,
+            ky * kx * v + kz * s, c + ky * ky * v, ky * kz * v - kx * s,
+            kz * kx * v - ky * s, kz * ky * v + kx * s, c + kz * kz * v];
+  }
+
+  /* geometry Pattern.copies */
+  function patternCopies(p) {
+    var once = [{ suffix: '', number: '', at: placementOf(null, null, false) }];
+    if (!p) return once;
+    var out = [], n, count = p.count || 0;
+    switch (String(p.kind || '').trim().toLowerCase()) {
+      case 'linear': {
+        var step = usableVector(p.offset);
+        if (!step || count > MAX_REPEAT) return null;
+        if (count < 2) return once;
+        for (n = 1; n <= count; n++) {
+          out.push(patternSlot(n, movedBy([step[0] * (n - 1), step[1] * (n - 1), step[2] * (n - 1)])));
+        }
+        return out;
+      }
+      case 'polar': {
+        if (p.about !== 'x' && p.about !== 'y' && p.about !== 'z') return null;
+        if (count > MAX_REPEAT) return null;
+        if (count < 2) return once;
+        var between = repeatSweep({ count: count, angle: p.angle });
+        for (n = 1; n <= count; n++) {
+          var a = between * (n - 1), at = placementOf(null, null, false);
+          at.m = rowMajor(p.about === 'x' ? [a, 0, 0] : p.about === 'y' ? [0, a, 0] : [0, 0, a]);
+          out.push(patternSlot(n, at));
+        }
+        return out;
+      }
+      case 'grid': {
+        var rows = p.rows || 0, columns = p.columns || 0;
+        if (rows < 1 || columns < 1 || rows * columns > MAX_REPEAT) return null;
+        var row = usableVector(p.row_offset), col = usableVector(p.column_offset);
+        if ((rows > 1 && !row) || (columns > 1 && !col)) return null;
+        if (rows * columns < 2) return once;
+        row = row || [0, 0, 0];
+        col = col || [0, 0, 0];
+        for (n = 0; n < rows * columns; n++) {
+          var r = Math.floor(n / columns), cc = n % columns;
+          out.push(patternSlot(n + 1, movedBy([row[0] * r + col[0] * cc, row[1] * r + col[1] * cc,
+                                               row[2] * r + col[2] * cc])));
+        }
+        return out;
+      }
+      case 'path': {
+        var path = p.path || [];
+        if (path.length < 2) return null;
+        var pts = [];
+        for (var i = 0; i < path.length; i++) {
+          var q = path[i] || {};
+          if (q.radius || q.radius_from || q.via || q.x_from || q.y_from || q.z_from) return null;
+          pts.push([q.x || 0, q.y || 0, q.z || 0]);
+        }
+        if (count > MAX_REPEAT) return null;
+        var stations = pathStations(pts, count);
+        if (!stations) return null;
+        if (count < 2) return once;
+        stations.forEach(function (st, k) {
+          var at = movedBy(st.point);
+          if (p.align) at.m = rotationTaking(st.direction);
+          out.push(patternSlot(k + 1, at));
+        });
+        return out;
+      }
+    }
+    return null;
+  }
+
   /* geometry expandAssemblies: top-level parts, then every part the tree places.
    * definitionOf maps each placed part's id to the definition it came from. A
    * placement Go refuses is left out here too; Go says why, in the export notes. */
@@ -1557,39 +1684,44 @@
         var cid = String(c.id || '');
         if (!cid.trim() || cid.indexOf(PATH_SEPARATOR) >= 0 || ids[cid]) continue;
         ids[cid] = true;
-        var childPath = path.concat([cid]);
-        var name = childPath.join(PATH_SEPARATOR);
         var reflect = reflectionAcross(c.mirror || '');
         if (!reflect) continue;   // refused by the exporter, left out here too
         var local = placementOf(c.position, c.rotation, false);
         local.m = mulMat3(local.m, reflect);
-        var childFrame = thenPlacement(frame, local);
-        var sub = asms[c.ref];
-        if (sub) {
-          if (onPath[sub.id]) continue;
-          onPath[sub.id] = true;
-          var stop = walk(sub, childPath, onPath, childFrame);
-          delete onPath[sub.id];
-          if (stop) return true;
-          continue;
-        }
-        var def = defs[c.ref];
-        if (!def) continue;
-        // The definition's own repeat, in the DEFINITION's frame (see tree.go).
-        var copies = expandRepeats([def], []).parts;
-        for (var j = 0; j < copies.length; j++) {
-          if (placed >= MAX_TREE_PARTS) return true;
-          var lp = copies[j], q = shallowCopy(lp);
-          var suffix = lp.id.indexOf(def.id) === 0 ? lp.id.slice(def.id.length) : lp.id;
-          q.id = name + suffix;
-          if (c.name) q.name = suffix ? c.name + ' ' + suffix.replace(/^-/, '') : c.name;
-          var st = storedPlacement(thenPlacement(childFrame, placementOf(lp.position, lp.rotation, !!lp.mirrored)));
-          q.position = st.position;
-          q.rotation = st.rotation;
-          q.mirrored = st.mirrored;
-          parts.push(q);
-          definitionOf[q.id] = def.id;
-          placed++;
+        var sub = asms[c.ref], def = defs[c.ref];
+        if (sub && onPath[sub.id]) continue;
+        if (!sub && !def) continue;
+        var slots = patternCopies(c.pattern);
+        if (!slots) continue;
+        // The definition's own repeat, once, in the DEFINITION's frame (see tree.go).
+        var defCopies = sub ? [] : expandRepeats([def], []).parts;
+        for (var s = 0; s < slots.length; s++) {
+          var slot = slots[s];
+          var childPath = path.concat([cid + slot.suffix]);
+          var slotName = childPath.join(PATH_SEPARATOR);
+          var childName = c.name && slot.number ? c.name + ' ' + slot.number : c.name;
+          var childFrame = thenPlacement(frame, thenPlacement(slot.at, local));
+          if (sub) {
+            onPath[sub.id] = true;
+            var stop = walk(sub, childPath, onPath, childFrame);
+            delete onPath[sub.id];
+            if (stop) return true;
+            continue;
+          }
+          for (var j = 0; j < defCopies.length; j++) {
+            if (placed >= MAX_TREE_PARTS) return true;
+            var lp = defCopies[j], q = shallowCopy(lp);
+            var suffix = lp.id.indexOf(def.id) === 0 ? lp.id.slice(def.id.length) : lp.id;
+            q.id = slotName + suffix;
+            if (childName) q.name = suffix ? childName + ' ' + suffix.replace(/^-/, '') : childName;
+            var st = storedPlacement(thenPlacement(childFrame, placementOf(lp.position, lp.rotation, !!lp.mirrored)));
+            q.position = st.position;
+            q.rotation = st.rotation;
+            q.mirrored = st.mirrored;
+            parts.push(q);
+            definitionOf[q.id] = def.id;
+            placed++;
+          }
         }
       }
       return false;
