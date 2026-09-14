@@ -57,10 +57,21 @@ jobs:
       # Integration tests run against the live Postgres service above. A schema
       # test against a hand-written CREATE TABLE proves nothing about the schema
       # that actually ships, so these are not optional in CI.
-      - name: Tests (with live Postgres)
+      # The blob store's tests run against a real S3-compatible server, the same
+      # SDK path production uses against AWS. Started with the Makefile so CI and
+      # a laptop use one definition of it (image pinned there).
+      - name: Blob store (MinIO)
+        run: make blob-up blob-wait
+
+      - name: Tests (with live Postgres and MinIO)
         run: go test -count=1 -race ./...
         env:
           FORGE_TEST_DATABASE_URL: postgres://forge:forge_dev_pw@localhost:55840/forge?sslmode=disable
+          FORGE_TEST_BLOB_ENDPOINT: http://localhost:55841
+          # MinIO development credentials from the Makefile. Not secrets.
+          AWS_ACCESS_KEY_ID: forge
+          AWS_SECRET_ACCESS_KEY: forge_dev_minio
+          AWS_REGION: us-east-1
 
       # NFR-07 is a claim about what happens when things BREAK, and nothing else
       # in the suite breaks anything: the unit tests exercise the happy path and
