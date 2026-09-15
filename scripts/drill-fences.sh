@@ -106,6 +106,7 @@ FILES=(
   internal/llm/illustrate.go
   internal/agent/render.go
   internal/domain/geometry/mesh.go
+  internal/platform/errs/code.go
 )
 
 BACKUP=""
@@ -958,6 +959,46 @@ drill "a scripted part is unreachable in the shape dispatch" internal/domain/cad
 drill "a refused assembly hides which part it refused" internal/domain/cad/cad.go \
   's = s.replace("\t\tif len(res.Skipped) > 0 {\n\t\t\tdetail +=", "\t\tif false {\n\t\t\tdetail +=", 1)' \
   ./internal/domain/cad 'TestKernel_ARefusedAssemblyNamesWhatItRefused'
+
+echo
+echo "A kernel build that runs out of time"
+# Added 2026-09-15 (kernel timeout is not a crash). A build past its limit was
+# killed, retried on a fresh process, killed again and reported as
+# CONNECTOR_UNAVAILABLE — 501 "no working backend" after two limits for a design
+# that was only large. The kernel fences run against cadtest's fake process, so
+# they need no build123d; the HTTP one needs FORGE_TEST_DATABASE_URL.
+# docs/bugfix/2026-09-15-a-kernel-build-that-ran-out-of-time-was-reported-as-no-kernel.md
+drill "a timed-out build is retried like a crashed one" internal/domain/cad/cad.go \
+  's = s.replace("\tif err != nil && !errors.As(err, &late) {", "\tif err != nil {", 1)' \
+  ./internal/domain/cad 'TestKernel_ABuildThatRunsOutOfTimeIsNotRetriedAndSaysSo'
+
+drill "the kill does not record that the kernel's limit ran out" internal/domain/cad/cad.go \
+  's = s.replace("\t\t\tstopped.Store(&lateError{limit: k.timeout})\n", "", 1)' \
+  ./internal/domain/cad 'TestKernel_ABuildThatRunsOutOfTimeIsNotRetriedAndSaysSo'
+
+drill "a timeout leaves the killed process in the kernel" internal/domain/cad/cad.go \
+  's = s.replace("\t\t\tk.stopLocked()\n\t\t\tk.log.Warn(ctx, logx.EventCADTimedOut", "\t\t\tk.log.Warn(ctx, logx.EventCADTimedOut", 1)' \
+  ./internal/domain/cad 'TestKernel_AfterATimeoutTheKernelStartsAFreshProcessForTheNextBuild'
+
+drill "the kernel's limit is reported as no working backend" internal/domain/cad/cad.go \
+  's = s.replace("\tcase late.caller == nil:\n\t\treturn errs.Wrap(op, errs.CodeKernelTimeout, late).", "\tcase late.caller == nil:\n\t\treturn errs.Wrap(op, errs.CodeConnectorUnavailable, late).", 1)' \
+  ./internal/domain/cad 'TestKernel_ABuildThatRunsOutOfTimeIsNotRetriedAndSaysSo'
+
+drill "the caller's deadline is reported as no working backend" internal/domain/cad/cad.go \
+  's = s.replace("\tcase errors.Is(late.caller, context.DeadlineExceeded):\n\t\treturn errs.Wrap(op, errs.CodeKernelTimeout, late).", "\tcase errors.Is(late.caller, context.DeadlineExceeded):\n\t\treturn errs.Wrap(op, errs.CodeConnectorUnavailable, late).", 1)' \
+  ./internal/httpapi 'TestAPI_AKernelBuildThatTakesTooLongIsA504ThatSaysSo'
+
+drill "a kernel timeout is offered as retryable" internal/platform/errs/code.go \
+  's = s.replace("A kernel build is allowed 30 seconds.\", false},", "A kernel build is allowed 30 seconds.\", true},", 1)' \
+  ./internal/httpapi 'TestAPI_AKernelBuildThatTakesTooLongIsA504ThatSaysSo'
+
+drill "a kernel timeout is a 501" internal/platform/errs/code.go \
+  's = s.replace("CodeKernelTimeout: {CodeKernelTimeout, CategoryExternal, 504,", "CodeKernelTimeout: {CodeKernelTimeout, CategoryExternal, 501,", 1)' \
+  ./internal/httpapi 'TestAPI_AKernelBuildThatTakesTooLongIsA504ThatSaysSo'
+
+drill "a process that dies mid-build is not retried" internal/domain/cad/cad.go \
+  's = s.replace("\t\tres, err = k.roundTrip(ctx, req)\n\t}\n\tif err != nil {", "\t}\n\tif err != nil {", 1)' \
+  ./internal/domain/cad 'TestKernel_AProcessThatDiesMidBuildIsStillRetriedOnce'
 
 if [ "$MODE" = "list" ]; then
   exit 0

@@ -96,6 +96,9 @@ func TestRetryabilityIsDeliberate(t *testing.T) {
 		CodeTokenAlreadyUsed, CodeForbidden, CodePasswordTooWeak,
 		CodeConfigInvalid, CodeMigrationFailed, CodeStateCorrupt,
 		CodeInvariantViolated,
+		// A build that ran out of time takes as long the next time: the worker
+		// would spend an attempt and the kernel process's 30 s on each retry.
+		CodeKernelTimeout,
 	}
 	for _, c := range mustNotRetry {
 		d, ok := Lookup(c)
