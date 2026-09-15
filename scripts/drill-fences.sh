@@ -1924,6 +1924,24 @@ drill "the validator enforces a ceiling the contract does not state" internal/do
   's = s.replace("const maxDensity = MaxDensity", "const maxDensity = 50000", 1)' \
   ./internal/agent 'TestTheContractTeachesDensityAsTheValidatorReadsIt'
 
+echo "The bearings and the angles read again: ISO/R 15/1 and EN 10056-1:2017"
+# Added 2026-09-15 (ISO 15 and EN 10056-1:2017). Every bearing was read against
+# ISO/R 15/1-1968 Table 3 (ISO 15:2017's own table was not reachable) and every angle
+# against EN 10056-1:2017 Table 1. Nothing was wrong, so these hold a verified figure
+# of each: a bearing's outside diameter and an angle's root radius in Go, and a
+# bearing's width in the browser's copy.
+drill "a 6004 bearing's outside diameter is 44, which no ISO 15 table prints" internal/domain/geometry/standard.go \
+  's = s.replace("{\"6004\", 20, 42, 12},", "{\"6004\", 20, 44, 12},", 1)' \
+  ./internal/domain/geometry 'TestStandard_EveryFamilyCarriesTheFiguresItsSourcePublishes'
+
+drill "the browser's 6001 bearing is 9 wide" internal/httpapi/assets/forge3d.js \
+  's = s.replace("[\x276001\x27, 12, 28, 8]", "[\x276001\x27, 12, 28, 9]", 1)' \
+  ./internal/httpapi 'TestRendererDrawsTheSameStandardPartAsTheExporter'
+
+drill "an L40 angle's root radius is 5, as neither edition prints" internal/domain/geometry/standard.go \
+  's = s.replace("{40, 4, 6, 3},", "{40, 4, 5, 2.5},", 1)' \
+  ./internal/domain/geometry 'TestStandard_EveryFamilyCarriesTheFiguresItsSourcePublishes'
+
 if [ "$MODE" = "list" ]; then
   exit 0
 fi
