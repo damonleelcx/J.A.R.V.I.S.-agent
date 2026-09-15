@@ -239,6 +239,12 @@ func TestScaleUp_MeasureAirframeBarrel(t *testing.T) {
 		rec := map[string]any{"bays": bays, "sectors": barrelSectors, "cpus": runtime.NumCPU()}
 		body, _ := json.Marshal(d)
 		rec["document_bytes"] = len(body)
+		// Added 2026-09-15 (repair bound and check profile): the document itself, which
+		// internal/agent's TestScaleUp_MeasureTheRepairPrompt traces the kernel's clashes
+		// through. A few kilobytes at every size.
+		if err := os.WriteFile(filepath.Join(out, fmt.Sprintf("barrel-doc-%d.json", bays)), body, 0o644); err != nil {
+			t.Fatal(err)
+		}
 		rec["definitions"] = len(d.Definitions)
 		rec["assemblies"] = len(d.Assemblies)
 
