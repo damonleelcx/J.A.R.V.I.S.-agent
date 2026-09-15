@@ -1,0 +1,52 @@
+time=2026-09-15T11:44:14.785-04:00 level=INFO msg=forge.worker.starting service=forge-worker version=dev commit=unknown built=unknown
+time=2026-09-15T11:44:44.823-04:00 level=INFO msg=forge.worker.ready service=forge-worker concurrency=1 workspace_root=C:/Users/damon/AppData/Local/Temp/claude/C--Users-damon-Downloads-agents/9c73bcba-7500-4641-9433-f7c8efd05843/scratchpad/live/ws planner_model=qwen3.8-max executor_model=qwen3.8-max verifier_model=deepseek-v4-pro tools=11
+time=2026-09-15T11:44:44.823-04:00 level=INFO msg=forge.worker.ready service=forge-worker worker_id=MSI/30760/01M2JVVX poll=2s
+time=2026-09-15T11:44:44.849-04:00 level=DEBUG msg=forge.worker.idle service=forge-worker worker_id=MSI/30760/01M2JVVX
+time=2026-09-15T11:44:46.872-04:00 level=DEBUG msg=forge.worker.idle service=forge-worker worker_id=MSI/30760/01M2JVVX
+time=2026-09-15T11:44:48.893-04:00 level=DEBUG msg=forge.worker.idle service=forge-worker worker_id=MSI/30760/01M2JVVX
+time=2026-09-15T11:44:50.900-04:00 level=DEBUG msg=forge.worker.idle service=forge-worker worker_id=MSI/30760/01M2JVVX
+time=2026-09-15T11:44:52.906-04:00 level=DEBUG msg=forge.worker.idle service=forge-worker worker_id=MSI/30760/01M2JVVX
+time=2026-09-15T11:44:54.947-04:00 level=DEBUG msg=forge.worker.idle service=forge-worker worker_id=MSI/30760/01M2JVVX
+time=2026-09-15T11:44:56.954-04:00 level=DEBUG msg=forge.worker.idle service=forge-worker worker_id=MSI/30760/01M2JVVX
+time=2026-09-15T11:44:58.964-04:00 level=DEBUG msg=forge.worker.idle service=forge-worker worker_id=MSI/30760/01M2JVVX
+time=2026-09-15T11:45:00.971-04:00 level=DEBUG msg=forge.worker.idle service=forge-worker worker_id=MSI/30760/01M2JVVX
+time=2026-09-15T11:45:02.977-04:00 level=DEBUG msg=forge.worker.idle service=forge-worker worker_id=MSI/30760/01M2JVVX
+time=2026-09-15T11:45:05.016-04:00 level=DEBUG msg=forge.worker.idle service=forge-worker worker_id=MSI/30760/01M2JVVX
+time=2026-09-15T11:45:07.023-04:00 level=WARN msg=forge.task.lease_expired service=forge-worker task_id=tsk_01M2JVQHSJ7ZP3JRQYFNMZKK6V goal_id=gol_01M2JVQC4HHHGVBD5CD5Y076J5 status=ready attempt=1 detail="the worker holding this task stopped responding; it was returned to the queue"
+time=2026-09-15T11:45:07.036-04:00 level=INFO msg=forge.task.cycle_started service=forge-worker worker_id=MSI/30760/01M2JVVX task_id=tsk_01M2JVQHSJ7ZP3JRQYFNMZKK6V goal_id=gol_01M2JVQC4HHHGVBD5CD5Y076J5 attempt=2 risk_tier=r1
+time=2026-09-15T11:45:15.952-04:00 level=DEBUG msg=forge.llm.completed service=forge-worker role=converse model=qwen3.7-plus prompt_tokens=9660 completion_tokens=723 tool_calls=0 finish_reason=stop latency_ms=8903
+time=2026-09-15T11:45:22.881-04:00 level=INFO msg=forge.cad.started service=forge-worker python=C:/Users/damon/Downloads/agents/jarvis-k2b/.cadvenv/Scripts/python.exe slot=0
+time=2026-09-15T11:45:24.672-04:00 level=DEBUG msg=forge.llm.completed service=forge-worker role=vision model=qwen3.8-max prompt_tokens=1109 completion_tokens=45 tool_calls=0 finish_reason=stop latency_ms=1679
+time=2026-09-15T11:45:31.314-04:00 level=DEBUG msg=forge.llm.completed service=forge-worker role=converse model=qwen3.7-plus prompt_tokens=670 completion_tokens=626 tool_calls=0 finish_reason=stop latency_ms=6638
+time=2026-09-15T11:45:31.424-04:00 level=INFO msg=forge.geometry.saved service=forge-worker version_id=ver_01M2JVXARFSN2WW7RXN7KZMK5P project_id=prj_01M2JVQC4CKXNCVBCF8QKFS0SR path=geometry/drivetrain-assembly.forge.json version=1 parts=4 bytes=1514 definitions=0 occurrences=4 units=mm generator=qwen3.7-plus
+time=2026-09-15T11:45:31.440-04:00 level=INFO msg=forge.task.cycle_started service=forge-worker worker_id=MSI/30760/01M2JVVX task_id=tsk_01M2JVQHSK9A18W7ENAAAXRM93 goal_id=gol_01M2JVQC4HHHGVBD5CD5Y076J5 attempt=1 risk_tier=r1
+time=2026-09-15T11:45:45.917-04:00 level=DEBUG msg=forge.llm.completed service=forge-worker role=converse model=qwen3.7-plus prompt_tokens=10289 completion_tokens=1310 tool_calls=0 finish_reason=stop latency_ms=14467
+time=2026-09-15T11:45:47.412-04:00 level=DEBUG msg=forge.llm.completed service=forge-worker role=vision model=qwen3.8-max prompt_tokens=1160 completion_tokens=6 tool_calls=0 finish_reason=stop latency_ms=1151
+time=2026-09-15T11:45:47.441-04:00 level=INFO msg=forge.geometry.saved service=forge-worker version_id=ver_01M2JVXTCYWQF1C12TYVX4469R project_id=prj_01M2JVQC4CKXNCVBCF8QKFS0SR path=geometry/drivetrain-assembly.forge.json version=2 parts=13 bytes=3934 definitions=0 occurrences=13 units=mm generator=qwen3.7-plus
+time=2026-09-15T11:45:47.460-04:00 level=INFO msg=forge.task.cycle_started service=forge-worker worker_id=MSI/30760/01M2JVVX task_id=tsk_01M2JVQHSM2MNDXVXMRFYQ9Y80 goal_id=gol_01M2JVQC4HHHGVBD5CD5Y076J5 attempt=1 risk_tier=r1
+time=2026-09-15T11:46:01.344-04:00 level=DEBUG msg=forge.llm.completed service=forge-worker role=converse model=qwen3.7-plus prompt_tokens=11045 completion_tokens=1122 tool_calls=0 finish_reason=stop latency_ms=13874
+time=2026-09-15T11:46:04.318-04:00 level=DEBUG msg=forge.llm.completed service=forge-worker role=vision model=qwen3.8-max prompt_tokens=1198 completion_tokens=90 tool_calls=0 finish_reason=stop latency_ms=2505
+time=2026-09-15T11:46:29.508-04:00 level=DEBUG msg=forge.llm.completed service=forge-worker role=converse model=qwen3.7-plus prompt_tokens=2115 completion_tokens=2436 tool_calls=0 finish_reason=stop latency_ms=25185
+time=2026-09-15T11:46:29.544-04:00 level=INFO msg=forge.geometry.saved service=forge-worker version_id=ver_01M2JVZ3GPNS51EQ23JHVB6NJS project_id=prj_01M2JVQC4CKXNCVBCF8QKFS0SR path=geometry/drivetrain-assembly.forge.json version=3 parts=20 bytes=6136 definitions=0 occurrences=20 units=mm generator=qwen3.7-plus
+time=2026-09-15T11:46:29.562-04:00 level=INFO msg=forge.task.cycle_started service=forge-worker worker_id=MSI/30760/01M2JVVX task_id=tsk_01M2JVQHSMDK5K9HR47CRK249D goal_id=gol_01M2JVQC4HHHGVBD5CD5Y076J5 attempt=1 risk_tier=r1
+time=2026-09-15T11:46:41.206-04:00 level=DEBUG msg=forge.llm.completed service=forge-worker role=converse model=qwen3.7-plus prompt_tokens=11693 completion_tokens=948 tool_calls=0 finish_reason=stop latency_ms=11634
+time=2026-09-15T11:46:45.353-04:00 level=DEBUG msg=forge.llm.completed service=forge-worker role=vision model=qwen3.8-max prompt_tokens=1210 completion_tokens=65 tool_calls=0 finish_reason=stop latency_ms=3349
+time=2026-09-15T11:47:16.508-04:00 level=DEBUG msg=forge.llm.completed service=forge-worker role=converse model=qwen3.7-plus prompt_tokens=2645 completion_tokens=3090 tool_calls=0 finish_reason=stop latency_ms=31147
+time=2026-09-15T11:47:48.485-04:00 level=DEBUG msg=forge.llm.completed service=forge-worker role=converse model=qwen3.7-plus prompt_tokens=3069 completion_tokens=3110 tool_calls=0 finish_reason=stop latency_ms=31969
+time=2026-09-15T11:47:49.087-04:00 level=INFO msg=forge.geometry.saved service=forge-worker version_id=ver_01M2JW1H6P3QYWWZGR5R1RBKPS project_id=prj_01M2JVQC4CKXNCVBCF8QKFS0SR path=geometry/drivetrain-assembly.forge.json version=4 parts=24 bytes=7854 definitions=0 occurrences=24 units=mm generator=qwen3.7-plus
+time=2026-09-15T11:47:49.100-04:00 level=INFO msg=forge.task.cycle_started service=forge-worker worker_id=MSI/30760/01M2JVVX task_id=tsk_01M2JVQHSNQSG8PTEC2PBQMBSG goal_id=gol_01M2JVQC4HHHGVBD5CD5Y076J5 attempt=1 risk_tier=r1
+time=2026-09-15T11:48:02.635-04:00 level=DEBUG msg=forge.llm.completed service=forge-worker role=converse model=qwen3.7-plus prompt_tokens=12263 completion_tokens=1082 tool_calls=0 finish_reason=stop latency_ms=13527
+time=2026-09-15T11:48:06.232-04:00 level=DEBUG msg=forge.llm.completed service=forge-worker role=vision model=qwen3.8-max prompt_tokens=1240 completion_tokens=85 tool_calls=0 finish_reason=stop latency_ms=2603
+time=2026-09-15T11:48:45.166-04:00 level=DEBUG msg=forge.llm.completed service=forge-worker role=converse model=qwen3.7-plus prompt_tokens=3233 completion_tokens=3808 tool_calls=0 finish_reason=stop latency_ms=38929
+time=2026-09-15T11:49:24.879-04:00 level=DEBUG msg=forge.llm.completed service=forge-worker role=converse model=qwen3.7-plus prompt_tokens=3536 completion_tokens=3830 tool_calls=0 finish_reason=stop latency_ms=39705
+time=2026-09-15T11:49:25.497-04:00 level=INFO msg=forge.geometry.saved service=forge-worker version_id=ver_01M2JW4FB9QHC6SZ8KPZ3ZYPTN project_id=prj_01M2JVQC4CKXNCVBCF8QKFS0SR path=geometry/drivetrain-assembly.forge.json version=5 parts=30 bytes=9806 definitions=0 occurrences=30 units=mm generator=qwen3.7-plus
+time=2026-09-15T11:49:25.514-04:00 level=INFO msg=forge.task.cycle_started service=forge-worker worker_id=MSI/30760/01M2JVVX task_id=tsk_01M2JVQHSPZ779BAH7G8RQE1VW goal_id=gol_01M2JVQC4HHHGVBD5CD5Y076J5 attempt=1 risk_tier=r1
+time=2026-09-15T11:49:42.329-04:00 level=DEBUG msg=forge.llm.completed service=forge-worker role=converse model=qwen3.7-plus prompt_tokens=12827 completion_tokens=1489 tool_calls=0 finish_reason=stop latency_ms=16805
+time=2026-09-15T11:49:46.403-04:00 level=DEBUG msg=forge.llm.completed service=forge-worker role=vision model=qwen3.8-max prompt_tokens=1259 completion_tokens=141 tool_calls=0 finish_reason=stop latency_ms=3171
+time=2026-09-15T11:50:34.227-04:00 level=DEBUG msg=forge.llm.completed service=forge-worker role=converse model=qwen3.7-plus prompt_tokens=3975 completion_tokens=4720 tool_calls=0 finish_reason=stop latency_ms=47819
+time=2026-09-15T11:51:23.136-04:00 level=DEBUG msg=forge.llm.completed service=forge-worker role=converse model=qwen3.7-plus prompt_tokens=3955 completion_tokens=4720 tool_calls=0 finish_reason=stop latency_ms=47853
+time=2026-09-15T11:51:24.125-04:00 level=INFO msg=forge.geometry.saved service=forge-worker version_id=ver_01M2JW836M2XD76SFRBN239BSQ project_id=prj_01M2JVQC4CKXNCVBCF8QKFS0SR path=geometry/drivetrain-assembly.forge.json version=6 parts=36 bytes=11626 definitions=0 occurrences=36 units=mm generator=qwen3.7-plus
+time=2026-09-15T11:51:24.140-04:00 level=INFO msg=forge.goal.settled service=forge-worker goal_id=gol_01M2JVQC4HHHGVBD5CD5Y076J5 outcome=succeeded tasks_total=8 succeeded=8 failed=0 skipped=0
+time=2026-09-15T11:51:24.144-04:00 level=DEBUG msg=forge.worker.idle service=forge-worker worker_id=MSI/30760/01M2JVVX
+time=2026-09-15T11:51:26.148-04:00 level=DEBUG msg=forge.worker.idle service=forge-worker worker_id=MSI/30760/01M2JVVX
+time=2026-09-15T11:51:28.153-04:00 level=DEBUG msg=forge.worker.idle service=forge-worker worker_id=MSI/30760/01M2JVVX
