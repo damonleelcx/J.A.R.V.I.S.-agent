@@ -131,9 +131,11 @@ measure-car: ## Measure how far a live car build actually gets (SPENDS REAL TOKE
 	@# ceiling enforced in the harness: once it is gone no further model call is
 	@# placed, the passes already built are kept, and the run reports that what it
 	@# measured is a partial car. Raise it deliberately, never by habit.
+	@# 300k is the ceiling damon approved for the Phase 2 live milestone (A4,
+	@# decided 2026-09-15); it was 400k.
 	@test -n "$$FORGE_LLM_API_KEY" || { echo "FORGE_LLM_API_KEY is not set — source .env first"; exit 1; }
 	FORGE_LIVE_LLM_TESTS=1 \
-	FORGE_MEASURE_TOKEN_BUDGET="$${FORGE_MEASURE_TOKEN_BUDGET:-400000}" \
+	FORGE_MEASURE_TOKEN_BUDGET="$${FORGE_MEASURE_TOKEN_BUDGET:-300000}" \
 	FORGE_CAD_PYTHON="$${FORGE_CAD_PYTHON:-$(abspath $(CAD_VENV))/bin/python}" \
 	go test -count=1 -v -timeout 60m -run TestLiveCarCeiling ./internal/agent/
 
