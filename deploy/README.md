@@ -72,6 +72,14 @@ you wanted just never happens.
 - 🔴 **The postgres NetworkPolicy is default-deny**, and cross-namespace access
   needs `namespaceSelector` + `podSelector` in **one list item** (ANDed). Two
   items are ORed and far wider than intended.
+- 🔴 **`forge-worker` has an egress NetworkPolicy** (`k8s/32-worker-egress.yaml`):
+  DNS, postgres, IMDS and 443 to public addresses, nothing else. A new outbound
+  connection from the worker that is not listed there times out at the network
+  layer. `forged` is on the host network, where no NetworkPolicy applies.
+- 🔴 **The worker reaches the instance role through one more hop than the node.**
+  At an IMDSv2 hop limit of 1 its blob calls fail however open the policy is;
+  `deploy/bootstrap-s3.sh` reports the limit and `verify.sh` check 9 proves the
+  round trip from inside both pods.
 - 🔴 **The backup CronJob dumps only `BACKUP_DATABASES`.** A database missing
   from that list is unbacked-up while the job still reports OK.
 - 🔴 **`REVOKE ... FROM forge` does nothing.** Postgres grants CONNECT to PUBLIC

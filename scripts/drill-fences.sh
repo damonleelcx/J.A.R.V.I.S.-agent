@@ -105,6 +105,10 @@ FILES=(
   internal/agent/sketch.go
   internal/llm/illustrate.go
   internal/agent/render.go
+  deploy/k8s/20-config.yaml
+  deploy/k8s/32-worker-egress.yaml
+  deploy/verify.sh
+  cmd/forgectl/blob.go
   internal/domain/geometry/mesh.go
 )
 
@@ -966,6 +970,32 @@ echo "Scripts run their kernel on one thread"
 drill "a script's kernel starts a thread per core again" internal/domain/cad/script.go \
   's = s.replace("\"OMP_NUM_THREADS=1\", ", "", 1)' \
   ./internal/domain/cad 'TestScriptEnv_RunsTheKernelOnOneThread'
+
+echo
+echo "Blob storage, wired into the deployment"
+# Added 2026-09-15 (Phase 3, stage S4). The manifests are committed and NOT
+# applied, so nothing on the cluster notices them drifting: these fences are all
+# that holds them until the next deploy runs verify.sh. The last drill is the
+# command that check runs, reporting a round trip it did not observe.
+drill "the ConfigMap loses the bucket" deploy/k8s/20-config.yaml \
+  's = s.replace("  FORGE_BLOB_BUCKET: \"forge-geometry-373468206837\"\n", "", 1)' \
+  ./deploy 'TestConfigMap_'
+
+drill "the worker's egress policy drops the IMDS rule" deploy/k8s/32-worker-egress.yaml \
+  'i = s.index("    # 3. IMDS"); j = s.index("    # 4. HTTPS"); s = s[:i] + s[j:]' \
+  ./deploy 'TestWorkerEgress_'
+
+drill "the worker's egress policy lets 443 into the cluster" deploy/k8s/32-worker-egress.yaml \
+  's = s.replace("            except:\n              - 10.0.0.0/8\n", "            except:\n", 1)' \
+  ./deploy 'TestWorkerEgress_'
+
+drill "verify.sh checks the blob round trip in forged only" deploy/verify.sh \
+  's = s.replace("for d in forged forge-worker; do\n  POD=", "for d in forged; do\n  POD=", 1)' \
+  ./deploy 'TestVerify_ChecksTheBlobRoundTripInsideBothPods'
+
+drill "forgectl blob check does not compare the bytes it read back" cmd/forgectl/blob.go \
+  's = s.replace("if !bytes.Equal(got, blobCheckPayload) {", "if !bytes.Equal(got, got) {", 1)' \
+  ./cmd/forgectl 'TestBlobCheck_AStoreThatLiesIsNeverReportedOK'
 
 if [ "$MODE" = "list" ]; then
   exit 0
