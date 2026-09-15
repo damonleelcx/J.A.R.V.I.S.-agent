@@ -139,8 +139,9 @@ func run() error {
 	// The CAD kernel (PRD VIS-05). Nothing starts here: the process is created
 	// on the first parametric export, so a deployment that never asks for one
 	// never pays the 2.5 s import, and a deployment with no interpreter
-	// configured simply refuses and says how to configure one.
-	cadKernel := cad.New(cfg.CAD.Python, log).WithScripts(cfg.CAD.AllowScripts)
+	// configured simply refuses and says how to configure one. FORGE_CAD_POOL
+	// processes serve builds at once (Phase 4, stage K3), one by default.
+	cadKernel := cad.New(cfg.CAD.Python, log).WithScripts(cfg.CAD.AllowScripts).WithPool(cfg.CAD.Pool)
 	defer cadKernel.Close()
 
 	handler := httpapi.NewRouter(httpapi.Deps{

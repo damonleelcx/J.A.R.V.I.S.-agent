@@ -256,6 +256,11 @@ type CADConfig struct {
 	// container, and a deployment that cannot accept that should leave this
 	// unset — the feature then does not exist rather than half-existing.
 	AllowScripts bool
+	// Pool is how many kernel processes serve builds at once (FORGE_CAD_POOL,
+	// default 1; Phase 4, stage K3). Each holds its own build123d in memory and
+	// nothing caps one below its pod's limit, so raising it is a decision to take
+	// on a measured memory number for that pod, not a tuning knob.
+	Pool int
 }
 
 // GeometryConfig is what one stored design may be (Phase 3, stage S0 of
@@ -801,6 +806,10 @@ func Load(required ...Section) (*Config, []string, error) {
 	cfg.CAD = CADConfig{
 		Python:       strings.TrimSpace(l.str("FORGE_CAD_PYTHON", "")),
 		AllowScripts: l.boolVal("FORGE_ALLOW_SCRIPTS", false),
+		Pool:         l.intVal("FORGE_CAD_POOL", 1),
+	}
+	if cfg.CAD.Pool <= 0 {
+		l.fail("FORGE_CAD_POOL", "must be a positive number; it is how many CAD kernel processes serve builds at once")
 	}
 
 	// Phase 3, stage S0. Defaults decided 2026-09-14 from measurements: a car stored
