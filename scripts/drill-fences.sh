@@ -125,6 +125,8 @@ FILES=(
   internal/domain/geometry/export.go
   internal/domain/geometry/service.go
   internal/platform/config/config.go
+  internal/domain/geometry/compare_structure.go
+  internal/httpapi/geometry.go
 )
 
 BACKUP=""
@@ -1553,6 +1555,46 @@ drill "a scripted part is unreachable in the shape dispatch" internal/domain/cad
 drill "a refused assembly hides which part it refused" internal/domain/cad/cad.go \
   's = s.replace("\t\tif len(res.Skipped) > 0 {\n\t\t\tdetail +=", "\t\tif false {\n\t\t\tdetail +=", 1)' \
   ./internal/domain/cad 'TestKernel_ARefusedAssemblyNamesWhatItRefused'
+
+# Added 2026-09-15 (Phase 7, stage E2). Comparing designs placed in assemblies
+# reports a changed definition ONCE, with how many times each variant places it,
+# and leaves a comparison of flat documents exactly as it was. Two of these break
+# the same line and read it from two packages: the domain fence says a flat
+# comparison has no structure, and the HTTP fence says its response is byte for
+# byte the one pinned before trees could be compared.
+echo
+echo "Comparing trees"
+drill "a flat comparison grows a structure section" internal/domain/geometry/compare_structure.go \
+  's = s.replace("\tif !trees {", "\tif false {", 1)' \
+  ./internal/domain/geometry 'TestCompare_AFlatComparisonHasNoStructure'
+
+drill "a flat comparison's response gains a key" internal/domain/geometry/compare_structure.go \
+  's = s.replace("\tif !trees {", "\tif false {", 1)' \
+  ./internal/httpapi 'TestCompare_AFlatComparisonComesBackExactlyAsItDidBeforeTreesCouldBeCompared'
+
+drill "a definition's size is not compared" internal/domain/geometry/compare_structure.go \
+  's = s.replace("{\"size\", func(a, b Part, l *lengths) bool {", "{\"size\", func(a, b Part, l *lengths) bool {\n\t\treturn true", 1)' \
+  ./internal/domain/geometry 'TestCompare_ChangingADefinitionPlacedFourTimesIsOneChangedDefinition'
+
+drill "a pattern's copies are not counted" internal/domain/geometry/compare_structure.go \
+  's = s.replace("k := len(slots)", "k := 1 + 0*len(slots)", 1)' \
+  ./internal/domain/geometry 'TestCompare_APatternCopyChangesTheCountsAndTheChildsPattern'
+
+drill "a pattern on a sub-assembly does not multiply it" internal/domain/geometry/compare_structure.go \
+  's = s.replace("m[def] = sat(m[def] + mul(k, n))", "m[def] = sat(m[def] + n)", 1)' \
+  ./internal/domain/geometry 'TestCompare_APatternedAssemblyMultipliesWhatItPlaces'
+
+drill "a moved interface is not compared" internal/domain/geometry/compare_structure.go \
+  's = s.replace("func(a, b Interface, l *lengths) bool { return l.vector(a.Position, b.Position) }", "func(a, b Interface, l *lengths) bool { return true }", 1)' \
+  ./internal/domain/geometry 'TestCompare_AMovedInterfaceIsReportedOnItsAssembly'
+
+drill "a definition or child in one variant only is not reported" internal/domain/geometry/compare_structure.go \
+  's = s.replace("missing = append(missing, col+1)", "missing = missing[:len(missing):len(missing)]", 1)' \
+  ./internal/domain/geometry 'TestCompare_AddedAndRemovedDefinitionsAndChildrenAreReported'
+
+drill "the response leaves the structure out" internal/httpapi/geometry.go \
+  's = s.replace("body[\"structure\"] = structureBody(cmp.Structure)", "_ = structureBody(cmp.Structure)", 1)' \
+  ./internal/httpapi 'TestCompare_TheResponseCarriesTheStructure'
 
 if [ "$MODE" = "list" ]; then
   exit 0
