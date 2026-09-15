@@ -1044,7 +1044,7 @@ drill "a part that was never built is never mentioned" internal/agent/interferen
   ./internal/agent 'TestInterference_APartThatWasNotBuiltIsNamedAsUnchecked'
 
 drill "the render drops how much was checked" internal/agent/render.go \
-  's = s.replace("\n\t\t\t\t\tChecked: built.Checked, Pairs: built.Pairs, Skipped: built.Skipped}", "}", 1)' \
+  's = s.replace("\n\t\t\t\t\tChecked: built.Checked, Pairs: built.Pairs, Skipped: built.Skipped,\n\t\t\t\t\tParts: built.Parts}", "\n\t\t\t\t\tParts: built.Parts}", 1)' \
   ./internal/agent 'TestRender_CarriesHowMuchTheCheckCovered'
 
 echo
