@@ -62,6 +62,10 @@ const (
 	PrefixRequest  Prefix = "req"
 	PrefixTrace    Prefix = "trc"
 	PrefixSpan     Prefix = "spn"
+	// PrefixExport names an off-node STEP export job. Never "export", "mesh" or
+	// "mass", which GET /v1/geometry/exports/{exportID} relies on (httpapi
+	// ExportRoute).
+	PrefixExport Prefix = "exp"
 )
 
 // crockford is the base32 alphabet: no I, L, O, or U, so an id read aloud or

@@ -44,6 +44,7 @@ type Worker struct {
 	executor  *Executor
 	verifier  *Verifier
 	builds    *BuildSteps
+	exports   *StepExporter
 
 	cfg        config.EngineConfig
 	production bool
@@ -65,7 +66,10 @@ type WorkerDeps struct {
 	// refuses them by name, which is what every worker was before builds ran as
 	// goals.
 	Builds *BuildSteps
-	Config config.EngineConfig
+	// Exports runs off-node STEP exports (stepexport.go). Nil is a worker that
+	// refuses them by name.
+	Exports *StepExporter
+	Config  config.EngineConfig
 	// Production is the deployment context, passed to every grant (PRD SAF-01).
 	// False is the safe default to get wrong in only one direction: a
 	// development deployment mislabelled as production refuses work, where the
@@ -89,8 +93,15 @@ func NewWorker(d WorkerDeps) *Worker {
 	if host == "" {
 		host = "unknown-host"
 	}
+	// ‼️ The LAST eight characters of a fresh id, which are random. It took the
+	// first eight, which are its millisecond timestamp's top bits and change about
+	// once a second, so every worker one process started together — forge-worker
+	// starts FORGE_WORKER_CONCURRENCY of them in one loop — had the same identity,
+	// and no lease guard could tell a worker from its sibling.
+	// docs/bugfix/2026-09-15-workers-started-together-shared-one-lease-identity.md
+	run := id.New(id.PrefixRun)
 	return &Worker{
-		ID:         fmt.Sprintf("%s/%d/%s", host, os.Getpid(), id.New(id.PrefixRun)[4:12]),
+		ID:         fmt.Sprintf("%s/%d/%s", host, os.Getpid(), run[len(run)-8:]),
 		pool:       d.Pool,
 		repo:       d.Repo,
 		queue:      d.Queue,
@@ -99,6 +110,7 @@ func NewWorker(d WorkerDeps) *Worker {
 		executor:   d.Executor,
 		verifier:   d.Verifier,
 		builds:     d.Builds,
+		exports:    d.Exports,
 		cfg:        d.Config,
 		production: d.Production,
 		workspace:  d.WorkspaceRoot,
@@ -273,6 +285,12 @@ func (w *Worker) runTask(ctx context.Context, task *engine.Task) {
 	// buildgoal.go.
 	if in, ok := buildStepOf(task); ok {
 		w.runBuildStep(ctx, goal, task, in)
+		return
+	}
+	// An off-node STEP export (stepexport.go) likewise: a file to write with the
+	// kernel and keep in blob storage, not an instruction for the tool loop.
+	if in, ok := exportStepOf(task); ok {
+		w.runExportStep(ctx, goal, task, in)
 		return
 	}
 

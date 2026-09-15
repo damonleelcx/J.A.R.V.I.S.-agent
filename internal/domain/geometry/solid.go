@@ -159,6 +159,27 @@ func SolidsAndOperations(d Document, unit Unit) ([]Solid, []Operation, []Problem
 	if refusal := d.DrawRefusal(); refusal != "" {
 		return nil, nil, nil, []string{refusal}
 	}
+	return solidsAndOperations(d, unit)
+}
+
+// ExportJobSolidsAndOperations is SolidsAndOperations for the off-node STEP export
+// job (cad.Kernel.ExportSTEPJob): the same expansion, bounded by the job's ceiling
+// (MaxExportJobParts) instead of the building one.
+//
+// ‼️ The one door past 4,096 parts into a kernel request, and only the job opens
+// it. Without it the job's own ceiling check in cad passed a 4,200-part design and
+// this package's building ceiling, applied again here, sent the kernel nothing:
+// "no parts FORGE can build". Fence: TestKernel_AnExportJobBuildsAboveTheBuildingCeilingWithoutTheInterferenceCheck.
+func ExportJobSolidsAndOperations(d Document, unit Unit) ([]Solid, []Operation, []Problem, []string) {
+	if refusal := d.ExportJobRefusal(); refusal != "" {
+		return nil, nil, nil, []string{refusal}
+	}
+	return solidsAndOperations(d, unit)
+}
+
+// solidsAndOperations is the expansion itself, for a document already within
+// whichever ceiling its caller answers to.
+func solidsAndOperations(d Document, unit Unit) ([]Solid, []Operation, []Problem, []string) {
 	// A gear is written out as the extrusion it is before anything reads the
 	// parts, and before patterns, so a repeated gear is a repeated extrusion and
 	// the kernel never sees the word (gear.go). Its facet notes are taken first,

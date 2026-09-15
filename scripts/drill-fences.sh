@@ -134,6 +134,9 @@ FILES=(
   internal/domain/engine/repository.go
   internal/httpapi/goals_start.go
   internal/httpapi/assets/workbench.js
+  internal/agent/stepexport.go
+  internal/httpapi/geometry_exports.go
+  internal/httpapi/router.go
 )
 
 BACKUP=""
@@ -1815,6 +1818,92 @@ drill "a replan with no body is refused" internal/httpapi/goals_start.go \
 drill "the workbench never asks for a build" internal/httpapi/assets/workbench.js \
   's = s.replace("      build: !!state.planAsBuild\n", "      build: false\n", 1)' \
   ./internal/httpapi 'TestWorkbench_StartThisSendsWhetherToPlanABuild'
+
+echo
+echo "Off-node STEP export"
+# Added 2026-09-15 (off-node STEP export). POST /v1/geometry/{id}/exports queues an engine
+# task that forge-worker runs with its own kernel (internal/agent/stepexport.go); the file
+# goes to the blob store and GET /v1/geometry/exports/{id}/file streams it back through
+# forged, checked against the digest the job recorded. The job's ceiling is 90,000
+# occurrences on #89's measured numbers, 1M stays refused, and the request path keeps
+# 4,096. The job skips the interference check; its file and its task are recorded in one
+# transaction under the lease; workers started together no longer share one identity
+# (bugfix 2026-09-15). Needs FORGE_TEST_DATABASE_URL and FORGE_CAD_PYTHON.
+drill "the export job builds past its ceiling" internal/domain/geometry/limits.go \
+  's = s.replace("occurrences(d, MaxExportJobParts) <= MaxExportJobParts {", "occurrences(d, 20*MaxExportJobParts) <= 20*MaxExportJobParts {", 1)' \
+  ./internal/domain/geometry 'TestExportJobRefusal_BuildsUpToNinetyThousandAndRefusesOneMillionNamingTheCeiling'
+
+drill "an export above the ceiling is queued" internal/agent/stepexport.go \
+  's = s.replace("if refusal := v.Document.ExportJobRefusal(); refusal != \"\" {\n\t\treturn nil, false,", "if refusal := \"\"; refusal != \"\" {\n\t\treturn nil, false,", 1)' \
+  ./internal/agent 'TestStepExport_ADesignAboveTheCeilingIsRefusedBeforeAnyJobExists'
+
+drill "the job's expansion stops at the building ceiling" internal/domain/geometry/solid.go \
+  's = s.replace("if refusal := d.ExportJobRefusal(); refusal != \"\" {", "if refusal := d.DrawRefusal(); refusal != \"\" {", 1)' \
+  ./internal/domain/cad 'TestKernel_AnExportJobBuildsAboveTheBuildingCeilingWithoutTheInterferenceCheck'
+
+drill "a request builds past 4,096" internal/domain/cad/cad.go \
+  's = s.replace("refusal := doc.DrawRefusal()\n", "refusal := doc.ExportJobRefusal()\n", 1).replace("expand := geometry.SolidsAndOperations\n", "expand := geometry.ExportJobSolidsAndOperations\n", 1)' \
+  ./internal/domain/cad 'TestKernel_AnExportJobBuildsAboveTheBuildingCeilingWithoutTheInterferenceCheck'
+
+drill "the export job asks for the interference check" internal/domain/cad/cad.go \
+  's = s.replace("SkipInterferences: job}", "SkipInterferences: false}", 1)' \
+  ./internal/domain/cad 'TestKernel_AnExportJobBuildsAboveTheBuildingCeilingWithoutTheInterferenceCheck'
+
+drill "the sidecar ignores skip_interferences" internal/domain/cad/sidecar.py \
+  's = s.replace("    if request.get(\"skip_interferences\"):\n", "    if False:\n", 1)' \
+  ./internal/domain/cad 'TestKernel_AnExportJobBuildsAboveTheBuildingCeilingWithoutTheInterferenceCheck'
+
+drill "the sidecar skips the check for every build" internal/domain/cad/sidecar.py \
+  's = s.replace("    if request.get(\"skip_interferences\"):\n", "    if True:\n", 1)' \
+  ./internal/domain/cad 'TestKernel_AnExportJobBuildsAboveTheBuildingCeilingWithoutTheInterferenceCheck'
+
+drill "an export is queued with no bucket" internal/httpapi/geometry_exports.go \
+  's = s.replace("\tif !h.blobStore().Available() {\n\t\terr := blob.Unavailable(op)", "\tif false {\n\t\terr := blob.Unavailable(op)", 1)' \
+  ./internal/httpapi 'TestExports_AnUnconfiguredBlobStoreIsRefusedByNameAndNothingIsQueued'
+
+drill "a worker with no bucket builds anyway" internal/agent/stepexport.go \
+  's = s.replace("\tif !x.blobs.Available() {\n", "\tif false {\n", 1)' \
+  ./internal/agent 'TestStepExport_AWorkerWithNoBlobStoreFailsTheJobNamingTheSetting'
+
+drill "a viewer may ask for an export" internal/httpapi/geometry_exports.go \
+  's = s.replace("v.ProjectID, user.ID, access.PermGoalCreate", "v.ProjectID, user.ID, access.PermProjectRead", 1)' \
+  ./internal/httpapi 'TestExports_AViewerMayFollowAnExportButNotAskForOne'
+
+drill "a non-member reads an export" internal/httpapi/geometry_exports.go \
+  's = s.replace("e.ProjectID, user.ID, access.PermProjectRead", "e.ProjectID, map[bool]string{true: e.RequestedBy, false: user.ID}[user.ID != \"\"], access.PermProjectRead", 1)' \
+  ./internal/httpapi 'TestExports_ANonMemberIsToldThereIsNoSuchDesignOrExport'
+
+drill "asking twice queues twice" internal/agent/stepexport.go \
+  's = s.replace("if live != nil && live.Status != ExportFailed {", "if live != nil && live.Status == \"never\" {", 1)' \
+  ./internal/agent 'TestStepExport_AskingTwiceReturnsTheExportAlreadyQueuedOrDoneAndAFailedOneIsAskedAfresh'
+
+drill "a reclaimed worker records its file" internal/agent/stepexport.go \
+  's = s.replace("lease_owner = $2 and status = ", "$2::text is not null and status = ", 1)' \
+  ./internal/agent 'TestStepExport_AWorkerKilledMidExportLeavesItRetryableAndNeverReportedSucceeded'
+
+drill "workers started together share one identity" internal/agent/worker.go \
+  's = s.replace("run[len(run)-8:]", "run[4:12]", 1)' \
+  ./internal/agent 'TestNewWorker_WorkersStartedTogetherHaveDistinctIdentities|TestStepExport_AWorkerKilledMidExportLeavesItRetryableAndNeverReportedSucceeded'
+
+drill "the worker never runs an export" internal/agent/worker.go \
+  's = s.replace("if in, ok := exportStepOf(task); ok {", "if in, ok := exportStepOf(task); ok && in.Kind == \"\" {", 1)' \
+  ./internal/agent 'TestStepExport_AWorkerWithNoBlobStoreFailsTheJobNamingTheSetting'
+
+drill "a succeeded task with no file is reported succeeded" internal/agent/stepexport.go \
+  's = s.replace("\t\tif key != \"\" {\n\t\t\treturn ExportSucceeded, \"\"", "\t\tif true {\n\t\t\treturn ExportSucceeded, \"\"", 1)' \
+  ./internal/agent 'TestExportStatus_AnExportIsSucceededOnlyWhenItsTaskSucceededAndItsFileIsStored'
+
+drill "a running export with a file is reported succeeded" internal/agent/stepexport.go \
+  's = s.replace("\tcase engine.StatusRunning, engine.StatusVerifying, engine.StatusAwaitingApproval:\n\t\treturn ExportRunning, \"\"", "\tcase engine.StatusRunning, engine.StatusVerifying, engine.StatusAwaitingApproval:\n\t\tif key != \"\" {\n\t\t\treturn ExportSucceeded, \"\"\n\t\t}\n\t\treturn ExportRunning, \"\"", 1)' \
+  ./internal/agent 'TestExportStatus_AnExportIsSucceededOnlyWhenItsTaskSucceededAndItsFileIsStored'
+
+drill "a corrupt file is served whole" internal/httpapi/geometry_exports.go \
+  's = s.replace("got != wantHex || total != size {", "got != got || total != size {", 1)' \
+  ./internal/httpapi 'TestExports_TheDownloadIsTheStoredFileAndACorruptOneIsNeverServedWhole'
+
+drill "the export status route is registered under its own name" internal/httpapi/router.go \
+  's = s.replace("mux.Handle(\"GET /v1/geometry/{id}/{rest}\", authed(geo.ExportRoute))", "mux.Handle(\"GET /v1/geometry/exports/{rest}\", authed(geo.ExportRoute))", 1)' \
+  ./internal/httpapi 'TestAPI_EveryGeometryRouteIsMountedAndRequiresASession'
 
 if [ "$MODE" = "list" ]; then
   exit 0

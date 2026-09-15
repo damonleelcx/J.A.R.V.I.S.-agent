@@ -38,6 +38,12 @@ func TestAPI_EveryGeometryRouteIsMountedAndRequiresASession(t *testing.T) {
 		{"GET", "/v1/geometry/geo_1/mesh"},
 		{"GET", "/v1/geometry/geo_1/export"},
 		{"GET", "/v1/geometry/geo_1/export/label"},
+		// Off-node STEP export. The status route is the one net/http refuses to
+		// register under its own name beside {id}/export, by panicking inside
+		// NewRouter (ExportRoute); a 404 here is that route lost.
+		{"POST", "/v1/geometry/geo_1/exports"},
+		{"GET", "/v1/geometry/exports/exp_1"},
+		{"GET", "/v1/geometry/exports/exp_1/file"},
 	} {
 		t.Run(tc.method+" "+tc.target, func(t *testing.T) {
 			rec := httptest.NewRecorder()
