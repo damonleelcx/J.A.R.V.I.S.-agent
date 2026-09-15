@@ -131,6 +131,7 @@ FILES=(
   internal/domain/geometry/service.go
   internal/platform/config/config.go
   internal/httpapi/assets/workbench.js
+  internal/httpapi/assets/workbench.css
   internal/domain/geometry/subtree.go
   internal/httpapi/geometry_subtree.go
 )
@@ -1929,6 +1930,42 @@ drill "the search index answers from its runs without checking the query" intern
 drill "the search reads every occurrence again" internal/httpapi/assets/forge3d.js \
   's = s.replace("if (q.length >= SEARCH_RUN) {", "if (false) {", 1)' \
   ./internal/httpapi 'TestRendererFindsOccurrencesThroughAnIndexLikeTheScan'
+
+# Added 2026-09-15 (kernel build ceiling and viewport follow-ups). Three findings of the
+# W2 acceptance run: a mesh reply, which is in millimetres, was drawn on a stage in the
+# document's unit; a search row named a part without saying where it was; and the
+# provenance banner covered most of an 800-px stage. docs/spikes/2026-09-15-kernel-build-ceiling.
+drill "a mesh reply is drawn in millimetres on a stage in the document's unit" internal/httpapi/assets/forge3d.js \
+  's = s.replace("var fromMM = opts.toMM > 0 ? 1 / opts.toMM : 1;", "var fromMM = 1;", 1)' \
+  ./internal/httpapi 'TestMeshSubtree_ADesignInInchesOrMetresIsDrawnWhereItsPrimitivesAre'
+
+drill "a copy's vertices are scaled and its translation is not" internal/httpapi/assets/forge3d.js \
+  's = s.replace("if (inst) { matrix[12] *= fromMM; matrix[13] *= fromMM; matrix[14] *= fromMM; }", "", 1)' \
+  ./internal/httpapi 'TestMeshSubtree_ADesignInInchesOrMetresIsDrawnWhereItsPrimitivesAre'
+
+drill "the whole design's reply is drawn in millimetres" internal/httpapi/assets/forge3d.js \
+  's = s.replace("{ wide: wide, toMM: unitToMM(this.spec.units) }", "{ wide: wide }", 1)' \
+  ./internal/httpapi 'TestMeshSubtree_ADesignInInchesOrMetresIsDrawnWhereItsPrimitivesAre'
+
+drill "a subtree's reply is drawn in millimetres" internal/httpapi/assets/forge3d.js \
+  's = s.replace("{ wide: lazy.wide, toMM: unitToMM(this.spec.units) }", "{ wide: lazy.wide }", 1)' \
+  ./internal/httpapi 'TestMeshSubtree_ADesignInInchesOrMetresIsDrawnWhereItsPrimitivesAre'
+
+drill "a search row names a part without saying where it is" internal/httpapi/assets/workbench.js \
+  's = s.replace("return treeRow(h.id, h.label, 0, false, false, null, h.id);", "return treeRow(h.id, h.label, 0, false, false, null);", 1)' \
+  ./internal/httpapi 'TestWorkbenchSearchRowsSayWhereEachOccurrenceIs'
+
+drill "the provenance banner's details are never folded" internal/httpapi/assets/workbench.js \
+  's = s.replace("var open = !!state.provenanceOpen;", "var open = true;", 1)' \
+  ./internal/httpapi 'TestWorkbenchProvenanceBannerFoldsItsDetailsOffTheStage'
+
+drill "the provenance banner's toggle does nothing" internal/httpapi/assets/workbench.js \
+  's = s.replace("      state.provenanceOpen = !state.provenanceOpen;\n", "", 1)' \
+  ./internal/httpapi 'TestWorkbenchProvenanceBannerFoldsItsDetailsOffTheStage'
+
+drill "a folded banner's details are hidden only by load order" internal/httpapi/assets/workbench.css \
+  's = s.replace(".provenance .prov-details.hidden { display: none; }", "", 1)' \
+  ./internal/httpapi 'TestWorkbenchProvenanceBannerFoldsItsDetailsOffTheStage'
 
 if [ "$MODE" = "list" ]; then
   exit 0

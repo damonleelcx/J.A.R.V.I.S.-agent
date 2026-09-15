@@ -64,7 +64,10 @@
     proposal: null,       // the ProposedGoal from the conversation
     goal: null,           // the created goal, once it exists
     planTasks: null,      // its tasks, once planning has run
-    goalPhase: 'none'     // none | proposed | planning | planned | starting | active | failed
+    goalPhase: 'none',    // none | proposed | planning | planned | starting | active | failed
+    /* Whether the provenance banner's details are open. Folded until somebody opens
+     * them, and kept across designs: see renderProvenance. */
+    provenanceOpen: false
   };
 
   function esc(s) {
@@ -1556,15 +1559,25 @@
     all.classList.toggle('hidden', !tree.isolated);
     if (!has) { el.innerHTML = ''; return; }
     if (tree.query) {
-      var hits = studio.findOccurrences(tree.query, 50);
-      el.innerHTML = (hits.total ? '' : '<div class="empty">Nothing drawn has that in its name or path.</div>') +
-        hits.found.map(function (h) { return treeRow(h.id, h.label, 0, false, false, null); }).join('') +
-        (hits.total > hits.found.length
-          ? '<div class="dim tree-more">' + (hits.total - hits.found.length) + ' more — narrow the search</div>'
-          : '');
+      el.innerHTML = searchRows(studio.findOccurrences(tree.query, 50));
       return;
     }
     el.innerHTML = treeRows(proto, proto.root, '', 0);
+  }
+
+  /* A search's rows: the first fifty occurrences it found, and how many more.
+   *
+   * Each row says WHERE its occurrence is — its path, after its name. The W2 acceptance
+   * run searched a car and read fifty rows of "Rivet 1", "Rivet 10", … with one per seam
+   * and nothing to tell the seams apart; a tree row does not need it, because its place
+   * in the tree says where it is, but a search row has no place.
+   * Fence: TestWorkbenchSearchRowsSayWhereEachOccurrenceIs. */
+  function searchRows(hits) {
+    return (hits.total ? '' : '<div class="empty">Nothing drawn has that in its name or path.</div>') +
+      hits.found.map(function (h) { return treeRow(h.id, h.label, 0, false, false, null, h.id); }).join('') +
+      (hits.total > hits.found.length
+        ? '<div class="dim tree-more">' + (hits.total - hits.found.length) + ' more — narrow the search</div>'
+        : '');
   }
 
   /* The rows under one assembly, and under every row somebody has opened. A patterned
@@ -1585,7 +1598,8 @@
     }).join('');
   }
 
-  function treeRow(path, label, depth, expandable, open, count) {
+  /* where, when given, is shown after the name: a search row's occurrence path. */
+  function treeRow(path, label, depth, expandable, open, count, where) {
     return '<div class="tnode" role="treeitem" data-path="' + esc(path) + '"' +
       (expandable ? ' aria-expanded="' + open + '"' : '') +
       ' aria-selected="' + (state.selectedPart === path) + '" style="padding-left:' + (depth * 12 + 2) + 'px">' +
@@ -1594,6 +1608,7 @@
           (open ? 'Close ' : 'Open ') + esc(label) + '">' + (open ? '▾' : '▸') + '</button>'
         : '<span class="tw"></span>') +
       '<span class="nm" data-select="' + esc(path) + '" title="' + esc(path) + '">' + esc(label) + '</span>' +
+      (where ? '<span class="dim where" title="' + esc(where) + '">' + esc(where) + '</span>' : '') +
       (count ? '<span class="dim">' + esc(count) + '</span>' : '') +
       '<button type="button" class="ghost iso" data-isolate="' + esc(path) + '" aria-pressed="' +
       (tree.isolated === path) + '">Isolate</button></div>';
@@ -1701,7 +1716,9 @@
     if (!state.prototype) { el.classList.add('hidden'); return; }
     var p = state.prototype;
 
-    var html = '<b>This is a proposal, not a verified design.</b>';
+    /* Everything below the headline is the banner's DETAILS, folded until somebody opens
+     * them (state.provenanceOpen); the headline is composed at the end. */
+    var html = '';
     if (p.not_verified && p.not_verified.length) {
       html += '<ul>' + p.not_verified.map(function (n) { return '<li>' + esc(n) + '</li>'; }).join('') + '</ul>';
     }
@@ -1773,8 +1790,40 @@
              * solid, and whether that solid is manufacturable, strong enough or
              * free of interference is not a question anything here asks. */
             '. No solver or interference check exists in this deployment.</div>';
-    el.innerHTML = html;
+    /* The headline, how many notes are behind it, and the toggle; the notes themselves
+     * folded until they are asked for.
+     *
+     * # Why the details fold (2026-09-15)
+     *
+     * The W2 acceptance run drew a stored 30,000-part car on an 800-px pane, and this
+     * banner — five not-verified items, the assumptions, a line per loaded subtree —
+     * filled the 40 % of the stage it may take: 70 of the 73 copies of an isolated seam
+     * on screen were under it and could not be clicked. Folded, it is two lines however
+     * much is behind it.
+     *
+     * ‼️ FOLDED, NOT DISMISSED (PRD VIS-06). The headline is outside the fold and is on
+     * the stage whenever geometry is, and the count says there is more to read. A
+     * change that folds the headline too, or offers a way to close the banner, is the
+     * thing VIS-06 forbids. Fence: TestWorkbenchProvenanceBannerFoldsItsDetailsOffTheStage. */
+    var notes = (html.match(/<li>/g) || []).length;
+    var open = !!state.provenanceOpen;
+    el.innerHTML = '<div class="prov-head"><b>This is a proposal, not a verified design.</b>' +
+      '<button type="button" class="ghost prov-toggle" data-prov-toggle aria-controls="provenance-details" ' +
+      'aria-expanded="' + open + '">' + (open ? 'Hide details' : 'Details (' + notes + ')') + '</button></div>' +
+      '<div class="prov-details' + (open ? '' : ' hidden') + '" id="provenance-details">' + html + '</div>';
     el.classList.remove('hidden');
+  }
+
+  /* Opens and folds the banner's details. Bound once, on the banner itself, because
+   * renderProvenance rewrites everything inside it. */
+  function initProvenance() {
+    var el = $('provenance');
+    if (!el) return;
+    el.addEventListener('click', function (e) {
+      if (!e.target || !e.target.closest || !e.target.closest('[data-prov-toggle]')) return;
+      state.provenanceOpen = !state.provenanceOpen;
+      renderProvenance();
+    });
   }
 
   /* ---- talking to FORGE -------------------------------------------------- */
@@ -3040,6 +3089,7 @@
     safely('soul', initSoul);
     safely('compare', initCompare);
     safely('tree', initTree);
+    safely('provenance', initProvenance);
     safely('stage', function () {
       window.ForgeStage.mount({ onPanel: function () { setPlace(); } });
     });
