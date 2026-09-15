@@ -111,6 +111,7 @@ FILES=(
   internal/httpapi/transcribe.go
   internal/httpapi/router.go
   internal/llm/transcribe.go
+  internal/platform/config/config.go
 )
 
 BACKUP=""
@@ -1077,6 +1078,62 @@ drill "an unserved transcription model is reported as an outage" internal/llm/tr
 drill "a 200 with no choices is indistinguishable from silence" internal/llm/transcribe.go \
   's = s.replace("return &Transcript{Model: model, Unanswered: true}, nil", "return &Transcript{Model: model}, nil", 1)' \
   ./internal/llm 'TestTranscribe_AnAnswerWithNoTranscriptIsMarkedUnanswered'
+
+# ---------------------------------------------------------------------------
+# Added 2026-09-15 (transcriber endpoint). FORGE_LLM_TRANSCRIBER_BASE_URL and
+# FORGE_LLM_TRANSCRIBER_API_KEY: speech to text on an endpoint of its own. The
+# property every drill here breaks is the same one from a different side — which
+# host hears a recording, and whose key it is sent with.
+# ---------------------------------------------------------------------------
+
+echo "Transcriber endpoint"
+drill "a transcriber key without an endpoint loads" internal/platform/config/config.go \
+  's = s.replace("tURL == \"\" && tKey != \"\"", "false && tKey != \"\"", 1)' \
+  ./internal/platform/config 'TestTranscriberEndpoint_AKeyWithoutAnEndpointIsRefusedByName'
+
+drill "another host with no key of its own loads" internal/platform/config/config.go \
+  's = s.replace("case tKey == \"\" && !SameOrigin(tURL, cfg.LLM.BaseURL):", "case false:", 1)' \
+  ./internal/platform/config 'TestTranscriberEndpoint_AnotherHostWithoutAKeyIsRefusedByName'
+
+drill "a second host hearing speech is not named at startup" internal/platform/config/config.go \
+  's = s.replace("\t\tcase !SameOrigin(tURL, cfg.LLM.BaseURL):", "\t\tcase false:", 1)' \
+  ./internal/platform/config 'TestTranscriberEndpoint_ASeparateEndpointWithItsOwnKeyIsUsed'
+
+drill "the resolver lends the chat key to another host" internal/platform/config/config.go \
+  's = s.replace("return own, \"\"", "return own, c.APIKey", 1)' \
+  ./internal/platform/config 'TestTranscriberEndpoint_NeverHandsTheChatKeyToAnotherHost'
+
+drill "config print shows the transcriber key" internal/platform/config/config.go \
+  's = s.replace("c.LLM.TranscriberAPIKey != \"\",", "c.LLM.TranscriberAPIKey,", 1)' \
+  ./internal/platform/config 'TestTranscriberEndpoint_TheKeyNeverReachesConfigPrint'
+
+drill "the client keeps the chat key for speech" internal/llm/openai_compatible.go \
+  's = s.replace("transcriberKey: sttKey,", "transcriberKey: cfg.APIKey,", 1)' \
+  ./internal/llm 'TestTranscribe_AnotherHostWithNoKeyOfItsOwnIsNeverSentTheChatKey'
+
+drill "transcription is sent to the chat host" internal/llm/transcribe.go \
+  's = s.replace("c.transcriberURL+\"/chat/completions\"", "c.baseURL+\"/chat/completions\"", 1)' \
+  ./internal/llm 'TestTranscribe_ASeparateEndpointGetsTheAudioWithItsOwnKeyAndTheChatHostGetsNothing'
+
+drill "transcription carries the chat key" internal/llm/transcribe.go \
+  's = s.replace("\"Bearer \"+c.transcriberKey", "\"Bearer \"+c.apiKey", 1)' \
+  ./internal/llm 'TestTranscribe_ASeparateEndpointGetsTheAudioWithItsOwnKeyAndTheChatHostGetsNothing'
+
+drill "a transcriber 404 lists the chat host's models" internal/llm/openai_compatible.go \
+  's = s.replace("base, key := c.endpointFor(role)", "base, key := c.baseURL, c.apiKey", 1)' \
+  ./internal/llm 'TestTranscribe_AnUnservedModelOnItsOwnEndpointListsThatEndpointAndNamesItsSettings'
+
+drill "a transcriber 404 names only the model" internal/llm/openai_compatible.go \
+  's = s.replace("\tif role != RoleTranscriber {\n\t\treturn \"\"", "\tif true {\n\t\treturn \"\"", 1)' \
+  ./internal/llm 'TestTranscribe_AnUnservedModelOnTheChatEndpointNamesTheSettingsThatMoveSpeech'
+
+drill "room speech is sent to the chat host" internal/llm/openai_compatible.go \
+  's = s.replace("transcriberURL: sttURL,", "transcriberURL: base,", 1)' \
+  ./internal/media 'TestRoomSpeech_GoesToTheTranscriberEndpointWithItsKeyAndNeverToTheChatHost'
+
+drill "the 501 never names the transcriber endpoint" internal/httpapi/transcribe.go \
+  's = s.replace("FORGE_LLM_TRANSCRIBER_BASE_URL with \"+", "the transcriber endpoint with \"+", 1)' \
+  ./internal/httpapi 'TestTranscribe_ADeploymentWithoutATranscriberSaysWhatTurnsItOn'
 
 
 if [ "$MODE" = "list" ]; then
