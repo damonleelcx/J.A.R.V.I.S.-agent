@@ -273,9 +273,9 @@ func (c *Conversation) buildOneStep(ctx context.Context, doc *Prototype, asked s
 	// a schema the model invented — measured on the first live build, which came
 	// back {"type":"box_beam","dimensions":{...}} on every step and produced
 	// nothing seven times out of eight.
-	system, sofar := stepSystem+"\n\n"+geometryContract, fmt.Sprintf("\n\n%s:\n%s", shown, body)
+	system, sofar := stepSystem+"\n\n"+buildContract, fmt.Sprintf("\n\n%s:\n%s", shown, body)
 	if !doc.HasGeometry() {
-		system, sofar = firstStepSystem+"\n\n"+geometryContract, ""
+		system, sofar = firstStepSystem+"\n\n"+buildContract, ""
 	}
 	// ‼️ And what the model so far writes out one child at a time where one pattern
 	// would place it (Phase 2, stage A3; see repetition.go). A step's model is shown
@@ -328,6 +328,21 @@ func (c *Conversation) buildOneStep(ctx context.Context, doc *Prototype, asked s
 		}
 		return nil, stepNote(n, step.Name, gateNoGeometry, noGeometryDetail(reply))
 	}
+	// ‼️ A build step's edit adds a subsystem; it does not get to replace the model's
+	// root. Measured live 2026-09-15 (car-quality run 2): two steps patched "root" to
+	// the assembly they had just built, which unplaced everything built before them —
+	// the second left a car of six cockpit parts. The root stays, and the assembly the
+	// step named as root is placed from it below.
+	// docs/bugfix/2026-09-15-a-build-steps-edit-replaced-the-models-root.md
+	// Fence: TestAssemble_AStepsEditDoesNotReplaceTheModelsRoot.
+	sentRoot := ""
+	if e := reply.PrototypeEdit; e != nil && e.Patch != nil && doc.Root != "" {
+		if r := strings.TrimSpace(e.Patch.Root); r != "" && r != doc.Root {
+			sentRoot, e.Patch.Root = r, ""
+			reply.noteRepair(fmt.Sprintf("This step's edit named %q as the model's root, which would have left "+
+				"everything already built under %q unplaced; the root was kept.", r, doc.Root))
+		}
+	}
 	// The edit becomes a document here, exactly as it does on a normal turn.
 	if err := reply.resolveEdit(doc); err != nil {
 		return nil, stepNote(n, step.Name, gateEditRefused, errs.DetailOf(err))
@@ -354,6 +369,11 @@ func (c *Conversation) buildOneStep(ctx context.Context, doc *Prototype, asked s
 	// and no note. See stepplace.go. Fence: TestAssemble_ANewAssemblyTheStepDidNotPlaceIsPlacedFromTheRoot.
 	if placed := placeStepAssembly(reply.Prototype, step.Assembly); placed != "" {
 		reply.noteRepair(placed)
+	}
+	if sentRoot != "" && sentRoot != strings.TrimSpace(step.Assembly) {
+		if placed := placeStepAssembly(reply.Prototype, sentRoot); placed != "" {
+			reply.noteRepair(placed)
+		}
 	}
 
 	// The same gauntlet, and in the same order, for the same reasons. A fault

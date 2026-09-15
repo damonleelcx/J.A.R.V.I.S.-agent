@@ -191,7 +191,7 @@ instead of "prototype". Never both.
         "features": [ ...whole features, by id... ],
         "definitions": [ ...whole definitions, by id... ],
         "assemblies": [ ...whole assemblies, by id... ],
-        "root": "the assembly that holds everything, when this edit makes the model a tree",
+        "root": "ONLY when the model has no root yet: the assembly that will hold everything",
         "parameters": [ ... ], "derived": [ ... ],
         "assumptions": ["what you chose for THIS change"],
         "not_verified": ["what this change does not establish"]
@@ -681,6 +681,17 @@ var densityContract = fmt.Sprintf(`  "density" is the material's density in KILO
   without one: a density on some parts and not others gives no mass at all.
 `, geometry.MaxDensity)
 
+// buildContract is the document contract a build step is sent (assemble.go).
+//
+// ‼️ Not geometryContract alone. The template's material paragraph ends on
+// ""finish" is only how it catches light:" and the finish list and the density rule
+// that finish that paragraph are spliced in by converseFraming only, so every build
+// step read a sentence that stopped mid-way and met "density" solely inside the
+// example material — never its unit, its ceiling or the all-parts rule for a mass
+// (2026-09-15; the conversation contract has had them since PR #92).
+// Fence: TestAssemble_EveryStepIsTaughtFinishesAndDensity.
+var buildContract = geometryContract + geometry.FinishGuide() + ".\n" + densityContract
+
 var converseFraming = converseManner + geometryContract + geometry.FinishGuide() + ".\n" + densityContract + `- "states" are named configurations: which parts are shown, and where they sit.
   A state with "offsets" says these pieces separate along this path, and
   NOTHING here checks that they can — there is no interference, clearance or
@@ -989,12 +1000,17 @@ func parseReply(resp *llm.Response) (Reply, error) {
 	//
 	// Only after the strict parse has already failed, so a reply that parses is
 	// never rewritten.
-	if repaired, moved := repairDimensions(body); moved {
+	if repaired, relocated, evaluated := repairDimensionsNoted(body); relocated || evaluated {
 		var second Reply
 		if json.Unmarshal(repaired, &second) == nil {
-			second.Repaired = "One or more dimensions arrived as expressions written in the " +
-				"place of a number. They were read as the expressions they are — the " +
-				"contract has a field for each — rather than the reply being discarded."
+			if relocated {
+				second.noteRepair("One or more dimensions arrived as expressions written in the " +
+					"place of a number. They were read as the expressions they are — the " +
+					"contract has a field for each — rather than the reply being discarded.")
+			}
+			if evaluated {
+				second.noteRepair(childPositionNote)
+			}
 			return second, nil
 		}
 	}

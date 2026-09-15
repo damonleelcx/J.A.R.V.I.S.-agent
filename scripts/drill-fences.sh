@@ -2022,6 +2022,41 @@ drill "the measurement stops counting unplaced assemblies" internal/agent/car_tr
   's = s.replace("if a.ID != d.Root && !ref[a.ID] {", "if false {", 1)' \
   ./internal/agent 'TestCarMeasure_CountsAssembliesNothingPlaces'
 
+echo
+echo "Live car findings, run 2: a step keeps the root, a placement's expression is read, steps learn density"
+# Added 2026-09-15 (live car findings, car-quality run 2).
+drill "a step's edit replaces the model's root again" internal/agent/assemble.go \
+  's = s.replace("if r := strings.TrimSpace(e.Patch.Root); r != \"\" && r != doc.Root {", "if r := strings.TrimSpace(e.Patch.Root); false {", 1)' \
+  ./internal/agent 'TestAssemble_AStepsEditDoesNotReplaceTheModelsRoot'
+
+drill "the root a step named is not placed" internal/agent/assemble.go \
+  's = s.replace("if placed := placeStepAssembly(reply.Prototype, sentRoot); placed != \"\" {", "if placed := \"\"; placed != \"\" {", 1)' \
+  ./internal/agent 'TestAssemble_AStepsEditDoesNotReplaceTheModelsRoot'
+
+drill "the contract lets a patch set any root" internal/agent/converse.go \
+  's = s.replace("\"root\": \"ONLY when the model has no root yet: the assembly that will hold everything\",", "\"root\": \"the assembly that will hold everything\",", 1)' \
+  ./internal/agent 'TestAssemble_AStepsEditDoesNotReplaceTheModelsRoot'
+
+drill "a child's position expression loses the reply again" internal/agent/dimensionrepair.go \
+  's = s.replace("if f, ok := evaluateOver(container, s, units); ok {", "if f, ok := evaluateOver(container, s, units); false {", 1)' \
+  ./internal/agent 'TestParseReply_ReadsAnExpressionInAChildsPositionAtItsValue'
+
+drill "an expression that does not evaluate is guessed as zero" internal/agent/dimensionrepair.go \
+  's = s.replace("\t\tif p.Severity == geometry.Error {\n\t\t\treturn 0, false\n\t\t}", "\t\t_ = p", 1)' \
+  ./internal/agent 'TestParseReply_AChildPositionItCannotEvaluateIsNotGuessed'
+
+drill "a placement read at its value is not noted" internal/agent/converse.go \
+  's = s.replace("second.noteRepair(childPositionNote)", "_ = childPositionNote", 1)' \
+  ./internal/agent 'TestParseReply_ReadsAnExpressionInAChildsPositionAtItsValue'
+
+drill "build steps lose the density rule" internal/agent/converse.go \
+  's = s.replace("var buildContract = geometryContract + geometry.FinishGuide() + \".\\n\" + densityContract", "var buildContract = geometryContract + geometry.FinishGuide() + \".\\n\"", 1)' \
+  ./internal/agent 'TestAssemble_EveryStepIsTaughtFinishesAndDensity'
+
+drill "build steps are sent the contract without its finishes" internal/agent/assemble.go \
+  's = s.replace("system, sofar := stepSystem+\"\\n\\n\"+buildContract,", "system, sofar := stepSystem+\"\\n\\n\"+geometryContract,", 1)' \
+  ./internal/agent 'TestAssemble_EveryStepIsTaughtFinishesAndDensity'
+
 if [ "$MODE" = "list" ]; then
   exit 0
 fi

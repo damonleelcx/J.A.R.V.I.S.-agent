@@ -91,8 +91,9 @@ model does with the prompt.
 
 ## Not in this fix
 
-- Strings in a tree child's `position`: a child has no `position_from`, so there is nowhere honest to move the
-  expression; that reply is still refused, now by name.
+- Strings in a tree child's `position`: a child has no `position_from`, so there is nowhere to move the expression.
+  Run 2 measured exactly this as its lost first step; it is read at its value in
+  `docs/bugfix/2026-09-15-a-build-steps-edit-replaced-the-models-root.md`.
 - Assemblies no plan named and nothing places (a helper assembly the model forgot to use): reported by the
   measurement, not placed.
 - Whole-document repairs dropping a placement: not observed in run 1 (every repair kept the root's children), so not

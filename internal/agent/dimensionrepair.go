@@ -3,6 +3,8 @@ package agent
 import (
 	"encoding/json"
 	"strconv"
+
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/geometry"
 )
 
 // An expression written where a number was expected.
@@ -84,11 +86,19 @@ var positionAxes = []string{"x", "y", "z"}
 // mentions is a document silently different from the one the model sent, which
 // is the same class of thing as a render that does not match its file.
 func repairDimensions(raw []byte) ([]byte, bool) {
+	out, relocated, evaluated := repairDimensionsNoted(raw)
+	return out, relocated || evaluated
+}
+
+// repairDimensionsNoted is repairDimensions saying which reading it made: an
+// expression moved to its "_from" twin (relocated), or a placement's expression
+// worked out to its number because a placement has no twin (evaluated).
+func repairDimensionsNoted(raw []byte) ([]byte, bool, bool) {
 	var doc map[string]any
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		// Not JSON at all. Nothing here can help, and pretending otherwise
 		// would replace one failure with a more confusing one.
-		return raw, false
+		return raw, false, false
 	}
 	// ‼️ Every list of parts a reply can carry, not only a whole prototype's "parts".
 	// A tree's parts are its DEFINITIONS, and every step of a build after the first
@@ -98,12 +108,15 @@ func repairDimensions(raw []byte) ([]byte, bool) {
 	// docs/bugfix/2026-09-15-an-expression-in-a-definition-lost-the-whole-reply.md
 	// Fence: TestParseReply_ReadsAnExpressionInADefinitionsSize.
 	var lists []any
+	evaluated := false
 	if proto, ok := doc["prototype"].(map[string]any); ok {
 		lists = append(lists, proto["parts"], proto["definitions"])
+		evaluated = repairPlacements(proto) || evaluated
 	}
 	if edit, ok := doc["prototype_edit"].(map[string]any); ok {
 		if patch, ok := edit["patch"].(map[string]any); ok {
 			lists = append(lists, patch["parts"], patch["definitions"])
+			evaluated = repairPlacements(patch) || evaluated
 		}
 	}
 	moved := false
@@ -128,14 +141,116 @@ func repairDimensions(raw []byte) ([]byte, bool) {
 			}
 		}
 	}
-	if !moved {
-		return raw, false
+	if !moved && !evaluated {
+		return raw, false, false
 	}
 	out, err := json.Marshal(doc)
 	if err != nil {
-		return raw, false
+		return raw, false, false
 	}
-	return out, true
+	return out, moved, evaluated
+}
+
+// childPositionNote tells the reader a placement's expression was read at its value.
+const childPositionNote = `A position on a placed child or an interface arrived as an expression, and a ` +
+	`placement has no "position_from" to hold one, so it was placed at what the expression works out to ` +
+	`from this reply's parameters now. It will not follow those parameters if they change.`
+
+// repairPlacements reads the positions of a tree's children and interfaces.
+//
+// # The problem this solves
+//
+// Measured live 2026-09-15 (car-quality run 2): after definitions were read, the
+// chassis step was still lost, to "position": ["-half_wheelbase + 200", 0, 0] on a
+// child. A child's place cannot be bound (only a definition's dimensions can), so
+// there is no twin to move the expression to, and the whole reply was discarded.
+//
+// # Why its value, and only when it can be worked out
+//
+// The model wrote the relationship it meant, over parameters it declared in the same
+// reply; the number that relationship gives now is the one it was placing. So a
+// quoted number is read as the number, and an expression is evaluated by FORGE's own
+// binder against the reply's parameters and derived values. An expression that does
+// not evaluate — an unknown name, a unit mismatch, bad grammar — is left as it was and
+// fails exactly as before: nothing is guessed. The note says the binding was lost.
+// docs/bugfix/2026-09-15-a-build-steps-edit-replaced-the-models-root.md
+// Fence: TestParseReply_ReadsAnExpressionInAChildsPositionAtItsValue.
+func repairPlacements(container map[string]any) bool {
+	asms, ok := container["assemblies"].([]any)
+	if !ok {
+		return false
+	}
+	units, _ := container["units"].(string)
+	moved := false
+	for _, a := range asms {
+		asm, ok := a.(map[string]any)
+		if !ok {
+			continue
+		}
+		for _, key := range []string{"children", "interfaces"} {
+			list, _ := asm[key].([]any)
+			for _, item := range list {
+				obj, ok := item.(map[string]any)
+				if !ok {
+					continue
+				}
+				pos, ok := obj["position"].([]any)
+				if !ok {
+					continue
+				}
+				for i, v := range pos {
+					s, isString := v.(string)
+					if !isString {
+						continue
+					}
+					if f, isNum := asNumber(v); isNum {
+						pos[i], moved = f, true
+						continue
+					}
+					if f, ok := evaluateOver(container, s, units); ok {
+						pos[i], moved = f, true
+					}
+				}
+			}
+		}
+	}
+	return moved
+}
+
+// evaluateOver works out one expression over a reply's parameters and derived
+// values, with the binder every bound dimension goes through: a probe part whose x
+// is bound to it. False when the binder reports an error.
+func evaluateOver(container map[string]any, expr, units string) (float64, bool) {
+	if units == "" {
+		units = "mm"
+	}
+	probe := map[string]any{"name": "probe", "units": units,
+		"parts": []any{map[string]any{"id": "probe", "shape": "box",
+			"size":     map[string]any{"width": 1, "height": 1, "depth": 1},
+			"position": []any{0, 0, 0}, "position_from": map[string]any{"x": expr}}}}
+	if p, ok := container["parameters"]; ok {
+		probe["parameters"] = p
+	}
+	if d, ok := container["derived"]; ok {
+		probe["derived"] = d
+	}
+	raw, err := json.Marshal(probe)
+	if err != nil {
+		return 0, false
+	}
+	var d geometry.Document
+	if json.Unmarshal(raw, &d) != nil {
+		return 0, false
+	}
+	for _, p := range d.Bind() {
+		if p.Severity == geometry.Error {
+			return 0, false
+		}
+	}
+	if len(d.Parts) != 1 || len(d.Parts[0].Position) != 3 {
+		return 0, false
+	}
+	return d.Parts[0].Position[0], true
 }
 
 // asNumber reads a quoted number. Returns ok=false for anything else, including
