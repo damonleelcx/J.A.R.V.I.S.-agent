@@ -1,0 +1,212 @@
+{
+  "speech": "Added the wheel, and placed it on both rear hubs from the root.",
+  "prototype_edit": {
+    "patch": {
+      "definitions": [
+        {
+          "id": "alloy-rim",
+          "name": "Alloy Wheel Rim",
+          "shape": "revolve",
+          "axis": "y",
+          "profile": [
+            {
+              "x": 100,
+              "y": -40,
+              "radius": 0
+            },
+            {
+              "x": 225,
+              "y": -40,
+              "radius": 0
+            },
+            {
+              "x": 225,
+              "y": 40,
+              "radius": 0
+            },
+            {
+              "x": 100,
+              "y": 40,
+              "radius": 0
+            }
+          ],
+          "size": {},
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "color": "#C0C0C0",
+          "note": "Lightweight alloy rim profile"
+        },
+        {
+          "id": "performance-tire",
+          "name": "Performance Tire",
+          "shape": "revolve",
+          "axis": "y",
+          "profile": [
+            {
+              "x": 210,
+              "y": -100,
+              "radius": 10
+            },
+            {
+              "x": 225,
+              "y": -100,
+              "radius": 0
+            },
+            {
+              "x": 225,
+              "y": 100,
+              "radius": 0
+            },
+            {
+              "x": 210,
+              "y": 100,
+              "radius": 10
+            }
+          ],
+          "size": {},
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "color": "#1a1a1a",
+          "note": "Low-profile performance tire"
+        },
+        {
+          "id": "lug-nut",
+          "name": "Lug Nut",
+          "shape": "standard",
+          "standard": "ISO 4032 M12",
+          "size": {},
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "color": "#silver",
+          "note": "Wheel fastener"
+        }
+      ],
+      "assemblies": [
+        {
+          "id": "wheels",
+          "name": "Single Wheel Unit",
+          "interfaces": [
+            {
+              "id": "hub-mount",
+              "position": [
+                0,
+                0,
+                0
+              ],
+              "rotation": [
+                0,
+                0,
+                0
+              ]
+            }
+          ],
+          "children": [
+            {
+              "id": "rim",
+              "ref": "alloy-rim",
+              "position": [
+                0,
+                0,
+                0
+              ],
+              "rotation": [
+                0,
+                0,
+                0
+              ]
+            },
+            {
+              "id": "tire",
+              "ref": "performance-tire",
+              "position": [
+                0,
+                0,
+                0
+              ],
+              "rotation": [
+                0,
+                0,
+                0
+              ]
+            },
+            {
+              "id": "lug-nuts",
+              "ref": "lug-nut",
+              "position": [
+                60,
+                0,
+                0
+              ],
+              "rotation": [
+                0,
+                0,
+                0
+              ],
+              "pattern": {
+                "kind": "polar",
+                "count": 5,
+                "about": "y"
+              }
+            }
+          ],
+          "features": [
+            {
+              "id": "fuse-rim-tire",
+              "op": "fuse",
+              "of": "rim",
+              "with": [
+                "tire"
+              ],
+              "note": "Bond tire to rim"
+            }
+          ]
+        }
+      ]
+    },
+    "placements": [
+      {
+        "id": "left-wheel",
+        "at": "left-hub/hub-face",
+        "rotation": [
+          0,
+          0,
+          90
+        ]
+      },
+      {
+        "id": "right-wheel",
+        "at": "right-hub/hub-face",
+        "rotation": [
+          0,
+          0,
+          90
+        ],
+        "mirror": "x"
+      }
+    ]
+  }
+}

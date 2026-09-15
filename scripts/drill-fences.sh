@@ -138,6 +138,8 @@ FILES=(
   internal/agent/car_ceiling_live_test.go
   internal/agent/stepplace.go
   internal/agent/dimensionrepair.go
+  internal/agent/stepdeclared.go
+  internal/agent/literals.go
 )
 
 BACKUP=""
@@ -2056,6 +2058,128 @@ drill "build steps lose the density rule" internal/agent/converse.go \
 drill "build steps are sent the contract without its finishes" internal/agent/assemble.go \
   's = s.replace("system, sofar := stepSystem+\"\\n\\n\"+buildContract,", "system, sofar := stepSystem+\"\\n\\n\"+geometryContract,", 1)' \
   ./internal/agent 'TestAssemble_EveryStepIsTaughtFinishesAndDensity'
+
+echo "Cross-assembly attach and bound positions: a subsystem mounts from the root, steps bind positions"
+# Added 2026-09-15 (cross-assembly attach and bound positions).
+drill "an at that leaves its assembly is refused without the fix" internal/domain/geometry/tree.go \
+  's = s.replace("if leaves(a, root, c.At) {", "if false {", 1)' \
+  ./internal/domain/geometry 'TestInterface_AnAttachmentThatLeavesItsAssemblyIsRefusedWithTheFix'
+
+drill "run 2's wheel step is refused as it was live" internal/domain/geometry/tree.go \
+  's = s.replace("if leaves(a, root, c.At) {", "if false {", 1)' \
+  ./internal/agent 'TestReplay_RunTwosWheelStepIsRefusedWithTheFixAndItsRepairIsToldIt|TestReplay_RunTwosFirstRepairOfTheWheelsIsToldToAttachFromTheRoot'
+
+drill "a child of the root is told to attach from the root" internal/domain/geometry/interface.go \
+  's = s.replace("\tif a.ID == root.ID {\n\t\treturn false\n\t}\n\tfirst, _, nested", "\tfirst, _, nested", 1)' \
+  ./internal/domain/geometry 'TestInterface_OnlyAPathThatLeavesItsAssemblyIsToldToAttachFromTheRoot'
+
+drill "a lone root interface is not seen as leaving" internal/domain/geometry/interface.go \
+  's = s.replace("return !declares(a, first) && declares(root, first)", "return false", 1)' \
+  ./internal/domain/geometry 'TestInterface_AnAttachmentThatLeavesItsAssemblyIsRefusedWithTheFix'
+
+drill "the fix keeps the root's own id in the path" internal/domain/geometry/interface.go \
+  's = s.replace("ok && first == root.ID && rest != \"\" {", "ok && false {", 1)' \
+  ./internal/domain/geometry 'TestInterface_AnAttachmentThatLeavesItsAssemblyIsRefusedWithTheFix'
+
+drill "the fix hides why the path fails from the root too" internal/domain/geometry/interface.go \
+  's = s.replace("out += \"; from the root that path fails too: \" + problem", "_ = problem", 1)' \
+  ./internal/domain/geometry 'TestInterface_AnAttachmentThatLeavesItsAssemblyIsRefusedWithTheFix'
+
+drill "root interfaces stop one placement down" internal/domain/geometry/interface.go \
+  's = s.replace("if depth >= rootInterfaceDepth {", "if depth >= 1 {", 1)' \
+  ./internal/domain/geometry 'TestInterfacesFromRoot_ListsWhereAChildOfTheRootCanAttach'
+
+drill "root interfaces offer a step its own assembly" internal/domain/geometry/interface.go \
+  's = s.replace("if !isAsm || c.Ref == except || sub.ID == root.ID {", "if !isAsm || sub.ID == root.ID {", 1)' \
+  ./internal/domain/geometry 'TestInterfacesFromRoot_ListsWhereAChildOfTheRootCanAttach'
+
+drill "root interfaces are unbounded" internal/domain/geometry/interface.go \
+  's = s.replace("if len(list) >= limit {", "if false {", 1)' \
+  ./internal/domain/geometry 'TestInterfacesFromRoot_ListsWhereAChildOfTheRootCanAttach'
+
+drill "a new assembly's view drops the root interfaces" internal/agent/subtree.go \
+  's = s.replace("view.RootInterfaces, view.RootInterfacesMore = d.InterfacesFromRoot(focus, maxRootInterfacesShown)\n\t\treturn marshalView(view)", "return marshalView(view)", 1)' \
+  ./internal/agent 'TestAssemble_AStepIsShownTheInterfacesItCanAttachAtFromTheRoot'
+
+drill "declared placements are ignored and the origin wins" internal/agent/assemble.go \
+  's = s.replace("if placed := placeDeclared(reply.Prototype, step.Assembly, declared); placed != \"\" {", "if placed := \"\"; placed != \"\" {", 1)' \
+  ./internal/agent 'TestAssemble_AStepsDeclaredPlacementAttachesItsAssemblyFromTheRoot|TestReplay_RunTwosWheelsWrittenAsTheContractTeachesAreAttachedFromTheRoot'
+
+drill "declared placements are read only beside the patch" internal/agent/stepdeclared.go \
+  's = s.replace("[]any{edit[\"placements\"], raw[\"placements\"], patch[\"placements\"]}", "[]any{edit[\"placements\"]}", 1)' \
+  ./internal/agent 'TestAssemble_DeclaredPlacementsAreReadWhereverTheStepPutThem'
+
+drill "a declared position over the model's parameters is not read" internal/agent/stepdeclared.go \
+  's = s.replace("withBaseParameters(scope, base, func() bool { return repairPlacements(scope) })", "_ = base", 1)' \
+  ./internal/agent 'TestAssemble_DeclaredPlacementsAreReadWhereverTheStepPutThem'
+
+drill "a declaration places an assembly the step already placed" internal/agent/stepdeclared.go \
+  's = s.replace("case placed[ref]:", "case false:", 1)' \
+  ./internal/agent 'TestAssemble_ADeclaredPlacementThatCannotBeUsedIsNotUsedAndSaysSo'
+
+drill "the placement note does not say which attachment" internal/agent/stepdeclared.go \
+  's = s.replace("out += fmt.Sprintf(\" at %q\", c.At)", "out += \"\"", 1)' \
+  ./internal/agent 'TestAssemble_AStepsDeclaredPlacementAttachesItsAssemblyFromTheRoot'
+
+drill "a step's placement over the model's parameters loses the step" internal/agent/assemble.go \
+  's = s.replace("resp, overModel := placementsOverModel(resp, doc)", "overModel := false", 1)' \
+  ./internal/agent 'TestAssemble_AStepsPlacementExpressionReadsTheModelsParameters'
+
+drill "the model's parameters are left in what the step sent" internal/agent/dimensionrepair.go \
+  's = s.replace("\t\t\tif had[k] {\n\t\t\t\tcontainer[k] = saved[k]\n\t\t\t} else {\n\t\t\t\tdelete(container, k)\n\t\t\t}", "\t\t\t_ = had[k]", 1)' \
+  ./internal/agent 'TestPlacementsOverModel_ReadsOverTheModelWithoutAddingToTheReply'
+
+drill "the contract lets an at leave its assembly" internal/agent/converse.go \
+  's = s.replace("An \"at\" never leaves its own assembly.", "An \"at\" may name any interface.", 1)' \
+  ./internal/agent 'TestTheContractSaysAnAtNeverLeavesItsAssemblyAndItsExampleAttaches'
+
+drill "the contract's mounted wheel lies flat" internal/agent/converse.go \
+  's = s.replace("\"at\": \"suspension-left/hub\", \"rotation\": [0, 0, 90]}\n", "\"at\": \"suspension-left/hub\", \"rotation\": [0, 90, 0]}\n", 1)' \
+  ./internal/agent 'TestTheContractSaysAnAtNeverLeavesItsAssemblyAndItsExampleAttaches'
+
+drill "the contract's child is placed by a number again" internal/agent/converse.go \
+  's = s.replace("\"position\": [\"half_wheelbase\", 0, 0]}", "\"position\": [1350, 0, 0]}", 1)' \
+  ./internal/agent 'TestTheContractShowsASizeAndAPositionWrittenWithAParameter'
+
+drill "steps are not taught placements" internal/agent/assemble.go \
+  's = s.replace("under \"placements\" beside \"patch\"", "under \"extras\" beside \"patch\"", 1)' \
+  ./internal/agent 'TestAssemble_AStepIsTaughtToAttachFromTheRootAndToBindPositions'
+
+drill "steps may retype a parameter's value" internal/agent/assemble.go \
+  's = s.replace("Never\n  retype a parameter'"'"'s value as a number. ", "", 1)' \
+  ./internal/agent 'TestAssemble_AStepIsTaughtToAttachFromTheRootAndToBindPositions'
+
+drill "a step is not shown its parameters' values" internal/agent/assemble.go \
+  's = s.replace("sofar += parametersForStep(doc)", "_ = parametersForStep", 1)' \
+  ./internal/agent 'TestAssemble_AStepIsShownTheParametersItCanBindTo'
+
+drill "a step that retyped parameters is not told" internal/agent/assemble.go \
+  's = s.replace("if literals := literalPositionNote(doc, reply.Prototype); literals != \"\" {", "if literals := \"\"; literals != \"\" {", 1)' \
+  ./internal/agent 'TestAssemble_AStepThatRetypesAParametersValueIsToldWhichParameter'
+
+drill "one or two coincidences are a habit" internal/agent/literals.go \
+  's = s.replace("const duplicatedLiteralsToNote = 3", "const duplicatedLiteralsToNote = 1", 1)' \
+  ./internal/agent 'TestAssemble_AStepThatRetypesAParametersValueIsToldWhichParameter'
+
+drill "positions the model already had are counted again" internal/agent/literals.go \
+  's = s.replace("if key := a.ID + \"/\" + c.ID; !samePosition(oldPlacements, key, c.Position) {", "if key := a.ID + \"/\" + c.ID; true {", 1)' \
+  ./internal/agent 'TestAssemble_AStepThatRetypesAParametersValueIsToldWhichParameter'
+
+drill "a bound position is counted as a literal" internal/agent/literals.go \
+  's = s.replace("if i > 2 || lit == 0 || from[positionAxes[i]] != \"\" {", "if i > 2 || lit == 0 {", 1)' \
+  ./internal/agent 'TestAssemble_AStepThatRetypesAParametersValueIsToldWhichParameter'
+
+drill "the note names parameters out of document order" internal/agent/literals.go \
+  's = s.replace("keys = append(keys, key)", "keys = append([]string{key}, keys...)", 1)' \
+  ./internal/agent 'TestAssemble_AStepThatRetypesAParametersValueIsToldWhichParameter'
+
+drill "the note suggests the parameter with the wrong sign" internal/agent/literals.go \
+  's = s.replace("if first.negative {", "if false {", 1)' \
+  ./internal/agent 'TestAssemble_AStepThatRetypesAParametersValueIsToldWhichParameter'
+
+drill "a conversational edit over the model's parameters is lost" internal/agent/converse.go \
+  's = s.replace("resp, overModel := placementsOverModel(resp, current)", "overModel := false", 1)' \
+  ./internal/agent 'TestRespond_AnEditPlacingAChildByTheModelsParameterIsRead'
 
 if [ "$MODE" = "list" ]; then
   exit 0
