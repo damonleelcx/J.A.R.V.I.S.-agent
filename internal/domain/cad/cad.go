@@ -182,6 +182,12 @@ type Build struct {
 	// geometry/interference.go and cad/sidecar.py.
 	Interferences          []geometry.Interference
 	InterferencesTruncated bool
+	// InterferenceBoxTests is how many pairs of bounding boxes the interference
+	// check compared to choose which pairs pay for a boolean. Reported so the broad
+	// phase's cost is a count a test can read (Phase 4, stage K2b): sorting and
+	// sweeping keeps it near linear on an assembly that spreads out, where comparing
+	// every pair is n(n-1)/2, 8.4 million at 4,096 parts.
+	InterferenceBoxTests int
 	// ShapeBuilds is how many distinct shapes the kernel built, and ScriptRuns how
 	// many scripts it ran: each distinct shape and each distinct script ONCE per build,
 	// however many occurrences place it (Phase 4, stage K1). Reported so "built once"
@@ -191,8 +197,8 @@ type Build struct {
 	// Phases is where the kernel spent this build. Reported so a slow build says
 	// which step was slow, in the log and to a test, without timing the whole
 	// build: the assembly and export steps are fenced to grow linearly
-	// (TestKernel_ExportingManyOccurrencesGrowsLinearly, Phase 4 stage K2) while
-	// the interference check is still quadratic until stage K2b.
+	// (TestKernel_ExportingManyOccurrencesGrowsLinearly, Phase 4 stage K2), and the
+	// interference check by the box tests it counts (InterferenceBoxTests, K2b).
 	Phases Phases
 	// Mesh is the built solid's surface, one entry per surviving part, empty
 	// unless it was asked for.
@@ -262,6 +268,7 @@ type reply struct {
 
 	Interferences          []geometry.Interference `json:"interferences,omitempty"`
 	InterferencesTruncated bool                    `json:"interferences_truncated,omitempty"`
+	InterferenceBoxTests   int                     `json:"interference_box_tests"`
 
 	STEP           string     `json:"step,omitempty"`
 	Mesh           []meshPart `json:"mesh,omitempty"`
@@ -474,7 +481,7 @@ func (k *Kernel) BuildDocument(ctx context.Context, doc geometry.Document, unit 
 
 	out := &Build{Parts: res.Parts, Volume: res.Volume, Bounds: res.Bounds,
 		Skipped: res.Skipped, FeatureFailures: res.FeaturesFailed, Inferred: inferred,
-		Interferences: res.Interferences, InterferencesTruncated: res.InterferencesTruncated,
+		Interferences: res.Interferences, InterferencesTruncated: res.InterferencesTruncated, InterferenceBoxTests: res.InterferenceBoxTests,
 		ShapeBuilds: res.ShapeBuilds, ScriptRuns: scriptRuns, Phases: res.Phases.durations()}
 	if res.STEP != "" {
 		decoded, err := base64.StdEncoding.DecodeString(res.STEP)

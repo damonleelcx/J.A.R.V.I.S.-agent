@@ -710,11 +710,75 @@ def _boxes_miss(a, b):
     return False
 
 
+def _sweep_axis(boxes, present):
+    """The axis the boxes' centres spread furthest along.
+
+    A sweep along an axis the parts barely spread along meets them all at once: a
+    panel standing in the YZ plane swept along x is one column of every part, and
+    the sweep is every pair again.
+    """
+    best, widest = 0, -1.0
+    for axis in range(3):
+        centres = [boxes[k][0][axis] + boxes[k][1][axis] for k in present]
+        mean = sum(centres) / len(centres)
+        spread = sum((c - mean) ** 2 for c in centres)
+        if spread > widest:
+            best, widest = axis, spread
+    return best
+
+
+def _candidate_pairs(boxes):
+    """Every pair whose boxes overlap, and how many box tests it took to find them.
+
+    # Sort and sweep (Phase 4, stage K2b)
+
+    Comparing every box with every other is n(n-1)/2 tests: 8.4 million at the
+    4,096 parts the kernel builds today, and 27% of a 10,000-part build
+    (docs/spikes/2026-09-14-definition-cache). Sorted by where each box starts on
+    one axis, a box can only overlap the boxes still OPEN when it starts, so it is
+    tested against those and nothing else. On an assembly that spreads out along
+    one axis, as a car does, that is a handful per part. Spread evenly over a
+    plane it is about sqrt(n) per part: 495,000 tests for a 100 x 100 grid,
+    against 50 million for every pair. An index over all three axes is Phase 5's
+    V1 (docs/spikes/2026-09-15-interference-broad-phase).
+
+    It is only a narrower pre-filter. Each open pair is still tested on all three
+    axes with _boxes_miss, so the pairs that come out are exactly the pairs
+    comparing everything would find, and the exact boolean after it is unchanged.
+
+    # Why the pairs are sorted back into index order
+
+    The pair budget stops the narrow phase part-way through a dense model. Which
+    pairs were measured before it stopped depends on the order they arrive in, so
+    they arrive in the order comparing every pair would meet them: a truncated
+    answer is the same truncated answer it was before this sweep existed.
+    """
+    present = [k for k, b in enumerate(boxes) if b is not None]
+    if len(present) < 2:
+        return [], 0
+    axis = _sweep_axis(boxes, present)
+    present.sort(key=lambda k: boxes[k][0][axis])
+    pairs, tests, still_open = [], 0, []
+    for k in present:
+        start = boxes[k][0][axis]
+        # Closed when it ends at or before this start: touching is a miss, the
+        # same rule _boxes_miss applies.
+        still_open = [a for a in still_open if boxes[a][1][axis] > start]
+        for a in still_open:
+            tests += 1
+            if not _boxes_miss(boxes[a], boxes[k]):
+                pairs.append((a, k) if a < k else (k, a))
+        still_open.append(k)
+    pairs.sort()
+    return pairs, tests
+
+
 def _interferences(solids, ids, labels):
     """Pairs of kept solids that share material, worst first.
 
-    Returns the list plus a note when the pair budget stopped the search, so a
-    caller never reads a truncated answer as a clean one.
+    Returns the list, whether the pair budget stopped the search (so a caller
+    never reads a truncated answer as a clean one), and how many box tests the
+    broad phase made.
     """
     boxes = _boxes(solids)
     volumes = []
@@ -724,43 +788,38 @@ def _interferences(solids, ids, labels):
         except Exception:
             volumes.append(0.0)
 
-    found, tested, truncated = [], 0, False
-    for i in range(len(solids)):
-        for j in range(i + 1, len(solids)):
-            if _boxes_miss(boxes[i], boxes[j]):
-                continue
-            if tested >= _INTERFERENCE_PAIR_BUDGET:
-                truncated = True
-                break
-            tested += 1
-            try:
-                shared = float(getattr(solids[i] & solids[j], "volume", 0.0))
-            except Exception:
-                # OCCT refusing a boolean is not evidence of interference, and
-                # guessing either way would be worse than saying nothing about
-                # this pair. The parts are still reported by every other check.
-                continue
-            if volumes[i] <= 0 or volumes[j] <= 0 or shared <= 0:
-                # A face has no volume, and "what fraction of it is buried" has
-                # no answer. Sections exist to be lofted and are consumed; one
-                # that survives is reported by the volume note in _build.
-                continue
-            smaller = min(volumes[i], volumes[j])
-            if shared < _INTERFERENCE_MIN_VOLUME or shared / smaller < _INTERFERENCE_MIN_FRACTION:
-                continue
-            # The SMALLER solid is reported first, because the fraction is its
-            # share and the sentence built from this reads "a is N% inside b".
-            # Reporting them in build order would produce "the chassis is 100%
-            # inside the master cylinder", which is true of no number here.
-            lo, hi = (i, j) if volumes[i] <= volumes[j] else (j, i)
-            found.append({"a": ids[lo], "b": ids[hi],
-                          "a_label": labels[lo], "b_label": labels[hi],
-                          "volume": shared, "fraction": shared / smaller})
-        if truncated:
+    pairs, box_tests = _candidate_pairs(boxes)
+    found, truncated = [], False
+    for tested, (i, j) in enumerate(pairs):
+        if tested >= _INTERFERENCE_PAIR_BUDGET:
+            truncated = True
             break
+        try:
+            shared = float(getattr(solids[i] & solids[j], "volume", 0.0))
+        except Exception:
+            # OCCT refusing a boolean is not evidence of interference, and
+            # guessing either way would be worse than saying nothing about
+            # this pair. The parts are still reported by every other check.
+            continue
+        if volumes[i] <= 0 or volumes[j] <= 0 or shared <= 0:
+            # A face has no volume, and "what fraction of it is buried" has
+            # no answer. Sections exist to be lofted and are consumed; one
+            # that survives is reported by the volume note in _build.
+            continue
+        smaller = min(volumes[i], volumes[j])
+        if shared < _INTERFERENCE_MIN_VOLUME or shared / smaller < _INTERFERENCE_MIN_FRACTION:
+            continue
+        # The SMALLER solid is reported first, because the fraction is its
+        # share and the sentence built from this reads "a is N% inside b".
+        # Reporting them in build order would produce "the chassis is 100%
+        # inside the master cylinder", which is true of no number here.
+        lo, hi = (i, j) if volumes[i] <= volumes[j] else (j, i)
+        found.append({"a": ids[lo], "b": ids[hi],
+                      "a_label": labels[lo], "b_label": labels[hi],
+                      "volume": shared, "fraction": shared / smaller})
 
     found.sort(key=lambda f: f["fraction"], reverse=True)
-    return found, truncated
+    return found, truncated, box_tests
 
 
 # The fields that decide what a solid IS, before it is placed. Everything else a
@@ -991,7 +1050,7 @@ def _build(request):
     # see the note above _interferences. Always, not on request: a check that a
     # caller has to remember to ask for is a check that is off in the one
     # deployment that needed it, and the broad phase makes the usual case free.
-    clashes, clash_truncated = _interferences(built, ids, names)
+    clashes, clash_truncated, box_tests = _interferences(built, ids, names)
     mark = _lap(phases, "interferences", mark)
     out = {
         "shape_builds": shape_builds,
@@ -999,6 +1058,7 @@ def _build(request):
         "parts": len(built),
         "interferences": clashes,
         "interferences_truncated": clash_truncated,
+        "interference_box_tests": box_tests,
         "volume": volume,
         "phases": phases,
         "bounds": [float(box.min.X), float(box.min.Y), float(box.min.Z),
