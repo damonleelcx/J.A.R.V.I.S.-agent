@@ -177,6 +177,11 @@ const (
 
 func init() { allEvents = append(allEvents, EventGoalSettled, EventGoalSettleFailed) }
 
+// Releasing the tasks a finished task left waiting.
+const EventTaskReleaseFailed Event = "forge.task.release_failed"
+
+func init() { allEvents = append(allEvents, EventTaskReleaseFailed) }
+
 // Workbench events.
 const (
 	EventConverseTurn Event = "forge.converse.turn"
