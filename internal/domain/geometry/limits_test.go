@@ -156,7 +156,7 @@ func TestLimits_ThirtyThousandOccurrencesAreStoredButNotDrawn(t *testing.T) {
 	if !strings.Contains(refusal, "more than 4096 parts") {
 		t.Fatalf("no drawing refusal for 30k parts: %q", refusal)
 	}
-	if solids, ops, _, inferred := SolidsAndOperations(d, Millimetre); len(solids) != 0 || len(ops) != 0 || len(inferred) != 1 || inferred[0] != refusal {
+	if solids, ops, _, inferred := SolidsAndOperations(d, Millimetre); len(solids) != 0 || len(ops) != 0 || len(inferred) != 1 || inferred[0] != d.BuildRefusal() {
 		t.Errorf("the kernel request was %d solids, %d operations, notes %q; want nothing but the refusal", len(solids), len(ops), inferred)
 	}
 	if m := Tessellate(d, Millimetre); len(m.Groups) != 0 || len(m.Inferences) != 1 || m.Inferences[0] != refusal {

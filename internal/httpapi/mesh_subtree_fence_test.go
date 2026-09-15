@@ -235,7 +235,7 @@ func TestMeshSubtree_LimitsAreTheSubtreesOwn(t *testing.T) {
 			}},
 			{ID: "row", Children: []geometry.Child{{ID: "rivet", Ref: "rivet", Pattern: line(512)}}},
 		}}
-	if doc.ViewportRefusal() == "" || doc.DrawRefusal() == "" {
+	if doc.ViewportRefusal() == "" || doc.BuildRefusal() == "" {
 		t.Fatal("the fixture no longer places more than both ceilings")
 	}
 
@@ -257,7 +257,7 @@ func TestMeshSubtree_LimitsAreTheSubtreesOwn(t *testing.T) {
 	if s, _ := subtreeSource(true, geometry.MaxBuiltParts()); s != sourceKernel {
 		t.Errorf("a subtree of exactly %d parts is not built by the kernel", geometry.MaxBuiltParts())
 	}
-	if s, note := subtreeSource(true, geometry.MaxBuiltParts()+1); s != sourceGo || !strings.Contains(note, "4096") {
+	if s, note := subtreeSource(true, geometry.MaxBuiltParts()+1); s != sourceGo || !strings.Contains(note, "8192") {
 		t.Errorf("a subtree one past the kernel's ceiling is sent to it (%s: %s)", s, note)
 	}
 	if s, note := subtreeSource(false, 3); s != sourceGo || !strings.Contains(note, "no CAD kernel") {

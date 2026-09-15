@@ -495,8 +495,14 @@ func (k *Kernel) build(ctx context.Context, doc geometry.Document, unit geometry
 	// kernel had never been sent, and was dropped from every export.
 	// docs/bugfix/2026-09-13-features-on-repeated-parts-were-never-applied.md
 	// A design too large to build is refused as an error, not built as nothing
-	// (geometry/limits.go, Phase 3 stage S0).
-	if refusal := doc.DrawRefusal(); refusal != "" {
+	// (geometry/limits.go, Phase 3 stage S0). A view is built to the kernel's own
+	// measured ceiling (maxBuiltParts); a file, a mass report or any other build to the
+	// tighter one, which nobody has measured past 4096.
+	refusal := doc.DrawRefusal()
+	if format == "mesh" && !properties {
+		refusal = doc.BuildRefusal()
+	}
+	if refusal != "" {
 		return nil, errs.New(op, errs.CodeValidationFailed).WithDetail("%s", refusal)
 	}
 	solids, operations, featureProblems, inferred := geometry.SolidsAndOperations(doc, unit)

@@ -2103,6 +2103,62 @@ drill "a process that dies mid-build is not retried" internal/domain/cad/cad.go 
   's = s.replace("\t\tres, err = s.roundTrip(ctx, req)\n\t}\n\tif err != nil {", "\t}\n\tif err != nil {", 1)' \
   ./internal/domain/cad 'TestKernel_AProcessThatDiesMidBuildIsStillRetriedOnce'
 
+echo
+echo "The kernel builds a view of 8192 parts, and nothing else past 4096"
+# Added 2026-09-15 (ceiling on Linux). forged in a container limited like its pod
+# (1 CPU, 1 GiB) built 8,192- and 8,315-part designs through the mesh endpoint in
+# 5.7-13.0 s, three runs each, with the 30 s kernel timeout; 16,556 took up to 21.5 s.
+# So a VIEW is built to 8192 and a STEP export, mass report, Go mesh and mesh file stay
+# at 4096. The cad fence runs against cadtest's fake process; the httpapi ones need node.
+# docs/spikes/2026-09-15-ceiling-on-linux
+drill "the kernel's view ceiling is back at 4096" internal/domain/geometry/limits.go \
+  's = s.replace("const maxBuiltParts = 8192", "const maxBuiltParts = 4096", 1)' \
+  ./internal/domain/geometry 'TestLimits_TheKernelBuildsAViewOf8192PartsAndNothingElsePast4096'
+
+drill "the view ceiling is raised past what was measured" internal/domain/geometry/limits.go \
+  's = s.replace("const maxBuiltParts = 8192", "const maxBuiltParts = 16384", 1)' \
+  ./internal/domain/geometry 'TestLimits_TheKernelBuildsAViewOf8192PartsAndNothingElsePast4096'
+
+drill "every kernel build is allowed the view's ceiling" internal/domain/cad/cad.go \
+  's = s.replace("\tif format == \"mesh\" && !properties {", "\tif true {", 1)' \
+  ./internal/domain/cad 'TestKernel_BuildsAViewOf8192PartsAndRefusesEveryOtherBuildPast4096'
+
+drill "a build that is not a STEP export is allowed the view's ceiling" internal/domain/cad/cad.go \
+  's = s.replace("\tif format == \"mesh\" && !properties {", "\tif format != \"step\" {", 1)' \
+  ./internal/domain/cad 'TestKernel_BuildsAViewOf8192PartsAndRefusesEveryOtherBuildPast4096'
+
+drill "a view is refused at the tighter ceiling" internal/domain/cad/cad.go \
+  's = s.replace("\t\trefusal = doc.BuildRefusal()", "\t\trefusal = doc.DrawRefusal()", 1)' \
+  ./internal/domain/cad 'TestKernel_BuildsAViewOf8192PartsAndRefusesEveryOtherBuildPast4096'
+
+drill "the kernel request is cut at the tighter ceiling" internal/domain/geometry/solid.go \
+  's = s.replace("\tif refusal := d.BuildRefusal(); refusal != \"\" {", "\tif refusal := d.DrawRefusal(); refusal != \"\" {", 1)' \
+  ./internal/domain/geometry 'TestLimits_TheKernelBuildsAViewOf8192PartsAndNothingElsePast4096'
+
+drill "the Go mesh is built to the view's ceiling" internal/domain/geometry/mesh.go \
+  's = s.replace("\tif refusal := doc.DrawRefusal(); refusal != \"\" {", "\tif refusal := doc.BuildRefusal(); refusal != \"\" {", 1)' \
+  ./internal/domain/geometry 'TestLimits_TheKernelBuildsAViewOf8192PartsAndNothingElsePast4096'
+
+drill "a mesh file is exported to the view's ceiling" internal/domain/geometry/export.go \
+  's = s.replace("\tif refusal := v.Document.DrawRefusal(); refusal != \"\" {", "\tif refusal := v.Document.BuildRefusal(); refusal != \"\" {", 1)' \
+  ./internal/domain/geometry 'TestLimits_TheKernelBuildsAViewOf8192PartsAndNothingElsePast4096'
+
+drill "the browser loads a design in pieces that the kernel builds whole" internal/httpapi/assets/forge3d.js \
+  's = s.replace("var LAZY_OCCURRENCES = 8192;", "var LAZY_OCCURRENCES = 4096;", 1)' \
+  ./internal/httpapi 'TestRendererLoadsLazilyExactlyPastTheKernelsViewCeiling'
+
+drill "the browser asks for a whole mesh the kernel refuses" internal/httpapi/assets/forge3d.js \
+  's = s.replace("var LAZY_OCCURRENCES = 8192;", "var LAZY_OCCURRENCES = 16384;", 1)' \
+  ./internal/httpapi 'TestRendererLoadsLazilyExactlyPastTheKernelsViewCeiling'
+
+drill "a subtree past the view ceiling is sent to the kernel" internal/httpapi/geometry_subtree.go \
+  's = s.replace("\tcase parts > geometry.MaxBuiltParts():", "\tcase parts > 2*geometry.MaxBuiltParts():", 1)' \
+  ./internal/httpapi 'TestMeshSubtree_LimitsAreTheSubtreesOwn'
+
+drill "the exported ceiling is still the old one" internal/domain/geometry/subtree.go \
+  's = s.replace("func MaxBuiltParts() int { return maxBuiltParts }", "func MaxBuiltParts() int { return maxDrawnParts }", 1)' \
+  ./internal/httpapi 'TestRendererLoadsLazilyExactlyPastTheKernelsViewCeiling|TestMeshSubtree_LimitsAreTheSubtreesOwn'
+
 if [ "$MODE" = "list" ]; then
   exit 0
 fi

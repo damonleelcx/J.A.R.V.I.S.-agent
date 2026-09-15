@@ -45,9 +45,10 @@ const (
 	DefaultMaxOccurrences         = 100_000
 )
 
-// maxDrawnParts is how many parts FORGE BUILDS at once: the kernel request, the Go
-// mesh and every export. The name is from before Phase 6, when it bounded the
-// viewport too; maxViewportParts is the viewport's own.
+// maxDrawnParts is how many parts FORGE BUILDS at once for everything but a view: a
+// STEP export, mass properties, the Go mesh and every Go mesh export. The name is from
+// before Phase 6, when it bounded the viewport too; maxViewportParts is the viewport's
+// own, and maxBuiltParts the kernel's for a view.
 //
 // ‼️ This is a PRE-INSTANCING ceiling, not a statement of what a design can
 // describe (it bounded the tree itself until S0). K1 (one build per definition) has
@@ -55,6 +56,20 @@ const (
 // (26 s at 30k in docs/spikes/2026-09-15-mesh-per-definition), never through
 // BuildDocument, so it stays until it is.
 const maxDrawnParts = 4096
+
+// maxBuiltParts is how many parts the CAD kernel builds at once for a VIEW: the whole
+// design's mesh, a subtree's, and a script check (cad.Kernel.BuildMesh). Nothing else.
+//
+// ‼️ Raised from 4096 on a measured number, for this path only: forged in a Linux
+// container limited like its pod (1 CPU, 1 GiB, deploy/k8s/30-forged.yaml), through GET
+// /v1/geometry/{id}/mesh with the shipped 30 s kernel timeout, built an 8,315-part car in
+// 12.1-13.0 s and an 8,192-part barrel in 5.7-8.8 s, three runs each, the container
+// peaking at 372 MiB (docs/spikes/2026-09-15-ceiling-on-linux). Not 16,384: the car took
+// 17.3-21.5 s there, less than twice under the timeout. amd64, not the arm64 node. STEP
+// export and mass properties were not measured past 4096 and keep maxDrawnParts.
+// forge3d.js holds the same number as LAZY_OCCURRENCES, and
+// TestRendererLoadsLazilyExactlyPastTheKernelsViewCeiling holds the two together.
+const maxBuiltParts = 8192
 
 // maxViewportParts is how many parts the browser draws at once.
 //
@@ -125,6 +140,18 @@ func (d Document) DrawRefusal() string {
 	return fmt.Sprintf("This design places more than %d parts, which is the most FORGE builds or exports "+
 		"at once until building at that size has been measured. It is stored as it is, and the viewport "+
 		"can still show it if it places no more than %d; nothing was built.", maxDrawnParts, maxViewportParts)
+}
+
+// BuildRefusal is why the CAD kernel does not build this design for a view
+// (cad.Kernel.BuildMesh), or "" when it does. Every other build and export answers
+// DrawRefusal, which is tighter: past maxDrawnParts only a view is built.
+func (d Document) BuildRefusal() string {
+	if occurrences(d, maxBuiltParts) <= maxBuiltParts {
+		return ""
+	}
+	return fmt.Sprintf("This design places more than %d parts, which is the most the FORGE CAD kernel builds "+
+		"at once for a view. It is stored as it is, and the viewport can still show it if it places no more "+
+		"than %d; nothing was built.", maxBuiltParts, maxViewportParts)
 }
 
 // ViewportRefusal is why the browser does not draw this design, or "" when it does.
