@@ -1,0 +1,4 @@
+14:10:44.207 ctrlrun AllocConsole=0 (Access is denied.)
+14:10:44.229 ctrlrun started pid=16468
+14:12:31.230 ctrlrun GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, 16468)=1 (The operation completed successfully.)
+14:12:31.240 ctrlrun child exited code=0 err=<nil> 10ms after CTRL_BREAK

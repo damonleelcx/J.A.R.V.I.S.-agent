@@ -1164,7 +1164,7 @@ drill "a goal's save names no task" internal/domain/geometry/service.go \
   ./internal/agent 'TestBuildGoal_AStepKeptInsideAGoalWritesAChainedArtifactEvent'
 
 drill "a finished task releases nothing" internal/agent/worker.go \
-  's = s.replace("\t\tw.releaseWaiting(ctx, goalID)\n", "", 1)' \
+  's = s.replace("\tw.releaseWaiting(book, goalID)\n", "", 1)' \
   ./internal/agent 'TestBuildGoal_EveryModelCallIsChargedToTheGoal'
 
 drill "the idle poll releases nothing" internal/agent/worker.go \
@@ -1815,6 +1815,18 @@ drill "a replan with no body is refused" internal/httpapi/goals_start.go \
 drill "the workbench never asks for a build" internal/httpapi/assets/workbench.js \
   's = s.replace("      build: !!state.planAsBuild\n", "      build: false\n", 1)' \
   ./internal/httpapi 'TestWorkbench_StartThisSendsWhetherToPlanABuild'
+
+echo
+echo "A stopping worker's bookkeeping"
+# Added 2026-09-15, exercising a live build goal. A graceful stop cancels the worker's
+# context mid-task; the task is handed back on a context of its own, and what the task's
+# end sets moving (releasing waiting tasks, settling the goal) must be too, or each fails
+# on the cancelled context and is logged as the database being unavailable. See
+# docs/bugfix/2026-09-15-a-stopping-worker-reported-its-own-stop-as-a-database-outage.md.
+# Needs FORGE_TEST_DATABASE_URL.
+drill "a stopping worker's bookkeeping runs on the cancelled context" internal/agent/worker.go \
+  's = s.replace("context.WithTimeout(context.WithoutCancel(ctx), afterTaskTimeout)", "context.WithTimeout(ctx, afterTaskTimeout)", 1)' \
+  ./internal/agent 'TestWorker_AStoppingWorkerStillReleasesWhatItsLastTaskLeftWaiting|TestBuildGoal_AStoppedWorkerDoesNotReportTheDatabaseUnavailable'
 
 if [ "$MODE" = "list" ]; then
   exit 0

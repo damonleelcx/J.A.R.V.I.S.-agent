@@ -157,17 +157,44 @@ func (w *Worker) Run(ctx context.Context) error {
 
 		goalID := task.GoalID
 		w.runTask(ctx, task)
-		// ‼️ A finished task releases the tasks waiting on it, before the next
-		// claim. Nothing did: a plan's first layer was made ready and every task
-		// after it stayed pending forever. On the idle poll alone, a busy worker
-		// would never get round to it.
-		// docs/bugfix/2026-09-15-a-finished-task-never-released-the-tasks-waiting-on-it.md
-		w.releaseWaiting(ctx, goalID)
-		// A task settling is the only moment a goal can become terminal, and the
-		// worker is already here holding that fact. A separate sweeper would be a
-		// second authority for goal status.
-		w.settleGoal(ctx, goalID)
+		w.afterTask(ctx, goalID)
 	}
+}
+
+// afterTaskTimeout bounds what a task's end sets moving when the worker is stopping,
+// so a database that really has gone away cannot hold a stopping worker past the 30 s
+// forge-worker gives its loops to return.
+const afterTaskTimeout = 10 * time.Second
+
+// afterTask is what the end of a task sets moving, whether the task finished or was
+// handed back because the worker is stopping.
+//
+// # Why on a context of its own
+//
+// ‼️ A stop cancels ctx while a task runs. The task itself is handed back on a
+// context that outlives the stop (runBuildStep releases it with WithoutCancel), and
+// then both calls below used to run on the cancelled ctx: each failed at once and was
+// logged as DATABASE_UNAVAILABLE, so every graceful stop in the middle of a task told
+// whoever read the log that the database was down, and a task that finished in the
+// instant the stop arrived left the tasks waiting on it pending until some worker's
+// idle poll found them. Found stopping a live forge-worker with a console Ctrl-Break.
+// docs/bugfix/2026-09-15-a-stopping-worker-reported-its-own-stop-as-a-database-outage.md
+//
+// Bounded rather than unbounded: these are two short statements, and the bound is what
+// keeps "outlives the stop" from becoming "outlives the process".
+func (w *Worker) afterTask(ctx context.Context, goalID string) {
+	book, cancel := context.WithTimeout(context.WithoutCancel(ctx), afterTaskTimeout)
+	defer cancel()
+	// ‼️ A finished task releases the tasks waiting on it, before the next
+	// claim. Nothing did: a plan's first layer was made ready and every task
+	// after it stayed pending forever. On the idle poll alone, a busy worker
+	// would never get round to it.
+	// docs/bugfix/2026-09-15-a-finished-task-never-released-the-tasks-waiting-on-it.md
+	w.releaseWaiting(book, goalID)
+	// A task settling is the only moment a goal can become terminal, and the
+	// worker is already here holding that fact. A separate sweeper would be a
+	// second authority for goal status.
+	w.settleGoal(book, goalID)
 }
 
 // sleep waits, returning false if the context was cancelled.

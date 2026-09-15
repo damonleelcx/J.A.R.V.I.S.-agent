@@ -1,0 +1,4 @@
+time|what|tokens|source
+13:59|probe.py qwen3.7-plus streamed json hello|82|provider usage
+13:58|workbench turn 1 (failed, EXTERNAL_PROTOCOL_ERROR)|~11300 (estimate: same prompt as turn 2)|not recorded by forged
+14:01|workbench turn 2 (proposal)|11275|provider usage via rec-proxy; forged turn tokens=11275
