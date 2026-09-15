@@ -124,12 +124,24 @@ func (c *OpenAICompatible) Transcribe(ctx context.Context, audio []byte, mimeTyp
 		return nil, errs.Wrap(op, errs.CodeSerializationFail, err)
 	}
 
+	// The transcriber's own endpoint and key when FORGE_LLM_TRANSCRIBER_BASE_URL
+	// is set, otherwise the chat endpoint's — resolved once at construction by
+	// config.LLMConfig.TranscriberEndpoint. Same http.Client, so the same
+	// FORGE_LLM_REQUEST_TIMEOUT, and still no retry loop: a room re-segments
+	// and a person holds the button again, and either is cheaper than a stale
+	// transcript arriving late.
+	//
+	// ‼️ c.baseURL and c.apiKey must not appear in this function. The production
+	// chat endpoint serves no speech model, and its key must never reach the host
+	// that does.
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		c.baseURL+"/chat/completions", bytes.NewReader(body))
+		c.transcriberURL+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
 		return nil, errs.Wrap(op, errs.CodeInternal, err)
 	}
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	if c.transcriberKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.transcriberKey)
+	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.client.Do(req)
@@ -180,8 +192,8 @@ func (c *OpenAICompatible) Transcribe(ctx context.Context, audio []byte, mimeTyp
 			code = errs.CodeConnectorUnavailable
 		}
 		return nil, errs.New(op, code).
-			WithDetail("the transcription provider returned %d: %s%s",
-				resp.StatusCode, truncate(raw.String(), 300),
+			WithDetail("the transcription provider at %s returned %d: %s%s",
+				c.transcriberURL, resp.StatusCode, truncate(raw.String(), 300),
 				c.whatIsServed(ctx, resp.StatusCode, RoleTranscriber))
 	}
 	if err := json.Unmarshal(raw.Bytes(), &parsed); err != nil {

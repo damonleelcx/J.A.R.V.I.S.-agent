@@ -142,7 +142,8 @@ func (h *ConverseHandlers) Transcribe(w http.ResponseWriter, r *http.Request) {
 		// the browser's recogniser, the second is worth another try.
 		WriteError(w, r, h.deps.Log, errs.New(op, errs.CodeConnectorUnavailable).
 			WithDetail("this deployment has no speech to text. Set FORGE_LLM_TRANSCRIBER_MODEL to a "+
-				"transcription model the endpoint at FORGE_LLM_BASE_URL serves; until then the "+
+				"transcription model the endpoint serves — FORGE_LLM_TRANSCRIBER_BASE_URL with "+
+				"FORGE_LLM_TRANSCRIBER_API_KEY when set, otherwise FORGE_LLM_BASE_URL; until then the "+
 				"microphone uses the browser's own recognition where there is one, and typing always works"))
 		return
 	}
