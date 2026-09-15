@@ -10,6 +10,15 @@ import (
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/logx"
 )
 
+func block() geometry.Document {
+	return geometry.Document{
+		Name: "block", Units: "mm",
+		Parts: []geometry.Part{{ID: "b", Shape: "box",
+			Size:     map[string]float64{"width": 10, "height": 10, "depth": 10},
+			Position: []float64{0, 0, 0}, Rotation: []float64{0, 0, 0}}},
+	}
+}
+
 // The retry path, exercised by an actual crash.
 //
 // # Why this test is inside the package
@@ -31,35 +40,81 @@ func TestRetryAfterTheProcessDies(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
-	doc := geometry.Document{
-		Name: "block", Units: "mm",
-		Parts: []geometry.Part{{ID: "b", Shape: "box",
-			Size:     map[string]float64{"width": 10, "height": 10, "depth": 10},
-			Position: []float64{0, 0, 0}, Rotation: []float64{0, 0, 0}}},
-	}
-	if _, err := k.BuildDocument(ctx, doc, geometry.Millimetre, ""); err != nil {
+	if _, err := k.BuildDocument(ctx, block(), geometry.Millimetre, ""); err != nil {
 		t.Fatal(err)
 	}
 
 	// Kill it the way an OOM or a stray pkill would: the process goes, and the
 	// kernel is not told. started stays true and the pipes stay open handles to
 	// nothing.
-	k.mu.Lock()
-	if k.cmd == nil || k.cmd.Process == nil {
-		k.mu.Unlock()
+	p := k.all[0].process()
+	if p == nil {
 		t.Fatal("the kernel has no process to kill; it was not kept warm")
 	}
-	_ = k.cmd.Process.Kill()
-	_, _ = k.cmd.Process.Wait()
-	k.mu.Unlock()
+	_ = p.Kill()
+	_, _ = p.Wait()
 	time.Sleep(50 * time.Millisecond)
 
-	got, err := k.BuildDocument(ctx, doc, geometry.Millimetre, "")
+	got, err := k.BuildDocument(ctx, block(), geometry.Millimetre, "")
 	if err != nil {
 		t.Fatalf("the kernel did not recover from a killed process: %v", err)
 	}
 	if got.Parts != 1 {
 		t.Errorf("built %d parts after the crash, want 1", got.Parts)
+	}
+}
+
+// A killed process in a pool is replaced in ITS slot, whichever slot that is.
+// Phase 4, stage K3's acceptance: "a killed sidecar is replaced".
+//
+// Both processes are started by hand and put back in slot order. The pool is a
+// FIFO channel, so the two builds after the kill take slot 0 and then slot 1:
+// each one meets a dead process and must replace it, rather than the first
+// replacement being reused twice while slot 1 stays dead.
+func TestRetryAfterEveryProcessInThePoolDies(t *testing.T) {
+	python := envCADPython(t)
+	k := New(python, logx.Discard()).WithPool(2)
+	defer k.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
+	defer cancel()
+
+	var held []*sidecar
+	for i := 0; i < 2; i++ {
+		s, err := k.acquire(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.start(ctx); err != nil {
+			t.Fatal(err)
+		}
+		held = append(held, s)
+	}
+	dead := map[*sidecar]int{}
+	for _, s := range held {
+		p := s.process()
+		dead[s] = p.Pid
+		_ = p.Kill()
+		_, _ = p.Wait()
+	}
+	for _, s := range held {
+		k.release(s)
+	}
+	time.Sleep(50 * time.Millisecond)
+
+	for i := 0; i < 2; i++ {
+		got, err := k.BuildDocument(ctx, block(), geometry.Millimetre, "")
+		if err != nil {
+			t.Fatalf("build %d after every process died: %v", i+1, err)
+		}
+		if got.Parts != 1 {
+			t.Errorf("build %d: %d parts, want 1", i+1, got.Parts)
+		}
+	}
+	for _, s := range held {
+		if p := s.process(); p == nil || p.Pid == dead[s] {
+			t.Errorf("slot %d still holds the process that was killed", s.slot)
+		}
 	}
 }
 

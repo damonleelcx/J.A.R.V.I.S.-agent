@@ -35,16 +35,9 @@
 package cad
 
 import (
-	"bufio"
 	"context"
 	"encoding/base64"
-	"encoding/json"
-	"errors"
 	"fmt"
-	"io"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -73,12 +66,13 @@ const buildTimeout = 30 * time.Second
 // start", which is the distinction the caller actually needs.
 const startTimeout = 60 * time.Second
 
-// Kernel is a build123d process, started on demand and kept warm.
+// Kernel is a pool of build123d processes, each started on demand and kept warm.
 //
-// Requests are serialised: it is one process with one stdin, and a second writer
-// would interleave two JSON documents into one line. Serialising is honest about
-// what the resource is — a pool is a later problem and would be a wrong answer to
-// a question nobody has asked yet.
+// Each process still serves one request at a time: it has one stdin, and a second
+// writer would interleave two JSON documents into one line. What the pool changes
+// is that a build waits for A process rather than for THE process, so one slow
+// assembly no longer holds up every other build in the deployment. One process is
+// the default; see WithPool and sidecar_process.go.
 type Kernel struct {
 	python string
 	log    *logx.Logger
@@ -88,12 +82,12 @@ type Kernel struct {
 	// does and does not promise.
 	scripts bool
 
-	mu      sync.Mutex
-	cmd     *exec.Cmd
-	stdin   io.WriteCloser
-	stdout  *bufio.Reader
-	script  string
-	started bool
+	// size is how many processes serve builds at once. The pool is made on
+	// first use, so a kernel nobody builds with owns nothing.
+	size  int
+	once  sync.Once
+	slots chan *sidecar
+	all   []*sidecar
 }
 
 // New returns a kernel that runs through the given Python interpreter.
@@ -102,7 +96,25 @@ type Kernel struct {
 // not an error. Nothing starts here; the process is started on the first build,
 // so a deployment that never exports a parametric file never pays for one.
 func New(python string, log *logx.Logger) *Kernel {
-	return &Kernel{python: strings.TrimSpace(python), log: log}
+	return &Kernel{python: strings.TrimSpace(python), log: log, size: 1}
+}
+
+// WithPool sets how many kernel processes serve builds at once. Fewer than one is
+// one. Set it before the first build: the pool is made once and never resized.
+//
+// # Why one is the default (Phase 4, stage K3)
+//
+// Every process holds its own build123d and OpenCASCADE in memory, and nothing
+// caps a process below its pod's limit, so a process too many is an OOM that
+// takes the whole container with it. forged shares a 1 GiB limit with the API and
+// the audio server. A second process there is a number to measure first, not a
+// default to guess.
+func (k *Kernel) WithPool(n int) *Kernel {
+	if n < 1 {
+		n = 1
+	}
+	k.size = n
+	return k
 }
 
 // WithScripts turns on running model-written build123d.
@@ -440,19 +452,26 @@ func (k *Kernel) BuildDocument(ctx context.Context, doc geometry.Document, unit 
 		inferred = append(inferred, fmt.Sprintf("%s %s.", p.Name, p.Detail))
 	}
 
-	k.mu.Lock()
-	defer k.mu.Unlock()
+	// A build waits HERE for a free process, not inside one, so a caller that gives
+	// up stops waiting instead of queueing behind a lock that ignores it.
+	s, err := k.acquire(ctx)
+	if err != nil {
+		return nil, errs.Wrap(op, errs.CodeConnectorUnavailable, err).
+			WithDetail("no CAD kernel process became free before the request ended")
+	}
+	defer k.release(s)
 
 	req := request{Solids: solids, Operations: operations, Format: format}
-	res, err := k.roundTrip(ctx, req)
+	res, err := s.roundTrip(ctx, req)
 	if err != nil {
 		// One retry, and exactly one. The overwhelmingly likely cause of an I/O
 		// failure is a process that died between requests — a machine asleep, an
 		// OOM, somebody's pkill — and restarting answers that. Retrying twice
 		// would turn a kernel that crashes on a particular document into a loop.
-		k.stopLocked()
-		k.log.Warn(ctx, logx.EventCADRestarted, "detail", err.Error())
-		res, err = k.roundTrip(ctx, req)
+		// The retry replaces THIS slot's process; the others are untouched.
+		s.stop()
+		k.log.Warn(ctx, logx.EventCADRestarted, "slot", s.slot, "detail", err.Error())
+		res, err = s.roundTrip(ctx, req)
 		if err != nil {
 			return nil, errs.Wrap(op, errs.CodeConnectorUnavailable, err).
 				WithDetail("the CAD kernel did not answer, and restarting it did not help")
@@ -514,160 +533,4 @@ func (k *Kernel) BuildDocument(ctx context.Context, doc geometry.Document, unit 
 // two claims about one design.
 func (k *Kernel) BuildMesh(ctx context.Context, doc geometry.Document, unit geometry.Unit) (*Build, error) {
 	return k.BuildDocument(ctx, doc, unit, "mesh")
-}
-
-// roundTrip sends one request and reads one reply. Caller holds the mutex.
-func (k *Kernel) roundTrip(ctx context.Context, req request) (*reply, error) {
-	if err := k.startLocked(ctx); err != nil {
-		return nil, err
-	}
-	body, err := json.Marshal(req)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := k.stdin.Write(append(body, '\n')); err != nil {
-		return nil, fmt.Errorf("writing to the kernel: %w", err)
-	}
-
-	// The deadline is enforced by a goroutine that kills the process, because a
-	// blocking Read on a pipe does not observe a context. Killing is the only
-	// thing that ends it, and it is also the right outcome: a kernel that has
-	// not answered in thirty seconds is not going to.
-	done := make(chan struct{})
-	defer close(done)
-	go func() {
-		timer := time.NewTimer(buildTimeout)
-		defer timer.Stop()
-		select {
-		case <-done:
-		case <-ctx.Done():
-			k.killLocked()
-		case <-timer.C:
-			k.killLocked()
-		}
-	}()
-
-	line, err := k.stdout.ReadBytes('\n')
-	if err != nil {
-		return nil, fmt.Errorf("reading from the kernel: %w", err)
-	}
-	var res reply
-	if err := json.Unmarshal(line, &res); err != nil {
-		return nil, fmt.Errorf("the kernel wrote something that is not a reply: %w", err)
-	}
-	return &res, nil
-}
-
-func (k *Kernel) startLocked(ctx context.Context) error {
-	if k.started {
-		return nil
-	}
-	// The sidecar is embedded and written out, so a deployment is one binary and
-	// the script cannot drift from the Go that speaks to it.
-	dir, err := os.MkdirTemp("", "forge-cad-")
-	if err != nil {
-		return err
-	}
-	script := filepath.Join(dir, "sidecar.py")
-	if err := os.WriteFile(script, sidecarSource, 0o600); err != nil {
-		return err
-	}
-
-	cmd := exec.Command(k.python, script)
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		return err
-	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return err
-	}
-	// stderr is drained rather than inherited: a Python warning on a shared
-	// stderr interleaves with this process's own logs, and a full pipe nobody
-	// reads blocks the child forever.
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return err
-	}
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("starting the CAD kernel with %q: %w", k.python, err)
-	}
-	go func() { _, _ = io.Copy(io.Discard, stderr) }()
-
-	k.cmd, k.stdin, k.stdout, k.script = cmd, stdin, bufio.NewReaderSize(stdout, 1<<20), dir
-
-	// The ready banner is written AFTER the import, so waiting for it is what
-	// distinguishes "still starting" from "will never start".
-	type banner struct {
-		res *reply
-		err error
-	}
-	ch := make(chan banner, 1)
-	go func() {
-		line, err := k.stdout.ReadBytes('\n')
-		if err != nil {
-			ch <- banner{err: err}
-			return
-		}
-		var r reply
-		if err := json.Unmarshal(line, &r); err != nil {
-			ch <- banner{err: fmt.Errorf("the kernel's first line was not a banner: %w", err)}
-			return
-		}
-		ch <- banner{res: &r}
-	}()
-
-	select {
-	case b := <-ch:
-		if b.err != nil || b.res == nil || !b.res.Ready {
-			k.stopLocked()
-			detail := "the kernel exited while starting"
-			if b.err != nil {
-				detail = b.err.Error()
-			} else if b.res != nil && b.res.Error != "" {
-				detail = b.res.Error
-			}
-			return errors.New(detail)
-		}
-	case <-time.After(startTimeout):
-		k.stopLocked()
-		return fmt.Errorf("the CAD kernel did not start within %s", startTimeout)
-	case <-ctx.Done():
-		k.stopLocked()
-		return ctx.Err()
-	}
-
-	k.started = true
-	k.log.Info(ctx, logx.EventCADStarted, "python", k.python)
-	return nil
-}
-
-func (k *Kernel) killLocked() {
-	if k.cmd != nil && k.cmd.Process != nil {
-		_ = k.cmd.Process.Kill()
-	}
-}
-
-func (k *Kernel) stopLocked() {
-	k.killLocked()
-	if k.cmd != nil {
-		_ = k.cmd.Wait()
-	}
-	if k.stdin != nil {
-		_ = k.stdin.Close()
-	}
-	if k.script != "" {
-		_ = os.RemoveAll(k.script)
-	}
-	k.cmd, k.stdin, k.stdout, k.script, k.started = nil, nil, nil, "", false
-}
-
-// Close stops the kernel. Safe on a kernel that was never started.
-func (k *Kernel) Close() {
-	if k == nil {
-		return
-	}
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	k.stopLocked()
 }

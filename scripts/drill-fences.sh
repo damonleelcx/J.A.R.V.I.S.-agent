@@ -87,6 +87,7 @@ FILES=(
   internal/httpapi/assets/forge3d.js
   internal/domain/cad/sidecar.py
   internal/domain/cad/cad.go
+  internal/domain/cad/sidecar_process.go
   internal/llm/deliberation.go
   internal/llm/stream.go
   internal/llm/openai_compatible.go
@@ -989,6 +990,22 @@ drill "the budget is spent in sweep order" internal/domain/cad/sidecar.py \
 drill "the build does not say how many boxes it compared" internal/domain/cad/cad.go \
   's = s.replace(" InterferenceBoxTests: res.InterferenceBoxTests,\n", "\n", 1)' \
   ./internal/domain/cad 'TestKernel_InterferenceBoxTestsGrowLinearly'
+
+echo
+echo "A pool of kernel processes builds side by side"
+# Added 2026-09-15 (Phase 4, stage K3). A Kernel is FORGE_CAD_POOL processes behind a
+# FIFO channel; a build takes a free one, retries once on that slot, and gives it back.
+drill "the pool is always one process" internal/domain/cad/sidecar_process.go \
+  's = s.replace("\t\tk.slots = make(chan *sidecar, k.size)\n\t\tfor i := 0; i < k.size; i++ {", "\t\tk.slots = make(chan *sidecar, 1)\n\t\tfor i := 0; i < 1; i++ {", 1)' \
+  ./internal/domain/cad 'TestKernel_ConcurrentBuildsDoNotSerialise'
+
+drill "the retry writes to the dead process again" internal/domain/cad/cad.go \
+  's = s.replace("\t\ts.stop()\n\t\tk.log.Warn(ctx, logx.EventCADRestarted", "\t\tk.log.Warn(ctx, logx.EventCADRestarted", 1)' \
+  ./internal/domain/cad 'TestRetryAfterTheProcessDies|TestRetryAfterEveryProcessInThePoolDies'
+
+drill "configuration accepts a pool of no processes" internal/platform/config/config.go \
+  's = s.replace("\tif cfg.CAD.Pool <= 0 {\n", "\tif false {\n", 1)' \
+  ./internal/platform/config 'TestCADPoolMustBePositive'
 
 echo
 echo "Islands"
