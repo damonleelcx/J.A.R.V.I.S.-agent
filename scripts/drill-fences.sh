@@ -135,6 +135,7 @@ FILES=(
   internal/domain/geometry/subtree.go
   internal/httpapi/geometry_subtree.go
   internal/platform/errs/code.go
+  internal/agent/car_tree_measure_test.go
 )
 
 BACKUP=""
@@ -977,6 +978,27 @@ drill "the build does not say where its time went" internal/domain/cad/sidecar.p
   ./internal/domain/cad 'TestKernel_ExportingManyOccurrencesGrowsLinearly'
 
 echo
+echo "A STEP export stays linear past the build ceiling"
+# Added 2026-09-15 (STEP export scaling). The writer's validation-property walk visits
+# an assembly's children by index, each lookup walking the child list; it is off
+# (_STEP_WRITE_PROPS), and the file past 4,096 occurrences is the one it wrote.
+drill "the writer walks every label for validation properties again" internal/domain/cad/sidecar.py \
+  "s = s.replace('_STEP_WRITE_PROPS = False\n', '_STEP_WRITE_PROPS = True\n', 1)" \
+  ./internal/domain/cad 'TestKernel_ExportTimeGrowsLinearlyPastTheBuildCeiling'
+
+drill "the props-mode setting never reaches the writer" internal/domain/cad/sidecar.py \
+  "s = s.replace('    writer.SetPropsMode(_STEP_WRITE_PROPS)\n', '', 1)" \
+  ./internal/domain/cad 'TestKernel_ExportTimeGrowsLinearlyPastTheBuildCeiling'
+
+drill "the fixed writer stops writing names the walking writer wrote" internal/domain/cad/sidecar.py \
+  "s = s.replace('    writer.SetNameMode(True)\n', '    writer.SetNameMode(_STEP_WRITE_PROPS)\n', 1)" \
+  ./internal/domain/cad 'TestKernel_ALargeExportIsTheFileThePropertyWalkWrote'
+
+drill "a large export writes its occurrences without their placement" internal/domain/cad/sidecar.py \
+  "s = s.replace('tool.AddComponent(root, label, solid.wrapped.Location())', 'tool.AddComponent(root, label, TopLoc_Location())', 1)" \
+  ./internal/domain/cad 'TestKernel_ALargeExportIsTheFileThePropertyWalkWrote'
+
+echo
 echo "The interference broad phase tests only boxes that could overlap"
 # Added 2026-09-15 (Phase 4, stage K2b) as a one-axis sweep. Since Phase 5, stage V1
 # the broad phase is a grid over all three axes, so the sweep's own drills (a box
@@ -1000,12 +1022,15 @@ drill "every box lands in one cell" internal/domain/cad/sidecar.py \
   "s = s.replace('    cell = max(longest[len(longest) // 2], 1e-6)\n', '    cell = 1e12\n', 1)" \
   ./internal/domain/cad 'TestKernel_APlaneOfPartsCostsAFewBoxTestsEach'
 
+# ‼️ The next two anchors moved on 2026-09-15 (large-box index): cell indices became
+# integers computed once, and the every-box loop for long boxes became passes between
+# groups of boxes with the same grid level on each axis.
 drill "a pair is tested where the earlier box starts, which the other may not reach" internal/domain/cad/sidecar.py \
-  "s = s.replace('if (_cell(max(boxes[a][0][0], boxes[b][0][0]), cell) != home[0]', 'if (_cell(min(boxes[a][0][0], boxes[b][0][0]), cell) != home[0]', 1)" \
+  "s = s.replace('if (max(qa[0], qb[0]) >> sx != home[0]', 'if (min(qa[0], qb[0]) >> sx != home[0]', 1)" \
   ./internal/domain/cad 'TestKernel_TheBroadPhaseFindsWhatEveryPairFinds'
 
 drill "a box too long for the grid is never tested" internal/domain/cad/sidecar.py \
-  "s = s.replace('    for a in large:\n', '    for a in []:\n', 1)" \
+  "s = s.replace('            filed, looking = groups[level_a], groups[level_b]\n', '            continue\n', 1)" \
   ./internal/domain/cad 'TestKernel_TheBroadPhaseFindsWhatEveryPairFinds'
 
 drill "every clash is measured again" internal/domain/cad/sidecar.py \
@@ -1023,6 +1048,54 @@ drill "the budget counts answers it did not pay for" internal/domain/cad/sidecar
 drill "the build does not say how many booleans it paid for" internal/domain/cad/cad.go \
   's = s.replace(" InterferenceBooleans: res.InterferenceBooleans,", "", 1)' \
   ./internal/domain/cad 'TestKernel_RepeatedClashesPayForOneBooleanEachPose'
+
+echo
+echo "The interference check's large boxes: a level per axis, and a clash slid along a box"
+# Added 2026-09-15 (large-box index). A box longer than four cells was tested against
+# every box, which is quadratic when the long parts grow with the model: an airframe
+# barrel's panels, frames and stringers made 16.2 billion tests at 1M occurrences. Each
+# box now has a grid level per axis, and two groups of boxes are tested in the grid of
+# their larger levels. A clash is reused along a box the other solid lies wholly inside,
+# and only then: a finite stringer is not the same at its ends.
+drill "a long box is tested against every box of another size again" internal/domain/cad/sidecar.py \
+  "s = s.replace('            sz = _GRID_LEVEL_SHIFT * max(level_a[2], level_b[2])\n', '            sz = _GRID_LEVEL_SHIFT * max(level_a[2], level_b[2])\n            if level_a != level_b:\n                sx = sy = sz = 64\n', 1)" \
+  ./internal/domain/cad 'TestKernel_BoxTestsGrowLinearlyWhenTheLongPartsGrowWithTheModel'
+
+drill "one level for all three axes, a cubic cell as long as the longest side" internal/domain/cad/sidecar.py \
+  "s = s.replace('        groups.setdefault(level, []).append(k)\n', '        groups.setdefault((max(level),) * 3, []).append(k)\n', 1)" \
+  ./internal/domain/cad 'TestKernel_BoxTestsGrowLinearlyWhenTheLongPartsGrowWithTheModel'
+
+drill "a pair from two groups is tested where it does not begin" internal/domain/cad/sidecar.py \
+  "s = s.replace('if (max(qa[0], qb[0]) >> sx != cx', 'if (min(qa[0], qb[0]) >> sx != cx', 1)" \
+  ./internal/domain/cad 'TestKernel_LongBoxesAreFoundAsEveryPairFindsThem'
+
+drill "a box is filed without the last cell it reaches" internal/domain/cad/sidecar.py \
+  "s = s.replace('            for cx in range(q[0] >> sx, (r[0] >> sx) + 1):\n', '            for cx in range(q[0] >> sx, r[0] >> sx):\n', 1)" \
+  ./internal/domain/cad 'TestKernel_LongBoxesAreFoundAsEveryPairFindsThem'
+
+drill "a clash is slid along a box it is not inside" internal/domain/cad/sidecar.py \
+  "s = s.replace('        if mid - reach >= _SLIDE_MARGIN - half[r] and mid + reach <= half[r] - _SLIDE_MARGIN:\n', '        if True:\n', 1)" \
+  ./internal/domain/cad 'TestKernel_PinsAlongARailPayForOneBooleanAndTheEndsAreMeasured'
+
+drill "containment is checked at one end of the box only" internal/domain/cad/sidecar.py \
+  "s = s.replace('        if mid - reach >= _SLIDE_MARGIN - half[r] and mid + reach <= half[r] - _SLIDE_MARGIN:\n', '        if mid - reach >= _SLIDE_MARGIN - half[r]:\n', 1)" \
+  ./internal/domain/cad 'TestKernel_PinsAlongARailPayForOneBooleanAndTheEndsAreMeasured'
+
+drill "a pin along a rail is measured at every pose again" internal/domain/cad/sidecar.py \
+  "s = s.replace('_INTERFERENCE_SLIDE = True\n', '_INTERFERENCE_SLIDE = False\n', 1)" \
+  ./internal/domain/cad 'TestKernel_PinsAlongARailPayForOneBooleanAndTheEndsAreMeasured'
+
+drill "a slide seen only from the other box is not carried" internal/domain/cad/sidecar.py \
+  "s = s.replace('    out = []\n    for v in axes:\n', '    out = []\n    for v in []:\n', 1)" \
+  ./internal/domain/cad 'TestKernel_PinsAlongARailPayForOneBooleanAndTheEndsAreMeasured'
+
+drill "a carried slide ignores a rotation that does not line the axes up" internal/domain/cad/sidecar.py \
+  "s = s.replace('            if (abs(pose[4 * w + v]) >= 1 - 1e-9\n                    and all(abs(pose[4 * o + v]) <= 1e-9 for o in range(3) if o != w)):\n', '            if w == v:\n', 1)" \
+  ./internal/domain/cad 'TestKernel_AReusedClashIsTheClashMeasuredAgain'
+
+drill "a clash is keyed in the frame that slides less" internal/domain/cad/sidecar.py \
+  "s = s.replace('        return forward if marked_f > marked_b else backward\n', '        return backward if marked_f > marked_b else forward\n', 1)" \
+  ./internal/domain/cad 'TestKernel_PinsAlongARailPayForOneBooleanAndTheEndsAreMeasured'
 
 echo
 echo "A check that covered part of the model says how much"
@@ -1102,6 +1175,28 @@ drill "a tree's parts go unnamed in the prompt" internal/agent/look.go \
 drill "the turn does not say how closely it looked" internal/agent/look.go \
   's = s.replace("\tif covered.Of > covered.Looked {", "\tif false {", 1)' \
   ./internal/agent 'TestLook_CapsSubAssemblyLooksAndSaysHowMany'
+
+echo
+echo "The live car is measured as a tree"
+# Added 2026-09-15 (Phase 2, stage A4). The live measurement counted len(doc.Parts),
+# so a car written as a tree measured as zero parts. It now counts definitions,
+# placed parts, occurrences and standard parts, tokens per design, and how much of
+# the car the interference check covered. These drills need no model and no key.
+drill "the car is counted by its top-level parts" internal/agent/car_tree_measure_test.go \
+  's = s.replace("\tc.Occurrences = len(d.Expanded().Parts)\n", "\tc.Occurrences = len(d.Parts)\n", 1)' \
+  ./internal/agent 'TestCarMeasure_CountsATreeByDefinitionAndByOccurrence'
+
+drill "a standard part is not counted" internal/agent/car_tree_measure_test.go \
+  's = s.replace("\t\tif p.Standard != \"\" {", "\t\tif false {", 1)' \
+  ./internal/agent 'TestCarMeasure_CountsATreeByDefinitionAndByOccurrence'
+
+drill "a tree's designs are its placed parts" internal/agent/car_tree_measure_test.go \
+  's = s.replace("\tif c.Definitions > 0 {\n\t\treturn c.Definitions", "\tif false {\n\t\treturn c.Definitions", 1)' \
+  ./internal/agent 'TestCarMeasure_CountsATreeByDefinitionAndByOccurrence'
+
+drill "a pair answered from a measured pose is not counted as checked" internal/agent/car_tree_measure_test.go \
+  's = s.replace("b.InterferenceBooleans+b.InterferenceReused, ", "b.InterferenceBooleans, ", 1)' \
+  ./internal/agent 'TestCarMeasure_CoverageCountsReusedPairsAsChecked'
 
 echo
 echo "A build step on a tree is shown the assembly it builds"
@@ -2007,6 +2102,62 @@ drill "a kernel timeout is a 501" internal/platform/errs/code.go \
 drill "a process that dies mid-build is not retried" internal/domain/cad/cad.go \
   's = s.replace("\t\tres, err = s.roundTrip(ctx, req)\n\t}\n\tif err != nil {", "\t}\n\tif err != nil {", 1)' \
   ./internal/domain/cad 'TestKernel_AProcessThatDiesMidBuildIsStillRetriedOnce'
+
+echo
+echo "The kernel builds a view of 8192 parts, and nothing else past 4096"
+# Added 2026-09-15 (ceiling on Linux). forged in a container limited like its pod
+# (1 CPU, 1 GiB) built 8,192- and 8,315-part designs through the mesh endpoint in
+# 5.7-13.0 s, three runs each, with the 30 s kernel timeout; 16,556 took up to 21.5 s.
+# So a VIEW is built to 8192 and a STEP export, mass report, Go mesh and mesh file stay
+# at 4096. The cad fence runs against cadtest's fake process; the httpapi ones need node.
+# docs/spikes/2026-09-15-ceiling-on-linux
+drill "the kernel's view ceiling is back at 4096" internal/domain/geometry/limits.go \
+  's = s.replace("const maxBuiltParts = 8192", "const maxBuiltParts = 4096", 1)' \
+  ./internal/domain/geometry 'TestLimits_TheKernelBuildsAViewOf8192PartsAndNothingElsePast4096'
+
+drill "the view ceiling is raised past what was measured" internal/domain/geometry/limits.go \
+  's = s.replace("const maxBuiltParts = 8192", "const maxBuiltParts = 16384", 1)' \
+  ./internal/domain/geometry 'TestLimits_TheKernelBuildsAViewOf8192PartsAndNothingElsePast4096'
+
+drill "every kernel build is allowed the view's ceiling" internal/domain/cad/cad.go \
+  's = s.replace("\tif format == \"mesh\" && !properties {", "\tif true {", 1)' \
+  ./internal/domain/cad 'TestKernel_BuildsAViewOf8192PartsAndRefusesEveryOtherBuildPast4096'
+
+drill "a build that is not a STEP export is allowed the view's ceiling" internal/domain/cad/cad.go \
+  's = s.replace("\tif format == \"mesh\" && !properties {", "\tif format != \"step\" {", 1)' \
+  ./internal/domain/cad 'TestKernel_BuildsAViewOf8192PartsAndRefusesEveryOtherBuildPast4096'
+
+drill "a view is refused at the tighter ceiling" internal/domain/cad/cad.go \
+  's = s.replace("\t\trefusal = doc.BuildRefusal()", "\t\trefusal = doc.DrawRefusal()", 1)' \
+  ./internal/domain/cad 'TestKernel_BuildsAViewOf8192PartsAndRefusesEveryOtherBuildPast4096'
+
+drill "the kernel request is cut at the tighter ceiling" internal/domain/geometry/solid.go \
+  's = s.replace("\tif refusal := d.BuildRefusal(); refusal != \"\" {", "\tif refusal := d.DrawRefusal(); refusal != \"\" {", 1)' \
+  ./internal/domain/geometry 'TestLimits_TheKernelBuildsAViewOf8192PartsAndNothingElsePast4096'
+
+drill "the Go mesh is built to the view's ceiling" internal/domain/geometry/mesh.go \
+  's = s.replace("\tif refusal := doc.DrawRefusal(); refusal != \"\" {", "\tif refusal := doc.BuildRefusal(); refusal != \"\" {", 1)' \
+  ./internal/domain/geometry 'TestLimits_TheKernelBuildsAViewOf8192PartsAndNothingElsePast4096'
+
+drill "a mesh file is exported to the view's ceiling" internal/domain/geometry/export.go \
+  's = s.replace("\tif refusal := v.Document.DrawRefusal(); refusal != \"\" {", "\tif refusal := v.Document.BuildRefusal(); refusal != \"\" {", 1)' \
+  ./internal/domain/geometry 'TestLimits_TheKernelBuildsAViewOf8192PartsAndNothingElsePast4096'
+
+drill "the browser loads a design in pieces that the kernel builds whole" internal/httpapi/assets/forge3d.js \
+  's = s.replace("var LAZY_OCCURRENCES = 8192;", "var LAZY_OCCURRENCES = 4096;", 1)' \
+  ./internal/httpapi 'TestRendererLoadsLazilyExactlyPastTheKernelsViewCeiling'
+
+drill "the browser asks for a whole mesh the kernel refuses" internal/httpapi/assets/forge3d.js \
+  's = s.replace("var LAZY_OCCURRENCES = 8192;", "var LAZY_OCCURRENCES = 16384;", 1)' \
+  ./internal/httpapi 'TestRendererLoadsLazilyExactlyPastTheKernelsViewCeiling'
+
+drill "a subtree past the view ceiling is sent to the kernel" internal/httpapi/geometry_subtree.go \
+  's = s.replace("\tcase parts > geometry.MaxBuiltParts():", "\tcase parts > 2*geometry.MaxBuiltParts():", 1)' \
+  ./internal/httpapi 'TestMeshSubtree_LimitsAreTheSubtreesOwn'
+
+drill "the exported ceiling is still the old one" internal/domain/geometry/subtree.go \
+  's = s.replace("func MaxBuiltParts() int { return maxBuiltParts }", "func MaxBuiltParts() int { return maxDrawnParts }", 1)' \
+  ./internal/httpapi 'TestRendererLoadsLazilyExactlyPastTheKernelsViewCeiling|TestMeshSubtree_LimitsAreTheSubtreesOwn'
 
 if [ "$MODE" = "list" ]; then
   exit 0
