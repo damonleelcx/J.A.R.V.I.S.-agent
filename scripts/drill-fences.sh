@@ -95,6 +95,7 @@ FILES=(
   internal/agent/converse.go
   internal/agent/converse_stream.go
   internal/agent/assemble.go
+  internal/agent/subtree.go
   internal/agent/georepair.go
   internal/agent/settledoc.go
   internal/httpapi/converse.go
@@ -1093,6 +1094,32 @@ drill "a tree's parts go unnamed in the prompt" internal/agent/look.go \
 drill "the turn does not say how closely it looked" internal/agent/look.go \
   's = s.replace("\tif covered.Of > covered.Looked {", "\tif false {", 1)' \
   ./internal/agent 'TestLook_CapsSubAssemblyLooksAndSaysHowMany'
+
+echo
+echo "A build step on a tree is shown the assembly it builds"
+# Added 2026-09-15 (Phase 2, stage A2). A step names the sub-assembly it builds and is
+# shown that subtree, how the root places it and the interfaces it attaches at; its
+# prompt stays the same size however many subsystems exist, and over a ceiling it is
+# refused by name.
+drill "a step on a tree is shown the whole model" internal/agent/assemble.go \
+  's = s.replace("\tif view := SubtreeModel(doc, step.Assembly); view != \"\" {", "\tif view := \"\"; view != \"\" {", 1)' \
+  ./internal/agent 'TestAssemble_AStepOnATreeIsShownOnlyItsAssembly'
+
+drill "a step over its ceiling is sent anyway" internal/agent/assemble.go \
+  's = s.replace("\tif doc.Root != \"\" && len(body) > maxStepContextBytes {", "\tif false {", 1)' \
+  ./internal/agent 'TestAssemble_AStepShownMoreThanItsCeilingIsRefused'
+
+drill "the plan drops the assembly a step builds" internal/agent/assemble.go \
+  's = s.replace("json:\"assembly,omitempty\"", "json:\"-\"", 1)' \
+  ./internal/agent 'TestPlanBuild_ReadsTheAssemblyAStepBuilds'
+
+drill "the view carries every subsystem" internal/agent/subtree.go \
+  's = s.replace("\twalk(focus)\n", "\tfor id := range assemblies {\n\t\twalk(id)\n\t}\n", 1)' \
+  ./internal/agent 'TestSubtreeModel_StaysTheSameSizeAsTheModelGrows'
+
+drill "a placement's interfaces are not carried" internal/agent/subtree.go \
+  's = s.replace("\t\tview.AttachesTo = append(view.AttachesTo, attachment{Assembly: a.ID, Interfaces: a.Interfaces})\n", "", 1)' \
+  ./internal/agent 'TestSubtreeModel_CarriesWhatTheFocusPlacesAndAttachesTo'
 
 echo
 echo "A pool of kernel processes builds side by side"
