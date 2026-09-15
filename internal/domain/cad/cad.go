@@ -257,6 +257,9 @@ type Build struct {
 	// built. Reported rather than returned as an error: the build succeeded and
 	// its volume, bounds and STEP are all still true.
 	MeshError string
+	// Properties is each surviving part's volume, centre of volume and box, in
+	// millimetres. Empty unless asked for with BuildProperties (Phase 5, stage V3).
+	Properties []geometry.SolidMeasure
 }
 
 // MeshPart is one built solid's surface, attributed to the part it came from.
@@ -327,6 +330,15 @@ type request struct {
 	// kernel choose from the model's own size — 0.1 mm is invisible on a
 	// bracket and catastrophic on a car body, so a constant cannot serve both.
 	Deflection float64 `json:"deflection,omitempty"`
+	// Properties asks for each part's volume, centre and box (see BuildProperties).
+	Properties bool `json:"properties,omitempty"`
+}
+
+type partProperties struct {
+	ID       string      `json:"id"`
+	Volume   float64     `json:"volume"`
+	Centroid *[3]float64 `json:"centroid"`
+	Bounds   *[6]float64 `json:"bounds"`
 }
 
 type reply struct {
@@ -357,6 +369,8 @@ type reply struct {
 	MeshDeflection  float64          `json:"mesh_deflection,omitempty"`
 	MeshSimplified  bool             `json:"mesh_simplified,omitempty"`
 	MeshError       string           `json:"mesh_error,omitempty"`
+
+	PartProperties []partProperties `json:"part_properties,omitempty"`
 }
 
 // phaseSeconds is the reply's "phases": seconds per phase of a build, written by
@@ -441,6 +455,20 @@ func keepBuildable(in []geometry.Solid) []geometry.Solid {
 }
 
 func (k *Kernel) BuildDocument(ctx context.Context, doc geometry.Document, unit geometry.Unit, format string) (*Build, error) {
+	return k.build(ctx, doc, unit, format, false)
+}
+
+// BuildProperties builds a document and returns each part's volume, centre of
+// volume and box, for geometry.MassProperties (Phase 5, stage V3).
+//
+// The same build as every other reader's, asking for one more thing: a mass
+// report from a different build than the export could disagree with it.
+func (k *Kernel) BuildProperties(ctx context.Context, doc geometry.Document, unit geometry.Unit) (*Build, error) {
+	return k.build(ctx, doc, unit, "", true)
+}
+
+// build is BuildDocument, optionally asking the kernel for each part's properties.
+func (k *Kernel) build(ctx context.Context, doc geometry.Document, unit geometry.Unit, format string, properties bool) (*Build, error) {
 	const op = "cad.Kernel.BuildDocument"
 	if !k.Available() {
 		return nil, Unavailable(op)
@@ -542,7 +570,7 @@ func (k *Kernel) BuildDocument(ctx context.Context, doc geometry.Document, unit 
 	}
 	defer k.release(s)
 
-	req := request{Solids: solids, Operations: operations, Format: format}
+	req := request{Solids: solids, Operations: operations, Format: format, Properties: properties}
 	res, err := s.roundTrip(ctx, req)
 	if err != nil {
 		// One retry, and exactly one. The overwhelmingly likely cause of an I/O
@@ -612,6 +640,15 @@ func (k *Kernel) BuildDocument(ctx context.Context, doc geometry.Document, unit 
 	out.Deflection = res.MeshDeflection
 	out.Simplified = res.MeshSimplified
 	out.MeshError = res.MeshError
+	for _, p := range res.PartProperties {
+		m := geometry.SolidMeasure{ID: p.ID, Volume: p.Volume}
+		// A part whose centre or box the kernel could not read is kept, marked
+		// unmeasured, so the roll-up can name it rather than weigh a guess.
+		if p.Centroid != nil && p.Bounds != nil {
+			m.Centroid, m.Bounds, m.Measured = *p.Centroid, *p.Bounds, true
+		}
+		out.Properties = append(out.Properties, m)
+	}
 	return out, nil
 }
 
