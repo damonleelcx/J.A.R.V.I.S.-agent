@@ -203,7 +203,9 @@ type Build struct {
 	InterferenceBoxTests int
 	// InterferencePairs is how many pairs' boxes overlap, InterferenceBooleans how
 	// many exact booleans were paid for, and InterferenceReused how many pairs were
-	// answered by a boolean already measured at the same pose (Phase 5, stage V1).
+	// answered by a boolean already measured at the same pose (Phase 5, stage V1) —
+	// or at a pose slid along a box it lies wholly inside, which shares the same
+	// volume (sidecar.py, _INTERFERENCE_SLIDE; docs/spikes/2026-09-15-large-box-index).
 	// The pair budget counts booleans, so Booleans + Reused below Pairs is exactly
 	// a truncated check — the count "checked X of Y" is built from.
 	InterferencePairs    int
