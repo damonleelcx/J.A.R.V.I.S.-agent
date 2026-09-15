@@ -1015,6 +1015,27 @@ drill "the build does not say how many booleans it paid for" internal/domain/cad
   ./internal/domain/cad 'TestKernel_RepeatedClashesPayForOneBooleanEachPose'
 
 echo
+echo "A check that covered part of the model says how much"
+# Added 2026-09-15 (Phase 5, stage V2). repairIfPartsOverlap returned without a word
+# when it found nothing, and a check the pair budget stopped found nothing too; parts
+# the kernel could not build were never in the check and never mentioned.
+drill "a truncated check reads as a clean one" internal/agent/interference.go \
+  's = s.replace("\tdefer func() {\n\t\tif note := coverageNote(sheet); note != \"\" {\n\t\t\treply.noteRepair(note)\n\t\t}\n\t}()\n", "", 1)' \
+  ./internal/agent 'TestInterference_ATruncatedCheckSaysSoInTheTurn'
+
+drill "truncation is not what the note is about" internal/agent/interference.go \
+  's = s.replace("\tif sheet.Truncated {\n\t\tif sheet.Pairs > 0 {", "\tif false {\n\t\tif sheet.Pairs > 0 {", 1)' \
+  ./internal/agent 'TestInterference_ATruncatedCheckSaysSoInTheTurn'
+
+drill "a part that was never built is never mentioned" internal/agent/interference.go \
+  's = s.replace("\tif n := len(sheet.Skipped); n > 0 {", "\tif n := len(sheet.Skipped); false && n > 0 {", 1)' \
+  ./internal/agent 'TestInterference_APartThatWasNotBuiltIsNamedAsUnchecked'
+
+drill "the render drops how much was checked" internal/agent/render.go \
+  's = s.replace("\n\t\t\t\t\tChecked: built.Checked, Pairs: built.Pairs, Skipped: built.Skipped}", "}", 1)' \
+  ./internal/agent 'TestRender_CarriesHowMuchTheCheckCovered'
+
+echo
 echo "A pool of kernel processes builds side by side"
 # Added 2026-09-15 (Phase 4, stage K3). A Kernel is FORGE_CAD_POOL processes behind a
 # FIFO channel; a build takes a free one, retries once on that slot, and gives it back.

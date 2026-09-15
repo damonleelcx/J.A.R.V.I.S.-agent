@@ -56,6 +56,11 @@ type builtSheet struct {
 	// product refuses (PRD promise 5).
 	Interferences []geometry.Interference
 	Truncated     bool
+	// Checked, Pairs and Skipped are how much of the model the check covered: see
+	// Built. Meaningful only when FromKernel is true, like Interferences.
+	Checked int
+	Pairs   int
+	Skipped []string
 }
 
 // SolidBuilder builds the real surface of a document.
@@ -101,6 +106,15 @@ type Built struct {
 	// Truncated says the kernel's pair budget stopped the search early, so a
 	// clean list is not evidence of a clean model.
 	Truncated bool
+	// Pairs is how many pairs of parts could touch (their boxes overlap), and
+	// Checked how many of them the kernel answered — measured, or reused from the
+	// same pose (Phase 5, stages V1 and V2). Checked below Pairs is a truncated check.
+	Checked int
+	Pairs   int
+	// Skipped names the parts the kernel could not build. A part that was never
+	// built was never checked for shared material either, and saying nothing about
+	// it would let "no overlaps" cover a part nobody looked at.
+	Skipped []string
 }
 
 // render draws the built solid, falling back to the described one.
@@ -118,7 +132,8 @@ func (c *Conversation) render(ctx context.Context, doc *Prototype) builtSheet {
 		if built, err := c.solids.BuildSurface(ctx, doc); err == nil && len(built.Parts) > 0 {
 			if img := geometry.ContactSheetOf(*doc, built.Parts, sheetSize); img != "" {
 				return builtSheet{Image: img, FromKernel: true,
-					Interferences: built.Interferences, Truncated: built.Truncated}
+					Interferences: built.Interferences, Truncated: built.Truncated,
+					Checked: built.Checked, Pairs: built.Pairs, Skipped: built.Skipped}
 			}
 		}
 	}

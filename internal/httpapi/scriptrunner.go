@@ -111,8 +111,12 @@ func (r kernelSolids) BuildSurface(ctx context.Context, doc *geometry.Document) 
 	// The interferences come from the SAME build that produced these triangles —
 	// the kernel computed them while it held the solids, and throwing them away
 	// here would cost a second build per turn to get them back.
+	// So does how much of the model the check covered: a pair answered from a
+	// pose already measured counts as checked (Phase 5, stages V1 and V2).
 	return agent.Built{Parts: out, Interferences: built.Interferences,
-		Truncated: built.InterferencesTruncated}, nil
+		Truncated: built.InterferencesTruncated,
+		Checked:   built.InterferenceBooleans + built.InterferenceReused,
+		Pairs:     built.InterferencePairs, Skipped: built.Skipped}, nil
 }
 
 // solidBuilder returns the thing that builds a surface, or nil when this
