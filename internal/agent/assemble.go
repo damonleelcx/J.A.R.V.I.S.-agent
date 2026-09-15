@@ -147,8 +147,22 @@ that ADDS what this step asks for, and nothing else.
   place your child "at" it instead of working out coordinates: a part placed by
   arithmetic floats clear as soon as the thing it should touch is anywhere else.
   Give what you build interfaces of its own where later steps will mount.
-- Bind what follows a parameter you were shown to that parameter ("size_from",
-  "position_from"). Read the dimensions you were given; do not assume them.
+- Mount on ANOTHER subsystem from the root, never from inside your assembly. An
+  assembly is written once and may be placed many times, so an "at" inside it
+  names only its own interfaces or its own children's ("hub", "knuckle/hub"),
+  and FORGE refuses one that reaches another subsystem. Say where the ROOT places
+  your assembly instead, under "placements" beside "patch": each is one child of
+  the root, its "ref" the assembly this step builds unless you name another you
+  built, its "at" a path from the root ("root_interfaces" in what you are shown):
+    "placements": [{"id": "left-wheel", "ref": "wheel", "at": "suspension-left/hub", "rotation": [0, 0, 90]},
+                   {"id": "right-wheel", "ref": "wheel", "at": "suspension-right/hub", "rotation": [0, 0, 90]}]
+  FORGE adds them to the root, so you do not restate what the root places.
+- Bind what follows a parameter you were shown to that parameter: "size_from"
+  and "position_from" on a part or a definition ({"depth": "wheelbase"}), and
+  the parameter's name in a child's or an interface's "position"
+  (["-half_wheelbase", 0, 0]), which FORGE works out from the parameters. Never
+  retype a parameter's value as a number. Read the dimensions you were given; do
+  not assume them.
 - Do this step only. The later steps are somebody else's, including yours in a
   moment.
 - When the step names an assembly, you are shown that assembly and what it
@@ -159,14 +173,14 @@ that ADDS what this step asks for, and nothing else.
   yourself, send the root under "assemblies" with every child it already has
   ("root_children" in what you are shown, which is not a field of an edit) and
   yours after them: a root patched with only your child removes everything else
-  the model had. An assembly you build and do not place is placed from the root at
-  the root's origin, so draw it in the root's frame unless you attach it "at" an
-  interface yourself.
+  the model had. An assembly you build and neither place nor declare under
+  "placements" is placed from the root at the root's origin, attached to nothing.
 - Send "prototype_edit" only: not "prototype", and not "build_in_passes", because
   this pass IS the build. It is read as strict JSON: no comments, every number a
-  number, and an expression only in the "_from" field made for it.
+  number, and an expression only in a "_from" field or in a child's or an
+  interface's "position".
 
-Return JSON: {"speech": "one sentence on what you added", "prototype_edit": {"patch": {"definitions": [...], "assemblies": [...], "parts": [...], "features": [...]}}}`
+Return JSON: {"speech": "one sentence on what you added", "prototype_edit": {"patch": {"definitions": [...], "assemblies": [...], "parts": [...], "features": [...]}, "placements": [...]}}`
 
 // firstStepSystem is for the pass that has nothing to add TO.
 //
@@ -199,8 +213,12 @@ will attach to, at a size the rest can be positioned against.
 - Give the assembly you build "interfaces" where the later subsystems will mount
   (suspension pick-up points, engine mounts, a hub's wheel face) so a later step
   attaches "at" them instead of guessing coordinates.
+- Declare the dimensions later steps will place against (wheelbase, track, ride
+  height) as "parameters", and write positions and sizes with their names, not
+  their values, so a later step reads them and a change moves everything.
 - It is read as strict JSON: no comments, every number a number, and an
-  expression only in the "_from" field made for it.
+  expression only in a "_from" field or in a child's or an interface's
+  "position".
 
 Return JSON: {"speech": "one sentence on what you built", "prototype": {"name": "...", "units": "mm", "parameters": [...], "definitions": [...], "assemblies": [...], "root": "...", "parts": [...]}}`
 
@@ -283,6 +301,11 @@ func (c *Conversation) buildOneStep(ctx context.Context, doc *Prototype, asked s
 	// one place a warning about the model so far reaches the model extending it.
 	// Fence: TestAssemble_AStepIsToldWhatCouldBeOnePattern.
 	sofar += repetitionForStep(doc)
+	// And the parameters it can place and size by, with what each works out to now
+	// (2026-09-15, attach and bind): every live car placed every part by literal
+	// arithmetic beside parameters that held the same numbers. See literals.go.
+	// Fence: TestAssemble_AStepIsShownTheParametersItCanBindTo.
+	sofar += parametersForStep(doc)
 	// The assembly the plan says this step builds, by id. The first step used to be
 	// told only the step's name, so the tree it wrote could not use the ids the later
 	// steps' views look for. Fence: TestAssemble_AStepIsToldTheAssemblyItBuilds.
@@ -304,6 +327,15 @@ func (c *Conversation) buildOneStep(ctx context.Context, doc *Prototype, asked s
 	if err != nil {
 		return nil, fmt.Sprintf("Step %d (%s) could not be built: %v.", n, step.Name, err)
 	}
+	// ‼️ A child placed by the name of a parameter the MODEL has, not the patch, is read
+	// over the model's parameters (dimensionrepair.go, withBaseParameters): the prompt
+	// now teaches exactly that, and it used to lose the step as unreadable.
+	resp, overModel := placementsOverModel(resp, doc)
+	// ‼️ And where the step says the root places what it built (stepdeclared.go): the one
+	// place one subsystem can attach to another. Run 2 of the live car lost its wheels
+	// to an "at" written inside the wheels assembly that reached the suspension.
+	// Fence: TestAssemble_AStepsDeclaredPlacementAttachesItsAssemblyFromTheRoot.
+	declared, declaredNote := stepPlacements(resp, doc)
 
 	// ‼️ Every refusal below says WHICH gate refused the step, and why, bounded
 	// (2026-09-15, live car findings). All of them used to say "produced no
@@ -335,6 +367,12 @@ func (c *Conversation) buildOneStep(ctx context.Context, doc *Prototype, asked s
 	// step named as root is placed from it below.
 	// docs/bugfix/2026-09-15-a-build-steps-edit-replaced-the-models-root.md
 	// Fence: TestAssemble_AStepsEditDoesNotReplaceTheModelsRoot.
+	if overModel {
+		reply.noteRepair(childPositionNote)
+	}
+	if declaredNote != "" {
+		reply.noteRepair(declaredNote)
+	}
 	sentRoot := ""
 	if e := reply.PrototypeEdit; e != nil && e.Patch != nil && doc.Root != "" {
 		if r := strings.TrimSpace(e.Patch.Root); r != "" && r != doc.Root {
@@ -367,6 +405,11 @@ func (c *Conversation) buildOneStep(ctx context.Context, doc *Prototype, asked s
 	// did not, and one wrote "root_children" into its patch — so the car kept its
 	// brakes, suspension, steering and body as designs nothing placed, with no fault
 	// and no note. See stepplace.go. Fence: TestAssemble_ANewAssemblyTheStepDidNotPlaceIsPlacedFromTheRoot.
+	// What the step declared first, so an assembly it said where to put is attached
+	// there and not placed at the root's origin below.
+	if placed := placeDeclared(reply.Prototype, step.Assembly, declared); placed != "" {
+		reply.noteRepair(placed)
+	}
 	if placed := placeStepAssembly(reply.Prototype, step.Assembly); placed != "" {
 		reply.noteRepair(placed)
 	}
@@ -397,6 +440,12 @@ func (c *Conversation) buildOneStep(ctx context.Context, doc *Prototype, asked s
 	// model" twice in one live car said nothing a person or the next pass could act on.
 	if after, before := reply.Prototype.Faults(), doc.Faults(); len(after) > len(before) {
 		return nil, stepNote(n, step.Name, gateBroke, addedFaults(before, after))
+	}
+	// A step that retyped parameters' values as positions is told which, by name, and
+	// never refused for it (literals.go).
+	// Fence: TestAssemble_AStepThatRetypesAParametersValueIsToldWhichParameter.
+	if literals := literalPositionNote(doc, reply.Prototype); literals != "" {
+		reply.noteRepair(literals)
 	}
 	// And a pass that DROPPED something is reported, never silently accepted.
 	if gone := vanishedParts(doc, reply.Prototype); len(gone) > 0 {

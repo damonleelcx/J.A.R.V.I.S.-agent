@@ -26,6 +26,10 @@ import (
 //   - the interfaces those placements attach AT, whether on the root or on a
 //     sibling — only the frames, never what the sibling contains;
 //   - the document's parameters and derived values, which a dimension may name;
+//   - every interface on what the root already places, by the path a child of the
+//     root attaches at ("suspension-left/knuckle/hub"), and where it sits: a step
+//     mounts its subsystem on another from the root, never from inside its own
+//     assembly (2026-09-15, attach and bind; stepdeclared.go);
 //   - how many other placements there are, so it knows it is not the whole model.
 //
 // An edit merges by id, so what the step does not see it does not lose.
@@ -50,7 +54,17 @@ type subtreeModel struct {
 	RootChildren []geometry.Child `json:"root_children,omitempty"`
 	// OtherPlacements is how many placements the root holds besides the focus's.
 	OtherPlacements int `json:"other_placements"`
+	// RootInterfaces is where a child of the root can attach, on everything the root
+	// places except the focus: the paths a step writes in "placements". Bounded;
+	// RootInterfacesMore counts what was left out.
+	// Fence: TestAssemble_AStepIsShownTheInterfacesItCanAttachAtFromTheRoot.
+	RootInterfaces     []geometry.RootInterface `json:"root_interfaces,omitempty"`
+	RootInterfacesMore int                      `json:"root_interfaces_more,omitempty"`
 }
+
+// maxRootInterfacesShown bounds root_interfaces, so the view stays the size of the
+// subsystem it shows however many mounting points the rest of the model has.
+const maxRootInterfacesShown = 48
 
 // attachment is the interfaces one assembly outside the subtree offers.
 type attachment struct {
@@ -95,6 +109,7 @@ func SubtreeModel(d *Prototype, focus string) string {
 		// Fence: TestSubtreeModel_ANewAssemblyIsShownWhatTheRootAlreadyPlaces.
 		view.RootChildren = root.Children
 		view.OtherPlacements = len(root.Children)
+		view.RootInterfaces, view.RootInterfacesMore = d.InterfacesFromRoot(focus, maxRootInterfacesShown)
 		return marshalView(view)
 	}
 
@@ -164,6 +179,7 @@ func SubtreeModel(d *Prototype, focus string) string {
 			attach(root)
 		}
 	}
+	view.RootInterfaces, view.RootInterfacesMore = d.InterfacesFromRoot(focus, maxRootInterfacesShown)
 	return marshalView(view)
 }
 

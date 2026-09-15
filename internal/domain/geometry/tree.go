@@ -243,6 +243,12 @@ func expandAssemblies(d Document) (Document, []Problem) {
 			// -- its position, rotation, mirror and pattern alike (interface.go).
 			reference, attachProblem := attach.reference(a, c, "")
 			if attachProblem != "" {
+				// ‼️ A path that leaves the assembly it is written in is refused with the
+				// fix, not with "has no child": run 2's wheels were repaired four times
+				// against that sentence and lost (interface.go, leaves).
+				if leaves(a, root, c.At) {
+					attachProblem = attach.outsideProblem(a, root, c.At)
+				}
 				fail(name, "%s", attachProblem)
 				continue
 			}
