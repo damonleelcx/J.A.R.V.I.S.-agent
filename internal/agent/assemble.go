@@ -160,7 +160,7 @@ that ADDS what this step asks for, and nothing else.
 - Bind what follows a parameter you were shown to that parameter: "size_from"
   and "position_from" on a part or a definition ({"depth": "wheelbase"}), and
   the parameter's name in a child's or an interface's "position"
-  (["-half_wheelbase", 0, 0]), which FORGE works out from the parameters. Never
+  (["-half_wheelbase", 0, 0]), which FORGE keeps bound to the parameters. Never
   retype a parameter's value as a number. Read the dimensions you were given; do
   not assume them.
 - Do this step only. The later steps are somebody else's, including yours in a

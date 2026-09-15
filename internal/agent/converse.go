@@ -431,7 +431,7 @@ About "prototype":
   "position_from" keys are "x", "y" and "z", and Y is up.
   In a tree a definition is bound the same way, and a child or an interface is
   placed by a parameter's name written in its "position", which FORGE works out
-  from the parameters:
+  from the parameters and keeps as its "position_from", so it follows them:
       {"id": "rail", "shape": "box", "size": {"width": 50, "height": 80, "depth": 2700}, "size_from": {"depth": "wheelbase"}}
       {"id": "front-axle", "ref": "axle", "position": ["half_wheelbase", 0, 0]}
   Never type the number a parameter holds: 1350 where half_wheelbase is 1350 is

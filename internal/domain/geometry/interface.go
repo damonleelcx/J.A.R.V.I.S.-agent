@@ -34,6 +34,10 @@ type Interface struct {
 	// document's units and in DEGREES about x then y then z, as a child's do.
 	Position []float64 `json:"position,omitempty"`
 	Rotation []float64 `json:"rotation,omitempty"`
+	// PositionFrom binds the frame's position to parameters, as a child's does
+	// (tree.go): a hub face at half_track moves every wheel attached at it when the
+	// track changes.
+	PositionFrom map[string]string `json:"position_from,omitempty"`
 }
 
 // interfaceProblems checks the interfaces one assembly declares: an id a path can

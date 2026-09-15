@@ -316,7 +316,7 @@ func TestAssemble_AStepThatRetypesAParametersValueIsToldWhichParameter(t *testin
 		`800 is half_track (brakes/left-disc x = -800, brakes/right-disc x = 800); ` +
 		`1350 is half_wheelbase (brakes/left-disc z = 1350, brakes/right-disc z = 1350, brakes interface caliper-mount z = -1350). ` +
 		`Write the parameter's name so the position follows it: "position_from": {"x": "-half_track"} on a part or a definition, ` +
-		`and "-half_track" in a child's or an interface's "position", which FORGE works out from the parameters.`
+		`and "-half_track" in a child's or an interface's "position", which FORGE keeps bound to the parameters.`
 	var notes []string
 	for i := 0; i < 5; i++ {
 		stub := &scriptedStub{replies: []string{retyped}}

@@ -158,8 +158,9 @@ func TestCarMeasure_CountsChildrenAttachedAtAnInterface(t *testing.T) {
 		{ID: "car", Interfaces: []geometry.Interface{{ID: "front"}}, Children: []geometry.Child{
 			{ID: "chassis", Ref: "chassis"}, {ID: "axle", Ref: "axle", At: "front"}}},
 	}}
-	if children, attached, interfaces := attachments(d); children != 2 || attached != 1 || interfaces != 1 {
-		t.Errorf("attachments = %d, %d, %d; want 2 children, 1 attached, 1 interface", children, attached, interfaces)
+	d.Assemblies[0].Children[0].PositionFrom = map[string]string{"x": "half_wheelbase"}
+	if children, attached, interfaces, bound := attachments(d); children != 2 || attached != 1 || interfaces != 1 || bound != 1 {
+		t.Errorf("attachments = %d, %d, %d, %d; want 2 children, 1 attached, 1 interface, 1 bound", children, attached, interfaces, bound)
 	}
 }
 

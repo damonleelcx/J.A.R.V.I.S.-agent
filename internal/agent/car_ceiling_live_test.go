@@ -285,12 +285,13 @@ func TestLiveCarCeiling(t *testing.T) {
 	literal, bound, subsystems := placement(placed)
 	t.Logf("CAR-PLACEMENT literal_positions=%d bound_positions=%d id_prefixes=%d",
 		literal, bound, subsystems)
-	// ‼️ In a tree a child's place cannot be bound to a parameter: a child has no
-	// "position_from", only a definition does. What stands in for binding there is
-	// attaching "at" an interface, so that is counted beside it.
-	children, attached, interfaces := attachments(*doc)
-	t.Logf("CAR-ATTACH children=%d attached_at_an_interface=%d at_coordinates=%d interfaces_declared=%d",
-		children, attached, children-attached, interfaces)
+	// ‼️ In a tree most positions are children's and interfaces', and since 2026-09-15
+	// (bound child positions) they carry "position_from" too, so they are counted apart
+	// from the flattened parts above, which carry none of it. Attaching "at" an
+	// interface is the other way a place follows the design, so it is counted beside it.
+	children, attached, interfaces, boundPlacements := attachments(*doc)
+	t.Logf("CAR-ATTACH children=%d attached_at_an_interface=%d at_coordinates=%d interfaces_declared=%d "+
+		"bound_placements=%d", children, attached, children-attached, interfaces, boundPlacements)
 	// And designs nothing places: built, paid for, and not in the car (run 1 of
 	// 2026-09-15 car-quality held five of them).
 	unplaced := unplacedAssemblies(*doc)
@@ -554,18 +555,27 @@ func secondsList(xs []float64) string {
 }
 
 // attachments counts how a tree's children are placed: at an interface, or at
-// coordinates in their assembly's frame, and how many interfaces were declared.
-func attachments(d geometry.Document) (children, attached, interfaces int) {
+// coordinates in their assembly's frame, how many interfaces were declared, and how
+// many children and interfaces bind their position to the parameters.
+func attachments(d geometry.Document) (children, attached, interfaces, bound int) {
 	for _, a := range d.Assemblies {
 		interfaces += len(a.Interfaces)
+		for _, f := range a.Interfaces {
+			if len(f.PositionFrom) > 0 {
+				bound++
+			}
+		}
 		for _, c := range a.Children {
 			children++
 			if strings.TrimSpace(c.At) != "" {
 				attached++
 			}
+			if len(c.PositionFrom) > 0 {
+				bound++
+			}
 		}
 	}
-	return children, attached, interfaces
+	return children, attached, interfaces, bound
 }
 
 // box is one part's axis-aligned bounds in the assembly frame.
