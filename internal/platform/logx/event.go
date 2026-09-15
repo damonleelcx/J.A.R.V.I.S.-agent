@@ -233,6 +233,12 @@ const (
 	// from an earlier document rather than proposed, and distinct from Adopted
 	// because the shape changed.
 	EventGeometryRespecified Event = "forge.geometry.respecified"
+	// EventGeometryExportQueued is an off-node STEP export asked for, or the
+	// export already queued, running or done returned for the same request.
+	EventGeometryExportQueued Event = "forge.geometry.export_queued"
+	// EventGeometryExportStored is an export job's file written to blob storage,
+	// with its size, key and the kernel's time per phase.
+	EventGeometryExportStored Event = "forge.geometry.export_stored"
 
 	// The CAD kernel (wave 14). A separate area from geometry because it is a
 	// separate SUBSYSTEM: a process that can be absent, can die, and whose
@@ -247,6 +253,7 @@ func init() {
 		EventGeometrySaved, EventGeometryExported, EventGeometryMeshed, EventGeometryRefused, EventGeometryCompared,
 		EventGeometryUnreadable,
 		EventGeometryAdopted, EventGeometryRespecified, EventGeometryTooLarge,
+		EventGeometryExportQueued, EventGeometryExportStored,
 		EventCADStarted, EventCADRestarted, EventCADRefused,
 	)
 }
@@ -483,4 +490,24 @@ func init() {
 		EventChoiceUnreadable, EventWorkspaceUnreadable,
 		EventAssumptionUnfiled,
 	)
+}
+
+// Blob storage (millions-of-parts plan, Phase 3): content-addressed bulk that can
+// be rebuilt from the document. Stored is info; a failed store is a warning
+// because the caller still has the bytes and can retry or rebuild; a corrupt
+// read is an ERROR because bytes that do not hash to their key mean the bucket
+// is not holding what was put in it.
+const (
+	EventBlobStored      Event = "forge.blob.stored"
+	EventBlobStoreFailed Event = "forge.blob.store_failed"
+	EventBlobCorrupt     Event = "forge.blob.corrupt"
+	// EventBlobReady is logged once at boot by forged and forge-worker: whether
+	// this process has blob storage, and which bucket. Construction makes no
+	// request, so it says what was configured, not that the bucket answers —
+	// `forgectl blob check` is what says that.
+	EventBlobReady Event = "forge.blob.ready"
+)
+
+func init() {
+	allEvents = append(allEvents, EventBlobStored, EventBlobStoreFailed, EventBlobCorrupt, EventBlobReady)
 }

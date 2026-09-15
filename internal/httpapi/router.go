@@ -8,6 +8,7 @@ import (
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/cad"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/identity"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/llm"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/blob"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/clock"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/config"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/db"
@@ -34,6 +35,11 @@ type Deps struct {
 	// exactly as it did when no kernel existed at all. Every call goes through
 	// Kernel's own nil-safe methods, so nothing here has to check.
 	CAD *cad.Kernel
+	// Blobs is content-addressed storage for large geometry (Phase 3, stage S1):
+	// where an off-node STEP export's file is kept and read back from. Nil is
+	// legal and means none — an export job is then refused naming
+	// FORGE_BLOB_BUCKET, never queued to be lost.
+	Blobs blob.Store
 	// Speaker is FORGE's own voice, or nil when this deployment has none — in
 	// which case the workbench falls back to the browser's speech synthesis and
 	// says so, rather than going silent.
@@ -255,6 +261,13 @@ func NewRouter(d Deps) http.Handler {
 	mux.Handle("GET /v1/geometry/{id}/mass", authed(geo.Mass))
 	mux.Handle("GET /v1/geometry/{id}/export", authed(geo.Export))
 	mux.Handle("GET /v1/geometry/{id}/export/label", authed(geo.ExportLabel))
+	// STEP above what a request builds, written off-node by forge-worker and kept
+	// in blob storage (geometry_exports.go). The status route is registered as
+	// {id}/{rest} because net/http refuses GET /v1/geometry/exports/{exportID}
+	// beside GET /v1/geometry/{id}/export, by panicking; see ExportRoute.
+	mux.Handle("POST /v1/geometry/{id}/exports", authed(geo.RequestExport))
+	mux.Handle("GET /v1/geometry/{id}/{rest}", authed(geo.ExportRoute))
+	mux.Handle("GET /v1/geometry/exports/{exportID}/file", authed(geo.DownloadExport))
 
 	// --- the shared session (PRD COL-01) ---
 	//

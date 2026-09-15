@@ -18,6 +18,7 @@ import (
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/httpapi"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/llm"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/mail"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/blob"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/clock"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/config"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/db"
@@ -144,12 +145,28 @@ func run() error {
 	cadKernel := cad.New(cfg.CAD.Python, log).WithScripts(cfg.CAD.AllowScripts).WithPool(cfg.CAD.Pool)
 	defer cadKernel.Close()
 
+	// Blob storage (docs/plan-2026-09-13-millions-of-parts.md, Phase 3). No handler
+	// uses it yet; it is built here for the same two reasons as in forge-worker —
+	// the first consumer only has to be handed it, and an AWS SDK configuration
+	// that cannot load is reported at boot. It makes no request, so S3 being
+	// unreachable never stops the API serving; verify.sh check 9 asks that
+	// question from inside this pod. Never nil: unconfigured, it refuses by name.
+	blobs, err := blob.New(ctx, cfg.Blob, log)
+	if err != nil {
+		return err
+	}
+	log.Info(ctx, logx.EventBlobReady, "available", blobs.Available(), "bucket", cfg.Blob.Bucket)
+
 	handler := httpapi.NewRouter(httpapi.Deps{
 		Config:   cfg,
 		Pool:     pool,
 		Identity: identitySvc,
 		LLM:      modelClient,
 		CAD:      cadKernel,
+		// ‼️ The note at blob.New above says no handler uses the store. It is #83's,
+		// kept word for word so the two branches merge; the off-node STEP export
+		// (httpapi/geometry_exports.go) is the first handler that does.
+		Blobs: blobs,
 		// FORGE's own voice, built once and shared by the workbench endpoint
 		// and the media plane. Nil when no vendor is configured, which is the
 		// default: the browser then reads answers aloud in its own voice.

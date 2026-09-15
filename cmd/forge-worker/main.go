@@ -26,6 +26,7 @@ import (
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/secrets"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/llm"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/persona"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/blob"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/clock"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/config"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/db"
@@ -111,6 +112,26 @@ func run() error {
 	}
 	defer pool.Close()
 
+	// Blob storage (docs/plan-2026-09-13-millions-of-parts.md, Phase 3). Nothing in
+	// the worker stores a blob yet. It is built here so the change that adds the
+	// first consumer only has to hand it over, and so a deployment whose AWS SDK
+	// configuration cannot load is told at boot rather than on the first model
+	// large enough to need a bucket. Never nil: with no FORGE_BLOB_BUCKET it is
+	// the store that refuses every call naming that setting.
+	//
+	// # Why the worker and not only forged
+	//
+	// The worker is the pod that is NOT on the host network, so it reaches the
+	// instance role and S3 through 32-worker-egress.yaml and the IMDS hop limit.
+	// Construction makes no request, so an unreachable bucket does not stop the
+	// worker starting — blob storage is a cache — and `forgectl blob check`
+	// (deploy/verify.sh check 9, run in this pod) is what proves the path works.
+	blobs, err := blob.New(ctx, cfg.Blob, log)
+	if err != nil {
+		return err
+	}
+	log.Info(ctx, logx.EventBlobReady, "available", blobs.Available(), "bucket", cfg.Blob.Bucket)
+
 	clk := clock.System{}
 	repo := engine.NewRepository()
 	queue := engine.NewQueue()
@@ -175,6 +196,12 @@ func run() error {
 		WithCharacters(characters).
 		WithDomains(agent.NewDomainStore(pool, log))
 	builds := agent.NewBuildSteps(builder, geometry.NewService(pool, clk, log), repo, budget, pool, clk, log)
+	// Off-node STEP export (internal/agent/stepexport.go): a design written as STEP
+	// with this worker's kernel and kept in the store above, one at a time, up to
+	// geometry.MaxExportJobParts. ‼️ The note at blob.New says nothing in the worker
+	// stores a blob yet; it is #83's, kept word for word so the two branches merge,
+	// and this is the consumer it was waiting for.
+	exports := agent.NewStepExporter(cadKernel, blobs, geometry.NewService(pool, clk, log), repo, pool, clk, log)
 
 	log.Info(ctx, logx.EventWorkerReady,
 		"concurrency", cfg.Engine.WorkerConcurrency,
@@ -188,7 +215,7 @@ func run() error {
 	for i := 0; i < cfg.Engine.WorkerConcurrency; i++ {
 		w := agent.NewWorker(agent.WorkerDeps{
 			Pool: pool, Repo: repo, Queue: queue, Budget: budget,
-			Assembler: assembler, Executor: executor, Verifier: verifier, Builds: builds,
+			Assembler: assembler, Executor: executor, Verifier: verifier, Builds: builds, Exports: exports,
 			Config: cfg.Engine, WorkspaceRoot: workspaceRoot, Clock: clk, Log: log,
 			// PRD SAF-01: the same action is a different event here than on a
 			// laptop, and the classifier is told which one this is.

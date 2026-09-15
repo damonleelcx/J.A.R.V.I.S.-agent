@@ -102,7 +102,7 @@ func (k *Kernel) Close() {
 }
 
 // roundTrip sends one request and reads one reply. Caller holds the slot.
-func (s *sidecar) roundTrip(ctx context.Context, req request) (*reply, error) {
+func (s *sidecar) roundTrip(ctx context.Context, req request, deadline time.Duration) (*reply, error) {
 	if err := s.start(ctx); err != nil {
 		return nil, err
 	}
@@ -117,11 +117,12 @@ func (s *sidecar) roundTrip(ctx context.Context, req request) (*reply, error) {
 	// The deadline is enforced by a goroutine that kills the process, because a
 	// blocking Read on a pipe does not observe a context. Killing is the only
 	// thing that ends it, and it is also the right outcome: a kernel that has
-	// not answered in thirty seconds is not going to.
+	// not answered by its deadline is not going to. Thirty seconds for a build in
+	// a request (buildTimeout); an export job's is longer (exportJobTimeout).
 	done := make(chan struct{})
 	defer close(done)
 	go func() {
-		timer := time.NewTimer(buildTimeout)
+		timer := time.NewTimer(deadline)
 		defer timer.Stop()
 		select {
 		case <-done:
