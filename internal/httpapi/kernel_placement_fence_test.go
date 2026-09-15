@@ -91,7 +91,7 @@ func TestRendererDoesNotPlaceAKernelMeshTwice(t *testing.T) {
       vm.runInContext(fs.readFileSync(process.argv[2], 'utf8'), sandbox);
       const F = sandbox.window.Forge3D;
       const input = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
-      if (typeof F.modelMatrix !== 'function') {
+      if (typeof F.modelMatrix !== 'function' || typeof F.drawBatches !== 'function') {
         process.stdout.write(JSON.stringify({ missing: true }));
         return;
       }
@@ -114,7 +114,10 @@ func TestRendererDoesNotPlaceAKernelMeshTwice(t *testing.T) {
         primitiveFromKernel: p.fromKernel,
         kernel: centre(kernelVerts, F.modelMatrix(k, [0, 0, 0])),
         displaced: centre(kernelVerts, F.modelMatrix(k, [5, -2, 3])),
-        primitive: centre(primitiveVerts, F.modelMatrix(p, [0, 0, 0]))
+        primitive: centre(primitiveVerts, F.modelMatrix(p, [0, 0, 0])),
+        // What the instanced draw places each with (Phase 6, stage W1).
+        batchKernel: centre(kernelVerts, F.drawBatches([k]).batches[0].instances[0].matrix),
+        batchPrimitive: centre(primitiveVerts, F.drawBatches([p]).batches[0].instances[0].matrix)
       }));
     `
 	if err := os.WriteFile(harness, []byte(script), 0o600); err != nil {
@@ -128,11 +131,12 @@ func TestRendererDoesNotPlaceAKernelMeshTwice(t *testing.T) {
 		t.Fatalf("the renderer could not be driven: %v %s", err, stderr.String())
 	}
 	if bytes.Contains(out, []byte(`"missing":true`)) {
-		t.Fatal("forge3d.js exports no modelMatrix, so nothing decides placement in one testable place")
+		t.Fatal("forge3d.js exports no modelMatrix or drawBatches, so nothing decides placement in one testable place")
 	}
 	var got struct {
 		FromKernel, PrimitiveFromKernel bool
 		Kernel, Displaced, Primitive    [3]float64
+		BatchKernel, BatchPrimitive     [3]float64
 	}
 	if err := json.Unmarshal(out, &got); err != nil {
 		t.Fatalf("unreadable renderer output: %v\n%s", err, out)
@@ -151,6 +155,15 @@ func TestRendererDoesNotPlaceAKernelMeshTwice(t *testing.T) {
 	if !near(got.Kernel, want) {
 		t.Errorf("the kernel-built part is drawn centred at %v; the exporter puts it at %v — it was placed twice",
 			got.Kernel, want)
+	}
+	// The draw itself places through drawBatches since Phase 6, stage W1, not through
+	// modelMatrix, so the draw is held to the same answer.
+	if !near(got.BatchKernel, want) {
+		t.Errorf("the instanced draw puts the kernel-built part at %v; the exporter puts it at %v — it was placed twice",
+			got.BatchKernel, want)
+	}
+	if !near(got.BatchPrimitive, want) {
+		t.Errorf("the instanced draw puts the primitive at %v, want %v", got.BatchPrimitive, want)
 	}
 	if !near(got.Primitive, want) {
 		t.Errorf("the primitive is drawn centred at %v, want %v", got.Primitive, want)
