@@ -602,9 +602,10 @@ func (d *Document) ProfileProblems() []Problem {
 	// hiding a part that is not in the model.
 	// Through the tree first, so a definition's outline is checked like a part's.
 	tree, _ := expandAssemblies(*d)
+	tree, standardProblems := expandStandards(tree)
 	expanded, gearProblems := expandGears(tree)
 	_, _, problems := expanded.resolvedProfiles()
-	return append(gearProblems, problems...)
+	return append(append(standardProblems, gearProblems...), problems...)
 }
 
 func coordinate(literal float64, expr string, lookup func(string) (float64, bool)) (float64, error) {

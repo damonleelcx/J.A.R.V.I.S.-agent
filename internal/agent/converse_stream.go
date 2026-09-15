@@ -356,6 +356,9 @@ func (c *Conversation) RespondStream(
 		 * omission, so a part nobody discussed can disappear while the reply
 		 * talks about something else — see vanished.go. */
 		noteVanished(&reply, current)
+		/* And what is written out one child at a time where one pattern would place
+		 * it: a warning, never a refusal — see repetition.go. */
+		noteRepetition(&reply)
 
 		if !speechSent && reply.Speech != "" {
 			if err := emit(StreamEvent{Kind: "speech", Text: reply.Speech, FirstTokenMS: firstTokenMS}); err != nil {

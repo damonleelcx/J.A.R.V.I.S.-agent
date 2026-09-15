@@ -240,6 +240,12 @@ func (c *Conversation) buildOneStep(ctx context.Context, doc *Prototype, asked s
 	if !doc.HasGeometry() {
 		system, sofar = firstStepSystem+"\n\n"+geometryContract, ""
 	}
+	// ‼️ And what the model so far writes out one child at a time where one pattern
+	// would place it (Phase 2, stage A3; see repetition.go). A step's model is shown
+	// this prompt and nothing else — not the notices a person reads — so this is the
+	// one place a warning about the model so far reaches the model extending it.
+	// Fence: TestAssemble_AStepIsToldWhatCouldBeOnePattern.
+	sofar += repetitionForStep(doc)
 	resp, err := c.client.Complete(ctx, llm.Request{
 		Role: llm.RoleConverse,
 		Messages: []llm.Message{
