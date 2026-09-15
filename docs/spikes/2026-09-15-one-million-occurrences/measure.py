@@ -35,8 +35,8 @@ SIDECAR = os.path.join(HERE, "..", "..", "..", "internal", "domain", "cad", "sid
 MESH_FIELDS = ("mesh", "mesh_definitions", "mesh_instances")
 
 
-def load_sidecar():
-    spec = importlib.util.spec_from_file_location("sidecar", SIDECAR)
+def load_sidecar(path=SIDECAR):
+    spec = importlib.util.spec_from_file_location("sidecar", path)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
     return module
@@ -94,10 +94,10 @@ def broad_phase_only(sidecar, stats):
     return check
 
 
-def child(mode, path, out_dir, tag):
+def child(mode, path, out_dir, tag, sidecar_path=SIDECAR, write_reply="0"):
     import psutil
 
-    sidecar = load_sidecar()
+    sidecar = load_sidecar(sidecar_path)
     t = time.perf_counter()
     with open(path, "rb") as fh:
         request = json.loads(fh.read())
@@ -116,11 +116,30 @@ def child(mode, path, out_dir, tag):
     for k in ("interference_box_tests", "interference_pairs", "interference_booleans", "interference_reused",
               "interferences_truncated", "mesh_triangles", "mesh_error", "mesh_simplified"):
         res[k] = reply.get(k)
-    res["found"] = len(reply.get("interferences") or [])
+    # Added 2026-09-15 (next scale walls). A reply lists at most a bounded number of
+    # clashes and counts all of them in interferences_found; "found" is the count,
+    # "listed" what the reply carries. A sidecar from before the bound lists them all.
+    res["listed"] = len(reply.get("interferences") or [])
+    res["found"] = reply.get("interferences_found", res["listed"])
+    res["interferences_summarized"] = reply.get("interferences_summarized", False)
     # Added 2026-09-15 (large-box index). The mesh and step modes replace the check,
     # and their rows used to read interferences_truncated false and found 0 — a
     # check that never ran, recorded as a clean one.
     res["interference_checked"] = mode == "full"
+    # Read before the reply is encoded below, which holds a second copy of it.
+    mem = psutil.Process().memory_info()
+    res["peak_rss_gb"] = getattr(mem, "peak_wset", mem.rss) / 1e9
+    # Added 2026-09-15 (next scale walls): what the sidecar's main() writes to Go,
+    # encoded as it encodes it, and the interference list's share of it.
+    t = time.perf_counter()
+    line = json.dumps(reply)
+    res["reply_dumps_s"] = time.perf_counter() - t
+    res["reply_bytes"] = len(line)
+    res["interferences_bytes"] = len(json.dumps(reply.get("interferences") or []))
+    if write_reply == "1":
+        with open(os.path.join(out_dir, "reply-%s-%s.json" % (mode, tag)), "w") as fh:
+            fh.write(line)
+    del line
     if mode == "mesh":
         t = time.perf_counter()
         body = json.dumps({k: reply[k] for k in MESH_FIELDS if k in reply})
@@ -135,8 +154,6 @@ def child(mode, path, out_dir, tag):
         del body
     if mode == "step":
         res["step_bytes"] = len(reply.get("step") or "") * 3 // 4
-    mem = psutil.Process().memory_info()
-    res["peak_rss_gb"] = getattr(mem, "peak_wset", mem.rss) / 1e9
     sys.stdout.write("RESULT " + json.dumps(res) + "\n")
     sys.stdout.flush()
 
@@ -150,9 +167,10 @@ def interference_answer(res):
         return "interference: NOT CHECKED (this mode runs the grid only)"
     pairs = res.get("interference_pairs") or 0
     checked = (res.get("interference_booleans") or 0) + (res.get("interference_reused") or 0)
-    return "interference: %s%d of %d pairs checked, %d found, %s booleans, %s reused, %s box tests" % (
+    return "interference: %s%d of %d pairs checked, %d found (%d listed), %s booleans, %s reused, %s box tests" % (
         "TRUNCATED — " if res.get("interferences_truncated") else "", checked, pairs, res.get("found") or 0,
-        res.get("interference_booleans"), res.get("interference_reused"), res.get("interference_box_tests"))
+        res.get("listed") or 0, res.get("interference_booleans"), res.get("interference_reused"),
+        res.get("interference_box_tests"))
 
 
 def parent(args):
@@ -169,7 +187,8 @@ def parent(args):
                 psutil.cpu_percent(None)
                 started = time.time()
                 proc = subprocess.Popen([sys.executable, os.path.abspath(__file__), "--child", mode, path,
-                                         args.dir, str(bays)], stdout=subprocess.PIPE, text=True)
+                                         args.dir, str(bays), os.path.abspath(args.sidecar),
+                                         "1" if args.write_reply else "0"], stdout=subprocess.PIPE, text=True)
                 watched = psutil.Process(proc.pid)
                 peak, stopped = 0.0, ""
                 while proc.poll() is None:
@@ -199,7 +218,9 @@ def parent(args):
                 res = json.loads(line) if line else {"mode": mode, "tag": str(bays), "ok": False,
                                                      "error": stopped or "child exited %s" % proc.returncode}
                 res.update({"bays": bays, "run": run, "child_wall_s": wall, "polled_peak_rss_gb": peak,
-                            "stopped": stopped, "system_cpu_pct": cpu, "other_processes": others})
+                            "stopped": stopped, "system_cpu_pct": cpu, "other_processes": others,
+                            "sidecar": os.path.abspath(args.sidecar), "started": time.strftime(
+                                "%Y-%m-%dT%H:%M:%S", time.localtime(started))})
                 with open(results, "a") as fh:
                     fh.write(json.dumps(res) + "\n")
                 ph = res.get("phases") or {}
@@ -216,7 +237,7 @@ def parent(args):
 
 def main():
     if len(sys.argv) > 1 and sys.argv[1] == "--child":
-        child(*sys.argv[2:6])
+        child(*sys.argv[2:8])
         return
     ap = argparse.ArgumentParser()
     ap.add_argument("--dir", required=True)
@@ -225,6 +246,11 @@ def main():
     ap.add_argument("--repeat", type=int, default=2)
     ap.add_argument("--cap", type=int, default=1800)
     ap.add_argument("--rss-cap-gb", type=float, default=24.0)
+    # Added 2026-09-15 (next scale walls): a frozen copy of the sidecar to measure, so
+    # edits in the tree cannot reach a run in progress; and the reply written to
+    # reply-<mode>-<bays>.json, for the Go decode measurement.
+    ap.add_argument("--sidecar", default=SIDECAR)
+    ap.add_argument("--write-reply", action="store_true")
     parent(ap.parse_args())
 
 
