@@ -132,6 +132,12 @@ func (w *Worker) Run(ctx context.Context) error {
 			// Reconcile on the idle path. Settling only when a task finishes
 			// makes goal state depend on event timing; this is the read that
 			// converges it regardless of what was missed. See settleFinishedGoals.
+			// What a finished task left waiting, released here too, for the reason
+			// goals are settled here: a worker that died between a task's last
+			// write and releasing its dependents leaves them with nothing to move
+			// them. See releaseWaitingGoals.
+			w.releaseWaitingGoals(ctx)
+
 			w.settleFinishedGoals(ctx)
 
 			// An idle queue is the normal state of a long-running agent, not a
@@ -145,6 +151,12 @@ func (w *Worker) Run(ctx context.Context) error {
 
 		goalID := task.GoalID
 		w.runTask(ctx, task)
+		// ‼️ A finished task releases the tasks waiting on it, before the next
+		// claim. Nothing did: a plan's first layer was made ready and every task
+		// after it stayed pending forever. On the idle poll alone, a busy worker
+		// would never get round to it.
+		// docs/bugfix/2026-09-15-a-finished-task-never-released-the-tasks-waiting-on-it.md
+		w.releaseWaiting(ctx, goalID)
 		// A task settling is the only moment a goal can become terminal, and the
 		// worker is already here holding that fact. A separate sweeper would be a
 		// second authority for goal status.
@@ -196,6 +208,14 @@ func (w *Worker) runTask(ctx context.Context, task *engine.Task) {
 		w.appendEvent(ctx, goal.ID, &task.ID, engine.EventBudgetExceeded, engine.ActorSystem,
 			fmt.Sprintf("Budget exhausted on %s: used %s of %s.", breach.Kind, breach.Used, breach.Limit),
 			map[string]any{"limit_kind": string(breach.Kind), "used": breach.Used, "limit": breach.Limit})
+		// ‼️ Through running, because the task is still only claimed and claimed
+		// cannot move to failed. Failing it straight from claimed was refused, the
+		// refusal was only logged, and the task sat claimed until its lease ran
+		// out, to be claimed and refused again: the goal never stopped.
+		// docs/bugfix/2026-09-15-a-budget-refusal-left-its-task-claimed.md
+		if err := w.transition(ctx, task, engine.StatusRunning, engine.TaskMutation{}); err != nil {
+			return
+		}
 		w.failTask(ctx, task, errs.CodeForbidden, breach.Error().Error())
 		return
 	}
