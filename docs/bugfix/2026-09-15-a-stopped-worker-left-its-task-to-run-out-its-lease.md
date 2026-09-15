@@ -180,10 +180,12 @@ Drills in `scripts/drill-fences.sh`, section "A stopped worker hands its task ba
 
 - **The approval request's timeline event can be lost.** A stop that lands after `checkApproval` inserts the
   request, but before it writes `approval.requested`, loses that event. The request row survives and the next
-  worker parks on it, but the timeline has no `approval.requested` for it.
+  worker parks on it, but the timeline has no `approval.requested` for it. Fixed on `fix/worker-stop-leftovers`:
+  docs/bugfix/2026-09-15-a-stopped-worker-lost-what-it-had-done-and-blamed-the-database.md.
 - **Other failure writes on a stopping worker.** `failTask`'s callers (an unreadable goal, an approval insert, the
   workspace, the pack) do not check for a stop. If the stop is what made them fail, their own writes fail on the
   cancelled context and may log DATABASE_UNAVAILABLE, and `Run` then hands the task back. The outcome is right and
-  the log is noisy, as #105's note on the classification of `context.Canceled` already says.
+  the log is noisy, as #105's note on the classification of `context.Canceled` already says. Fixed on
+  `fix/worker-stop-leftovers`, along with the records a stop lost with them (spent tokens, a tool call that ran).
 - **Work repeated after a hand-back.** The next attempt resumes from the last iteration checkpoint, so anything
   after it runs again. That is what lease-expiry recovery already did; it just happens sooner now.
