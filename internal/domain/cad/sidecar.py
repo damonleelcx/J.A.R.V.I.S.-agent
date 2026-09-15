@@ -882,13 +882,26 @@ def _boxes_miss(a, b):
     return False
 
 
-# A box longer than this many grid cells on any axis is tested against every box
-# instead of being filed in every cell it crosses. See _candidate_pairs.
+# A box longer than this many cells of a level on an axis is filed one level up
+# on that axis. See _candidate_pairs.
 _GRID_LARGE = 4.0
+# Each level's cells are 2**_GRID_LEVEL_SHIFT (4) times the level below's, on each
+# axis separately. A power of two, so a level's cell index is the finest level's
+# index shifted right, which is exact integer arithmetic.
+_GRID_LEVEL_SHIFT = 2
 
 
 def _cell(value, size):
     return int(math.floor(value / size))
+
+
+def _grid_level(extent, cell):
+    """The coarsest-needed level on one axis: the first whose cells are at least
+    extent / _GRID_LARGE long, so a box crosses at most five of them."""
+    level = 0
+    while extent > _GRID_LARGE * math.ldexp(cell, _GRID_LEVEL_SHIFT * level) and level < 512:
+        level += 1
+    return level
 
 
 def _candidate_pairs(boxes):
@@ -917,11 +930,40 @@ def _candidate_pairs(boxes):
     inside both boxes whenever they overlap, and so in a cell both were filed in.
     That is exactly one cell, so a pair is never tested, or counted, twice.
 
-    # Boxes much larger than a cell
+    # Boxes much larger than a cell: a level for each axis (large-box index)
 
     A chassis rail filed in every cell it crosses would cost more cells than it has
-    neighbours. A box longer than _GRID_LARGE cells is kept out of the grid and
-    tested against every box instead; an assembly has few of them.
+    neighbours. Until 2026-09-15 a box longer than _GRID_LARGE cells was kept out of
+    the grid and tested against EVERY box, on the grounds that an assembly has few
+    of them. An airframe barrel does not: every skin panel, frame segment and
+    stringer is one, 16,160 of them at 1,008,160 occurrences, and 16.2 billion box
+    tests priced the check at ~2,650 s — the build hit its 40-minute cap
+    (docs/spikes/2026-09-15-one-million-occurrences).
+
+    ‼️ One coarser cubic grid does not fix that. A 50 m stringer needs a 50 m cell,
+    and every rivet in the barrel shares that cell with every stringer: 80 million
+    tests at 1M. Long parts are long on ONE axis and thin on the others, so the
+    level is chosen per axis. Level l's cells are 4**l finest cells long on that
+    axis, and a box's level on an axis is the first whose cells it crosses at most
+    five of: a rivet is (0, 0, 0), a stringer (5, 0, 0) — cells 14 m along the
+    barrel and 14 mm across it — and a skin panel (2, 0, 1). Boxes with the same
+    levels form a group; (0, 0, 0) is the grid as it was, box for box.
+
+    A pair from groups A and B is tested in the grid whose level on each axis is
+    the larger of the two: both boxes cross at most five of its cells a side, and
+    only boxes sharing a cell are tested. Every pair of groups is one such pass —
+    the fewer boxes filed, the other group looking up the cells it crosses — and a
+    pair belongs to exactly one pass. Cost is a few cells per box per group, not
+    one test per box per large box (docs/spikes/2026-09-15-large-box-index).
+
+    # Each pair is tested in one cell only, at every level
+
+    The home cell above holds at any level. Cell indices are computed once, at the
+    finest level, as integers, and a coarser index is that integer shifted right —
+    floor(floor(x / c) / 4**l) is floor(x / (c * 4**l)) — so the home cell of a pair
+    at any level is the larger of their two low-corner indices, shifted. It is in
+    both boxes' ranges whenever they overlap (floor is monotone), and it is one
+    cell, so a pair is tested, and counted, once.
 
     # Why the pairs are sorted back into index order
 
@@ -935,36 +977,68 @@ def _candidate_pairs(boxes):
         return [], 0
     longest = sorted(max(boxes[k][1][a] - boxes[k][0][a] for a in range(3)) for k in present)
     cell = max(longest[len(longest) // 2], 1e-6)
-    cells, large = {}, []
+    # Each box's low and high cell at the finest level, and its group.
+    lows, highs, groups = {}, {}, {}
     for k in present:
         lo, hi = boxes[k]
-        if max(hi[a] - lo[a] for a in range(3)) > _GRID_LARGE * cell:
-            large.append(k)
-            continue
-        for cx in range(_cell(lo[0], cell), _cell(hi[0], cell) + 1):
-            for cy in range(_cell(lo[1], cell), _cell(hi[1], cell) + 1):
-                for cz in range(_cell(lo[2], cell), _cell(hi[2], cell) + 1):
-                    cells.setdefault((cx, cy, cz), []).append(k)
+        lows[k] = (_cell(lo[0], cell), _cell(lo[1], cell), _cell(lo[2], cell))
+        highs[k] = (_cell(hi[0], cell), _cell(hi[1], cell), _cell(hi[2], cell))
+        level = (_grid_level(hi[0] - lo[0], cell), _grid_level(hi[1] - lo[1], cell),
+                 _grid_level(hi[2] - lo[2], cell))
+        groups.setdefault(level, []).append(k)
+
+    def file(members, sx, sy, sz):
+        cells = {}
+        for k in members:
+            q, r = lows[k], highs[k]
+            for cx in range(q[0] >> sx, (r[0] >> sx) + 1):
+                for cy in range(q[1] >> sy, (r[1] >> sy) + 1):
+                    for cz in range(q[2] >> sz, (r[2] >> sz) + 1):
+                        cells.setdefault((cx, cy, cz), []).append(k)
+        return cells
+
     pairs, tests = [], 0
-    for home, members in cells.items():
-        for m, a in enumerate(members):
-            for b in members[m + 1:]:
-                if (_cell(max(boxes[a][0][0], boxes[b][0][0]), cell) != home[0]
-                        or _cell(max(boxes[a][0][1], boxes[b][0][1]), cell) != home[1]
-                        or _cell(max(boxes[a][0][2], boxes[b][0][2]), cell) != home[2]):
-                    continue
-                tests += 1
-                if not _boxes_miss(boxes[a], boxes[b]):
-                    pairs.append((a, b) if a < b else (b, a))
-    done = set()
-    for a in large:
-        done.add(a)
-        for b in present:
-            if b in done:
+    order = sorted(groups)
+    for n, level_a in enumerate(order):
+        for level_b in order[n:]:
+            sx = _GRID_LEVEL_SHIFT * max(level_a[0], level_b[0])
+            sy = _GRID_LEVEL_SHIFT * max(level_a[1], level_b[1])
+            sz = _GRID_LEVEL_SHIFT * max(level_a[2], level_b[2])
+            if level_a == level_b:
+                for home, members in file(groups[level_a], sx, sy, sz).items():
+                    for m, a in enumerate(members):
+                        qa = lows[a]
+                        for b in members[m + 1:]:
+                            qb = lows[b]
+                            if (max(qa[0], qb[0]) >> sx != home[0]
+                                    or max(qa[1], qb[1]) >> sy != home[1]
+                                    or max(qa[2], qb[2]) >> sz != home[2]):
+                                continue
+                            tests += 1
+                            if not _boxes_miss(boxes[a], boxes[b]):
+                                pairs.append((a, b) if a < b else (b, a))
                 continue
-            tests += 1
-            if not _boxes_miss(boxes[a], boxes[b]):
-                pairs.append((a, b) if a < b else (b, a))
+            filed, looking = groups[level_a], groups[level_b]
+            if len(filed) > len(looking):
+                filed, looking = looking, filed
+            cells = file(filed, sx, sy, sz)
+            for a in looking:
+                qa, ra = lows[a], highs[a]
+                for cx in range(qa[0] >> sx, (ra[0] >> sx) + 1):
+                    for cy in range(qa[1] >> sy, (ra[1] >> sy) + 1):
+                        for cz in range(qa[2] >> sz, (ra[2] >> sz) + 1):
+                            members = cells.get((cx, cy, cz))
+                            if members is None:
+                                continue
+                            for b in members:
+                                qb = lows[b]
+                                if (max(qa[0], qb[0]) >> sx != cx
+                                        or max(qa[1], qb[1]) >> sy != cy
+                                        or max(qa[2], qb[2]) >> sz != cz):
+                                    continue
+                                tests += 1
+                                if not _boxes_miss(boxes[a], boxes[b]):
+                                    pairs.append((a, b) if a < b else (b, a))
     pairs.sort()
     return pairs, tests
 
@@ -984,6 +1058,46 @@ def _candidate_pairs(boxes):
 # (testdata/interference_cache.py).
 _INTERFERENCE_CACHE = True
 
+# # A clash inside a box is the same clash wherever it slides (large-box index)
+#
+# A rivet row along a stringer is a hundred different poses against ONE stringer,
+# so the pose cache above reused nothing there: an airframe barrel's booleans grew
+# ~96 a bay and the 2,000 budget truncated it from ~20 bays (316,976 of 528,000
+# clashes at 300k; docs/spikes/2026-09-15-one-million-occurrences).
+#
+# ‼️ "Key the pose modulo the stringer's translational invariance" is WRONG: a
+# stringer is finite, and a rivet hanging over its end shares less of it. What is
+# true is narrower. A box is the intersection of three slabs, one per local axis.
+# If the other solid lies wholly inside the slab of axis u, then its common volume
+# with the box is its common volume with the other two slabs alone, and those do
+# not change when it moves along u. So two placements that differ only along u,
+# and are BOTH inside that slab, share the same volume. The key marks the axis
+# (its translation becomes inf, which no real pose has) only when containment is
+# shown — with the other solid's own box, which is never smaller than the solid,
+# and a margin — so a pose near an end keeps its full key and is measured.
+#
+# The same holds from the other side. When THIS frame's box lies inside the other
+# box's slab on the other's axis v, and v lies along this frame's axis w, moving
+# the other along w is moving it along its own v: marked -inf ("carried"). Without
+# it a skin panel keyed a barrel-long stringer by where along the stringer the
+# panel sits — a boolean a bay again.
+#
+# Why marks can be combined: each containment is an interval on ONE translation
+# component in this frame (a rotation that lines v up with w leaves the other
+# components out of it). Two placements with equal keys differ only in marked
+# components, each inside its interval in both; intervals are convex, so moving
+# one component at a time from one to the other stays inside every interval, and
+# no move changes the volume. The sign says which containment marked a component,
+# so both placements slide for the same reason.
+#
+# Boxes only: a box's slabs are known exactly from its dims (checked against its
+# measured bounds before they are trusted). _INTERFERENCE_SLIDE turns this off; it
+# exists so a measurement can say what sliding saves.
+_INTERFERENCE_SLIDE = True
+# Containment must hold by this much (mm): far above bounds noise and the 1e-6 mm
+# the pose is rounded to, far below any clash worth reporting.
+_SLIDE_MARGIN = 1e-4
+
 
 def _pose(location):
     """A placement as twelve numbers, rounded so float noise does not split one
@@ -992,15 +1106,103 @@ def _pose(location):
     return tuple(round(t.Value(r, c), 6 if c == 4 else 9) for r in (1, 2, 3) for c in (1, 2, 3, 4))
 
 
-def _pair_key(placed, shape_ids, i, j):
+def _slabs(key, shape):
+    """A shape's half-lengths along its own axes when it is a box centred on its
+    origin — the slabs it is made of — and its own box, for _slid."""
+    box = _box_of(shape)
+    half = None
+    try:
+        spec = json.loads(key)
+        if spec.get("shape") == "box" and box is not None:
+            d = spec["dims"]
+            half = (float(d["width"]) / 2, float(d["height"]) / 2, float(d["depth"]) / 2)
+            # Trusted only if the solid really is that box. Bounds are never
+            # tighter than the solid, so a box's bounds within a micron of its
+            # slabs on every side are the slabs.
+            if any(abs(box[0][r] + half[r]) > 1e-3 or abs(box[1][r] - half[r]) > 1e-3 for r in range(3)):
+                half = None
+    except (ValueError, KeyError, TypeError):
+        half = None
+    return half, box
+
+
+def _inside(relative, frame, other):
+    """The axes of the frame's box whose slab the other solid lies wholly inside,
+    by _SLIDE_MARGIN. relative places the other in the frame."""
+    half, box = frame[0], other[1]
+    axes = []
+    if half is None or box is None:
+        return axes
+    t = relative.wrapped.Transformation()
+    for r in range(3):
+        mid, reach = t.Value(r + 1, 4), 0.0
+        for c in range(3):
+            v = t.Value(r + 1, c + 1)
+            mid += v * (box[0][c] + box[1][c]) / 2
+            reach += abs(v) * (box[1][c] - box[0][c]) / 2
+        if mid - reach >= _SLIDE_MARGIN - half[r] and mid + reach <= half[r] - _SLIDE_MARGIN:
+            axes.append(r)
+    return axes
+
+
+def _carried(pose, axes):
+    """The frame's axes that the other solid's own axes `axes` lie along.
+
+    A column of pose's rotation is one of the other's axes in this frame; it lies
+    along the frame's axis w when that entry is ±1 and the rest round to zero — the
+    same 1e-9 the pose is compared to."""
+    out = []
+    for v in axes:
+        for w in range(3):
+            if (abs(pose[4 * w + v]) >= 1 - 1e-9
+                    and all(abs(pose[4 * o + v]) <= 1e-9 for o in range(3) if o != w)):
+                out.append(w)
+    return out
+
+
+def _slid(pose, inside, carried):
+    """pose with the translation along each axis the volume cannot depend on marked:
+    inf where the other solid is inside this frame's box on that axis, -inf where
+    this frame's solid is inside the other's box along it. Marked by WHICH reason,
+    so two equal keys slide for the same reason and the proof never mixes them."""
+    if not inside and not carried:
+        return pose
+    out = list(pose)
+    for r in carried:
+        out[4 * r + 3] = -math.inf
+    for r in inside:
+        out[4 * r + 3] = math.inf
+    return tuple(out)
+
+
+def _marks(pose):
+    return sum(1 for r in range(3) if math.isinf(pose[4 * r + 3]))
+
+
+def _pair_key(placed, shape_ids, i, j, slabs=None):
     """Which two shapes, and where the second sits in the first's frame — the same
-    for the pair in either order — or None when either was changed by a feature."""
+    for the pair in either order — or None when either was changed by a feature.
+
+    With slabs (shape key -> _slabs), each translation the volume cannot depend on
+    is marked (see _INTERFERENCE_SLIDE), and the frame that marks more of them is
+    the key: a rivet is keyed in its stringer's frame, not the stringer in the
+    rivet's."""
     pi, pj = placed[i], placed[j]
     if pi is None or pj is None:
         return None
     a, b = shape_ids[pi[0]], shape_ids[pj[0]]
-    forward = (a, b, _pose(pi[1].inverse() * pj[1]))
-    backward = (b, a, _pose(pj[1].inverse() * pi[1]))
+    ahead, back = pi[1].inverse() * pj[1], pj[1].inverse() * pi[1]
+    forward = (a, b, _pose(ahead))
+    backward = (b, a, _pose(back))
+    if not slabs:
+        return min(forward, backward)
+    inside_i = _inside(ahead, slabs[pi[0]], slabs[pj[0]])
+    inside_j = _inside(back, slabs[pj[0]], slabs[pi[0]])
+    forward = (a, b, _slid(forward[2], inside_i, _carried(forward[2], inside_j)))
+    backward = (b, a, _slid(backward[2], inside_j, _carried(backward[2], inside_i)))
+    marked_f, marked_b = _marks(forward[2]), _marks(backward[2])
+    if marked_f != marked_b:
+        return forward if marked_f > marked_b else backward
     return min(forward, backward)
 
 
@@ -1013,21 +1215,24 @@ def _interferences(solids, ids, labels, placed=None):
     Returns the list, whether the budget stopped the search (so a caller never
     reads a truncated answer as a clean one), how many box tests the broad phase
     made, and {"pairs", "booleans", "reused"}: the pairs whose boxes overlap, the
-    booleans paid for, and the answers reused from an identical pose.
+    booleans paid for, and the answers reused from an identical pose (or one slid
+    along a box it lies inside; see _INTERFERENCE_SLIDE).
     """
     boxes, volumes = _measures(solids, placed)
     pairs, box_tests = _candidate_pairs(boxes)
 
     cached = _INTERFERENCE_CACHE and placed is not None
-    shape_ids, cache = {}, {}
+    shape_ids, cache, slabs = {}, {}, {}
     if cached:
         for p in placed:
             if p is not None and p[0] not in shape_ids:
                 shape_ids[p[0]] = len(shape_ids)
+                if _INTERFERENCE_SLIDE:
+                    slabs[p[0]] = _slabs(p[0], p[2])
 
     found, truncated, booleans, reused = [], False, 0, 0
     for i, j in pairs:
-        key = _pair_key(placed, shape_ids, i, j) if cached else None
+        key = _pair_key(placed, shape_ids, i, j, slabs) if cached else None
         if key is not None and key in cache:
             shared = cache[key]
             reused += 1
