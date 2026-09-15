@@ -194,6 +194,26 @@ type Build struct {
 	// geometry/interference.go and cad/sidecar.py.
 	Interferences          []geometry.Interference
 	InterferencesTruncated bool
+	// InterferencesFound is how many pairs the check found sharing material, and
+	// Interferences lists at most the worst _INTERFERENCE_LIST_LIMIT of them
+	// (sidecar.py, 10,000). A reply
+	// that found more is SUMMARIZED, never cut silently: InterferencesFound says how
+	// many there were, and InterferencesSummarized says the list is the worst of
+	// them rather than all of them.
+	//
+	// # Why a list has a bound at all
+	//
+	// A million-occurrence airframe barrel shares material in 1,760,000 pairs — every
+	// rivet in its skin and its stringer — and those are 15 distinct answers reused.
+	// Listed in full the reply is hundreds of megabytes that no reader uses: the turn
+	// names three, and a repair that sent them all would send a model a prompt of
+	// that size (docs/spikes/2026-09-15-next-scale-walls).
+	//
+	// This is not a truncated CHECK. Every pair was checked; what is bounded is how
+	// many of the answers are written down. InterferencesTruncated keeps meaning
+	// "not every pair was checked", and the two are said separately.
+	InterferencesFound      int
+	InterferencesSummarized bool
 	// InterferenceBoxTests is how many pairs of bounding boxes the interference
 	// check compared to choose which pairs pay for a boolean. Reported so the broad
 	// phase's cost is a count a test can read (Phase 4, stage K2b): sorting and
@@ -358,10 +378,14 @@ type reply struct {
 
 	Interferences          []geometry.Interference `json:"interferences,omitempty"`
 	InterferencesTruncated bool                    `json:"interferences_truncated,omitempty"`
-	InterferenceBoxTests   int                     `json:"interference_box_tests"`
-	InterferencePairs      int                     `json:"interference_pairs"`
-	InterferenceBooleans   int                     `json:"interference_booleans"`
-	InterferenceReused     int                     `json:"interference_reused"`
+	// A pointer, so a reply that does not carry the count is told apart from one
+	// that found nothing (see buildOf).
+	InterferencesFound      *int `json:"interferences_found"`
+	InterferencesSummarized bool `json:"interferences_summarized,omitempty"`
+	InterferenceBoxTests    int  `json:"interference_box_tests"`
+	InterferencePairs       int  `json:"interference_pairs"`
+	InterferenceBooleans    int  `json:"interference_booleans"`
+	InterferenceReused      int  `json:"interference_reused"`
 
 	STEP            string           `json:"step,omitempty"`
 	Mesh            []meshPart       `json:"mesh,omitempty"`
@@ -609,11 +633,27 @@ func (k *Kernel) build(ctx context.Context, doc geometry.Document, unit geometry
 			WithDetail("the CAD kernel could not build this assembly: %s", detail)
 	}
 
+	return buildOf(res, inferred, scriptRuns)
+}
+
+// buildOf is what a successful reply says, as a Build. Separate from build so the
+// reply's cost at scale can be measured on exactly this path
+// (TestScaleUp_MeasureTheInterferenceReply).
+func buildOf(res *reply, inferred []string, scriptRuns int) (*Build, error) {
+	const op = "cad.Kernel.BuildDocument"
 	out := &Build{Parts: res.Parts, Volume: res.Volume, Bounds: res.Bounds,
 		Skipped: res.Skipped, FeatureFailures: res.FeaturesFailed, Inferred: inferred,
 		Interferences: res.Interferences, InterferencesTruncated: res.InterferencesTruncated, InterferenceBoxTests: res.InterferenceBoxTests,
 		InterferencePairs: res.InterferencePairs, InterferenceBooleans: res.InterferenceBooleans, InterferenceReused: res.InterferenceReused,
 		ShapeBuilds: res.ShapeBuilds, ScriptRuns: scriptRuns, Phases: res.Phases.durations()}
+	// ‼️ Never fewer found than listed, and a list shorter than the count is a
+	// summary whatever the flag says: a reader that sees N findings and a count of
+	// N must be able to trust that nothing was left out.
+	out.InterferencesFound = len(res.Interferences)
+	if res.InterferencesFound != nil && *res.InterferencesFound > out.InterferencesFound {
+		out.InterferencesFound = *res.InterferencesFound
+	}
+	out.InterferencesSummarized = res.InterferencesSummarized || out.InterferencesFound > len(res.Interferences)
 	if res.STEP != "" {
 		decoded, err := base64.StdEncoding.DecodeString(res.STEP)
 		if err != nil {
