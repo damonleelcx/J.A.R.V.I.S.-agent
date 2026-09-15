@@ -1015,6 +1015,14 @@
   text-transform: uppercase; color: var(--ink-dim); min-width: 18px;
 }
 .proposal .steps li .gate { flex: none; font-size: 10px; color: var(--warn); font-weight: 700; }
+/* Where each step is once the goal runs, read from the goal (workbench.js
+ * goalProgress). The `.rt` treatment, pushed to the end of the row. */
+.proposal .steps li .state {
+  flex: none; margin-left: auto; font-size: 10px; font-weight: 700; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--ink-dim);
+}
+.proposal .steps li .state.succeeded { color: var(--core); }
+.proposal .steps li .state.failed { color: var(--warn); }
 .proposal .note { margin-top: 10px; }
 
 /* ---- variants and side-by-side (PRD VIS-04) ----------------------------- */

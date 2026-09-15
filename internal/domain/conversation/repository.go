@@ -19,7 +19,8 @@ func NewRepository() *Repository { return &Repository{} }
 
 const turnColumns = `id, conversation_id, owner_id, coalesce(project_id, ''), seq,
 	role, text, detail, images, said_at,
-	model, first_token_ms, total_ms, round_trip_ms, tokens`
+	model, first_token_ms, total_ms, round_trip_ms, tokens,
+	coalesce(failure, ''), coalesce(unusable_reply, '')`
 
 func scanTurn(row pgx.Row) (*Turn, error) {
 	var t Turn
@@ -33,7 +34,7 @@ func scanTurn(row pgx.Row) (*Turn, error) {
 	if err := row.Scan(&t.ID, &t.ConversationID, &t.OwnerID, &t.ProjectID, &t.Seq,
 		&role, &t.Text, &t.Detail, &t.Images, &t.SaidAt,
 		&model, &timing.FirstTokenMS, &timing.TotalMS, &timing.RoundTripMS,
-		&timing.Tokens); err != nil {
+		&timing.Tokens, &t.Failure, &t.UnusableReply); err != nil {
 		return nil, err
 	}
 	if model != nil {
@@ -85,18 +86,28 @@ func (r *Repository) Append(ctx context.Context, q db.Querier, t *Turn) error {
 		m := t.Timing.Model
 		model = &m
 	}
+	// A turn that did not fail writes nulls here too (migration 0023).
+	var failure, unusableReply *string
+	if t.Failure != "" {
+		f := t.Failure
+		failure = &f
+	}
+	if t.UnusableReply != "" {
+		u := t.UnusableReply
+		unusableReply = &u
+	}
 	err := q.QueryRow(ctx, `
 		insert into forge_conversation_turns
 			(id, conversation_id, owner_id, project_id, seq, role, text, detail, images, said_at,
-			 model, first_token_ms, total_ms, round_trip_ms, tokens)
+			 model, first_token_ms, total_ms, round_trip_ms, tokens, failure, unusable_reply)
 		select $1, $2, $3, $4, coalesce(max(seq), 0) + 1, $5, $6, $7, $8, $9,
-			   $10, $11, $12, $13, $14
+			   $10, $11, $12, $13, $14, $15, $16
 		from forge_conversation_turns where conversation_id = $2
 		returning seq`,
 		t.ID, t.ConversationID, t.OwnerID, projectID,
 		string(t.Role), t.Text, t.Detail, t.Images, t.SaidAt,
 		model, t.Timing.first(), t.Timing.total(), t.Timing.roundTrip(),
-		t.Timing.tokens()).Scan(&t.Seq)
+		t.Timing.tokens(), failure, unusableReply).Scan(&t.Seq)
 	if err != nil {
 		if isUnique(err, "forge_conversation_turns_conversation_id_seq_key") {
 			return errs.Wrap(op, errs.CodeConflict, err).

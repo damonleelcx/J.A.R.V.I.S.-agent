@@ -26,10 +26,14 @@ import (
 // else was working. The reply names the population it covers rather than letting
 // a reader assume a larger one.
 //
-// A failed turn. Nothing is written for one — the conversation record is
-// appended when a reply lands, and a turn that produced no reply has nothing to
-// append. That is stated in the reply too, because a latency history that
-// silently omitted its failures would read best exactly when things were worst.
+// A turn that failed before any reply arrived — a model that could not be
+// reached, a turn cut off. Nothing is written for one. That is stated in the
+// reply too, because a latency history that silently omitted its failures would
+// read best exactly when things were worst.
+//
+// A turn whose reply ARRIVED and could not be used is written since migration
+// 0023, and is listed here marked failed with what it cost. It is left out of
+// both medians: a refusal's timing is not a reply's.
 
 // TelemetryHandlers serves the measured history.
 type TelemetryHandlers struct {
@@ -59,6 +63,9 @@ type measuredTurnDTO struct {
 	// Geometry says this turn produced a shape. Read from the record rather than
 	// re-derived: a turn whose detail is empty produced speech only.
 	Spoke bool `json:"spoke"`
+	// Failed marks a turn whose reply arrived and could not be used. Its tokens
+	// were still spent, which is why it is listed at all.
+	Failed bool `json:"failed,omitempty"`
 }
 
 // Turns handles GET /v1/telemetry/turns.
@@ -83,8 +90,12 @@ func (h *TelemetryHandlers) Turns(w http.ResponseWriter, r *http.Request) {
 			RoundTripMS:  t.Timing.RoundTripMS,
 			Tokens:       t.Timing.Tokens,
 			ProjectID:    t.ProjectID,
-			Spoke:        t.Text != "",
+			Spoke:        t.Text != "" && !t.Failed(),
+			Failed:       t.Failed(),
 		})
+		if t.Failed() {
+			continue
+		}
 		if t.Timing.FirstTokenMS != nil {
 			first = append(first, *t.Timing.FirstTokenMS)
 		}
@@ -104,9 +115,11 @@ func (h *TelemetryHandlers) Turns(w http.ResponseWriter, r *http.Request) {
 		// Named, so nobody reads this as the deployment.
 		"population": "your own turns on this deployment, newest first",
 		// Named, so nobody reads a quiet history as a healthy one.
-		"excludes": "turns that failed before producing a reply. Nothing is recorded for one — " +
-			"the record is appended when a reply lands — so they are in the server log with " +
-			"their error code and not in this list.",
+		"excludes": "turns that failed before any reply arrived — a model that could not be " +
+			"reached, a turn cut off. Nothing is recorded for one, so they are in the server log " +
+			"with their error code and not in this list. A turn whose reply arrived and could " +
+			"not be used IS listed, marked failed with the tokens it cost, and is left out of " +
+			"both medians.",
 	})
 }
 

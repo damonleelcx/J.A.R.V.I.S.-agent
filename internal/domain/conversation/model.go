@@ -21,6 +21,7 @@ package conversation
 import (
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/errs"
 )
@@ -79,7 +80,24 @@ type Turn struct {
 	// NOT measured, which is a different fact from "it was instant" — see
 	// Timing's own comment, and migration 0022.
 	Timing *Timing
+	// Failure is the error code a FORGE turn failed with, and empty when it did
+	// not fail. A failed turn's Text is what the person was shown instead of a
+	// reply (migration 0023).
+	Failure string
+	// UnusableReply is the refused reply of a failed turn, bounded.
+	//
+	// ‼️ Untrusted model output (PRD SEC-04), kept so somebody can see why the
+	// turn failed. It is not what FORGE said and must never be replayed to a
+	// model as history.
+	UnusableReply string
 }
+
+// MaxUnusableReply bounds a kept reply, in characters: the application's own
+// bound plus room for the truncation marker. Mirrors migration 0023's check.
+const MaxUnusableReply = 8100
+
+// Failed reports whether this turn is a failure rather than a reply.
+func (t *Turn) Failed() bool { return t.Failure != "" }
 
 // Summary is one conversation seen from the outside, for a list of them.
 //
@@ -216,6 +234,23 @@ func (t *Turn) Validate() error {
 	if t.Timing != nil && t.Timing.Tokens != nil && *t.Timing.Tokens < 0 {
 		return errs.New(op, errs.CodeValidationFailed).
 			WithDetail("this turn reports %d tokens", *t.Timing.Tokens)
+	}
+	// The three rules migration 0023 checks, for the reason every rule above is
+	// mirrored: a sentence rather than a constraint name.
+	if t.Role == RoleHuman && (t.Failure != "" || t.UnusableReply != "") {
+		return errs.New(op, errs.CodeValidationFailed).
+			WithDetail("a human turn carries a failed reply. What somebody typed has no reply " +
+				"behind it to be unusable")
+	}
+	if t.UnusableReply != "" && t.Failure == "" {
+		return errs.New(op, errs.CodeValidationFailed).
+			WithDetail("this turn keeps a refused reply and names no failure; a reply that was " +
+				"used is its text and detail, not a second copy here")
+	}
+	if n := utf8.RuneCountInString(t.UnusableReply); n > MaxUnusableReply {
+		return errs.New(op, errs.CodeValidationFailed).
+			WithDetail("this turn keeps a refused reply of %d characters, over the %d kept",
+				n, MaxUnusableReply)
 	}
 	return nil
 }

@@ -242,12 +242,26 @@ type TaskMutation struct {
 	NotBefore *time.Time
 }
 
-// ListTasks returns a goal's tasks, oldest first.
+// ListTasks returns a goal's tasks in the order they were planned.
+//
+// # What was wrong (2026-09-15)
+//
+// It ordered by created_at alone, and every task of a plan is written in one
+// transaction at one instant. So the order among them was whatever Postgres
+// returned, and the operations console listed a live five-step build as steps
+// 1, 2, 5, 3, 4. docs/bugfix/2026-09-15-a-goals-tasks-were-listed-out-of-step-order.md
+//
+// Plans applied since then stamp each task's created_at with its position in
+// the plan (agent.PlanApplier.Apply), so created_at is plan order. The tie-break
+// is for the rows written before that: a build step's idempotency key is
+// build-step-NN, zero-padded, so those still list in step order; any other tie
+// lists the same way every time rather than differently on each read.
 func (r *Repository) ListTasks(ctx context.Context, ex db.Querier, goalID string) ([]*Task, error) {
 	const op = "engine.Repository.ListTasks"
 
 	rows, err := ex.Query(ctx,
-		`select `+taskColumns+` from forge_tasks where goal_id = $1 order by created_at asc`, goalID)
+		`select `+taskColumns+` from forge_tasks where goal_id = $1
+		 order by created_at asc, idempotency_key asc, id asc`, goalID)
 	if err != nil {
 		return nil, errs.Wrap(op, errs.CodeDatabaseUnavail, err)
 	}
