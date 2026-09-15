@@ -432,7 +432,7 @@ drill "nothing is ever reported as interfering" internal/domain/cad/sidecar.py \
 # the solids as they are BEFORE the feature loop, which is what this does.
 drill "interference is measured BEFORE the tools are consumed" internal/domain/cad/sidecar.py \
   's = s.replace("    shapes = dict(zip(ids, built))", "    shapes = dict(zip(ids, built))\n    _pre = (list(built), list(ids), list(names))", 1)
-s = s.replace("clashes, clash_truncated, box_tests = _interferences(built, ids, names)", "clashes, clash_truncated, box_tests = _interferences(*_pre)", 1)' \
+s = s.replace("clashes, clash_truncated, box_tests, clash_pairs = _interferences(built, ids, names, kept_placed)", "clashes, clash_truncated, box_tests, clash_pairs = _interferences(*_pre)", 1)' \
   ./internal/domain/cad 'TestKernel_ACutToolIsNotAnInterference'
 
 # ‼️ Both anchors here moved when stage K2b unfolded the pair loop in _interferences
