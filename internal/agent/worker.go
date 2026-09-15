@@ -151,6 +151,9 @@ func (w *Worker) Run(ctx context.Context) error {
 
 		goalID := task.GoalID
 		w.runTask(ctx, task)
+		if ctx.Err() != nil {
+			w.handBack(ctx, task)
+		}
 		w.afterTask(ctx, goalID)
 	}
 }
@@ -193,6 +196,47 @@ func (w *Worker) afterTask(ctx context.Context, goalID string) {
 // AfterTaskForTest exposes afterTask so a test can hand it the cancelled context a
 // stop leaves Run holding, instead of racing a stop against a task's last write.
 func (w *Worker) AfterTaskForTest(ctx context.Context, goalID string) { w.afterTask(ctx, goalID) }
+
+// handBack returns the task a stopping worker still holds to the queue, at once and
+// without counting the stopped attempt.
+//
+// # Why once, after runTask, rather than wherever runTask can be stopped
+//
+// ‼️ A stop can land anywhere in runTask: before the task starts, at the approval gate,
+// inside a model call, during verification, or just after its last write. Each used to
+// end the same way. The next write ran on the cancelled context and failed, and the
+// task stayed claimed or running under its lease until the reaper recovered it minutes
+// later, with the stop counted as an attempt. That is the opposite of what Run's own
+// comment promised.
+// docs/bugfix/2026-09-15-a-stopped-worker-left-its-task-to-run-out-its-lease.md
+//
+// A single call covers every one of those points because Release decides from the row,
+// not from how far runTask got: it hands back only a task this worker still holds under
+// a lease. A task that finished, failed or parked at the gate before the stop holds no
+// lease, and one the reaper gave to another worker is not this worker's. Both come back
+// as a CONFLICT, and nothing happens, which is right.
+//
+// On a context that outlives the stop, for afterTask's reason. A hand-back that cannot
+// be written leaves the task to the reaper, which is where it was before this existed.
+func (w *Worker) handBack(ctx context.Context, task *engine.Task) {
+	book, cancel := context.WithTimeout(context.WithoutCancel(ctx), afterTaskTimeout)
+	defer cancel()
+	switch err := w.queue.Release(book, w.pool, task.ID, w.ID, w.clock.Now()); {
+	case err == nil:
+	case errs.CodeOf(err) == errs.CodeConflict:
+		return
+	default:
+		w.log.WarnWith(book, logx.EventTaskHandBackFailed, err,
+			"task_id", task.ID, "goal_id", task.GoalID, "worker_id", w.ID,
+			"detail", "a stopping worker could not hand its task back; the lease reaper will return it when the lease expires")
+		return
+	}
+	w.log.Info(book, logx.EventTaskHandedBack,
+		"task_id", task.ID, "goal_id", task.GoalID, "worker_id", w.ID, "stopped_while", string(task.Status))
+	w.appendEvent(book, task.GoalID, &task.ID, engine.EventTaskHandedBack, engine.ActorExecutor,
+		"The worker running this task was stopped. The task was handed back to the queue, and the stopped attempt does not count against it.",
+		map[string]any{"worker": w.ID, "stopped_while": string(task.Status)})
+}
 
 // sleep waits, returning false if the context was cancelled.
 func (w *Worker) sleep(ctx context.Context, d time.Duration) bool {
@@ -269,6 +313,9 @@ func (w *Worker) runTask(ctx context.Context, task *engine.Task) {
 		"attempt", task.AttemptCount, "risk_tier", string(task.RiskTier))
 
 	if err := w.repo.TransitionTask(ctx, w.pool, task, engine.StatusRunning, w.clock.Now(), engine.TaskMutation{}); err != nil {
+		if ctx.Err() != nil {
+			return // stopped before the task started; Run hands it back
+		}
 		// Losing the race here means the reaper already took the task. Abandon
 		// it quietly rather than continuing under a lease we no longer hold.
 		w.log.Info(ctx, logx.EventTaskCycleEnded,
@@ -426,6 +473,14 @@ func (w *Worker) completeTask(ctx context.Context, goal *engine.Goal, task *engi
 
 // retryOrFail applies backoff and returns the task to the queue, or fails it.
 func (w *Worker) retryOrFail(ctx context.Context, goal *engine.Goal, task *engine.Task, cause error) {
+	// ‼️ A stop is not a failed attempt. What brings a stopping worker here is almost
+	// always the stop itself, as a cancelled model or verifier call, and every write
+	// below would run on the cancelled context: it used to log a retry, lose its event
+	// and fail its transition as DATABASE_UNAVAILABLE, and leave the task under its
+	// lease. Run hands the task back instead (handBack).
+	if ctx.Err() != nil {
+		return
+	}
 	if breach := w.budget.CheckAttempts(task); breach != nil || !errs.IsRetryable(cause) {
 		reason := "no attempts remain"
 		if breach == nil {

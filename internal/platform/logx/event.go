@@ -182,6 +182,14 @@ const EventTaskReleaseFailed Event = "forge.task.release_failed"
 
 func init() { allEvents = append(allEvents, EventTaskReleaseFailed) }
 
+// A stopping worker handing back the task it was holding.
+const (
+	EventTaskHandedBack     Event = "forge.task.handed_back"
+	EventTaskHandBackFailed Event = "forge.task.hand_back_failed"
+)
+
+func init() { allEvents = append(allEvents, EventTaskHandedBack, EventTaskHandBackFailed) }
+
 // Workbench events.
 const (
 	EventConverseTurn Event = "forge.converse.turn"

@@ -114,6 +114,8 @@ call's new place in `afterTask` and still goes red.
   `TransitionTask` back to `ready` run on the same cancelled context, fail, and are logged as `DATABASE_UNAVAILABLE`
   too (`forge.task.cycle_ended`); the task stays `running` until its lease expires and the reaper recovers it. The
   stage A1 branch hands a build step back with `WithoutCancel` in `runBuildStep`; the executor path has no equivalent.
-  That is `runTask`'s stop path, not the bookkeeping after it, and is left for its own change.
+  That is `runTask`'s stop path, not the bookkeeping after it, and is left for its own change. Fixed on the branch
+  stacked on this one (`fix/worker-stop-hands-task-back`):
+  docs/bugfix/2026-09-15-a-stopped-worker-left-its-task-to-run-out-its-lease.md.
 - **The classification.** A cancelled context is still reported as `DATABASE_UNAVAILABLE` wherever else it reaches
   `db`. Mapping `context.Canceled` to its own code would be a wider change to `internal/platform/db`.
