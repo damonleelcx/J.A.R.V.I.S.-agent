@@ -61,6 +61,9 @@ type builtSheet struct {
 	Checked int
 	Pairs   int
 	Skipped []string
+	// Parts is what was drawn, part by part, so a sub-assembly can be drawn on
+	// its own from the same build instead of a second one (Phase 5, stage V4).
+	Parts []geometry.RenderPart
 }
 
 // SolidBuilder builds the real surface of a document.
@@ -133,14 +136,22 @@ func (c *Conversation) render(ctx context.Context, doc *Prototype) builtSheet {
 			if img := geometry.ContactSheetOf(*doc, built.Parts, sheetSize); img != "" {
 				return builtSheet{Image: img, FromKernel: true,
 					Interferences: built.Interferences, Truncated: built.Truncated,
-					Checked: built.Checked, Pairs: built.Pairs, Skipped: built.Skipped}
+					Checked: built.Checked, Pairs: built.Pairs, Skipped: built.Skipped,
+					Parts: built.Parts}
 			}
 		}
 	}
 	// The unit is Millimetre here for the reason it always has been: the views
 	// fit whatever they are given, so a uniform scale changes nothing anyone can
-	// see, and a document with no unit still has to produce a picture.
-	return builtSheet{Image: geometry.ContactSheet(*doc, geometry.Millimetre, sheetSize)}
+	// see, and a document with no unit still has to produce a picture. The parts
+	// are tessellated here rather than inside geometry.ContactSheet — the same
+	// two steps it takes — so the sheet can keep them.
+	m := geometry.Tessellate(*doc, geometry.Millimetre)
+	parts := make([]geometry.RenderPart, 0, len(m.Groups))
+	for _, g := range m.Groups {
+		parts = append(parts, geometry.RenderPart{ID: g.PartID, Triangles: g.Triangles})
+	}
+	return builtSheet{Image: geometry.ContactSheetOf(*doc, parts, sheetSize), Parts: parts}
 }
 
 // describedRenderNote is what a caller must tell the vision model when the

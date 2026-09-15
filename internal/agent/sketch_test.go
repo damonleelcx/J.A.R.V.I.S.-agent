@@ -416,7 +416,7 @@ func TestLook_IsToldWhichPartsAreCuttingTools(t *testing.T) {
 		Size: map[string]float64{"radius": 5, "height": 30}})
 	doc.Features = []geometry.Feature{{ID: "drill", Op: "cut", Of: "plate", With: []string{"hole"}}}
 
-	if _, err := c.look(context.Background(), doc, "a plate with a bolt hole", c.render(context.Background(), doc)); err != nil {
+	if _, _, err := c.look(context.Background(), doc, "a plate with a bolt hole", c.render(context.Background(), doc)); err != nil {
 		t.Fatalf("look failed: %v", err)
 	}
 	if !strings.Contains(spy.prompt, "Bolt Hole") || !strings.Contains(spy.prompt, "TOOLS that cut") {
@@ -435,7 +435,7 @@ func TestLook_IsToldWhichPartsAreCuttingTools(t *testing.T) {
 	// A document with no cut says nothing about tools.
 	spy.prompt = ""
 	plain := bracketDoc(100)
-	if _, err := c.look(context.Background(), plain, "a plate",
+	if _, _, err := c.look(context.Background(), plain, "a plate",
 		c.render(context.Background(), plain)); err != nil {
 		t.Fatalf("look failed: %v", err)
 	}

@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/geometry"
@@ -76,36 +78,233 @@ you should not feel obliged to find something.`
 //
 // errNoVision is the one absence that is NOT a problem: this deployment ships
 // with vision deliberately unconfigured, and the caller stays quiet about that.
-func (c *Conversation) look(ctx context.Context, doc *Prototype, asked string, sheet builtSheet) ([]geometry.Problem, error) {
+func (c *Conversation) look(ctx context.Context, doc *Prototype, asked string, sheet builtSheet) ([]geometry.Problem, lookCoverage, error) {
 	if c == nil || c.client == nil || doc == nil {
-		return nil, errNoVision
+		return nil, lookCoverage{}, errNoVision
 	}
 	if c.client.ModelFor(llm.RoleVision) == "" {
-		return nil, errNoVision
+		return nil, lookCoverage{}, errNoVision
 	}
 	if sheet.Image == "" {
-		return nil, errNothingToSee
+		return nil, lookCoverage{}, errNothingToSee
 	}
-
-	parts := make([]string, 0, len(doc.Parts))
-	for _, p := range doc.Parts {
-		parts = append(parts, p.Label())
-	}
-	// Told what it is looking at and what was asked for: questions 1-3 are much
-	// easier to answer about named parts than about coloured blobs.
-	prompt := "This was built in answer to: " + asked +
-		"\n\nThe parts are: " + strings.Join(parts, ", ")
 
 	// And, ONLY when this picture is the described one rather than the built
 	// one, what it is lying about. Both apologies used to live here in full; they
 	// are shared with the sketch comparison now (render.go), because the same
 	// blind spot explained in two places drifts into two different explanations,
 	// either of which can be fixed without the other.
-	prompt += describedRenderNote(doc, sheet)
+	note := describedRenderNote(doc, sheet)
+
+	problems, err := c.lookAt(ctx, sheet.Image, "This was built in answer to: "+asked, partNames(doc), note)
+	if err != nil {
+		return nil, lookCoverage{}, err
+	}
+
+	// ‼️ And each sub-assembly, drawn on its own (Phase 5, stage V4).
+	//
+	// One contact sheet of a whole car is a picture of a car: a bracket buried in
+	// the engine bay, or a seat mounted backwards, is a few pixels behind the body
+	// panels in all four views. Drawn alone, a sub-assembly's parts fill the views.
+	// See subAssemblySheets for which ones, and why at most maxSubAssemblyLooks.
+	subs, of := subAssemblySheets(doc, sheet)
+	for _, s := range subs {
+		seen, err := c.lookAt(ctx, s.image, "This is one sub-assembly of the model, "+s.path+
+			" (an occurrence of "+s.ref+"), drawn on its own. The model was built in answer to: "+asked,
+			s.labels, note)
+		if err != nil {
+			return nil, lookCoverage{}, err
+		}
+		for _, p := range seen {
+			p.Detail = "in " + s.path + ": " + p.Detail
+			problems = append(problems, p)
+		}
+	}
+	return problems, lookCoverage{Looked: len(subs), Of: of}, nil
+}
+
+// lookCoverage is how many sub-assemblies were looked at closely, of how many
+// there were to look at.
+type lookCoverage struct{ Looked, Of int }
+
+// partNames is what the prompt calls the parts in the picture.
+//
+// A document's authored parts, or — for a tree, whose top level holds no parts at
+// all — its placed ones. Until stage V4 this read doc.Parts only, and told the
+// vision model a tree-only design had no parts. Capped: a named list the model
+// cannot finish reading is no better than none.
+func partNames(doc *Prototype) []string {
+	source := doc.Parts
+	if doc.Root != "" {
+		source = doc.Expanded().Parts
+	}
+	const most = 60
+	seen := map[string]bool{}
+	names := make([]string, 0, len(source))
+	for _, p := range source {
+		label := p.Label()
+		if seen[label] {
+			continue
+		}
+		seen[label] = true
+		if len(names) == most {
+			names = append(names, fmt.Sprintf("and %d more", len(source)-most))
+			break
+		}
+		names = append(names, label)
+	}
+	return names
+}
+
+// maxSubAssemblyLooks is how many sub-assemblies one turn looks at closely, beside
+// the whole model. Each is a vision call; four was decided 2026-09-15.
+const maxSubAssemblyLooks = 4
+
+// subSheet is one sub-assembly drawn on its own.
+type subSheet struct {
+	path, ref string
+	image     string
+	labels    []string
+}
+
+// subAssemblySheets draws the sub-assemblies worth a closer look, and says how
+// many there were.
+//
+//   - Which: every assembly the root places directly, once — four wheels are one
+//     wheel to look at, so the first occurrence drawn stands for the rest. An
+//     assembly of one part is seen well enough in the whole picture.
+//   - In what order: one with a part the kernel found sharing material first,
+//     then larger ones.
+//   - How many: maxSubAssemblyLooks, and the count of the rest is returned so the
+//     turn can say what was not looked at closely.
+//
+// Drawn from the parts the sheet already holds, so no second build.
+func subAssemblySheets(doc *Prototype, sheet builtSheet) ([]subSheet, int) {
+	if doc == nil || doc.Root == "" || len(sheet.Parts) == 0 {
+		return nil, 0
+	}
+	assemblies := map[string]bool{}
+	var root *geometry.Assembly
+	for i := range doc.Assemblies {
+		assemblies[doc.Assemblies[i].ID] = true
+		if doc.Assemblies[i].ID == doc.Root {
+			root = &doc.Assemblies[i]
+		}
+	}
+	if root == nil {
+		return nil, 0
+	}
+	childRef := map[string]string{}
+	for _, ch := range root.Children {
+		if assemblies[ch.Ref] {
+			childRef[ch.ID] = ch.Ref
+		}
+	}
+	// The assembly a placed id's first segment places: a child's own id, or a
+	// pattern copy of it ("wheels-3").
+	refOf := func(seg string) string {
+		if ref, ok := childRef[seg]; ok {
+			return ref
+		}
+		if i := strings.LastIndex(seg, "-"); i > 0 && allDigits(seg[i+1:]) {
+			return childRef[seg[:i]]
+		}
+		return ""
+	}
+
+	type group struct {
+		path, ref string
+		parts     []geometry.RenderPart
+		clash     bool
+	}
+	var order []*group
+	byRef := map[string]*group{}
+	for _, p := range sheet.Parts {
+		seg, _, nested := strings.Cut(p.ID, geometry.PathSeparator)
+		ref := refOf(seg)
+		if !nested || ref == "" {
+			continue
+		}
+		g := byRef[ref]
+		if g == nil {
+			g = &group{path: seg, ref: ref}
+			byRef[ref] = g
+			order = append(order, g)
+		}
+		if seg == g.path {
+			g.parts = append(g.parts, p)
+		}
+	}
+	for _, f := range sheet.Interferences {
+		for _, id := range []string{f.A, f.B} {
+			seg, _, _ := strings.Cut(id, geometry.PathSeparator)
+			if g := byRef[refOf(seg)]; g != nil {
+				g.clash = true
+			}
+		}
+	}
+
+	var groups []*group
+	for _, g := range order {
+		if len(g.parts) >= 2 {
+			groups = append(groups, g)
+		}
+	}
+	sort.SliceStable(groups, func(i, j int) bool {
+		if groups[i].clash != groups[j].clash {
+			return groups[i].clash
+		}
+		return len(groups[i].parts) > len(groups[j].parts)
+	})
+	of := len(groups)
+	if len(groups) > maxSubAssemblyLooks {
+		groups = groups[:maxSubAssemblyLooks]
+	}
+
+	labels := map[string]string{}
+	for _, p := range doc.Expanded().Parts {
+		labels[p.ID] = p.Label()
+	}
+	out := make([]subSheet, 0, len(groups))
+	for _, g := range groups {
+		img := geometry.ContactSheetOf(*doc, g.parts, sheetSize)
+		if img == "" {
+			continue
+		}
+		s := subSheet{path: g.path, ref: g.ref, image: img}
+		for _, p := range g.parts {
+			label := labels[p.ID]
+			if label == "" {
+				label = p.ID
+			}
+			s.labels = append(s.labels, label)
+		}
+		out = append(out, s)
+	}
+	return out, of
+}
+
+func allDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for _, r := range s {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+// lookAt puts the closed questions to the vision model about one picture.
+func (c *Conversation) lookAt(ctx context.Context, image, about string, parts []string, note string) ([]geometry.Problem, error) {
+	// Told what it is looking at and what was asked for: questions 1-3 are much
+	// easier to answer about named parts than about coloured blobs.
+	prompt := about + "\n\nThe parts are: " + strings.Join(parts, ", ") + note
 
 	resp, err := c.client.Complete(ctx, llm.Request{
 		Role:     llm.RoleVision,
-		Messages: []llm.Message{{Role: llm.System, Content: lookSystem}, {Role: llm.User, Content: prompt, Images: []string{sheet.Image}}},
+		Messages: []llm.Message{{Role: llm.System, Content: lookSystem}, {Role: llm.User, Content: prompt, Images: []string{image}}},
 		JSONMode: true,
 		// Generous, because a reasoning model spends its budget thinking and
 		// then has nothing left to answer with. Measured on qwen3.8-max, a
@@ -193,7 +392,7 @@ func (c *Conversation) repairIfItLooksWrong(ctx context.Context, reply *Reply, a
 	if reply == nil || reply.Prototype == nil || sheet == nil {
 		return
 	}
-	seen, err := c.look(ctx, reply.Prototype, asked, *sheet)
+	seen, covered, err := c.look(ctx, reply.Prototype, asked, *sheet)
 	if errors.Is(err, errNoVision) {
 		return // deliberate absence: see the config note in converse.go
 	}
@@ -203,6 +402,12 @@ func (c *Conversation) repairIfItLooksWrong(ctx context.Context, reply *Reply, a
 		// things to be told.
 		reply.noteRepair("FORGE could not look at the model it built to check it: " + err.Error())
 		return
+	}
+	// How closely it looked, when it could not look closely at everything: the
+	// rest were seen only in the whole model's picture (Phase 5, stages V2, V4).
+	if covered.Of > covered.Looked {
+		reply.noteRepair(fmt.Sprintf("FORGE looked closely at %d of %d sub-assemblies; the rest were "+
+			"seen only in the picture of the whole model.", covered.Looked, covered.Of))
 	}
 	if len(seen) == 0 {
 		return
@@ -236,7 +441,8 @@ func problemWord(n int) string {
 // the same reason RepairForTest exists: only a real vision model can answer
 // whether this premise holds, and it lives in the external test package.
 func LookForTest(ctx context.Context, c *Conversation, doc *Prototype, asked string) ([]geometry.Problem, error) {
-	return c.look(ctx, doc, asked, c.render(ctx, doc))
+	problems, _, err := c.look(ctx, doc, asked, c.render(ctx, doc))
+	return problems, err
 }
 
 // AskVisionForTest puts one closed question to the vision model about one
