@@ -133,9 +133,16 @@ type Material struct {
 	Density float64 `json:"density,omitempty"`
 }
 
-// maxDensity is past the densest material there is (osmium, about 22,590 kg/m³),
+// MaxDensity is past the densest material there is (osmium, about 22,590 kg/m³),
 // with room to spare. A number above it is a unit mistake, not a material.
-const maxDensity = 100000
+//
+// Exported so the contract states the ceiling this refuses above rather than a
+// copy of it: a contract teaching one limit while the validator enforces another
+// is a model faithfully writing a density and having its material refused.
+// TestTheContractTeachesDensityAsTheValidatorReadsIt holds the two together.
+const MaxDensity = 100000
+
+const maxDensity = MaxDensity
 
 // Validate checks a material before it is stored or drawn.
 func (m *Material) Validate() error {
