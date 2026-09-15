@@ -946,7 +946,7 @@ echo "A worker carries a plan to its end"
 # events were hashed at nanoseconds but stored at microseconds, so every event the
 # real clock wrote failed the audit chain. Needs FORGE_TEST_DATABASE_URL.
 drill "a finished task releases nothing" internal/agent/worker.go \
-  's = s.replace("\t\tw.releaseWaiting(ctx, goalID)\n", "", 1)' \
+  's = s.replace("\tw.releaseWaiting(book, goalID)\n", "", 1)' \
   ./internal/agent 'TestWorker_AFinishedTaskReleasesTheTasksWaitingOnIt'
 
 drill "the idle poll releases nothing" internal/agent/worker.go \
@@ -960,6 +960,18 @@ drill "a budget refusal fails a task that is only claimed" internal/agent/worker
 drill "an event is hashed at a precision it is not stored at" internal/domain/engine/repository.go \
   's = s.replace("\tnow = now.Truncate(time.Microsecond)\n", "", 1)' \
   ./internal/domain/engine 'TestAuditChain_AnEventStampedAtNanosecondsVerifies'
+
+echo
+echo "A stopping worker's bookkeeping"
+# Added 2026-09-15, found exercising a live build goal (#104). A graceful stop cancels
+# the worker's context mid-task, and what the task's end sets moving (releasing waiting
+# tasks, settling the goal) must run on a context of its own, or each fails on the
+# cancelled one and is logged as the database being unavailable. See
+# docs/bugfix/2026-09-15-a-stopping-worker-reported-its-own-stop-as-a-database-outage.md.
+# Needs FORGE_TEST_DATABASE_URL.
+drill "a stopping worker's bookkeeping runs on the cancelled context" internal/agent/worker.go \
+  's = s.replace("context.WithTimeout(context.WithoutCancel(ctx), afterTaskTimeout)", "context.WithTimeout(ctx, afterTaskTimeout)", 1)' \
+  ./internal/agent 'TestWorker_AWorkerStoppedMidTaskDoesNotReportItsBookkeepingAsADatabaseFailure|TestWorker_ATaskFinishedAsTheStopArrivesStillReleasesItsDependentsAndSettlesItsGoal'
 
 echo
 echo "The kernel"
