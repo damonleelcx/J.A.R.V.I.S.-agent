@@ -26,6 +26,25 @@ data:
   # STEP export refuse with its documented message.
   FORGE_CAD_PYTHON: "/opt/cad/venv/bin/python"
 
+  # Blob storage for large geometry (docs/plan-2026-09-13-millions-of-parts.md,
+  # Phase 3). The bucket, and the ForgeGeometryBlobs policy on the node's role
+  # heros-vm (Get/Put under blobs/, List on that prefix, no Delete), were made by
+  # deploy/bootstrap-s3.sh.
+  #
+  # Deliberately NO FORGE_BLOB_ENDPOINT and NO keys. No endpoint means AWS
+  # itself, which config.Load accepts once a region is given. Credentials come
+  # from the instance role through IMDS, so there is no key to leak, rotate or
+  # add to forge/prod — and a key set anywhere in this pod's environment would
+  # silently win over the role in the SDK's chain.
+  #
+  # ‼️ Both pods read these, and they reach IMDS differently. forged is on the
+  # host network and reaches it as the node does. forge-worker is not: it needs
+  # 32-worker-egress.yaml's IMDS rule AND an instance IMDS hop limit of at least
+  # 2, which bootstrap-s3.sh reports. verify.sh check 9 runs the round trip in
+  # both pods; neither passing says anything about the other.
+  FORGE_BLOB_BUCKET: "forge-geometry-373468206837"
+  FORGE_BLOB_REGION: "us-east-1"
+
   # PRD SEC-01. Deliberately has no default: FORGE will not assert what a
   # provider does with submitted content on the strength of a guess. Set to
   # no_training on 2026-09-07, matching the local .env, as a statement about the

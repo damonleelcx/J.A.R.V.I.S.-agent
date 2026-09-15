@@ -23,6 +23,7 @@ import (
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/secrets"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/llm"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/persona"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/blob"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/clock"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/config"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/db"
@@ -104,6 +105,26 @@ func run() error {
 		return err
 	}
 	defer pool.Close()
+
+	// Blob storage (docs/plan-2026-09-13-millions-of-parts.md, Phase 3). Nothing in
+	// the worker stores a blob yet. It is built here so the change that adds the
+	// first consumer only has to hand it over, and so a deployment whose AWS SDK
+	// configuration cannot load is told at boot rather than on the first model
+	// large enough to need a bucket. Never nil: with no FORGE_BLOB_BUCKET it is
+	// the store that refuses every call naming that setting.
+	//
+	// # Why the worker and not only forged
+	//
+	// The worker is the pod that is NOT on the host network, so it reaches the
+	// instance role and S3 through 32-worker-egress.yaml and the IMDS hop limit.
+	// Construction makes no request, so an unreachable bucket does not stop the
+	// worker starting — blob storage is a cache — and `forgectl blob check`
+	// (deploy/verify.sh check 9, run in this pod) is what proves the path works.
+	blobs, err := blob.New(ctx, cfg.Blob, log)
+	if err != nil {
+		return err
+	}
+	log.Info(ctx, logx.EventBlobReady, "available", blobs.Available(), "bucket", cfg.Blob.Bucket)
 
 	clk := clock.System{}
 	repo := engine.NewRepository()
