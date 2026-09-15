@@ -961,6 +961,31 @@ drill "the build does not say where its time went" internal/domain/cad/sidecar.p
   ./internal/domain/cad 'TestKernel_ExportingManyOccurrencesGrowsLinearly'
 
 echo
+echo "The interference broad phase sweeps instead of comparing every pair"
+# Added 2026-09-15 (Phase 4, stage K2b). Boxes are sorted along the axis the parts
+# spread furthest and each is tested only against the boxes still open; the pairs
+# found are handed to the narrow phase in the order comparing every pair would.
+drill "a box is never closed, so the sweep compares every pair" internal/domain/cad/sidecar.py \
+  "s = s.replace('        still_open = [a for a in still_open if boxes[a][1][axis] > start]\n', '', 1)" \
+  ./internal/domain/cad 'TestKernel_InterferenceBoxTestsGrowLinearly'
+
+drill "the sweep always runs along x" internal/domain/cad/sidecar.py \
+  "s = s.replace('    axis = _sweep_axis(boxes, present)\n', '    axis = 0\n', 1)" \
+  ./internal/domain/cad 'TestKernel_InterferenceBoxTestsGrowLinearly'
+
+drill "boxes are swept in the order they end, closing boxes still open" internal/domain/cad/sidecar.py \
+  "s = s.replace('    present.sort(key=lambda k: boxes[k][0][axis])', '    present.sort(key=lambda k: boxes[k][1][axis])', 1)" \
+  ./internal/domain/cad 'TestKernel_TheBroadPhaseFindsWhatEveryPairFinds'
+
+drill "the budget is spent in sweep order" internal/domain/cad/sidecar.py \
+  "s = s.replace('    pairs.sort()\n', '', 1)" \
+  ./internal/domain/cad 'TestKernel_ATruncatedBroadPhaseStopsWhereEveryPairStops'
+
+drill "the build does not say how many boxes it compared" internal/domain/cad/cad.go \
+  's = s.replace(" InterferenceBoxTests: res.InterferenceBoxTests,\n", "\n", 1)' \
+  ./internal/domain/cad 'TestKernel_InterferenceBoxTestsGrowLinearly'
+
+echo
 echo "Islands"
 drill "an island is cut away with its hole" internal/domain/geometry/triangulate.go \
   's = s.replace("\t\tif depth[i]%2 != 0 {\n\t\t\tcontinue // a void, and it belongs to whatever contains it\n\t\t}", "\t\tif i != 0 {\n\t\t\tcontinue\n\t\t}", 1)' \
