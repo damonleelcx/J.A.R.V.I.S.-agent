@@ -288,8 +288,9 @@
   /* kind, B, H, t */
   var EN10219 = [['SHS', 20, 20, 2], ['SHS', 30, 30, 3], ['SHS', 40, 40, 3], ['SHS', 40, 40, 4],
                  ['SHS', 50, 50, 5], ['RHS', 40, 20, 2], ['RHS', 60, 40, 3]];
-  /* leg a, t, root radius r1, toe radius r2 */
-  var EN10056 = [[20, 3, 3.5, 2], [30, 3, 5, 2.5], [40, 4, 6, 3], [50, 5, 7, 3.5]];
+  /* leg a, t, root radius r1, toe radius r2 — half the root radius, as EN 10056-1
+   * states (standard.go names the source; the L20's was 2 until 2026-09-15) */
+  var EN10056 = [[20, 3, 3.5, 1.75], [30, 3, 5, 2.5], [40, 4, 6, 3], [50, 5, 7, 3.5]];
   /* geometry/units.go unitTable: the factor to millimetres and every alias. */
   var UNIT_TABLE = [[1, ['mm', 'millimetre', 'millimeter', 'millimetres', 'millimeters']],
                     [10, ['cm', 'centimetre', 'centimeter', 'centimetres', 'centimeters']],
