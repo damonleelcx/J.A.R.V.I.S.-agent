@@ -180,6 +180,61 @@ func (h *GeometryHandlers) Get(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, map[string]any{"variant": toVariantDTO(*v)})
 }
 
+// Mass handles GET /v1/geometry/{id}/mass — mass, centre of gravity and envelope,
+// rolled up through the tree (Phase 5, stage V3).
+//
+// # Why it can answer without a mass
+//
+// Mass needs a density on every part. When a part has none, the answer is weighed
+// by volume and says so, naming the parts: a centre of gravity computed from a
+// guessed density looks exactly like a measured one. See geometry/mass.go.
+func (h *GeometryHandlers) Mass(w http.ResponseWriter, r *http.Request) {
+	v, err := h.authorisedVariant(r)
+	if err != nil {
+		WriteError(w, r, h.deps.Log, err)
+		return
+	}
+	if h.deps.CAD == nil || !h.deps.CAD.Available() {
+		WriteError(w, r, h.deps.Log, errs.New("httpapi.Mass", errs.CodeConnectorUnavailable).
+			WithDetail("this deployment has no CAD kernel, so where each part's volume is cannot be "+
+				"measured. Set FORGE_CAD_PYTHON to a Python with build123d"))
+		return
+	}
+	if !v.Units.Known() {
+		WriteError(w, r, h.deps.Log, errs.New("httpapi.Mass", errs.CodeValidationFailed).
+			WithDetail("this variant has no unit FORGE can convert (%s), and the kernel works in "+
+				"millimetres", strings.ToLower(strings.TrimSuffix(v.UnitsNote(), "."))))
+		return
+	}
+	built, err := h.deps.CAD.BuildProperties(r.Context(), v.Document, v.Units)
+	if err != nil {
+		h.logRefusal(r, v, "mass", err)
+		WriteError(w, r, h.deps.Log, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, massBody(v.VersionID, geometry.MassProperties(v.Document, built.Properties), built.Skipped))
+}
+
+// massBody is the mass reply, shared with its fence.
+func massBody(versionID string, report geometry.MassReport, skipped []string) map[string]any {
+	note := ""
+	if report.Basis == geometry.MassByVolume {
+		note = fmt.Sprintf("no mass is claimed: %d part(s) have no density, so each centre is the centre "+
+			"of volume, which is the centre of gravity only if the model is one material",
+			len(report.WithoutDensity))
+	}
+	return map[string]any{
+		"version_id":      versionID,
+		"basis":           report.Basis,
+		"groups":          report.Groups,
+		"without_density": report.WithoutDensity,
+		"unmeasured":      report.Unmeasured,
+		// A part the kernel could not build is in no group, and is named here.
+		"skipped": skipped,
+		"note":    note,
+	}
+}
+
 // Mesh handles GET /v1/geometry/{id}/mesh — the surface of the BUILT solid.
 //
 // # Why this exists
