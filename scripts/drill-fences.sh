@@ -1008,6 +1008,31 @@ drill "configuration accepts a pool of no processes" internal/platform/config/co
   ./internal/platform/config 'TestCADPoolMustBePositive'
 
 echo
+echo "A mesh is tessellated once per definition"
+# Added 2026-09-15 (Phase 4, stage K4). The sidecar tessellates each distinct shape once
+# in its own frame and sends every untouched copy as a 4x4 column-major matrix; Go
+# (WorldMeshes) and the browser (expandMeshInstances) move each copy into place.
+drill "every part is meshed on its own again" internal/domain/cad/sidecar.py \
+  's = s.replace("_MESH_PER_DEFINITION = True\n", "_MESH_PER_DEFINITION = False\n", 1)' \
+  ./internal/domain/cad 'TestKernel_AMeshIsTessellatedOncePerDefinition'
+
+drill "an instance matrix is written row by row" internal/domain/cad/sidecar.py \
+  's = s.replace("return [t.Value(1, 1), t.Value(2, 1), t.Value(3, 1), 0.0,", "return [t.Value(1, 1), t.Value(1, 2), t.Value(1, 3), 0.0,", 1)' \
+  ./internal/domain/cad 'TestKernel_AnInstancedMeshIsTheMeshEveryPartUsedToGet'
+
+drill "a part a feature changed is drawn as the shape it started from" internal/domain/cad/sidecar.py \
+  's = s.replace("        touched.add(op[\"of\"])\n", "", 1)' \
+  ./internal/domain/cad 'TestKernel_AnInstancedMeshIsTheMeshEveryPartUsedToGet'
+
+drill "Go moves a copy without its translation" internal/domain/cad/cad.go \
+  's = s.replace("v[i] = m[0]*x + m[4]*y + m[8]*z + m[12]", "v[i] = m[0]*x + m[4]*y + m[8]*z", 1)' \
+  ./internal/domain/cad 'TestWorldMeshesPlacesEachCopyByItsMatrix'
+
+drill "the browser moves a copy without its translation" internal/httpapi/assets/forge3d.js \
+  "s = s.replace('v[i] = m[0] * x + m[4] * y + m[8] * z + m[12];', 'v[i] = m[0] * x + m[4] * y + m[8] * z;', 1)" \
+  ./internal/httpapi 'TestRendererExpandsMeshInstancesLikeTheBuild'
+
+echo
 echo "Islands"
 drill "an island is cut away with its hole" internal/domain/geometry/triangulate.go \
   's = s.replace("\t\tif depth[i]%2 != 0 {\n\t\t\tcontinue // a void, and it belongs to whatever contains it\n\t\t}", "\t\tif i != 0 {\n\t\t\tcontinue\n\t\t}", 1)' \
