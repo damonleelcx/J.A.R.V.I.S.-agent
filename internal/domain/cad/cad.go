@@ -37,6 +37,7 @@ package cad
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -88,6 +89,10 @@ type Kernel struct {
 	once  sync.Once
 	slots chan *sidecar
 	all   []*sidecar
+
+	// timeout is how long one build may take: buildTimeout, except in the fences
+	// that need a limit short enough to cross on purpose.
+	timeout time.Duration
 }
 
 // New returns a kernel that runs through the given Python interpreter.
@@ -96,7 +101,7 @@ type Kernel struct {
 // not an error. Nothing starts here; the process is started on the first build,
 // so a deployment that never exports a parametric file never pays for one.
 func New(python string, log *logx.Logger) *Kernel {
-	return &Kernel{python: strings.TrimSpace(python), log: log, size: 1}
+	return &Kernel{python: strings.TrimSpace(python), log: log, size: 1, timeout: buildTimeout}
 }
 
 // WithPool sets how many kernel processes serve builds at once. Fewer than one is
@@ -572,19 +577,33 @@ func (k *Kernel) build(ctx context.Context, doc geometry.Document, unit geometry
 
 	req := request{Solids: solids, Operations: operations, Format: format, Properties: properties}
 	res, err := s.roundTrip(ctx, req)
-	if err != nil {
+	var late *lateError
+	if err != nil && !errors.As(err, &late) {
 		// One retry, and exactly one. The overwhelmingly likely cause of an I/O
 		// failure is a process that died between requests — a machine asleep, an
 		// OOM, somebody's pkill — and restarting answers that. Retrying twice
 		// would turn a kernel that crashes on a particular document into a loop.
 		// The retry replaces THIS slot's process; the others are untouched.
+		//
+		// ‼️ A build that ran out of time is NOT retried: its process was working,
+		// and a fresh one takes as long again. Fences:
+		// TestKernel_ABuildThatRunsOutOfTimeIsNotRetriedAndSaysSo, and
+		// TestKernel_AProcessThatDiesMidBuildIsStillRetriedOnce for the retry.
 		s.stop()
 		k.log.Warn(ctx, logx.EventCADRestarted, "slot", s.slot, "detail", err.Error())
 		res, err = s.roundTrip(ctx, req)
-		if err != nil {
-			return nil, errs.Wrap(op, errs.CodeConnectorUnavailable, err).
-				WithDetail("the CAD kernel did not answer, and restarting it did not help")
+	}
+	if err != nil {
+		if errors.As(err, &late) {
+			// The killed process is reaped and the slot reset NOW, so the next build
+			// starts a fresh process instead of spending its one retry discovering
+			// this one is dead. Fence: TestKernel_AfterATimeoutTheSlotHasAFreshProcessForTheNextBuild.
+			s.stop()
+			k.log.Warn(ctx, logx.EventCADTimedOut, "slot", s.slot, "detail", late.Error())
+			return nil, lateRefusal(op, late)
 		}
+		return nil, errs.Wrap(op, errs.CodeConnectorUnavailable, err).
+			WithDetail("the CAD kernel did not answer, and restarting it did not help")
 	}
 	if !res.OK {
 		detail := res.Error
@@ -650,6 +669,29 @@ func (k *Kernel) build(ctx context.Context, doc geometry.Document, unit geometry
 		out.Properties = append(out.Properties, m)
 	}
 	return out, nil
+}
+
+// lateRefusal is the error for a build stopped because time ran out.
+//
+// CAD_KERNEL_TIMEOUT (504, not retryable — errs/code.go says why), with a detail
+// naming which time ran out. A caller that CANCELLED rather than ran out of time
+// has gone, and gets the pool's existing "request ended" wording under the code
+// acquire already uses: nobody is reading that reply.
+func lateRefusal(op string, late *lateError) error {
+	switch {
+	case late.caller == nil:
+		return errs.Wrap(op, errs.CodeKernelTimeout, late).
+			WithDetail("this build took longer than the CAD kernel's %s limit, so it was stopped and "+
+				"not retried: the same build would take as long again. Build part of the design at a "+
+				"time, or split it into smaller subassemblies", late.limit)
+	case errors.Is(late.caller, context.DeadlineExceeded):
+		return errs.Wrap(op, errs.CodeKernelTimeout, late).
+			WithDetail("the request's own deadline ended before the CAD kernel finished this build, " +
+				"so it was stopped and not retried: the same build would take at least as long again")
+	default:
+		return errs.Wrap(op, errs.CodeConnectorUnavailable, late).
+			WithDetail("the request ended before the CAD kernel finished, so the build was stopped")
+	}
 }
 
 // BuildMesh builds a document and returns the surface of the solid it makes.

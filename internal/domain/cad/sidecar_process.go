@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/logx"
@@ -39,6 +40,8 @@ import (
 type sidecar struct {
 	python string
 	log    *logx.Logger
+	// timeout is how long one build may take (Kernel.timeout).
+	timeout time.Duration
 	// slot is this process's place in the pool, logged so a restart names which
 	// process was replaced.
 	slot int
@@ -59,7 +62,7 @@ func (k *Kernel) pool() chan *sidecar {
 	k.once.Do(func() {
 		k.slots = make(chan *sidecar, k.size)
 		for i := 0; i < k.size; i++ {
-			s := &sidecar{python: k.python, log: k.log, slot: i}
+			s := &sidecar{python: k.python, log: k.log, timeout: k.timeout, slot: i}
 			k.all = append(k.all, s)
 			k.slots <- s
 		}
@@ -118,22 +121,33 @@ func (s *sidecar) roundTrip(ctx context.Context, req request) (*reply, error) {
 	// blocking Read on a pipe does not observe a context. Killing is the only
 	// thing that ends it, and it is also the right outcome: a kernel that has
 	// not answered in thirty seconds is not going to.
+	//
+	// ‼️ The goroutine records WHY it killed the process before it does. To the
+	// read below, a process killed for its time and one that crashed are the same
+	// EOF, and until 2026-09-15 they were treated the same: retried on a fresh
+	// process, killed again, reported as "no working backend". See lateError.
 	done := make(chan struct{})
 	defer close(done)
+	var stopped atomic.Pointer[lateError]
 	go func() {
-		timer := time.NewTimer(buildTimeout)
+		timer := time.NewTimer(s.timeout)
 		defer timer.Stop()
 		select {
 		case <-done:
 		case <-ctx.Done():
+			stopped.Store(&lateError{caller: ctx.Err()})
 			s.kill()
 		case <-timer.C:
+			stopped.Store(&lateError{limit: s.timeout})
 			s.kill()
 		}
 	}()
 
 	line, err := s.stdout.ReadBytes('\n')
 	if err != nil {
+		if late := stopped.Load(); late != nil {
+			return nil, late
+		}
 		return nil, fmt.Errorf("reading from the kernel: %w", err)
 	}
 	var res reply
@@ -142,6 +156,33 @@ func (s *sidecar) roundTrip(ctx context.Context, req request) (*reply, error) {
 	}
 	return &res, nil
 }
+
+// lateError is a build whose process was killed because time ran out while it was
+// still working: the kernel's own limit, or the caller's context.
+//
+// # Why it is its own type
+//
+// The retry in Kernel.build is for a process that DIED — an OOM, a pkill, a
+// machine asleep — and a fresh process answers that. A process killed for its time
+// was alive and building, and a fresh one given the same build takes as long
+// again: retrying turned a 31 s build into a 60 s wait, and the second kill into
+// "the CAD kernel did not answer, and restarting it did not help" under
+// CONNECTOR_UNAVAILABLE. build asks errors.As for this, and does not retry it.
+type lateError struct {
+	// limit is the kernel's own limit, when that is what ran out.
+	limit time.Duration
+	// caller is the caller's context error, when that ended first.
+	caller error
+}
+
+func (e *lateError) Error() string {
+	if e.caller != nil {
+		return "the request ended before the kernel answered: " + e.caller.Error()
+	}
+	return fmt.Sprintf("the kernel did not answer within %s", e.limit)
+}
+
+func (e *lateError) Unwrap() error { return e.caller }
 
 func (s *sidecar) start(ctx context.Context) error {
 	if s.started {
