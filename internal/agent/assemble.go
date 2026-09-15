@@ -72,8 +72,12 @@ Rules:
 - Each step's "what" is one sentence naming what is added and where it goes,
   written for whoever builds it next. It is not a description of the finished
   object.
+- When the object is made of sub-assemblies, give each step an "assembly": a
+  short id for the sub-assembly that step builds ("chassis", "front-left-wheel").
+  The step is shown that sub-assembly and what it attaches to, not the whole model,
+  so a step that adds a door does not have to read the gearbox.
 
-Return JSON: {"steps": [{"name": "short name", "what": "one sentence"}]}`
+Return JSON: {"steps": [{"name": "short name", "what": "one sentence", "assembly": "optional sub-assembly id"}]}`
 
 // planBuild asks for the order to build something in.
 func (c *Conversation) planBuild(ctx context.Context, asked string) ([]buildTask, error) {
@@ -116,7 +120,16 @@ func (c *Conversation) planBuild(ctx context.Context, asked string) ([]buildTask
 type buildTask struct {
 	Name string `json:"name"`
 	What string `json:"what"`
+	// Assembly is the sub-assembly this step builds, when the plan names one. On a
+	// model written as a tree the step is shown only that (see subtree.go).
+	Assembly string `json:"assembly,omitempty"`
 }
+
+// maxStepContextBytes is how much of a tree one build step is shown (Phase 2,
+// stage A2; decided 2026-09-15). A step over it is refused by name rather than
+// shown a truncated model, which would be a model with parts missing and nothing
+// to say so.
+const maxStepContextBytes = 64 << 10
 
 var errNotWorthPlanning = fmt.Errorf("this does not need building in passes")
 
@@ -132,6 +145,10 @@ that ADDS what this step asks for, and nothing else.
   you were given; do not assume them.
 - Do this step only. The later steps are somebody else's, including yours in a
   moment.
+- When the step names an assembly, you are shown that assembly and what it
+  attaches to rather than the whole model. Build inside that assembly: patch it by
+  id, or create it and place it as a child of the root if it is new. What you are
+  not shown is still there, and an edit keeps it.
 
 Return JSON: {"speech": "one sentence on what you added", "prototype_edit": {"patch": {"parts": [...], "features": [...]}}}`
 
@@ -200,12 +217,26 @@ func (c *Conversation) buildOneStep(ctx context.Context, doc *Prototype, asked s
 	if err != nil {
 		return nil, ""
 	}
+	// ‼️ A step on a tree is shown the assembly it builds, not the whole model
+	// (Phase 2, stage A2; see subtree.go). The whole document grows with every
+	// subsystem already built; the view grows only with the one being built.
+	shown := "The model so far"
+	if view := SubtreeModel(doc, step.Assembly); view != "" {
+		body = []byte(view)
+		shown = "The assembly this step builds, and what it attaches to (the rest of the model is not shown, and an edit keeps it)"
+	}
+	// And bounded, for a tree: refused by name over the ceiling, never truncated.
+	if doc.Root != "" && len(body) > maxStepContextBytes {
+		return nil, fmt.Sprintf("Step %d (%s) was not built: what it would be shown is %d KiB, over the %d KiB "+
+			"one step is given. A step on a model built from sub-assemblies is shown only the one it names, "+
+			"so name a smaller one.", n, step.Name, len(body)>>10, maxStepContextBytes>>10)
+	}
 	// The CONTRACT goes with every step, not just the conversational turns. A
 	// prompt that asks for geometry without saying what geometry looks like gets
 	// a schema the model invented — measured on the first live build, which came
 	// back {"type":"box_beam","dimensions":{...}} on every step and produced
 	// nothing seven times out of eight.
-	system, sofar := stepSystem+"\n\n"+geometryContract, fmt.Sprintf("\n\nThe model so far:\n%s", body)
+	system, sofar := stepSystem+"\n\n"+geometryContract, fmt.Sprintf("\n\n%s:\n%s", shown, body)
 	if !doc.HasGeometry() {
 		system, sofar = firstStepSystem+"\n\n"+geometryContract, ""
 	}
