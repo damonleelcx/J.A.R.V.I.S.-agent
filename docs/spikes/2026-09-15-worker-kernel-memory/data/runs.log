@@ -1,0 +1,47 @@
+== p1-400 pool=1 conc=1 occurrences=400 copies=1 seconds=10
+mem p1-400 #1|succeeded|26|8
+Step 1 of 3 — chassis|succeeded||{"result": {"note": "Parts are inside each other and FORGE could not correct it: hub is 100% inside wheel: they occupy the same material (452389 mm³). Move one of them, or make the part that contains the other hollow. lug is 100% inside hub: they occupy the sa
+Step 2 of 3 — corners|succeeded||{"result": {"note": "Parts are inside each other and FORGE could not correct it: hub is 100% inside wheel: they occupy the same material (452389 mm³). Move one of them, or make the part that contains the other hollow. lug is 100% inside hub: they occupy the sa
+Step 3 of 3 — wheels|succeeded||{"result": {"note": "Parts are inside each other and FORGE could not correct it: hub is 100% inside wheel: they occupy the same material (452389 mm³). Move one of them, or make the part that contains the other hollow. lug is 100% inside hub: they occupy the sa
+== p1-4000 pool=1 conc=1 occurrences=4000 copies=1 seconds=15
+mem p1-4000 #1|succeeded|26|13
+Step 1 of 3 — chassis|succeeded||{"result": {"note": "Parts are inside each other and FORGE could not correct it: hub is 100% inside wheel: they occupy the same material (452389 mm³). Move one of them, or make the part that contains the other hollow. lug is 100% inside hub: they occupy the sa
+Step 2 of 3 — corners|succeeded||{"result": {"note": "Parts are inside each other and FORGE could not correct it: hub is 100% inside wheel: they occupy the same material (452389 mm³). Move one of them, or make the part that contains the other hollow. lug is 100% inside hub: they occupy the sa
+Step 3 of 3 — wheels|succeeded||{"result": {"note": "Parts are inside each other and FORGE could not correct it: hub is 100% inside wheel: they occupy the same material (452389 mm³). Move one of them, or make the part that contains the other hollow. lug is 100% inside hub: they occupy the sa
+== p2-40 pool=2 conc=2 occurrences=40 copies=2 seconds=9
+mem p2-40 #1|succeeded|26|7
+mem p2-40 #2|succeeded|26|7
+Step 1 of 3 — chassis|succeeded||{"result": {"note": "Parts are inside each other and FORGE could not correct it: hub is 100% inside wheel: they occupy the same material (452389 mm³). Move one of them, or make the part that contains the other hollow. lug is 100% inside hub: they occupy the sa
+Step 2 of 3 — corners|succeeded||{"result": {"note": "Parts are inside each other and FORGE could not correct it: hub is 100% inside wheel: they occupy the same material (452389 mm³). Move one of them, or make the part that contains the other hollow. lug is 100% inside hub: they occupy the sa
+Step 3 of 3 — wheels|succeeded||{"result": {"note": "Parts are inside each other and FORGE could not correct it: hub is 100% inside wheel: they occupy the same material (452389 mm³). Move one of them, or make the part that contains the other hollow. lug is 100% inside hub: they occupy the sa
+Step 1 of 3 — chassis|succeeded||{"result": {"note": "Parts are inside each other and FORGE could not correct it: hub is 100% inside wheel: they occupy the same material (452389 mm³). Move one of them, or make the part that contains the other hollow. lug is 100% inside hub: they occupy the sa
+Step 2 of 3 — corners|succeeded||{"result": {"note": "Parts are inside each other and FORGE could not correct it: hub is 100% inside wheel: they occupy the same material (452389 mm³). Move one of them, or make the part that contains the other hollow. lug is 100% inside hub: they occupy the sa
+Step 3 of 3 — wheels|succeeded||{"result": {"note": "Parts are inside each other and FORGE could not correct it: hub is 100% inside wheel: they occupy the same material (452389 mm³). Move one of them, or make the part that contains the other hollow. lug is 100% inside hub: they occupy the sa
+== p2-400 pool=2 conc=2 occurrences=400 copies=2 seconds=10
+mem p2-400 #1|succeeded|26|8
+mem p2-400 #2|succeeded|26|8
+Step 1 of 3 — chassis|succeeded||{"result": {"note": "Parts are inside each other and FORGE could not correct it: hub is 100% inside wheel: they occupy the same material (452389 mm³). Move one of them, or make the part that contains the other hollow. lug is 100% inside hub: they occupy the sa
+Step 2 of 3 — corners|succeeded||{"result": {"note": "Parts are inside each other and FORGE could not correct it: hub is 100% inside wheel: they occupy the same material (452389 mm³). Move one of them, or make the part that contains the other hollow. lug is 100% inside hub: they occupy the sa
+Step 3 of 3 — wheels|succeeded||{"result": {"note": "Parts are inside each other and FORGE could not correct it: hub is 100% inside wheel: they occupy the same material (452389 mm³). Move one of them, or make the part that contains the other hollow. lug is 100% inside hub: they occupy the sa
+Step 1 of 3 — chassis|succeeded||{"result": {"note": "Parts are inside each other and FORGE could not correct it: hub is 100% inside wheel: they occupy the same material (452389 mm³). Move one of them, or make the part that contains the other hollow. lug is 100% inside hub: they occupy the sa
+Step 2 of 3 — corners|succeeded||{"result": {"note": "Parts are inside each other and FORGE could not correct it: hub is 100% inside wheel: they occupy the same material (452389 mm³). Move one of them, or make the part that contains the other hollow. lug is 100% inside hub: they occupy the sa
+Step 3 of 3 — wheels|succeeded||{"result": {"note": "Parts are inside each other and FORGE could not correct it: hub is 100% inside wheel: they occupy the same material (452389 mm³). Move one of them, or make the part that contains the other hollow. lug is 100% inside hub: they occupy the sa
+== p2-4000 pool=2 conc=2 occurrences=4000 copies=2 seconds=18
+mem p2-4000 #1|succeeded|26|17
+mem p2-4000 #2|succeeded|26|17
+Step 1 of 3 — chassis|succeeded||{"result": {"note": "Parts are inside each other and FORGE could not correct it: hub is 100% inside wheel: they occupy the same material (452389 mm³). Move one of them, or make the part that contains the other hollow. lug is 100% inside hub: they occupy the sa
+Step 2 of 3 — corners|succeeded||{"result": {"note": "Parts are inside each other and FORGE could not correct it: hub is 100% inside wheel: they occupy the same material (452389 mm³). Move one of them, or make the part that contains the other hollow. lug is 100% inside hub: they occupy the sa
+Step 3 of 3 — wheels|succeeded||{"result": {"note": "Parts are inside each other and FORGE could not correct it: hub is 100% inside wheel: they occupy the same material (452389 mm³). Move one of them, or make the part that contains the other hollow. lug is 100% inside hub: they occupy the sa
+Step 1 of 3 — chassis|succeeded||{"result": {"note": "Parts are inside each other and FORGE could not correct it: hub is 100% inside wheel: they occupy the same material (452389 mm³). Move one of them, or make the part that contains the other hollow. lug is 100% inside hub: they occupy the sa
+Step 2 of 3 — corners|succeeded||{"result": {"note": "Parts are inside each other and FORGE could not correct it: hub is 100% inside wheel: they occupy the same material (452389 mm³). Move one of them, or make the part that contains the other hollow. lug is 100% inside hub: they occupy the sa
+Step 3 of 3 — wheels|succeeded||{"result": {"note": "Parts are inside each other and FORGE could not correct it: hub is 100% inside wheel: they occupy the same material (452389 mm³). Move one of them, or make the part that contains the other hollow. lug is 100% inside hub: they occupy the sa
+== p1c2-4000 pool=1 conc=2 occurrences=4000 copies=2 seconds=19
+mem p1c2-4000 #1|succeeded|26|16
+mem p1c2-4000 #2|succeeded|26|19
+Step 1 of 3 — chassis|succeeded||{"result": {"note": "Parts are inside each other and FORGE could not correct it: hub is 100% inside wheel: they occupy the same material (452389 mm³). Move one of them, or make the part that contains the other hollow. lug is 100% inside hub: they occupy the sa
+Step 2 of 3 — corners|succeeded||{"result": {"note": "Parts are inside each other and FORGE could not correct it: hub is 100% inside wheel: they occupy the same material (452389 mm³). Move one of them, or make the part that contains the other hollow. lug is 100% inside hub: they occupy the sa
+Step 3 of 3 — wheels|succeeded||{"result": {"note": "Parts are inside each other and FORGE could not correct it: hub is 100% inside wheel: they occupy the same material (452389 mm³). Move one of them, or make the part that contains the other hollow. lug is 100% inside hub: they occupy the sa
+Step 1 of 3 — chassis|succeeded||{"result": {"note": "Parts are inside each other and FORGE could not correct it: hub is 100% inside wheel: they occupy the same material (452389 mm³). Move one of them, or make the part that contains the other hollow. lug is 100% inside hub: they occupy the sa
+Step 2 of 3 — corners|succeeded||{"result": {"note": "Parts are inside each other and FORGE could not correct it: hub is 100% inside wheel: they occupy the same material (452389 mm³). Move one of them, or make the part that contains the other hollow. lug is 100% inside hub: they occupy the sa
+Step 3 of 3 — wheels|succeeded||{"result": {"note": "Parts are inside each other and FORGE could not correct it: hub is 100% inside wheel: they occupy the same material (452389 mm³). Move one of them, or make the part that contains the other hollow. lug is 100% inside hub: they occupy the sa
+all-done

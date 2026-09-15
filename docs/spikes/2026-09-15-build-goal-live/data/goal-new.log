@@ -1,0 +1,26 @@
+time=2026-09-15T11:42:16.174-04:00 level=WARN msg=forge.config.default_applied service=forgectl warning="FORGE_SHELL_ALLOWED_COMMANDS is empty, so shell_run may execute anything the host can run. FORGE does not confine network egress (see docs/security-promises.md), so this list is the control, not a refinement of one. Set it to the commands this deployment's work actually needs, e.g. FORGE_SHELL_ALLOWED_COMMANDS=go,git,ls,cat"
+time=2026-09-15T11:42:16.178-04:00 level=INFO msg=forge.db.connecting service=forgectl max_conns=16
+time=2026-09-15T11:42:16.201-04:00 level=INFO msg=forge.db.connected service=forgectl server_version=17.11
+created project prj_01M2JVQC4CKXNCVBCF8QKFS0SR in Automotive (automotive)
+created goal gol_01M2JVQC4HHHGVBD5CD5Y076J5
+
+planning with qwen3.8-max …
+time=2026-09-15T11:42:21.989-04:00 level=DEBUG msg=forge.llm.completed service=forgectl role=converse model=qwen3.7-plus prompt_tokens=312 completion_tokens=409 tool_calls=0 finish_reason=stop latency_ms=5777
+
+Build it in 8 steps, each adding to the model the step before it kept.
+
+TASK                               RISK  GATE  DEPENDS ON
+Step 1 of 8 — Chassis Frame        r1    -     -
+Step 2 of 8 — Suspension Uprights  r1    -     build-step-01
+Step 3 of 8 — Drivetrain Assembly  r1    -     build-step-02
+Step 4 of 8 — Suspension Arms      r1    -     build-step-03
+Step 5 of 8 — Braking System       r1    -     build-step-04
+Step 6 of 8 — Wheels and Tires     r1    -     build-step-05
+Step 7 of 8 — Steering Rack        r1    -     build-step-06
+Step 8 of 8 — Body Panels          r1    -     build-step-07
+
+plan v1 · 8 task(s) written
+
+goal is ACTIVE. Run `make work` (or ./bin/forge-worker) to execute it.
+Follow it with:
+  forgectl goal show gol_01M2JVQC4HHHGVBD5CD5Y076J5

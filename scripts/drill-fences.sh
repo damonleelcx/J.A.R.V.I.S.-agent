@@ -132,6 +132,8 @@ FILES=(
   internal/agent/spend.go
   internal/agent/worker.go
   internal/domain/engine/repository.go
+  internal/httpapi/goals_start.go
+  internal/httpapi/assets/workbench.js
 )
 
 BACKUP=""
@@ -1786,6 +1788,33 @@ drill "a scripted part is unreachable in the shape dispatch" internal/domain/cad
 drill "a refused assembly hides which part it refused" internal/domain/cad/cad.go \
   's = s.replace("\t\tif len(res.Skipped) > 0 {\n\t\t\tdetail +=", "\t\tif false {\n\t\t\tdetail +=", 1)' \
   ./internal/domain/cad 'TestKernel_ARefusedAssemblyNamesWhatItRefused'
+
+echo
+echo "A build starts from the API"
+# Added 2026-09-15 (Phase 2, A1 follow-ups). POST /v1/goals takes build:true and plans
+# the statement as steps (Intake.PlanBuild); POST /v1/goals/{id}/plan takes the same
+# flag, or no body at all; the workbench's "Start this" sends it. A named project must
+# grant the caller goal.create before anything is written or asked (bugfix 2026-09-15).
+# Needs FORGE_TEST_DATABASE_URL.
+drill "a goal is drafted into a project its caller is not in" internal/httpapi/goals_start.go \
+  's = s.replace("\tif req.ProjectID != \"\" {\n\t\tif err := h.deps.requirePermission(", "\tif false {\n\t\tif err := h.deps.requirePermission(", 1)' \
+  ./internal/httpapi 'TestCreateGoal_RefusesAProjectTheCallerIsNotAMemberOf|TestCreateGoal_RefusesAViewerOfTheProject'
+
+drill "build:true plans ordinary work" internal/httpapi/goals_start.go \
+  's = s.replace("\t\tplan = h.intake.PlanBuild\n", "\t\t_ = h.intake.PlanBuild\n", 1)' \
+  ./internal/httpapi 'TestCreateGoal_ABuildIsPlannedAsOneTaskPerStepEachWaitingForTheOneBefore|TestBuildGoal_StepsAndKeptVersionsShowOnTheGoalAndItsTimeline'
+
+drill "a replan forgets it was asked for a build" internal/httpapi/goals_start.go \
+  's = s.replace("\t\treplan = h.intake.ReplanBuild\n", "\t\t_ = h.intake.ReplanBuild\n", 1)' \
+  ./internal/httpapi 'TestReplan_ADraftIsReplannedAsABuildWhenAsked'
+
+drill "a replan with no body is refused" internal/httpapi/goals_start.go \
+  's = s.replace("\tif r.ContentLength != 0 {\n", "\tif r.ContentLength != 0 || true {\n", 1).replace("err != nil && !errors.Is(err, io.EOF) {", "err != nil && errors.Is(err, err) != errors.Is(io.EOF, nil) {", 1)' \
+  ./internal/httpapi 'TestReplan_AnEmptyBodyIsStillAccepted'
+
+drill "the workbench never asks for a build" internal/httpapi/assets/workbench.js \
+  's = s.replace("      build: !!state.planAsBuild\n", "      build: false\n", 1)' \
+  ./internal/httpapi 'TestWorkbench_StartThisSendsWhetherToPlanABuild'
 
 if [ "$MODE" = "list" ]; then
   exit 0

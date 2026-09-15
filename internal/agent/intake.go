@@ -368,10 +368,26 @@ func (in *Intake) recordIndustryReading(ctx context.Context, pool *db.Pool, goal
 // So the boundary is the recoverable state and nothing wider, and the refusal
 // says which of the two conditions failed rather than a single unhelpful "no".
 func (in *Intake) Replan(ctx context.Context, pool *db.Pool, goal *engine.Goal) (*PlanOutcome, error) {
+	if err := replannable(ctx, pool, goal); err != nil {
+		return nil, err
+	}
+	return in.Plan(ctx, pool, goal)
+}
+
+// ReplanBuild is Replan for a build: the same boundary, planned as steps.
+func (in *Intake) ReplanBuild(ctx context.Context, pool *db.Pool, goal *engine.Goal) (*PlanOutcome, error) {
+	if err := replannable(ctx, pool, goal); err != nil {
+		return nil, err
+	}
+	return in.PlanBuild(ctx, pool, goal)
+}
+
+// replannable is the boundary Replan documents: a draft with no tasks.
+func replannable(ctx context.Context, pool *db.Pool, goal *engine.Goal) error {
 	const op = "agent.Intake.Replan"
 
 	if goal.Status != engine.GoalDraft {
-		return nil, errs.New(op, errs.CodeConflict).
+		return errs.New(op, errs.CodeConflict).
 			WithDetail("goal %s is %s, not a draft. Replanning exists to recover a plan that never "+
 				"landed; changing the plan of a goal that is already running would leave two sets of "+
 				"tasks racing for it, and this build has no way to retire the first.", goal.ID, goal.Status)
@@ -379,15 +395,15 @@ func (in *Intake) Replan(ctx context.Context, pool *db.Pool, goal *engine.Goal) 
 	var tasks int
 	if err := pool.QueryRow(ctx,
 		`select count(*) from forge_tasks where goal_id = $1`, goal.ID).Scan(&tasks); err != nil {
-		return nil, errs.Wrap(op, errs.CodeDatabaseUnavail, err)
+		return errs.Wrap(op, errs.CodeDatabaseUnavail, err)
 	}
 	if tasks > 0 {
-		return nil, errs.New(op, errs.CodeConflict).
+		return errs.New(op, errs.CodeConflict).
 			WithDetail("goal %s already has %d task(s), so its plan did land. Replanning would add a "+
 				"second plan beside the first rather than replacing it. Start the goal, or create a "+
 				"new one if the plan is wrong.", goal.ID, tasks)
 	}
-	return in.Plan(ctx, pool, goal)
+	return nil
 }
 
 // Start activates a planned goal so its tasks become claimable.
