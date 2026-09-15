@@ -69,6 +69,14 @@ type Transcript struct {
 	Model string
 	// AudioTokens is what the provider billed for the audio, when it says.
 	AudioTokens int64
+	// Unanswered is true when the provider answered 200 with no choices at all.
+	//
+	// The media plane treats that as an empty segment and must go on doing so
+	// (see the warning below). The workbench cannot: a person who held the
+	// button and spoke is not a quiet room, and "nothing was heard" would be a
+	// false account of a model that never answered. Measured 2026-09-15:
+	// qwen-audio-3.0-realtime-plus answers every input_audio request this way.
+	Unanswered bool
 }
 
 // Transcribe converts one segment of audio to text.
@@ -157,7 +165,21 @@ func (c *OpenAICompatible) Transcribe(ctx context.Context, audio []byte, mimeTyp
 		// helper the chat path uses. Measured 2026-09-06: this provider retired
 		// the models behind all three roles at once, and this surface said only
 		// "Model not exist."
-		return nil, errs.New(op, errs.CodeExternalUnavailable).
+		//
+		// ‼️ And a 404 is CONNECTOR_UNAVAILABLE, not EXTERNAL_UNAVAILABLE.
+		//
+		// An outage is a 503, and a 503's detail is withheld from the HTTP
+		// response — so the workbench microphone told its user "an external
+		// service could not be reached" while the log held the one sentence that
+		// fixes it. Nothing is down: the endpoint is up and says it does not serve
+		// this model. Measured 2026-09-15 on the production endpoint, which
+		// serves no speech-to-text model at all. The media plane logs either code
+		// the same way, so rooms are unaffected.
+		code := errs.CodeExternalUnavailable
+		if resp.StatusCode == http.StatusNotFound {
+			code = errs.CodeConnectorUnavailable
+		}
+		return nil, errs.New(op, code).
 			WithDetail("the transcription provider returned %d: %s%s",
 				resp.StatusCode, truncate(raw.String(), 300),
 				c.whatIsServed(ctx, resp.StatusCode, RoleTranscriber))
@@ -177,7 +199,9 @@ func (c *OpenAICompatible) Transcribe(ctx context.Context, audio []byte, mimeTyp
 		// same in the transcript.
 		c.log.Warn(ctx, logx.EventASREmptyResponse,
 			"model", model, "bytes", len(audio), "body", truncate(raw.String(), 200))
-		return &Transcript{Model: model}, nil
+		// Text stays empty so the media plane is unchanged; Unanswered is what
+		// lets the workbench refuse to call it silence.
+		return &Transcript{Model: model, Unanswered: true}, nil
 	}
 
 	text := strings.TrimSpace(parsed.Choices[0].Message.Content)
