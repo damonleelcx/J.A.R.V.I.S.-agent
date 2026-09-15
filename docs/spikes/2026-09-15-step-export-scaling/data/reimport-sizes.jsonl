@@ -1,0 +1,7 @@
+{"n": 4096, "script": "timed", "wall_s": 6.01, "status": "exit 0", "cpu_pct": 62.5, "bytes": 2543765, "steps": {"read_file_s": 0.6915674000047147, "transfer_s": 3.8300665999995545, "walk_s": 0.049658400006592274, "ok": true, "components": 4096, "shapes": 2, "total_s": 4.575618899994879}}
+{"n": 4096, "script": "fence_script", "wall_s": 5.49, "status": "exit 0", "cpu_pct": 61.9, "bytes": 2543765}
+{"n": 8192, "script": "timed", "wall_s": 27.03, "status": "exit 0", "cpu_pct": 62.2, "bytes": 5099254, "steps": {"read_file_s": 6.5592032999993535, "transfer_s": 18.97638790000201, "walk_s": 0.08541889999469277, "ok": true, "components": 8192, "shapes": 2, "total_s": 25.62402209999709}}
+{"n": 8192, "script": "fence_script", "wall_s": 19.36, "status": "exit 0", "cpu_pct": 59.2, "bytes": 5099254}
+{"n": 16384, "script": "timed", "wall_s": 86.36, "status": "exit 0", "cpu_pct": 53.5, "bytes": 10334269, "steps": {"read_file_s": 3.2191357999981847, "transfer_s": 81.71916090000013, "walk_s": 0.09594990000186954, "ok": true, "components": 16384, "shapes": 2, "total_s": 85.03770030000305}}
+{"n": 16384, "script": "fence_script", "wall_s": 66.88, "status": "exit 0", "cpu_pct": 44.9, "bytes": 10334269}
+{"n": 32768, "script": "timed", "wall_s": 300.04, "status": "STOPPED over 300 s", "cpu_pct": 37.8, "bytes": 20992714}
