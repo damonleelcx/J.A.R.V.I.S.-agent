@@ -972,6 +972,27 @@ drill "the build does not say where its time went" internal/domain/cad/sidecar.p
   ./internal/domain/cad 'TestKernel_ExportingManyOccurrencesGrowsLinearly'
 
 echo
+echo "A STEP export stays linear past the build ceiling"
+# Added 2026-09-15 (STEP export scaling). The writer's validation-property walk visits
+# an assembly's children by index, each lookup walking the child list; it is off
+# (_STEP_WRITE_PROPS), and the file past 4,096 occurrences is the one it wrote.
+drill "the writer walks every label for validation properties again" internal/domain/cad/sidecar.py \
+  "s = s.replace('_STEP_WRITE_PROPS = False\n', '_STEP_WRITE_PROPS = True\n', 1)" \
+  ./internal/domain/cad 'TestKernel_ExportTimeGrowsLinearlyPastTheBuildCeiling'
+
+drill "the props-mode setting never reaches the writer" internal/domain/cad/sidecar.py \
+  "s = s.replace('    writer.SetPropsMode(_STEP_WRITE_PROPS)\n', '', 1)" \
+  ./internal/domain/cad 'TestKernel_ExportTimeGrowsLinearlyPastTheBuildCeiling'
+
+drill "the fixed writer stops writing names the walking writer wrote" internal/domain/cad/sidecar.py \
+  "s = s.replace('    writer.SetNameMode(True)\n', '    writer.SetNameMode(_STEP_WRITE_PROPS)\n', 1)" \
+  ./internal/domain/cad 'TestKernel_ALargeExportIsTheFileThePropertyWalkWrote'
+
+drill "a large export writes its occurrences without their placement" internal/domain/cad/sidecar.py \
+  "s = s.replace('tool.AddComponent(root, label, solid.wrapped.Location())', 'tool.AddComponent(root, label, TopLoc_Location())', 1)" \
+  ./internal/domain/cad 'TestKernel_ALargeExportIsTheFileThePropertyWalkWrote'
+
+echo
 echo "The interference broad phase tests only boxes that could overlap"
 # Added 2026-09-15 (Phase 4, stage K2b) as a one-axis sweep. Since Phase 5, stage V1
 # the broad phase is a grid over all three axes, so the sweep's own drills (a box
