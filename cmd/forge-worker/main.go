@@ -18,6 +18,8 @@ import (
 	"time"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/agent"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/agent/cadbridge"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/cad"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/engine"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/geometry"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/memory"
@@ -160,6 +162,20 @@ func run() error {
 		WithCharacters(characters)
 	verifier := agent.NewVerifier(client, character).WithCharacters(characters)
 
+	// A build runs as a goal (Phase 2, stage A1), and its steps are built here
+	// the way the workbench builds a turn: the same conversation, the same
+	// repairs, the same kernel. Nothing starts until a step asks for a surface,
+	// and without FORGE_CAD_PYTHON a step is built on the described render and
+	// says so, exactly as the workbench does without one.
+	cadKernel := cad.New(cfg.CAD.Python, log).WithScripts(cfg.CAD.AllowScripts).WithPool(cfg.CAD.Pool)
+	defer cadKernel.Close()
+	builder := agent.NewConversation(client, character).
+		WithScripts(cadbridge.Scripts(cadKernel)).
+		WithSolids(cadbridge.Solids(cadKernel)).
+		WithCharacters(characters).
+		WithDomains(agent.NewDomainStore(pool, log))
+	builds := agent.NewBuildSteps(builder, geometry.NewService(pool, clk, log), repo, budget, pool, clk, log)
+
 	log.Info(ctx, logx.EventWorkerReady,
 		"concurrency", cfg.Engine.WorkerConcurrency,
 		"workspace_root", workspaceRoot,
@@ -172,7 +188,7 @@ func run() error {
 	for i := 0; i < cfg.Engine.WorkerConcurrency; i++ {
 		w := agent.NewWorker(agent.WorkerDeps{
 			Pool: pool, Repo: repo, Queue: queue, Budget: budget,
-			Assembler: assembler, Executor: executor, Verifier: verifier,
+			Assembler: assembler, Executor: executor, Verifier: verifier, Builds: builds,
 			Config: cfg.Engine, WorkspaceRoot: workspaceRoot, Clock: clk, Log: log,
 			// PRD SAF-01: the same action is a different event here than on a
 			// laptop, and the classifier is told which one this is.

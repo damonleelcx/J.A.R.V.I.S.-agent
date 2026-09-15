@@ -128,6 +128,10 @@ FILES=(
   internal/domain/geometry/export.go
   internal/domain/geometry/service.go
   internal/platform/config/config.go
+  internal/agent/buildgoal.go
+  internal/agent/spend.go
+  internal/agent/worker.go
+  internal/domain/engine/repository.go
 )
 
 BACKUP=""
@@ -1120,6 +1124,58 @@ drill "the view carries every subsystem" internal/agent/subtree.go \
 drill "a placement's interfaces are not carried" internal/agent/subtree.go \
   's = s.replace("\t\tview.AttachesTo = append(view.AttachesTo, attachment{Assembly: a.ID, Interfaces: a.Interfaces})\n", "", 1)' \
   ./internal/agent 'TestSubtreeModel_CarriesWhatTheFocusPlacesAndAttachesTo'
+
+echo
+echo "A build runs as an engine goal"
+# Added 2026-09-15 (Phase 2, stage A1, and Phase 7, stage E3). A build's plan is one
+# task per step, each waiting for the one before; forge-worker builds a step, keeps
+# it as a version inside the goal, and charges every model call to the goal. Three
+# engine defects this stage found are drilled here too: a finished task released
+# nothing, a budget refusal could not fail a claimed task, and events were hashed at
+# a precision they are not stored at. Needs FORGE_TEST_DATABASE_URL.
+drill "the steps do not wait for each other" internal/agent/buildgoal.go \
+  's = s.replace("\t\t\tpt.DependsOn = []string{prev}\n", "\t\t\t_ = prev\n", 1)' \
+  ./internal/agent 'TestBuildGoal_EachStepIsATaskThatWaitsForTheOneBefore'
+
+drill "a build's model calls are charged to nobody" internal/agent/spend.go \
+  's = s.replace("\tif err := c.budget.RecordSpend(", "\tif err := error(nil); err != nil && c.budget.RecordSpend(", 1).replace("resp.Usage.TotalTokens, 0); err != nil {", "resp.Usage.TotalTokens, 0) != nil {", 1)' \
+  ./internal/agent 'TestBuildGoal_EveryModelCallIsChargedToTheGoal'
+
+drill "a step keeps asking after the budget is spent" internal/agent/spend.go \
+  's = s.replace("\tif breach != nil {\n\t\treturn nil, breach.Error()\n\t}\n\n\tresp, err", "\tresp, err", 1)' \
+  ./internal/agent 'TestBuildGoal_AStepStopsAskingOnceTheBudgetIsSpent'
+
+drill "a kept step is built again" internal/agent/buildgoal.go \
+  's = s.replace("\tif cp != nil && cp.Kind == checkpointBuildStepSaved {", "\tif false {", 1)' \
+  ./internal/agent 'TestBuildGoal_AStepKeptBeforeItsWorkerStoppedIsNotBuiltAgain'
+
+drill "a step starts from an empty model" internal/agent/buildgoal.go \
+  's = s.replace("\tdeps, err := b.repo.ListDependencies(ctx, b.pool, task.ID)", "\tdeps, err := []string(nil), error(nil)", 1)' \
+  ./internal/agent 'TestBuildGoal_AWorkerThatHangsIsResumedFromTheLastStepKept'
+
+drill "a stopped worker sits on its step" internal/agent/buildgoal.go \
+  's = s.replace("\t\tif ctx.Err() != nil {\n\t\t\t// Stopping, not failing.", "\t\tif false {\n\t\t\t// Stopping, not failing.", 1)' \
+  ./internal/agent 'TestBuildGoal_AStoppedWorkerHandsItsStepBack'
+
+drill "a goal's save names no task" internal/domain/geometry/service.go \
+  's = s.replace("\t\tTaskID:  taskOf(n),\n", "", 1)' \
+  ./internal/agent 'TestBuildGoal_AStepKeptInsideAGoalWritesAChainedArtifactEvent'
+
+drill "a finished task releases nothing" internal/agent/worker.go \
+  's = s.replace("\t\tw.releaseWaiting(ctx, goalID)\n", "", 1)' \
+  ./internal/agent 'TestBuildGoal_EveryModelCallIsChargedToTheGoal'
+
+drill "the idle poll releases nothing" internal/agent/worker.go \
+  's = s.replace("\t\t\tw.releaseWaitingGoals(ctx)\n", "", 1)' \
+  ./internal/agent 'TestWorker_ATaskLeftWaitingByACrashIsReleasedOnTheIdlePoll'
+
+drill "a budget refusal fails a task that is only claimed" internal/agent/worker.go \
+  's = s.replace("\t\tif err := w.transition(ctx, task, engine.StatusRunning, engine.TaskMutation{}); err != nil {\n\t\t\treturn\n\t\t}\n", "", 1)' \
+  ./internal/agent 'TestBuildGoal_ABudgetRefusalStopsTheGoalCleanly'
+
+drill "an event is hashed at a precision it is not stored at" internal/domain/engine/repository.go \
+  's = s.replace("\tnow = now.Truncate(time.Microsecond)\n", "", 1)' \
+  ./internal/domain/engine 'TestAuditChain_AnEventStampedAtNanosecondsVerifies'
 
 echo
 echo "A pool of kernel processes builds side by side"
