@@ -1,0 +1,58 @@
+[
+  {
+    "n": 1,
+    "of": 8,
+    "name": "Chassis Frame",
+    "note": "Step 1 (Chassis Frame) came back unreadable: its JSON does not parse: \"prototype.definitions.size\" is a JSON string where a float64 was expected, at character 1733: …e\": \"box\", \"size\": { \"width\": \"beam_width\", \"height\"….",
+    "parts": 0
+  },
+  {
+    "n": 2,
+    "of": 8,
+    "name": "Powertrain Block",
+    "note": "Looking at the model it had just built, FORGE found a problem and corrected it: Engine Mount Bracket: The small mount brackets are floating clear of the main assembly, visible as detached pins in the side and top views rather than being attached to the engine or transmission.",
+    "parts": 0
+  },
+  {
+    "n": 3,
+    "of": 8,
+    "name": "Drivetrain Linkage",
+    "note": "The geometry as first written had 1 part(s) that could not be built. FORGE corrected it and re-checked. Looking at the model it had just built, FORGE found problems and corrected it: Engine Block: The Engine Block is completely hidden inside the Transmission Case and does not appear in the isometric or side views. Parts are inside each other and FORGE could not correct it: Driveshaft Tube is 87% inside Transmission Case: they occupy the same material (3518584 mm³). Move one of them, or make the part that contains the other hollow. Rear Axle Mount Bracket is 50% inside Differential Housing: they occupy the same material (85000 mm³). Move one of them, or make the part that contains the other hollow. Rear Axle Mount Bracket is 50% inside Differential Housing: they occupy the same material (85000 mm³). Move one of them, or make the part that contains the other hollow. and 4 more",
+    "parts": 0
+  },
+  {
+    "n": 4,
+    "of": 8,
+    "name": "Front Suspension Uprights",
+    "note": "Looking at the model it had just built, FORGE found problems and corrected it: Differential Housing: The part is floating clear of the Driveshaft Tube in the side and isometric views, with a visible gap between them. Parts are inside each other and FORGE could not correct it: Driveshaft Tube is 87% inside Transmission Case: they occupy the same material (3518584 mm³). Move one of them, or make the part that contains the other hollow. Rear Axle Mount Bracket is 50% inside Differential Housing: they occupy the same material (85000 mm³). Move one of them, or make the part that contains the other hollow. Rear Axle Mount Bracket is 50% inside Differential Housing: they occupy the same material (85000 mm³). Move one of them, or make the part that contains the other hollow. and 4 more",
+    "parts": 0
+  },
+  {
+    "n": 5,
+    "of": 8,
+    "name": "Rear Suspension Uprights",
+    "note": "Looking at the model it had just built, FORGE found problems and corrected it: Engine Mount Bracket: The small dark cube on the left is floating in space, completely detached from the main assembly shown in the side and isometric views. Parts are inside each other and FORGE could not correct it: Driveshaft Tube is 75% inside Transmission Case: they occupy the same material (3015929 mm³). Move one of them, or make the part that contains the other hollow. Engine Mount Bracket is 50% inside Engine Block: they occupy the same material (39270 mm³). Move one of them, or make the part that contains the other hollow. Engine Mount Bracket is 50% inside Engine Block: they occupy the same material (39270 mm³). Move one of them, or make the part that contains the other hollow. and 3 more",
+    "parts": 0
+  },
+  {
+    "n": 6,
+    "of": 8,
+    "name": "Braking System",
+    "note": "Looking at the model it had just built, FORGE found problems and corrected it: Brake Calipers: The requested brake calipers are not present in the model. Parts are inside each other and FORGE could not correct it: Driveshaft Tube is 75% inside Transmission Case: they occupy the same material (3015929 mm³). Move one of them, or make the part that contains the other hollow. Rear Axle Mount Bracket is 50% inside Differential Housing: they occupy the same material (85000 mm³). Move one of them, or make the part that contains the other hollow. Rear Axle Mount Bracket is 50% inside Differential Housing: they occupy the same material (85000 mm³). Move one of them, or make the part that contains the other hollow. and 5 more",
+    "parts": 0
+  },
+  {
+    "n": 7,
+    "of": 8,
+    "name": "Steering Rack",
+    "note": "Looking at the model it had just built, FORGE found problems and corrected it: Steering Rack: The steering rack and tie rods requested in the prompt are completely missing from the model. Parts are inside each other and FORGE could not correct it: Driveshaft Tube is 75% inside Transmission Case: they occupy the same material (3015929 mm³). Move one of them, or make the part that contains the other hollow. Engine Mount Bracket is 50% inside Engine Block: they occupy the same material (39270 mm³). Move one of them, or make the part that contains the other hollow. Engine Mount Bracket is 50% inside Engine Block: they occupy the same material (39270 mm³). Move one of them, or make the part that contains the other hollow. and 3 more",
+    "parts": 0
+  },
+  {
+    "n": 8,
+    "of": 8,
+    "name": "Body Shell",
+    "note": "Looking at the model it had just built, FORGE found problems and corrected it: Drivetrain Assembly: The entire drivetrain assembly (Engine Block, Transmission Case, Driveshaft Tube, Differential Housing) is floating clear of the Chassis Frame, touching nothing. Parts are inside each other and FORGE could not correct it: Driveshaft Tube is 75% inside Transmission Case: they occupy the same material (3015929 mm³). Move one of them, or make the part that contains the other hollow. Engine Mount Bracket is 50% inside Engine Block: they occupy the same material (39270 mm³). Move one of them, or make the part that contains the other hollow. Engine Mount Bracket is 50% inside Engine Block: they occupy the same material (39270 mm³). Move one of them, or make the part that contains the other hollow. and 5 more",
+    "parts": 0
+  }
+]

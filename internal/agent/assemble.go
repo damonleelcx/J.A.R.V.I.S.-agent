@@ -9,6 +9,7 @@ import (
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/geometry"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/llm"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/errs"
 )
 
 // Building a model across several passes instead of all at once.
@@ -141,16 +142,31 @@ that ADDS what this step asks for, and nothing else.
 - Do not restate parts that are already there. An edit merges by id: what you do
   not mention is kept exactly as it is, which is the point of this form.
 - Reuse an existing id only when you mean to REPLACE that part wholesale.
-- Position what you add relative to what is already there. Read the dimensions
-  you were given; do not assume them.
+- ATTACH what you add to what is already there. Where the model offers an
+  interface ("interfaces" on an assembly, "attaches_to" in what you are shown),
+  place your child "at" it instead of working out coordinates: a part placed by
+  arithmetic floats clear as soon as the thing it should touch is anywhere else.
+  Give what you build interfaces of its own where later steps will mount.
+- Bind what follows a parameter you were shown to that parameter ("size_from",
+  "position_from"). Read the dimensions you were given; do not assume them.
 - Do this step only. The later steps are somebody else's, including yours in a
   moment.
 - When the step names an assembly, you are shown that assembly and what it
   attaches to rather than the whole model. Build inside that assembly: patch it by
   id, or create it and place it as a child of the root if it is new. What you are
   not shown is still there, and an edit keeps it.
+- A patched assembly is REPLACED WHOLE, children and all. To place a new assembly
+  yourself, send the root under "assemblies" with every child it already has
+  ("root_children" in what you are shown, which is not a field of an edit) and
+  yours after them: a root patched with only your child removes everything else
+  the model had. An assembly you build and do not place is placed from the root at
+  the root's origin, so draw it in the root's frame unless you attach it "at" an
+  interface yourself.
+- Send "prototype_edit" only: not "prototype", and not "build_in_passes", because
+  this pass IS the build. It is read as strict JSON: no comments, every number a
+  number, and an expression only in the "_from" field made for it.
 
-Return JSON: {"speech": "one sentence on what you added", "prototype_edit": {"patch": {"parts": [...], "features": [...]}}}`
+Return JSON: {"speech": "one sentence on what you added", "prototype_edit": {"patch": {"definitions": [...], "assemblies": [...], "parts": [...], "features": [...]}}}`
 
 // firstStepSystem is for the pass that has nothing to add TO.
 //
@@ -159,13 +175,34 @@ Return JSON: {"speech": "one sentence on what you added", "prototype_edit": {"pa
 // model on screen is a mistake worth naming, not one to paper over. So the first
 // pass sends a whole document — there is nothing yet for it to lose — and every
 // pass after it sends an edit, which is where the guarantee starts mattering.
+//
+// ‼️ It asks for a TREE with a root and interfaces when the plan names assemblies
+// (2026-09-15, live car findings). It used to show only {"parts": [...]}, and the
+// geometry contract it is sent with says a car is "too big for ONE document" and to
+// set "build_in_passes" and leave "prototype" out. Two live builds lost their first
+// step, and the build-goal run's whole car came out flat: an edit cannot add a root
+// the contract never showed it could, and a later step had nothing to attach "at".
+// docs/bugfix/2026-09-15-a-failed-build-step-said-no-geometry-whatever-refused-it.md
+// Fence: TestAssemble_TheFirstStepIsAskedForATreeWithInterfaces.
 const firstStepSystem = `You are building the FIRST part of a model that will be added to in later passes.
 
 Return the whole prototype for this step only. Do not build the later steps: they
 are somebody else's, including yours in a moment. Build the part everything else
 will attach to, at a size the rest can be positioned against.
 
-Return JSON: {"speech": "one sentence on what you built", "prototype": {"name": "...", "units": "mm", "parts": [...]}}`
+- Send "prototype". Not "prototype_edit": there is no model yet to edit. Not
+  "build_in_passes": this pass IS the build.
+- When the step names the assembly it builds, write the model as a tree from the
+  start: that assembly, and a "root" assembly for the whole object that places it.
+  Later steps add their own assemblies beside it under the same root. Assemblies
+  with no "root" place nothing, and the step is lost.
+- Give the assembly you build "interfaces" where the later subsystems will mount
+  (suspension pick-up points, engine mounts, a hub's wheel face) so a later step
+  attaches "at" them instead of guessing coordinates.
+- It is read as strict JSON: no comments, every number a number, and an
+  expression only in the "_from" field made for it.
+
+Return JSON: {"speech": "one sentence on what you built", "prototype": {"name": "...", "units": "mm", "parameters": [...], "definitions": [...], "assemblies": [...], "root": "...", "parts": [...]}}`
 
 // assemble builds a model in passes and returns what it managed to build.
 //
@@ -236,9 +273,9 @@ func (c *Conversation) buildOneStep(ctx context.Context, doc *Prototype, asked s
 	// a schema the model invented — measured on the first live build, which came
 	// back {"type":"box_beam","dimensions":{...}} on every step and produced
 	// nothing seven times out of eight.
-	system, sofar := stepSystem+"\n\n"+geometryContract, fmt.Sprintf("\n\n%s:\n%s", shown, body)
+	system, sofar := stepSystem+"\n\n"+buildContract, fmt.Sprintf("\n\n%s:\n%s", shown, body)
 	if !doc.HasGeometry() {
-		system, sofar = firstStepSystem+"\n\n"+geometryContract, ""
+		system, sofar = firstStepSystem+"\n\n"+buildContract, ""
 	}
 	// ‼️ And what the model so far writes out one child at a time where one pattern
 	// would place it (Phase 2, stage A3; see repetition.go). A step's model is shown
@@ -246,13 +283,20 @@ func (c *Conversation) buildOneStep(ctx context.Context, doc *Prototype, asked s
 	// one place a warning about the model so far reaches the model extending it.
 	// Fence: TestAssemble_AStepIsToldWhatCouldBeOnePattern.
 	sofar += repetitionForStep(doc)
+	// The assembly the plan says this step builds, by id. The first step used to be
+	// told only the step's name, so the tree it wrote could not use the ids the later
+	// steps' views look for. Fence: TestAssemble_AStepIsToldTheAssemblyItBuilds.
+	target := ""
+	if a := strings.TrimSpace(step.Assembly); a != "" {
+		target = fmt.Sprintf("\nThis step builds the assembly %q.", a)
+	}
 	resp, err := c.client.Complete(ctx, llm.Request{
 		Role: llm.RoleConverse,
 		Messages: []llm.Message{
 			{Role: llm.System, Content: system},
 			{Role: llm.User, Content: fmt.Sprintf(
-				"Building: %s\nStep %d of %d — %s: %s%s",
-				asked, n, of, step.Name, step.What, sofar)},
+				"Building: %s\nStep %d of %d — %s: %s%s%s",
+				asked, n, of, step.Name, step.What, target, sofar)},
 		},
 		JSONMode:  true,
 		MaxTokens: converseMaxTokens,
@@ -261,16 +305,50 @@ func (c *Conversation) buildOneStep(ctx context.Context, doc *Prototype, asked s
 		return nil, fmt.Sprintf("Step %d (%s) could not be built: %v.", n, step.Name, err)
 	}
 
+	// ‼️ Every refusal below says WHICH gate refused the step, and why, bounded
+	// (2026-09-15, live car findings). All of them used to say "produced no
+	// geometry": an unparseable reply, an edit sent to an empty model, a tree with no
+	// root and a reply that only asked to build in passes read identically, and two
+	// live builds lost their first step with nothing to diagnose it from. See
+	// stepgates.go. Fence: TestAssemble_AFailedStepSaysWhichGateRefusedIt.
+	//
 	// The SAME parser a turn uses. A second copy here used a different extractor
 	// and skipped the dimension-repair fallback, and reported "came back
 	// unreadable" on every step of a live eight-step build.
 	reply, err := parseReply(resp)
 	if err != nil {
-		return nil, fmt.Sprintf("Step %d (%s) came back unreadable.", n, step.Name)
+		return nil, stepNote(n, step.Name, gateUnreadable, unreadableDetail(resp))
+	}
+	// parseReply's last resort keeps the WORDS of a reply whose JSON it cannot read
+	// and returns no error, which is right for a conversation and hides the cause
+	// here: a step with no geometry is asked again whether its JSON parsed.
+	if reply.Prototype == nil && reply.PrototypeEdit == nil {
+		if why := unreadableDetail(resp); why != "" {
+			return nil, stepNote(n, step.Name, gateUnreadable, why)
+		}
+		return nil, stepNote(n, step.Name, gateNoGeometry, noGeometryDetail(reply))
+	}
+	// ‼️ A build step's edit adds a subsystem; it does not get to replace the model's
+	// root. Measured live 2026-09-15 (car-quality run 2): two steps patched "root" to
+	// the assembly they had just built, which unplaced everything built before them —
+	// the second left a car of six cockpit parts. The root stays, and the assembly the
+	// step named as root is placed from it below.
+	// docs/bugfix/2026-09-15-a-build-steps-edit-replaced-the-models-root.md
+	// Fence: TestAssemble_AStepsEditDoesNotReplaceTheModelsRoot.
+	sentRoot := ""
+	if e := reply.PrototypeEdit; e != nil && e.Patch != nil && doc.Root != "" {
+		if r := strings.TrimSpace(e.Patch.Root); r != "" && r != doc.Root {
+			sentRoot, e.Patch.Root = r, ""
+			reply.noteRepair(fmt.Sprintf("This step's edit named %q as the model's root, which would have left "+
+				"everything already built under %q unplaced; the root was kept.", r, doc.Root))
+		}
 	}
 	// The edit becomes a document here, exactly as it does on a normal turn.
-	if err := reply.resolveEdit(doc); err != nil || reply.Prototype == nil {
-		return nil, fmt.Sprintf("Step %d (%s) produced no geometry.", n, step.Name)
+	if err := reply.resolveEdit(doc); err != nil {
+		return nil, stepNote(n, step.Name, gateEditRefused, errs.DetailOf(err))
+	}
+	if reply.Prototype == nil {
+		return nil, stepNote(n, step.Name, gatePlacesNothing, "the model its edit produced places nothing")
 	}
 	// ‼️ Settled like a turn's own document. A pass never goes through validate(),
 	// so a build used to install what each pass typed — never bound, defaulted or
@@ -278,9 +356,24 @@ func (c *Conversation) buildOneStep(ctx context.Context, doc *Prototype, asked s
 	// and settling is idempotent, so it is done for both.
 	// docs/bugfix/2026-09-11-edited-and-repaired-documents-were-never-settled.md
 	// Fence: TestAssemble_APassIsSettled.
+	sent := reply.Prototype
 	reply.Prototype = settleDocument(reply.Prototype)
 	if reply.Prototype == nil {
-		return nil, fmt.Sprintf("Step %d (%s) produced no geometry.", n, step.Name)
+		return nil, stepNote(n, step.Name, gatePlacesNothing, placesNothingDetail(sent))
+	}
+	// ‼️ And the assembly the plan says this step builds is PLACED. Measured live
+	// 2026-09-15 (car-quality run 1): five of eight steps built their sub-assembly and
+	// left it unplaced — shown the root's children and told to patch the root, they
+	// did not, and one wrote "root_children" into its patch — so the car kept its
+	// brakes, suspension, steering and body as designs nothing placed, with no fault
+	// and no note. See stepplace.go. Fence: TestAssemble_ANewAssemblyTheStepDidNotPlaceIsPlacedFromTheRoot.
+	if placed := placeStepAssembly(reply.Prototype, step.Assembly); placed != "" {
+		reply.noteRepair(placed)
+	}
+	if sentRoot != "" && sentRoot != strings.TrimSpace(step.Assembly) {
+		if placed := placeStepAssembly(reply.Prototype, sentRoot); placed != "" {
+			reply.noteRepair(placed)
+		}
 	}
 
 	// The same gauntlet, and in the same order, for the same reasons. A fault
@@ -300,8 +393,10 @@ func (c *Conversation) buildOneStep(ctx context.Context, doc *Prototype, asked s
 
 	// A pass that BREAKS the model is refused and the previous state kept: ten
 	// good passes must not be lost to an eleventh bad one.
-	if len(reply.Prototype.Faults()) > len(doc.Faults()) {
-		return nil, fmt.Sprintf("Step %d (%s) was left out: it would have broken the model.", n, step.Name)
+	// And says which faults it would have added, because "it would have broken the
+	// model" twice in one live car said nothing a person or the next pass could act on.
+	if after, before := reply.Prototype.Faults(), doc.Faults(); len(after) > len(before) {
+		return nil, stepNote(n, step.Name, gateBroke, addedFaults(before, after))
 	}
 	// And a pass that DROPPED something is reported, never silently accepted.
 	if gone := vanishedParts(doc, reply.Prototype); len(gone) > 0 {
