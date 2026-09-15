@@ -14,13 +14,15 @@ import (
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/geometry"
 )
 
-// The interference check's broad phase sorts the kept solids' boxes along one
-// axis and sweeps, instead of comparing every pair. Phase 4, stage K2b of
-// docs/plan-2026-09-13-millions-of-parts.md.
+// The interference check's broad phase tests only boxes that could overlap,
+// instead of comparing every pair. Phase 4, stage K2b of
+// docs/plan-2026-09-13-millions-of-parts.md, as a sweep; since Phase 5, stage V1,
+// a grid over all three axes (sidecar.py, _candidate_pairs), which these fences
+// hold to the same bounds.
 //
 // Its cost is fenced by the box tests the kernel COUNTS, not by a timer: the
-// count is the same on a laptop and a loaded CI runner, and it separates the
-// sweep (a handful per part) from every pair (n(n-1)/2) by orders of magnitude
+// count is the same on a laptop and a loaded CI runner, and it separates a broad
+// phase (a handful per part) from every pair (n(n-1)/2) by orders of magnitude
 // where a time only separates them by a noisy ratio.
 
 // studGrid is rows copies of one 4×6×8 mm stud stepping 10 mm along x (or z),

@@ -739,20 +739,79 @@ _INTERFERENCE_MIN_VOLUME = 1.0
 _INTERFERENCE_MIN_FRACTION = 0.001
 
 
+def _box_of(solid):
+    """A solid's axis-aligned bounds as (lo, hi) triples, or None."""
+    try:
+        b = solid.bounding_box()
+        return ((float(b.min.X), float(b.min.Y), float(b.min.Z)),
+                (float(b.max.X), float(b.max.Y), float(b.max.Z)))
+    except Exception:
+        # A solid whose bounds cannot be read is left out of the broad phase
+        # rather than paired with everything: it is already in trouble, and
+        # the parts around it should not be reported because of it.
+        return None
+
+
 def _boxes(solids):
     """Each solid's axis-aligned bounds, as (lo, hi) triples."""
-    out = []
-    for s in solids:
-        try:
-            b = s.bounding_box()
-            out.append(((float(b.min.X), float(b.min.Y), float(b.min.Z)),
-                        (float(b.max.X), float(b.max.Y), float(b.max.Z))))
-        except Exception:
-            # A solid whose bounds cannot be read is left out of the broad phase
-            # rather than paired with everything: it is already in trouble, and
-            # the parts around it should not be reported because of it.
-            out.append(None)
-    return out
+    return [_box_of(s) for s in solids]
+
+
+def _volume_of(solid):
+    try:
+        return float(getattr(solid, "volume", 0.0))
+    except Exception:
+        return 0.0
+
+
+def _moved_box(box, location):
+    """A local box moved by a placement: the box around its eight moved corners.
+
+    Never tighter than the placed solid's own box — a turned box's box is larger
+    than the box — so it can only let an extra pair through to the exact boolean,
+    never keep a real one out.
+    """
+    if box is None:
+        return None
+    t = location.wrapped.Transformation()
+    m = [[t.Value(r, c) for c in (1, 2, 3, 4)] for r in (1, 2, 3)]
+    lo, hi = [math.inf] * 3, [-math.inf] * 3
+    for x in (box[0][0], box[1][0]):
+        for y in (box[0][1], box[1][1]):
+            for z in (box[0][2], box[1][2]):
+                for r in range(3):
+                    v = m[r][0] * x + m[r][1] * y + m[r][2] * z + m[r][3]
+                    lo[r] = min(lo[r], v)
+                    hi[r] = max(hi[r], v)
+    return (tuple(lo), tuple(hi))
+
+
+def _measures(solids, placed=None):
+    """Every kept solid's box and volume.
+
+    # Once per definition (Phase 5, stage V1)
+
+    Reading an OCCT solid's bounds and volume costs about 0.2 ms, and after K2b
+    that per-solid read was most of what the interference phase spent: 2 s of a
+    10,000-part build. A copy is its shape placed, so the shape is measured once
+    and each copy's box is that box moved by its placement; volume does not change
+    under a rigid motion. A part a feature changed (placed entry None) is measured
+    as the solid it is.
+    """
+    boxes, volumes, local = [], [], {}
+    for i, solid in enumerate(solids):
+        p = placed[i] if placed else None
+        if p is None:
+            boxes.append(_box_of(solid))
+            volumes.append(_volume_of(solid))
+            continue
+        key, location, shape = p
+        if key not in local:
+            local[key] = (_box_of(shape), _volume_of(shape))
+        box, volume = local[key]
+        boxes.append(_moved_box(box, location))
+        volumes.append(volume)
+    return boxes, volumes
 
 
 def _boxes_miss(a, b):
@@ -764,96 +823,170 @@ def _boxes_miss(a, b):
     return False
 
 
-def _sweep_axis(boxes, present):
-    """The axis the boxes' centres spread furthest along.
+# A box longer than this many grid cells on any axis is tested against every box
+# instead of being filed in every cell it crosses. See _candidate_pairs.
+_GRID_LARGE = 4.0
 
-    A sweep along an axis the parts barely spread along meets them all at once: a
-    panel standing in the YZ plane swept along x is one column of every part, and
-    the sweep is every pair again.
-    """
-    best, widest = 0, -1.0
-    for axis in range(3):
-        centres = [boxes[k][0][axis] + boxes[k][1][axis] for k in present]
-        mean = sum(centres) / len(centres)
-        spread = sum((c - mean) ** 2 for c in centres)
-        if spread > widest:
-            best, widest = axis, spread
-    return best
+
+def _cell(value, size):
+    return int(math.floor(value / size))
 
 
 def _candidate_pairs(boxes):
     """Every pair whose boxes overlap, and how many box tests it took to find them.
 
-    # Sort and sweep (Phase 4, stage K2b)
+    # A grid over all three axes (Phase 5, stage V1)
 
-    Comparing every box with every other is n(n-1)/2 tests: 8.4 million at the
-    4,096 parts the kernel builds today, and 27% of a 10,000-part build
-    (docs/spikes/2026-09-14-definition-cache). Sorted by where each box starts on
-    one axis, a box can only overlap the boxes still OPEN when it starts, so it is
-    tested against those and nothing else. On an assembly that spreads out along
-    one axis, as a car does, that is a handful per part. Spread evenly over a
-    plane it is about sqrt(n) per part: 495,000 tests for a 100 x 100 grid,
-    against 50 million for every pair. An index over all three axes is Phase 5's
-    V1 (docs/spikes/2026-09-15-interference-broad-phase).
+    Comparing every box with every other is n(n-1)/2 tests: 50 million at 10,000
+    parts. K2b swept along one axis, which is a handful of tests per part on an
+    assembly long in one direction and about sqrt(n) per part on one spread over a
+    plane — 495,000 tests for a 100 x 100 grid
+    (docs/spikes/2026-09-15-interference-broad-phase). A uniform grid does not
+    care which way the parts spread: each box is filed in the cells it crosses,
+    and only boxes sharing a cell are tested. The cell is the median box's longest
+    side, so a typical part crosses one or two cells a side.
 
-    It is only a narrower pre-filter. Each open pair is still tested on all three
-    axes with _boxes_miss, so the pairs that come out are exactly the pairs
-    comparing everything would find, and the exact boolean after it is unchanged.
+    It is only a narrower pre-filter. A pair that shares a cell is still tested on
+    all three axes with _boxes_miss, so the pairs that come out are exactly the
+    pairs comparing everything would find, and the exact boolean after it is
+    unchanged.
+
+    # Each pair is tested in one cell only
+
+    Two boxes can share many cells. A pair is tested in the cell holding the corner
+    where their overlap would begin — the larger of their two low corners, which is
+    inside both boxes whenever they overlap, and so in a cell both were filed in.
+    That is exactly one cell, so a pair is never tested, or counted, twice.
+
+    # Boxes much larger than a cell
+
+    A chassis rail filed in every cell it crosses would cost more cells than it has
+    neighbours. A box longer than _GRID_LARGE cells is kept out of the grid and
+    tested against every box instead; an assembly has few of them.
 
     # Why the pairs are sorted back into index order
 
     The pair budget stops the narrow phase part-way through a dense model. Which
     pairs were measured before it stopped depends on the order they arrive in, so
     they arrive in the order comparing every pair would meet them: a truncated
-    answer is the same truncated answer it was before this sweep existed.
+    answer is the same truncated answer it was before any broad phase existed.
     """
     present = [k for k, b in enumerate(boxes) if b is not None]
     if len(present) < 2:
         return [], 0
-    axis = _sweep_axis(boxes, present)
-    present.sort(key=lambda k: boxes[k][0][axis])
-    pairs, tests, still_open = [], 0, []
+    longest = sorted(max(boxes[k][1][a] - boxes[k][0][a] for a in range(3)) for k in present)
+    cell = max(longest[len(longest) // 2], 1e-6)
+    cells, large = {}, []
     for k in present:
-        start = boxes[k][0][axis]
-        # Closed when it ends at or before this start: touching is a miss, the
-        # same rule _boxes_miss applies.
-        still_open = [a for a in still_open if boxes[a][1][axis] > start]
-        for a in still_open:
+        lo, hi = boxes[k]
+        if max(hi[a] - lo[a] for a in range(3)) > _GRID_LARGE * cell:
+            large.append(k)
+            continue
+        for cx in range(_cell(lo[0], cell), _cell(hi[0], cell) + 1):
+            for cy in range(_cell(lo[1], cell), _cell(hi[1], cell) + 1):
+                for cz in range(_cell(lo[2], cell), _cell(hi[2], cell) + 1):
+                    cells.setdefault((cx, cy, cz), []).append(k)
+    pairs, tests = [], 0
+    for home, members in cells.items():
+        for m, a in enumerate(members):
+            for b in members[m + 1:]:
+                if (_cell(max(boxes[a][0][0], boxes[b][0][0]), cell) != home[0]
+                        or _cell(max(boxes[a][0][1], boxes[b][0][1]), cell) != home[1]
+                        or _cell(max(boxes[a][0][2], boxes[b][0][2]), cell) != home[2]):
+                    continue
+                tests += 1
+                if not _boxes_miss(boxes[a], boxes[b]):
+                    pairs.append((a, b) if a < b else (b, a))
+    done = set()
+    for a in large:
+        done.add(a)
+        for b in present:
+            if b in done:
+                continue
             tests += 1
-            if not _boxes_miss(boxes[a], boxes[k]):
-                pairs.append((a, k) if a < k else (k, a))
-        still_open.append(k)
+            if not _boxes_miss(boxes[a], boxes[b]):
+                pairs.append((a, b) if a < b else (b, a))
     pairs.sort()
     return pairs, tests
 
 
-def _interferences(solids, ids, labels):
+# # A clash is measured once per pose (Phase 5, stage V1)
+#
+# A thousand plates each with the same bolt through the same hole are a thousand
+# identical booleans. The common volume of two copies depends only on which two
+# shapes they are and where one sits relative to the other, so it is measured
+# once per (shape, shape, relative pose) and reused. The budget counts booleans
+# PAID FOR, not pairs answered, so a repetitive assembly is checked in full
+# where the 2,000-pair budget used to stop it part-way.
+#
+# A part a feature changed is not a copy of anything and is always measured.
+# _INTERFERENCE_CACHE turns reuse off; it exists so the uncached answer stays
+# available as the reference the cached one must reproduce
+# (testdata/interference_cache.py).
+_INTERFERENCE_CACHE = True
+
+
+def _pose(location):
+    """A placement as twelve numbers, rounded so float noise does not split one
+    pose into two: rotation to 1e-9, translation to 1e-6 mm."""
+    t = location.wrapped.Transformation()
+    return tuple(round(t.Value(r, c), 6 if c == 4 else 9) for r in (1, 2, 3) for c in (1, 2, 3, 4))
+
+
+def _pair_key(placed, shape_ids, i, j):
+    """Which two shapes, and where the second sits in the first's frame — the same
+    for the pair in either order — or None when either was changed by a feature."""
+    pi, pj = placed[i], placed[j]
+    if pi is None or pj is None:
+        return None
+    a, b = shape_ids[pi[0]], shape_ids[pj[0]]
+    forward = (a, b, _pose(pi[1].inverse() * pj[1]))
+    backward = (b, a, _pose(pj[1].inverse() * pi[1]))
+    return min(forward, backward)
+
+
+def _interferences(solids, ids, labels, placed=None):
     """Pairs of kept solids that share material, worst first.
 
-    Returns the list, whether the pair budget stopped the search (so a caller
-    never reads a truncated answer as a clean one), and how many box tests the
-    broad phase made.
-    """
-    boxes = _boxes(solids)
-    volumes = []
-    for s in solids:
-        try:
-            volumes.append(float(getattr(s, "volume", 0.0)))
-        except Exception:
-            volumes.append(0.0)
+    placed holds, for each solid, (shape key, location, unplaced shape) when it is
+    an untouched copy of a shape built once, or None — see _tessellate.
 
+    Returns the list, whether the budget stopped the search (so a caller never
+    reads a truncated answer as a clean one), how many box tests the broad phase
+    made, and {"pairs", "booleans", "reused"}: the pairs whose boxes overlap, the
+    booleans paid for, and the answers reused from an identical pose.
+    """
+    boxes, volumes = _measures(solids, placed)
     pairs, box_tests = _candidate_pairs(boxes)
-    found, truncated = [], False
-    for tested, (i, j) in enumerate(pairs):
-        if tested >= _INTERFERENCE_PAIR_BUDGET:
-            truncated = True
-            break
-        try:
-            shared = float(getattr(solids[i] & solids[j], "volume", 0.0))
-        except Exception:
-            # OCCT refusing a boolean is not evidence of interference, and
-            # guessing either way would be worse than saying nothing about
-            # this pair. The parts are still reported by every other check.
+
+    cached = _INTERFERENCE_CACHE and placed is not None
+    shape_ids, cache = {}, {}
+    if cached:
+        for p in placed:
+            if p is not None and p[0] not in shape_ids:
+                shape_ids[p[0]] = len(shape_ids)
+
+    found, truncated, booleans, reused = [], False, 0, 0
+    for i, j in pairs:
+        key = _pair_key(placed, shape_ids, i, j) if cached else None
+        if key is not None and key in cache:
+            shared = cache[key]
+            reused += 1
+        else:
+            if booleans >= _INTERFERENCE_PAIR_BUDGET:
+                truncated = True
+                break
+            booleans += 1
+            try:
+                shared = float(getattr(solids[i] & solids[j], "volume", 0.0))
+            except Exception:
+                # OCCT refusing a boolean is not evidence of interference, and
+                # guessing either way would be worse than saying nothing about
+                # this pair. The parts are still reported by every other check.
+                shared = None
+            if key is not None:
+                cache[key] = shared
+        if shared is None:
             continue
         if volumes[i] <= 0 or volumes[j] <= 0 or shared <= 0:
             # A face has no volume, and "what fraction of it is buried" has
@@ -873,7 +1006,7 @@ def _interferences(solids, ids, labels):
                       "volume": shared, "fraction": shared / smaller})
 
     found.sort(key=lambda f: f["fraction"], reverse=True)
-    return found, truncated, box_tests
+    return found, truncated, box_tests, {"pairs": len(pairs), "booleans": booleans, "reused": reused}
 
 
 # The fields that decide what a solid IS, before it is placed. Everything else a
@@ -1124,7 +1257,7 @@ def _build(request):
     # see the note above _interferences. Always, not on request: a check that a
     # caller has to remember to ask for is a check that is off in the one
     # deployment that needed it, and the broad phase makes the usual case free.
-    clashes, clash_truncated, box_tests = _interferences(built, ids, names)
+    clashes, clash_truncated, box_tests, clash_pairs = _interferences(built, ids, names, kept_placed)
     mark = _lap(phases, "interferences", mark)
     out = {
         "shape_builds": shape_builds,
@@ -1133,6 +1266,9 @@ def _build(request):
         "interferences": clashes,
         "interferences_truncated": clash_truncated,
         "interference_box_tests": box_tests,
+        "interference_pairs": clash_pairs["pairs"],
+        "interference_booleans": clash_pairs["booleans"],
+        "interference_reused": clash_pairs["reused"],
         "volume": volume,
         "phases": phases,
         "bounds": [float(box.min.X), float(box.min.Y), float(box.min.Z),
