@@ -155,11 +155,13 @@ that ADDS what this step asks for, and nothing else.
   attaches to rather than the whole model. Build inside that assembly: patch it by
   id, or create it and place it as a child of the root if it is new. What you are
   not shown is still there, and an edit keeps it.
-- A patched assembly is REPLACED WHOLE, children and all. To place a new assembly,
-  patch the root with every child it already has ("root_children" in what you are
-  shown) and yours after them: a root patched with only your child removes
-  everything else the model had. When the model has no "root" yet, add "root" to
-  the patch, naming the assembly that places yours.
+- A patched assembly is REPLACED WHOLE, children and all. To place a new assembly
+  yourself, send the root under "assemblies" with every child it already has
+  ("root_children" in what you are shown, which is not a field of an edit) and
+  yours after them: a root patched with only your child removes everything else
+  the model had. An assembly you build and do not place is placed from the root at
+  the root's origin, so draw it in the root's frame unless you attach it "at" an
+  interface yourself.
 - Send "prototype_edit" only: not "prototype", and not "build_in_passes", because
   this pass IS the build. It is read as strict JSON: no comments, every number a
   number, and an expression only in the "_from" field made for it.
@@ -343,6 +345,15 @@ func (c *Conversation) buildOneStep(ctx context.Context, doc *Prototype, asked s
 	reply.Prototype = settleDocument(reply.Prototype)
 	if reply.Prototype == nil {
 		return nil, stepNote(n, step.Name, gatePlacesNothing, placesNothingDetail(sent))
+	}
+	// ‼️ And the assembly the plan says this step builds is PLACED. Measured live
+	// 2026-09-15 (car-quality run 1): five of eight steps built their sub-assembly and
+	// left it unplaced — shown the root's children and told to patch the root, they
+	// did not, and one wrote "root_children" into its patch — so the car kept its
+	// brakes, suspension, steering and body as designs nothing placed, with no fault
+	// and no note. See stepplace.go. Fence: TestAssemble_ANewAssemblyTheStepDidNotPlaceIsPlacedFromTheRoot.
+	if placed := placeStepAssembly(reply.Prototype, step.Assembly); placed != "" {
+		reply.noteRepair(placed)
 	}
 
 	// The same gauntlet, and in the same order, for the same reasons. A fault

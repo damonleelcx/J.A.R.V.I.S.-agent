@@ -136,6 +136,8 @@ FILES=(
   internal/agent/vanished.go
   internal/domain/geometry/placedby.go
   internal/agent/car_ceiling_live_test.go
+  internal/agent/stepplace.go
+  internal/agent/dimensionrepair.go
 )
 
 BACKUP=""
@@ -1996,6 +1998,29 @@ drill "the measurement stops counting children attached at an interface" interna
   's = s.replace("if strings.TrimSpace(c.At) != \"\" {", "if false {", 1)' \
   ./internal/agent 'TestCarMeasure_CountsChildrenAttachedAtAnInterface'
 
+
+echo
+echo "Live car findings, run 1: a definition's expression is read, and a step's assembly is placed"
+# Added 2026-09-15 (live car findings, car-quality run 1).
+drill "an expression in a definition's size loses the reply again" internal/agent/dimensionrepair.go \
+  's = s.replace("lists = append(lists, proto[\"parts\"], proto[\"definitions\"])", "lists = append(lists, proto[\"parts\"])", 1)' \
+  ./internal/agent 'TestParseReply_ReadsAnExpressionInADefinitionsSize'
+
+drill "an edit's patch is not read for expressions" internal/agent/dimensionrepair.go \
+  's = s.replace("lists = append(lists, patch[\"parts\"], patch[\"definitions\"])", "_ = patch", 1)' \
+  ./internal/agent 'TestParseReply_ReadsAnExpressionInAnEditsDefinitionAndPart'
+
+drill "a step's unplaced assembly stays unplaced" internal/agent/assemble.go \
+  's = s.replace("if placed := placeStepAssembly(reply.Prototype, step.Assembly); placed != \"\" {", "if placed := \"\"; placed != \"\" {", 1)' \
+  ./internal/agent 'TestAssemble_ANewAssemblyTheStepDidNotPlaceIsPlacedFromTheRoot'
+
+drill "an assembly the step placed itself is placed again" internal/agent/stepplace.go \
+  's = s.replace("return \"\" // placed already, wherever the step chose", "continue", 1)' \
+  ./internal/agent 'TestAssemble_AnAssemblyTheStepPlacedItselfIsLeftAlone'
+
+drill "the measurement stops counting unplaced assemblies" internal/agent/car_tree_measure_test.go \
+  's = s.replace("if a.ID != d.Root && !ref[a.ID] {", "if false {", 1)' \
+  ./internal/agent 'TestCarMeasure_CountsAssembliesNothingPlaces'
 
 if [ "$MODE" = "list" ]; then
   exit 0

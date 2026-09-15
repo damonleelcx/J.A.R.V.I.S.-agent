@@ -90,27 +90,41 @@ func repairDimensions(raw []byte) ([]byte, bool) {
 		// would replace one failure with a more confusing one.
 		return raw, false
 	}
-	proto, ok := doc["prototype"].(map[string]any)
-	if !ok {
-		return raw, false
+	// ‼️ Every list of parts a reply can carry, not only a whole prototype's "parts".
+	// A tree's parts are its DEFINITIONS, and every step of a build after the first
+	// arrives as an edit's patch. Measured live 2026-09-15 (car-quality run 1): a
+	// chassis written as a tree, "size": {"width": "beam_width"} on a definition, and
+	// the whole first step was lost because this read prototype.parts alone.
+	// docs/bugfix/2026-09-15-an-expression-in-a-definition-lost-the-whole-reply.md
+	// Fence: TestParseReply_ReadsAnExpressionInADefinitionsSize.
+	var lists []any
+	if proto, ok := doc["prototype"].(map[string]any); ok {
+		lists = append(lists, proto["parts"], proto["definitions"])
 	}
-	parts, ok := proto["parts"].([]any)
-	if !ok {
-		return raw, false
+	if edit, ok := doc["prototype_edit"].(map[string]any); ok {
+		if patch, ok := edit["patch"].(map[string]any); ok {
+			lists = append(lists, patch["parts"], patch["definitions"])
+		}
 	}
 	moved := false
-	for _, p := range parts {
-		part, ok := p.(map[string]any)
+	for _, list := range lists {
+		parts, ok := list.([]any)
 		if !ok {
 			continue
 		}
-		moved = repairSize(part) || moved
-		moved = repairPosition(part) || moved
-		moved = repairPoints(part["profile"]) || moved
-		moved = repairPath(part["path"]) || moved
-		if holes, ok := part["holes"].([]any); ok {
-			for _, hole := range holes {
-				moved = repairPoints(hole) || moved
+		for _, p := range parts {
+			part, ok := p.(map[string]any)
+			if !ok {
+				continue
+			}
+			moved = repairSize(part) || moved
+			moved = repairPosition(part) || moved
+			moved = repairPoints(part["profile"]) || moved
+			moved = repairPath(part["path"]) || moved
+			if holes, ok := part["holes"].([]any); ok {
+				for _, hole := range holes {
+					moved = repairPoints(hole) || moved
+				}
 			}
 		}
 	}

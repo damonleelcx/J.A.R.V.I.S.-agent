@@ -291,6 +291,10 @@ func TestLiveCarCeiling(t *testing.T) {
 	children, attached, interfaces := attachments(*doc)
 	t.Logf("CAR-ATTACH children=%d attached_at_an_interface=%d at_coordinates=%d interfaces_declared=%d",
 		children, attached, children-attached, interfaces)
+	// And designs nothing places: built, paid for, and not in the car (run 1 of
+	// 2026-09-15 car-quality held five of them).
+	unplaced := unplacedAssemblies(*doc)
+	t.Logf("CAR-UNPLACED assemblies=%d ids=%s", len(unplaced), strings.Join(unplaced, ","))
 
 	// 7 — is anything hollow? Wall C. A car whose every part is solid is a car
 	// that weighs four tonnes.

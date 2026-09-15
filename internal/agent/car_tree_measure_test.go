@@ -77,6 +77,34 @@ func coverageLine(b *cad.Build) string {
 		b.InterferenceBooleans+b.InterferenceReused, b.InterferencePairs, len(b.Skipped), b.InterferencesTruncated)
 }
 
+// unplacedAssemblies is every assembly that is neither the root nor any child's ref.
+func unplacedAssemblies(d geometry.Document) []string {
+	ref := map[string]bool{}
+	for _, a := range d.Assemblies {
+		for _, c := range a.Children {
+			ref[c.Ref] = true
+		}
+	}
+	var out []string
+	for _, a := range d.Assemblies {
+		if a.ID != d.Root && !ref[a.ID] {
+			out = append(out, a.ID)
+		}
+	}
+	return out
+}
+
+// An assembly built and placed by nothing is counted by name.
+func TestCarMeasure_CountsAssembliesNothingPlaces(t *testing.T) {
+	d := geometry.Document{Root: "car", Assemblies: []geometry.Assembly{
+		{ID: "car", Children: []geometry.Child{{ID: "chassis", Ref: "chassis"}}},
+		{ID: "chassis"}, {ID: "brakes"}, {ID: "steering"},
+	}}
+	if got := strings.Join(unplacedAssemblies(d), ","); got != "brakes,steering" {
+		t.Errorf("unplaced = %q, want brakes,steering", got)
+	}
+}
+
 func orNone(s string) string {
 	if s == "" {
 		return "none"
