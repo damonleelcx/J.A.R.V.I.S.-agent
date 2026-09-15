@@ -1,0 +1,5 @@
+bays=30 full run 1: ok=True build 450.5s [shapes 81.5 assembly 52.9 interf 314.5 props 0.0 mesh 0.0 export 0.0] peak 1.8 GB cpu 22% 
+bays=30 mesh run 1: ok=True build 151.5s [shapes 76.2 assembly 49.3 interf 7.4 props 11.9 mesh 5.2 export 0.0] peak 2.0 GB cpu 25% 
+bays=30 mesh run 2: ok=True build 141.7s [shapes 70.8 assembly 48.0 interf 6.6 props 9.9 mesh 4.9 export 0.0] peak 2.0 GB cpu 19% 
+bays=30 step run 1: ok=True build 543.0s [shapes 81.0 assembly 60.8 interf 8.4 props 0.0 mesh 0.0 export 391.1] peak 3.4 GB cpu 39% 
+bays=30 step run 2: ok=True build 465.2s [shapes 96.9 assembly 53.6 interf 6.7 props 0.0 mesh 0.0 export 306.6] peak 3.4 GB cpu 32% 

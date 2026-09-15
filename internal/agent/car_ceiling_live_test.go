@@ -66,7 +66,8 @@ func TestLiveCarCeiling(t *testing.T) {
 	if os.Getenv("FORGE_LIVE_LLM_TESTS") == "" || os.Getenv("FORGE_LLM_API_KEY") == "" {
 		t.Skip("set FORGE_LLM_API_KEY and FORGE_LIVE_LLM_TESTS=1 to run the live car ceiling measurement")
 	}
-	budget := int64(400_000)
+	// 300k: the ceiling damon approved for the Phase 2 live milestone (A4, 2026-09-15).
+	budget := int64(300_000)
 	if s := os.Getenv("FORGE_MEASURE_TOKEN_BUDGET"); s != "" {
 		n, err := strconv.ParseInt(s, 10, 64)
 		if err != nil || n <= 0 {
@@ -141,13 +142,33 @@ func TestLiveCarCeiling(t *testing.T) {
 	if len(steps) > 0 {
 		planned = steps[len(steps)-1].Of
 	}
+	// ‼️ A car written as a tree has no top-level parts, so it is counted by what
+	// it places (car_tree_measure_test.go). Counted by len(doc.Parts) it measured
+	// as nothing.
+	tree := countTree(*doc)
+	expanded := doc.Expanded()
+	placed := *doc
+	placed.Parts = doc.PlacedParts()
 	t.Logf("CAR-CEILING steps_run=%d steps_planned=%d parts=%d features=%d minutes=%.1f",
-		len(steps), planned, len(doc.Parts), len(doc.Features), elapsed.Minutes())
+		len(steps), planned, tree.Occurrences, len(expanded.Features), elapsed.Minutes())
+
+	// 1b — the tree (Phase 2, stage A4): what was described once, how often it is
+	// placed, and what each distinct design cost.
+	t.Logf("CAR-TREE %s", tree.line())
+	t.Logf("CAR-TOKENS per_design=%d per_occurrence=%d designs=%d",
+		tokensPer(spent, tree.Designs()), tokensPer(spent, tree.Occurrences), tree.Designs())
+	for i, r := range doc.EnumeratedRepetition() {
+		if i == 5 {
+			t.Logf("  … and %d more", tree.Repetitions-5)
+			break
+		}
+		t.Logf("  could be one pattern: %d × %s in %s", len(r.Children), r.Ref, r.Assembly)
+	}
 
 	// 2 — what it reached for. A car built entirely out of boxes and a car that
 	// used lofts and revolves are the same part count and not the same model.
-	t.Logf("CAR-SHAPES %s", histogram(shapesOf(*doc)))
-	t.Logf("CAR-FEATURES %s", histogram(opsOf(*doc)))
+	t.Logf("CAR-SHAPES %s", histogram(shapesOf(placed)))
+	t.Logf("CAR-FEATURES %s", histogram(opsOf(expanded)))
 
 	// 3 — does the finished assembly build in the real kernel? The document's own
 	// Faults() is the weaker question and is reported beside it, because the gap
@@ -202,7 +223,8 @@ func TestLiveCarCeiling(t *testing.T) {
 	} else {
 		buried := len(geometry.InterferenceProblems(kernelBuild.Interferences))
 		t.Logf("CAR-INTERFERENCE pairs=%d buried=%d truncated=%v of parts=%d",
-			len(kernelBuild.Interferences), buried, kernelBuild.InterferencesTruncated, len(doc.Parts))
+			len(kernelBuild.Interferences), buried, kernelBuild.InterferencesTruncated, tree.Occurrences)
+		t.Logf("CAR-COVERAGE %s", coverageLine(kernelBuild))
 		for i, f := range kernelBuild.Interferences {
 			if i == 10 {
 				t.Logf("  … and %d more", len(kernelBuild.Interferences)-10)
@@ -215,21 +237,21 @@ func TestLiveCarCeiling(t *testing.T) {
 	// 5 — what a "mirror" would have saved. Wall B. Bounding boxes are the right
 	// tool HERE, unlike for interference: "same size, opposite x" is a question
 	// about extents, and a box answers it exactly.
-	boxes := boundingBoxes(*doc, unit)
+	boxes := boundingBoxes(expanded, unit)
 	pairs := mirrorPairs(boxes)
 	t.Logf("CAR-SYMMETRY mirror_pairs=%d parts_in_a_pair=%d of %d",
 		pairs, pairs*2, len(boxes))
 
 	// 6 — how the model placed things. Wall A: a literal position is arithmetic
 	// the model did in its head; a bound one is arithmetic the document does.
-	literal, bound, subsystems := placement(*doc)
+	literal, bound, subsystems := placement(placed)
 	t.Logf("CAR-PLACEMENT literal_positions=%d bound_positions=%d id_prefixes=%d",
 		literal, bound, subsystems)
 
 	// 7 — is anything hollow? Wall C. A car whose every part is solid is a car
 	// that weighs four tonnes.
-	hollow, cuts := hollowness(*doc)
-	t.Logf("CAR-HOLLOW parts_with_holes=%d cut_features=%d of parts=%d", hollow, cuts, len(doc.Parts))
+	hollow, cuts := hollowness(expanded)
+	t.Logf("CAR-HOLLOW parts_with_holes=%d cut_features=%d of parts=%d", hollow, cuts, tree.Occurrences)
 
 	// 8 — did any pass fail or lose work? Wall G, and the silent-drop bug.
 	failed := 0
@@ -260,7 +282,7 @@ func TestLiveCarCeiling(t *testing.T) {
 	// This is a MEASUREMENT, and the only thing it fails on is not having
 	// measured anything. Asserting a part count here would turn a number that is
 	// supposed to move into a fence that has to be edited every time it does.
-	if len(doc.Parts) == 0 {
+	if !doc.HasGeometry() {
 		t.Fatal("the build produced no parts at all, so there is nothing to measure")
 	}
 }
