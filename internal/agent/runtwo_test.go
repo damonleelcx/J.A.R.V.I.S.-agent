@@ -31,8 +31,16 @@ func TestParseReply_ReadsAnExpressionInAChildsPositionAtItsValue(t *testing.T) {
 	if got := a.Interfaces[0].Position; len(got) != 3 || got[0] != 1300 {
 		t.Errorf("the interface is at %v, want x = 1300", got)
 	}
-	if !strings.Contains(reply.Repaired, `no "position_from"`) || !strings.Contains(reply.Repaired, "will not follow") {
-		t.Errorf("the reader is not told the placement lost its binding: %q", reply.Repaired)
+	// Since 2026-09-15 (bound child positions) the expression is kept as the placement's
+	// binding, and a quoted number is a number that binds nothing.
+	if !strings.Contains(reply.Repaired, childPositionNote) {
+		t.Errorf("the reader is not told the placement was read and kept bound: %q", reply.Repaired)
+	}
+	if from := a.Children[0].PositionFrom; len(from) != 1 || from["x"] != "-half_wheelbase + 200" {
+		t.Errorf("the child keeps %v as its binding; want only x = \"-half_wheelbase + 200\"", from)
+	}
+	if from := a.Interfaces[0].PositionFrom; len(from) != 1 || from["x"] != "half_wheelbase" {
+		t.Errorf("the interface keeps %v as its binding; want only x = \"half_wheelbase\"", from)
 	}
 }
 

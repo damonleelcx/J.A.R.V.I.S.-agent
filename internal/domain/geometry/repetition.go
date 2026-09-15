@@ -152,7 +152,10 @@ func assemblyRepetition(a Assembly) []Repetition {
 	var groups []*siblingGroup
 	byKey := map[string]*siblingGroup{}
 	for _, c := range a.Children {
-		if c.Pattern != nil || strings.TrimSpace(c.ID) == "" || strings.TrimSpace(c.Ref) == "" {
+		// A bound position is a relationship a pattern would drop for every copy but the
+		// first, exactly as for a top-level part below (2026-09-15, bound child positions).
+		// Fence: TestRepetition_ABoundChildIsNotOfferedAsAPattern.
+		if c.Pattern != nil || len(c.PositionFrom) > 0 || strings.TrimSpace(c.ID) == "" || strings.TrimSpace(c.Ref) == "" {
 			continue
 		}
 		s, finite := newSibling(c.ID, c.Position, c.Rotation)

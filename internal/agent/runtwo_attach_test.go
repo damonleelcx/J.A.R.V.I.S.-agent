@@ -211,10 +211,15 @@ func TestPlacementsOverModel_ReadsOverTheModelWithoutAddingToTheReply(t *testing
 	if resp.Content != sent {
 		t.Error("the model's own reply was changed in place")
 	}
-	for _, unwanted := range []string{"half_track", `"parameters"`, `"derived"`, `"units"`} {
+	// The expressions are kept as the placement's binding since 2026-09-15 (bound child
+	// positions), so the parameters' NAMES are in what was read; their declarations are not.
+	for _, unwanted := range []string{`"name":"half_track"`, `"parameters"`, `"derived"`, `"units"`} {
 		if strings.Contains(read.Content, unwanted) {
 			t.Errorf("what was read carries %s, which the step did not send:\n%s", unwanted, read.Content)
 		}
+	}
+	if !strings.Contains(read.Content, `"position_from":{"x":"-half_track","z":"half_wheelbase"}`) {
+		t.Errorf("the expressions were not kept as the placement's binding:\n%s", read.Content)
 	}
 	if !strings.Contains(read.Content, `"position":[-800,0,1350]`) {
 		t.Errorf("the position was not read at its value:\n%s", read.Content)

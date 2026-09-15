@@ -153,10 +153,11 @@ func repairDimensionsNoted(raw []byte) ([]byte, bool, bool) {
 	return out, moved, evaluated
 }
 
-// childPositionNote tells the reader a placement's expression was read at its value.
-const childPositionNote = `A position on a placed child or an interface arrived as an expression, and a ` +
-	`placement has no "position_from" to hold one, so it was placed at what the expression works out to ` +
-	`from this reply's parameters now. It will not follow those parameters if they change.`
+// childPositionNote tells the reader a placement's expression was read at its value
+// and kept as its binding.
+const childPositionNote = `A position on a placed child or an interface arrived as an expression. It was ` +
+	`placed at what the expression works out to from the parameters now, and the expression was kept as ` +
+	`its "position_from", so it follows those parameters when they change.`
 
 // repairPlacements reads the positions of a tree's children and interfaces.
 //
@@ -164,8 +165,8 @@ const childPositionNote = `A position on a placed child or an interface arrived 
 //
 // Measured live 2026-09-15 (car-quality run 2): after definitions were read, the
 // chassis step was still lost, to "position": ["-half_wheelbase + 200", 0, 0] on a
-// child. A child's place cannot be bound (only a definition's dimensions can), so
-// there is no twin to move the expression to, and the whole reply was discarded.
+// child. A child's place had no "position_from" to move the expression to, and the
+// whole reply was discarded.
 //
 // # Why its value, and only when it can be worked out
 //
@@ -174,9 +175,19 @@ const childPositionNote = `A position on a placed child or an interface arrived 
 // quoted number is read as the number, and an expression is evaluated by FORGE's own
 // binder against the reply's parameters and derived values. An expression that does
 // not evaluate — an unknown name, a unit mismatch, bad grammar — is left as it was and
-// fails exactly as before: nothing is guessed. The note says the binding was lost.
+// fails exactly as before: nothing is guessed.
 // docs/bugfix/2026-09-15-a-build-steps-edit-replaced-the-models-root.md
 // Fence: TestParseReply_ReadsAnExpressionInAChildsPositionAtItsValue.
+//
+// # And why the expression is kept
+//
+// ‼️ #97 kept only the number, so a respec of half_wheelbase moved every definition
+// bound to it and left the wheels placed at the old one. A child and an interface now
+// have "position_from" (geometry/tree.go), and an expression that evaluates is written
+// there beside its number: every reader still draws the number, and a respec moves it.
+// A quoted number is a number and binds nothing. The model's own "position_from" for
+// that axis, when it sent one, wins, as it does on a part.
+// Fence: TestAssemble_AStepsChildPlacedByAParameterFollowsItAfterStorageAndRespec.
 func repairPlacements(container map[string]any) bool {
 	asms, ok := container["assemblies"].([]any)
 	if !ok {
@@ -211,12 +222,29 @@ func repairPlacements(container map[string]any) bool {
 					}
 					if f, ok := evaluateOver(container, s, units); ok {
 						pos[i], moved = f, true
+						bindPlacementAxis(obj, i, s)
 					}
 				}
 			}
 		}
 	}
 	return moved
+}
+
+// bindPlacementAxis keeps a placement's expression for axis i as its position_from,
+// unless the placement already binds that axis.
+func bindPlacementAxis(obj map[string]any, i int, expr string) {
+	if i >= len(positionAxes) {
+		return
+	}
+	from, _ := obj["position_from"].(map[string]any)
+	if from == nil {
+		from = map[string]any{}
+		obj["position_from"] = from
+	}
+	if _, taken := from[positionAxes[i]]; !taken {
+		from[positionAxes[i]] = expr
+	}
 }
 
 // evaluateOver works out one expression over a reply's parameters and derived
