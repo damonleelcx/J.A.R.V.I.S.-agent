@@ -372,6 +372,9 @@ func bounds(doc Document) (min, max [3]float64) {
 	// gear, so it keeps that exact case too.
 	// Fences: TestAGearIsDrawnAndMeasuredAtItsOwnSize, TestAGearFollowsItsParameters.
 	tree, _ := expandAssemblies(doc)
+	// Standard parts ARE expanded: unlike a gear, a designation has no exact
+	// case below, and unexpanded it would measure as a unit box (standard.go).
+	tree, _ = expandStandards(tree)
 	withCopies, _ := expandRepeats(tree)
 	for _, p := range withCopies.Parts {
 		pos := padTo3(p.Position)

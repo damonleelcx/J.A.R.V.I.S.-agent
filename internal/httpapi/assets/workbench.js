@@ -1509,6 +1509,10 @@
       if (length != null) dims.push('h ' + qty(length));
     } else if (p.shape === 'sphere') {
       if (s.radius != null) dims.push('⌀' + qty(s.radius * 2));
+    } else if (p.shape === 'standard') {
+      /* The designation is the dimensions. Same line as Dimensions in geometry/units.go. */
+      if (p.standard) dims.push(p.standard);
+      if (s.length != null) dims.push(qty(s.length) + ' long');
     } else if (p.shape === 'gear') {
       /* The numbers a gear is specified by, and what they work out to — through
        * Forge3D, so a face width written as "thickness" shows as the width the

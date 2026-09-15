@@ -118,6 +118,8 @@ FILES=(
   internal/domain/geometry/binding.go
   internal/domain/geometry/variant.go
   internal/domain/geometry/frame.go
+  internal/domain/geometry/standard.go
+  internal/domain/geometry/repetition.go
   internal/domain/geometry/pattern.go
   internal/domain/geometry/interface.go
   internal/domain/geometry/tree_features.go
@@ -1730,6 +1732,74 @@ drill "a scripted part is unreachable in the shape dispatch" internal/domain/cad
 drill "a refused assembly hides which part it refused" internal/domain/cad/cad.go \
   's = s.replace("\t\tif len(res.Skipped) > 0 {\n\t\t\tdetail +=", "\t\tif false {\n\t\t\tdetail +=", 1)' \
   ./internal/domain/cad 'TestKernel_ARefusedAssemblyNamesWhatItRefused'
+
+echo
+echo "Standard parts and patterns in the contract"
+# Added 2026-09-15 (Phase 2, stage A3). A part names a catalogued designation and is
+# written out as the revolve or extrusion it is, at the published figures, the same in
+# Go and in the browser; an unknown designation is refused with the nearest named. The
+# contract offers the catalogue rendered from the table, and children written out one
+# at a time where one pattern would place them are named to the turn and to the next
+# build step — a warning, never a refusal.
+drill "an M8 cap screw's head is 14 across" internal/domain/geometry/standard.go \
+  's = s.replace("{\"M8\", 8, 13, 8, 12, 80},", "{\"M8\", 8, 14, 8, 12, 80},", 1)' \
+  ./internal/domain/geometry 'TestStandard_TheCatalogueCarriesThePublishedFigures'
+
+drill "the browser's M8 cap screw head is 14 across" internal/httpapi/assets/forge3d.js \
+  's = s.replace("[\x27M8\x27, 8, 13, 8, 12, 80]", "[\x27M8\x27, 8, 14, 8, 12, 80]", 1)' \
+  ./internal/httpapi 'TestRendererDrawsTheSameStandardPartAsTheExporter'
+
+drill "a hex nut is not stood up along Y" internal/domain/geometry/standard.go \
+  's = s.replace("shape: \"extrusion\", turned: true,", "shape: \"extrusion\", turned: false,", 1)' \
+  ./internal/domain/geometry 'TestStandard_TheKernelAndTheMeasurementSeeTheDrawnPart'
+
+drill "a refused designation names no near match" internal/domain/geometry/standard.go \
+  's = s.replace("quotedList(nearestStandards(p.Standard, 3))", "quotedList(nil)", 1)' \
+  ./internal/domain/geometry 'TestStandard_AnUnknownDesignationIsRefusedWithTheNearestNamed'
+
+drill "an unknown designation is not a fault" internal/domain/geometry/faults.go \
+  's = s.replace("profileProblems = append(profileProblems, standardProblems...)", "_ = standardProblems", 1)' \
+  ./internal/domain/geometry 'TestStandard_AnUnknownDesignationIsRefusedWithTheNearestNamed'
+
+drill "the kernel is sent the word standard" internal/domain/geometry/solid.go \
+  's = s.replace("d, standardProblems := expandStandards(d)", "standardProblems := []Problem(nil)", 1)' \
+  ./internal/domain/geometry 'TestStandard_TheKernelAndTheMeasurementSeeTheDrawnPart|TestStandard_EveryDesignationBuilds'
+
+drill "measurement reads a standard part as a unit box" internal/domain/geometry/overlay.go \
+  's = s.replace("\ttree, _ = expandStandards(tree)\n", "", 1)' \
+  ./internal/domain/geometry 'TestStandard_TheKernelAndTheMeasurementSeeTheDrawnPart'
+
+drill "the contract's catalogue is typed rather than rendered" internal/agent/converse.go \
+  's = s.replace("geometry.StandardGuide(), strings.Join(", "\"    \\\"ISO 4762 M8x30\\\"\", strings.Join(", 1)' \
+  ./internal/agent 'TestTheContractTeachesEveryStandardPartFORGEHas'
+
+drill "irregular spacing counts as a row" internal/domain/geometry/repetition.go \
+  's = s.replace("const repetitionTolerance = 1e-3", "const repetitionTolerance = 0.2", 1)' \
+  ./internal/domain/geometry 'TestRepetition_IrregularSpacingIsNotFlagged'
+
+drill "a grid is never looked for" internal/domain/geometry/repetition.go \
+  's = s.replace("if p, ok := gridOf(g.siblings); ok {", "if p, ok := gridOf(g.siblings); ok && false {", 1)' \
+  ./internal/domain/geometry 'TestRepetition_FindsAGrid'
+
+drill "a ring is never looked for" internal/domain/geometry/repetition.go \
+  's = s.replace("if p, unturned, ok := ringOf(g.siblings); ok {", "if p, unturned, ok := ringOf(g.siblings); ok && false {", 1)' \
+  ./internal/domain/geometry 'TestRepetition_FindsAPolarRing'
+
+drill "groups are read in map order" internal/domain/geometry/repetition.go \
+  's = s.replace("\tfor _, g := range groups {", "\tfor _, g := range byKey {", 1)' \
+  ./internal/domain/geometry 'TestRepetition_IsDeterministic'
+
+drill "the turn does not say what could be one pattern" internal/agent/converse.go \
+  's = s.replace("\tnoteRepetition(&reply)\n\treturn &reply, nil", "\treturn &reply, nil", 1)' \
+  ./internal/agent 'TestRepetition_TheTurnSaysWhatCouldBeOnePattern'
+
+drill "the streaming turn does not say what could be one pattern" internal/agent/converse_stream.go \
+  's = s.replace("\t\tnoteRepetition(&reply)\n", "", 1)' \
+  ./internal/agent 'TestRepetition_TheTurnSaysWhatCouldBeOnePattern'
+
+drill "a build step is not told what could be one pattern" internal/agent/assemble.go \
+  's = s.replace("\tsofar += repetitionForStep(doc)\n", "", 1)' \
+  ./internal/agent 'TestAssemble_AStepIsToldWhatCouldBeOnePattern'
 
 if [ "$MODE" = "list" ]; then
   exit 0
