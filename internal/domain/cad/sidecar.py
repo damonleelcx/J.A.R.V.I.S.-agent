@@ -32,6 +32,7 @@ import heapq
 import json
 import math
 import os
+import struct
 import sys
 import tempfile
 import time
@@ -867,7 +868,34 @@ def _moved_box(box, location):
     return (tuple(lo), tuple(hi))
 
 
-def _measures(solids, placed=None):
+# # A moved box without a min() per corner (repair bound and check profile)
+#
+# _measures was 11 s of the 1M check (docs/spikes/2026-09-15-check-profile): a
+# moved box per occurrence, each 24 corner sums read through nested lists and folded
+# with 24 min() and max() calls. _moved_box_direct evaluates the same sums —
+# (a*x + b*y) + c*z + d, each product the same float — in the same corner order, and
+# takes min() and max() of the eight at once. min and max return the FIRST of tied
+# values either way, so even a -0.0 beside a 0.0 comes out the same. The box is the
+# same tuple, bit for bit. _MOVED_BOX_DIRECT = False restores the loop, kept as the
+# reference testdata/interference_pair_keys.py compares every box against.
+_MOVED_BOX_DIRECT = True
+
+
+def _moved_box_direct(box, e):
+    """_moved_box from a placement's _entries."""
+    (x0, y0, z0), (x1, y1, z1) = box
+    lo, hi = [], []
+    for r in (0, 4, 8):
+        a, b, c, d = e[r], e[r + 1], e[r + 2], e[r + 3]
+        ax0, ax1, by0, by1, cz0, cz1 = a * x0, a * x1, b * y0, b * y1, c * z0, c * z1
+        corners = (ax0 + by0 + cz0 + d, ax0 + by0 + cz1 + d, ax0 + by1 + cz0 + d, ax0 + by1 + cz1 + d,
+                   ax1 + by0 + cz0 + d, ax1 + by0 + cz1 + d, ax1 + by1 + cz0 + d, ax1 + by1 + cz1 + d)
+        lo.append(min(corners))
+        hi.append(max(corners))
+    return (tuple(lo), tuple(hi))
+
+
+def _measures(solids, placed=None, rotations=None):
     """Every kept solid's box and volume.
 
     # Once per definition (Phase 5, stage V1)
@@ -878,8 +906,13 @@ def _measures(solids, placed=None):
     and each copy's box is that box moved by its placement; volume does not change
     under a rigid motion. A part a feature changed (placed entry None) is measured
     as the solid it is.
+
+    rotations, when a list as long as solids, receives each placed solid's rotation
+    entries as bytes, interned so that equal rotations are one object: read here for
+    the box anyway, and what _pair_keys memoizes relative rotations by (repair bound
+    and check profile). Filled only on the direct path (_MOVED_BOX_DIRECT).
     """
-    boxes, volumes, local = [], [], {}
+    boxes, volumes, local, interned = [], [], {}, {}
     for i, solid in enumerate(solids):
         p = placed[i] if placed else None
         if p is None:
@@ -890,7 +923,14 @@ def _measures(solids, placed=None):
         if key not in local:
             local[key] = (_box_of(shape), _volume_of(shape))
         box, volume = local[key]
-        boxes.append(_moved_box(box, location))
+        if _MOVED_BOX_DIRECT:
+            e = _entries(location.wrapped)
+            if rotations is not None:
+                bits = _PACK_ROTATION(e[0], e[1], e[2], e[4], e[5], e[6], e[8], e[9], e[10])
+                rotations[i] = interned.setdefault(bits, bits)
+            boxes.append(None if box is None else _moved_box_direct(box, e))
+        else:
+            boxes.append(_moved_box(box, location))
         volumes.append(volume)
     return boxes, volumes
 
@@ -1318,6 +1358,188 @@ def _pair_key(placed, shape_ids, i, j, slabs=None):
     return min(forward, backward)
 
 
+# # A pair's key without a build123d Location per step (repair bound and check profile)
+#
+# Profiled 2026-09-15 on the airframe barrel (docs/spikes/2026-09-15-check-profile):
+# the check was 121 s of the 1M build, and ~80% of it was _pair_key, run once for
+# each of 2,191,348 candidate pairs to find 15 booleans' worth of distinct clashes.
+# Each key built four build123d Locations (two inverses, two products), each
+# Location.__init__ parsing nine keyword arguments and four isinstance checks
+# around one OCCT call; read each relative transformation's twelve entries twice
+# (once for the pose, once more for containment); and ran _carried and _marks as
+# generator expressions.
+#
+# _pair_keys makes the SAME OCCT calls on the same TopLoc_Locations — Inverted(),
+# then the product, then Transformation() — without a Python Location around any of
+# them, and reads each transformation's entries once. A placement's inverse is taken
+# once per solid rather than once per pair it is in; TopLoc_Location is immutable,
+# so the inverse reused is the inverse that would have been taken. The arithmetic of
+# the pose, the rounding, the containment test and the marks is written out in the
+# order the originals do it, so every key is the same tuple, bit for bit.
+#
+# _PAIR_KEY_DIRECT = False restores _pair_key through build123d, kept as the
+# reference the fence compares every key against (testdata/interference_pair_keys.py).
+_PAIR_KEY_DIRECT = True
+
+
+#
+# # And the relative ROTATION once per pair of rotations
+#
+# With the Locations gone, what was left of a key was reading and rounding: 24
+# Value() calls and 24 round() calls a pair, about 15 µs of 22. Measured on the 90k
+# barrel: 197,356 pairs have 80 distinct placement rotations and 224 distinct pairs
+# of them, and in every pair, both ways, the relative rotation's bits were the same
+# for every pair with the same two rotations.
+#
+# Why that holds, from OCCT's gp_Trsf: a product's vectorial part is computed from
+# the factors' matrices, forms and scale factors, and an inverse's from its own —
+# never from a translation. TopLoc_Location composes a chain item by item, so the
+# argument covers a placement that is ONE datum at power 1, which is what every
+# placement _placement makes. So the key memoizes the relative rotation, raw and
+# rounded, by the two placements' (form, rotation bits), and reads and rounds only
+# the three translations per direction.
+#
+# ‼️ Guarded, not assumed: a placement that is a chain, a power other than 1, or a
+# scale factor other than 1 is keyed without the memo; so is a pair whose two
+# placements are one datum, where TopLoc_Location cancels the powers to the exact
+# identity and a product of the two would not. The memo holds at most
+# _ROTATION_MEMO_LIMIT pairs of rotations (65,536 at ~1 KB each); past that a pair
+# is keyed without it.
+_ROTATION_MEMO_LIMIT = 1 << 16
+_PACK_ROTATION = struct.Struct("<9d").pack
+
+
+def _entries(location):
+    """A TopLoc_Location's transformation as its twelve entries, row by row, each
+    row's rotation then its translation — _pose's order, unrounded."""
+    v = location.Transformation().Value
+    return (v(1, 1), v(1, 2), v(1, 3), v(1, 4), v(2, 1), v(2, 2), v(2, 3), v(2, 4),
+            v(3, 1), v(3, 2), v(3, 3), v(3, 4))
+
+
+def _rotation(v):
+    """A transformation's rotation entries, row by row, from its Value."""
+    return (v(1, 1), v(1, 2), v(1, 3), v(2, 1), v(2, 2), v(2, 3), v(3, 1), v(3, 2), v(3, 3))
+
+
+def _rounded_rotation(r):
+    """_pose's rounding of a rotation: 1e-9."""
+    return (round(r[0], 9), round(r[1], 9), round(r[2], 9), round(r[3], 9), round(r[4], 9),
+            round(r[5], 9), round(r[6], 9), round(r[7], 9), round(r[8], 9))
+
+
+def _pose_of(q, t):
+    """_pose from a rounded rotation and a translation, which is rounded to 1e-6 here."""
+    return (q[0], q[1], q[2], round(t[0], 6), q[3], q[4], q[5], round(t[1], 6),
+            q[6], q[7], q[8], round(t[2], 6))
+
+
+def _inside_split(rot, t, half, box):
+    """_inside on a rotation and a translation: the same sums, in the same order."""
+    axes = []
+    if half is None or box is None:
+        return axes
+    lo, hi = box
+    for r in range(3):
+        if half[r] is None:
+            continue
+        row = 3 * r
+        mid, reach = t[r], 0.0
+        for c in range(3):
+            v = rot[row + c]
+            mid += v * (lo[c] + hi[c]) / 2
+            reach += abs(v) * (hi[c] - lo[c]) / 2
+        if mid - reach >= _SLIDE_MARGIN - half[r] and mid + reach <= half[r] - _SLIDE_MARGIN:
+            axes.append(r)
+    return axes
+
+
+def _carried_fast(pose, axes):
+    """_carried without generators."""
+    out = []
+    for v in axes:
+        for w in range(3):
+            if abs(pose[4 * w + v]) >= 1 - 1e-9:
+                clear = True
+                for o in range(3):
+                    if o != w and not abs(pose[4 * o + v]) <= 1e-9:
+                        clear = False
+                        break
+                if clear:
+                    out.append(w)
+    return out
+
+
+def _pair_keys(placed, shape_ids, slabs, rotations=None):
+    """A function (i, j) -> _pair_key(placed, shape_ids, i, j, slabs), the same key.
+
+    rotations is _measures' per-solid rotation bits, or None for no memo."""
+    if not _PAIR_KEY_DIRECT:
+        return lambda i, j: _pair_key(placed, shape_ids, i, j, slabs)
+    # Indexed by solid: lists, not dicts, at a million solids.
+    inverses, rotation_of = [None] * len(placed), [None] * len(placed)
+    rotation_ids, memo = {}, {}
+
+    def rotation_id(i, location):
+        r = rotation_of[i]
+        if r is None:
+            r = -1
+            bits = rotations[i] if rotations is not None else None
+            if bits is not None and location.FirstPower() == 1 and location.NextLocation().IsIdentity():
+                t = location.Transformation()
+                if t.ScaleFactor() == 1.0:
+                    r = rotation_ids.setdefault((int(t.Form()), bits), len(rotation_ids))
+            rotation_of[i] = r
+        return r
+
+    def key(i, j):
+        pi, pj = placed[i], placed[j]
+        if pi is None or pj is None:
+            return None
+        li, lj = pi[1].wrapped, pj[1].wrapped
+        inv_i = inverses[i]
+        if inv_i is None:
+            inv_i = inverses[i] = li.Inverted()
+        inv_j = inverses[j]
+        if inv_j is None:
+            inv_j = inverses[j] = lj.Inverted()
+        va, vb =(inv_i * lj).Transformation().Value, (inv_j * li).Transformation().Value
+        ta, tb = (va(1, 4), va(2, 4), va(3, 4)), (vb(1, 4), vb(2, 4), vb(3, 4))
+        ri, rj = rotation_id(i, li), rotation_id(j, lj)
+        memoizable = ri >= 0 and rj >= 0 and not (ri == rj and li.IsEqual(lj))
+        m = memo.get((ri, rj)) if memoizable else None
+        if m is None:
+            ra, rb = _rotation(va), _rotation(vb)
+            m = (ra, _rounded_rotation(ra), rb, _rounded_rotation(rb))
+            if memoizable and len(memo) < _ROTATION_MEMO_LIMIT:
+                memo[(ri, rj)] = m
+        ra, qa, rb, qb = m
+        a, b = shape_ids[pi[0]], shape_ids[pj[0]]
+        pose_f, pose_b = _pose_of(qa, ta), _pose_of(qb, tb)
+        if not slabs:
+            return min((a, b, pose_f), (b, a, pose_b))
+        frame_i, frame_j = slabs[pi[0]], slabs[pj[0]]
+        inside_i = _inside_split(ra, ta, frame_i[0], frame_j[1])
+        inside_j = _inside_split(rb, tb, frame_j[0], frame_i[1])
+        if not inside_i and not inside_j:
+            # Nothing marked on either side: both poses are _slid's input unchanged,
+            # and a real pose's translations are finite, so both mark nothing.
+            return min((a, b, pose_f), (b, a, pose_b))
+        carried_f = _carried_fast(pose_f, inside_j) if inside_j else []
+        carried_b = _carried_fast(pose_b, inside_i) if inside_i else []
+        forward = (a, b, _slid(pose_f, inside_i, carried_f))
+        backward = (b, a, _slid(pose_b, inside_j, carried_b))
+        pf, pb = forward[2], backward[2]
+        marked_f = math.isinf(pf[3]) + math.isinf(pf[7]) + math.isinf(pf[11])
+        marked_b = math.isinf(pb[3]) + math.isinf(pb[7]) + math.isinf(pb[11])
+        if marked_f != marked_b:
+            return forward if marked_f > marked_b else backward
+        return min(forward, backward)
+
+    key.memo = memo
+    return key
+
+
 def _interferences(solids, ids, labels, placed=None):
     """Pairs of kept solids that share material, worst first.
 
@@ -1330,10 +1552,11 @@ def _interferences(solids, ids, labels, placed=None):
     booleans paid for, and the answers reused from an identical pose (or one slid
     along a box it lies inside; see _INTERFERENCE_SLIDE).
     """
-    boxes, volumes = _measures(solids, placed)
+    cached = _INTERFERENCE_CACHE and placed is not None
+    rotations = [None] * len(solids) if cached else None
+    boxes, volumes = _measures(solids, placed, rotations)
     pairs, box_tests = _candidate_pairs(boxes)
 
-    cached = _INTERFERENCE_CACHE and placed is not None
     shape_ids, cache, slabs = {}, {}, {}
     if cached:
         for p in placed:
@@ -1343,8 +1566,9 @@ def _interferences(solids, ids, labels, placed=None):
                     slabs[p[0]] = _slabs(p[0], p[2])
 
     found, truncated, booleans, reused = [], False, 0, 0
+    pair_key = _pair_keys(placed, shape_ids, slabs, rotations) if cached else None
     for i, j in pairs:
-        key = _pair_key(placed, shape_ids, i, j, slabs) if cached else None
+        key = pair_key(i, j) if cached else None
         if key is not None and key in cache:
             shared = cache[key]
             reused += 1

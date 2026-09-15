@@ -1980,6 +1980,110 @@ drill "the assembly volume forgets all but the last copy" internal/domain/cad/si
   's = s.replace("        total += counted[p[0]]\n", "        total = counted[p[0]]\n", 1)' \
   ./internal/domain/cad 'TestKernel_APlacedCopyIsTheCopyBuild123dMade'
 
+echo
+echo "Repair bound and check profile: what an overlap repair asks, and a clash's key without Locations"
+# Added 2026-09-15 (repair bound and check profile). An overlap repair asked a model
+# one line per buried clash, 1.41 MB at the 1M barrel's 10,000 listed; it is now asked
+# every line as before when they fit 16 KiB, and otherwise a summary by the placements
+# that made the clashes, with exact counts and the worst named. And the interference
+# check keys each candidate pair through OCCT directly, without four build123d
+# Locations a pair, to the same key bit for bit.
+drill "an overlap repair is asked about every buried clash however many" internal/agent/interference.go \
+  's = s.replace("repairAsks(reply.Prototype, found, sheet.Found)", "geometry.InterferenceProblems(found)", 1)' \
+  ./internal/agent 'TestInterference_ARepairOfTenThousandClashesIsAskedWithinItsBudget'
+
+drill "a model whose clashes fit is summarized anyway" internal/agent/interference.go \
+  's = s.replace("\tif problemBytes(buried) <= maxRepairProblemBytes {\n", "\tif false && problemBytes(buried) <= maxRepairProblemBytes {\n", 1)' \
+  ./internal/agent 'TestInterference_AFewBuriedClashesAreAskedAboutAsBefore'
+
+drill "the summary counts the list as everything found" internal/agent/interference.go \
+  's = s.replace("\t\t\ttotal, listed, count))},\n", "\t\t\tlen(found), listed, count))},\n", 1)' \
+  ./internal/agent 'TestInterference_(ARepairOfTenThousandClashesIsAskedWithinItsBudget|ARepairSummaryDoesNotGrowWithTheClashes)'
+
+drill "the worst clash is the first listed, not the deepest" internal/agent/interference.go \
+  's = s.replace("\t\tif worst < 0 || f.Fraction > found[worst].Fraction {\n", "\t\tif worst < 0 {\n", 1)' \
+  ./internal/agent 'TestInterference_TheWorstClashIsNamedWhateverTheBudget'
+
+drill "groups are told in a map's order, with no tiebreak" internal/agent/interference.go \
+  's = s.replace("\t// Deepest first, then the most clashes", "\tgroups = groups[:0]\n\tfor _, g := range index {\n\t\tgroups = append(groups, g)\n\t}\n\t// Deepest first, then the most clashes", 1); s = s.replace("\t\treturn gi.first < gj.first\n", "\t\treturn false\n", 1)' \
+  ./internal/agent 'TestInterference_ARepairSummaryIsTheSamePromptEveryTime'
+
+drill "clashes are grouped by their labels, not their placements" internal/agent/interference.go \
+  's = s.replace("\t\tkey := [2]placement{placed(f.A), placed(f.B)}\n", "\t\tkey := [2]placement{{path: f.ALabel, definition: placed(f.A).definition}, {path: f.BLabel, definition: placed(f.B).definition}}\n", 1)' \
+  ./internal/agent 'TestInterference_ARepairOfTenThousandClashesIsAskedWithinItsBudget'
+
+drill "a pattern copy is not traced to the child that placed it" internal/agent/interference.go \
+  's = s.replace("\tif len(numbers) > 2 {\n", "\tif len(numbers) > 0 {\n", 1)' \
+  ./internal/agent 'TestInterference_AClashIsTracedToThePlacementThatMadeIt'
+
+drill "a child's own id is read as a copy number" internal/agent/interference.go \
+  's = s.replace("\t\tif c.ID == seg {\n\t\t\treturn c\n\t\t}\n", "", 1)' \
+  ./internal/agent 'TestInterference_AClashIsTracedToThePlacementThatMadeIt'
+
+drill "the shorter of two matching child ids wins" internal/agent/interference.go \
+  's = s.replace("(best == nil || len(c.ID) > len(best.ID))", "best == nil", 1)' \
+  ./internal/agent 'TestInterference_AClashIsTracedToThePlacementThatMadeIt'
+
+drill "a line is cut inside a character" internal/agent/interference.go \
+  's = s.replace("\tfor cut > 0 && !utf8.RuneStart(s[cut]) {\n", "\tfor cut > 0 && false && !utf8.RuneStart(s[cut]) {\n", 1)' \
+  ./internal/agent 'TestInterference_TheWorstClashIsNamedWhateverTheBudget'
+
+drill "the budget keeps no room for the header's count" internal/agent/interference.go \
+  's = s.replace("problemBytes(out) - len(coverage(len(groups), count)) -", "problemBytes(out) -", 1)' \
+  ./internal/agent 'TestInterference_ARepairSummaryNeverPassesItsBudget'
+
+drill "the budget keeps no room for the last line" internal/agent/interference.go \
+  's = s.replace("\t\tlen(\"- \\n\") - len(tail(len(groups), count))\n", "\t\t0\n", 1)' \
+  ./internal/agent 'TestInterference_ARepairSummaryNeverPassesItsBudget'
+
+drill "a direct key rounds its translation like its rotation" internal/domain/cad/sidecar.py \
+  's = s.replace("round(t[0], 6), q[3]", "round(t[0], 9), q[3]", 1)' \
+  ./internal/domain/cad 'TestKernel_APairKeyWithoutLocationsIsTheKeyBuild123dGave'
+
+drill "the rotation memo is keyed by one placement's rotation" internal/domain/cad/sidecar.py \
+  's = s.replace("memo.get((ri, rj))", "memo.get((ri, ri))", 1); s = s.replace("memo[(ri, rj)] = m", "memo[(ri, ri)] = m", 1)' \
+  ./internal/domain/cad 'TestKernel_APairKeyWithoutLocationsIsTheKeyBuild123dGave'
+
+drill "a rotation is told apart by its first row alone" internal/domain/cad/sidecar.py \
+  's = s.replace("_PACK_ROTATION(e[0], e[1], e[2], e[4], e[5], e[6], e[8], e[9], e[10])", "_PACK_ROTATION(e[0], e[1], e[2], e[0], e[1], e[2], e[0], e[1], e[2])", 1)' \
+  ./internal/domain/cad 'TestKernel_APairKeyWithoutLocationsIsTheKeyBuild123dGave'
+
+# ‼️ No drill for the memo's same-datum guard (memoizable = ... not (ri == rj and
+# li.IsEqual(lj))). One was written and STAYED GREEN on 2026-09-15: two solids at one
+# datum cancel to the exact identity, a product of two datums with that rotation is
+# the identity off by ~1e-16 on the diagonal, and both round to the same pose. The raw
+# rotation only reaches the key through containment, at exactly its boundary, which
+# no fixture's tolerance-padded bounds can be put on. The guard is kept so the key
+# stays build123d's to the bit there; nothing here shows it is needed.
+
+drill "a placement's inverse is cached under the other solid" internal/domain/cad/sidecar.py \
+  's = s.replace("            inv_j = inverses[j] = lj.Inverted()\n", "            inv_j = inverses[i] = lj.Inverted()\n", 1)' \
+  ./internal/domain/cad 'TestKernel_APairKeyWithoutLocationsIsTheKeyBuild123dGave'
+
+drill "a direct key forgets what the other frame carries" internal/domain/cad/sidecar.py \
+  's = s.replace("        carried_f = _carried_fast(pose_f, inside_j) if inside_j else []\n", "        carried_f = []\n", 1)' \
+  ./internal/domain/cad 'TestKernel_APairKeyWithoutLocationsIsTheKeyBuild123dGave'
+
+drill "a direct key is taken in the frame that marks fewer" internal/domain/cad/sidecar.py \
+  's = s.replace("            return forward if marked_f > marked_b else backward\n", "            return forward if marked_f < marked_b else backward\n", 1)' \
+  ./internal/domain/cad 'TestKernel_APairKeyWithoutLocationsIsTheKeyBuild123dGave'
+
+drill "direct containment takes a box's whole length for its reach" internal/domain/cad/sidecar.py \
+  's = s.replace("            reach += abs(v) * (hi[c] - lo[c]) / 2\n", "            reach += abs(v) * (hi[c] - lo[c])\n", 1)' \
+  ./internal/domain/cad 'TestKernel_APairKeyWithoutLocationsIsTheKeyBuild123dGave'
+
+drill "a pair inside only the other frame is keyed as unmarked" internal/domain/cad/sidecar.py \
+  's = s.replace("        if not inside_i and not inside_j:\n", "        if not inside_i:\n", 1)' \
+  ./internal/domain/cad 'TestKernel_APairKeyWithoutLocationsIsTheKeyBuild123dGave'
+
+drill "a moved box forgets its far corner" internal/domain/cad/sidecar.py \
+  's = s.replace("ax1 + by1 + cz0 + d, ax1 + by1 + cz1 + d)", "ax1 + by1 + cz0 + d, ax1 + by1 + cz0 + d)", 1)' \
+  ./internal/domain/cad 'TestKernel_APairKeyWithoutLocationsIsTheKeyBuild123dGave'
+
+drill "the check keys a pair through build123d again" internal/domain/cad/sidecar.py \
+  's = s.replace("    if not _PAIR_KEY_DIRECT:\n        return lambda i, j:", "    if True:\n        return lambda i, j:", 1)' \
+  ./internal/domain/cad 'TestKernel_KeyingMorePairsBuildsNoMoreLocations'
+
 if [ "$MODE" = "list" ]; then
   exit 0
 fi

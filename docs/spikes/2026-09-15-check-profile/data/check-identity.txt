@@ -1,0 +1,3 @@
+bays=9: _interferences before (sha1 25c3c4a) and after (sha1 14a49b1), as JSON: 1685751 and 1685751 bytes, byte-identical=True
+bays=30: _interferences before (sha1 25c3c4a) and after (sha1 14a49b1), as JSON: 1685752 and 1685752 bytes, byte-identical=True
+bays=100: _interferences before (sha1 25c3c4a) and after (sha1 14a49b1), as JSON: 1685755 and 1685755 bytes, byte-identical=True
