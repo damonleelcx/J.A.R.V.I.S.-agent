@@ -270,7 +270,9 @@ func TestLiveCarCeiling(t *testing.T) {
 	// one. A measurement that throws away its subject can only be repeated, not
 	// examined.
 	if raw, mErr := json.MarshalIndent(doc, "", "  "); mErr == nil {
-		path := filepath.Join(t.TempDir(), "car.json")
+		// ‼️ Not t.TempDir(): Go removes it when the test ends, and the 2026-09-15 run
+		// lost its car to exactly that. The system temp directory keeps it.
+		path := filepath.Join(os.TempDir(), fmt.Sprintf("forge-car-%s.json", time.Now().Format("20060102-150405")))
 		if os.WriteFile(path, raw, 0o600) == nil {
 			t.Logf("CAR-DOCUMENT saved=%s bytes=%d", path, len(raw))
 		}
