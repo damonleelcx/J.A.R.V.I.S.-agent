@@ -3037,8 +3037,36 @@
     return (this.approximations || []).slice();
   };
 
+  /* Every part's kernel surface in assembly coordinates, from a mesh reply.
+   *
+   * Since Phase 4, stage K4 the reply sends each distinct shape's triangles ONCE
+   * ("definitions") and each placed copy as the 4×4 column-major matrix that
+   * places them ("instances"); only a part a feature changed arrives placed, in
+   * "parts". The renderer draws placed parts, so this moves each copy into place —
+   * exactly as cad.Build.WorldMeshes does in Go, which
+   * TestRendererExpandsMeshInstancesLikeTheBuild holds it to. Instanced drawing,
+   * which would not need this, is stage W1. */
+  function expandMeshInstances(reply) {
+    var out = (reply && reply.parts ? reply.parts : []).slice();
+    var defs = (reply && reply.definitions) || [];
+    ((reply && reply.instances) || []).forEach(function (inst) {
+      var d = defs[inst.definition];
+      if (!d) return;
+      var m = inst.matrix, src = d.vertices, v = new Array(src.length);
+      for (var i = 0; i + 2 < src.length; i += 3) {
+        var x = src[i], y = src[i + 1], z = src[i + 2];
+        v[i] = m[0] * x + m[4] * y + m[8] * z + m[12];
+        v[i + 1] = m[1] * x + m[5] * y + m[9] * z + m[13];
+        v[i + 2] = m[2] * x + m[6] * y + m[10] * z + m[14];
+      }
+      out.push({ id: inst.id, label: inst.label, vertices: v, triangles: d.triangles });
+    });
+    return out;
+  }
+
   global.Forge3D = {
     supportedShapes: SUPPORTED,
+    expandMeshInstances: expandMeshInstances,
     /* A cylinder's length, reading "depth" when "height" is absent.
      *
      * Exported so the Parts panel reads it the same way the stage draws it and

@@ -590,10 +590,44 @@ def _tessellate_once(solids, deflection):
     return meshes, total
 
 
-def _tessellate(solids, ids, names, request):
+# # Once per definition (Phase 4, stage K4)
+#
+# A thousand copies of one bolt were tessellated a thousand times and sent as a
+# thousand identical triangle lists, each already moved to its place. A copy is
+# the shape K1 built once, placed; so the shape is tessellated once, in its own
+# frame, and each copy is sent as the matrix that places it. The triangle budget
+# counts a definition's triangles once, which is what they cost to draw.
+#
+# A solid a feature changed is not a copy of anything any more, and keeps the
+# mesh it always had: its own, in assembly coordinates, under "mesh".
+#
+# _MESH_PER_DEFINITION turns this off. It exists so the per-solid tessellation it
+# replaced stays available as the reference an instanced mesh must reproduce
+# (testdata/mesh_per_definition.py); nothing in production turns it off.
+_MESH_PER_DEFINITION = True
+
+
+def _column_major(location):
+    """A placement as the 4x4 matrix WebGL reads: columns first, translation last."""
+    t = location.wrapped.Transformation()
+    return [t.Value(1, 1), t.Value(2, 1), t.Value(3, 1), 0.0,
+            t.Value(1, 2), t.Value(2, 2), t.Value(3, 2), 0.0,
+            t.Value(1, 3), t.Value(2, 3), t.Value(3, 3), 0.0,
+            t.Value(1, 4), t.Value(2, 4), t.Value(3, 4), 1.0]
+
+
+def _tessellate(solids, ids, names, request, placed=None):
+    """The surface of every kept solid.
+
+    placed holds, for each solid, (shape key, location, the unplaced shape) when
+    it is an untouched copy of a shape built once, or None when a feature changed
+    it. Copies share one tessellation of their shape; the rest are meshed as placed.
+    """
     # A deflection in millimetres, from the model's own size rather than a
     # constant: 0.1 mm is invisible on a bracket and catastrophic on a car body,
-    # and the same number cannot serve both.
+    # and the same number cannot serve both. The ASSEMBLY's size, for copies too:
+    # a bolt tessellated to its own size would come out finer than the body it
+    # sits in.
     # One pass, never Compound(children=...): see the note on the assembly in _build.
     box = Compound(list(solids)).bounding_box()
     span = max(float(box.max.X - box.min.X),
@@ -601,13 +635,27 @@ def _tessellate(solids, ids, names, request):
                float(box.max.Z - box.min.Z), 1.0)
     deflection = float(request.get("deflection") or (span / 2000.0))
 
+    index, shapes, instances, own = {}, [], [], []
+    for i, solid in enumerate(solids):
+        p = placed[i] if (_MESH_PER_DEFINITION and placed) else None
+        if p is None:
+            own.append(i)
+            continue
+        key, location, shape = p
+        if key not in index:
+            index[key] = len(shapes)
+            shapes.append(shape)
+        instances.append((i, index[key], location))
+
     simplified = False
     for _ in range(_MESH_TRIES):
         try:
-            meshes, total = _tessellate_once(solids, deflection)
+            definitions, shared = _tessellate_once(shapes, deflection)
+            meshes, separate = _tessellate_once([solids[i] for i in own], deflection)
         except Exception as exc:
             reason = str(exc).strip() or type(exc).__name__
             return {"mesh_error": "the solid could not be tessellated: %s" % reason}
+        total = shared + separate
         if total <= _MESH_BUDGET:
             break
         # Over budget. Coarsened rather than truncated: half a model is a lie
@@ -618,13 +666,19 @@ def _tessellate(solids, ids, names, request):
         return {"mesh_error": "this assembly could not be tessellated within %d triangles"
                              % _MESH_BUDGET}
 
-    for mesh, part_id, name in zip(meshes, ids, names):
-        mesh["id"] = part_id
-        mesh["label"] = name
-    return {"mesh": meshes,
-            "mesh_triangles": total,
-            "mesh_deflection": deflection,
-            "mesh_simplified": simplified}
+    for mesh, i in zip(meshes, own):
+        mesh["id"] = ids[i]
+        mesh["label"] = names[i]
+    out = {"mesh": meshes,
+           "mesh_triangles": total,
+           "mesh_deflection": deflection,
+           "mesh_simplified": simplified}
+    if instances:
+        out["mesh_definitions"] = definitions
+        out["mesh_instances"] = [{"id": ids[i], "label": names[i], "definition": d,
+                                  "matrix": _column_major(location)}
+                                 for i, d, location in instances]
+    return out
 
 
 # --- interference ----------------------------------------------------------
@@ -927,6 +981,9 @@ def _build(request):
     phases = {}
     mark = time.perf_counter()
     built, names, ids, skipped = [], [], [], []
+    # For each built solid, the key of the shape it is a copy of and where it was
+    # placed, so a mesh can be tessellated once per shape (Phase 4, stage K4).
+    keys, locations = [], []
     # shape key -> (the built, mirrored shape, or None; why it could not be built)
     built_once = {}
     # Counted where _shape is CALLED, not read back as len(built_once): the cache's
@@ -941,9 +998,12 @@ def _build(request):
             if shape is None:
                 skipped.append("%s: %s" % (s.get("label") or s.get("id"), reason))
                 continue
-            built.append(_placement(s) * shape)
+            location = _placement(s)
+            built.append(location * shape)
             names.append(s.get("label") or s.get("id"))
             ids.append(s.get("id"))
+            keys.append(key)
+            locations.append(location)
             continue
         shape_builds += 1
         try:
@@ -979,9 +1039,12 @@ def _build(request):
             # Phase 1, stage D1c of docs/plan-2026-09-13-millions-of-parts.md.
             shape = shape.mirror(Plane.YZ)
         built_once[key] = (shape, None)
-        built.append(_placement(s) * shape)
+        location = _placement(s)
+        built.append(location * shape)
         names.append(s.get("label") or s.get("id"))
         ids.append(s.get("id"))
+        keys.append(key)
+        locations.append(location)
 
     if not built:
         return {"ok": False, "error": "no part could be built", "skipped": skipped}
@@ -993,7 +1056,12 @@ def _build(request):
     # it does not also appear as a solid of its own, or the hole would be filled
     # by the thing that made it.
     shapes = dict(zip(ids, built))
-    consumed, failed = set(), []
+    placed = dict(zip(ids, zip(keys, locations)))
+    # Every part an operation was applied TO, whether or not it succeeded. Such a
+    # solid is no longer a copy of its shape, so its mesh is its own. Marked on the
+    # attempt, not the success: a failure part-way through cannot then leave a
+    # changed solid drawn as the shape it started from.
+    consumed, failed, touched = set(), [], set()
     for op in request.get("operations") or []:
         missing = [n for n in [op["of"]] + list(op.get("with") or []) if n not in shapes]
         if missing:
@@ -1003,6 +1071,7 @@ def _build(request):
             failed.append("%s: %s could not be built, so this was not applied"
                           % (op["id"], ", ".join(missing)))
             continue
+        touched.add(op["of"])
         try:
             _apply(op, shapes)
         except Exception as exc:
@@ -1011,7 +1080,7 @@ def _build(request):
             continue
         consumed.update(op.get("with") or [])
 
-    kept, kept_names, kept_ids = [], [], []
+    kept, kept_names, kept_ids, kept_placed = [], [], [], []
     for part_id, name in zip(ids, names):
         if part_id in consumed:
             continue
@@ -1021,6 +1090,11 @@ def _build(request):
         # to the part the viewport lists. Without it a mesh is one anonymous
         # blob and selecting "Cabin" in the Parts panel can highlight nothing.
         kept_ids.append(part_id)
+        if part_id in touched:
+            kept_placed.append(None)
+        else:
+            key, location = placed[part_id]
+            kept_placed.append((key, location, built_once[key][0]))
     if not kept:
         return {"ok": False, "error": "every part was consumed as a tool, leaving nothing to export",
                 "skipped": skipped, "features_failed": failed}
@@ -1069,7 +1143,7 @@ def _build(request):
 
     fmt = request.get("format")
     if fmt == "mesh":
-        out.update(_tessellate(built, ids, names, request))
+        out.update(_tessellate(built, ids, names, request, kept_placed))
         mark = _lap(phases, "mesh", mark)
     if fmt == "step":
         # The writer writes a file; its stream form is not used here.
