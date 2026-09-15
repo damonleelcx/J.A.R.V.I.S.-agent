@@ -79,35 +79,121 @@ func (c *Conversation) repairIfPartsOverlap(ctx context.Context, reply *Reply, s
 	}
 
 	// ‼️ What the model is ASKED is bounded; what the repair is JUDGED by is not.
-	// problems stays every buried clash the kernel listed, so "fewer buried after"
-	// counts the same things it always did. Only the prompt is summarized
-	// (repairAsks; repair bound and check profile).
+	// Only the prompt is summarized (repairAsks; repair bound and check profile). The
+	// repair is judged by every buried clash the kernel FOUND, which past the list's
+	// bound is its count, not the list (repairVerdict).
+	refused := ""
 	if fixed := c.repairGeometry(ctx, reply.Prototype, repairAsks(reply.Prototype, found, sheet.Found)); fixed != nil {
 		// Re-built, not re-read: the question "is it still inside" can only be
 		// answered by the kernel, and a repair that claimed success against the
 		// OLD numbers would be a check that cannot fail. Same reason look.go
 		// re-renders after a repair it accepts.
 		after := c.render(ctx, fixed)
-		if after.FromKernel &&
-			len(fixed.Faults()) <= len(reply.Prototype.Faults()) &&
-			len(geometry.InterferenceProblems(after.Interferences)) < len(problems) {
+		keep, why := repairVerdict(*sheet, after, len(fixed.Faults()) <= len(reply.Prototype.Faults()))
+		if !keep {
+			refused = why
+		} else {
 			reply.Prototype = fixed
 			*sheet = after
-			remaining := geometry.InterferenceProblems(after.Interferences)
-			if len(remaining) == 0 {
+			switch {
+			case tallyOf(after).buried > 0:
+				reply.noteRepair("FORGE kept a repair and re-checked it with the kernel: " + why + ".")
+				found = after.Interferences
+			case after.Truncated:
+				// ‼️ Never "moved them apart" from a check that stopped part-way: none
+				// buried is true only of the pairs it checked (Phase 5, V2), and the
+				// deferred coverage note says how many those were.
+				reply.noteRepair("FORGE moved parts that were inside each other and re-checked with the kernel, " +
+					"which found none buried in the pairs it checked: " + why + ".")
+				return
+			default:
 				reply.noteRepair("Parts were sitting inside each other. FORGE moved them apart " +
-					"and re-checked with the kernel.")
+					"and re-checked with the kernel: " + why + ".")
 				return
 			}
-			problems = remaining
-			found = after.Interferences
 		}
 	}
 
 	// Still wrong: say it, with the parts named. A reader looking at a model that
 	// builds, reports no faults and passes the visual check has no other way to
 	// learn that two of its parts are in the same place.
-	reply.noteRepair("Parts are inside each other and FORGE could not correct it: " + list(found, sheet.Found))
+	note := "Parts are inside each other and FORGE could not correct it: " + list(found, sheet.Found)
+	if refused != "" {
+		note = strings.TrimRight(note, ".") + ". A repair was tried and not kept: " + refused + "."
+	}
+	reply.noteRepair(note)
+}
+
+// # How a repair is judged (repair judged by the kernel total)
+//
+// A repair is kept when the kernel re-builds it, it adds no document faults, and the
+// kernel finds FEWER buried clashes than before. Until 2026-09-15 "finds" was
+// counted from the list. The kernel lists at most the worst 10,000 clashes (#113), so a
+// model with more buried clashes than that listed 10,000 before a repair and 10,000
+// after it: on the 1M barrel's 768,000 buried rivets no repair could ever be kept, and
+// a repair that buried more read exactly like one that changed nothing.
+// docs/bugfix/2026-09-15-an-overlap-repair-was-judged-by-a-list-that-could-not-shrink.md
+//
+// So the count is the kernel's own (Built.Buried). A builder that does not count
+// leaves the list, which is the whole count only when the list is the whole list —
+// how coverageNote tells a cut list from a whole one, by Found against its length.
+//
+// ‼️ The count AFTER must be a total. The count before may be a floor: fewer than a
+// floor is fewer than what it floors. The other way round, 10,000 listed after a
+// repair is what 768,000 and 10,000 buried both list, and a repair would be kept on
+// nothing.
+//
+// A check the pair budget stopped (V2) is judged as it always was, by what it
+// checked; that it stopped is said by coverageNote, and never read as clean.
+
+// buriedTally is what one kernel check says about buried clashes.
+type buriedTally struct {
+	buried, listed, found int
+	// counted says buried is every buried clash found, not a floor from a cut list.
+	counted bool
+}
+
+func tallyOf(s builtSheet) buriedTally {
+	t := buriedTally{listed: len(s.Interferences), found: max(s.Found, len(s.Interferences))}
+	t.buried = len(geometry.InterferenceProblems(s.Interferences))
+	t.counted = t.found <= t.listed
+	if s.BuriedCounted {
+		t.buried, t.counted = max(s.Buried, t.buried), true
+	}
+	return t
+}
+
+func (t buriedTally) String() string {
+	if t.counted {
+		return fmt.Sprintf("%d buried clash(es) among %d pair(s) sharing material", t.buried, t.found)
+	}
+	return fmt.Sprintf("%d buried clash(es) in the %d it listed of %d pair(s) sharing material, "+
+		"and it did not count how many of the rest are buried", t.buried, t.listed, t.found)
+}
+
+// repairVerdict says whether a repair re-built as after is kept over before, and why,
+// with the kernel's totals.
+func repairVerdict(before, after builtSheet, noNewFaults bool) (keep bool, why string) {
+	switch {
+	case !after.FromKernel:
+		return false, "the kernel could not re-check it"
+	case !noNewFaults:
+		return false, "it added faults to the document"
+	}
+	b, a := tallyOf(before), tallyOf(after)
+	// Each half says what it counted, so the sentence reads as two answers and not as
+	// one number that changed: an uncounted half is a clause of its own.
+	totals := fmt.Sprintf("before the repair the kernel found %s; after it, %s", b, a)
+	switch {
+	case !a.counted:
+		return false, totals + ", so fewer could not be shown"
+	case a.buried < b.buried:
+		return true, totals
+	case a.buried == b.buried:
+		return false, totals + ": no fewer"
+	default:
+		return false, totals + ": more, not fewer"
+	}
 }
 
 // coverageNote says how much of the model the kernel's interference check looked

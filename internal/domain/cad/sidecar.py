@@ -819,6 +819,22 @@ _INTERFERENCE_MIN_FRACTION = 0.001
 # 10,000 is a chosen count, not a measured optimum: above every fence's clash count
 # (2,400 at most), and about 1.8 MB of reply at the barrel's 177 bytes a clash.
 _INTERFERENCE_LIST_LIMIT = 10000
+# The share of the smaller solid inside the other at which a clash is BURIED, and
+# drives a repair. geometry.BuriedFraction, the same number and the same comparison
+# (>=), counted here because only here are all the clashes still held.
+#
+# # Why the kernel counts them (repair judged by the kernel total)
+#
+# A repair is kept only when the kernel finds fewer buried clashes after it than
+# before. Past _INTERFERENCE_LIST_LIMIT the list is the worst 10,000, so on the 1M
+# barrel's 768,000 buried rivets it holds 10,000 buried clashes whatever a repair
+# does: counted from the list, a repair could never be kept and a worse one never
+# seen (docs/bugfix/2026-09-15-an-overlap-repair-was-judged-by-a-list-that-could-not-shrink.md).
+#
+# ‼️ Change it only together with geometry.BuriedFraction. A count taken at a
+# different line than the list is read at would judge a repair by clashes the turn
+# does not call buried.
+_BURIED_FRACTION = 0.5
 
 
 def _box_of(solid):
@@ -1611,8 +1627,11 @@ def _interferences(solids, ids, labels, placed=None):
     listed = [{"a": ids[lo], "b": ids[hi], "a_label": labels[lo], "b_label": labels[hi],
                "volume": shared, "fraction": fraction}
               for fraction, _, lo, hi, shared in worst]
+    # Every buried clash found, not the listed ones: see _BURIED_FRACTION.
+    buried = sum(1 for f in found if f[0] >= _BURIED_FRACTION)
     return listed, truncated, box_tests, {"pairs": len(pairs), "booleans": booleans, "reused": reused,
-                                          "found": len(found), "summarized": len(found) > len(listed)}
+                                          "found": len(found), "summarized": len(found) > len(listed),
+                                          "buried": buried}
 
 
 # The fields that decide what a solid IS, before it is placed. Everything else a
@@ -1953,6 +1972,10 @@ def _build(request):
         # count them lists every one it has.
         "interferences_found": clash_pairs.get("found", len(clashes)),
         "interferences_summarized": clash_pairs.get("summarized", False),
+        # How many of the clashes found are buried, the number a repair is judged by.
+        # A replaced check that does not count them counts the ones it lists.
+        "interferences_buried": clash_pairs.get(
+            "buried", sum(1 for c in clashes if c["fraction"] >= _BURIED_FRACTION)),
         "interference_box_tests": box_tests,
         "interference_pairs": clash_pairs["pairs"],
         "interference_booleans": clash_pairs["booleans"],

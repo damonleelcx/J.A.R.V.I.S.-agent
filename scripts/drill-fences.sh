@@ -2084,6 +2084,64 @@ drill "the check keys a pair through build123d again" internal/domain/cad/sideca
   's = s.replace("    if not _PAIR_KEY_DIRECT:\n        return lambda i, j:", "    if True:\n        return lambda i, j:", 1)' \
   ./internal/domain/cad 'TestKernel_KeyingMorePairsBuildsNoMoreLocations'
 
+echo "An overlap repair judged by the kernel's total, not by the list it cut"
+# Added 2026-09-15 (repair judged by the kernel total). #113 cut the kernel's clash
+# list to the worst 10,000 and counted all of them; the repair went on comparing the
+# LISTED buried count before and after, which past 10,000 is pinned whatever a repair
+# does. The kernel now counts the buried clashes too, and a repair is kept only when
+# that count falls — never on a count the kernel did not take.
+drill "a repair is judged by the buried clashes listed, not the ones found" internal/agent/interference.go \
+  's = s.replace("\tt.counted = t.found <= t.listed\n\tif s.BuriedCounted {\n", "\tt.counted = true\n\tif false && s.BuriedCounted {\n", 1)' \
+  ./internal/agent 'TestInterference_ARepairPastTheListBoundIsJudgedByTheKernelsTotal'
+
+drill "a cut list with no count is read as the whole count" internal/agent/interference.go \
+  's = s.replace("\tt.counted = t.found <= t.listed\n", "\tt.counted = true\n", 1)' \
+  ./internal/agent 'TestInterference_ARepairIsNotKeptOnACountTheKernelDidNotTake'
+
+drill "a re-check that counted nothing is taken on trust" internal/agent/interference.go \
+  's = s.replace("\tcase !a.counted:\n", "\tcase false && !a.counted:\n", 1)' \
+  ./internal/agent 'TestInterference_ARepairIsNotKeptOnACountTheKernelDidNotTake'
+
+drill "a repair that leaves as many buried is kept" internal/agent/interference.go \
+  's = s.replace("\tcase a.buried < b.buried:\n", "\tcase a.buried <= b.buried:\n", 1)' \
+  ./internal/agent 'TestInterference_ARepairPastTheListBoundIsJudgedByTheKernelsTotal'
+
+drill "a kept repair's note does not say the totals" internal/agent/interference.go \
+  's = s.replace("reply.noteRepair(\"FORGE kept a repair and re-checked it with the kernel: \" + why + \".\")", "reply.noteRepair(\"FORGE kept a repair and re-checked it with the kernel.\")", 1)' \
+  ./internal/agent 'TestInterference_ARepairPastTheListBoundIsJudgedByTheKernelsTotal'
+
+drill "a refused repair does not say why it was refused" internal/agent/interference.go \
+  's = s.replace("\tif refused != \"\" {\n", "\tif false && refused != \"\" {\n", 1)' \
+  ./internal/agent 'TestInterference_(ARepairPastTheListBoundIsJudgedByTheKernelsTotal|ARepairIsNotKeptOnACountTheKernelDidNotTake)'
+
+drill "a re-check stopped part-way says the parts were moved apart" internal/agent/interference.go \
+  's = s.replace("\t\t\tcase after.Truncated:\n", "\t\t\tcase false && after.Truncated:\n", 1)' \
+  ./internal/agent 'TestInterference_ARepairReCheckedOnlyInPartNeverReadsAsClean'
+
+drill "the render drops the kernel's buried count" internal/agent/render.go \
+  's = s.replace("\t\t\t\t\tBuried: built.Buried, BuriedCounted: built.BuriedCounted, Skipped: built.Skipped,\n", "\t\t\t\t\tSkipped: built.Skipped,\n", 1)' \
+  ./internal/agent 'TestRender_CarriesHowMuchTheCheckCovered'
+
+drill "buildOf ignores the buried count the kernel sent" internal/domain/cad/cad.go \
+  's = s.replace("\tif res.InterferencesBuried != nil {\n", "\tif false && res.InterferencesBuried != nil {\n", 1)' \
+  ./internal/domain/cad 'TestBuildOf_ABuriedCountIsNeverBelowTheListAndSaysWhetherItIsAll|TestKernel_AReplyWithMoreClashesThanItListsCountsThemAll'
+
+drill "a buried count below the list is believed" internal/domain/cad/cad.go \
+  's = s.replace("out.InterferencesBuried = max(out.InterferencesBuried, *res.InterferencesBuried)", "out.InterferencesBuried = *res.InterferencesBuried", 1)' \
+  ./internal/domain/cad 'TestBuildOf_ABuriedCountIsNeverBelowTheListAndSaysWhetherItIsAll'
+
+drill "a cut list with no buried count is called counted" internal/domain/cad/cad.go \
+  's = s.replace("out.InterferencesBuriedCounted = !out.InterferencesSummarized", "out.InterferencesBuriedCounted = true", 1)' \
+  ./internal/domain/cad 'TestBuildOf_ABuriedCountIsNeverBelowTheListAndSaysWhetherItIsAll'
+
+drill "the kernel counts the buried clashes it listed" internal/domain/cad/sidecar.py \
+  's = s.replace("buried = sum(1 for f in found if f[0] >= _BURIED_FRACTION)", "buried = sum(1 for f in worst if f[0] >= _BURIED_FRACTION)", 1)' \
+  ./internal/domain/cad 'TestKernel_AReplyWithMoreClashesThanItListsCountsThemAll'
+
+drill "the kernel counts buried at a different line than the turn" internal/domain/cad/sidecar.py \
+  's = s.replace("_BURIED_FRACTION = 0.5", "_BURIED_FRACTION = 0.4", 1)' \
+  ./internal/domain/cad 'TestKernel_TheBuriedCountIsTheClashesTheTurnCallsBuried'
+
 if [ "$MODE" = "list" ]; then
   exit 0
 fi
