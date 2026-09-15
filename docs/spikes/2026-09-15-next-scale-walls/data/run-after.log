@@ -1,0 +1,20 @@
+25c3c4a4e2cb31a4b82e7c3df91facef993d8f36 *after/sidecar.py
+25c3c4a4e2cb31a4b82e7c3df91facef993d8f36 *C:/Users/damon/Downloads/agents/jarvis-walls/internal/domain/cad/sidecar.py
+Tue Sep 15 16:59:17 EDT 2026
+split after 90k done
+Tue Sep 15 16:59:29 EDT 2026
+split after 300k done
+Tue Sep 15 16:59:56 EDT 2026
+split after 1M done
+Tue Sep 15 17:01:04 EDT 2026
+bays=9 full run 1: ok=True build 16.7s [shapes 3.8 assembly 0.6 interf 11.9 props 0.0 mesh 0.0 export 0.0] peak 0.8 GB cpu 34% 
+bays=30 full run 1: ok=True build 59.7s [shapes 13.7 assembly 2.2 interf 42.6 props 0.0 mesh 0.0 export 0.0] peak 1.9 GB cpu 38% 
+bays=100 full run 1: ok=True build 173.9s [shapes 41.9 assembly 7.1 interf 120.6 props 0.0 mesh 0.0 export 0.0] peak 5.3 GB cpu 20% 
+Tue Sep 15 17:05:35 EDT 2026
+bays=9 mesh run 1: ok=True build 9.7s [shapes 3.3 assembly 0.6 interf 1.5 props 2.6 mesh 1.3 export 0.0] peak 0.9 GB cpu 16% 
+bays=30 mesh run 1: ok=True build 33.0s [shapes 11.6 assembly 1.9 interf 5.3 props 9.2 mesh 3.8 export 0.0] peak 2.0 GB cpu 19% 
+bays=100 mesh run 1: ok=True build 110.8s [shapes 38.7 assembly 6.3 interf 18.4 props 28.9 mesh 14.6 export 0.0] peak 5.7 GB cpu 18% 
+Tue Sep 15 17:08:41 EDT 2026
+CHAIN DONE
+
+[exited with code 0]
