@@ -132,6 +132,10 @@ FILES=(
   internal/platform/config/config.go
   internal/agent/car_tree_measure_test.go
   internal/agent/repetition.go
+  internal/agent/stepgates.go
+  internal/agent/vanished.go
+  internal/domain/geometry/placedby.go
+  internal/agent/car_ceiling_live_test.go
 )
 
 BACKUP=""
@@ -1923,6 +1927,75 @@ drill "the contract states a ceiling the validator does not enforce" internal/ag
 drill "the validator enforces a ceiling the contract does not state" internal/domain/geometry/assembly.go \
   's = s.replace("const maxDensity = MaxDensity", "const maxDensity = 50000", 1)' \
   ./internal/agent 'TestTheContractTeachesDensityAsTheValidatorReadsIt'
+
+echo
+echo "Live car findings: a build step names its gate, keeps its placements, and is told how to attach"
+# Added 2026-09-15 (live car findings). docs/spikes/2026-09-15-car-quality/README.md,
+# docs/bugfix/2026-09-15-a-failed-build-step-said-no-geometry-whatever-refused-it.md
+drill "an unparseable reply reads as no geometry again" internal/agent/assemble.go \
+  's = s.replace("if why := unreadableDetail(resp); why != \"\" {", "if why := \"\"; why != \"\" {", 1)' \
+  ./internal/agent 'TestAssemble_AFailedStepSaysWhichGateRefusedIt'
+
+drill "a refused step no longer names the faults it added" internal/agent/stepgates.go \
+  's = s.replace("out := head + \", and these are new: \" + strings.Join(named, \"; \")", "out := head", 1)' \
+  ./internal/agent 'TestAssemble_AFailedStepSaysWhichGateRefusedIt'
+
+drill "a refused step names every added fault, however many" internal/agent/stepgates.go \
+  's = s.replace("if i == maxAddedFaultsNamed {", "if false {", 1)' \
+  ./internal/agent 'TestAssemble_ARefusedStepsNoteIsBounded'
+
+drill "a note no longer says which gate it came from" internal/agent/stepgates.go \
+  's = s.replace("if strings.Contains(note, \") \"+g.phrase) {", "if strings.Contains(note, \")  \"+g.phrase) {", 1)' \
+  ./internal/agent 'TestCarMeasure_ARefusedStepIsNamedByItsGate'
+
+drill "a tree step that drops a placement says nothing" internal/agent/vanished.go \
+  's = s.replace("\tif before.Root != \"\" {", "\tif false {", 1)' \
+  ./internal/agent 'TestAssemble_AStepThatDropsAPlacementSaysSo'
+
+drill "a step creating an assembly is not shown the root's children" internal/agent/subtree.go \
+  's = s.replace("view.RootChildren = root.Children", "view.RootChildren = nil", 1)' \
+  ./internal/agent 'TestSubtreeModel_ANewAssemblyIsShownWhatTheRootAlreadyPlaces'
+
+drill "a step is not told the assembly it builds" internal/agent/assemble.go \
+  's = s.replace("This step builds the assembly %q.", "This step builds %q.", 1)' \
+  ./internal/agent 'TestAssemble_AStepIsToldTheAssemblyItBuilds'
+
+drill "the first step is not asked for a root" internal/agent/assemble.go \
+  's = s.replace("\"root\" assembly for the whole object that places it.", "root for the whole object that places it.", 1)' \
+  ./internal/agent 'TestAssemble_TheFirstStepIsAskedForATreeWithInterfaces'
+
+drill "a later step is not told to restate the root's children" internal/agent/assemble.go \
+  's = s.replace("(\"root_children\" in what you are", "(in what you are", 1)' \
+  ./internal/agent 'TestAssemble_TheFirstStepIsAskedForATreeWithInterfaces'
+
+drill "the contract no longer says a cylinder stands on its Y" internal/agent/converse.go \
+  's = s.replace("A \"cylinder\" or \"cone\" STANDS UPRIGHT", "A \"cylinder\" or \"cone\" stands", 1)' \
+  ./internal/agent 'TestTheContractSaysACylinderStandsOnItsOwnY'
+
+drill "the contract no longer says where a polar pattern turns" internal/agent/converse.go \
+  's = s.replace("about an axis THROUGH THE ORIGIN of the", "about an axis of the", 1)' \
+  ./internal/agent 'TestTheContractSaysWhereAPolarPatternTurns'
+
+drill "a buried copy's repair is not told which child places it" internal/agent/interference.go \
+  's = s.replace("problems = placedByNotes(reply.Prototype, found, problems)", "_ = placedByNotes", 1)' \
+  ./internal/agent 'TestInterference_ARepairIsToldWhichChildPlacesABuriedCopy'
+
+drill "a pattern copy is not traced to its child" internal/domain/geometry/placedby.go \
+  's = s.replace("case c.Pattern != nil && !hasMore:", "case false:", 1)' \
+  ./internal/domain/geometry 'TestPlacedBy_'
+
+drill "the measurement stops seeing sub-assembly looks" internal/agent/car_ceiling_live_test.go \
+  's = s.replace("strings.CutPrefix(r.Prompt, subAssemblyLook)", "strings.CutPrefix(r.Prompt, subAssemblyLook+\"x\")", 1)' \
+  ./internal/agent 'TestCarMeasure_LooksAreCountedPerStepAndPerSubAssembly'
+
+drill "a sub-assembly look is reworded under the measurement" internal/agent/look.go \
+  's = s.replace("\"This is one sub-assembly of the model, \"+s.path", "\"This is a sub-assembly of the model, \"+s.path", 1)' \
+  ./internal/agent 'TestLook_ASubAssemblyLookOpensTheWayTheMeasurementReadsIt'
+
+drill "the measurement stops counting children attached at an interface" internal/agent/car_ceiling_live_test.go \
+  's = s.replace("if strings.TrimSpace(c.At) != \"\" {", "if false {", 1)' \
+  ./internal/agent 'TestCarMeasure_CountsChildrenAttachedAtAnInterface'
+
 
 if [ "$MODE" = "list" ]; then
   exit 0

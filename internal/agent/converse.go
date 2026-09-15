@@ -191,6 +191,7 @@ instead of "prototype". Never both.
         "features": [ ...whole features, by id... ],
         "definitions": [ ...whole definitions, by id... ],
         "assemblies": [ ...whole assemblies, by id... ],
+        "root": "the assembly that holds everything, when this edit makes the model a tree",
         "parameters": [ ... ], "derived": [ ... ],
         "assumptions": ["what you chose for THIS change"],
         "not_verified": ["what this change does not establish"]
@@ -209,6 +210,9 @@ instead of "prototype". Never both.
   id like "axle/left-wheel/hub" says where a part IS; to change it, edit the
   definition "hub" or the assembly "wheel" it comes from. "children" removes
   one child from one assembly, written "assembly-id/child-id".
+- A patched ASSEMBLY is replaced whole, children and all. To add a child to one,
+  send it with every child it already has and the new one after them; an
+  assembly sent with only the new child loses the others.
 - "assumptions" and "not_verified" in a patch are ADDED to what is already there.
   The earlier ones still hold; do not restate them.
 - Send a whole "prototype" instead when there is nothing on screen yet, or when
@@ -218,6 +222,11 @@ About "prototype":
 
 - Positions are in the stated units, Y is up, and the origin is the assembly's
   centre. Parts are centred on their own position.
+- A "cylinder" or "cone" STANDS UPRIGHT: its "height" runs along the part's own
+  Y, with its round faces at the top and bottom. So a wheel, a brake disc or a
+  pulley on an axle that runs across the model, along X, is turned
+  "rotation": [0, 0, 90]. Left unturned it lies flat like a plate, and turned
+  [90, 0, 0] it faces forward and would roll sideways.
 - Part ids are STABLE ACROSS TURNS. When you revise an assembly, the part that
   was "base-plate" stays "base-plate" — that is what lets somebody put the two
   versions side by side and see what changed rather than two unrelated designs.
@@ -271,6 +280,15 @@ About "prototype":
   "align": true}, along straight segments only. The copies are named "child-1",
   "child-2" and so on. "pattern" repeats a placed child, a whole sub-assembly
   included; "repeat" is still how one part appears many times.
+  A "polar" pattern turns its copies about an axis THROUGH THE ORIGIN of the
+  frame the child is measured in: its assembly's, or its interface's when it has
+  "at". So the child's "position" is where the FIRST copy sits on the circle, off
+  that axis: [57, 0, 0] with "about": "y" is a ring of radius 57 round Y, and a
+  child ON the axis puts every copy in the same place. "about" must be the axis
+  of the thing the copies go round. Draw a wheel upright in its own assembly, its
+  axis Y and its lug nuts a ring "about": "y" at its outer face, and turn the
+  whole wheel where it is placed; a rim turned inside the wheel leaves its nuts
+  circling an axis the rim no longer has, straight through the rim and the tyre.
   "interfaces" on an assembly are named mounting frames, each an "id", a
   "position" and a "rotation". A child with "at" is measured in that frame
   instead of its assembly's: "at": "mount" names an interface of its own
