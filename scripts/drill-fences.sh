@@ -106,6 +106,7 @@ FILES=(
   internal/llm/illustrate.go
   internal/agent/render.go
   internal/domain/geometry/mesh.go
+  internal/httpapi/goals_start.go
 )
 
 BACKUP=""
@@ -958,6 +959,23 @@ drill "a scripted part is unreachable in the shape dispatch" internal/domain/cad
 drill "a refused assembly hides which part it refused" internal/domain/cad/cad.go \
   's = s.replace("\t\tif len(res.Skipped) > 0 {\n\t\t\tdetail +=", "\t\tif false {\n\t\t\tdetail +=", 1)' \
   ./internal/domain/cad 'TestKernel_ARefusedAssemblyNamesWhatItRefused'
+
+echo
+echo "Goal project permission"
+# Added 2026-09-15 (goal project permission). POST /v1/goals never checked the
+# project_id it was given: a stranger could draft a goal, and spend a planning call,
+# in someone else's project, and a viewer could plan in one it only reads. Create now
+# requires goal.create on a named project before Draft; replan already required it
+# through the goal's row, and is fenced so it stays that way. Both drills need
+# FORGE_TEST_DATABASE_URL. See
+# docs/bugfix/2026-09-15-a-goal-could-be-drafted-into-a-project-its-caller-was-not-in.md.
+drill "a goal is drafted into a project its caller is not in" internal/httpapi/goals_start.go \
+  's = s.replace("\tif req.ProjectID != \"\" {\n\t\tif err := h.deps.requirePermission(", "\tif false {\n\t\tif err := h.deps.requirePermission(", 1)' \
+  ./internal/httpapi 'TestCreateGoal_RefusesAProjectTheCallerIsNotAMemberOf|TestCreateGoal_RefusesAViewerOfTheProject'
+
+drill "a viewer replans a goal it can only read" internal/httpapi/goals_start.go \
+  's = s.replace("h.loadGoalFor(r, goalID, user.ID, access.PermGoalCreate)", "h.loadGoalFor(r, goalID, user.ID, access.PermProjectRead)", 1)' \
+  ./internal/httpapi 'TestReplan_RefusesAStrangerAndAViewerOfTheGoalsProject'
 
 if [ "$MODE" = "list" ]; then
   exit 0
