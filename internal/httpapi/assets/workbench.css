@@ -200,6 +200,24 @@
 .provenance b { color: var(--warn-ink-strong); }
 .provenance ul { margin: 5px 0 0; padding-left: 17px; }
 
+/* The banner's details fold; its headline never does.
+ *
+ * # The problem this solves
+ *
+ * The W2 acceptance run (docs/spikes/2026-09-15-subtree-loading) drew a stored car on an
+ * 800-px pane and the banner — every not-verified item, every assumption, and a line per
+ * loaded subtree — filled its 40 % of the stage: 70 of the 73 copies of an isolated seam
+ * on screen were under it and could not be clicked. So the headline and a count stay
+ * on the stage, and the lists open on request. Folding is not dismissing: VIS-06's
+ * sentence is always there, and the count says how much is behind it.
+ *
+ * ‼️ .hidden is restated here: shell.css's `.hidden` and a display rule of the same
+ * specificity would be decided by load order (see .stage-empty above).
+ * Fence: TestWorkbenchProvenanceBannerFoldsItsDetailsOffTheStage. */
+.provenance .prov-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; }
+.provenance .prov-toggle { margin-left: auto; font-size: 11px; padding: 1px 8px; }
+.provenance .prov-details.hidden { display: none; }
+
 .viewctl {
   position: absolute; top: 12px; left: 12px;
   display: flex; flex-wrap: wrap; gap: 6px;
@@ -2160,3 +2178,7 @@
 .tnode .iso { font-size: 11px; padding: 1px 6px; }
 .tnode .iso[aria-pressed="true"] { color: var(--core); }
 .tree-more { padding: 4px 2px; }
+/* Where a search result is: its occurrence path after its name, cut at the END when the
+ * rail is narrow, because the top-level slot ("seam-12") is what tells two "Rivet 1"
+ * rows apart. See searchRows in workbench.js. */
+.tnode .where { flex: 0 1 auto; min-width: 0; max-width: 60%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
