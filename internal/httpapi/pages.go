@@ -843,6 +843,16 @@ const pageTemplates = `
     <div class="h">Parts</div>
     <div id="parts"></div>
 
+    <!-- The assembly tree (Phase 6, stage W2). Shown only for a design written as a
+         tree, whose Parts panel above is empty. Rows open lazily, the search runs
+         over what is drawn, and Isolate draws one subtree on its own. -->
+    <div class="h hidden" id="tree-head">Assembly</div>
+    <div class="tree-tools hidden" id="tree-tools">
+      <input type="search" id="tree-search" placeholder="Find by name or path" aria-label="Find a part in the assembly">
+      <button type="button" class="ghost hidden" id="tree-showall">Show all</button>
+    </div>
+    <div class="tree" id="tree" role="tree" aria-label="Assembly tree"></div>
+
     <!-- Variants (PRD VIS-04). Every shape FORGE proposes in this conversation
          is kept as a version, so an earlier one is still there to be compared
          with a later one. Pick two or more and open them side by side. -->

@@ -294,7 +294,8 @@ func (h *GeometryHandlers) Mesh(w http.ResponseWriter, r *http.Request) {
 		"version_id": v.VersionID,
 		// The parts a feature changed, each in assembly coordinates; and every other
 		// part as a placed copy of one definition, tessellated once (Phase 4, stage
-		// K4). The browser expands them with Forge3D.expandMeshInstances.
+		// K4). Since Phase 6, stage W1 the browser draws them as they arrive: each
+		// definition uploaded once, every copy one instance of it (Forge3D.drawBatches).
 		"parts":       parts,
 		"definitions": definitions,
 		"instances":   instances,
