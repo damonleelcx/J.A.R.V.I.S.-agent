@@ -93,6 +93,14 @@ type VariantDTO struct {
 }
 
 func toVariantDTO(v geometry.Variant) VariantDTO {
+	// ‼️ Never null, like Assumptions below. A design written as a tree has no
+	// top-level parts, and it was sent as "parts": null — which the workbench read
+	// as "nothing to put back on the stage" and then threw on while listing the
+	// parts, before it drew the assembly tree. Found by the Phase 6, stage W2
+	// acceptance run, opening a stored 30,000-part car and getting an empty grid.
+	if v.Document.Parts == nil {
+		v.Document.Parts = []geometry.Part{}
+	}
 	return VariantDTO{
 		VersionID: v.VersionID, ProjectID: v.ProjectID, Path: v.Path, Version: v.Version,
 		Name: v.Name, Inputs: json.RawMessage(v.Inputs),
@@ -259,6 +267,13 @@ func (h *GeometryHandlers) Mesh(w http.ResponseWriter, r *http.Request) {
 	v, err := h.authorisedVariant(r)
 	if err != nil {
 		WriteError(w, r, h.deps.Log, err)
+		return
+	}
+	// One subtree's surface (Phase 6, stage W2), behind the same door and the same
+	// permission check as the whole design's: a subtree of a variant the caller
+	// cannot read reads exactly like a variant that does not exist.
+	if r.URL.Query().Has("subtree") {
+		h.meshSubtree(w, r, v)
 		return
 	}
 	if h.deps.CAD == nil || !h.deps.CAD.Available() {
