@@ -432,11 +432,16 @@ drill "nothing is ever reported as interfering" internal/domain/cad/sidecar.py \
 # the solids as they are BEFORE the feature loop, which is what this does.
 drill "interference is measured BEFORE the tools are consumed" internal/domain/cad/sidecar.py \
   's = s.replace("    shapes = dict(zip(ids, built))", "    shapes = dict(zip(ids, built))\n    _pre = (list(built), list(ids), list(names))", 1)
-s = s.replace("clashes, clash_truncated = _interferences(built, ids, names)", "clashes, clash_truncated = _interferences(*_pre)", 1)' \
+s = s.replace("clashes, clash_truncated, box_tests = _interferences(built, ids, names)", "clashes, clash_truncated, box_tests = _interferences(*_pre)", 1)' \
   ./internal/domain/cad 'TestKernel_ACutToolIsNotAnInterference'
 
+# ‼️ Both anchors here moved when stage K2b unfolded the pair loop in _interferences
+# (one indent less) and gave it a third return value, and neither drill said so:
+# this one's FIRST replacement still applied, so the file changed and the script
+# saw no moved anchor, while the second — the one that makes it a drill — matched
+# nothing. Found by a whole-script dry run on 2026-09-15.
 drill "the pair is reported in build order, not smaller first" internal/domain/cad/sidecar.py \
-  "s = s.replace('            lo, hi = (i, j) if volumes[i] <= volumes[j] else (j, i)', '            lo, hi = i, j', 1)" \
+  "s = s.replace('        lo, hi = (i, j) if volumes[i] <= volumes[j] else (j, i)', '        lo, hi = i, j', 1)" \
   ./internal/domain/cad 'TestKernel_ASwallowedPartIsReportedAsBuried'
 
 drill "every graze counts as buried, so a weld drives a rewrite" internal/domain/geometry/interference.go \
