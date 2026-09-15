@@ -134,6 +134,8 @@ FILES=(
   internal/domain/engine/repository.go
   internal/httpapi/goals_start.go
   internal/httpapi/assets/workbench.js
+  internal/agent/apply.go
+  internal/agent/intake.go
 )
 
 BACKUP=""
@@ -1827,6 +1829,67 @@ echo "A stopping worker's bookkeeping"
 drill "a stopping worker's bookkeeping runs on the cancelled context" internal/agent/worker.go \
   's = s.replace("context.WithTimeout(context.WithoutCancel(ctx), afterTaskTimeout)", "context.WithTimeout(ctx, afterTaskTimeout)", 1)' \
   ./internal/agent 'TestWorker_AStoppingWorkerStillReleasesWhatItsLastTaskLeftWaiting|TestBuildGoal_AStoppedWorkerDoesNotReportTheDatabaseUnavailable'
+
+echo
+echo "Build goal UX"
+# Added 2026-09-15 (build goal UX), from a live exercise of a build goal started at the
+# workbench. A refused reply is kept with its cost and never replayed as history
+# (docs/bugfix/2026-09-15-a-failed-workbench-turn-left-no-trace.md); a stated maximum of
+# steps is told to the planner and enforced (…-a-build-planned-more-steps-than-it-was-allowed.md);
+# the proposal card follows the goal it started until it settles; a goal's tasks list in
+# plan order (…-a-goals-tasks-were-listed-out-of-step-order.md); POST /v1/goals takes a
+# bounded max_tokens. Needs FORGE_TEST_DATABASE_URL, and node for the card.
+drill "a refused reply is returned without the reply or its cost" internal/agent/converse_stream.go \
+  's = s.replace("\t\t\treturn unusable(err, accumulated.String(), chunk.Model, chunk.Usage)\n", "\t\t\treturn err\n", 1)' \
+  ./internal/agent 'TestRespondStream_AReplyThatCouldNotBeUsedComesBackWithTheReplyAndItsCost'
+
+drill "a failed turn is not recorded" internal/httpapi/converse.go \
+  's = s.replace("\t\tif errors.As(emitErr, &refused) {\n", "\t\tif false && errors.As(emitErr, &refused) {\n", 1)' \
+  ./internal/httpapi 'TestConverse_AReplyThatCouldNotBeUsedIsKeptWithWhatItCost'
+
+drill "a failed turn is replayed as history" internal/httpapi/converse.go \
+  's = s.replace("\t\tif turns[i].Failed() {\n\t\t\tcontinue\n\t\t}\n", "", 1)' \
+  ./internal/httpapi 'TestConverse_AFailedTurnIsNotGivenToTheModelAsHistory'
+
+drill "a plan over the stated limit is kept whole" internal/agent/assemble.go \
+  's = s.replace("\tif stated && len(steps) > limit {\n", "\tif false && stated && len(steps) > limit {\n", 1)' \
+  ./internal/agent 'TestPlanBuild_AStatedMaximumOfStepsIsHonouredAndSaid|TestPlanBuildGoal_AStatedMaximumOfStepsIsTheGoalsPlanAndItsRationaleSaysSo'
+
+drill "the planner is not told the limit" internal/agent/assemble.go \
+  's = s.replace("\tif stated {\n\t\trequest +=", "\tif false {\n\t\trequest +=", 1)' \
+  ./internal/agent 'TestPlanBuild_AStatedMaximumOfStepsIsHonouredAndSaid'
+
+drill "the card never stops polling" internal/httpapi/assets/workbench.js \
+  's = s.replace("        if (!p.settled && !stopped) timer = later(tick, interval);\n", "        if (!stopped) timer = later(tick, interval);\n", 1)' \
+  ./internal/httpapi 'TestWorkbench_TheCardShowsABuildsProgressAndStopsWhenItSettles|TestWorkbench_TheCardSaysABuildWasStoppedByItsBudget'
+
+drill "a goal that is gone is asked for forever" internal/httpapi/assets/workbench.js \
+  's = s.replace("        if (err && (err.status === 401 || err.status === 403 || err.status === 404)) return;\n", "", 1)' \
+  ./internal/httpapi 'TestWorkbench_TheCardRetriesADroppedReadAndStopsForAGoalThatIsGone'
+
+drill "Start it never follows the goal" internal/httpapi/assets/workbench.js \
+  's = s.replace("        followStartedGoal();\n      })", "      })", 1)' \
+  ./internal/httpapi 'TestWorkbench_TheProposalCardFollowsTheGoalItStarted'
+
+drill "tasks written at one instant have no order" internal/domain/engine/repository.go \
+  's = s.replace("order by created_at asc, idempotency_key asc, id asc", "order by created_at asc", 1)' \
+  ./internal/domain/engine 'TestListTasks_ABuildsStepsWrittenAtOneInstantAreListedInStepOrder'
+
+drill "a plan's order is not written" internal/agent/apply.go \
+  's = s.replace("stamped := now.Add(time.Duration(position) * time.Microsecond)", "stamped := now.Add(time.Duration(position*0) * time.Microsecond)", 1)' \
+  ./internal/agent 'TestApply_APlansTasksAreListedInThePlansOrder'
+
+drill "a goal's token ceiling is not stored" internal/agent/intake.go \
+  's = s.replace("string(goal.Autonomy), string(goal.RiskTier), req.MaxTokens, now); err != nil {", "string(goal.Autonomy), string(goal.RiskTier), (*int64)(nil), now); err != nil {", 1)' \
+  ./internal/httpapi 'TestCreateGoal_ATokenCeilingIsStoredOnTheGoal'
+
+drill "a token ceiling above the engine's is accepted" internal/agent/intake.go \
+  's = s.replace("if in.maxTokensPerGoal > 0 && *req.MaxTokens > in.maxTokensPerGoal {", "if false && *req.MaxTokens > in.maxTokensPerGoal {", 1)' \
+  ./internal/httpapi 'TestCreateGoal_ATokenCeilingOutOfRangeIsRefusedBeforeAnythingIsWritten'
+
+drill "POST /v1/goals drops the ceiling" internal/httpapi/goals_start.go \
+  's = s.replace("\t\tMaxTokens: req.MaxTokens,\n", "", 1)' \
+  ./internal/httpapi 'TestCreateGoal_ATokenCeilingIsStoredOnTheGoal'
 
 if [ "$MODE" = "list" ]; then
   exit 0

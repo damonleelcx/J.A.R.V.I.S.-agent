@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -142,7 +143,7 @@ func (a *PlanApplier) Apply(ctx context.Context, pool *db.Pool, goal *engine.Goa
 		keyToID := map[string]string{}
 		newCount := 0
 
-		for _, pt := range plan.Tasks {
+		for position, pt := range plan.Tasks {
 			if tid, reused := existing[pt.Key]; reused {
 				keyToID[pt.Key] = tid
 				continue
@@ -162,6 +163,14 @@ func (a *PlanApplier) Apply(ctx context.Context, pool *db.Pool, goal *engine.Goa
 				tier = goal.RiskTier
 			}
 
+			// ‼️ Each task is stamped with its place in the plan, a microsecond
+			// apart. Every task here is written at one instant, so created_at
+			// alone ordered them however Postgres liked, and the console listed a
+			// live build as steps 1, 2, 5, 3, 4. A microsecond is the column's
+			// resolution and invisible to anything that reads a time; the stamp
+			// is still this clock's, not an invented one.
+			// docs/bugfix/2026-09-15-a-goals-tasks-were-listed-out-of-step-order.md
+			stamped := now.Add(time.Duration(position) * time.Microsecond)
 			t := &engine.Task{
 				ID: id.New(id.PrefixTask), GoalID: goal.ID, PlanID: created.ID,
 				Title: pt.Title, Instruction: pt.Instruction,
@@ -175,7 +184,7 @@ func (a *PlanApplier) Apply(ctx context.Context, pool *db.Pool, goal *engine.Goa
 				Priority:         100,
 				RiskTier:         tier,
 				RequiresApproval: tier.RequiresApproval(),
-				CreatedAt:        now, UpdatedAt: now,
+				CreatedAt:        stamped, UpdatedAt: stamped,
 			}
 			if err := a.repo.CreateTask(ctx, tx, t, nil); err != nil {
 				return err

@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"os"
 	"strings"
@@ -48,9 +49,19 @@ func cmdGoalNew(ctx context.Context, cfg *config.Config, log *logx.Logger, args 
 	start := fs.Bool("start", false, "activate the goal immediately after planning")
 	build := fs.Bool("build", false, "plan the statement as a BUILD of a model: one task per step, run by\n"+
 		"\tforge-worker with the CAD kernel, each step kept as a version of the design")
+	maxTokens := fs.Int64("max-tokens", 0, "this goal's own token ceiling, at most FORGE_MAX_TOKENS_PER_GOAL\n"+
+		"\t(omit to use that ceiling)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	// Given or not, not zero or not: an explicit --max-tokens 0 goes to Draft and
+	// is refused there, the same as "max_tokens": 0 over HTTP.
+	var ceiling *int64
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "max-tokens" {
+			ceiling = maxTokens
+		}
+	})
 	if *title == "" || *statement == "" || *email == "" {
 		fs.Usage()
 		return errs.New(op, errs.CodeValidationFailed).
@@ -88,6 +99,7 @@ func cmdGoalNew(ctx context.Context, cfg *config.Config, log *logx.Logger, args 
 		Statement: *statement,
 		Autonomy:  engine.Autonomy(*autonomy),
 		RiskTier:  engine.RiskTier(*risk),
+		MaxTokens: ceiling,
 	})
 	if err != nil {
 		return err

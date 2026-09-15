@@ -42,15 +42,18 @@ func NewGoalHandlers(d Deps) *GoalHandlers {
 // a decision reimplemented in the client is a decision that will eventually
 // disagree with itself.
 type GoalDTO struct {
-	ID          string  `json:"id"`
-	Title       string  `json:"title"`
-	Statement   string  `json:"statement"`
-	Status      string  `json:"status"`
-	Autonomy    string  `json:"autonomy"`
-	RiskTier    string  `json:"risk_tier"`
-	AvatarState string  `json:"avatar_state"`
-	StateLabel  string  `json:"state_label"`
-	TokensSpent int64   `json:"tokens_spent"`
+	ID          string `json:"id"`
+	Title       string `json:"title"`
+	Statement   string `json:"statement"`
+	Status      string `json:"status"`
+	Autonomy    string `json:"autonomy"`
+	RiskTier    string `json:"risk_tier"`
+	AvatarState string `json:"avatar_state"`
+	StateLabel  string `json:"state_label"`
+	TokensSpent int64  `json:"tokens_spent"`
+	// MaxTokens is the goal's own token ceiling, omitted when it inherits the
+	// engine's. Shown so a ceiling set with POST /v1/goals can be read back.
+	MaxTokens   *int64  `json:"max_tokens,omitempty"`
 	TasksTotal  int     `json:"tasks_total"`
 	TasksDone   int     `json:"tasks_done"`
 	TasksFailed int     `json:"tasks_failed"`
@@ -75,7 +78,7 @@ func (h *GoalHandlers) ListGoals(w http.ResponseWriter, r *http.Request) {
 	rows, err := h.deps.Pool.Query(r.Context(), `
 		select g.id, g.title, g.statement, g.status, g.autonomy, g.risk_tier,
 		       g.tokens_spent, g.created_at, g.started_at, g.ended_at,
-		       coalesce(g.outcome_summary, '')
+		       coalesce(g.outcome_summary, ''), g.max_tokens
 		  from forge_goals g
 		 where g.project_id = any($1)
 		 order by g.created_at desc
@@ -399,7 +402,7 @@ func (h *GoalHandlers) loadGoal(r *http.Request, goalID, userID string) (*GoalDT
 	row := h.deps.Pool.QueryRow(r.Context(), `
 		select g.id, g.title, g.statement, g.status, g.autonomy, g.risk_tier,
 		       g.tokens_spent, g.created_at, g.started_at, g.ended_at,
-		       coalesce(g.outcome_summary, '')
+		       coalesce(g.outcome_summary, ''), g.max_tokens
 		  from forge_goals g where g.id = $1`, goalID)
 
 	dto, err := h.scanGoalRow(row)
@@ -420,7 +423,7 @@ func (h *GoalHandlers) scanGoalRow(row scannable) (GoalDTO, error) {
 	var created time.Time
 	var started, ended *time.Time
 	if err := row.Scan(&d.ID, &d.Title, &d.Statement, &d.Status, &d.Autonomy, &d.RiskTier,
-		&d.TokensSpent, &created, &started, &ended, &d.Outcome); err != nil {
+		&d.TokensSpent, &created, &started, &ended, &d.Outcome, &d.MaxTokens); err != nil {
 		return d, err
 	}
 	d.CreatedAt = created.UTC().Format(time.RFC3339)

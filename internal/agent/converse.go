@@ -626,7 +626,9 @@ var converseFraming = converseManner + geometryContract + geometry.FinishGuide()
   so nothing here has been checked against anything.
 
 About "proposed_goal": offer one only when they have described work they want
-DONE, not merely discussed. It is a proposal — nothing runs until they start it.`
+DONE, not merely discussed. It is a proposal — nothing runs until they start it.
+Its "statement" is all the planner will read, so any limit they stated — a number
+of steps at most, a size, a deadline — goes into it in their own words.`
 
 // NotVerifiedFallback is what VIS-06's banner says when the model supplied
 // nothing of its own.
@@ -1146,15 +1148,18 @@ func (c *Conversation) Respond(ctx context.Context, projectID string, history []
 
 	reply, err := parseReply(resp)
 	if err != nil {
-		return nil, errs.Wrap(op, errs.CodeExternalProtocol, err).
-			WithDetail("the model returned neither usable JSON nor any text")
+		return nil, unusable(errs.Wrap(op, errs.CodeExternalProtocol, err).
+			WithDetail("the model returned neither usable JSON nor any text"),
+			resp.Content, resp.Model, resp.Usage)
 	}
 	reply.Model = resp.Model
 	reply.Usage = resp.Usage
 	reply.LatencyMS = resp.Latency.Milliseconds()
 
 	if err := reply.validate(); err != nil {
-		return nil, err
+		// The same as the streamed path: the reply and its cost travel with the
+		// refusal. See unusable.go.
+		return nil, unusable(err, resp.Content, resp.Model, resp.Usage)
 	}
 	// The same resolution the streamed path does, at the same point. A rule
 	// enforced in one of two paths holds until somebody uses the other one —

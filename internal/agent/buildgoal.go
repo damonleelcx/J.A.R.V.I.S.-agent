@@ -116,7 +116,7 @@ func planBuildGoal(ctx context.Context, pool *db.Pool, c *Conversation, applier 
 	const op = "agent.planBuildGoal"
 
 	charged := chargeTo(c.client, applier.budget, pool, goal, applier.clock, log)
-	steps, err := c.withClient(charged).planBuild(ctx, goal.Statement)
+	steps, limited, err := c.withClient(charged).planBuildNoted(ctx, goal.Statement)
 	if errors.Is(err, errNotWorthPlanning) {
 		return nil, errs.New(op, errs.CodeValidationFailed).
 			WithDetail("the model planned this as a single step, and one step is a turn rather than a build. " +
@@ -126,6 +126,12 @@ func planBuildGoal(ctx context.Context, pool *db.Pool, c *Conversation, applier 
 		return nil, err
 	}
 	plan := buildPlan(goal.Statement, steps)
+	if limited != "" {
+		// In the rationale, which the proposal card, the API reply and the plan's
+		// timeline entry all show: the plan the person authorises is not the one
+		// the model returned, and they are told so where they read it.
+		plan.Rationale += " " + limited
+	}
 	plan.Model = charged.ModelFor(llm.RoleConverse)
 	created, tasks, err := applier.Apply(ctx, pool, goal, plan, "planner")
 	if err != nil {

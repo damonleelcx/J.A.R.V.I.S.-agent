@@ -46,6 +46,9 @@ type Intake struct {
 	planner *Planner
 	applier *PlanApplier
 	clock   clock.Clock
+	// maxTokensPerGoal is the engine's ceiling per goal (FORGE_MAX_TOKENS_PER_GOAL),
+	// which a goal's own ceiling may lower and never raise. Zero means none.
+	maxTokensPerGoal int64
 	// log is optional. Nil is a legal caller — forgectl's tests build an intake
 	// without one — and the hazard load then happens silently rather than not at
 	// all.
@@ -58,7 +61,8 @@ func NewIntake(client llm.Client, char persona.Character, engineCfg config.Engin
 		planner: NewPlanner(client, char),
 		applier: NewPlanApplier(engine.NewRepository(), engine.NewQueue(),
 			engine.NewBudgetGuard(engineCfg), clk),
-		clock: clk,
+		clock:            clk,
+		maxTokensPerGoal: engineCfg.MaxTokensPerGoal,
 	}
 }
 
@@ -108,6 +112,14 @@ type DraftRequest struct {
 	Statement string
 	Autonomy  engine.Autonomy
 	RiskTier  engine.RiskTier
+	// MaxTokens is the goal's own token ceiling, stored in forge_goals.max_tokens.
+	// Nil inherits the engine's (FORGE_MAX_TOKENS_PER_GOAL). When set it must be
+	// positive and not above the engine's: BudgetGuard reads a goal's own ceiling
+	// INSTEAD of the engine's, so a larger one would raise the limit a deployment
+	// set, from a request body.
+	//
+	// Until 2026-09-15 nothing could set it: a live exercise set it by SQL.
+	MaxTokens *int64
 }
 
 // PlanOutcome is what planning produced.
@@ -143,6 +155,21 @@ func (in *Intake) Draft(ctx context.Context, pool *db.Pool, req DraftRequest) (*
 	if !req.RiskTier.Valid() {
 		return nil, errs.New(op, errs.CodeValidationFailed).
 			WithDetail("risk tier %q is not recognised", req.RiskTier)
+	}
+	// ‼️ Checked before anything is written, like every rule above: a refused
+	// ceiling must not leave a draft behind with no ceiling at all.
+	if req.MaxTokens != nil {
+		if *req.MaxTokens <= 0 {
+			return nil, errs.New(op, errs.CodeValidationFailed).
+				WithDetail("a goal's token ceiling must be a positive number of tokens, got %d. "+
+					"Leave it out to use this deployment's ceiling", *req.MaxTokens)
+		}
+		if in.maxTokensPerGoal > 0 && *req.MaxTokens > in.maxTokensPerGoal {
+			return nil, errs.New(op, errs.CodeValidationFailed).
+				WithDetail("a token ceiling of %d is above this deployment's maximum of %d per goal "+
+					"(FORGE_MAX_TOKENS_PER_GOAL). A goal's own ceiling can lower that limit, not raise it",
+					*req.MaxTokens, in.maxTokensPerGoal)
+		}
 	}
 
 	// The industry is a property of the PROJECT, so asking for one while naming an
@@ -201,12 +228,15 @@ func (in *Intake) Draft(ctx context.Context, pool *db.Pool, req DraftRequest) (*
 		Autonomy: req.Autonomy, RiskTier: req.RiskTier,
 		CreatedAt: now, UpdatedAt: now,
 	}
+	// On the returned goal as well as the row, so the planning call that follows
+	// is charged against this ceiling rather than the engine's.
+	goal.Budget.MaxTokens = req.MaxTokens
 	if _, err := pool.Exec(ctx, `
 		insert into forge_goals (id, project_id, created_by, title, statement, status,
-			autonomy, risk_tier, completion_criteria, created_at, updated_at)
-		values ($1,$2,$3,$4,$5,'draft',$6,$7,'[]'::jsonb,$8,$8)`,
+			autonomy, risk_tier, completion_criteria, max_tokens, created_at, updated_at)
+		values ($1,$2,$3,$4,$5,'draft',$6,$7,'[]'::jsonb,$8,$9,$9)`,
 		goal.ID, goal.ProjectID, goal.CreatedBy, goal.Title, goal.Statement,
-		string(goal.Autonomy), string(goal.RiskTier), now); err != nil {
+		string(goal.Autonomy), string(goal.RiskTier), req.MaxTokens, now); err != nil {
 		return nil, errs.Wrap(op, errs.CodeDatabaseUnavail, err)
 	}
 	return goal, nil

@@ -58,6 +58,15 @@ type turnDTO struct {
 	Images    int    `json:"images,omitempty"`
 	ProjectID string `json:"project_id,omitempty"`
 	SaidAt    string `json:"said_at"`
+	// Failure is the error code of a FORGE turn whose reply could not be used;
+	// its Text is what the person was shown instead (migration 0023).
+	Failure string `json:"failure,omitempty"`
+	// UnusableReply is that refused reply, bounded, returned to the conversation's
+	// owner so why the turn failed can be seen.
+	//
+	// ‼️ Untrusted model output (PRD SEC-04). The workbench does not render it
+	// and nothing sends it to a model.
+	UnusableReply string `json:"unusable_reply,omitempty"`
 }
 
 type conversationDTO struct {
@@ -118,7 +127,8 @@ func (h *ConversationHandlers) Get(w http.ResponseWriter, r *http.Request) {
 		out = append(out, turnDTO{
 			Seq: t.Seq, Role: string(t.Role), Text: t.Text, Detail: t.Detail,
 			Images: t.Images, ProjectID: t.ProjectID,
-			SaidAt: t.SaidAt.UTC().Format(time.RFC3339),
+			SaidAt:  t.SaidAt.UTC().Format(time.RFC3339),
+			Failure: t.Failure, UnusableReply: t.UnusableReply,
 		})
 	}
 	WriteJSON(w, http.StatusOK, map[string]any{
