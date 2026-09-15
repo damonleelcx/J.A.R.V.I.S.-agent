@@ -26,6 +26,8 @@ DB_PORT      ?= 55840
 # The CAD kernel's interpreter. Not committed: it is 60+ MB of OpenCASCADE, and
 # a deployment without it refuses parametric export rather than faking it.
 CAD_VENV     ?= .cadvenv
+# Every package in it, pinned. The same file the image and CI install from.
+CAD_REQUIREMENTS := internal/domain/cad/requirements.txt
 DB_USER      ?= forge
 DB_PASS      ?= forge_dev_pw
 DB_NAME      ?= forge
@@ -117,12 +119,23 @@ cad-venv: ## Create the Python venv the CAD kernel runs in (PRD VIS-05)
 	@#
 	@# Not committed and not required: a deployment without it declares STEP and
 	@# refuses it, which is the default and a supported configuration.
+	@#
+	@# The versions come from $(CAD_REQUIREMENTS), never from PyPI's latest: the
+	@# kernel tests prove one OpenCASCADE, and this is the one they prove.
+	@# --no-deps + pip check: a dependency missing from the list fails here.
 	python3 -m venv $(CAD_VENV)
 	$(CAD_VENV)/bin/pip install --quiet --upgrade pip
-	$(CAD_VENV)/bin/pip install --quiet build123d
+	$(CAD_VENV)/bin/pip install --quiet --no-deps -r $(CAD_REQUIREMENTS)
+	$(CAD_VENV)/bin/pip check
 	@$(CAD_VENV)/bin/python -c "import build123d; print('build123d', build123d.__version__)"
 	@echo
 	@echo "export FORGE_CAD_PYTHON=$(abspath $(CAD_VENV))/bin/python"
+
+.PHONY: cad-script-timing
+cad-script-timing: ## Time a scripted part end to end under FORGE's limits, and describe the machine (never fails)
+	@# Diagnosis for the open script timeout on CI runners; see scripts/cad_script_timing.py.
+	@test -x $(CAD_VENV)/bin/python || { echo "no CAD venv: run \`make cad-venv\` first"; exit 1; }
+	@$(CAD_VENV)/bin/python scripts/cad_script_timing.py internal/domain/cad/script.py internal/domain/cad/script_test.go internal/domain/cad/script.go || true
 
 .PHONY: test-cad
 test-cad: ## Run the CAD kernel tests against the real kernel (needs `make cad-venv`)
