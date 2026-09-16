@@ -148,12 +148,12 @@ func (s *Subtree) Refusal() string {
 }
 
 // Buildable reports whether the kernel may be asked to build this subtree: whether it
-// places no more than the parts FORGE builds at once (maxDrawnParts, unchanged).
-func (s *Subtree) Buildable() bool { return len(s.Parts) <= maxDrawnParts }
+// places no more than the parts the kernel builds at once for a view (maxBuiltParts).
+func (s *Subtree) Buildable() bool { return len(s.Parts) <= maxBuiltParts }
 
 // MaxBuiltParts is the kernel's ceiling, exported so the mesh endpoint can say in its
 // reply why a subtree was not built by the kernel.
-func MaxBuiltParts() int { return maxDrawnParts }
+func MaxBuiltParts() int { return maxBuiltParts }
 
 // InstanceMesh is a design's surface as the K4 reply carries it, made by the Go
 // tessellator instead of the kernel: each distinct shape's triangles once, in its own

@@ -1,0 +1,17 @@
+{"at":"2026-09-16T01:19:25.918Z","id":1,"event":"get","path":"/v1/models"}
+{"at":"2026-09-16T01:20:19.127Z","id":2,"event":"request","model":"stand-in-converse","stream":true,"tokens":2950,"kind":"unusable"}
+{"at":"2026-09-16T01:21:31.050Z","id":3,"event":"request","model":"stand-in-converse","stream":true,"tokens":3200,"kind":"converse"}
+{"at":"2026-09-16T01:22:56.122Z","id":4,"event":"request","model":"stand-in-converse","stream":false,"tokens":400,"kind":"plan"}
+{"at":"2026-09-16T01:23:37.683Z","id":5,"event":"request","model":"stand-in-converse","stream":false,"tokens":1100,"kind":"step","step":1,"of":3,"name":"Base","faulty":false}
+{"at":"2026-09-16T01:23:43.001Z","id":6,"event":"request","model":"stand-in-vision","stream":false,"tokens":920,"kind":"look"}
+{"at":"2026-09-16T01:23:43.076Z","id":7,"event":"request","model":"stand-in-converse","stream":false,"tokens":1100,"kind":"step","step":2,"of":3,"name":"Arm","faulty":true}
+{"at":"2026-09-16T01:23:43.080Z","id":8,"event":"request","model":"stand-in-converse","stream":false,"tokens":780,"kind":"repair","step":2}
+{"at":"2026-09-16T01:23:43.118Z","id":9,"event":"request","model":"stand-in-vision","stream":false,"tokens":920,"kind":"look"}
+{"at":"2026-09-16T01:23:43.144Z","id":10,"event":"request","model":"stand-in-converse","stream":false,"tokens":1100,"kind":"step","step":3,"of":3,"name":"Shade","faulty":false}
+{"at":"2026-09-16T01:23:43.183Z","id":11,"event":"request","model":"stand-in-vision","stream":false,"tokens":920,"kind":"look"}
+{"at":"2026-09-16T01:27:47.050Z","id":12,"event":"request","model":"stand-in-converse","stream":true,"tokens":3200,"kind":"converse"}
+{"at":"2026-09-16T01:28:18.614Z","id":13,"event":"request","model":"stand-in-converse","stream":false,"tokens":400,"kind":"plan"}
+{"at":"2026-09-16T01:28:44.524Z","id":14,"event":"request","model":"stand-in-converse","stream":false,"tokens":1100,"kind":"step","step":1,"of":3,"name":"Base","faulty":false}
+{"at":"2026-09-16T01:39:06.028Z","id":15,"event":"request","model":"stand-in-converse","stream":true,"tokens":3200,"kind":"converse"}
+{"at":"2026-09-16T01:39:31.963Z","id":16,"event":"request","model":"stand-in-converse","stream":false,"tokens":400,"kind":"plan"}
+{"at":"2026-09-16T01:40:05.051Z","id":17,"event":"request","model":"stand-in-converse","stream":false,"tokens":1100,"kind":"step","step":1,"of":3,"name":"Base","faulty":false}

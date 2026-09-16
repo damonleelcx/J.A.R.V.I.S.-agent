@@ -19,7 +19,8 @@ The fix runs both on a context that outlives the stop (`context.WithoutCancel`, 
 ## Symptom
 
 Seen live on the stacked stage A1 branch (#104), stopping a real `forge-worker` with a console `CTRL_BREAK_EVENT` 14 s
-into step 2 of a build goal (`docs/spikes/2026-09-15-build-goal-exercised/data/worker-1-stub-stopped.log` there):
+into step 2 of a build goal ([`docs/spikes/2026-09-15-build-goal-exercised`](../spikes/2026-09-15-build-goal-exercised),
+`data/worker-1-stub-stopped.log`):
 
 ```
 14:10:37.475 INFO forge.worker.stopping  detail="finishing in-flight tasks; they are released back to the queue ..."
@@ -28,7 +29,8 @@ into step 2 of a build goal (`docs/spikes/2026-09-15-build-goal-exercised/data/w
 14:10:37.481 INFO forge.worker.stopped
 ```
 
-The database was up throughout: a new worker claimed the step 7 s later through the same database.
+The database was up throughout: the step had been handed back 6 ms earlier through the same pool (by
+`runBuildStep`'s own release, as #104 then had it), and a new worker claimed it 7 s later.
 
 Reproduced on this branch by `TestWorker_AWorkerStoppedMidTaskDoesNotReportItsBookkeepingAsADatabaseFailure`, which
 stops a real worker blocked inside an executor model call. Without the fix it logs the same two lines:
@@ -70,8 +72,11 @@ context since goal settlement was added; #87 put `releaseWaiting` beside it in t
 
 - **No fence stopped a worker and read what it logged.** #87's release fences run a worker until its goal settles and
   read rows; the settlement fences call `SettleGoalForTest` on a live context. The warnings went to `t.Log` only.
-- **A graceful stop had never been exercised live.** The only live stop before #104 was `taskkill /F`, which kills the
-  process before any of this runs.
+- **The build-step stop fence read rows, not logs.** `TestBuildGoal_AStoppedWorkerHandsItsStepBack` checks that step 2
+  is `ready` with no lease owner, which it was; the warnings were visible only under `-v`.
+- **A graceful stop had never been exercised live.** The only live stop before #104
+  ([`2026-09-15-build-goal-live`](../spikes/2026-09-15-build-goal-live)) was `taskkill /F`, which kills the process
+  before any of this runs; that spike records that a console signal could not be sent from its driver.
 - **The finished-at-the-stop case needs a stop inside a few milliseconds** between the task's last write and the
   release. No test or run aimed at that window.
 
@@ -100,11 +105,22 @@ This is #104's fix, ported to #87's `Run`, which releases through the executor p
   `afterTask` seam with the context passed straight through), and both pass with the fix. #87's
   `TestWorker_AFinishedTaskReleasesTheTasksWaitingOnIt`, `TestWorker_ATaskLeftWaitingByACrashIsReleasedOnTheIdlePoll`
   and `TestWorker_ABudgetRefusalStopsTheGoal` still pass.
+- `TestBuildGoal_AStoppedWorkerDoesNotReportTheDatabaseUnavailable` (internal/agent/worker_stop_db_test.go, from #104)
+  covers the path the defect was found on: it stops a real worker blocked inside a build step's model call and
+  requires no `forge.task.release_failed`, `forge.goal.settle_failed` or `DATABASE_UNAVAILABLE` anywhere in its
+  warnings, and step 2 handed back.
 
 ## Regression prevention
 
 Drill "a stopping worker's bookkeeping runs on the cancelled context" in `scripts/drill-fences.sh` replaces the
-outliving context with `ctx`; both fences go red. #87's drill "a finished task releases nothing" was re-anchored to the
+outliving context in `afterTask` with `ctx`, and `TestWorker_ATaskFinishedAsTheStopArrivesStillReleasesItsDependentsAndSettlesItsGoal`
+goes red. It is anchored on `afterTask`'s own `book, cancel :=` line: `outliving` and `handBack` open with the same
+`WithTimeout(WithoutCancel(ctx))`, and the bare expression, which `replace(..., 1)` found first in `outliving`, left
+the drill green.
+
+Since the stop-quiet guards in `releaseWaiting` and `settleGoal` (#117), this defect no longer shows in the log at
+all, so `TestBuildGoal_AStoppedWorkerDoesNotReportTheDatabaseUnavailable` cannot see it; that test is drilled instead
+by "a stopped build step is handed back on the cancelled context", which makes the same change in `handBack`. #87's drill "a finished task releases nothing" was re-anchored to the
 call's new place in `afterTask` and still goes red.
 
 ## Not in this fix

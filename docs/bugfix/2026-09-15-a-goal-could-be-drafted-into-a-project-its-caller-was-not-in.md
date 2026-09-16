@@ -22,6 +22,12 @@ Reproduced on main with a stub model before the fix:
   stranger's, planned, with a task) and the model had been **asked once**.
 - A **viewer** of P posts the same: **201** with the whole plan. P held 2 goals, the model was asked once.
 
+On the build stack (#90), where it was found, the stranger's case surfaced as a **502** rather than a 404: that
+branch's fence posts `build: true`, the stub's reply was not a build plan, and the planner's own refusal answered
+before the handler's failing read could. The writes underneath were the same — the stranger's project held
+**2 goals** and the model had been **asked once**. Worth recording because the status code alone names a different
+culprit on each branch, and neither names this one.
+
 ## Impact
 
 - Any account could put draft goals, with planned tasks, into any project it had an id for. A draft runs nothing,
@@ -29,7 +35,8 @@ Reproduced on main with a stub model before the fix:
   clarifying question and the planner's industry-reading note are written under someone else's project, and they
   appear in its console and timeline.
 - The planner's call is made on the stranger's behalf, against the operator's model budget, for a goal in a project
-  the caller has no standing in.
+  the caller has no standing in. On the build stack, a `build: true` plan also records that planning call in the
+  stranger's goal's own budget, so the spend shows up under their project's accounting too.
 - A viewer of a project could plan work in it, although `goal.create` is not a viewer's permission (contributor and
   above).
 
@@ -89,6 +96,13 @@ request.
   with one call, and a request with no `project_id` still lands in a new project the caller owns.
 - `TestReplan_RefusesAStrangerAndAViewerOfTheGoalsProject`: the replan route's existing check — 404 for a stranger,
   403 for a viewer, no call, no tasks. Green before and after; it holds the route that was already right.
+
+On the build stack, two further fences in `goals_build_test.go` —
+`TestCreateGoal_RefusesAProjectTheCallerIsNotAMemberOfWhenAskedForABuild` and
+`TestCreateGoal_RefusesAViewerOfTheProjectWhenAskedForABuild` — send the same two requests with `build: true`, so
+the refusal is proved on the request shape the fences above do not send. The check is shared (it runs before `Plan`
+or `PlanBuild` is chosen), so these add coverage rather than a second check; `-run` matches by substring, so the
+drill below exercises them too.
 
 ## Regression prevention
 

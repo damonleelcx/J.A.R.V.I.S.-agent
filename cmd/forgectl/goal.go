@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"os"
 	"strings"
@@ -48,9 +49,19 @@ func cmdGoalNew(ctx context.Context, cfg *config.Config, log *logx.Logger, args 
 	start := fs.Bool("start", false, "activate the goal immediately after planning")
 	build := fs.Bool("build", false, "plan the statement as a BUILD of a model: one task per step, run by\n"+
 		"\tforge-worker with the CAD kernel, each step kept as a version of the design")
+	maxTokens := fs.Int64("max-tokens", 0, "this goal's own token ceiling, at most FORGE_MAX_TOKENS_PER_GOAL\n"+
+		"\t(omit to use that ceiling)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
+	// Given or not, not zero or not: an explicit --max-tokens 0 goes to Draft and
+	// is refused there, the same as "max_tokens": 0 over HTTP.
+	var ceiling *int64
+	fs.Visit(func(f *flag.Flag) {
+		if f.Name == "max-tokens" {
+			ceiling = maxTokens
+		}
+	})
 	if *title == "" || *statement == "" || *email == "" {
 		fs.Usage()
 		return errs.New(op, errs.CodeValidationFailed).
@@ -88,6 +99,7 @@ func cmdGoalNew(ctx context.Context, cfg *config.Config, log *logx.Logger, args 
 		Statement: *statement,
 		Autonomy:  engine.Autonomy(*autonomy),
 		RiskTier:  engine.RiskTier(*risk),
+		MaxTokens: ceiling,
 	})
 	if err != nil {
 		return err
@@ -106,12 +118,12 @@ func cmdGoalNew(ctx context.Context, cfg *config.Config, log *logx.Logger, args 
 	// as a hang, and PRD NFR-02 asks for meaningful progress at least every 10s.
 	// A ticker is the least this can be and still be honest: it reports elapsed
 	// time, which is all that is actually known.
-	fmt.Printf("planning with %s …\n", intake.PlannerModel())
-	stopTicker := startElapsedTicker("  still planning")
-	plan := intake.Plan
+	plan, planner := intake.Plan, intake.PlannerModel()
 	if *build {
-		plan = intake.PlanBuild
+		plan, planner = intake.PlanBuild, intake.BuildPlannerModel()
 	}
+	fmt.Printf("planning with %s …\n", planner)
+	stopTicker := startElapsedTicker("  still planning")
 	outcome, err := plan(ctx, pool, goal)
 	stopTicker()
 	if err != nil {
@@ -176,7 +188,7 @@ func cmdGoalReplan(ctx context.Context, cfg *config.Config, log *logx.Logger, ar
 
 	if len(args) == 0 || strings.HasPrefix(args[0], "-") {
 		return errs.New(op, errs.CodeValidationFailed).
-			WithDetail("usage: forgectl goal replan <goal-id>")
+			WithDetail("usage: forgectl goal replan <goal-id> [--build]")
 	}
 	goalID := args[0]
 
@@ -197,9 +209,16 @@ func cmdGoalReplan(ctx context.Context, cfg *config.Config, log *logx.Logger, ar
 		WithCharacters(agent.NewCharacterStore(pool, log)).
 		WithLog(log)
 
+	// ‼️ --build is not remembered from `goal new --build`: nothing on the goal
+	// row says it was meant as a build, and without the flag a build whose plan
+	// never landed comes back as ordinary tasks.
+	replan := intake.Replan
+	if hasFlag(args[1:], "--build") {
+		replan = intake.ReplanBuild
+	}
 	fmt.Printf("planning %q with %s …\n", goal.Title, intake.PlannerModel())
 	stopTicker := startElapsedTicker("  still planning")
-	outcome, err := intake.Replan(ctx, pool, goal)
+	outcome, err := replan(ctx, pool, goal)
 	stopTicker()
 	if err != nil {
 		return err

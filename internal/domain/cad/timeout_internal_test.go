@@ -34,14 +34,29 @@ func cue(id string) geometry.Document {
 	}
 }
 
-// warm starts the kernel's process now, so a fence times the build and not a
-// test binary starting.
+// warm starts EVERY process in the pool now, so a fence times the build and not
+// a test binary starting.
+//
+// It starts them by hand rather than by building: a build starts only the one
+// slot it takes, which is the same thing in a pool of one and not in a pool of
+// two. Released in slot order, so the FIFO hands them out in that order too.
 func warm(t *testing.T, k *Kernel) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
-	if _, err := k.BuildDocument(ctx, cue("fine"), geometry.Millimetre, ""); err != nil {
-		t.Fatalf("the fake kernel did not start: %v", err)
+	var held []*sidecar
+	for i := 0; i < k.size; i++ {
+		s, err := k.acquire(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.start(ctx); err != nil {
+			t.Fatalf("the fake kernel did not start: %v", err)
+		}
+		held = append(held, s)
+	}
+	for _, s := range held {
+		k.release(s)
 	}
 }
 
@@ -145,6 +160,12 @@ func TestKernel_AfterATimeoutTheKernelStartsAFreshProcessForTheNextBuild(t *test
 	if _, err := k.BuildDocument(ctx, cue(cadtest.Slow), geometry.Millimetre, ""); !errs.Is(err, errs.CodeKernelTimeout) {
 		t.Fatalf("the slow build did not time out: %v", err)
 	}
+	// ‼️ From #100: the late build RELEASED its slot. Resetting a slot and losing
+	// it look identical from the next build's side when the pool has spares, and
+	// a pool that shrinks by one process per timeout ends up serving nothing.
+	if n := len(k.slots); n != k.size {
+		t.Fatalf("%d of %d slots are free after the timeout: the pool shrank", n, k.size)
+	}
 
 	got, err := k.BuildDocument(ctx, cue(cadtest.CrashOnce), geometry.Millimetre, "")
 	if err != nil {
@@ -215,20 +236,7 @@ func TestKernel_ATimeoutInOneSlotLeavesTheOtherSlotsServing(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
 
-	var held []*sidecar
-	for i := 0; i < 2; i++ {
-		s, err := k.acquire(ctx)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := s.start(ctx); err != nil {
-			t.Fatal(err)
-		}
-		held = append(held, s)
-	}
-	for _, s := range held {
-		k.release(s)
-	}
+	warm(t, k)
 	if n := cadtest.Starts(t, dir); n != 2 {
 		t.Fatalf("%d processes started warming a pool of two, want 2", n)
 	}

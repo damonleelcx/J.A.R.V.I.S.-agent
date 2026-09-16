@@ -306,7 +306,7 @@ var registry = map[Code]Definition{
 	// 2026-09-15 ceiling spike measured a 30,023-part car at 40-101 s, every run past
 	// the limit. The callers that read the flag would each pay for a retry that
 	// fails the same way — the engine worker (errs.IsRetryable) would spend an
-	// attempt and 30 s of the kernel process per try, and a person would click export
+	// attempt and 30 s of a kernel process per try, and a person would click export
 	// again. The mesh fetch and the agent's render fall back to primitives on any
 	// failure and never read the flag. A build that only crossed the limit because
 	// the machine was busy is the exception, and a person can still ask again.
@@ -314,7 +314,7 @@ var registry = map[Code]Definition{
 	// (TestKernel_ABuildThatRunsOutOfTimeIsNotRetriedAndSaysSo) fails if they drift.
 	CodeKernelTimeout: {CodeKernelTimeout, CategoryExternal, 504,
 		"The CAD kernel took too long: it was still building this design when the time a build is allowed ran out, so the build was stopped. The kernel itself is working.",
-		"Do not ask for the same build again straight away: it will take as long again. Build a smaller part of the design, or split the assembly into smaller subassemblies. A kernel build is allowed 30 seconds.", false},
+		"Do not ask for the same build again straight away: it will take as long again. Build part of the design at a time (open one subassembly), or split the assembly into smaller subassemblies. A kernel build is allowed 30 seconds.", false},
 	CodeToolRefused: {CodeToolRefused, CategoryBusiness, 403,
 		"The policy plane declined to run this tool for this goal.",
 		"Raise the goal's autonomy level or grant the missing capability if that is appropriate. A prohibited (R5) action is refused regardless of permissions.", false},

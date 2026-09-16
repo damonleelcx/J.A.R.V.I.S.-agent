@@ -52,9 +52,13 @@ type Removals struct {
 	Features []string `json:"features,omitempty"`
 	// A tree is changed through its DESIGN (decided 2026-09-14, stage D1f of
 	// docs/plan-2026-09-13-millions-of-parts.md): a definition or an assembly by id,
-	// and one child of one assembly as "assembly-id/child-id". Never a placed part's
-	// path: that would fork one occurrence away from the definition every other
+	// and one child of one assembly as "assembly-id/child-id". Never ONE placed
+	// part: that would fork one occurrence away from the definition every other
 	// occurrence still follows.
+	//
+	// A placed path may NAME the design, here and in a patch (decided 2026-09-15,
+	// stage E1): "front-left/hub" is read as the definition that placement places,
+	// and every occurrence of it changes. See edit_paths.go.
 	Definitions []string `json:"definitions,omitempty"`
 	Assemblies  []string `json:"assemblies,omitempty"`
 	Children    []string `json:"children,omitempty"`
@@ -77,6 +81,15 @@ func (e Edit) Empty() bool {
 }
 
 // Apply returns base with this edit made, and what could not be done.
+// ApplyAndReport says, as well, which placed parts each change reached.
+func (e Edit) Apply(base Document) (Document, []Problem) {
+	out, _, problems := e.ApplyAndReport(base)
+	return out, problems
+}
+
+// ApplyAndReport returns base with this edit made, every part, definition,
+// assembly and child it patched or removed with the placed parts that show it
+// (edit_paths.go), and what could not be done.
 //
 // Never mutates base: the stored variant must stay exactly what it was, or a
 // failed edit would corrupt the thing it failed to change.
@@ -85,7 +98,7 @@ func (e Edit) Empty() bool {
 // cabin" when there is no cabin means the agent and the person disagree about
 // what is on screen, and continuing quietly hides that disagreement behind a
 // version that looks successful.
-func (e Edit) Apply(base Document) (Document, []Problem) {
+func (e Edit) ApplyAndReport(base Document) (Document, []Reached, []Problem) {
 	var problems []Problem
 	fail := func(format string, args ...any) {
 		problems = append(problems, Problem{Severity: Error, Name: "edit",
@@ -106,6 +119,24 @@ func (e Edit) Apply(base Document) (Document, []Problem) {
 	out.Definitions = append([]Part(nil), base.Definitions...)
 	out.Assemblies = append([]Assembly(nil), base.Assemblies...)
 
+	// The tree is written out once before the edit, and only when the edit names
+	// something in it: that is what a placed path is read against, and where the
+	// report finds the occurrences a change reached.
+	touchesTree := len(e.Remove.Definitions) > 0 || len(e.Remove.Assemblies) > 0 || len(e.Remove.Children) > 0 ||
+		(e.Patch != nil && (len(e.Patch.Definitions) > 0 || len(e.Patch.Assemblies) > 0))
+	var before placedTree
+	defIDs, asmIDs := map[string]bool{}, map[string]bool{}
+	if touchesTree {
+		before = placedTreeOf(base)
+		for _, d := range base.Definitions {
+			defIDs[d.ID] = true
+		}
+		for _, a := range base.Assemblies {
+			asmIDs[a.ID] = true
+		}
+	}
+	var reached []Reached
+
 	for _, id := range e.Remove.Parts {
 		kept := out.Parts[:0]
 		found := false
@@ -119,7 +150,9 @@ func (e Edit) Apply(base Document) (Document, []Problem) {
 		out.Parts = kept
 		if !found {
 			fail("cannot remove part %q, which is not in this assembly", id)
+			continue
 		}
+		reached = append(reached, Reached{Kind: "part", ID: id, Removed: true})
 	}
 	for _, id := range e.Remove.Features {
 		kept := out.Features[:0]
@@ -137,7 +170,11 @@ func (e Edit) Apply(base Document) (Document, []Problem) {
 		}
 	}
 
-	for _, id := range e.Remove.Definitions {
+	for _, name := range e.Remove.Definitions {
+		id, path, ok := before.resolveDesign(name, false, defIDs, "remove", fail)
+		if !ok {
+			continue
+		}
 		kept := out.Definitions[:0]
 		found := false
 		for _, d := range out.Definitions {
@@ -149,10 +186,16 @@ func (e Edit) Apply(base Document) (Document, []Problem) {
 		}
 		out.Definitions = kept
 		if !found {
-			fail("cannot remove definition %q, which is not in this design", id)
+			fail("cannot remove definition %q, which is not in this design", name)
+			continue
 		}
+		reached = append(reached, Reached{Kind: "definition", ID: id, Path: path, Removed: true})
 	}
-	for _, id := range e.Remove.Assemblies {
+	for _, name := range e.Remove.Assemblies {
+		id, path, ok := before.resolveDesign(name, true, asmIDs, "remove", fail)
+		if !ok {
+			continue
+		}
 		kept := out.Assemblies[:0]
 		found := false
 		for _, a := range out.Assemblies {
@@ -164,11 +207,17 @@ func (e Edit) Apply(base Document) (Document, []Problem) {
 		}
 		out.Assemblies = kept
 		if !found {
-			fail("cannot remove assembly %q, which is not in this design", id)
+			fail("cannot remove assembly %q, which is not in this design", name)
+			continue
 		}
+		reached = append(reached, Reached{Kind: "assembly", ID: id, Path: path, Removed: true})
 	}
 	for _, path := range e.Remove.Children {
-		out.Assemblies = removeChild(out.Assemblies, path, fail)
+		var removed bool
+		out.Assemblies, removed = removeChild(out.Assemblies, path, fail)
+		if removed {
+			reached = append(reached, Reached{Kind: "child", ID: path, Removed: true})
+		}
 	}
 
 	if e.Patch != nil {
@@ -181,17 +230,32 @@ func (e Edit) Apply(base Document) (Document, []Problem) {
 		}
 		for _, in := range p.Parts {
 			out.Parts = upsertPart(out.Parts, in)
+			reached = append(reached, Reached{Kind: "part", ID: in.ID})
 		}
 		for _, in := range p.Features {
 			out.Features = upsertFeature(out.Features, in)
 		}
 		// The design of a tree, by id and whole, like parts: a definition changed here
-		// changes every placement of it.
+		// changes every placement of it. Named by a placed path, the entry takes the
+		// id of the design that path places, so it replaces that design rather than
+		// adding a definition called "front-left/hub".
 		for _, in := range p.Definitions {
+			id, path, ok := before.resolveDesign(in.ID, false, defIDs, "patch", fail)
+			if !ok {
+				continue
+			}
+			in.ID = id
 			out.Definitions = upsertPart(out.Definitions, in)
+			reached = append(reached, Reached{Kind: "definition", ID: id, Path: path})
 		}
 		for _, in := range p.Assemblies {
+			id, path, ok := before.resolveDesign(in.ID, true, asmIDs, "patch", fail)
+			if !ok {
+				continue
+			}
+			in.ID = id
 			out.Assemblies = upsertAssembly(out.Assemblies, in)
+			reached = append(reached, Reached{Kind: "assembly", ID: id, Path: path})
 		}
 		if strings.TrimSpace(p.Root) != "" {
 			out.Root = p.Root
@@ -215,7 +279,12 @@ func (e Edit) Apply(base Document) (Document, []Problem) {
 		out.Assumptions = appendNew(out.Assumptions, p.Assumptions)
 		out.NotVerified = appendNew(out.NotVerified, p.NotVerified)
 	}
-	return out, problems
+
+	var after placedTree
+	if touchesTree {
+		after = placedTreeOf(out)
+	}
+	return out, fillReached(reached, base, out, before, after), problems
 }
 
 func upsertPart(list []Part, in Part) []Part {
@@ -242,11 +311,11 @@ func upsertAssembly(list []Assembly, in Assembly) []Assembly {
 // children slice: list is a copy of the base's assemblies, but each one still
 // shares its children with the base, and filtering them in place would change
 // the stored variant this edit must never touch.
-func removeChild(list []Assembly, path string, fail func(format string, args ...any)) []Assembly {
+func removeChild(list []Assembly, path string, fail func(format string, args ...any)) ([]Assembly, bool) {
 	asmID, childID, ok := strings.Cut(path, PathSeparator)
 	if !ok || asmID == "" || childID == "" || strings.Contains(childID, PathSeparator) {
 		fail("cannot remove child %q: name it as \"assembly-id/child-id\", one child of one assembly", path)
-		return list
+		return list, false
 	}
 	for i := range list {
 		if list[i].ID != asmID {
@@ -263,13 +332,13 @@ func removeChild(list []Assembly, path string, fail func(format string, args ...
 		}
 		if !found {
 			fail("cannot remove child %q, which assembly %q does not place", childID, asmID)
-			return list
+			return list, false
 		}
 		list[i].Children = kept
-		return list
+		return list, true
 	}
 	fail("cannot remove child %q: there is no assembly %q in this design", path, asmID)
-	return list
+	return list, false
 }
 
 func upsertFeature(list []Feature, in Feature) []Feature {

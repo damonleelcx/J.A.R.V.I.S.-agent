@@ -3,6 +3,7 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -443,7 +444,28 @@ func (h *ConverseHandlers) Converse(w http.ResponseWriter, r *http.Request) {
 		})
 
 	if emitErr != nil {
-		h.deps.Log.WarnWith(r.Context(), logx.EventConverseTurn, emitErr, "user_id", user.ID)
+		/* ‼️ A reply that ARRIVED and could not be used is a turn that happened
+		 * and was paid for. It is kept — what the person was shown, the refused
+		 * reply, the tokens — rather than leaving only their own half in the
+		 * record and the cost nowhere, which is what a live exercise found
+		 * (docs/bugfix/2026-09-15-a-failed-workbench-turn-left-no-trace.md).
+		 *
+		 * The raw reply goes to the turn and NOT to the log: the log cannot be
+		 * deleted with the conversation (AUD-07), and a reply can quote what
+		 * the person said. The log line carries the code, the model and the
+		 * tokens, which are what an operator needs. */
+		var refused *agent.UnusableReply
+		kept := false
+		if errors.As(emitErr, &refused) {
+			model, tokens = refused.Model, refused.Tokens
+			said := h.keepFailed(r, convID, user.ID, req.ProjectID, emitErr, refused, firstTokenMS, start)
+			kept = said.NotKept == ""
+			if !kept {
+				_ = send(agent.StreamEvent{Kind: "conversation", Conversation: said})
+			}
+		}
+		h.deps.Log.WarnWith(r.Context(), logx.EventConverseTurn, emitErr, "user_id", user.ID,
+			"model", model, "tokens", tokens, "failed_reply_kept", kept)
 		// The status line is long gone, so the failure travels as an event.
 		payload, _ := json.Marshal(agent.StreamEvent{
 			Kind:  "error",
@@ -463,6 +485,32 @@ func (h *ConverseHandlers) Converse(w http.ResponseWriter, r *http.Request) {
 		"spoke", spoke,
 		"has_prototype", hadPrototype,
 		"variant_id", savedVariant)
+}
+
+// keepFailed records FORGE's half of a turn whose reply could not be used.
+//
+// # What is written
+//
+// The sentence the person was shown in place of a reply, as the turn's text: it
+// is what FORGE "said" from where they sat, and it keeps the record's rule that a
+// turn says something without inventing speech. The error code, the refused reply
+// (bounded, untrusted) and the measured cost go beside it (migration 0023).
+//
+// On a context of its own, bounded like keepGeometry's: the turn's context is
+// close to its budget by the time a reply is refused, and a failure that could
+// not be written because the turn had just failed would be the same gap again.
+func (h *ConverseHandlers) keepFailed(r *http.Request, convID, userID, projectID string, err error,
+	refused *agent.UnusableReply, firstTokenMS int64, start time.Time) *agent.ConversationKept {
+	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Second)
+	defer cancel()
+	return h.keepSaid(ctx, conversation.Said{
+		ConversationID: convID, OwnerID: userID, ProjectID: projectID,
+		Role: conversation.RoleForge, Text: userFacing(err),
+		Timing: turnTiming(refused.Model, firstTokenMS, 0, refused.Tokens,
+			h.deps.Clock.Now().Sub(start).Milliseconds()),
+		Failure:       string(errs.CodeOf(err)),
+		UnusableReply: refused.Raw,
+	})
 }
 
 // turnTiming packages what the server measured about one turn, keeping
@@ -747,6 +795,13 @@ func (h *ConverseHandlers) historyFor(ctx context.Context, convID, userID string
 	}
 	out := make([]agent.Turn, 0, len(turns))
 	for i := range turns {
+		// ‼️ A failed turn is not history. Its text is the error the person was
+		// shown and its kept reply is refused, untrusted model output; handed to
+		// the model as FORGE's own words, either would be a turn that never
+		// happened (PRD SEC-04, RSN-06). Migration 0023 §3.
+		if turns[i].Failed() {
+			continue
+		}
 		out = append(out, agent.Turn{Role: modelRole(turns[i].Role), Content: agent.HistoryContent(turns[i].Text, turns[i].Detail)})
 	}
 	return out, total - len(turns)

@@ -152,10 +152,27 @@ type NewVariant struct {
 	// could never state a domain no matter what the person had chosen on screen.
 	// The goal path gained a producer and this one did not, which left the same
 	// hole in half the product.
-	Industry  string
-	Agent     workspace.Agent
-	Generator string
-	Document  Document
+	Industry string
+	// ArtifactID appends this version to an artifact that already exists,
+	// instead of to the one the document's name resolves to.
+	//
+	// Empty — every save but a build step's — keeps today's rule exactly: the
+	// path comes from the name (artifactPath), so successive proposals of the
+	// same assembly accumulate and a renamed one starts a second history.
+	//
+	// A BUILD GOAL sets it, to the artifact its first kept step created, because
+	// a build's steps are one piece of work and a step that renames the model
+	// would otherwise split that work across two artifacts (#119). See
+	// workspace.Service.artifactFor for the whole argument, and for why a pinned
+	// id is checked against the project.
+	//
+	// ‼️ The document's name is still stored on the version. Pinning changes
+	// which history the version lands in, never what the version says the model
+	// is called.
+	ArtifactID string
+	Agent      workspace.Agent
+	Generator  string
+	Document   Document
 	// Inputs is what the geometry was made from — for a workbench proposal, the
 	// message that produced it. Required, because "made from nothing" and
 	// "nobody recorded what it was made from" are different and only one of

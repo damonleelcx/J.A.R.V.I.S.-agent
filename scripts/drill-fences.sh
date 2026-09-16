@@ -114,7 +114,6 @@ FILES=(
   deploy/verify.sh
   cmd/forgectl/blob.go
   internal/domain/geometry/mesh.go
-  internal/platform/errs/code.go
   internal/httpapi/assets/voice.js
   internal/httpapi/assets/workbench.js
   internal/httpapi/transcribe.go
@@ -137,16 +136,19 @@ FILES=(
   internal/domain/geometry/interface.go
   internal/domain/geometry/tree_features.go
   internal/domain/geometry/edit.go
+  internal/domain/geometry/edit_paths.go
   internal/agent/currentmodel.go
   internal/domain/geometry/limits.go
   internal/domain/geometry/repeat.go
   internal/domain/geometry/export.go
   internal/domain/geometry/service.go
+  internal/domain/workspace/service.go
   internal/platform/config/config.go
   internal/httpapi/assets/workbench.js
   internal/httpapi/assets/workbench.css
   internal/domain/geometry/subtree.go
   internal/httpapi/geometry_subtree.go
+  internal/platform/errs/code.go
   internal/agent/buildgoal.go
   internal/agent/spend.go
   internal/domain/engine/repository.go
@@ -163,6 +165,9 @@ FILES=(
   internal/domain/geometry/compare_structure.go
   internal/httpapi/geometry.go
   internal/httpapi/goals_start.go
+  internal/httpapi/assets/workbench.js
+  internal/agent/apply.go
+  internal/agent/intake.go
   internal/domain/engine/queue.go
   internal/agent/executor.go
   internal/agent/settle.go
@@ -933,16 +938,20 @@ drill "a design too large to draw is meshed anyway" internal/domain/geometry/mes
   's = s.replace("\tif refusal := doc.DrawRefusal(); refusal != \"\" {\n\t\treturn &Mesh{", "\tif refusal := doc.DrawRefusal(); false {\n\t\treturn &Mesh{", 1)' \
   ./internal/domain/geometry 'TestLimits_ThirtyThousandOccurrencesAreStoredButNotDrawn'
 
+# Re-anchored 2026-09-16 merging #110: the refusal split into DrawRefusal (4096)
+# and BuildRefusal (8192), and SolidsAndOperations now refuses at BuildRefusal.
 drill "the kernel request carries a design too large to build" internal/domain/geometry/solid.go \
-  's = s.replace("\tif refusal := d.DrawRefusal(); refusal != \"\" {\n\t\treturn nil, nil, nil, []string{refusal}", "\tif refusal := d.DrawRefusal(); false {\n\t\treturn nil, nil, nil, []string{refusal}", 1)' \
+  's = s.replace("\tif refusal := d.BuildRefusal(); refusal != \"\" {\n\t\treturn nil, nil, nil, []string{refusal}", "\tif refusal := d.BuildRefusal(); false {\n\t\treturn nil, nil, nil, []string{refusal}", 1)' \
   ./internal/domain/geometry 'TestLimits_ThirtyThousandOccurrencesAreStoredButNotDrawn'
 
 drill "a mesh file of a design too large to draw is written" internal/domain/geometry/export.go \
   's = s.replace("\tif refusal := v.Document.DrawRefusal(); refusal != \"\" {\n", "\tif refusal := v.Document.DrawRefusal(); false {\n", 1)' \
   ./internal/domain/geometry 'TestLimits_ThirtyThousandOccurrencesAreStoredButNotDrawn'
 
+# Re-anchored 2026-09-16 merging #110: cad.go now picks DrawRefusal or BuildRefusal
+# by build kind and tests `refusal` once; the mutation disables that single test.
 drill "the kernel is sent a design too large to build" internal/domain/cad/cad.go \
-  's = s.replace("\tif refusal := doc.DrawRefusal(); refusal != \"\" {\n", "\tif refusal := doc.DrawRefusal(); false {\n", 1)' \
+  's = s.replace("\tif refusal != \"\" {\n\t\treturn nil, errs.New(op, errs.CodeValidationFailed)", "\tif false {\n\t\treturn nil, errs.New(op, errs.CodeValidationFailed)", 1)' \
   ./internal/domain/cad 'TestKernel_ADesignTooLargeToBuildIsRefusedAndSaysWhy'
 
 drill "the storage door stores a design over the byte ceiling" internal/domain/geometry/service.go \
@@ -1937,8 +1946,10 @@ echo "A stopping worker's bookkeeping"
 # cancelled one and is logged as the database being unavailable. See
 # docs/bugfix/2026-09-15-a-stopping-worker-reported-its-own-stop-as-a-database-outage.md.
 # Needs FORGE_TEST_DATABASE_URL.
+# Anchored on afterTask's own line: the same WithTimeout(WithoutCancel(ctx)) also opens
+# outliving and handBack, and the bare expression hit outliving first and tested nothing.
 drill "a stopping worker's bookkeeping runs on the cancelled context" internal/agent/worker.go \
-  's = s.replace("context.WithTimeout(context.WithoutCancel(ctx), afterTaskTimeout)", "context.WithTimeout(ctx, afterTaskTimeout)", 1)' \
+  's = s.replace("book, cancel := context.WithTimeout(context.WithoutCancel(ctx), afterTaskTimeout)\n\tdefer cancel()\n\t// ", "book, cancel := context.WithTimeout(ctx, afterTaskTimeout)\n\tdefer cancel()\n\t// ", 1)' \
   ./internal/agent 'TestWorker_AWorkerStoppedMidTaskDoesNotReportItsBookkeepingAsADatabaseFailure|TestWorker_ATaskFinishedAsTheStopArrivesStillReleasesItsDependentsAndSettlesItsGoal'
 
 echo
@@ -1952,6 +1963,13 @@ echo "A stopped worker hands its task back"
 drill "a stopped worker leaves its task to its lease" internal/agent/worker.go \
   's = s.replace("\t\tif ctx.Err() != nil {\n\t\t\tw.handBack(ctx, task)\n\t\t}\n", "", 1)' \
   ./internal/agent 'TestWorker_AWorkerStoppedInsideAModelCallHandsItsTaskBackAtOnce|TestWorker_AWorkerStoppedBeforeItsTaskStartsHandsItBackUnstarted|TestWorker_AWorkerStoppedAtTheApprovalGateHandsItsTaskBackAndTheGateIsOpenedOnce'
+
+# A hand-back written on the context the stop cancelled fails as DATABASE_UNAVAILABLE and
+# leaves the task leased. Read through a worker stopped inside a build step (#104), where
+# the stop was first exercised live.
+drill "a stopped build step is handed back on the cancelled context" internal/agent/worker.go \
+  's = s.replace("book, cancel := context.WithTimeout(context.WithoutCancel(ctx), afterTaskTimeout)\n\tdefer cancel()\n\tswitch err := w.queue.Release(book", "book, cancel := context.WithTimeout(ctx, afterTaskTimeout)\n\tdefer cancel()\n\tswitch err := w.queue.Release(book", 1)' \
+  ./internal/agent 'TestBuildGoal_AStoppedWorkerDoesNotReportTheDatabaseUnavailable'
 
 drill "a stop still counts as an attempt" internal/domain/engine/queue.go \
   's = s.replace("not_before = $3,\n\t\t       attempt_count = greatest(attempt_count - 1, 0)\n", "not_before = $3\n", 1)' \
@@ -2107,6 +2125,50 @@ drill "a refused assembly hides which part it refused" internal/domain/cad/cad.g
   ./internal/domain/cad 'TestKernel_ARefusedAssemblyNamesWhatItRefused'
 
 echo
+echo "An edit by path reaches every occurrence, and says so"
+# Added 2026-09-15 (Phase 7, stage E1). A placed path names the definition or assembly
+# it places and the edit changes that design everywhere, never one copy; every edit
+# reports the placed parts it reached, and the turn says so, within a bound.
+drill "a path is added as a new definition instead of naming one" internal/domain/geometry/edit.go \
+  's = s.replace("\t\t\tin.ID = id\n\t\t\tout.Definitions = upsertPart(out.Definitions, in)", "\t\t\tout.Definitions = upsertPart(out.Definitions, in)", 1)' \
+  ./internal/domain/geometry 'TestEdit_APathToAPatternCopyChangesTheDefinitionAndReportsEveryCopy'
+
+drill "a pattern copy's path is recorded as its child's id" internal/domain/geometry/tree.go \
+  's = s.replace("record(treeSpan{path: slotName, ref: def.ID,", "record(treeSpan{path: name, ref: def.ID,", 1)' \
+  ./internal/domain/geometry 'TestEdit_APathToAPatternCopyChangesTheDefinitionAndReportsEveryCopy'
+
+drill "the report stops at a design's first placement" internal/domain/geometry/edit_paths.go \
+  's = s.replace("\t\tend = max(end, s.end)\n", "\t\tend = max(end, s.end)\n\t\tbreak\n", 1)' \
+  ./internal/domain/geometry 'TestEdit_ADefinitionInASubAssemblyPlacedTwiceReportsEveryOccurrenceAndNothingElse'
+
+drill "a path that places nothing is taken as a new id" internal/domain/geometry/edit_paths.go \
+  's = s.replace("if strings.Contains(name, PathSeparator) {", "if strings.Contains(name, PathSeparator+PathSeparator) {", 1)' \
+  ./internal/domain/geometry 'TestEdit_RefusesAPathThatPlacesNothingOrIsAmbiguousByName'
+
+drill "a path two placements write out is resolved by guessing" internal/domain/geometry/edit_paths.go \
+  's = s.replace("\t\t\tp.ambiguous[s.path] = true\n", "", 1)' \
+  ./internal/domain/geometry 'TestEdit_RefusesAPathThatPlacesNothingOrIsAmbiguousByName'
+
+drill "a repeated flat part is reported as its authored id" internal/domain/geometry/edit_paths.go \
+  's = s.replace("\t\te, _ = expandRepeats(e)\n", "", 1)' \
+  ./internal/domain/geometry 'TestEdit_AFlatDocumentEditReportsExactlyThePartsItEdited'
+
+drill "the turn is not told what an edit reached" internal/agent/converse.go \
+  's = s.replace("\tif note := describeReach(reached); note != \"\" {\n\t\tr.noteRepair(note)\n", "\tif note := describeReach(reached); note != \"\" {\n\t\t_ = note\n", 1)' \
+  ./internal/agent 'TestResolveEdit_TheStreamedTurnSaysEveryOccurrenceAnEditReached'
+
+drill "the note lists every occurrence however many there are" internal/agent/converse.go \
+  's = s.replace("\t\tif n > maxListedOccurrences {", "\t\tif n > maxListedOccurrences*100 {", 1)' \
+  ./internal/agent 'TestResolveEdit_ALongListOfOccurrencesIsCountedAndBounded'
+
+drill "every flat patch leaves a note" internal/agent/converse.go \
+  's = s.replace("\t\tif r.Path == \"\" && len(r.Occurrences) == 1 && r.Occurrences[0] == r.ID {", "\t\tif false {", 1)' \
+  ./internal/agent 'TestResolveEdit_AnEditThatReachesOnlyWhatItNamedAddsNoNote'
+
+drill "the contract's path example is not a path its example places" internal/agent/converse.go \
+  's = s.replace("{\"id\": \"left-wheel/spoke-3\", ...}", "{\"id\": \"left-wheel/spoke-9\", ...}", 1)' \
+  ./internal/agent 'TestTheContractTeachesAPathItsOwnExampleResolves'
+
 echo "Standard parts and patterns in the contract"
 # Added 2026-09-15 (Phase 2, stage A3). A part names a catalogued designation and is
 # written out as the revolve or extrusion it is, at the published figures, the same in
@@ -3396,58 +3458,6 @@ drill "the kernel counts buried at a different line than the turn" internal/doma
   's = s.replace("_BURIED_FRACTION = 0.5", "_BURIED_FRACTION = 0.4", 1)' \
   ./internal/domain/cad 'TestKernel_TheBuriedCountIsTheClashesTheTurnCallsBuried'
 
-# Added 2026-09-15 (kernel build ceiling and viewport follow-ups). Three findings of the
-# W2 acceptance run: a mesh reply, which is in millimetres, was drawn on a stage in the
-# document's unit; a search row named a part without saying where it was; and the
-# provenance banner covered most of an 800-px stage. docs/spikes/2026-09-15-kernel-build-ceiling.
-drill "a mesh reply is drawn in millimetres on a stage in the document's unit" internal/httpapi/assets/forge3d.js \
-  's = s.replace("var fromMM = opts.toMM > 0 ? 1 / opts.toMM : 1;", "var fromMM = 1;", 1)' \
-  ./internal/httpapi 'TestMeshSubtree_ADesignInInchesOrMetresIsDrawnWhereItsPrimitivesAre'
-
-drill "a copy's vertices are scaled and its translation is not" internal/httpapi/assets/forge3d.js \
-  's = s.replace("if (inst) { matrix[12] *= fromMM; matrix[13] *= fromMM; matrix[14] *= fromMM; }", "", 1)' \
-  ./internal/httpapi 'TestMeshSubtree_ADesignInInchesOrMetresIsDrawnWhereItsPrimitivesAre'
-
-drill "the whole design's reply is drawn in millimetres" internal/httpapi/assets/forge3d.js \
-  's = s.replace("{ wide: wide, toMM: unitToMM(this.spec.units) }", "{ wide: wide }", 1)' \
-  ./internal/httpapi 'TestMeshSubtree_ADesignInInchesOrMetresIsDrawnWhereItsPrimitivesAre'
-
-drill "a subtree's reply is drawn in millimetres" internal/httpapi/assets/forge3d.js \
-  's = s.replace("{ wide: lazy.wide, toMM: unitToMM(this.spec.units) }", "{ wide: lazy.wide }", 1)' \
-  ./internal/httpapi 'TestMeshSubtree_ADesignInInchesOrMetresIsDrawnWhereItsPrimitivesAre'
-
-drill "a search row names a part without saying where it is" internal/httpapi/assets/workbench.js \
-  's = s.replace("return treeRow(h.id, h.label, 0, false, false, null, h.id);", "return treeRow(h.id, h.label, 0, false, false, null);", 1)' \
-  ./internal/httpapi 'TestWorkbenchSearchRowsSayWhereEachOccurrenceIs'
-
-# Added 2026-09-16. #70 made geometry.Part.Name the whole occurrence path, so a search
-# row that takes its name from it says where twice and what never. These two hold the
-# other half of the same fence: the name column is the occurrence's OWN name.
-drill "a search row is named by its whole occurrence path" internal/httpapi/assets/forge3d.js \
-  "s = s.replace(\"return String(p.spec.occurrenceName || p.spec.name || '') || p.id;\", \"return String(p.spec.name || '') || p.id;\", 1)" \
-  ./internal/httpapi 'TestWorkbenchSearchRowsSayWhereEachOccurrenceIs'
-
-drill "an occurrence is named by its definition, not by the child placing it" internal/httpapi/assets/forge3d.js \
-  's = s.replace("              : childNames[childNames.length - 1];", "              : (lp.name || lp.id);", 1)' \
-  ./internal/httpapi 'TestWorkbenchSearchRowsSayWhereEachOccurrenceIs'
-
-drill "a search row's name column shows the path instead of the name" internal/httpapi/assets/workbench.js \
-  's = s.replace("return treeRow(h.id, h.label, 0, false, false, null, h.id);", "return treeRow(h.id, h.id, 0, false, false, null, h.id);", 1)' \
-  ./internal/httpapi 'TestWorkbenchSearchRowsSayWhereEachOccurrenceIs'
-
-drill "the provenance banner's details are never folded" internal/httpapi/assets/workbench.js \
-  's = s.replace("var open = !!state.provenanceOpen;", "var open = true;", 1)' \
-  ./internal/httpapi 'TestWorkbenchProvenanceBannerFoldsItsDetailsOffTheStage'
-
-drill "the provenance banner's toggle does nothing" internal/httpapi/assets/workbench.js \
-  's = s.replace("      state.provenanceOpen = !state.provenanceOpen;\n", "", 1)' \
-  ./internal/httpapi 'TestWorkbenchProvenanceBannerFoldsItsDetailsOffTheStage'
-
-drill "a folded banner's details are hidden only by load order" internal/httpapi/assets/workbench.css \
-  's = s.replace(".provenance .prov-details.hidden { display: none; }", "", 1)' \
-  ./internal/httpapi 'TestWorkbenchProvenanceBannerFoldsItsDetailsOffTheStage'
-
-
 echo "Last hot spots: a placed copy without a deepcopy, and containment once per group of pairs"
 # Added 2026-09-15 (last hot spots). The shapes phase and what was left of the
 # interference check after #114. A placed occurrence no longer deepcopies every
@@ -3535,7 +3545,291 @@ drill "the shape key stops canonicalizing a solid's dims" internal/domain/cad/si
   's = s.replace("tuple(sorted(dims.items()))", "tuple(dims.items())", 1)' \
   ./internal/domain/cad 'TestKernel_APlacedCopyIsTheCopyBuild123dMade'
 
-echo "Interference approach: the narrow phase one array at a time"
+echo "A repair may not add contacts: the found total is judged beside the buried one"
+# Added 2026-09-15 (a repair may not add contacts). #115 judged a repair by the kernel's
+# BURIED total, because #113's list is capped at 10,000 and so could never fall on a large
+# model, and it ignored the FOUND total deliberately. A repair that pulls a part out of the
+# solid it was inside and leaves it touching ten new neighbours is not a fix, and the found
+# total is the number that says so. Both are judged now: the buried total must fall AND the
+# found total must not rise, and a refusal names the test that failed with both numbers.
+#
+# ‼️ The found total gets the buried one's epistemics. found below buried PROVES found is a
+# floor — a reply carrying interferences_buried and not interferences_found — and a floor is
+# never compared as a total nor read as unchanged. Three of the five below hold that half,
+# because it is the half no reader can check by eye
+# (docs/bugfix/2026-09-15-a-found-floor-was-printed-as-a-total.md).
+drill "a repair that adds contacts is kept as long as fewer are buried" internal/agent/interference.go \
+  's = s.replace("\t\tcase a.found > b.found:\n", "\t\tcase false:\n", 1)' \
+  ./internal/agent 'TestInterference_ARepairThatBuriesFewerPartsButTouchesMoreIsRefused'
+
+drill "the found totals are compared the wrong way round" internal/agent/interference.go \
+  's = s.replace("a.found > b.found", "a.found < b.found", 1)' \
+  ./internal/agent 'TestInterference_(ARepairThatBuriesFewerPartsButTouchesMoreIsRefused|ARepairIsKeptWhenFewerAreBuriedAndNoMorePairsShareMaterial)'
+
+drill "a found total the kernel never took is called a total" internal/agent/interference.go \
+  's = s.replace("\tt.foundCounted = t.found >= t.buried\n", "\tt.foundCounted = true\n", 1)' \
+  ./internal/agent 'TestInterference_AFoundTotalTheKernelDidNotTakeIsNeitherComparedNorCalledUnchanged'
+
+drill "the found totals are compared when only the one after the repair is a total" internal/agent/interference.go \
+  's = s.replace("\t\tcase !b.foundCounted || !a.foundCounted:\n", "\t\tcase !a.foundCounted:\n", 1)' \
+  ./internal/agent 'TestInterference_AFoundTotalTheKernelDidNotTakeIsNeitherComparedNorCalledUnchanged'
+
+drill "a note states the pairs it listed as the pairs sharing material" internal/agent/interference.go \
+  's = s.replace("\tcase !t.foundCounted:\n", "\tcase false && !t.foundCounted:\n", 1)' \
+  ./internal/agent 'TestInterference_AFoundTotalTheKernelDidNotTakeIsNeitherComparedNorCalledUnchanged'
+# Added 2026-09-15 (kernel build ceiling and viewport follow-ups). Three findings of the
+# W2 acceptance run: a mesh reply, which is in millimetres, was drawn on a stage in the
+# document's unit; a search row named a part without saying where it was; and the
+# provenance banner covered most of an 800-px stage. docs/spikes/2026-09-15-kernel-build-ceiling.
+drill "a mesh reply is drawn in millimetres on a stage in the document's unit" internal/httpapi/assets/forge3d.js \
+  's = s.replace("var fromMM = opts.toMM > 0 ? 1 / opts.toMM : 1;", "var fromMM = 1;", 1)' \
+  ./internal/httpapi 'TestMeshSubtree_ADesignInInchesOrMetresIsDrawnWhereItsPrimitivesAre'
+
+drill "a copy's vertices are scaled and its translation is not" internal/httpapi/assets/forge3d.js \
+  's = s.replace("if (inst) { matrix[12] *= fromMM; matrix[13] *= fromMM; matrix[14] *= fromMM; }", "", 1)' \
+  ./internal/httpapi 'TestMeshSubtree_ADesignInInchesOrMetresIsDrawnWhereItsPrimitivesAre'
+
+drill "the whole design's reply is drawn in millimetres" internal/httpapi/assets/forge3d.js \
+  's = s.replace("{ wide: wide, toMM: unitToMM(this.spec.units) }", "{ wide: wide }", 1)' \
+  ./internal/httpapi 'TestMeshSubtree_ADesignInInchesOrMetresIsDrawnWhereItsPrimitivesAre'
+
+drill "a subtree's reply is drawn in millimetres" internal/httpapi/assets/forge3d.js \
+  's = s.replace("{ wide: lazy.wide, toMM: unitToMM(this.spec.units) }", "{ wide: lazy.wide }", 1)' \
+  ./internal/httpapi 'TestMeshSubtree_ADesignInInchesOrMetresIsDrawnWhereItsPrimitivesAre'
+
+drill "a search row names a part without saying where it is" internal/httpapi/assets/workbench.js \
+  's = s.replace("return treeRow(h.id, h.label, 0, false, false, null, h.id);", "return treeRow(h.id, h.label, 0, false, false, null);", 1)' \
+  ./internal/httpapi 'TestWorkbenchSearchRowsSayWhereEachOccurrenceIs'
+
+# Added 2026-09-16. #70 made geometry.Part.Name the whole occurrence path, so a search
+# row that takes its name from it says where twice and what never. These two hold the
+# other half of the same fence: the name column is the occurrence's OWN name.
+drill "a search row is named by its whole occurrence path" internal/httpapi/assets/forge3d.js \
+  "s = s.replace(\"return String(p.spec.occurrenceName || p.spec.name || '') || p.id;\", \"return String(p.spec.name || '') || p.id;\", 1)" \
+  ./internal/httpapi 'TestWorkbenchSearchRowsSayWhereEachOccurrenceIs'
+
+drill "an occurrence is named by its definition, not by the child placing it" internal/httpapi/assets/forge3d.js \
+  's = s.replace("              : childNames[childNames.length - 1];", "              : (lp.name || lp.id);", 1)' \
+  ./internal/httpapi 'TestWorkbenchSearchRowsSayWhereEachOccurrenceIs'
+
+drill "a search row's name column shows the path instead of the name" internal/httpapi/assets/workbench.js \
+  's = s.replace("return treeRow(h.id, h.label, 0, false, false, null, h.id);", "return treeRow(h.id, h.id, 0, false, false, null, h.id);", 1)' \
+  ./internal/httpapi 'TestWorkbenchSearchRowsSayWhereEachOccurrenceIs'
+
+drill "the provenance banner's details are never folded" internal/httpapi/assets/workbench.js \
+  's = s.replace("var open = !!state.provenanceOpen;", "var open = true;", 1)' \
+  ./internal/httpapi 'TestWorkbenchProvenanceBannerFoldsItsDetailsOffTheStage'
+
+drill "the provenance banner's toggle does nothing" internal/httpapi/assets/workbench.js \
+  's = s.replace("      state.provenanceOpen = !state.provenanceOpen;\n", "", 1)' \
+  ./internal/httpapi 'TestWorkbenchProvenanceBannerFoldsItsDetailsOffTheStage'
+
+drill "a folded banner's details are hidden only by load order" internal/httpapi/assets/workbench.css \
+  's = s.replace(".provenance .prov-details.hidden { display: none; }", "", 1)' \
+  ./internal/httpapi 'TestWorkbenchProvenanceBannerFoldsItsDetailsOffTheStage'
+
+echo "A build starts from the API"
+# Added 2026-09-15 (Phase 2, A1 follow-ups). POST /v1/goals takes build:true and plans
+# the statement as steps (Intake.PlanBuild); POST /v1/goals/{id}/plan takes the same
+# flag, or no body at all; the workbench's "Start this" sends it. The named project's
+# goal.create check these share is drilled under "Goal project permission" above.
+# Needs FORGE_TEST_DATABASE_URL.
+
+drill "build:true plans ordinary work" internal/httpapi/goals_start.go \
+  's = s.replace("\t\tplan = h.intake.PlanBuild\n", "\t\t_ = h.intake.PlanBuild\n", 1)' \
+  ./internal/httpapi 'TestCreateGoal_ABuildIsPlannedAsOneTaskPerStepEachWaitingForTheOneBefore|TestBuildGoal_StepsAndKeptVersionsShowOnTheGoalAndItsTimeline'
+
+drill "a replan forgets it was asked for a build" internal/httpapi/goals_start.go \
+  's = s.replace("\t\treplan = h.intake.ReplanBuild\n", "\t\t_ = h.intake.ReplanBuild\n", 1)' \
+  ./internal/httpapi 'TestReplan_ADraftIsReplannedAsABuildWhenAsked'
+
+drill "a replan with no body is refused" internal/httpapi/goals_start.go \
+  's = s.replace("\tif r.ContentLength != 0 {\n", "\tif r.ContentLength != 0 || true {\n", 1).replace("err != nil && !errors.Is(err, io.EOF) {", "err != nil && errors.Is(err, err) != errors.Is(io.EOF, nil) {", 1)' \
+  ./internal/httpapi 'TestReplan_AnEmptyBodyIsStillAccepted'
+
+drill "the workbench never asks for a build" internal/httpapi/assets/workbench.js \
+  's = s.replace("      build: !!state.planAsBuild\n", "      build: false\n", 1)' \
+  ./internal/httpapi 'TestWorkbench_StartThisSendsWhetherToPlanABuild'
+
+echo "View ceiling on Linux (#110)"
+# Added 2026-09-15 (ceiling on Linux). forged in a container limited like its pod
+# (1 CPU, 1 GiB) built 8,192- and 8,315-part designs through the mesh endpoint in
+# 5.7-13.0 s, three runs each, with the 30 s kernel timeout; 16,556 took up to 21.5 s.
+# So a VIEW is built to 8192 and a STEP export, mass report, Go mesh and mesh file stay
+# at 4096. The cad fence runs against cadtest's fake process; the httpapi ones need node.
+# docs/spikes/2026-09-15-ceiling-on-linux
+drill "the kernel's view ceiling is back at 4096" internal/domain/geometry/limits.go \
+  's = s.replace("const maxBuiltParts = 8192", "const maxBuiltParts = 4096", 1)' \
+  ./internal/domain/geometry 'TestLimits_TheKernelBuildsAViewOf8192PartsAndNothingElsePast4096'
+
+drill "the view ceiling is raised past what was measured" internal/domain/geometry/limits.go \
+  's = s.replace("const maxBuiltParts = 8192", "const maxBuiltParts = 16384", 1)' \
+  ./internal/domain/geometry 'TestLimits_TheKernelBuildsAViewOf8192PartsAndNothingElsePast4096'
+
+drill "every kernel build is allowed the view's ceiling" internal/domain/cad/cad.go \
+  's = s.replace("\tif format == \"mesh\" && !properties {", "\tif true {", 1)' \
+  ./internal/domain/cad 'TestKernel_BuildsAViewOf8192PartsAndRefusesEveryOtherBuildPast4096'
+
+drill "a build that is not a STEP export is allowed the view's ceiling" internal/domain/cad/cad.go \
+  's = s.replace("\tif format == \"mesh\" && !properties {", "\tif format != \"step\" {", 1)' \
+  ./internal/domain/cad 'TestKernel_BuildsAViewOf8192PartsAndRefusesEveryOtherBuildPast4096'
+
+drill "a view is refused at the tighter ceiling" internal/domain/cad/cad.go \
+  's = s.replace("\t\trefusal = doc.BuildRefusal()", "\t\trefusal = doc.DrawRefusal()", 1)' \
+  ./internal/domain/cad 'TestKernel_BuildsAViewOf8192PartsAndRefusesEveryOtherBuildPast4096'
+
+drill "the kernel request is cut at the tighter ceiling" internal/domain/geometry/solid.go \
+  's = s.replace("\tif refusal := d.BuildRefusal(); refusal != \"\" {", "\tif refusal := d.DrawRefusal(); refusal != \"\" {", 1)' \
+  ./internal/domain/geometry 'TestLimits_TheKernelBuildsAViewOf8192PartsAndNothingElsePast4096'
+
+drill "the Go mesh is built to the view's ceiling" internal/domain/geometry/mesh.go \
+  's = s.replace("\tif refusal := doc.DrawRefusal(); refusal != \"\" {", "\tif refusal := doc.BuildRefusal(); refusal != \"\" {", 1)' \
+  ./internal/domain/geometry 'TestLimits_TheKernelBuildsAViewOf8192PartsAndNothingElsePast4096'
+
+drill "a mesh file is exported to the view's ceiling" internal/domain/geometry/export.go \
+  's = s.replace("\tif refusal := v.Document.DrawRefusal(); refusal != \"\" {", "\tif refusal := v.Document.BuildRefusal(); refusal != \"\" {", 1)' \
+  ./internal/domain/geometry 'TestLimits_TheKernelBuildsAViewOf8192PartsAndNothingElsePast4096'
+
+drill "the browser loads a design in pieces that the kernel builds whole" internal/httpapi/assets/forge3d.js \
+  's = s.replace("var LAZY_OCCURRENCES = 8192;", "var LAZY_OCCURRENCES = 4096;", 1)' \
+  ./internal/httpapi 'TestRendererLoadsLazilyExactlyPastTheKernelsViewCeiling'
+
+drill "the browser asks for a whole mesh the kernel refuses" internal/httpapi/assets/forge3d.js \
+  's = s.replace("var LAZY_OCCURRENCES = 8192;", "var LAZY_OCCURRENCES = 16384;", 1)' \
+  ./internal/httpapi 'TestRendererLoadsLazilyExactlyPastTheKernelsViewCeiling'
+
+drill "a subtree past the view ceiling is sent to the kernel" internal/httpapi/geometry_subtree.go \
+  's = s.replace("\tcase parts > geometry.MaxBuiltParts():", "\tcase parts > 2*geometry.MaxBuiltParts():", 1)' \
+  ./internal/httpapi 'TestMeshSubtree_LimitsAreTheSubtreesOwn'
+
+drill "the exported ceiling is still the old one" internal/domain/geometry/subtree.go \
+  's = s.replace("func MaxBuiltParts() int { return maxBuiltParts }", "func MaxBuiltParts() int { return maxDrawnParts }", 1)' \
+  ./internal/httpapi 'TestRendererLoadsLazilyExactlyPastTheKernelsViewCeiling|TestMeshSubtree_LimitsAreTheSubtreesOwn'
+
+echo
+
+echo
+echo "Build goal UX"
+# Added 2026-09-15 (build goal UX), from a live exercise of a build goal started at the
+# workbench. A refused reply is kept with its cost and never replayed as history
+# (docs/bugfix/2026-09-15-a-failed-workbench-turn-left-no-trace.md); a stated maximum of
+# steps is told to the planner and enforced (…-a-build-planned-more-steps-than-it-was-allowed.md);
+# the proposal card follows the goal it started until it settles; a goal's tasks list in
+# plan order (…-a-goals-tasks-were-listed-out-of-step-order.md); POST /v1/goals takes a
+# bounded max_tokens. Needs FORGE_TEST_DATABASE_URL, and node for the card.
+drill "a refused reply is returned without the reply or its cost" internal/agent/converse_stream.go \
+  's = s.replace("\t\t\treturn unusable(err, accumulated.String(), chunk.Model, chunk.Usage)\n", "\t\t\treturn err\n", 1)' \
+  ./internal/agent 'TestRespondStream_AReplyThatCouldNotBeUsedComesBackWithTheReplyAndItsCost'
+
+drill "a failed turn is not recorded" internal/httpapi/converse.go \
+  's = s.replace("\t\tif errors.As(emitErr, &refused) {\n", "\t\tif false && errors.As(emitErr, &refused) {\n", 1)' \
+  ./internal/httpapi 'TestConverse_AReplyThatCouldNotBeUsedIsKeptWithWhatItCost'
+
+drill "a failed turn is replayed as history" internal/httpapi/converse.go \
+  's = s.replace("\t\tif turns[i].Failed() {\n\t\t\tcontinue\n\t\t}\n", "", 1)' \
+  ./internal/httpapi 'TestConverse_AFailedTurnIsNotGivenToTheModelAsHistory'
+
+drill "a plan over the stated limit is kept whole" internal/agent/assemble.go \
+  's = s.replace("\tif stated && len(steps) > limit {\n", "\tif false && stated && len(steps) > limit {\n", 1)' \
+  ./internal/agent 'TestPlanBuild_AStatedMaximumOfStepsIsHonouredAndSaid|TestPlanBuildGoal_AStatedMaximumOfStepsIsTheGoalsPlanAndItsRationaleSaysSo'
+
+drill "the planner is not told the limit" internal/agent/assemble.go \
+  's = s.replace("\tif stated {\n\t\trequest +=", "\tif false {\n\t\trequest +=", 1)' \
+  ./internal/agent 'TestPlanBuild_AStatedMaximumOfStepsIsHonouredAndSaid'
+
+drill "the card never stops polling" internal/httpapi/assets/workbench.js \
+  's = s.replace("        if (!p.settled && !stopped) timer = later(tick, interval);\n", "        if (!stopped) timer = later(tick, interval);\n", 1)' \
+  ./internal/httpapi 'TestWorkbench_TheCardShowsABuildsProgressAndStopsWhenItSettles|TestWorkbench_TheCardSaysABuildWasStoppedByItsBudget'
+
+drill "a goal that is gone is asked for forever" internal/httpapi/assets/workbench.js \
+  's = s.replace("        if (err && (err.status === 401 || err.status === 403 || err.status === 404)) return;\n", "", 1)' \
+  ./internal/httpapi 'TestWorkbench_TheCardRetriesADroppedReadAndStopsForAGoalThatIsGone'
+
+drill "Start it never follows the goal" internal/httpapi/assets/workbench.js \
+  's = s.replace("        followStartedGoal();\n      })", "      })", 1)' \
+  ./internal/httpapi 'TestWorkbench_TheProposalCardFollowsTheGoalItStarted'
+
+drill "tasks written at one instant have no order" internal/domain/engine/repository.go \
+  's = s.replace("order by created_at asc, idempotency_key asc, id asc", "order by created_at asc", 1)' \
+  ./internal/domain/engine 'TestListTasks_ABuildsStepsWrittenAtOneInstantAreListedInStepOrder'
+
+drill "a plan's order is not written" internal/agent/apply.go \
+  's = s.replace("stamped := now.Add(time.Duration(position) * time.Microsecond)", "stamped := now.Add(time.Duration(position*0) * time.Microsecond)", 1)' \
+  ./internal/agent 'TestApply_APlansTasksAreListedInThePlansOrder'
+
+drill "a goal's token ceiling is not stored" internal/agent/intake.go \
+  's = s.replace("string(goal.Autonomy), string(goal.RiskTier), req.MaxTokens, now); err != nil {", "string(goal.Autonomy), string(goal.RiskTier), (*int64)(nil), now); err != nil {", 1)' \
+  ./internal/httpapi 'TestCreateGoal_ATokenCeilingIsStoredOnTheGoal'
+
+drill "a token ceiling above the engine's is accepted" internal/agent/intake.go \
+  's = s.replace("if in.maxTokensPerGoal > 0 && *req.MaxTokens > in.maxTokensPerGoal {", "if false && *req.MaxTokens > in.maxTokensPerGoal {", 1)' \
+  ./internal/httpapi 'TestCreateGoal_ATokenCeilingOutOfRangeIsRefusedBeforeAnythingIsWritten'
+
+drill "POST /v1/goals drops the ceiling" internal/httpapi/goals_start.go \
+  's = s.replace("\t\tMaxTokens: req.MaxTokens,\n", "", 1)' \
+  ./internal/httpapi 'TestCreateGoal_ATokenCeilingIsStoredOnTheGoal'
+
+# Added 2026-09-15 (card checked), from watching the card drive a build in a real browser
+# against a stand-in model: docs/spikes/2026-09-15-card-checked. Two defects the fences above
+# could not see — the card sent no project, and it showed a budget stop as a permissions error.
+
+# rsplit, not replace: "project_id: state.projectID" is sent by the conversation turn too, and
+# that one comes FIRST in the file. The last occurrence is the card's.
+drill "the card starts a goal with no project" internal/httpapi/assets/workbench.js \
+  's = "project_idX: state.projectID".join(s.rsplit("project_id: state.projectID", 1))' \
+  ./internal/httpapi 'TestWorkbench_TheCardStartsAGoalInTheConversationsProject'
+
+drill "a budget stop is shown as a raw error" internal/httpapi/assets/workbench.js \
+  's = s.replace("if (withCode) return withCode[1].trim();", "if (false) return withCode[1].trim();", 1)' \
+  ./internal/httpapi 'TestWorkbench_TheCardSaysWhatABudgetStopMeantWithoutTheErrorsPlumbing'
+
+# Added 2026-09-15 (one artifact per build), from the decision that a build goal pins the
+# artifact its first kept step created. A step that renamed the model used to open a SECOND
+# artifact and split one build's history in two, each half in its own file (#119).
+#
+# ‼️ These six need FORGE_TEST_DATABASE_URL. Every property is a property of rows — which
+# artifact a version hangs off — so without a database they SKIP, and the drill reports them
+# as UNPROVEN rather than as fences that held.
+
+drill "a build step drops its build's artifact" internal/agent/buildgoal.go \
+  's = s.replace("\t\t\tArtifactID: prev.ArtifactID,\n", "", 1)' \
+  ./internal/agent 'TestBuildGoal_ABuildThatRenamesTheModelKeepsOneArtifactWithAVersionPerStep'
+
+drill "a save ignores the artifact it was pinned to" internal/domain/geometry/service.go \
+  's = s.replace("ArtifactID: strings.TrimSpace(n.ArtifactID),", "ArtifactID: \"\",", 1)' \
+  ./internal/domain/geometry 'TestSave_APinnedSaveAppendsToThatArtifactAndStillStoresTheNewName'
+
+drill "a change ignores the artifact it pins" internal/domain/workspace/service.go \
+  's = s.replace("pinned := strings.TrimSpace(c.ArtifactID)", "pinned := \"\"", 1)' \
+  ./internal/domain/geometry 'TestSave_APinnedSaveAppendsToThatArtifactAndStillStoresTheNewName'
+
+# The pin applied UNCONDITIONALLY — the plausible wrong version of this change. The first step
+# that keeps anything has no artifact to pin, and pinning nothing finds nothing.
+drill "the artifact is pinned even when nothing pinned one" internal/domain/workspace/service.go \
+  's = s.replace("\tif pinned == \"\" {", "\tif false {", 1)' \
+  ./internal/agent 'TestBuildGoal_AStepWhosePredecessorKeptNothingStillCreatesTheArtifact'
+
+drill "a pinned artifact is not checked against the project" internal/domain/workspace/service.go \
+  's = s.replace("if artifact.ProjectID != c.ProjectID {", "if false {", 1)' \
+  ./internal/domain/geometry 'TestSave_APinnedArtifactFromAnotherProjectIsRefused'
+
+# "ArtifactID: source.ArtifactID," appears twice — Adopt first, then Respec — so replace(..., 1)
+# takes Adopt's and the rsplit below takes Respec's. One drill each: they are two call sites and
+# either could lose the pin on its own.
+#
+# ‼️ The adopt fence had to be STRENGTHENED before this drill could redden it. It adopted v1,
+# whose own name still resolves to the artifact v1 is on — the name rule and the artifact rule
+# agree there, so removing the pin changed nothing and the drill stayed green. It now adopts the
+# RENAMED version, which is where the two rules disagree.
+drill "adopting forgets which artifact it came from" internal/domain/geometry/service.go \
+  's = s.replace("\t\tArtifactID: source.ArtifactID,\n", "", 1)' \
+  ./internal/domain/geometry 'TestAdopt_AppendsToTheArtifactTheSourceIsOnAfterARename'
+
+drill "re-specifying forgets which artifact it came from" internal/domain/geometry/service.go \
+  's = "".join(s.rsplit("\t\tArtifactID: source.ArtifactID,\n", 1))' \
+  ./internal/domain/geometry 'TestRespec_AppendsToTheArtifactTheSourceIsOnAfterARename'
+
+echo "Interference narrow phase in arrays (#128)"
 # Added 2026-09-16 (interference approach). #121 took the last micro-optimisation out
 # of the per-pair keying loop and moved the check 0.94-0.98x. This branch keys a whole
 # GROUP of pairs at once instead: a pair's relative translation and its containment
@@ -3636,7 +3930,7 @@ drill "every clash found is counted buried" internal/domain/cad/sidecar.py \
   's = s.replace("    buried = int((fr >= _BURIED_FRACTION).sum())", "    buried = int((fr >= _INTERFERENCE_MIN_FRACTION).sum())", 1)' \
   ./internal/domain/cad 'TestKernel_TheArrayNarrowPhaseGivesTheLoopsAnswerOnThreeFixtures'
 
-
+echo
 
 if [ "$MODE" = "list" ]; then
   exit 0

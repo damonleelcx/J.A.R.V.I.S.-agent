@@ -154,12 +154,41 @@ func (c *Conversation) repairIfPartsOverlap(ctx context.Context, reply *Reply, s
 //
 // A check the pair budget stopped (V2) is judged as it always was, by what it
 // checked; that it stopped is said by coverageNote, and never read as clean.
+//
+// # Why the found total is judged too (a repair may not add contacts)
+//
+// Decided 2026-09-15. Fewer buried is not by itself a fix. A repair is free to drag a
+// part out of the solid it was inside and leave it grazing ten new neighbours, and
+// judged on the buried total alone that reads as a success: the count fell, the note
+// said so, and the document that gets installed touches MORE of the model than the one
+// it replaced. The found total is the number that says so — every pair sharing
+// material, buried or not — and #115 ignored it deliberately.
+//
+// So both totals are judged. The buried total must FALL and the found total must not
+// RISE, and a refusal says which of the two tests failed, with both numbers. A rise is
+// a rise: there is no allowance, because a part moved out of one solid and into contact
+// with another has not been fixed, it has been moved. Equal is not a rise — a clash that
+// goes from 100% buried to a 2% graze is one pair sharing material before and after, and
+// that is the repair working.
+//
+// ‼️ The found total gets the same epistemics as the buried one, and for the same
+// reason: a floor must never be compared as a total. A check cannot find fewer pairs
+// sharing material than it says are buried, so found BELOW buried proves found is a
+// floor — a reply that carried interferences_buried and not interferences_found, which
+// buildOf leaves at the list's length. The found test is then not applied at all, the
+// repair is judged on the buried total alone, and the note SAYS the found totals were
+// not comparable. Never "unchanged": that would pass a test on a number nobody took.
+// docs/bugfix/2026-09-15-a-found-floor-was-printed-as-a-total.md
 
 // buriedTally is what one kernel check says about buried clashes.
 type buriedTally struct {
 	buried, listed, found int
 	// counted says buried is every buried clash found, not a floor from a cut list.
 	counted bool
+	// foundCounted says found is every pair sharing material, not a floor. A check
+	// cannot find fewer pairs than it says are buried, so found below buried is a reply
+	// that counted the buried ones and not the found ones (repair may not add contacts).
+	foundCounted bool
 }
 
 func tallyOf(s builtSheet) buriedTally {
@@ -169,19 +198,35 @@ func tallyOf(s builtSheet) buriedTally {
 	if s.BuriedCounted {
 		t.buried, t.counted = max(s.Buried, t.buried), true
 	}
+	// ‼️ found is NOT raised to the buried count to make the pair consistent. A floor is
+	// reported as the floor it is and flagged, so the rule can decline to compare it
+	// (repairVerdict); inventing "at least this many pairs share material" here would
+	// hand the rule, and the reader, a number the kernel never took.
+	t.foundCounted = t.found >= t.buried
 	return t
 }
 
 func (t buriedTally) String() string {
-	if t.counted {
+	switch {
+	case !t.counted:
+		return fmt.Sprintf("%d buried clash(es) in the %d it listed of %d pair(s) sharing material, "+
+			"and it did not count how many of the rest are buried", t.buried, t.listed, t.found)
+	case !t.foundCounted:
+		// ‼️ Never the sentence below when found is a floor: with 768,000 counted buried
+		// behind a list of 10,000 it reads "768000 buried clash(es) among 10000 pair(s)
+		// sharing material", which is a floor stated as a total and arithmetic nonsense.
+		return fmt.Sprintf("%d buried clash(es), and it did not say how many pairs share material "+
+			"in all (it listed %d)", t.buried, t.listed)
+	default:
 		return fmt.Sprintf("%d buried clash(es) among %d pair(s) sharing material", t.buried, t.found)
 	}
-	return fmt.Sprintf("%d buried clash(es) in the %d it listed of %d pair(s) sharing material, "+
-		"and it did not count how many of the rest are buried", t.buried, t.listed, t.found)
 }
 
 // repairVerdict says whether a repair re-built as after is kept over before, and why,
 // with the kernel's totals.
+//
+// Two tests, and the note names the one that failed: the buried total must fall, and
+// the found total must not rise (a repair may not add contacts).
 func repairVerdict(before, after builtSheet, noNewFaults bool) (keep bool, why string) {
 	switch {
 	case !after.FromKernel:
@@ -197,7 +242,19 @@ func repairVerdict(before, after builtSheet, noNewFaults bool) (keep bool, why s
 	case !a.counted:
 		return false, totals + ", so fewer could not be shown"
 	case a.buried < b.buried:
-		return true, totals
+		// Fewer are buried. Whether the parts were moved OUT of the model or merely into
+		// contact with more of it is the found total's answer, when both are totals.
+		switch {
+		case !b.foundCounted || !a.foundCounted:
+			return true, totals + ", so fewer are buried; whether more pairs share material " +
+				"could not be compared"
+		case a.found > b.found:
+			return false, totals + fmt.Sprintf(": fewer buried, but the pairs sharing material "+
+				"rose from %d to %d, so parts were moved into contact with more of the model "+
+				"rather than out of it", b.found, a.found)
+		default:
+			return true, totals
+		}
 	case a.buried == b.buried:
 		return false, totals + ": no fewer"
 	default:
@@ -315,6 +372,11 @@ func repairAsks(doc *Prototype, found []geometry.Interference, total int) []geom
 // the bound rather than assume it (docs/spikes/2026-09-15-last-hot-spots). The shipped
 // path is repairAsks and only it chooses the budget; nothing else passes one but
 // TestScaleUp_MeasureTheRepairPrompt, which sweeps candidates to choose the constant.
+//
+// ‼️ The sweep prices the lines that are actually SENT, notes and names included: the
+// placedByNotes call and problemBytes both sit inside here, below the budget, not
+// above it in repairAsks. A sweep that priced bare findings would choose a constant
+// for a prompt nobody sends.
 func repairAsksWithin(doc *Prototype, found []geometry.Interference, total, limit int) []geometry.Problem {
 	// Each line first says which child places its parts (placedByNotes), because a
 	// list that fits is asked line for line and a path alone is not editable. The

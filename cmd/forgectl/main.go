@@ -46,9 +46,12 @@ Goals:
       --industry <name>   domain for the NEW project; "project industry" lists them.
                           Omitted means "Other": lower autonomy and expert review.
       --start             activate immediately instead of leaving it a draft
+      --max-tokens <n>    this goal's own token ceiling; positive, at most
+                          FORGE_MAX_TOKENS_PER_GOAL (omitted: that ceiling)
   goal replan <id>    Plan a draft goal whose plan never landed. Planning is a model call
                       and can time out; what survives is a draft with no tasks, which cannot
                       be started because it would run with nothing to run.
+      --build             plan it as a build again (not remembered from "goal new --build")
   goal start <id>     Activate a drafted goal so workers can claim its tasks
   goal show <id>      Current state, tasks, pending approvals, and the timeline
   goal answer <id> "..."  Answer the question FORGE refused to guess past. Consequential

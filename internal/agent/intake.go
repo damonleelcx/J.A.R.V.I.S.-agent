@@ -46,6 +46,9 @@ type Intake struct {
 	planner *Planner
 	applier *PlanApplier
 	clock   clock.Clock
+	// maxTokensPerGoal is the engine's ceiling per goal (FORGE_MAX_TOKENS_PER_GOAL),
+	// which a goal's own ceiling may lower and never raise. Zero means none.
+	maxTokensPerGoal int64
 	// log is optional. Nil is a legal caller — forgectl's tests build an intake
 	// without one — and the hazard load then happens silently rather than not at
 	// all.
@@ -58,7 +61,8 @@ func NewIntake(client llm.Client, char persona.Character, engineCfg config.Engin
 		planner: NewPlanner(client, char),
 		applier: NewPlanApplier(engine.NewRepository(), engine.NewQueue(),
 			engine.NewBudgetGuard(engineCfg), clk),
-		clock: clk,
+		clock:            clk,
+		maxTokensPerGoal: engineCfg.MaxTokensPerGoal,
 	}
 }
 
@@ -108,6 +112,14 @@ type DraftRequest struct {
 	Statement string
 	Autonomy  engine.Autonomy
 	RiskTier  engine.RiskTier
+	// MaxTokens is the goal's own token ceiling, stored in forge_goals.max_tokens.
+	// Nil inherits the engine's (FORGE_MAX_TOKENS_PER_GOAL). When set it must be
+	// positive and not above the engine's: BudgetGuard reads a goal's own ceiling
+	// INSTEAD of the engine's, so a larger one would raise the limit a deployment
+	// set, from a request body.
+	//
+	// Until 2026-09-15 nothing could set it: a live exercise set it by SQL.
+	MaxTokens *int64
 }
 
 // PlanOutcome is what planning produced.
@@ -143,6 +155,21 @@ func (in *Intake) Draft(ctx context.Context, pool *db.Pool, req DraftRequest) (*
 	if !req.RiskTier.Valid() {
 		return nil, errs.New(op, errs.CodeValidationFailed).
 			WithDetail("risk tier %q is not recognised", req.RiskTier)
+	}
+	// ‼️ Checked before anything is written, like every rule above: a refused
+	// ceiling must not leave a draft behind with no ceiling at all.
+	if req.MaxTokens != nil {
+		if *req.MaxTokens <= 0 {
+			return nil, errs.New(op, errs.CodeValidationFailed).
+				WithDetail("a goal's token ceiling must be a positive number of tokens, got %d. "+
+					"Leave it out to use this deployment's ceiling", *req.MaxTokens)
+		}
+		if in.maxTokensPerGoal > 0 && *req.MaxTokens > in.maxTokensPerGoal {
+			return nil, errs.New(op, errs.CodeValidationFailed).
+				WithDetail("a token ceiling of %d is above this deployment's maximum of %d per goal "+
+					"(FORGE_MAX_TOKENS_PER_GOAL). A goal's own ceiling can lower that limit, not raise it",
+					*req.MaxTokens, in.maxTokensPerGoal)
+		}
 	}
 
 	// The industry is a property of the PROJECT, so asking for one while naming an
@@ -201,12 +228,15 @@ func (in *Intake) Draft(ctx context.Context, pool *db.Pool, req DraftRequest) (*
 		Autonomy: req.Autonomy, RiskTier: req.RiskTier,
 		CreatedAt: now, UpdatedAt: now,
 	}
+	// On the returned goal as well as the row, so the planning call that follows
+	// is charged against this ceiling rather than the engine's.
+	goal.Budget.MaxTokens = req.MaxTokens
 	if _, err := pool.Exec(ctx, `
 		insert into forge_goals (id, project_id, created_by, title, statement, status,
-			autonomy, risk_tier, completion_criteria, created_at, updated_at)
-		values ($1,$2,$3,$4,$5,'draft',$6,$7,'[]'::jsonb,$8,$8)`,
+			autonomy, risk_tier, completion_criteria, max_tokens, created_at, updated_at)
+		values ($1,$2,$3,$4,$5,'draft',$6,$7,'[]'::jsonb,$8,$9,$9)`,
 		goal.ID, goal.ProjectID, goal.CreatedBy, goal.Title, goal.Statement,
-		string(goal.Autonomy), string(goal.RiskTier), now); err != nil {
+		string(goal.Autonomy), string(goal.RiskTier), req.MaxTokens, now); err != nil {
 		return nil, errs.Wrap(op, errs.CodeDatabaseUnavail, err)
 	}
 	return goal, nil
@@ -368,10 +398,26 @@ func (in *Intake) recordIndustryReading(ctx context.Context, pool *db.Pool, goal
 // So the boundary is the recoverable state and nothing wider, and the refusal
 // says which of the two conditions failed rather than a single unhelpful "no".
 func (in *Intake) Replan(ctx context.Context, pool *db.Pool, goal *engine.Goal) (*PlanOutcome, error) {
+	if err := replannable(ctx, pool, goal); err != nil {
+		return nil, err
+	}
+	return in.Plan(ctx, pool, goal)
+}
+
+// ReplanBuild is Replan for a build: the same boundary, planned as steps.
+func (in *Intake) ReplanBuild(ctx context.Context, pool *db.Pool, goal *engine.Goal) (*PlanOutcome, error) {
+	if err := replannable(ctx, pool, goal); err != nil {
+		return nil, err
+	}
+	return in.PlanBuild(ctx, pool, goal)
+}
+
+// replannable is the boundary Replan documents: a draft with no tasks.
+func replannable(ctx context.Context, pool *db.Pool, goal *engine.Goal) error {
 	const op = "agent.Intake.Replan"
 
 	if goal.Status != engine.GoalDraft {
-		return nil, errs.New(op, errs.CodeConflict).
+		return errs.New(op, errs.CodeConflict).
 			WithDetail("goal %s is %s, not a draft. Replanning exists to recover a plan that never "+
 				"landed; changing the plan of a goal that is already running would leave two sets of "+
 				"tasks racing for it, and this build has no way to retire the first.", goal.ID, goal.Status)
@@ -379,15 +425,15 @@ func (in *Intake) Replan(ctx context.Context, pool *db.Pool, goal *engine.Goal) 
 	var tasks int
 	if err := pool.QueryRow(ctx,
 		`select count(*) from forge_tasks where goal_id = $1`, goal.ID).Scan(&tasks); err != nil {
-		return nil, errs.Wrap(op, errs.CodeDatabaseUnavail, err)
+		return errs.Wrap(op, errs.CodeDatabaseUnavail, err)
 	}
 	if tasks > 0 {
-		return nil, errs.New(op, errs.CodeConflict).
+		return errs.New(op, errs.CodeConflict).
 			WithDetail("goal %s already has %d task(s), so its plan did land. Replanning would add a "+
 				"second plan beside the first rather than replacing it. Start the goal, or create a "+
 				"new one if the plan is wrong.", goal.ID, tasks)
 	}
-	return in.Plan(ctx, pool, goal)
+	return nil
 }
 
 // Start activates a planned goal so its tasks become claimable.

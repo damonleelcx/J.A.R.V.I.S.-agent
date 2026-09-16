@@ -820,9 +820,10 @@
       'What is measured starts at Send.</li>' +
       '<li><b>Retrieval time.</b> A turn is marked as having quoted memory or not; how long ' +
       'that took is not separated from the rest of the turn.</li>' +
-      '<li><b>A turn that failed before it replied.</b> Nothing is recorded for one: the ' +
-      'record is appended when a reply lands. Those are in the server log with their error ' +
-      'code — so a quiet history is not the same as a healthy one.</li>' +
+      '<li><b>A turn that failed before any reply arrived</b> — a model that could not be ' +
+      'reached, a turn cut off. Nothing is recorded for one; those are in the server log with ' +
+      'their error code — so a quiet history is not the same as a healthy one. A reply that ' +
+      'arrived and could not be used is listed below, marked failed.</li>' +
       '<li><b>Tool calls, plans and approvals</b> (NFR-05). Those belong to goals, ' +
       'which run in the worker and report on their own timeline — see Operations, not here.</li>' +
       '<li><b>Anybody else\'s turns.</b> The history below is your own, not the deployment\'s. ' +
@@ -873,10 +874,13 @@
   }
 
   function historyRow(t) {
-    return '<li class="wbturn">' +
+    /* A refused reply is listed because its tokens were spent, and marked so it
+     * is not read as a reply. The server leaves it out of both medians. */
+    return '<li class="wbturn' + (t.failed ? ' bad' : '') + '">' +
       '<div class="wbturn-h">' +
         '<span class="wbver-w">' + esc(t.at) + '</span>' +
         (t.model ? '<span class="wbver-a">' + esc(t.model) + '</span>' : '') +
+        (t.failed ? '<span class="wbver-a">failed — the reply could not be used</span>' : '') +
       '</div>' +
       '<div class="wbturn-m">' +
         '<span>first token ' + ms(t.first_token_ms) + ' <i>server</i></span>' +
