@@ -259,7 +259,178 @@
    * which makes a list called "supported shapes" say the opposite of the truth
    * about three of them. */
   var SUPPORTED = ['box', 'cylinder', 'cone', 'sphere', 'plane',
-                   'extrusion', 'revolve', 'sweep', 'section', 'gear'];
+                   'extrusion', 'revolve', 'sweep', 'section', 'gear', 'standard'];
+
+  /* ---- standard parts ----------------------------------------------------
+   *
+   * The browser's copy of internal/domain/geometry/standard.go (Phase 2, stage A3):
+   * a designation — "ISO 4762 M8x30", "ISO 15 608" — written out as the revolve or
+   * extrusion the exporter builds, at the published figures in the document's units.
+   * Every row is the Go table's row, and every expression is written in the order Go
+   * writes it, so the same doubles come out. A copy for the reason the gear has one:
+   * the browser cannot call Go, and a copy that drifted would draw a screw the STEP
+   * file does not hold. TestRendererDrawsTheSameStandardPartAsTheExporter holds every
+   * designation in the catalogue to Go's answer. */
+  var ISO4762_LENGTHS = [5, 6, 8, 10, 12, 16, 20, 25, 30, 35, 40, 45, 50, 55, 60, 65, 70, 80, 90, 100, 110, 120];
+  /* size, d, head diameter dk, head height k, shortest and longest length */
+  var ISO4762 = [['M3', 3, 5.5, 3, 5, 30], ['M4', 4, 7, 4, 6, 40], ['M5', 5, 8.5, 5, 8, 50],
+                 ['M6', 6, 10, 6, 10, 60], ['M8', 8, 13, 8, 12, 80], ['M10', 10, 16, 10, 16, 100],
+                 ['M12', 12, 18, 12, 20, 120]];
+  /* size, d, across flats s, height m */
+  var ISO4032 = [['M3', 3, 5.5, 2.4], ['M4', 4, 7, 3.2], ['M5', 5, 8, 4.7], ['M6', 6, 10, 5.2],
+                 ['M8', 8, 13, 6.8], ['M10', 10, 16, 8.4], ['M12', 12, 18, 10.8]];
+  /* size, d1, d2, h */
+  var ISO7089 = [['M3', 3.2, 7, 0.5], ['M4', 4.3, 9, 0.8], ['M5', 5.3, 10, 1], ['M6', 6.4, 12, 1.6],
+                 ['M8', 8.4, 16, 1.6], ['M10', 10.5, 20, 2], ['M12', 13, 24, 2.5]];
+  /* series, bore, outside diameter, width */
+  var ISO15 = [['608', 8, 22, 7], ['6000', 10, 26, 8], ['6001', 12, 28, 8], ['6002', 15, 32, 9],
+               ['6003', 17, 35, 10], ['6004', 20, 42, 12], ['6005', 25, 47, 12]];
+  /* kind, B, H, t */
+  var EN10219 = [['SHS', 20, 20, 2], ['SHS', 30, 30, 3], ['SHS', 40, 40, 3], ['SHS', 40, 40, 4],
+                 ['SHS', 50, 50, 5], ['RHS', 40, 20, 2], ['RHS', 60, 40, 3]];
+  /* leg a, t, root radius r1, toe radius r2 */
+  var EN10056 = [[20, 3, 3.5, 2], [30, 3, 5, 2.5], [40, 4, 6, 3], [50, 5, 7, 3.5]];
+  /* geometry/units.go unitTable: the factor to millimetres and every alias. */
+  var UNIT_TABLE = [[1, ['mm', 'millimetre', 'millimeter', 'millimetres', 'millimeters']],
+                    [10, ['cm', 'centimetre', 'centimeter', 'centimetres', 'centimeters']],
+                    [1000, ['m', 'metre', 'meter', 'metres', 'meters']],
+                    [25.4, ['in', 'inch', 'inches', '"']]];
+
+  function unitToMM(units) {
+    var norm = String(units == null ? '' : units).trim().toLowerCase();
+    for (var i = 0; i < UNIT_TABLE.length; i++) {
+      if (norm && UNIT_TABLE[i][1].indexOf(norm) >= 0) return UNIT_TABLE[i][0];
+    }
+    return 0;
+  }
+
+  function circleLoop(r) {
+    return [{ x: r, y: 0, via: { x: 0, y: -r } }, { x: -r, y: 0, via: { x: 0, y: r } }];
+  }
+
+  function ringSection(inner, outer, width) {
+    return [{ x: inner, y: -width / 2 }, { x: outer, y: -width / 2 }, { x: outer, y: width / 2 }, { x: inner, y: width / 2 }];
+  }
+
+  var STANDARD_CATALOG = (function () {
+    var out = [];
+    ISO4762.forEach(function (s) {
+      ISO4762_LENGTHS.forEach(function (l) {
+        if (l < s[4] || l > s[5]) return;
+        out.push({ designation: 'ISO 4762 ' + s[0] + 'x' + l, draw: function (k) {
+          var r = s[1] / 2 * k, head = s[2] / 2 * k, length = l * k, height = s[3] * k;
+          return { shape: 'revolve', profile: [{ x: 0, y: -length }, { x: r, y: -length }, { x: r, y: 0 },
+                   { x: head, y: 0 }, { x: head, y: height }, { x: 0, y: height }] };
+        } });
+      });
+    });
+    ISO4032.forEach(function (n) {
+      out.push({ designation: 'ISO 4032 ' + n[0], draw: function (k) {
+        var corner = n[2] / Math.sqrt(3) * k, half = n[2] * k / 2;
+        return { shape: 'extrusion', turned: true, depth: n[3] * k,
+                 profile: [{ x: corner, y: 0 }, { x: corner / 2, y: half }, { x: -corner / 2, y: half },
+                           { x: -corner, y: 0 }, { x: -corner / 2, y: -half }, { x: corner / 2, y: -half }],
+                 holes: [circleLoop(n[1] / 2 * k)] };
+      } });
+    });
+    ISO7089.forEach(function (w) {
+      out.push({ designation: 'ISO 7089 ' + w[0], draw: function (k) {
+        return { shape: 'revolve', profile: ringSection(w[1] / 2 * k, w[2] / 2 * k, w[3] * k) };
+      } });
+    });
+    ISO15.forEach(function (b) {
+      out.push({ designation: 'ISO 15 ' + b[0], draw: function (k) {
+        return { shape: 'revolve', profile: ringSection(b[1] / 2 * k, b[2] / 2 * k, b[3] * k) };
+      } });
+    });
+    EN10219.forEach(function (h) {
+      out.push({ designation: 'EN 10219 ' + h[0] + ' ' + h[1] + 'x' + h[2] + 'x' + h[3], needsLength: true,
+        draw: function (k, length) {
+          var x = h[1] / 2 * k, y = h[2] / 2 * k, t = h[3] * k;
+          var outside = 2 * h[3] * k, inside = h[3] * k;
+          return { shape: 'extrusion', depth: length,
+                   profile: [{ x: -x, y: -y, radius: outside }, { x: x, y: -y, radius: outside },
+                             { x: x, y: y, radius: outside }, { x: -x, y: y, radius: outside }],
+                   holes: [[{ x: -(x - t), y: -(y - t), radius: inside }, { x: x - t, y: -(y - t), radius: inside },
+                            { x: x - t, y: y - t, radius: inside }, { x: -(x - t), y: y - t, radius: inside }]] };
+        } });
+    });
+    EN10056.forEach(function (a) {
+      out.push({ designation: 'EN 10056 L' + a[0] + 'x' + a[0] + 'x' + a[1], needsLength: true,
+        draw: function (k, length) {
+          var leg = a[0] * k, t = a[1] * k, root = a[2] * k, toe = a[3] * k;
+          return { shape: 'extrusion', depth: length, profile: [{ x: 0, y: 0 }, { x: leg, y: 0 },
+                   { x: leg, y: t, radius: toe }, { x: t, y: t, radius: root }, { x: t, y: leg, radius: toe }, { x: 0, y: leg }] };
+        } });
+    });
+    return out;
+  })();
+
+  /* geometry normaliseDesignation: ASCII letters upper-cased, the multiplication
+   * sign read as x, runs of spaces as one. No more forgiving than Go, or the browser
+   * would draw a bearing the exporter refuses. */
+  function normaliseDesignation(s) {
+    s = String(s == null ? '' : s).replace(/\u00d7/g, 'x');
+    var t = '';
+    for (var i = 0; i < s.length; i++) {
+      var ch = s.charAt(i);
+      t += (ch >= 'a' && ch <= 'z') ? ch.toUpperCase() : ch;
+    }
+    return t.split(/\s+/).filter(function (w) { return w.length > 0; }).join(' ');
+  }
+
+  var STANDARD_INDEX = {};
+  STANDARD_CATALOG.forEach(function (s, i) { STANDARD_INDEX[normaliseDesignation(s.designation)] = i; });
+
+  function isStandardShape(p) {
+    return !!p && String(p.shape || '').trim().toLowerCase() === 'standard';
+  }
+
+  /* standardPart is the part written out as geometry/standard.go writes it, or null
+   * where Go refuses it: no designation, one not in the catalogue, no unit it can be
+   * sized in, or a section with no length. */
+  function standardPart(part, units) {
+    part = part || {};
+    if (!String(part.standard || '').trim()) return null;
+    var i = STANDARD_INDEX[normaliseDesignation(part.standard)];
+    if (i === undefined) return null;
+    var toMM = unitToMM(units);
+    if (!toMM) return null;
+    var spec = STANDARD_CATALOG[i], length = 0;
+    if (spec.needsLength) {
+      var l = (part.size || {}).length;
+      if (!(typeof l === 'number' && isFinite(l) && l > 0)) return null;
+      length = l;
+    }
+    var drawn = spec.draw(1 / toMM, length);
+    var q = shallowCopy(part);
+    q.shape = drawn.shape;
+    q.standard = spec.designation;
+    q.profile = drawn.profile;
+    if (drawn.holes) q.holes = drawn.holes; else delete q.holes;
+    delete q.path; delete q.path_closed; delete q.script; delete q.size_from; delete q.axis;
+    q.size = {};
+    if (drawn.shape === 'revolve') q.axis = 'y'; else q.size.depth = drawn.depth;
+    if (!q.name) q.name = spec.designation;
+    if (drawn.turned) {
+      /* Local Z up along +Y, inside the part's own placement (standard.go). */
+      var st = storedPlacement(thenPlacement(placementOf(part.position, part.rotation, !!part.mirrored),
+                                             placementOf(null, [-90, 0, 0], false)));
+      q.position = st.position;
+      q.rotation = st.rotation;
+      q.mirrored = st.mirrored;
+    }
+    return q;
+  }
+
+  /* geometry expandStandards. A designation Go refuses is left for buildResolved,
+   * which draws it as a labelled unit box — the bargain an unreadable gear has. */
+  function expandStandards(parts, units) {
+    return (parts || []).map(function (p) {
+      if (!isStandardShape(p)) return p;
+      return standardPart(p, units) || p;
+    });
+  }
 
   /* ---- gears ------------------------------------------------------------
    *
@@ -1894,7 +2065,8 @@
     // The tree first, then repeats — the exporter's order (geometry.Expanded).
     var tree = expandAssemblies(spec);
     // Top-level features first, then the tree's, as the exporter orders them.
-    var expanded = expandRepeats(tree.parts, (spec.features || []).concat(tree.features));
+    // Standard parts after the tree and before the repeats, as geometry.Expanded does.
+    var expanded = expandRepeats(expandStandards(tree.parts, spec.units), (spec.features || []).concat(tree.features));
     var removed = {};
     expanded.features.forEach(function (f) {
       if (!f) return;
@@ -1973,6 +2145,13 @@
       /* A spur gear: its numbers become an extrusion's outline, the way the
        * exporter builds it (gear.go). Any outline the part carries is ignored,
        * as it is there. */
+      /* A standard part reaches here only when expandStandards refused it. */
+      case 'standard':
+        return {
+          geo: boxGeometry(1, 1, 1),
+          approximated: 'this standard part names a designation FORGE does not have, or the document ' +
+                        'states no unit to size it in — the notes say which — so it is drawn as a unit box'
+        };
       case 'gear': {
         var gear = gearOutline(s);
         if (!gear) {
@@ -3083,6 +3262,10 @@
      * diameter the way the stage draws it, and for the fence that holds this copy
      * of gear.go to Go's answer point for point. */
     gearOutline: gearOutline,
+    /* Exported for the fence that holds this copy of standard.go to Go's answer,
+     * designation by designation. */
+    standardPart: standardPart,
+    standardDesignations: function () { return STANDARD_CATALOG.map(function (s) { return s.designation; }); },
     /* The list Studio.load draws, exported so TestRendererExpandsARepeatLikeTheExporter
      * holds the browser's copies to the exporter's, and so the workbench attaches a
      * kernel mesh to the copy it belongs to. */

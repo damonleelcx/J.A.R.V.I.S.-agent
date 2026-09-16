@@ -68,8 +68,13 @@ How to answer:
 // went on telling the model "there is no sine or cosine here" — a rule the model
 // reads, describing a grammar that had changed underneath it, which is worse
 // than no rule at all. ExpressionFunctionsAreNamedInTheContract fences it.
+//
+// The catalogue of standard parts is substituted the same way and for the same
+// reason (Phase 2, stage A3): a designation the prompt offers and the table does
+// not have is a part every model that trusts the prompt gets refused.
+// TestTheContractTeachesEveryStandardPartFORGEHas fences it.
 var geometryContract = fmt.Sprintf(geometryContractTemplate,
-	strings.Join(geometry.ExpressionFunctions(), ", "))
+	geometry.StandardGuide(), strings.Join(geometry.ExpressionFunctions(), ", "))
 
 var geometryContractTemplate = `Reply with JSON only:
 
@@ -93,8 +98,9 @@ var geometryContractTemplate = `Reply with JSON only:
         "id": "stable-kebab-id",
         "name": "human name",
         "shape": "box" | "cylinder" | "cone" | "sphere" | "plane" |
-                 "extrusion" | "revolve" | "sweep" | "section" | "gear" | "script",
+                 "extrusion" | "revolve" | "sweep" | "section" | "gear" | "standard" | "script",
         "shape_note": "for \"extrusion\", size only needs \"depth\"",
+        "standard": "only for shape \"standard\": a designation from the catalogue below",
         "size": {"width":1,"height":1,"depth":1,"radius":0.5,"radius_top":0.5},
         "profile": [{"x": 0, "y": 0, "radius": 0, "x_from": "", "y_from": "plate_height",
                      "via": null or {"x": 0, "y": 0}}],
@@ -312,6 +318,36 @@ About "prototype":
   lays a gear flat with its axle upright. A hub, a keyway or spokes are ordinary
   parts, fused or cut. Helical, bevel and internal gears and racks are not this
   shape.
+- "standard" is a CATALOGUED part — a screw, a nut, a washer, a bearing or a
+  structural section — and it is how every one of those is made: never draw a
+  screw's head and shank, and never type a bearing's diameters. Give only its
+  designation, exactly as it is listed below —
+    {"id": "screw", "name": "Cap screw", "shape": "standard", "standard": "ISO 4762 M8x30"}
+  FORGE draws it at the published figures, in the document's units. A screw's
+  axis is the part's own Y: its position is the underside of the head, and the
+  shank runs down -Y. A nut, a washer and a bearing are centred on their position
+  with their axis along Y. A section runs along the part's own Z for the length
+  in its "size": {"length": 600}, centred like an extrusion's depth; a hollow
+  section is centred on its axis, and an angle has its heel at the origin and its
+  legs along +X and +Y. Threads, sockets and a bearing's balls are not drawn. A
+  designation that is not listed here is refused, and the nearest are named:
+%s
+- WRITE A DESIGN ONCE AND PLACE IT MANY TIMES. The same screw, bracket or seat
+  appearing again is its definition placed again, never its geometry written a
+  second time; and many of them in a row, a grid or a ring are ONE child with a
+  "pattern", never a child each. FORGE notices children written out one at a
+  time where one pattern would place them, and says which pattern to write.
+  Worked example — six cap screws round a flange:
+      "definitions": [
+        {"id": "screw", "name": "Cap screw", "shape": "standard", "standard": "ISO 4762 M6x20"}
+      ],
+      "assemblies": [
+        {"id": "flange",
+         "children": [
+           {"id": "screw", "ref": "screw", "position": [40, 0, 0], "pattern": {"kind": "polar", "count": 6, "about": "y"}}
+         ]}
+      ],
+      "root": "flange"
 - "script" is the last resort, and only when this deployment offers it: a part
   whose shape is "script" carries build123d Python in "script", and the kernel
   runs it and imports what it built. It is for a shape this vocabulary genuinely
@@ -1190,6 +1226,9 @@ func (c *Conversation) Respond(ctx context.Context, projectID string, history []
 	// it works — one more reason the streaming path is the one people use.
 	c.repairIfScriptsFail(ctx, &reply, current, nil)
 	noteVanished(&reply, current)
+	// And what is written out one child at a time where one pattern would do, at the
+	// same point the streamed path says it (repetition.go).
+	noteRepetition(&reply)
 	return &reply, nil
 }
 
