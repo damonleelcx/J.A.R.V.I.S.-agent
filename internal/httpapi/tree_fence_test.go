@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/geometry"
@@ -44,7 +45,7 @@ func TestRendererFlattensATreeLikeTheExporter(t *testing.T) {
       const spec = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
       process.stdout.write(JSON.stringify(F.partsToDraw(spec).map(function (p) {
         return { id: p.spec.id, label: p.spec.name || p.spec.id,
-                 position: p.spec.position, rotation: p.spec.rotation, mirrored: !!p.spec.mirrored };
+                 position: p.spec.position, rotation: p.spec.rotation, mirrored: !!p.spec.mirrored, removed: !!p.removed };
       })));
     `
 	if err := os.WriteFile(harness, []byte(script), 0o600); err != nil {
@@ -192,6 +193,29 @@ func TestRendererFlattensATreeLikeTheExporter(t *testing.T) {
 				geometry.Child{ID: "kept", Ref: "damper", At: "bolt-1/hub"})
 			return d
 		}()},
+		{"an assembly's cut, in every occurrence", func() geometry.Document {
+			d := corner()
+			d.Assemblies[1].Features = []geometry.Feature{{ID: "bore", Op: "cut", Of: "damper", With: []string{"spring"}}}
+			return d
+		}()},
+		{"a cut whose tools are a whole pattern", func() geometry.Document {
+			d := corner()
+			d.Assemblies[1].Children[1].Pattern = &geometry.Pattern{Kind: "linear", Count: 3, Offset: []float64{0, 0, 12}}
+			d.Assemblies[1].Features = []geometry.Feature{{ID: "holes", Op: "cut", Of: "damper", With: []string{"spring"}}}
+			return d
+		}()},
+		{"a parent's cut reaching one copy inside a child", func() geometry.Document {
+			d := corner()
+			d.Assemblies[1].Children[1].Pattern = &geometry.Pattern{Kind: "linear", Count: 2, Offset: []float64{0, 0, 12}}
+			d.Assemblies[0].Children = append(d.Assemblies[0].Children, geometry.Child{ID: "frame", Ref: "damper"})
+			d.Assemblies[0].Features = []geometry.Feature{{ID: "notch", Op: "cut", Of: "frame", With: []string{"front-left/spring-2"}}}
+			return d
+		}()},
+		{"a feature naming nothing leaves its tools solid", func() geometry.Document {
+			d := corner()
+			d.Assemblies[1].Features = []geometry.Feature{{ID: "bore", Op: "cut", Of: "damper", With: []string{"spring", "nowhere"}}}
+			return d
+		}()},
 		{"top-level parts beside the tree", func() geometry.Document {
 			d := corner()
 			d.Parts = []geometry.Part{box("frame")}
@@ -251,11 +275,23 @@ func TestRendererFlattensATreeLikeTheExporter(t *testing.T) {
 				ID, Label          string
 				Position, Rotation []float64
 				Mirrored           bool
+				Removed            bool
 			}
 			if err := json.Unmarshal(out, &got); err != nil {
 				t.Fatalf("unreadable renderer output: %v", err)
 			}
-			want := tc.doc.Expanded().Parts
+			expanded := tc.doc.Expanded()
+			want := expanded.Parts
+			// Material being removed is drawn ghosted: the tools of a cut or a loft,
+			// including those an assembly's own features name (D1e).
+			removed := map[string]bool{}
+			for _, f := range expanded.Features {
+				if op := strings.ToLower(f.Op); op == "cut" || op == "loft" {
+					for _, id := range f.With {
+						removed[id] = true
+					}
+				}
+			}
 			if len(got) != len(want) {
 				t.Fatalf("the browser draws %d parts, the exporter builds %d", len(got), len(want))
 			}
@@ -263,6 +299,9 @@ func TestRendererFlattensATreeLikeTheExporter(t *testing.T) {
 				g := got[i]
 				if g.Mirrored != w.Mirrored {
 					t.Fatalf("%s: browser mirrored=%v, exporter mirrored=%v", w.ID, g.Mirrored, w.Mirrored)
+				}
+				if g.Removed != removed[w.ID] {
+					t.Fatalf("%s: the browser draws it removed=%v, the exporter removes it=%v", w.ID, g.Removed, removed[w.ID])
 				}
 				if g.ID != w.ID || g.Label != w.Label() {
 					t.Fatalf("part %d: browser %q/%q, exporter %q/%q", i, g.ID, g.Label, w.ID, w.Label())

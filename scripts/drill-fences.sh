@@ -125,6 +125,7 @@ FILES=(
   internal/domain/geometry/frame.go
   internal/domain/geometry/pattern.go
   internal/domain/geometry/interface.go
+  internal/domain/geometry/tree_features.go
   internal/httpapi/goals_start.go
   internal/agent/worker.go
   internal/domain/engine/repository.go
@@ -742,6 +743,66 @@ drill "the browser ignores where a sibling is placed" internal/httpapi/assets/fo
 
 drill "the browser ignores a sibling's own attachment" internal/httpapi/assets/forge3d.js \
   "s = s.replace('          var ref = reference(a, c);\n', '          var ref = placementOf(null, null, false);\n', 1)" \
+  ./internal/httpapi 'TestRendererFlattensATreeLikeTheExporter'
+
+echo
+echo "Features declared on an assembly"
+# Added 2026-09-14 (Phase 1, stage D1e). An assembly's features are written out per
+# occurrence, naming the parts its placements wrote out; each drill breaks one term.
+drill "an assembly's features are ignored" internal/domain/geometry/tree.go \
+  's = s.replace("occurrenceFeatures(a, path, index, out.Parts, fail)", "occurrenceFeatures(Assembly{}, path, index, out.Parts, fail)", 1)' \
+  ./internal/domain/geometry 'TestTreeFeature_AWeldDeclaredOnceIsAppliedInEveryOccurrence'
+
+drill "an outer assembly's features are written before its children's" internal/domain/geometry/tree.go \
+  's = s.replace("out.Features = append(out.Features, occurrenceFeatures(a, path, index, out.Parts, fail)...)", "out.Features = append(occurrenceFeatures(a, path, index, out.Parts, fail), out.Features...)", 1)' \
+  ./internal/domain/geometry 'TestTreeFeature_InnerFeaturesComeBeforeOuterOnes'
+
+drill "a whole pattern names only its first copy" internal/domain/geometry/tree.go \
+  's = s.replace("index[c.ID] = partRange{childStart, len(out.Parts)}", "index[c.ID] = partRange{childStart, childStart + 1}", 1)' \
+  ./internal/domain/geometry 'TestTreeFeature_APathNamesAPlacementAtAnyDepth'
+
+drill "a path into a sub-assembly names nothing" internal/domain/geometry/tree.go \
+  's = s.replace("index[c.ID+slot.suffix+PathSeparator+rel] = r", "_, _ = rel, r", 1)' \
+  ./internal/domain/geometry 'TestTreeFeature_APathNamesAPlacementAtAnyDepth'
+
+drill "a definition's repeat copy cannot be named" internal/domain/geometry/tree.go \
+  's = s.replace("index[c.ID+slot.suffix+suffix] = partRange{partStart, len(out.Parts)}", "_ = partStart", 1)' \
+  ./internal/domain/geometry 'TestTreeFeature_APathNamesAPlacementAtAnyDepth'
+
+drill "expansion appends to the caller's features" internal/domain/geometry/tree.go \
+  's = s.replace("out.Features = append([]Feature(nil), d.Features...)", "out.Features = d.Features", 1)' \
+  ./internal/domain/geometry 'TestTreeFeature_ExpansionDoesNotWriteIntoTheCallersFeatures'
+
+drill "a feature on a group applies to its last part" internal/domain/geometry/tree_features.go \
+  's = s.replace("q.Of = of[0]", "q.Of = of[len(of)-1]", 1)' \
+  ./internal/domain/geometry 'TestTreeFeature_APathNamesAPlacementAtAnyDepth'
+
+drill "a tree feature keeps its bare id in every occurrence" internal/domain/geometry/tree_features.go \
+  's = s.replace("name = prefix + PathSeparator + id", "name = id", 1)' \
+  ./internal/domain/geometry 'TestTreeFeature_AWeldDeclaredOnceIsAppliedInEveryOccurrence'
+
+drill "a clone shares an assembly's features" internal/domain/geometry/binding.go \
+  's = s.replace("f.With = append([]string(nil), f.With...)", "f.With = f.With", 1)' \
+  ./internal/domain/geometry 'TestTreeFeature_ACloneDoesNotShareAnAssemblysFeatures'
+
+drill "the kernel never sees an assembly's weld" internal/domain/geometry/tree.go \
+  's = s.replace("occurrenceFeatures(a, path, index, out.Parts, fail)", "occurrenceFeatures(Assembly{}, path, index, out.Parts, fail)", 1)' \
+  ./internal/domain/cad 'TestKernel_AWheelWeldedAsASubAssemblyBuildsLikeTheFlatOne'
+
+drill "the browser ignores an assembly's features" internal/httpapi/assets/forge3d.js \
+  "s = s.replace('      occurrenceFeatures(a, path, index);\n', '', 1)" \
+  ./internal/httpapi 'TestRendererFlattensATreeLikeTheExporter'
+
+drill "the browser cuts with one copy of a whole pattern" internal/httpapi/assets/forge3d.js \
+  "s = s.replace('if (slots.length > 1) index[cid] = [childStart, parts.length];', 'if (slots.length > 1) index[cid] = [childStart, childStart + 1];', 1)" \
+  ./internal/httpapi 'TestRendererFlattensATreeLikeTheExporter'
+
+drill "the browser cannot name a path into a child" internal/httpapi/assets/forge3d.js \
+  "s = s.replace('for (var rel in subIndex) index[cid + slot.suffix + PATH_SEPARATOR + rel] = subIndex[rel];', '', 1)" \
+  ./internal/httpapi 'TestRendererFlattensATreeLikeTheExporter'
+
+drill "the browser keeps a feature whose tool names nothing" internal/httpapi/assets/forge3d.js \
+  "s = s.replace('if (!got.length) refused = true;', '', 1)" \
   ./internal/httpapi 'TestRendererFlattensATreeLikeTheExporter'
 
 echo
