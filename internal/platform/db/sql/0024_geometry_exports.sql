@@ -1,4 +1,4 @@
--- 0023_geometry_exports: a STEP file written off-node, by forge-worker, and kept
+-- 0024_geometry_exports: a STEP file written off-node, by forge-worker, and kept
 -- in blob storage.
 --
 -- docs/plan-2026-09-13-millions-of-parts.md; the owner decision "STEP export at
