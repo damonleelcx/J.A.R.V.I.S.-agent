@@ -968,6 +968,51 @@
     });
     html += '</table>';
 
+    /* How the TREES differ (Phase 7, stage E2), absent for flat documents. A
+     * definition is one row with how many times each variant places it, never a
+     * row per placed part: a wheel placed four times that changed is one change,
+     * and a design of a million parts is still a table a person can read. */
+    var st = cmp.structure;
+    if (st) {
+      var absentCell = '<td class="absent">not in this variant</td>';
+      html += '<table class="cmp-table"><tr><th>Structure</th>' +
+        variants.map(function (v, i) { return '<th>' + (i + 1) + '</th>'; }).join('') + '</tr>';
+      html += '<tr class="' + (st.root.differs ? 'differs' : '') + '"><td>root</td>' +
+        st.root.values.map(function (v) { return '<td>' + esc(v) + '</td>'; }).join('') + '</tr>';
+      (st.definitions || []).forEach(function (d) {
+        html += '<tr class="' + (d.differs ? 'differs' : '') + '"><td>' + esc(d.label) +
+          '<span class="why">definition</span>' +
+          (d.changed.length ? '<ul class="diffs"><li>changed: ' + esc(d.changed.join(', ')) + '</li></ul>' : '') +
+          '</td>' +
+          d.occurrences.map(function (n, i) {
+            return d.missing_from.indexOf(i + 1) >= 0 ? absentCell : '<td>placed ' + n + '×</td>';
+          }).join('') + '</tr>';
+      });
+      (st.assemblies || []).forEach(function (a) {
+        /* Only the members that differ: an assembly of two hundred unchanged
+         * children is otherwise two hundred lines saying so. */
+        var lines = a.changed.length ? ['changed: ' + a.changed.join(', ')] : [];
+        [['child', a.children], ['interface', a.interfaces], ['feature', a.features]].forEach(function (kind) {
+          (kind[1] || []).forEach(function (m) {
+            if (!m.differs) return;
+            var bits = [];
+            if (m.missing_from.length) bits.push('not in column ' + m.missing_from.join(', '));
+            if (m.changed.length) bits.push('changed: ' + m.changed.join(', '));
+            lines.push(kind[0] + ' ' + m.id + ' — ' + bits.join('; '));
+          });
+        });
+        html += '<tr class="' + (a.differs ? 'differs' : '') + '"><td>' + esc(a.label) +
+          '<span class="why">assembly</span>' +
+          (lines.length ? '<ul class="diffs">' + lines.map(function (l) {
+            return '<li>' + esc(l) + '</li>';
+          }).join('') + '</ul>' : '') + '</td>' +
+          variants.map(function (v, i) {
+            return a.missing_from.indexOf(i + 1) >= 0 ? absentCell : '<td>present</td>';
+          }).join('') + '</tr>';
+      });
+      html += '</table>';
+    }
+
     if (cmp.match_notes && cmp.match_notes.length) {
       html += '<div class="cmp-uncompared matched"><b>Matched by name, not by identity</b><ul>' +
         cmp.match_notes.map(function (n) { return '<li>' + esc(n) + '</li>'; }).join('') +
