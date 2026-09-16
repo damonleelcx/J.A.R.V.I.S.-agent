@@ -140,8 +140,9 @@ func (k *Kernel) Available() bool { return k != nil && k.python != "" }
 func Unavailable(op string) error {
 	return errs.New(op, errs.CodeConnectorUnavailable).
 		WithDetail("this deployment has no CAD kernel, so it cannot produce a parametric file. " +
-			"Set FORGE_CAD_PYTHON to a Python interpreter with build123d installed " +
-			"(python3 -m venv venv && ./venv/bin/pip install build123d). It is unset by default: " +
+			"Set FORGE_CAD_PYTHON to a Python interpreter with the pinned kernel packages installed: " +
+			"in the FORGE image that is /opt/cad/venv/bin/python; from a checkout, `make cad-venv` builds " +
+			"one from internal/domain/cad/requirements.txt. It is unset by default: " +
 			"writing a STEP file full of tessellated facets and calling it parametric is a lie " +
 			"with a file extension on it.")
 }
