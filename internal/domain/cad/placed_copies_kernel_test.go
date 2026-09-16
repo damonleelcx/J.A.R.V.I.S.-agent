@@ -16,8 +16,13 @@ import (
 // docs/spikes/2026-09-15-next-scale-walls.
 
 type placedCopies struct {
-	Error        string                           `json:"error"`
-	Checked      int                              `json:"checked"`
+	Error   string `json:"error"`
+	Checked int    `json:"checked"`
+	// DistinctKeys is how many definitions the fixture's shape key separates it
+	// into. Added 2026-09-15 (fences that can fail): the key became a tuple, and
+	// a comparison that runs the same key on both sides cannot see a key that
+	// merges two shapes — so the key is asserted directly. See shape_keys().
+	DistinctKeys int                              `json:"distinct_keys"`
 	Problems     []string                         `json:"problems"`
 	ProblemCount int                              `json:"problem_count"`
 	Counts       map[string]map[string]placeTally `json:"counts"`
@@ -83,10 +88,16 @@ func placedCopiesOf(t *testing.T) placedCopies {
 // with a plate a feature changed beside a plate it did not.
 func TestKernel_APlacedCopyIsTheCopyBuild123dMade(t *testing.T) {
 	got := placedCopiesOf(t)
-	t.Logf("%d solid(s) compared across the three formats, %d difference(s)", got.Checked, got.ProblemCount)
+	t.Logf("%d solid(s) compared across the three formats, %d shape key(s), %d difference(s)",
+		got.Checked, got.DistinctKeys, got.ProblemCount)
 	// 7 kinds × 8 matrices + 2 plates, in three formats.
 	if got.Checked < 3*58 {
 		t.Fatalf("compared %d solids; the fixture has 58 in each of three formats", got.Checked)
+	}
+	// The fixture must hold more than one definition, or "the key separates these
+	// shapes" is a claim about nothing. 7 kinds plus the two plates and the drill.
+	if got.DistinctKeys < 8 {
+		t.Fatalf("the fixture has %d distinct shape key(s); it has at least 8 kinds", got.DistinctKeys)
 	}
 	for _, p := range got.Problems {
 		t.Error(p)

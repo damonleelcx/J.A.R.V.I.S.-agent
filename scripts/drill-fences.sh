@@ -3448,22 +3448,10 @@ echo "Last hot spots: a placed copy without a deepcopy, and containment once per
 # ‼️ The two count drills mutate the CODE PATH, not the switch: testdata/placed_copies.py
 # assigns _PLACE_WITHOUT_DEEPCOPY and _LOCATION_WITHOUT_INIT itself for its reference
 # run, so a drill that flipped the constant would be overwritten and stay green.
-# ‼️ FIVE MORE WERE WRITTEN AND REMOVED, because they stayed green. Recorded here so
-# the next person does not write them again expecting them to hold
-# (docs/spikes/2026-09-15-last-hot-spots, "Drills"):
-#
-#   - "a placed copy shares its definition's empty containers"
-#     (setattr(out, key, {}) -> setattr(out, key, value))
-#   - "a placement's Location is missing the attribute the constructor sets"
-#     (deleting out.location_index = 0)
-#   - "a placement builds its Location through the constructor again"
-#     (_location_of(TopLoc_Location(trsf)) -> Location(TopLoc_Location(trsf)))
-#
-#     None of these three was caught. testdata/placed_copies.py compares a PLACEMENT
-#     only through its transformation numbers and compares __dict__ only for the
-#     placed SOLID, so the Location object's own attributes are never inspected; and
-#     the count fence did not move on the third. These are gaps in the fence, not
-#     properties that cannot be broken — see the spike's Recommendations.
+# ‼️ FIVE MORE WERE WRITTEN AND REMOVED here, because they stayed green. THREE OF
+# THEM ARE NOW BELOW, in "Fences that can fail", and they go red: re-run on
+# 2026-09-15, two of the three reddened the fences exactly as written, with no
+# change to the fence at all. Only one was a real fence gap. See that section.
 #
 #   - "grouped containment folds its reach into the bound"
 #     (mid - reach >= low  ->  mid >= low + reach)
@@ -3483,9 +3471,58 @@ drill "a containment plan is keyed by the rotations and not the definitions" int
   's = s.replace("plans.get((ri, rj, a, b))", "plans.get((ri, rj))", 1); s = s.replace("plans[(ri, rj, a, b)] = g", "plans[(ri, rj)] = g", 1)' \
   ./internal/domain/cad 'TestKernel_APairKeyWithoutLocationsIsTheKeyBuild123dGave'
 
-drill "the direction that cannot win is skipped on a tie too" internal/domain/cad/sidecar.py \
-  's = s.replace("            if a < b:\n", "            if a <= b:\n", 1)' \
-  ./internal/domain/cad 'TestKernel_APairKeyWithoutLocationsIsTheKeyBuild123dGave'
+echo "Fences that can fail: the three gaps #121 left, and the shape key as a tuple"
+# Added 2026-09-15 (fences that can fail). #121 wrote three drills against its own
+# work, watched them stay green, removed them, and recorded all three as fence gaps:
+# "a copy's attributes are not shared with its definition" and "a placement is not
+# built through Location.__init__" were written down as asserted-but-unfenced.
+#
+# ‼️ TWO OF THE THREE WERE NEVER FENCE GAPS. Re-run against the fences exactly as
+# #121 left them, the empty-container mutation produced 171 differences in
+# TestKernel_APlacedCopyIsTheCopyBuild123dMade ("attribute joints is its definition's
+# own object, not a copy" — the identity check #121 could not explain does fire), and
+# the constructor mutation moved the Locations counter from 24 -> 24 to 83 -> 475 in
+# TestKernel_PlacingMoreCopiesCopiesNoBRepsAndBuildsNoMorePlanes. Both fences held the
+# property all along; what could not fail was the drill run, not the fence. So the
+# code comments claiming those properties stand, and these two drills now prove it.
+#
+# The THIRD was a real gap and is closed in testdata/placed_copies.py: a placement was
+# compared only through transformation(), so a Location missing the one attribute
+# build123d's constructor sets was identical on every number. location_object() now
+# compares the OBJECT — its class, its attribute names and location_index — for the
+# recorded placement and for every Location a placed copy carries, and the copies are
+# checked to hold no Location object in common (fresh per occurrence, never the
+# definition's). Deleting `out.location_index = 0` now gives 270 differences.
+#
+# The last two drills are the shape key's, which became a tuple in this branch.
+# ‼️ A key mutation is invisible to placed_copies.py's comparison, because BOTH sides
+# of it run the same _shape_key: two shapes wrongly sharing a definition agree with
+# each other perfectly. So shape_keys() asserts the key directly — every kind in the
+# fixture is its own definition, and dims written in another key order is not — and
+# these two drills are against that.
+drill "a placed copy shares its definition's empty dict" internal/domain/cad/sidecar.py \
+  's = s.replace("setattr(out, key, {})", "setattr(out, key, value)", 1)' \
+  ./internal/domain/cad 'TestKernel_APlacedCopyIsTheCopyBuild123dMade'
+
+drill "a placed copy shares its definition's empty list" internal/domain/cad/sidecar.py \
+  's = s.replace("setattr(out, key, [])", "setattr(out, key, value)", 1)' \
+  ./internal/domain/cad 'TestKernel_APlacedCopyIsTheCopyBuild123dMade'
+
+drill "a placement's Location is missing the attribute the constructor sets" internal/domain/cad/sidecar.py \
+  's = s.replace("    out.location_index = 0\n", "", 1)' \
+  ./internal/domain/cad 'TestKernel_APlacedCopyIsTheCopyBuild123dMade'
+
+drill "a placement builds its Location through the constructor again" internal/domain/cad/sidecar.py \
+  's = s.replace("return _location_of(TopLoc_Location(trsf))", "return Location(TopLoc_Location(trsf))", 1)' \
+  ./internal/domain/cad 'TestKernel_PlacingMoreCopiesCopiesNoBRepsAndBuildsNoMorePlanes'
+
+drill "the shape key forgets that a mirrored solid is a different solid" internal/domain/cad/sidecar.py \
+  's = s.replace("solid.get(\"step\"), solid.get(\"mirrored\"))", "solid.get(\"step\"), None)", 1)' \
+  ./internal/domain/cad 'TestKernel_APlacedCopyIsTheCopyBuild123dMade'
+
+drill "the shape key stops canonicalizing a solid's dims" internal/domain/cad/sidecar.py \
+  's = s.replace("tuple(sorted(dims.items()))", "tuple(dims.items())", 1)' \
+  ./internal/domain/cad 'TestKernel_APlacedCopyIsTheCopyBuild123dMade'
 
 echo "A repair may not add contacts: the found total is judged beside the buried one"
 # Added 2026-09-15 (a repair may not add contacts). #115 judged a repair by the kernel's
