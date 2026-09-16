@@ -269,8 +269,9 @@ func (c *Conversation) RespondStream(
 				// than leaving the person with silence.
 				text := strings.TrimSpace(accumulated.String())
 				if text == "" {
-					return errs.Wrap(op, errs.CodeExternalProtocol, err).
-						WithDetail("the stream produced neither usable JSON nor any text")
+					return unusable(errs.Wrap(op, errs.CodeExternalProtocol, err).
+						WithDetail("the stream produced neither usable JSON nor any text"),
+						"", chunk.Model, chunk.Usage)
 				}
 				return emit(StreamEvent{Kind: "speech", Text: text, FirstTokenMS: firstTokenMS})
 			}
@@ -282,7 +283,11 @@ func (c *Conversation) RespondStream(
 			})
 		}
 		if err := reply.validate(); err != nil {
-			return err
+			/* ‼️ With the reply and what it cost, not the bare refusal. The
+			 * tokens were spent the moment the stream finished, and a refusal
+			 * returned alone left the handler nothing to keep and nothing to
+			 * charge — see unusable.go. */
+			return unusable(err, accumulated.String(), chunk.Model, chunk.Usage)
 		}
 		/* An edit becomes the document it describes BEFORE anything is emitted.
 		 * Downstream — the viewport, the store, compare, export — only ever sees

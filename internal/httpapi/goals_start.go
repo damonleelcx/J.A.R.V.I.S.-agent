@@ -68,6 +68,14 @@ type createGoalRequest struct {
 	// POST /v1/goals/{id}/start. A second route would be a second copy of those,
 	// and the copy is where one of them would be forgotten.
 	Build bool `json:"build"`
+	// MaxTokens is the goal's own token ceiling, build or not. Omitted, the goal
+	// inherits the engine's (FORGE_MAX_TOKENS_PER_GOAL); given, it must be positive
+	// and not above the engine's, or the request is refused before anything is
+	// written or any model is asked — agent.Intake.Draft holds the rule, so
+	// `forgectl goal new --max-tokens` refuses the same values.
+	//
+	// A pointer, so an explicit 0 is refused rather than read as "not given".
+	MaxTokens *int64 `json:"max_tokens"`
 }
 
 // replanRequest is POST /v1/goals/{id}/plan's optional body.
@@ -174,6 +182,7 @@ func (h *GoalHandlers) CreateGoal(w http.ResponseWriter, r *http.Request) {
 		Statement: req.Statement,
 		Autonomy:  autonomy,
 		RiskTier:  risk,
+		MaxTokens: req.MaxTokens,
 	})
 	if err != nil {
 		WriteError(w, r, h.deps.Log, err)

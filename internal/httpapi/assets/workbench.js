@@ -2625,7 +2625,200 @@
       '</div>';
   }
 
+  /* ---- a started goal, followed on its card ------------------------------ */
+
+  /* # Why the card follows the goal it started (2026-09-15)
+   *
+   * A live build was started from this card. The card said "Started." and then
+   * nothing, for the 45 s the build took and afterwards: which step was being
+   * built, the version each step kept, and how it ended were only in the
+   * operations console, in another tab. Somebody who pressed "Start it" here is
+   * watching here.
+   *
+   * # What it reads, and how often
+   *
+   * The two endpoints the console reads — GET /v1/goals/{id} and its timeline —
+   * so the card and the console cannot tell two different stories. Every
+   * GOAL_POLL_MS: a live build step took 5–15 s, so each shows within one poll of
+   * landing, and two small reads every few seconds from one open card costs
+   * nothing worth saving.
+   *
+   * ‼️ It STOPS: when the goal settles (succeeded, failed, cancelled); when the
+   * goal is gone or no longer this person's (401, 403, 404 — asking again will
+   * not bring it back); and when the card is given another proposal. A dropped
+   * connection is retried at the same interval. A poller that never stopped
+   * would read a finished goal twice every few seconds for as long as the tab
+   * stayed open.
+   *
+   * # Why it is on window
+   *
+   * So the fence runs THIS code in node against stubbed replies, the way
+   * forge3d.js is fenced (goal_progress_fence_test.go). The page calls the
+   * functions directly, never through window.
+   */
+  var GOAL_POLL_MS = 4000;
+  var GOAL_SETTLED = { succeeded: true, failed: true, cancelled: true };
+  var TASK_ENDED = { succeeded: true, failed: true, cancelled: true, skipped: true };
+
+  /* goalProgress reads what a person watching needs out of the two replies. */
+  function goalProgress(goal, tasks, events) {
+    goal = goal || {};
+    tasks = tasks || [];
+    events = events || [];
+    var p = {
+      status: goal.status || '',
+      settled: !!GOAL_SETTLED[goal.status],
+      done: goal.tasks_done || 0,
+      total: goal.tasks_total || tasks.length,
+      tokens: goal.tokens_spent || 0,
+      maxTokens: goal.max_tokens || null,
+      outcome: goal.outcome_summary || '',
+      current: null,
+      kept: [],
+      stop: null,
+      tasks: tasks
+    };
+    /* The step in hand: one a worker holds, else the next one still to run. */
+    var held = null, next = null;
+    tasks.forEach(function (t) {
+      if (!held && (t.status === 'running' || t.status === 'claimed')) held = t;
+      if (!next && !TASK_ENDED[t.status]) next = t;
+    });
+    var now = held || next;
+    if (!p.settled && now) p.current = { title: now.title, status: now.status };
+    /* The versions kept, oldest first. The timeline arrives newest first, and a
+     * finished build step names the version it kept (agent.stepOutcome). */
+    for (var i = events.length - 1; i >= 0; i--) {
+      if (events[i].kind !== 'task.succeeded') continue;
+      var m = /kept as version ([^\s.]+)/.exec(events[i].summary || '');
+      if (m && p.kept.indexOf(m[1]) < 0) p.kept.push(m[1]);
+    }
+    /* Why it stopped. The budget first: it is the one a person can act on, by
+     * raising a ceiling, and its step fails too, so it would otherwise read as
+     * an ordinary failure. */
+    var budget = null, failed = null;
+    events.forEach(function (e) { if (!budget && e.kind === 'budget.exceeded') budget = e; });
+    tasks.forEach(function (t) { if (!failed && t.status === 'failed') failed = t; });
+    if (budget || (failed && /budget exhausted/i.test(failed.error_detail || ''))) {
+      p.stop = { kind: 'budget', text: budget ? budget.summary : failed.error_detail };
+    } else if (failed) {
+      p.stop = { kind: 'failed', text: failed.title + ' failed' +
+        (failed.error_detail ? ': ' + failed.error_detail : '.') };
+    } else if (goal.status === 'failed' || goal.status === 'cancelled') {
+      p.stop = { kind: goal.status, text: p.outcome || ('The goal ' + goal.status + '.') };
+    }
+    return p;
+  }
+
+  function goalProgressHTML(p, asBuild) {
+    if (!p) return '';
+    var unit = asBuild ? 'step' : 'task';
+    var html = '<div class="foot"><b>' + p.done + ' of ' + p.total + ' ' + unit +
+      (p.total === 1 ? '' : 's') + ' done</b> · ' + Number(p.tokens).toLocaleString('en-US') +
+      (p.maxTokens ? ' of ' + Number(p.maxTokens).toLocaleString('en-US') : '') + ' tokens</div>';
+    if (p.current) {
+      html += '<div class="foot">Now: ' + esc(p.current.title) + ' — ' + esc(p.current.status) + '</div>';
+    }
+    if (p.kept.length) {
+      html += '<div class="foot">' + p.kept.length + ' version' + (p.kept.length === 1 ? '' : 's') +
+        ' kept, the latest <code>' + esc(p.kept[p.kept.length - 1]) + '</code></div>';
+    }
+    if (p.stop) {
+      html += '<div class="note bad">' + (p.stop.kind === 'budget' ? 'Stopped by its budget: ' : 'Stopped: ') +
+        esc(p.stop.text) + '</div>';
+    } else if (p.settled) {
+      html += '<div class="foot">Finished. ' + esc(p.outcome || p.status) + '</div>';
+    }
+    return html;
+  }
+
+  /* watchGoal polls a goal until it settles. opts.fetch, opts.setTimeout and
+   * opts.clearTimeout default to the browser's; the fence replaces them. */
+  function watchGoal(goalID, opts) {
+    opts = opts || {};
+    var get = opts.fetch || function (path) { return fetch(path); };
+    var later = opts.setTimeout || setTimeout;
+    var cancel = opts.clearTimeout || clearTimeout;
+    var interval = opts.interval || GOAL_POLL_MS;
+    var onProgress = opts.onProgress || function () {};
+    var onError = opts.onError || function () {};
+    var base = '/v1/goals/' + encodeURIComponent(goalID);
+    var stopped = false;
+    var timer = null;
+
+    function read(path) {
+      return get(path).then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (b) {
+          if (!r.ok) {
+            var e = new Error((b && b.error && b.error.message) || ('Request failed (' + r.status + ')'));
+            e.status = r.status;
+            throw e;
+          }
+          return b;
+        });
+      });
+    }
+    function tick() {
+      timer = null;
+      Promise.all([read(base), read(base + '/timeline')]).then(function (res) {
+        if (stopped) return;
+        var p = goalProgress(res[0].goal, res[0].tasks, res[1].events);
+        onProgress(p);
+        if (!p.settled && !stopped) timer = later(tick, interval);
+      }, function (err) {
+        if (stopped) return;
+        onError(err);
+        if (err && (err.status === 401 || err.status === 403 || err.status === 404)) return;
+        timer = later(tick, interval);
+      });
+    }
+    tick();
+    return {
+      stop: function () {
+        stopped = true;
+        if (timer !== null) cancel(timer);
+        timer = null;
+      }
+    };
+  }
+
+  window.ForgeGoalProgress = {
+    summarise: goalProgress, html: goalProgressHTML, watch: watchGoal, interval: GOAL_POLL_MS
+  };
+
+  /* Follow the goal on the card, and only the goal this card started. */
+  function followStartedGoal() {
+    stopFollowingGoal();
+    if (!state.goal) return;
+    var id = state.goal.id;
+    state.goalWatch = watchGoal(id, {
+      onProgress: function (p) {
+        if (!state.goal || state.goal.id !== id) return;
+        state.progress = p;
+        state.progressError = null;
+        renderProposal();
+      },
+      onError: function (err) {
+        if (!state.goal || state.goal.id !== id) return;
+        var gone = err.status === 401 || err.status === 403 || err.status === 404;
+        state.progressError = 'Its progress could not be read: ' + err.message +
+          (gone ? ' Open it in operations.' : ' Trying again.');
+        renderProposal();
+      }
+    });
+  }
+
+  function stopFollowingGoal() {
+    if (state.goalWatch) state.goalWatch.stop();
+    state.goalWatch = null;
+  }
+
   function proposeGoal(goal) {
+    /* A new proposal is a new card: the goal the last one started is no longer
+     * what this card is about, so it stops being read. */
+    stopFollowingGoal();
+    state.progress = null;
+    state.progressError = null;
     state.proposal = goal;
     state.goal = null;
     state.planTasks = null;
@@ -2724,6 +2917,9 @@
         state.startMessage = b.message;
         state.goalPhase = 'active';
         addTurn('forge', b.message);
+        /* And then keep saying where it is, here, until it ends — see
+         * goalProgress. "Started." alone was all a live build ever showed. */
+        followStartedGoal();
       })
       .catch(function (err) {
         state.goalPhase = 'planned';
@@ -2752,7 +2948,8 @@
       planning: 'planning…',
       planned:  (g.risk_tier || 'r1') + ' · planned, not running',
       starting: 'starting…',
-      active:   'active',
+      /* The goal's own word once it has ended, read from the goal. */
+      active:   state.progress && state.progress.settled ? state.progress.status : 'active',
       failed:   (g.risk_tier || 'r1') + ' · proposed'
     }[phase];
 
@@ -2771,10 +2968,15 @@
     }
 
     if ((phase === 'planned' || phase === 'starting' || phase === 'active') && state.planTasks) {
+      /* Where each task is, once the goal runs: read from the goal, by id. */
+      var now = {};
+      ((state.progress && state.progress.tasks) || []).forEach(function (t) { now[t.id] = t.status; });
       html += '<ul class="steps">' + state.planTasks.map(function (t) {
         return '<li><span class="rt">' + esc(t.risk_tier) + '</span>' +
                '<span>' + esc(t.title) + '</span>' +
-               (t.requires_approval ? '<span class="gate">gate</span>' : '') + '</li>';
+               (t.requires_approval ? '<span class="gate">gate</span>' : '') +
+               (now[t.id] ? '<span class="state ' + esc(now[t.id]) + '">' + esc(now[t.id]) + '</span>' : '') +
+               '</li>';
       }).join('') + '</ul>';
       if (state.rationale) {
         html += '<div class="foot">' + esc(state.rationale) + '</div>';
@@ -2815,6 +3017,11 @@
               '</div>';
     } else if (phase === 'active') {
       html += '<div class="foot">' + esc(state.startMessage || 'Started.') + '</div>';
+      /* What happened after "Started.", read from the goal until it ends. */
+      html += goalProgressHTML(state.progress, state.planAsBuild);
+      if (state.progressError) {
+        html += '<div class="note bad">' + esc(state.progressError) + '</div>';
+      }
     }
 
     if (state.error) {
