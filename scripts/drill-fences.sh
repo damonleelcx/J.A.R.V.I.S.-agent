@@ -1568,7 +1568,7 @@ drill "the host match is a bare suffix, not a domain one" internal/llm/deliberat
   ./internal/llm 'TestWhichEndpointsUnderstandTheField'
 
 drill "a retired model is reported without naming the survivors" internal/llm/openai_compatible.go \
-  's = s.replace("\tserved, err := c.servedModels(ctx)", "\tserved, err := []string(nil), error(nil)\n\t_ = c.servedModels", 1)' \
+  's = s.replace("\tserved, err := c.servedModels(ctx, base, key)", "\tserved, err := []string(nil), error(nil)\n\t_, _ = base, key\n\t_ = c.servedModels", 1)' \
   ./internal/llm 'TestAMissingModelNamesWhatTheEndpointDoesServe'
 
 echo
