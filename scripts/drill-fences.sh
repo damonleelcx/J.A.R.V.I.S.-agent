@@ -143,6 +143,9 @@ FILES=(
   internal/domain/geometry/export.go
   internal/domain/geometry/service.go
   internal/platform/config/config.go
+  internal/httpapi/assets/workbench.js
+  internal/domain/geometry/subtree.go
+  internal/httpapi/geometry_subtree.go
   internal/agent/buildgoal.go
   internal/agent/spend.go
   internal/domain/engine/repository.go
@@ -2538,12 +2541,14 @@ drill "the workbench stops handing the mesh reply to the studio" internal/httpap
   's = s.replace("studio.load(proto, b);", "studio.load(proto);", 1)' \
   ./internal/httpapi 'TestWorkbenchDrawsTheMeshReplyInstanced'
 
+# Re-anchored by stage W2: a copy is culled by its own test or by a node of its batch's
+# hierarchy, so both are switched off; and the box is one of three levels (levelFor).
 drill "nothing out of view is culled" internal/httpapi/assets/forge3d.js \
-  's = s.replace("if (!sphereInFrustum(f.planes, cx, cy, cz, r)) {", "if (false) {", 1)' \
+  's = s.replace("if (!whole && !sphereInFrustum(f.planes, cx, cy, cz, r)) {", "if (false) {", 1).replace("if (most < -eps) return -1;", "", 1)' \
   ./internal/httpapi 'TestRendererPicksAnInstanceBackToItsOccurrencePath'
 
 drill "a far copy is never drawn as its box" internal/httpapi/assets/forge3d.js \
-  's = s.replace("var proxy = lod > 0 &&", "var proxy = false &&", 1)' \
+  's = s.replace("if (b.triangles > 12 && px < lod) return 2;", "if (false) return 2;", 1)' \
   ./internal/httpapi 'TestRendererPicksAnInstanceBackToItsOccurrencePath'
 
 drill "a click names the first copy of whatever it hit" internal/httpapi/assets/forge3d.js \
@@ -2564,6 +2569,75 @@ drill "the viewport's ceiling is the kernel's" internal/domain/geometry/limits.g
   's = s.replace("const maxViewportParts = DefaultMaxOccurrences", "const maxViewportParts = maxDrawnParts", 1)' \
   ./internal/domain/geometry 'TestLimits_TheViewportDrawsWhatStorageAcceptsAndNoMore'
 
+# Added 2026-09-15 (Phase 6, stage W2). A large tree is loaded a subtree at a time: the
+# mesh endpoint answers for one occurrence path (the kernel within its ceiling, the Go
+# tessellator past it), and the studio asks for a path when its first view or a row calls
+# for it. Culling walks a hierarchy over each batch's copies, a small copy is drawn as a
+# simplified mesh before it becomes a box, and search reads an index. Each fence holds
+# the faster path to the slower one it replaced, or to Go's own answer, and to doing less.
+drill "a subtree reply ignores its path and sends the whole design" internal/domain/geometry/subtree.go \
+  's = s.replace("\t\tif under(part.ID) {", "\t\tif under(part.ID) || true {", 1)' \
+  ./internal/httpapi 'TestMeshSubtree_TheSubtreeReplysInstancesAreTheWholeReplysFilteredToThePath'
+
+drill "a path that places nothing is answered with an empty mesh" internal/domain/geometry/subtree.go \
+  's = s.replace("\tif len(s.Parts) == 0 {", "\tif false {", 1)' \
+  ./internal/httpapi 'TestMeshSubtree_AnUnknownPathIsRefusedByName'
+
+drill "a feature that straddles the path is applied in the subtree" internal/domain/geometry/subtree.go \
+  's = s.replace("if touched == len(named) {", "if touched > 0 {", 1)' \
+  ./internal/httpapi 'TestMeshSubtree_TheSubtreeReplysInstancesAreTheWholeReplysFilteredToThePath'
+
+drill "a subtree's ceiling is counted on the whole design" internal/domain/geometry/subtree.go \
+  's = s.replace("\tif len(s.Parts) <= maxViewportParts {", "\tif occurrences(s.expanded, maxViewportParts) <= maxViewportParts {", 1)' \
+  ./internal/httpapi 'TestMeshSubtree_LimitsAreTheSubtreesOwn'
+
+drill "a subtree past the kernel's ceiling is sent to the kernel" internal/httpapi/geometry_subtree.go \
+  's = s.replace("\tcase parts > geometry.MaxBuiltParts():", "\tcase false:", 1)' \
+  ./internal/httpapi 'TestMeshSubtree_LimitsAreTheSubtreesOwn'
+
+drill "the Go tessellator draws a mirrored copy unmirrored" internal/domain/geometry/subtree.go \
+  's = s.replace("\t\tif mirrored {\n\t\t\tt = mirrorTriangle(t)\n\t\t}\n", "", 1)' \
+  ./internal/httpapi 'TestMeshSubtree_TheGoInstancesAreTessellateWrittenOutOncePerShape'
+
+drill "the Go tessellator's copies are left in the document's unit" internal/domain/geometry/subtree.go \
+  's = s.replace("pos[0] * scale, pos[1] * scale, pos[2] * scale, 1}", "pos[0], pos[1], pos[2], 1}", 1)' \
+  ./internal/httpapi 'TestMeshSubtree_TheGoInstancesAreTessellateWrittenOutOncePerShape'
+
+drill "opening a tree row asks for nothing" internal/httpapi/assets/workbench.js \
+  's = s.replace("        if (tree.open[path]) studio.requestSubtree(path);\n", "", 1)' \
+  ./internal/httpapi 'TestWorkbenchLoadsALargeTreeASubtreeAtATime'
+
+drill "a subtree already covered is asked for again" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    if (this._covered(path)) return false;\n", "", 1)' \
+  ./internal/httpapi 'TestRendererLoadsASubtreeWhenItIsAskedForAndDrawsWhatGoPlacesThere'
+
+drill "the first view asks for every row however large" internal/httpapi/assets/forge3d.js \
+  's = s.replace("if (n > 0 && n <= LAZY_OCCURRENCES && total + n <= FIRST_VIEW_OCCURRENCES) {", "if (n > 0) {", 1)' \
+  ./internal/httpapi 'TestRendererLoadsASubtreeWhenItIsAskedForAndDrawsWhatGoPlacesThere'
+
+drill "a subtree is drawn from its primitives, not its reply" internal/httpapi/assets/forge3d.js \
+  's = s.replace("var plan = drawBatches(drawn, reply || null, { wide: lazy.wide });", "var plan = drawBatches(drawn, null, { wide: lazy.wide });", 1)' \
+  ./internal/httpapi 'TestRendererLoadsASubtreeWhenItIsAskedForAndDrawsWhatGoPlacesThere'
+
+drill "a node that straddles a plane is kept whole" internal/httpapi/assets/forge3d.js \
+  's = s.replace("if (least < eps) inside = 0;", "", 1)' \
+  ./internal/httpapi 'TestRendererCullsAHierarchyExactlyAsItCullsEachCopy'
+
+drill "the hierarchy opens every node down to its leaves" internal/httpapi/assets/forge3d.js \
+  's = s.replace("if (rel > 0 || !node.left) {", "if (!node.left) {", 1)' \
+  ./internal/httpapi 'TestRendererCullsAHierarchyExactlyAsItCullsEachCopy'
+
+drill "a small copy is never drawn simplified" internal/httpapi/assets/forge3d.js \
+  's = s.replace("if (b.simple && px < simple) return 1;", "if (false) return 1;", 1)' \
+  ./internal/httpapi 'TestRendererDrawsACopyAtTheLevelItsProjectedSizeCalls'
+
+drill "the search index answers from its runs without checking the query" internal/httpapi/assets/forge3d.js \
+  's = s.replace("      if (text[0].indexOf(q) < 0 && text[1].indexOf(q) < 0) continue;\n", "", 1)' \
+  ./internal/httpapi 'TestRendererFindsOccurrencesThroughAnIndexLikeTheScan'
+
+drill "the search reads every occurrence again" internal/httpapi/assets/forge3d.js \
+  's = s.replace("if (q.length >= SEARCH_RUN) {", "if (false) {", 1)' \
+  ./internal/httpapi 'TestRendererFindsOccurrencesThroughAnIndexLikeTheScan'
 echo "A3's gaps: the catalogue read, a real build, the turn told, flat parts, density taught"
 # Added 2026-09-15 (A3 gaps and density). Every catalogue family was read against a
 # published table (standard.go names each), which found the L20x20x3 toe radius

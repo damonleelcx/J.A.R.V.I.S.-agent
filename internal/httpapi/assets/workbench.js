@@ -588,7 +588,11 @@
       if (variants[i].disposition !== 'superseded') { pick = variants[i]; break; }
     }
     if (!pick) pick = variants[0];
-    if (!pick || !pick.document || !pick.document.parts) return;
+    /* ‼️ A design written as a tree has no top-level parts — it is stored with
+     * "parts": null and a root — and was never put back on the stage until the
+     * W2 acceptance run opened a stored 30,000-part car and found an empty grid.
+     * Geometry is parts OR a root, as geometry.Document.HasGeometry says. */
+    if (!pick || !pick.document || !(pick.document.parts || pick.document.root)) return;
     loadPrototype(pick.document, pick.measured || [], pick.version_id);
   }
 
@@ -1269,23 +1273,64 @@
       .catch(function () { /* the primitives are already on screen */ });
   }
 
+  /* One subtree's mesh, for the studio that asked (Phase 6, stage W2).
+   *
+   * The reply says which tessellator made it — the CAD kernel, or Go's primitives
+   * when the subtree is past the kernel's ceiling or there is no kernel — and that
+   * goes in the provenance banner: a surface with its holes cut and one without
+   * look alike until something says which this is. A refusal leaves the row a box
+   * that can be asked for again. */
+  function fetchSubtree(versionID, proto, path) {
+    fetch('/v1/geometry/' + encodeURIComponent(versionID) + '/mesh?subtree=' + encodeURIComponent(path))
+      .then(function (r) {
+        return r.json().then(function (b) { return r.ok ? b : Promise.reject(b); });
+      })
+      .then(function (b) {
+        if (state.prototype !== proto) return;
+        state.subtrees[path] = { source: b.source, note: b.source_note, occurrences: b.occurrences,
+          outside: (b.features_outside || []).concat(b.skipped || [], b.feature_failures || []) };
+        studio.addSubtree(path, b);
+        renderProvenance();
+      })
+      .catch(function (e) {
+        if (state.prototype !== proto) return;
+        studio.failSubtree(path, (e && e.error && e.error.detail) || 'the subtree could not be fetched');
+      });
+  }
+
+  /* A switch for measuring the viewport the way it loaded before W2: set
+   * localStorage "forge.viewport.eager" to "1" and every design is uploaded whole. */
+  function viewportEager() {
+    try { return window.localStorage.getItem('forge.viewport.eager') === '1'; } catch (e) { return false; }
+  }
+
   function loadPrototype(proto, measured, versionID) {
     state.prototype = proto;
     state.measured = measured || [];
     state.selectedPart = null;
     state.builtSolid = null;
     tree.open = {}; tree.query = ''; tree.isolated = '';
+    state.subtrees = {};
     if ($('tree-search')) $('tree-search').value = '';
-    studio.load(proto);
-    /* The primitives are drawn FIRST and the built solid replaces them.
-     *
-     * Not "instead of": the kernel is a subsystem that can be absent, and it
-     * costs a round trip and a tessellation when it is not. Drawing the
-     * approximation immediately and refining it when the real surface arrives
-     * puts the shape on screen at the moment it always appeared, and makes it
-     * true a moment later — rather than leaving the viewport empty while
-     * somebody waits for OpenCASCADE. */
-    if (versionID) refineWithBuiltSolid(versionID, proto);
+    /* A stored design past the kernel's ceiling is loaded a subtree at a time
+     * (Phase 6, stage W2): every occurrence is listed, none is uploaded, and the
+     * studio asks for a subtree's mesh when its first view or a row calls for it —
+     * see "Loading a large tree a subtree at a time" in forge3d.js. Its whole-design
+     * mesh is not fetched: past the ceiling that request is refused anyway. */
+    if (versionID && window.Forge3D.loadsLazily(proto) && !viewportEager()) {
+      studio.loadLazy(proto, function (path) { fetchSubtree(versionID, proto, path); });
+    } else {
+      studio.load(proto);
+      /* The primitives are drawn FIRST and the built solid replaces them.
+       *
+       * Not "instead of": the kernel is a subsystem that can be absent, and it
+       * costs a round trip and a tessellation when it is not. Drawing the
+       * approximation immediately and refining it when the real surface arrives
+       * puts the shape on screen at the moment it always appeared, and makes it
+       * true a moment later — rather than leaving the viewport empty while
+       * somebody waits for OpenCASCADE. */
+      if (versionID) refineWithBuiltSolid(versionID, proto);
+    }
     /* PRD VIS-03. Authored and derived stay separate all the way here — the
      * server sends two lists and the studio draws them differently, so a
      * dimension somebody took off a drawing never looks like one FORGE worked
@@ -1499,7 +1544,9 @@
       el.innerHTML = '<div class="empty">No geometry yet. Describe something and FORGE will propose a shape.</div>';
       return;
     }
-    el.innerHTML = state.prototype.parts.map(function (p) {
+    /* A design written as a tree has no top-level parts (W2 acceptance run): its
+     * parts are listed in the Assembly tree below, and this must not throw first. */
+    el.innerHTML = (state.prototype.parts || []).map(function (p) {
       return '<div class="part" data-id="' + esc(p.id) + '" aria-current="' + (state.selectedPart === p.id) + '">' +
         '<span class="sw" style="background:' + esc(p.color || '#b8bcc4') + '"></span>' +
         '<span class="nm">' + esc(p.name || p.id) +
@@ -1541,9 +1588,10 @@
    * redraw — the batches on the GPU stay — and both reach exactly the occurrences Go
    * places under the path (TestRendererSelectsAndIsolatesTheOccurrencesUnderATreeNode).
    *
-   * ‼️ Lazy LISTING, not lazy loading: every occurrence's geometry is on the GPU from
-   * the first draw. Fetching a subtree's meshes only when it is opened needs a mesh
-   * endpoint that answers for a subtree, and there is none. */
+   * Since stage W2's second part, the GEOMETRY is lazy too for a stored design past the
+   * kernel's ceiling: opening, selecting or isolating a row asks the studio for that
+   * row's subtree (studio.requestSubtree), which fetches it unless a loaded or pending
+   * path already covers it. For a design loaded whole it is a no-op. */
   var tree = { open: {}, query: '', isolated: '' };
 
   function renderTree() {
@@ -1608,13 +1656,16 @@
       var path;
       if ((path = t.getAttribute('data-toggle'))) {
         tree.open[path] = !tree.open[path];
+        if (tree.open[path]) studio.requestSubtree(path);
       } else if ((path = t.getAttribute('data-select'))) {
         state.selectedPart = state.selectedPart === path ? null : path;
         studio.select(state.selectedPart ? window.Forge3D.occurrenceMatcher(state.selectedPart) : null);
+        if (state.selectedPart) studio.requestSubtree(state.selectedPart);
         renderParts();
       } else if ((path = t.getAttribute('data-isolate'))) {
         tree.isolated = tree.isolated === path ? '' : path;
         studio.isolate(tree.isolated ? window.Forge3D.occurrenceMatcher(tree.isolated) : null);
+        if (tree.isolated) studio.requestSubtree(tree.isolated);
       }
       renderTree();
     });
@@ -1722,6 +1773,18 @@
      * piece. Reported because the viewport cannot say it any other way — eight
      * parts in the rail and seven bodies on the stage reads as a rendering
      * choice until something names the eighth and says why. */
+    /* A design loaded a subtree at a time (Phase 6, stage W2) says, per subtree on
+     * screen, which tessellator made it and what its surface leaves out. */
+    var subtreePaths = Object.keys(state.subtrees || {});
+    if (subtreePaths.length) {
+      html += '<div style="margin-top:7px"><b>Loaded a subtree at a time:</b><ul>' +
+        subtreePaths.map(function (path) {
+          var s = state.subtrees[path];
+          return '<li>' + esc(path) + ' (' + esc(String(s.occurrences)) + ' parts) — ' + esc(s.note || s.source || '') +
+            (s.outside.length ? '<ul>' + s.outside.map(function (n) { return '<li>' + esc(n) + '</li>'; }).join('') + '</ul>' : '') +
+            '</li>';
+        }).join('') + '</ul></div>';
+    }
     if (state.builtSolid && state.builtSolid.notes && state.builtSolid.notes.length) {
       html += '<div style="margin-top:7px"><b>Not in the built solid:</b><ul>' +
         state.builtSolid.notes.map(function (n) { return '<li>' + esc(n) + '</li>'; }).join('') +
@@ -3052,6 +3115,8 @@
       onSelect: function (id) {
         state.selectedPart = id;
         studio.select(id);
+        /* A click on a subtree still drawn as its box names the box, and loads it. */
+        if (id) studio.requestSubtree(id);
         renderParts();
         renderTree();
       },

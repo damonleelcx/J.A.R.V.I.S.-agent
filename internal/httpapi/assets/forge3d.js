@@ -2659,8 +2659,15 @@
     this.transparency = 1.0;
     this.batches = [];
     this.isolated = null;
-    /* Pixels of radius below which a copy is drawn as its box; 0 draws every copy whole. */
+    /* Pixels of radius below which a copy is drawn as its box; 0 draws every copy whole
+     * (and turns the simplified level off with it). */
     this.lod = LOD_PIXELS;
+    /* Pixels of radius below which a copy is drawn as its batch's simplified mesh (W2). */
+    this.lodSimple = LOD_SIMPLE_PIXELS;
+    /* Cull through each batch's hierarchy of copies (W2); false tests every copy. */
+    this.hierarchy = true;
+    /* A design loaded a subtree at a time (loadLazy), or null. */
+    this.lazy = null;
     this.stats = null;
 
     this.camera = { yaw: 0.7, pitch: 0.5, distance: 6, target: [0, 0, 0] };
@@ -2818,6 +2825,8 @@
     this.spec = spec || { parts: [] };
     this.approximations = [];
     this.isolated = null;
+    this.lazy = null;
+    this._searchIndex = null;
     /* Refused whole and said out loud (Phase 3, stage S0): partsToDraw draws nothing
      * for a design over the ceiling, and an empty stage must not read as an empty design. */
     var refusal = drawRefusal(this.spec);
@@ -2888,7 +2897,11 @@
       removed: new Uint8Array(n), mirrored: new Uint8Array(n), opacity: new Float32Array(n),
       model: new Float32Array(n * 16), centre: new Float64Array(n * 3), radius: new Float32Array(n),
       extent: new Float32Array(n * 3), anchor: new Float64Array(n * 3),
-      disp: new Float32Array(n * 3), group: new Uint8Array(n), visible: new Uint8Array(n),
+      disp: new Float32Array(n * 3),
+      /* The frame each copy was last on screen in, so nothing is cleared per copy per
+       * frame; and this frame's drawn copies with their run, in the order they were found. */
+      seen: new Uint32Array(n), drawn: new Int32Array(n), drawnGroup: new Uint8Array(n),
+      placeholder: !!plan.placeholder, simple: null, tree: null,
       scratch: new Float32Array(n * INSTANCE_FLOATS), instanceBuffer: gl.createBuffer()
     };
     var c = bd.centre, h = bd.half;
@@ -2918,6 +2931,8 @@
       var at = s.position || [0, 0, 0];
       b.anchor[o] = num(at[0], 0); b.anchor[o + 1] = num(at[1], 0); b.anchor[o + 2] = num(at[2], 0);
     }
+    b.tree = instanceTree(b);
+    b.simple = simpleBuffers(gl, geo, bd);
     return b;
   };
 
@@ -2944,6 +2959,11 @@
     gl.deleteBuffer(b.proxy.position);
     gl.deleteBuffer(b.proxy.normal);
     gl.deleteBuffer(b.proxy.index);
+    if (b.simple) {
+      gl.deleteBuffer(b.simple.position);
+      gl.deleteBuffer(b.simple.normal);
+      gl.deleteBuffer(b.simple.index);
+    }
     gl.deleteBuffer(b.instanceBuffer);
   }
 
@@ -3051,8 +3071,48 @@
 
   /* Drawn parts whose path or name contains the query, case-insensitively, up to
    * limit, and how many there were in all — a search over a car must say it found
-   * 500 rivets rather than list them. */
+   * 500 rivets rather than list them.
+   *
+   * # Through an index built once (Phase 6, stage W2)
+   *
+   * Until W2 every keystroke read every occurrence's path and name: 30,000 string
+   * searches per character typed into the tree's search box. The index maps each
+   * three-letter run of every lowercased path and name to the occurrences that contain
+   * it, built on the first search after a load. A query of three letters or more reads
+   * only the occurrences in its rarest run's list, and still checks each of them for
+   * the whole query — so the answer is the scan's, in the scan's order, and
+   * TestRendererFindsOccurrencesThroughAnIndexLikeTheScan holds it to scanOccurrences.
+   *
+   * ‼️ A query of one or two letters has no run of three and is answered by the scan.
+   * It matches most of a car anyway, and the reply is fifty rows and a count. */
   Studio.prototype.findOccurrences = function (query, limit) {
+    var q = String(query || '').trim().toLowerCase(), found = [], total = 0;
+    if (!q) return { found: found, total: 0 };
+    var index = this._searchIndex || (this._searchIndex = searchIndex(this.parts));
+    var candidates = null, k;
+    if (q.length >= SEARCH_RUN) {
+      for (k = 0; k + SEARCH_RUN <= q.length; k++) {
+        var list = index.runs.get(q.substr(k, SEARCH_RUN));
+        if (!list) { candidates = []; break; }
+        if (!candidates || list.length < candidates.length) candidates = list;
+      }
+    }
+    var n = candidates ? candidates.length : this.parts.length;
+    this.searchStats = { rows: this.parts.length, examined: n, indexed: !!candidates };
+    for (k = 0; k < n; k++) {
+      var i = candidates ? candidates[k] : k, text = index.text[i];
+      if (text[0].indexOf(q) < 0 && text[1].indexOf(q) < 0) continue;
+      total++;
+      if (found.length < (limit || 50)) {
+        var p = this.parts[i];
+        found.push({ id: p.id, label: String(p.spec.name || '') || p.id });
+      }
+    }
+    return { found: found, total: total };
+  };
+
+  /* The scan the index replaced, kept as the statement of what a search answers. */
+  Studio.prototype.scanOccurrences = function (query, limit) {
     var q = String(query || '').trim().toLowerCase(), found = [], total = 0;
     if (!q) return { found: found, total: 0 };
     for (var i = 0; i < this.parts.length; i++) {
@@ -3062,6 +3122,230 @@
       if (found.length < (limit || 50)) found.push({ id: p.id, label: name || p.id });
     }
     return { found: found, total: total };
+  };
+
+  var SEARCH_RUN = 3;
+
+  /* Every three-letter run of each occurrence's lowercased path and name, to the
+   * occurrences holding it in ascending order, each listed once. */
+  function searchIndex(parts) {
+    var runs = new Map(), text = new Array(parts.length);
+    function add(s, i) {
+      for (var k = 0; k + SEARCH_RUN <= s.length; k++) {
+        var key = s.substr(k, SEARCH_RUN), list = runs.get(key);
+        if (!list) runs.set(key, list = []);
+        if (list[list.length - 1] !== i) list.push(i);
+      }
+    }
+    for (var i = 0; i < parts.length; i++) {
+      text[i] = [String(parts[i].id).toLowerCase(), String(parts[i].spec.name || '').toLowerCase()];
+      add(text[i][0], i);
+      add(text[i][1], i);
+    }
+    return { runs: runs, text: text };
+  }
+
+  /* ---- Loading a large tree a subtree at a time (Phase 6, stage W2) -------------
+   *
+   * # The problem this solves
+   *
+   * load() uploads every occurrence of a design before the first frame: a 30,000-part
+   * car is 30,000 instances on the GPU, and a person who came to look at one wheel paid
+   * for the seams too. The tree already LISTED lazily (W2, #88); the geometry did not.
+   *
+   * # The policy
+   *
+   * loadLazy lists every occurrence at once (search, the tree and a click all read the
+   * list, and listing is cheap), but uploads none of them. Each top-level slot of the
+   * tree is drawn as one translucent box around where its parts are, until geometry
+   * arrives for it. Then:
+   *
+   *   - FIRST VIEW: every top-level row that places no more than the kernel builds at
+   *     once (LAZY_OCCURRENCES) is requested, in the tree's order, until
+   *     FIRST_VIEW_OCCURRENCES have been asked for. A car's corners, pack and seats
+   *     arrive; its 26,000 riveted seams stay boxes.
+   *   - OPENING, SELECTING or ISOLATING a row requests exactly that row's path
+   *     (requestSubtree), unless a path already loaded or on its way covers it.
+   *
+   * request(path) is the host's: the workbench fetches
+   * GET /v1/geometry/{id}/mesh?subtree=<path> and hands the reply to addSubtree, which
+   * draws the row's parts from it exactly as load draws a whole reply (drawBatches).
+   * Fence: TestRendererLoadsASubtreeWhenItIsAskedForAndDrawsWhatGoPlacesThere.
+   *
+   * ‼️ A design is loaded this way only when it places more than LAZY_OCCURRENCES
+   * (loadsLazily) — past the kernel's ceiling, where the whole design has no built
+   * surface to fetch anyway. Everything smaller is loaded whole, as before. */
+  var LAZY_OCCURRENCES = 4096;           // geometry/limits.go maxDrawnParts
+  var FIRST_VIEW_OCCURRENCES = 8192;
+  var PLACEHOLDER_COLOUR = '#8a94a6', PLACEHOLDER_OPACITY = 0.18;
+
+  function loadsLazily(spec) {
+    return !!(spec && spec.root) && !drawRefusal(spec) && occurrences(spec, MAX_VIEWPORT_PARTS) > LAZY_OCCURRENCES;
+  }
+
+  /* What a first view asks for, by the policy above. */
+  function firstViewPaths(spec) {
+    spec = spec || {};
+    var out = [], total = 0;
+    function take(path, n) {
+      if (n > 0 && n <= LAZY_OCCURRENCES && total + n <= FIRST_VIEW_OCCURRENCES) {
+        out.push(path);
+        total += n;
+      }
+    }
+    (spec.parts || []).forEach(function (p) { if (p && String(p.id || '').trim()) take(String(p.id), repeatCount(p)); });
+    treeChildren(spec, spec.root, '').forEach(function (row) {
+      var one = occurrences({ definitions: spec.definitions, assemblies: spec.assemblies, root: row.ref }, MAX_VIEWPORT_PARTS);
+      take(row.path, one * (row.slots ? row.slots.length : 1));
+    });
+    return out;
+  }
+
+  Studio.prototype.loadLazy = function (spec, request) {
+    if (!this.gl) return 0;
+    var gl = this.gl, self = this;
+    (this.batches || []).forEach(function (b) { releaseBatch(gl, b); });
+    this.batches = [];
+    this.spec = spec || { parts: [] };
+    this.approximations = [];
+    this.isolated = null;
+    this._searchIndex = null;
+    var refusal = drawRefusal(this.spec);
+    if (refusal) this.onError(refusal);
+
+    var drawn = partsToDraw(this.spec);
+    this.parts = drawn.map(function (d) {
+      return { id: d.spec.id, spec: d.spec, removed: !!d.removed, repeatOf: d.repeatOf, fromKernel: false };
+    });
+    var wide = this.webgl2 || !!gl.getExtension('OES_element_index_uint');
+    /* Where each top-level slot's parts are, from the boxes of the shapes that will be
+     * drawn there: computed on the CPU and never uploaded. */
+    var slots = {}, order = [];
+    drawBatches(drawn, null, { wide: wide }).batches.forEach(function (p) {
+      var h = p.bounds.half, c = p.bounds.centre;
+      p.instances.forEach(function (inst) {
+        var m = inst.matrix, key = String(inst.id).split(PATH_SEPARATOR)[0], s = slots[key];
+        if (!s) {
+          s = slots[key] = { min: [Infinity, Infinity, Infinity], max: [-Infinity, -Infinity, -Infinity] };
+          order.push(key);
+        }
+        for (var k = 0; k < 3; k++) {
+          var at = m[k] * c[0] + m[4 + k] * c[1] + m[8 + k] * c[2] + m[12 + k];
+          var e = Math.abs(m[k]) * h[0] + Math.abs(m[4 + k]) * h[1] + Math.abs(m[8 + k]) * h[2];
+          if (at - e < s.min[k]) s.min[k] = at - e;
+          if (at + e > s.max[k]) s.max[k] = at + e;
+        }
+      });
+    });
+    this.lazy = { request: request || function () {}, drawn: drawn, wide: wide, loaded: {}, pending: {},
+                  failed: {}, requested: [], matchers: {}, slots: slots, slotOrder: order, placeholder: null };
+    this._placeholders();
+    this._frameAll();
+    firstViewPaths(this.spec).forEach(function (path) { self.requestSubtree(path); });
+    this.draw();
+    return this.parts.length;
+  };
+
+  Studio.prototype._matcher = function (key) {
+    var m = this.lazy.matchers;
+    return m[key] || (m[key] = occurrenceMatcher(key));
+  };
+
+  /* Whether a path is loaded — or, unless loadedOnly, on its way — itself or under a
+   * path that is. */
+  Studio.prototype._covered = function (path, loadedOnly) {
+    var lazy = this.lazy, sets = loadedOnly ? [lazy.loaded] : [lazy.loaded, lazy.pending];
+    for (var s = 0; s < sets.length; s++) {
+      for (var key in sets[s]) {
+        if (key === path || this._matcher(key)(path, '')) return true;
+      }
+    }
+    return false;
+  };
+
+  /* Ask the host for one path's geometry, unless it is already covered. True when
+   * asked. A no-op for a design loaded whole. */
+  Studio.prototype.requestSubtree = function (path) {
+    var lazy = this.lazy;
+    path = String(path || '');
+    if (!lazy || !path) return false;
+    if (this._covered(path)) return false;
+    lazy.pending[path] = true;
+    delete lazy.failed[path];
+    lazy.requested.push(path);
+    lazy.request(path);
+    return true;
+  };
+
+  /* Draw one requested path's parts from its mesh reply (or as primitives, for null),
+   * replacing any path beneath it that arrived earlier. Returns how many parts it drew. */
+  Studio.prototype.addSubtree = function (path, reply) {
+    var lazy = this.lazy, gl = this.gl, self = this;
+    if (!lazy || !lazy.pending[path]) return 0;
+    delete lazy.pending[path];
+    if (this._covered(path, true)) return 0;
+    var under = this._matcher(path);
+    Object.keys(lazy.loaded).forEach(function (key) {
+      if (!under(key, '')) return;
+      var gone = lazy.loaded[key];
+      gone.forEach(function (b) { releaseBatch(gl, b); });
+      self.batches = self.batches.filter(function (b) { return gone.indexOf(b) < 0; });
+      delete lazy.loaded[key];
+    });
+    var drawn = lazy.drawn.filter(function (d) { return under(d.spec.id, d.repeatOf); });
+    var plan = drawBatches(drawn, reply || null, { wide: lazy.wide });
+    var batches = plan.batches.map(function (p) {
+      p.key = path + '|' + p.key;
+      return self._upload(p, lazy.wide);
+    });
+    lazy.loaded[path] = batches;
+    this.batches = this.batches.concat(batches);
+    this.approximations = this.approximations.concat(plan.approximations);
+    this._placeholders();
+    this.draw();
+    return drawn.length;
+  };
+
+  /* A request the host could not answer: the path stays a box, and may be asked again. */
+  Studio.prototype.failSubtree = function (path, why) {
+    if (!this.lazy || !this.lazy.pending[path]) return;
+    delete this.lazy.pending[path];
+    this.lazy.failed[path] = why || true;
+  };
+
+  Studio.prototype.lazyState = function () {
+    var lazy = this.lazy;
+    if (!lazy) return null;
+    return { loaded: Object.keys(lazy.loaded), pending: Object.keys(lazy.pending),
+             failed: Object.keys(lazy.failed), requested: lazy.requested.slice(),
+             placeholders: lazy.placeholder ? lazy.placeholder.n : 0 };
+  };
+
+  /* One box per top-level slot that no loaded path covers yet. */
+  Studio.prototype._placeholders = function () {
+    var lazy = this.lazy, gl = this.gl, self = this, old = lazy.placeholder;
+    if (old) {
+      releaseBatch(gl, old);
+      this.batches = this.batches.filter(function (b) { return b !== old; });
+      lazy.placeholder = null;
+    }
+    var instances = [];
+    lazy.slotOrder.forEach(function (key) {
+      if (self._covered(key, true)) return;
+      var s = lazy.slots[key], size = [], centre = [];
+      for (var k = 0; k < 3; k++) {
+        size[k] = Math.max(s.max[k] - s.min[k], 1e-3);
+        centre[k] = (s.max[k] + s.min[k]) / 2;
+      }
+      instances.push({ id: key, repeatOf: '', removed: false,
+        spec: { id: key, name: key, color: PLACEHOLDER_COLOUR, opacity: PLACEHOLDER_OPACITY, position: centre },
+        matrix: [size[0], 0, 0, 0, 0, size[1], 0, 0, 0, 0, size[2], 0, centre[0], centre[1], centre[2], 1] });
+    });
+    if (!instances.length) return;
+    var geo = boxGeometry(1, 1, 1);
+    lazy.placeholder = this._upload({ key: 'placeholder', fromKernel: false, definition: -1, shading: shadingFor(null),
+      geo: geo, bounds: geometryBounds(geo.positions), instances: instances, placeholder: true }, lazy.wide);
+    this.batches.unshift(lazy.placeholder);
   };
 
   Studio.prototype.setSection = function (axis, t) {
@@ -3100,7 +3384,179 @@
     return b.removed[i] ? REMOVED_ALPHA : b.opacity[i] * transparency;
   }
   var LOD_PIXELS = 3;
-  var SKIP = 255;
+
+  /* ---- A level between the box and the whole mesh (Phase 6, stage W2) ----------
+   *
+   * # The problem this solves
+   *
+   * Until W2 a copy was either its box (under three pixels of radius) or every triangle
+   * of its shape. A lamp twenty pixels across on a car seen whole was drawn with the
+   * sphere's 960 triangles, and a kernel definition of a cast housing with all of its
+   * thousands.
+   *
+   * Each batch computes, once at upload, a SIMPLIFIED mesh of its shape by clustering
+   * vertices on a grid of SIMPLE_CELLS across its longest side: every vertex in a cell
+   * becomes the cell's average, and triangles that collapse are dropped. A copy under
+   * LOD_SIMPLE_PIXELS of radius is drawn with it. A shape that does not at least halve
+   * has no simplified level and goes straight from whole to box.
+   *
+   * Picking never reads it: a click is tested against the real triangles (pick).
+   * Fence: TestRendererDrawsACopyAtTheLevelItsProjectedSizeCalls. */
+  var LOD_SIMPLE_PIXELS = 24;
+  var SIMPLE_CELLS = 8;
+  var SIMPLE_MIN_TRIANGLES = 48;
+
+  function simplifyGeometry(geo, bd) {
+    var pos = geo.positions, idx = geo.indices, triangles = idx.length / 3;
+    if (triangles <= SIMPLE_MIN_TRIANGLES) return null;
+    var side = Math.max(bd.max[0] - bd.min[0], bd.max[1] - bd.min[1], bd.max[2] - bd.min[2]);
+    if (!(side > 0)) return null;
+    var cell = side / SIMPLE_CELLS, span = SIMPLE_CELLS + 1;
+    var clusters = {}, sums = [], remap = new Int32Array(pos.length / 3), v, k;
+    for (v = 0; v < remap.length; v++) {
+      var key = 0;
+      for (k = 0; k < 3; k++) {
+        key = key * span + Math.max(0, Math.min(SIMPLE_CELLS, Math.floor((pos[v * 3 + k] - bd.min[k]) / cell)));
+      }
+      var c = clusters[key];
+      if (c === undefined) { c = clusters[key] = sums.length / 4; sums.push(0, 0, 0, 0); }
+      sums[c * 4] += pos[v * 3]; sums[c * 4 + 1] += pos[v * 3 + 1]; sums[c * 4 + 2] += pos[v * 3 + 2];
+      sums[c * 4 + 3]++;
+      remap[v] = c;
+    }
+    var vertices = new Array(sums.length / 4 * 3);
+    for (c = 0; c < sums.length / 4; c++) {
+      for (k = 0; k < 3; k++) vertices[c * 3 + k] = sums[c * 4 + k] / sums[c * 4 + 3];
+    }
+    var out = [], seen = {};
+    for (var t = 0; t + 2 < idx.length; t += 3) {
+      var a = remap[idx[t]], b = remap[idx[t + 1]], d = remap[idx[t + 2]];
+      if (a === b || b === d || a === d) continue;
+      /* One key per triangle AND winding: two faces back to back are both kept. */
+      var id = a < b && a < d ? a + ',' + b + ',' + d : b < d ? b + ',' + d + ',' + a : d + ',' + a + ',' + b;
+      if (seen[id]) continue;
+      seen[id] = true;
+      out.push(a, b, d);
+    }
+    if (!out.length || out.length / 3 > triangles / 2) return null;
+    return kernelGeometry({ vertices: vertices, triangles: out }).geo;
+  }
+
+  function simpleBuffers(gl, geo, bd) {
+    var s = simplifyGeometry(geo, bd);
+    if (!s) return null;
+    return {
+      position: makeBuffer(gl, gl.ARRAY_BUFFER, new Float32Array(s.positions)),
+      normal:   makeBuffer(gl, gl.ARRAY_BUFFER, new Float32Array(s.normals)),
+      index:    makeBuffer(gl, gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(s.indices)),
+      count:    s.indices.length,
+      geo:      s
+    };
+  }
+
+  /* Which level a copy of radius r at dist is drawn at: 2 its box, 1 its simplified
+   * mesh, 0 whole. One function, read per copy and for a whole node of the hierarchy. */
+  function levelFor(b, r, dist, pixels, lod, simple) {
+    if (lod > 0 && dist > r) {
+      var px = r * pixels / dist;
+      if (b.triangles > 12 && px < lod) return 2;
+      if (b.simple && px < simple) return 1;
+    }
+    return 0;
+  }
+
+  /* ---- Culling through a hierarchy of copies (Phase 6, stage W2) ----------------
+   *
+   * # The problem this solves
+   *
+   * Until W2 every frame tested every copy's sphere against the view: 100,000 sphere
+   * tests to draw a car seen from across the room, and 100,000 to draw nothing when the
+   * camera looked away from it.
+   *
+   * Each batch builds, once at upload, a binary tree over its copies: split at the
+   * median along the longest side of their centres, TREE_LEAF copies to a leaf. A node
+   * holds the box around its copies' spheres, the box of their centres and their largest
+   * radius. A frame walks it:
+   *
+   *   - a node wholly outside one plane culls every copy under it, unvisited;
+   *   - a node wholly inside every plane keeps every copy under it without testing
+   *     one, and when even its nearest copy is too small, draws them all as boxes;
+   *   - a node that straddles a plane is opened, and a leaf tests its copies one by
+   *     one exactly as before.
+   *
+   * # Why the answer is the per-copy answer
+   *
+   * A copy is culled by the flat test when its centre is more than its radius behind a
+   * plane. A node's box holds every copy's centre ± radius, so a box wholly behind the
+   * plane holds only such copies, and a box wholly in front none — both with a margin
+   * for rounding, and anything within it is opened and tested per copy. An exploded view
+   * moves each copy by at most the explode distance, so the boxes grow by that. An
+   * assembly state moves copies by amounts of its own, so a frame with one tests every
+   * copy. TestRendererCullsAHierarchyExactlyAsItCullsEachCopy holds it on randomized
+   * cameras, and that a far or turned-away car visits a handful of nodes.
+   *
+   * ‼️ What is counted changes in one way: a copy under a culled node is counted
+   * culled even when an isolation would also have hidden it. Every copy is still
+   * counted once. */
+  var TREE_LEAF = 8;
+
+  function instanceTree(b) {
+    var n = b.n;
+    if (n <= TREE_LEAF) return null;
+    var order = new Int32Array(n), scale = 0, count = 0, i;
+    for (i = 0; i < n; i++) order[i] = i;
+    function build(start, end) {
+      var node = { start: start, end: end, lo: [Infinity, Infinity, Infinity], hi: [-Infinity, -Infinity, -Infinity],
+                   clo: [Infinity, Infinity, Infinity], chi: [-Infinity, -Infinity, -Infinity], rmax: 0,
+                   left: null, right: null };
+      count++;
+      for (var k = start; k < end; k++) {
+        var j = order[k], r = b.radius[j];
+        if (r > node.rmax) node.rmax = r;
+        for (var a = 0; a < 3; a++) {
+          var c = b.centre[j * 3 + a];
+          if (c - r < node.lo[a]) node.lo[a] = c - r;
+          if (c + r > node.hi[a]) node.hi[a] = c + r;
+          if (c < node.clo[a]) node.clo[a] = c;
+          if (c > node.chi[a]) node.chi[a] = c;
+        }
+      }
+      if (end - start <= TREE_LEAF) return node;
+      var axis = 0;
+      for (var x = 1; x < 3; x++) {
+        if (node.chi[x] - node.clo[x] > node.chi[axis] - node.clo[axis]) axis = x;
+      }
+      if (!(node.chi[axis] - node.clo[axis] > 0)) return node;
+      var sorted = Array.prototype.slice.call(order, start, end).sort(function (p, q) {
+        return b.centre[p * 3 + axis] - b.centre[q * 3 + axis];
+      });
+      order.set(sorted, start);
+      var mid = (start + end) >> 1;
+      node.left = build(start, mid);
+      node.right = build(mid, end);
+      return node;
+    }
+    var root = build(0, n);
+    for (i = 0; i < 3; i++) scale = Math.max(scale, Math.abs(root.lo[i]), Math.abs(root.hi[i]));
+    return { root: root, order: order, nodes: count, scale: scale };
+  }
+
+  /* -1 when a box grown by `grow` is wholly behind a plane, 1 when it is wholly in front
+   * of every plane, 0 when it straddles one — with a rounding margin that only ever
+   * turns an answer into 0. */
+  function boxAgainstFrustum(planes, lo, hi, grow, scale) {
+    var inside = 1;
+    for (var i = 0; i < 6; i++) {
+      var p = planes[i], eps = 1e-9 * (scale + grow + Math.abs(p[3]) + 1);
+      var most = p[0] * (p[0] > 0 ? hi[0] + grow : lo[0] - grow) + p[1] * (p[1] > 0 ? hi[1] + grow : lo[1] - grow) +
+                 p[2] * (p[2] > 0 ? hi[2] + grow : lo[2] - grow) + p[3];
+      if (most < -eps) return -1;
+      var least = p[0] * (p[0] > 0 ? lo[0] - grow : hi[0] + grow) + p[1] * (p[1] > 0 ? lo[1] - grow : hi[1] + grow) +
+                  p[2] * (p[2] > 0 ? lo[2] - grow : hi[2] + grow) + p[3];
+      if (least < eps) inside = 0;
+    }
+    return inside;
+  }
 
   /* The six planes of the view, from clip = projection · view, each normalised so a
    * sphere's distance can be compared with its radius (Gribb and Hartmann). */
@@ -3221,13 +3677,15 @@
     /* What the frame was drawn with, kept for pick(): a click is resolved against the
      * camera and the displacements that were on screen, not whatever changed since. */
     var frame = this._frame = {
+      number: (this._frameNumber = (this._frameNumber || 0) + 1),
       view: view, proj: proj, eye: eye, planes: frustumPlanes(multiply(proj, view)),
       pixels: h / (2 * Math.tan(FOV_DEGREES * Math.PI / 360))
     };
     /* Counted every frame and kept, because "how many draw calls" is the question a
      * slow viewport is asked first and the answer must not need a debugger. */
     var stats = this.stats = { path: this.renderPath, batches: (this.batches || []).length, drawCalls: 0,
-      instances: 0, culled: 0, proxied: 0, hidden: 0, translucent: 0, uploadedBytes: 0 };
+      instances: 0, culled: 0, proxied: 0, simplified: 0, hidden: 0, translucent: 0, placeholders: 0,
+      visited: 0, uploadedBytes: 0 };
     var translucent = [];
     for (var n = 0; n < (this.batches || []).length; n++) {
       this._drawBatch(this.batches[n], frame, stats, translucent);
@@ -3244,68 +3702,110 @@
     this._placeLabels(view, proj);
   };
 
-  /* One batch: decide each copy, lay the survivors out in four runs — full or box,
-   * each wound either way — upload them once, and draw each run with one call. */
+  /* One batch: decide each copy — through the batch's hierarchy, or one by one — lay
+   * the survivors out in six runs (whole, simplified or box, each wound either way),
+   * upload them once, and draw each run with one call. */
   Studio.prototype._drawBatch = function (b, f, stats, translucent) {
     var gl = this.gl, g = ground();
-    var explode = this.explode > 0 && this.bounds ? this.explode * this.bounds.span * 0.6 : 0;
-    var isolated = this.isolated, state = this.state, lod = this.lod;
-    var counts = [0, 0, 0, 0], i, o;
-    for (i = 0; i < b.n; i++) {
-      b.visible[i] = 0;
-      b.group[i] = SKIP;
-      var id = b.ids[i], rep = b.repeatOf[i];
-      if (isolated && !isolated(id, rep)) { stats.hidden++; continue; }
-      o = i * 3;
-      var dx = 0, dy = 0, dz = 0;
-      /* Exploded view: parts move outward from the assembly centre, so the
-       * relationship between them stays readable while the gap opens. */
-      if (explode) {
-        var ax = b.anchor[o] - this.bounds.centre[0], ay = b.anchor[o + 1] - this.bounds.centre[1],
-            az = b.anchor[o + 2] - this.bounds.centre[2];
-        var len = Math.sqrt(ax * ax + ay * ay + az * az);
-        if (len < 1e-6) { ax = 0; ay = 1; az = 0; len = 1; }
-        dx = ax / len * explode; dy = ay / len * explode; dz = az / len * explode;
-      }
-      /* PRD VIS-02. The active assembly state moves parts and hides them. It is
-       * applied here rather than baked into the loaded geometry so that
-       * switching states costs a redraw instead of a rebuild, and so the
-       * document on screen stays the document that was stored. */
-      if (state) {
-        var st = this._stateFor(id, rep);
-        if (st.hidden) { stats.hidden++; continue; }
-        if (st.offset) { dx += st.offset[0]; dy += st.offset[1]; dz += st.offset[2]; }
-      }
-      b.disp[o] = dx; b.disp[o + 1] = dy; b.disp[o + 2] = dz;
-      var cx = b.centre[o] + dx, cy = b.centre[o + 1] + dy, cz = b.centre[o + 2] + dz, r = b.radius[i];
-      if (!sphereInFrustum(f.planes, cx, cy, cz, r)) { stats.culled++; continue; }
-      b.visible[i] = 1;
-      var ex = cx - f.eye[0], ey = cy - f.eye[1], ez = cz - f.eye[2];
-      var dist = Math.sqrt(ex * ex + ey * ey + ez * ez);
-      var proxy = lod > 0 && b.triangles > 12 && dist > r && r * f.pixels / dist < lod ? 1 : 0;
-      if (alphaOf(b, i, this.transparency) < 1) {
-        translucent.push({ b: b, i: i, proxy: proxy, depth: dist });
-        continue;
-      }
-      b.group[i] = proxy * 2 + b.mirrored[i];
-      counts[b.group[i]]++;
+    var ctx = { b: b, f: f, stats: stats, translucent: translucent,
+      explode: this.explode > 0 && this.bounds ? this.explode * this.bounds.span * 0.6 : 0,
+      isolated: this.isolated, state: this.state, lod: this.lod, simple: this.lodSimple,
+      count: 0, counts: [0, 0, 0, 0, 0, 0] };
+    var k;
+    if (this.hierarchy && b.tree && !this.state) {
+      this._visitTree(ctx);
+    } else {
+      for (k = 0; k < b.n; k++) this._classify(ctx, k, false, -1);
     }
-    var starts = [0, counts[0], counts[0] + counts[1], counts[0] + counts[1] + counts[2]];
-    var total = starts[3] + counts[3];
+    var counts = ctx.counts, total = ctx.count;
     if (!total) return;
+    var starts = [0];
+    for (k = 1; k < 6; k++) starts[k] = starts[k - 1] + counts[k - 1];
     var at = starts.slice();
-    for (i = 0; i < b.n; i++) {
-      if (b.group[i] !== SKIP) this._writeInstance(b.scratch, at[b.group[i]]++, b, i, 1, g);
-    }
+    for (k = 0; k < total; k++) this._writeInstance(b.scratch, at[b.drawnGroup[k]]++, b, b.drawn[k], 1, g);
     if (this.instancing) {
       var data = b.scratch.subarray(0, total * INSTANCE_FLOATS);
       gl.bindBuffer(gl.ARRAY_BUFFER, b.instanceBuffer);
       gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
       stats.uploadedBytes += data.byteLength;
     }
-    for (var k = 0; k < 4; k++) {
-      if (counts[k]) this._drawRun(b, k >= 2, k % 2 === 1, b.instanceBuffer, b.scratch, starts[k], counts[k], stats);
+    for (k = 0; k < 6; k++) {
+      if (counts[k]) this._drawRun(b, k >> 1, k % 2 === 1, b.instanceBuffer, b.scratch, starts[k], counts[k], stats);
     }
+  };
+
+  /* The batch's hierarchy, walked with the rules above; a leaf and a node wholly in view
+   * hand their copies to _classify. */
+  Studio.prototype._visitTree = function (ctx) {
+    var b = ctx.b, t = b.tree, f = ctx.f, stats = ctx.stats;
+    var stack = this._stack || (this._stack = []);
+    stack.length = 0;
+    stack.push(t.root);
+    while (stack.length) {
+      var node = stack.pop();
+      stats.visited++;
+      var rel = boxAgainstFrustum(f.planes, node.lo, node.hi, ctx.explode, t.scale);
+      if (rel < 0) { stats.culled += node.end - node.start; continue; }
+      if (rel > 0 || !node.left) {
+        var level = -1;
+        if (rel > 0) {
+          /* Nearest any copy's centre can be, after the explode moves it. */
+          var d2 = 0;
+          for (var a = 0; a < 3; a++) {
+            var e = f.eye[a], gap = e < node.clo[a] ? node.clo[a] - e : e > node.chi[a] ? e - node.chi[a] : 0;
+            d2 += gap * gap;
+          }
+          var near = Math.sqrt(d2) - ctx.explode;
+          if (near > 0 && levelFor(b, node.rmax, near, f.pixels, ctx.lod, 0) === 2) level = 2;
+        }
+        for (var k = node.start; k < node.end; k++) this._classify(ctx, t.order[k], rel > 0, level);
+        continue;
+      }
+      stack.push(node.right, node.left);
+    }
+  };
+
+  /* One copy: hidden, culled, or drawn at a level — in a run, or queued as translucent.
+   * `whole` says a node already put it in view; a level of 2 says a node already made it
+   * a box, and -1 leaves the level to this copy's own distance. */
+  Studio.prototype._classify = function (ctx, i, whole, level) {
+    var b = ctx.b, f = ctx.f, stats = ctx.stats, o = i * 3;
+    var id = b.ids[i], rep = b.repeatOf[i];
+    if (ctx.isolated && !ctx.isolated(id, rep)) { stats.hidden++; return; }
+    var dx = 0, dy = 0, dz = 0;
+    /* Exploded view: parts move outward from the assembly centre, so the
+     * relationship between them stays readable while the gap opens. */
+    if (ctx.explode) {
+      var ax = b.anchor[o] - this.bounds.centre[0], ay = b.anchor[o + 1] - this.bounds.centre[1],
+          az = b.anchor[o + 2] - this.bounds.centre[2];
+      var len = Math.sqrt(ax * ax + ay * ay + az * az);
+      if (len < 1e-6) { ax = 0; ay = 1; az = 0; len = 1; }
+      dx = ax / len * ctx.explode; dy = ay / len * ctx.explode; dz = az / len * ctx.explode;
+    }
+    /* PRD VIS-02. The active assembly state moves parts and hides them. It is
+     * applied here rather than baked into the loaded geometry so that
+     * switching states costs a redraw instead of a rebuild, and so the
+     * document on screen stays the document that was stored. */
+    if (ctx.state) {
+      var st = this._stateFor(id, rep);
+      if (st.hidden) { stats.hidden++; return; }
+      if (st.offset) { dx += st.offset[0]; dy += st.offset[1]; dz += st.offset[2]; }
+    }
+    b.disp[o] = dx; b.disp[o + 1] = dy; b.disp[o + 2] = dz;
+    var cx = b.centre[o] + dx, cy = b.centre[o + 1] + dy, cz = b.centre[o + 2] + dz, r = b.radius[i];
+    if (!whole && !sphereInFrustum(f.planes, cx, cy, cz, r)) { stats.culled++; return; }
+    b.seen[i] = f.number;
+    var ex = cx - f.eye[0], ey = cy - f.eye[1], ez = cz - f.eye[2];
+    var dist = Math.sqrt(ex * ex + ey * ey + ez * ez);
+    if (level < 0) level = levelFor(b, r, dist, f.pixels, ctx.lod, ctx.simple);
+    if (alphaOf(b, i, this.transparency) < 1) {
+      ctx.translucent.push({ b: b, i: i, level: level, depth: dist });
+      return;
+    }
+    var group = level * 2 + b.mirrored[i];
+    b.drawn[ctx.count] = i;
+    b.drawnGroup[ctx.count++] = group;
+    ctx.counts[group]++;
   };
 
   /* One instance's 21 floats: its matrix moved by what the view added, its colour and
@@ -3359,17 +3859,17 @@
     var start = 0;
     for (j = 1; j <= list.length; j++) {
       var a = list[start], e = list[j];
-      if (e && e.b === a.b && e.proxy === a.proxy && e.b.mirrored[e.i] === a.b.mirrored[a.i]) continue;
-      this._drawRun(a.b, !!a.proxy, !!a.b.mirrored[a.i], this._translucentBuffer, data, start, j - start, stats);
+      if (e && e.b === a.b && e.level === a.level && e.b.mirrored[e.i] === a.b.mirrored[a.i]) continue;
+      this._drawRun(a.b, a.level, !!a.b.mirrored[a.i], this._translucentBuffer, data, start, j - start, stats);
       start = j;
     }
   };
 
   /* Draw `count` instances starting at `start` of `data` (uploaded to `buffer`). */
-  Studio.prototype._drawRun = function (b, proxy, mirrored, buffer, data, start, count, stats) {
+  Studio.prototype._drawRun = function (b, level, mirrored, buffer, data, start, count, stats) {
     var gl = this.gl, loc = this._loc;
-    var geo = proxy ? b.proxy : b.buffers;
-    var elements = proxy ? b.proxy.count : b.count, type = proxy ? gl.UNSIGNED_SHORT : b.indexType;
+    var geo = level === 2 ? b.proxy : level === 1 ? b.simple : b.buffers;
+    var elements = level ? geo.count : b.count, type = level ? gl.UNSIGNED_SHORT : b.indexType;
     /* The finish, as the document declared it. Not looked up from the material
      * NAME: that table would have to exist here and in Go, and this codebase
      * has already recorded what two copies of one rule cost. */
@@ -3419,7 +3919,9 @@
       }
     }
     stats.instances += count;
-    if (proxy) stats.proxied += count;
+    if (level === 2) stats.proxied += count;
+    if (level === 1) stats.simplified += count;
+    if (b.placeholder) stats.placeholders += count;
   };
 
   /* ‼️ Divisors and enabled arrays are CONTEXT state, not program state. Left set, the
@@ -3455,11 +3957,12 @@
   };
 
   Studio.prototype.pickRay = function (origin, dir) {
-    var best = null;
+    var best = null, f = this._frame;
+    if (!f) return null;
     for (var n = 0; n < this.batches.length; n++) {
       var b = this.batches[n];
       for (var i = 0; i < b.n; i++) {
-        if (!b.visible[i]) continue;
+        if (b.seen[i] !== f.number) continue;
         var o = i * 3, r = b.radius[i];
         var cx = b.centre[o] + b.disp[o] - origin[0], cy = b.centre[o + 1] + b.disp[o + 1] - origin[1],
             cz = b.centre[o + 2] + b.disp[o + 2] - origin[2];
@@ -3867,6 +4370,10 @@
      * for the fence that holds a row's reach to what Go places under it (W2, W3). */
     treeChildren: treeChildren,
     occurrenceMatcher: occurrenceMatcher,
+    /* Whether a design is loaded a subtree at a time, and what its first view asks for
+     * (W2): exported for the workbench, and for the fence that holds the policy. */
+    loadsLazily: loadsLazily,
+    firstViewPaths: firstViewPaths,
     /* A cylinder's length, reading "depth" when "height" is absent.
      *
      * Exported so the Parts panel reads it the same way the stage draws it and
