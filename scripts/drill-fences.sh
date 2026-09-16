@@ -1133,12 +1133,20 @@ drill "a box is filed without the last cell it reaches" internal/domain/cad/side
   "s = s.replace('            for cx in range(q[0] >> sx, (r[0] >> sx) + 1):\n', '            for cx in range(q[0] >> sx, r[0] >> sx):\n', 1)" \
   ./internal/domain/cad 'TestKernel_LongBoxesAreFoundAsEveryPairFindsThem'
 
+# Re-anchored 2026-09-16 (drills that could break the wrong copy). The four drills
+# below were written against _inside, _carried and _pair_key when those were the only
+# keying path. The direct path copied their text, so each anchor occurred twice and
+# replace(..., 1) went on mutating the REFERENCE copy, which the shipped check no
+# longer runs: all four stayed green. They now break the copy this fence's build takes.
+# Containment is _inside_planned's test (the same comparison, bounds precomputed):
+# every pair on the rail is memoizable, so breaking _inside_split's copy instead stays
+# green here. That copy is held by the pair-key fence.
 drill "a clash is slid along a box it is not inside" internal/domain/cad/sidecar.py \
-  "s = s.replace('        if mid - reach >= _SLIDE_MARGIN - half[r] and mid + reach <= half[r] - _SLIDE_MARGIN:\n', '        if True:\n', 1)" \
+  "s = s.replace('        if mid - reach >= low and mid + reach <= high:\n', '        if True:\n', 1)" \
   ./internal/domain/cad 'TestKernel_PinsAlongARailPayForOneBooleanAndTheEndsAreMeasured'
 
 drill "containment is checked at one end of the box only" internal/domain/cad/sidecar.py \
-  "s = s.replace('        if mid - reach >= _SLIDE_MARGIN - half[r] and mid + reach <= half[r] - _SLIDE_MARGIN:\n', '        if mid - reach >= _SLIDE_MARGIN - half[r]:\n', 1)" \
+  "s = s.replace('        if mid - reach >= low and mid + reach <= high:\n', '        if mid - reach >= low:\n', 1)" \
   ./internal/domain/cad 'TestKernel_PinsAlongARailPayForOneBooleanAndTheEndsAreMeasured'
 
 drill "a pin along a rail is measured at every pose again" internal/domain/cad/sidecar.py \
@@ -1146,7 +1154,7 @@ drill "a pin along a rail is measured at every pose again" internal/domain/cad/s
   ./internal/domain/cad 'TestKernel_PinsAlongARailPayForOneBooleanAndTheEndsAreMeasured'
 
 drill "a slide seen only from the other box is not carried" internal/domain/cad/sidecar.py \
-  "s = s.replace('    out = []\n    for v in axes:\n', '    out = []\n    for v in []:\n', 1)" \
+  "s = s.replace('    out = []\n    for v in axes:\n        for w in range(3):\n            if abs(pose[4 * w + v]) >= 1 - 1e-9:\n', '    out = []\n    for v in []:\n        for w in range(3):\n            if abs(pose[4 * w + v]) >= 1 - 1e-9:\n', 1)" \
   ./internal/domain/cad 'TestKernel_PinsAlongARailPayForOneBooleanAndTheEndsAreMeasured'
 
 drill "a carried slide ignores a rotation that does not line the axes up" internal/domain/cad/sidecar.py \
@@ -1154,7 +1162,7 @@ drill "a carried slide ignores a rotation that does not line the axes up" intern
   ./internal/domain/cad 'TestKernel_AReusedClashIsTheClashMeasuredAgain'
 
 drill "a clash is keyed in the frame that slides less" internal/domain/cad/sidecar.py \
-  "s = s.replace('        return forward if marked_f > marked_b else backward\n', '        return backward if marked_f > marked_b else forward\n', 1)" \
+  "s = s.replace('            return forward if marked_f > marked_b else backward\n', '            return backward if marked_f > marked_b else forward\n', 1)" \
   ./internal/domain/cad 'TestKernel_PinsAlongARailPayForOneBooleanAndTheEndsAreMeasured'
 
 echo
@@ -1479,8 +1487,11 @@ drill "an inert radius is fatal again" internal/domain/geometry/curve.go \
   's = s.replace("\t\t\t\tinert(i, \"where the edges either side of it are in line\")\n\t\t\t\tcontinue", "\t\t\t\treturn nil, ignored, fmt.Errorf(\"in line\")", 1)' \
   ./internal/domain/geometry 'TestRoundedCorners_IgnoresARadiusThatNamesNoCorner'
 
+# Re-anchored 2026-09-16: the old anchor also matched resolveArcs' via warning, and
+# `_ = fmt.Sprintf(` left append's closing paren behind, a build error that was red for
+# the wrong reason. The warning is still built and dropped, now in a form that compiles.
 drill "an ignored radius is ignored SILENTLY" internal/domain/geometry/curve.go \
-  's = s.replace("\t\tignored = append(ignored, fmt.Sprintf(", "\t\t_ = fmt.Sprintf(", 1)' \
+  's = s.replace("\t\tignored = append(ignored, fmt.Sprintf(\"has a corner radius on", "\t\t_ = append(ignored, fmt.Sprintf(\"has a corner radius on", 1)' \
   ./internal/domain/geometry 'TestRoundedCorners_IgnoresARadiusThatNamesNoCorner|TestSwept_ARadiusOnAnEndIsIgnoredRatherThanFatal'
 
 drill "the renderer keeps a loop's repeated closing point" internal/httpapi/assets/forge3d.js \
@@ -1788,8 +1799,10 @@ drill "the method hint names the inherited leaves" internal/domain/cad/script.py
   's = s.replace("defined = qual.split(\".\")[0] if \".\" in qual else owner", "defined = owner", 1)' \
   ./internal/domain/cad 'TestScript_AMethodIsNotASpellingMistake'
 
+# Re-anchored 2026-09-16: this anchor and the parser's-word one below first matched the
+# function's own `def` line, so each mutation was a SyntaxError in script.py.
 drill "a failure does not say how the builder is called" internal/domain/cad/script.py \
-  's = s.replace("signature_help(ns, source, exc)", "\"\"", 1)' \
+  's = s.replace("signature_help(ns, source, exc)),", "\"\"),", 1)' \
   ./internal/domain/cad 'TestScript_AFailureSaysHowTheBuilderIsCalled'
 
 drill "the failing LINE is not consulted" internal/domain/cad/script.py \
@@ -1825,7 +1838,7 @@ drill "the dunder rule does not reach through an @ expression" internal/domain/c
   ./internal/domain/cad 'TestScript_RefusesTheWayOut'
 
 drill "a refusal names the parser's word, not the author's" internal/domain/cad/script.py \
-  's = s.replace("_syntax_name(node)", "type(node).__name__", 1)' \
+  's = s.replace("_syntax_name(node)))", "type(node).__name__))", 1)' \
   ./internal/domain/cad 'TestScript_ARefusalNamesWhatWasWritten'
 
 drill "the suggestion cutoff is difflib's loose default" internal/domain/cad/script.py \
@@ -2221,7 +2234,7 @@ drill "a ring is never looked for" internal/domain/geometry/repetition.go \
   ./internal/domain/geometry 'TestRepetition_FindsAPolarRing'
 
 drill "groups are read in map order" internal/domain/geometry/repetition.go \
-  's = s.replace("\tfor _, g := range groups {", "\tfor _, g := range byKey {", 1)' \
+  's = s.replace("\tfor _, g := range groups {\n\t\tfor _, run := range groupRuns(g) {\n\t\t\tout = append(out, Repetition{Assembly: a.ID,", "\tfor _, g := range byKey {\n\t\tfor _, run := range groupRuns(g) {\n\t\t\tout = append(out, Repetition{Assembly: a.ID,", 1)' \
   ./internal/domain/geometry 'TestRepetition_IsDeterministic'
 
 drill "the turn does not say what could be one pattern" internal/agent/converse.go \
@@ -3274,8 +3287,13 @@ drill "a cached placement is not inverted" internal/domain/cad/sidecar.py \
   's = s.replace("    trsf.Invert()\n    return _location_of(TopLoc_Location(trsf))\n", "    return _location_of(TopLoc_Location(trsf))\n", 1)' \
   ./internal/domain/cad 'TestKernel_APlacedCopyIsTheCopyBuild123dMade'
 
+# Re-anchored 2026-09-16 (drills that could break the wrong copy). The old anchor hit
+# the deepcopy loop kept as the reference (_PLACE_WITHOUT_DEEPCOPY = False), which the
+# fixture never reaches, and stayed green. The plan's fallback deepcopy, the other copy
+# of that line, ALSO stays green: no attribute in the fixture falls back. The attribute
+# the shipped plan does copy, and no other drill shares, is a Location.
 drill "a located copy shares its definition's attributes" internal/domain/cad/sidecar.py \
-  's = s.replace("            setattr(out, key, copy.deepcopy(value, memo))\n", "            setattr(out, key, value)\n", 1)' \
+  's = s.replace("            setattr(out, key, _location_of(TopLoc_Location(value.wrapped.Transformation())))\n", "            setattr(out, key, value)\n", 1)' \
   ./internal/domain/cad 'TestKernel_APlacedCopyIsTheCopyBuild123dMade'
 
 drill "the assembly integrates every copy again" internal/domain/cad/sidecar.py \
@@ -3381,7 +3399,7 @@ drill "a direct key is taken in the frame that marks fewer" internal/domain/cad/
   ./internal/domain/cad 'TestKernel_APairKeyWithoutLocationsIsTheKeyBuild123dGave'
 
 drill "direct containment takes a box's whole length for its reach" internal/domain/cad/sidecar.py \
-  's = s.replace("            reach += abs(v) * (hi[c] - lo[c]) / 2\n", "            reach += abs(v) * (hi[c] - lo[c])\n", 1)' \
+  's = s.replace("            mid += v * (lo[c] + hi[c]) / 2\n            reach += abs(v) * (hi[c] - lo[c]) / 2\n", "            mid += v * (lo[c] + hi[c]) / 2\n            reach += abs(v) * (hi[c] - lo[c])\n", 1)' \
   ./internal/domain/cad 'TestKernel_APairKeyWithoutLocationsIsTheKeyBuild123dGave'
 
 drill "a pair inside only the other frame is keyed as unmarked" internal/domain/cad/sidecar.py \
@@ -3809,8 +3827,8 @@ drill "a pinned artifact is not checked against the project" internal/domain/wor
   's = s.replace("if artifact.ProjectID != c.ProjectID {", "if false {", 1)' \
   ./internal/domain/geometry 'TestSave_APinnedArtifactFromAnotherProjectIsRefused'
 
-# "ArtifactID: source.ArtifactID," appears twice — Adopt first, then Respec — so replace(..., 1)
-# takes Adopt's and the rsplit below takes Respec's. One drill each: they are two call sites and
+# "ArtifactID: source.ArtifactID," appears twice — Adopt first, then Respec — so Adopt's drill
+# also anchors on the comment line only Adopt has above it, and the rsplit below takes Respec's. One drill each: they are two call sites and
 # either could lose the pin on its own.
 #
 # ‼️ The adopt fence had to be STRENGTHENED before this drill could redden it. It adopted v1,
@@ -3818,7 +3836,7 @@ drill "a pinned artifact is not checked against the project" internal/domain/wor
 # agree there, so removing the pin changed nothing and the drill stayed green. It now adopts the
 # RENAMED version, which is where the two rules disagree.
 drill "adopting forgets which artifact it came from" internal/domain/geometry/service.go \
-  's = s.replace("\t\tArtifactID: source.ArtifactID,\n", "", 1)' \
+  's = s.replace("\t\t// just ruled on, and \"we went back to v1\" would appear in neither list.\n\t\tArtifactID: source.ArtifactID,\n", "\t\t// just ruled on, and \"we went back to v1\" would appear in neither list.\n", 1)' \
   ./internal/domain/geometry 'TestAdopt_AppendsToTheArtifactTheSourceIsOnAfterARename'
 
 drill "re-specifying forgets which artifact it came from" internal/domain/geometry/service.go \
