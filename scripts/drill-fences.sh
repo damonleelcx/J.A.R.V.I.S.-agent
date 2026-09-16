@@ -461,8 +461,10 @@ echo "Interference"
 # The first two are the DESIGN, not the arithmetic. The whole reason the numbers
 # come from the kernel on the solids that survive the features is that anything
 # computed earlier reports every bolt hole as an interference.
+# ‼️ Re-anchored 2026-09-16: K2b replaced the sort of dicts with a heap over tuples,
+# and the old anchor (the sort) matched nothing. Now nothing is ever appended.
 drill "nothing is ever reported as interfering" internal/domain/cad/sidecar.py \
-  "s = s.replace('    found.sort(key=lambda f: f[\"fraction\"], reverse=True)', '    found = []', 1)" \
+  "s = s.replace('        found.append((shared / smaller, len(found), lo, hi, shared))', '        pass', 1)" \
   ./internal/domain/cad 'TestKernel_TwoSolidsInTheSameSpaceAreReported'
 
 # ‼️ The first version of this drill substituted `shapes` at the call site and
@@ -645,8 +647,10 @@ drill "the sidecar never mirrors" internal/domain/cad/sidecar.py \
   "s = s.replace('        if s.get(\"mirrored\"):\n', '        if False:\n', 1)" \
   ./internal/domain/cad 'TestKernel_MirrorsAPartBeforePlacingIt'
 
+# ‼️ Re-anchored 2026-09-16: since W1 the reflection is a sign on x's scale in
+# placementMatrix, the one copy modelMatrix and the instanced draw both read.
 drill "the browser does not reflect a mirrored primitive" internal/httpapi/assets/forge3d.js \
-  "s = s.replace('    if (s.mirrored) sc = [-sc[0], sc[1], sc[2]];\n', '', 1)" \
+  "s = s.replace('    var sx = num(sc[0], 1) * (spec.mirrored ? -1 : 1), sy', '    var sx = num(sc[0], 1), sy', 1)" \
   ./internal/httpapi 'TestRendererPlacesAMirroredPartLikeTheExporter'
 
 drill "the browser tree ignores a child's mirror" internal/httpapi/assets/forge3d.js \
@@ -2662,7 +2666,7 @@ drill "the first view asks for every row however large" internal/httpapi/assets/
   ./internal/httpapi 'TestRendererLoadsASubtreeWhenItIsAskedForAndDrawsWhatGoPlacesThere'
 
 drill "a subtree is drawn from its primitives, not its reply" internal/httpapi/assets/forge3d.js \
-  's = s.replace("var plan = drawBatches(drawn, reply || null, { wide: lazy.wide });", "var plan = drawBatches(drawn, null, { wide: lazy.wide });", 1)' \
+  's = s.replace("var plan = drawBatches(drawn, reply || null, { wide: lazy.wide, toMM: unitToMM(this.spec.units) });", "var plan = drawBatches(drawn, null, { wide: lazy.wide, toMM: unitToMM(this.spec.units) });", 1)' \
   ./internal/httpapi 'TestRendererLoadsASubtreeWhenItIsAskedForAndDrawsWhatGoPlacesThere'
 
 drill "a node that straddles a plane is kept whole" internal/httpapi/assets/forge3d.js \
@@ -2961,7 +2965,7 @@ drill "root interfaces stop one placement down" internal/domain/geometry/interfa
   ./internal/domain/geometry 'TestInterfacesFromRoot_ListsWhereAChildOfTheRootCanAttach'
 
 drill "root interfaces offer a step its own assembly" internal/domain/geometry/interface.go \
-  's = s.replace("if !isAsm || c.Ref == except || sub.ID == root.ID {", "if !isAsm || sub.ID == root.ID {", 1)' \
+  's = s.replace("if !isAsm || c.Ref == except || sub.ID == from.ID {", "if !isAsm || sub.ID == from.ID {", 1)' \
   ./internal/domain/geometry 'TestInterfacesFromRoot_ListsWhereAChildOfTheRootCanAttach'
 
 drill "root interfaces are unbounded" internal/domain/geometry/interface.go \
@@ -3180,8 +3184,11 @@ drill "a list is cut without saying how many there were" internal/domain/cad/sid
   's = s.replace("        \"interferences_found\": clash_pairs.get(\"found\", len(clashes)),\n", "        \"interferences_found\": len(clashes),\n", 1)' \
   ./internal/domain/cad 'TestKernel_(AListCutToItsBoundIsTheWorstAndSaysHowManyThereWere|AReplyWithMoreClashesThanItListsCountsThemAll)'
 
+# Re-anchored 2026-09-16 merging #121. ‼️ Moved by #115, which put the buried count
+# on the next line of this dict, so the closing brace this matched was no longer
+# there and the drill changed nothing — on main since #115 landed. Same mutation.
 drill "a cut list says it is whole" internal/domain/cad/sidecar.py \
-  's = s.replace("\"summarized\": len(found) > len(listed)}", "\"summarized\": False}", 1)' \
+  's = s.replace("\"summarized\": len(found) > len(listed),\n", "\"summarized\": False,\n", 1)' \
   ./internal/domain/cad 'TestKernel_AListCutToItsBoundIsTheWorstAndSaysHowManyThereWere'
 
 drill "a cut list keeps the first found, not the worst" internal/domain/cad/sidecar.py \
@@ -3449,6 +3456,21 @@ drill "a subtree's reply is drawn in millimetres" internal/httpapi/assets/forge3
 
 drill "a search row names a part without saying where it is" internal/httpapi/assets/workbench.js \
   's = s.replace("return treeRow(h.id, h.label, 0, false, false, null, h.id);", "return treeRow(h.id, h.label, 0, false, false, null);", 1)' \
+  ./internal/httpapi 'TestWorkbenchSearchRowsSayWhereEachOccurrenceIs'
+
+# Added 2026-09-16. #70 made geometry.Part.Name the whole occurrence path, so a search
+# row that takes its name from it says where twice and what never. These two hold the
+# other half of the same fence: the name column is the occurrence's OWN name.
+drill "a search row is named by its whole occurrence path" internal/httpapi/assets/forge3d.js \
+  "s = s.replace(\"return String(p.spec.occurrenceName || p.spec.name || '') || p.id;\", \"return String(p.spec.name || '') || p.id;\", 1)" \
+  ./internal/httpapi 'TestWorkbenchSearchRowsSayWhereEachOccurrenceIs'
+
+drill "an occurrence is named by its definition, not by the child placing it" internal/httpapi/assets/forge3d.js \
+  's = s.replace("              : childNames[childNames.length - 1];", "              : (lp.name || lp.id);", 1)' \
+  ./internal/httpapi 'TestWorkbenchSearchRowsSayWhereEachOccurrenceIs'
+
+drill "a search row's name column shows the path instead of the name" internal/httpapi/assets/workbench.js \
+  's = s.replace("return treeRow(h.id, h.label, 0, false, false, null, h.id);", "return treeRow(h.id, h.id, 0, false, false, null, h.id);", 1)' \
   ./internal/httpapi 'TestWorkbenchSearchRowsSayWhereEachOccurrenceIs'
 
 drill "the provenance banner's details are never folded" internal/httpapi/assets/workbench.js \

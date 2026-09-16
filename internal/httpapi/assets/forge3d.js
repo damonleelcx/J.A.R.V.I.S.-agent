@@ -1975,6 +1975,19 @@
             var suffix = lp.id.indexOf(def.id) === 0 ? lp.id.slice(def.id.length) : lp.id;
             q.id = slotName + suffix;
             q.name = childNames.concat([lp.name || lp.id]).join(NAME_SEPARATOR);
+            /* The occurrence's OWN name, without the path above it: the label the tree
+             * gives this row ("Rivet 1"), and the definition part's label after it when
+             * one definition placed several parts ("Ell 1" tells those copies apart).
+             *
+             * q.name is the whole occurrence path since #70 (NAME_SEPARATOR), which is
+             * what a name must be where it travels alone — the Parts panel, a STEP file,
+             * a message. A row that shows the path in a column of its own would then say
+             * where twice and what never; this is the "what". Browser-only: Go's
+             * geometry.Part has no such field and the exporter does not need one.
+             * Fence: TestWorkbenchSearchRowsSayWhereEachOccurrenceIs. */
+            q.occurrenceName = defCopies.length > 1
+              ? childNames[childNames.length - 1] + NAME_SEPARATOR + (lp.name || lp.id)
+              : childNames[childNames.length - 1];
             var st = storedPlacement(thenPlacement(childFrame, placementOf(lp.position, lp.rotation, !!lp.mirrored)));
             q.position = st.position;
             q.rotation = st.rotation;
@@ -3126,7 +3139,7 @@
       total++;
       if (found.length < (limit || 50)) {
         var p = this.parts[i];
-        found.push({ id: p.id, label: String(p.spec.name || '') || p.id });
+        found.push({ id: p.id, label: occurrenceLabel(p) });
       }
     }
     return { found: found, total: total };
@@ -3140,10 +3153,17 @@
       var p = this.parts[i], name = String(p.spec.name || '');
       if (p.id.toLowerCase().indexOf(q) < 0 && name.toLowerCase().indexOf(q) < 0) continue;
       total++;
-      if (found.length < (limit || 50)) found.push({ id: p.id, label: name || p.id });
+      if (found.length < (limit || 50)) found.push({ id: p.id, label: occurrenceLabel(p) });
     }
     return { found: found, total: total };
   };
+
+  /* What to CALL one occurrence in a row that shows its path separately: its own name
+   * (occurrenceName, set by the tree flattener), falling back to the whole display name
+   * for a part the document lists at the top level, which has no path above it. */
+  function occurrenceLabel(p) {
+    return String(p.spec.occurrenceName || p.spec.name || '') || p.id;
+  }
 
   var SEARCH_RUN = 3;
 
