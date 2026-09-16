@@ -179,9 +179,14 @@ func (e *Executor) Execute(ctx context.Context, tc *TaskContext, workspace strin
 		// Record spend immediately, not at the end. A task that is killed
 		// mid-loop has still spent the tokens, and a budget that only counts
 		// completed work is not a budget.
-		if err := e.budget.RecordSpend(ctx, e.pool, tc.Goal.ID, resp.Usage.TotalTokens, 0); err != nil {
+		//
+		// ‼️ On a context that outlives a stop: a call that answered as the worker was
+		// stopped has spent its tokens too, and on the run context they went uncounted.
+		rec, cancelRec := outliving(ctx)
+		if err := e.budget.RecordSpend(rec, e.pool, tc.Goal.ID, resp.Usage.TotalTokens, 0); err != nil {
 			e.log.WarnWith(ctx, logx.EventBudgetRecordFailed, err, "goal_id", tc.Goal.ID)
 		}
+		cancelRec()
 
 		messages = append(messages, llm.Message{
 			Role: llm.Assistant, Content: resp.Content, ToolCalls: resp.ToolCalls,
@@ -205,6 +210,13 @@ func (e *Executor) Execute(ctx context.Context, tc *TaskContext, workspace strin
 		}
 
 		for _, call := range resp.ToolCalls {
+			// ‼️ A stopped worker starts no further tool call. Its ledger lookup would
+			// fail on the cancelled context and read as "never ran", so a tool that
+			// ignored the cancellation would repeat a side effect. The next attempt
+			// resumes from the last checkpoint and finds what did run in the ledger.
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
 			totalCalls++
 			result := e.runTool(ctx, tc, call, workspace)
 			messages = append(messages, llm.Message{
@@ -218,6 +230,13 @@ func (e *Executor) Execute(ctx context.Context, tc *TaskContext, workspace strin
 		// Checkpoint after every iteration, before the next model call. This is
 		// the line that makes the whole thing resumable: a crash here loses at
 		// most one iteration, not the task.
+		//
+		// Not from an iteration a stop cut short: its last tool result may be only the
+		// stop, and resuming from it would tell the model a tool failed that was merely
+		// interrupted. The ledger holds what ran; the previous checkpoint is the resume.
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		state, _ := json.Marshal(map[string]any{
 			"messages":  messages[1:], // the system prompt is rebuilt, never stored
 			"iteration": iteration,
@@ -331,6 +350,12 @@ func (e *Executor) runTool(ctx context.Context, tc *TaskContext, call llm.ToolCa
 	elapsed := e.clock.Now().Sub(start)
 
 	if runErr != nil {
+		// ‼️ A call the stop cut short is not recorded. It did not fail, and a failed
+		// record would hold its idempotency key, so the next attempt's run of the same
+		// call could never be recorded as succeeded and a later retry would repeat it.
+		if ctx.Err() != nil {
+			return toolError(string(errs.CodeOf(runErr)), "the worker was stopped during this call")
+		}
 		// The error text is redacted too. A failing HTTP client quoting the
 		// header it choked on is one of the likeliest ways a value comes back.
 		detail := resolution.Redactor.Redact(runErr.Error())
@@ -532,8 +557,12 @@ func (e *Executor) recordToolCall(ctx context.Context, tc *TaskContext, call llm
 	tier engine.RiskTier, undo tools.Reversibility) {
 
 	now := e.clock.Now()
-	err := db.InTx(ctx, e.pool, func(tx pgx.Tx) error {
-		_, err := tx.Exec(ctx, `
+	// On a context that outlives a stop: the call happened, and a ledger without it is
+	// how the next attempt repeats it. See outliving.
+	rec, cancel := outliving(ctx)
+	defer cancel()
+	err := db.InTx(rec, e.pool, func(tx pgx.Tx) error {
+		_, err := tx.Exec(rec, `
 			insert into forge_tool_calls
 				(id, task_id, idempotency_key, tool_name, input, status, output,
 				 raw_output, error_code, error_detail, started_at, ended_at, duration_ms, created_at,

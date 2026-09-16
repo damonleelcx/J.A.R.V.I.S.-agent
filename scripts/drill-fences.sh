@@ -110,6 +110,7 @@ FILES=(
   internal/agent/worker.go
   internal/domain/engine/repository.go
   internal/domain/engine/queue.go
+  internal/agent/executor.go
 )
 
 BACKUP=""
@@ -1006,6 +1007,67 @@ drill "a stop is recorded as a failed attempt" internal/agent/worker.go \
 drill "a genuine failure is dropped as if it were a stop" internal/agent/worker.go \
   's = s.replace("\tif ctx.Err() != nil {\n\t\treturn\n\t}\n\tif breach := w.budget.CheckAttempts(task)", "\tif ctx.Err() != nil || true {\n\t\treturn\n\t}\n\tif breach := w.budget.CheckAttempts(task)", 1)' \
   ./internal/agent 'TestWorker_ATaskThatFailsWhileItsWorkerRunsIsStillRetriedAndThenFailed'
+
+echo
+echo "A stopped worker keeps what it did"
+# Added 2026-09-15 (stop leftovers). A stop must leave an approval request and its
+# approval.requested event both or neither; must still record what had happened before
+# it (an event, spent tokens, a tool call that ran); must skip, not fail, what it cut
+# short (a decision, a tool call, a checkpoint); and must log no DATABASE_UNAVAILABLE.
+# Mutations keep the code compiling, so a red here is the fence and not the build. See
+# docs/bugfix/2026-09-15-a-stopped-worker-lost-what-it-had-done-and-blamed-the-database.md.
+# Needs FORGE_TEST_DATABASE_URL.
+drill "the approval request and its event are written apart" internal/agent/worker.go \
+  's = s.replace("if _, err := tx.Exec(ctx, `\n\t\t\tinsert into forge_approvals", "if _, err := w.pool.Exec(ctx, `\n\t\t\tinsert into forge_approvals", 1)' \
+  ./internal/agent 'TestWorker_AStopBetweenOpeningAnApprovalRequestAndRecordingItLeavesTheTimelineAndTheApprovalsAgreeing'
+
+drill "a failure reached while stopping is still written" internal/agent/worker.go \
+  's = s.replace("\t// database being unavailable. Run hands the task back instead.\n\tif ctx.Err() != nil {\n\t\treturn\n\t}\n", "\t// database being unavailable. Run hands the task back instead.\n", 1)' \
+  ./internal/agent 'TestWorker_AStopBetweenOpeningAnApprovalRequestAndRecordingItLeavesTheTimelineAndTheApprovalsAgreeing'
+
+drill "a decision the stop refused is logged as a database failure" internal/agent/worker.go \
+  's = s.replace("if err != nil && ctx.Err() == nil {\n\t\tw.log.WarnWith(ctx, logx.EventTaskCycleEnded, err,", "if err != nil {\n\t\tw.log.WarnWith(ctx, logx.EventTaskCycleEnded, err,", 1)' \
+  ./internal/agent 'TestWorker_AWorkerStoppedAnywhereInATaskKeepsWhatItDidAndLogsNoDatabaseFailure/^at_the_approval_gate$'
+
+drill "a heartbeat the stop cancelled reports a lost lease" internal/agent/worker.go \
+  's = s.replace("\t\t\t\tif ctx.Err() != nil {\n\t\t\t\t\treturn\n\t\t\t\t}\n\t\t\t\t// Losing the lease", "\t\t\t\t// Losing the lease", 1)' \
+  ./internal/agent 'TestWorker_AWorkerStoppedAnywhereInATaskKeepsWhatItDidAndLogsNoDatabaseFailure'
+
+drill "a blocked answer that arrives with the stop is recorded as a failure" internal/agent/worker.go \
+  's = s.replace("\t\tif ctx.Err() != nil {\n\t\t\treturn\n\t\t}\n\t\tw.appendEvent(ctx, goal.ID, &task.ID, engine.EventTaskFailed", "\t\tw.appendEvent(ctx, goal.ID, &task.ID, engine.EventTaskFailed", 1)' \
+  ./internal/agent 'TestWorker_AWorkerStoppedAnywhereInATaskKeepsWhatItDidAndLogsNoDatabaseFailure/^as_a_model_call_answers_that_the_task_is_blocked$'
+
+drill "a success the stop refused is recorded" internal/agent/worker.go \
+  's = s.replace("if err := w.transition(ctx, task, engine.StatusSucceeded, engine.TaskMutation{Result: resultJSON}); err != nil {\n\t\t\treturn\n\t\t}\n", "w.transition(ctx, task, engine.StatusSucceeded, engine.TaskMutation{Result: resultJSON})\n", 1)' \
+  ./internal/agent 'TestWorker_AWorkerStoppedAnywhereInATaskKeepsWhatItDidAndLogsNoDatabaseFailure/^as_a_model_call_answers_that_the_task_is_done$'
+
+drill "an event is written on the context the stop cancelled" internal/agent/worker.go \
+  's = s.replace("\trec, cancel := outliving(ctx)\n\tdefer cancel()\n\tif err := w.repo.AppendEvent(rec", "\trec, cancel := context.WithCancel(ctx)\n\tdefer cancel()\n\tif err := w.repo.AppendEvent(rec", 1)' \
+  ./internal/agent 'TestWorker_AWorkerStoppedAsItRecoversACrashedWorkersTaskRecordsTheRecoveryAndLogsNoDatabaseFailure'
+
+drill "a claim the stop refused is logged as a database failure" internal/agent/worker.go \
+  's = s.replace("\t\t\tif ctx.Err() != nil {\n\t\t\t\tcontinue // stopped while claiming", "\t\t\tif false {\n\t\t\t\tcontinue // stopped while claiming", 1)' \
+  ./internal/agent 'TestWorker_AWorkerStoppedAsItRecoversACrashedWorkersTaskRecordsTheRecoveryAndLogsNoDatabaseFailure'
+
+drill "the tokens a stopped call spent go uncounted" internal/agent/executor.go \
+  's = s.replace("rec, cancelRec := outliving(ctx)", "rec, cancelRec := context.WithCancel(ctx)", 1)' \
+  ./internal/agent 'TestWorker_AWorkerStoppedAnywhereInATaskKeepsWhatItDidAndLogsNoDatabaseFailure/^as_a_model_call_answers_that_the_task_is_done$'
+
+drill "a stopped worker runs its next tool call" internal/agent/executor.go \
+  's = s.replace("\t\t\tif ctx.Err() != nil {\n\t\t\t\treturn nil, ctx.Err()\n\t\t\t}\n\t\t\ttotalCalls++", "\t\t\ttotalCalls++", 1)' \
+  ./internal/agent 'TestWorker_AWorkerStoppedAnywhereInATaskKeepsWhatItDidAndLogsNoDatabaseFailure/^as_a_tool_call_finishes$'
+
+drill "a tool call that ran is lost from the ledger" internal/agent/executor.go \
+  's = s.replace("rec, cancel := outliving(ctx)\n\tdefer cancel()\n\terr := db.InTx(rec", "rec, cancel := context.WithCancel(ctx)\n\tdefer cancel()\n\terr := db.InTx(rec", 1)' \
+  ./internal/agent 'TestWorker_AWorkerStoppedAnywhereInATaskKeepsWhatItDidAndLogsNoDatabaseFailure/^as_a_tool_call_finishes$'
+
+drill "a tool call the stop cut short is recorded as failed" internal/agent/executor.go \
+  's = s.replace("\t\tif ctx.Err() != nil {\n\t\t\treturn toolError(", "\t\tif false {\n\t\t\treturn toolError(", 1)' \
+  ./internal/agent 'TestWorker_AWorkerStoppedAnywhereInATaskKeepsWhatItDidAndLogsNoDatabaseFailure/^inside_a_tool_call$'
+
+drill "a checkpoint is saved from an iteration the stop cut short" internal/agent/executor.go \
+  's = s.replace("\t\tif ctx.Err() != nil {\n\t\t\treturn nil, ctx.Err()\n\t\t}\n\t\tstate, _ := json.Marshal(", "\t\tstate, _ := json.Marshal(", 1)' \
+  ./internal/agent 'TestWorker_AWorkerStoppedAnywhereInATaskKeepsWhatItDidAndLogsNoDatabaseFailure/^inside_a_tool_call$'
 
 echo
 echo "The kernel"
