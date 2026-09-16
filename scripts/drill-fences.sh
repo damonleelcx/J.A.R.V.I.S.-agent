@@ -3485,6 +3485,29 @@ drill "a folded banner's details are hidden only by load order" internal/httpapi
   's = s.replace(".provenance .prov-details.hidden { display: none; }", "", 1)' \
   ./internal/httpapi 'TestWorkbenchProvenanceBannerFoldsItsDetailsOffTheStage'
 
+echo "A build starts from the API"
+# Added 2026-09-15 (Phase 2, A1 follow-ups). POST /v1/goals takes build:true and plans
+# the statement as steps (Intake.PlanBuild); POST /v1/goals/{id}/plan takes the same
+# flag, or no body at all; the workbench's "Start this" sends it. The named project's
+# goal.create check these share is drilled under "Goal project permission" above.
+# Needs FORGE_TEST_DATABASE_URL.
+
+drill "build:true plans ordinary work" internal/httpapi/goals_start.go \
+  's = s.replace("\t\tplan = h.intake.PlanBuild\n", "\t\t_ = h.intake.PlanBuild\n", 1)' \
+  ./internal/httpapi 'TestCreateGoal_ABuildIsPlannedAsOneTaskPerStepEachWaitingForTheOneBefore|TestBuildGoal_StepsAndKeptVersionsShowOnTheGoalAndItsTimeline'
+
+drill "a replan forgets it was asked for a build" internal/httpapi/goals_start.go \
+  's = s.replace("\t\treplan = h.intake.ReplanBuild\n", "\t\t_ = h.intake.ReplanBuild\n", 1)' \
+  ./internal/httpapi 'TestReplan_ADraftIsReplannedAsABuildWhenAsked'
+
+drill "a replan with no body is refused" internal/httpapi/goals_start.go \
+  's = s.replace("\tif r.ContentLength != 0 {\n", "\tif r.ContentLength != 0 || true {\n", 1).replace("err != nil && !errors.Is(err, io.EOF) {", "err != nil && errors.Is(err, err) != errors.Is(io.EOF, nil) {", 1)' \
+  ./internal/httpapi 'TestReplan_AnEmptyBodyIsStillAccepted'
+
+drill "the workbench never asks for a build" internal/httpapi/assets/workbench.js \
+  's = s.replace("      build: !!state.planAsBuild\n", "      build: false\n", 1)' \
+  ./internal/httpapi 'TestWorkbench_StartThisSendsWhetherToPlanABuild'
+
 if [ "$MODE" = "list" ]; then
   exit 0
 fi

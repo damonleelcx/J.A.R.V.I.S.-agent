@@ -2686,7 +2686,11 @@
        * industry sent with a project id — the industry belongs to the project,
        * and changing it would change the rules its earlier work was done under —
        * so sending one here would turn every follow-up goal into an error. */
-      industry: state.projectID ? '' : (state.industry || '')
+      industry: state.projectID ? '' : (state.industry || ''),
+      /* Planned as a BUILD: one task per step, each built by forge-worker with
+       * the CAD kernel and kept as a version, so a long build survives a closed
+       * tab or a deploy. Still only planned — "Start it" is still the act. */
+      build: !!state.planAsBuild
     }).then(function (b) {
       state.goal = b.goal;
       state.planTasks = b.tasks || [];
@@ -2798,11 +2802,17 @@
      * planned and running distinct, and the difference between them is invisible
      * unless the interface states it. */
     if (phase === 'proposed' || phase === 'failed') {
+      html += '<label class="foot"><input type="checkbox" id="plan-build"' +
+              (state.planAsBuild ? ' checked' : '') + '> Build it as a model, one step per ' +
+              'task, each kept as a version</label>';
       html += '<div class="foot">Nothing has been created. Starting this writes a draft ' +
               'goal and plans it — it does not run it.</div>';
     } else if (phase === 'planned') {
       html += '<div class="foot">The goal is a <b>draft</b>. These tasks exist and no worker ' +
-              'can claim them until you start it.</div>';
+              'can claim them until you start it.' +
+              (state.planAsBuild ? ' Each is one step of the build; a worker with the CAD ' +
+               'kernel builds it and keeps the model as a version before the next begins.' : '') +
+              '</div>';
     } else if (phase === 'active') {
       html += '<div class="foot">' + esc(state.startMessage || 'Started.') + '</div>';
     }
@@ -2816,6 +2826,10 @@
     setPresence();
     var plan = document.getElementById('do-plan');
     if (plan) plan.addEventListener('click', startThis);
+    var asBuild = document.getElementById('plan-build');
+    if (asBuild) asBuild.addEventListener('change', function () {
+      state.planAsBuild = asBuild.checked;
+    });
     var start = document.getElementById('do-start');
     if (start) start.addEventListener('click', startIt);
   }

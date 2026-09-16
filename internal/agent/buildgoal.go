@@ -140,6 +140,11 @@ func (in *Intake) PlanBuild(ctx context.Context, pool *db.Pool, goal *engine.Goa
 	return planBuildGoal(ctx, pool, NewConversation(in.planner.client, in.planner.char), in.applier, goal, in.logger())
 }
 
+// BuildPlannerModel names the model a build is planned with. Not PlannerModel:
+// a build's steps are planned by the conversation model (planBuild asks
+// RoleConverse), and naming the planner would name a model that is not called.
+func (in *Intake) BuildPlannerModel() string { return in.planner.client.ModelFor(llm.RoleConverse) }
+
 // BuildSteps runs the steps of a build for a worker.
 type BuildSteps struct {
 	conv   *Conversation

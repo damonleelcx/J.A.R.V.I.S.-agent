@@ -1,0 +1,15 @@
+== p1d-400 pool=1 conc=1 occurrences=400 copies=1 seconds=11
+mem p1d-400 #1|succeeded|44|10
+Step 1 of 3 — chassis|succeeded||{"result": {"note": "FORGE looked closely at 4 of 16 sub-assemblies; the rest were seen only in the picture of the whole model. Parts are inside each other and FORGE could not correct it: hub4 is 100% inside wheel4: they occupy the same material (366435 mm³). 
+Step 2 of 3 — corners|succeeded||{"result": {"note": "FORGE looked closely at 4 of 32 sub-assemblies; the rest were seen only in the picture of the whole model. Parts are inside each other and FORGE could not correct it: hub16 is 100% inside wheel16: they occupy the same material (352989 mm³)
+Step 3 of 3 — wheels|succeeded||{"result": {"note": "FORGE looked closely at 4 of 49 sub-assemblies; the rest were seen only in the picture of the whole model. Parts are inside each other and FORGE could not correct it: hub16 is 100% inside wheel16: they occupy the same material (352989 mm³)
+== p2d-400 pool=2 conc=2 occurrences=400 copies=2 seconds=11
+mem p2d-400 #1|succeeded|44|11
+mem p2d-400 #2|succeeded|44|11
+Step 1 of 3 — chassis|succeeded||{"result": {"note": "FORGE looked closely at 4 of 16 sub-assemblies; the rest were seen only in the picture of the whole model. Parts are inside each other and FORGE could not correct it: hub4 is 100% inside wheel4: they occupy the same material (366435 mm³). 
+Step 2 of 3 — corners|succeeded||{"result": {"note": "FORGE looked closely at 4 of 32 sub-assemblies; the rest were seen only in the picture of the whole model. Parts are inside each other and FORGE could not correct it: hub16 is 100% inside wheel16: they occupy the same material (352989 mm³)
+Step 3 of 3 — wheels|succeeded||{"result": {"note": "FORGE looked closely at 4 of 49 sub-assemblies; the rest were seen only in the picture of the whole model. Parts are inside each other and FORGE could not correct it: hub16 is 100% inside wheel16: they occupy the same material (352989 mm³)
+Step 1 of 3 — chassis|succeeded||{"result": {"note": "FORGE looked closely at 4 of 16 sub-assemblies; the rest were seen only in the picture of the whole model. Parts are inside each other and FORGE could not correct it: hub4 is 100% inside wheel4: they occupy the same material (366435 mm³). 
+Step 2 of 3 — corners|succeeded||{"result": {"note": "FORGE looked closely at 4 of 32 sub-assemblies; the rest were seen only in the picture of the whole model. Parts are inside each other and FORGE could not correct it: hub16 is 100% inside wheel16: they occupy the same material (352989 mm³)
+SUCCESS: The process "stub.exe" with PID 31752 has been terminated.
+distinct-done

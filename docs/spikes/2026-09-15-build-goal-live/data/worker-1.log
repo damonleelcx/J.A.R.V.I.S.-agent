@@ -1,0 +1,13 @@
+time=2026-09-15T11:42:23.148-04:00 level=INFO msg=forge.worker.starting service=forge-worker version=dev commit=unknown built=unknown
+time=2026-09-15T11:42:23.182-04:00 level=INFO msg=forge.worker.ready service=forge-worker concurrency=1 workspace_root=C:/Users/damon/AppData/Local/Temp/claude/C--Users-damon-Downloads-agents/9c73bcba-7500-4641-9433-f7c8efd05843/scratchpad/live/ws planner_model=qwen3.8-max executor_model=qwen3.8-max verifier_model=deepseek-v4-pro tools=11
+time=2026-09-15T11:42:23.182-04:00 level=INFO msg=forge.worker.ready service=forge-worker worker_id=MSI/26796/01M2JVQJ poll=2s
+time=2026-09-15T11:42:23.194-04:00 level=INFO msg=forge.task.cycle_started service=forge-worker worker_id=MSI/26796/01M2JVQJ task_id=tsk_01M2JVQHSG0CH7J64KWAAGHH0W goal_id=gol_01M2JVQC4HHHGVBD5CD5Y076J5 attempt=1 risk_tier=r1
+time=2026-09-15T11:42:46.607-04:00 level=DEBUG msg=forge.llm.completed service=forge-worker role=converse model=qwen3.7-plus prompt_tokens=9659 completion_tokens=2057 tool_calls=0 finish_reason=stop latency_ms=23400
+time=2026-09-15T11:42:46.621-04:00 level=INFO msg=forge.task.cycle_started service=forge-worker worker_id=MSI/26796/01M2JVQJ task_id=tsk_01M2JVQHSJNPKYVAVB617E5C19 goal_id=gol_01M2JVQC4HHHGVBD5CD5Y076J5 attempt=1 risk_tier=r1
+time=2026-09-15T11:43:20.472-04:00 level=DEBUG msg=forge.llm.completed service=forge-worker role=converse model=qwen3.7-plus prompt_tokens=9661 completion_tokens=2976 tool_calls=0 finish_reason=stop latency_ms=33845
+time=2026-09-15T11:43:20.486-04:00 level=INFO msg=forge.task.cycle_started service=forge-worker worker_id=MSI/26796/01M2JVQJ task_id=tsk_01M2JVQHSJ7ZP3JRQYFNMZKK6V goal_id=gol_01M2JVQC4HHHGVBD5CD5Y076J5 attempt=1 risk_tier=r1
+time=2026-09-15T11:43:34.338-04:00 level=DEBUG msg=forge.llm.completed service=forge-worker role=converse model=qwen3.7-plus prompt_tokens=9660 completion_tokens=1162 tool_calls=0 finish_reason=stop latency_ms=13846
+time=2026-09-15T11:43:43.918-04:00 level=DEBUG msg=forge.llm.completed service=forge-worker role=converse model=qwen3.7-plus prompt_tokens=925 completion_tokens=917 tool_calls=0 finish_reason=stop latency_ms=9572
+time=2026-09-15T11:43:53.327-04:00 level=DEBUG msg=forge.llm.completed service=forge-worker role=converse model=qwen3.7-plus prompt_tokens=897 completion_tokens=917 tool_calls=0 finish_reason=stop latency_ms=9406
+time=2026-09-15T11:44:00.643-04:00 level=INFO msg=forge.cad.started service=forge-worker python=C:/Users/damon/Downloads/agents/jarvis-k2b/.cadvenv/Scripts/python.exe slot=0
+time=2026-09-15T11:44:02.660-04:00 level=DEBUG msg=forge.llm.completed service=forge-worker role=vision model=qwen3.8-max prompt_tokens=1152 completion_tokens=47 tool_calls=0 finish_reason=stop latency_ms=1697

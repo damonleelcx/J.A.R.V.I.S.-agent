@@ -50,6 +50,11 @@ spec:
             # first step that builds a surface, each holding build123d in memory.
             # The 2Gi ceiling is that room; a pool above one needs a measured
             # number for this pod before it is raised.
+            # Measured 2026-09-15 on Windows (docs/spikes/2026-09-15-worker-kernel-memory):
+            # pool 1 peaked at 530Mi working set with two 4,000-occurrence builds
+            # contending for it; pool 2 at 1,016Mi working set but 2.7Gi private
+            # (commit). FORGE_CAD_POOL stays 1 until the same run on Linux, in this
+            # image, shows pool 2 under ~1.2Gi.
             limits:   { cpu: "1", memory: "2Gi" }
       volumes:
         - name: workspaces
