@@ -65,6 +65,21 @@ func isStandard(p Part) bool {
 // ---- The catalogue -----------------------------------------------------------
 //
 // Millimetres throughout, which is what every one of these standards publishes.
+//
+// # Where each figure was read (checked 2026-09-15)
+//
+// A3 typed these tables from memory of the nominal tables, and said so in its PR.
+// Each family was then read against a published table, named on the family
+// below. One figure did not match — the L20x20x3 angle's toe radius was 2, and the
+// standard's is 1.75 — and was corrected
+// (docs/bugfix/2026-09-15-an-angles-toe-radius-was-not-half-its-root-radius.md).
+// TestStandard_EveryFamilyCarriesTheFiguresItsSourcePublishes holds several
+// figures per family to those tables. The bearings and the angles were read again
+// the same day, against ISO/R 15/1-1968 and EN 10056-1:2017, and nothing changed.
+//
+// ‼️ A row added here is read off a source, and the source is named on its
+// family. A figure from memory is the thing this catalogue exists to take away
+// from the model; typed in here, it would be asserted to every model instead.
 
 // iso4762Lengths is ISO 4762's series of nominal lengths l, in mm, as far as the
 // longest screw below.
@@ -73,6 +88,14 @@ var iso4762Lengths = []float64{5, 6, 8, 10, 12, 16, 20, 25, 30, 35, 40, 45, 50, 
 // iso4762 is ISO 4762:2004, hexagon socket head cap screws: thread d, head
 // diameter dk (max, plain head), head height k (max, equal to d), and the
 // shortest and longest commercial length l the standard tabulates for that size.
+//
+// Source: ISO 4762:2004 Table 1, pages 4 and 5, read from ISO's own preview of
+// the standard (cdn.standards.iteh.ai, sample 34460). dk max and k max are the
+// printed figures. The length range is the one between the table's stepped lines;
+// the series of l above is its first column from 5 to 120.
+//
+// ‼️ Supplier tables give wider ranges — fasteners.eu lists M8 as 10 to 90 — and
+// those are what one supplier stocks, not what the standard tabulates.
 var iso4762 = []struct {
 	Size                          string
 	D, HeadDiameter, HeadHeight   float64
@@ -89,6 +112,11 @@ var iso4762 = []struct {
 
 // iso4032 is ISO 4032:2012, hexagon regular nuts (style 1): thread d, width
 // across flats s, and height m (max).
+//
+// Source: ISO 4032:2012 Table 1 (preferred threads), read from ISO's own preview
+// (cdn.standards.iteh.ai, sample 61668): s "nom. = max." and m max as printed.
+// fasteners.eu's ISO 4032 table agrees on every figure. ‼️ M10 is 16 and M12 is 18
+// across flats in ISO 4032; DIN 934, its predecessor, has 17 and 19.
 var iso4032 = []struct {
 	Size                   string
 	D, AcrossFlats, Height float64
@@ -104,6 +132,10 @@ var iso4032 = []struct {
 
 // iso7089 is ISO 7089:2000, plain washers, normal series: hole d1 (min), outside
 // diameter d2 (max) and thickness h (nominal), for the thread size named.
+//
+// Source: ISO 7089:2000 Table 1 (preferred dimensions), read from ISO's own
+// preview (cdn.standards.iteh.ai, sample 13666): d1 nom. (min.), d2 nom. (max.) and
+// h nom., as printed.
 var iso7089 = []struct {
 	Size                    string
 	Inner, Outer, Thickness float64
@@ -117,9 +149,26 @@ var iso7089 = []struct {
 	{"M12", 13, 24, 2.5},
 }
 
-// iso15 is ISO 15:2017's boundary dimensions for single-row deep-groove ball
-// bearings: bore d, outside diameter D and width B. 608 is diameter series 0 in
-// the 8 mm bore; the 6000 series continues it.
+// iso15 is ISO 15's boundary dimensions for single-row deep-groove ball bearings:
+// bore d, outside diameter D and width B. 608 is diameter series 0 in the 8 mm
+// bore; the 6000 series continues it. All seven are dimension series 10.
+//
+// Source: ISO/R 15/1-1968 Table 3 (diameter series 0), read from ISO's own preview
+// (cdn.standards.iteh.ai sample 3599). Its dimension-series-10 width against each
+// bore and outside diameter matches all seven rows, 8 × 22 × 7 to 25 × 47 × 12.
+// ‼️ That is ISO 15's first form, not ISO 15:2017. The current edition's diameter
+// series 0 table (Table 4) was NOT reachable: the 2017, 2011 and 1998 previews all
+// stop before it. What carries the figures forward is each later edition's
+// foreword, read from the same previews: ISO 15:1998 (sample 20513) extended
+// diameter series 7, 1 and 2 and names no change to series 0; ISO 15:2011 (sample
+// 55216) revised only references and terminology; ISO 15:2017 (sample 69977)
+// extended the tables to very large bearings. Two copies of the standard's figures
+// agree on all seven as well: GB/T 276-2013, China's deep-groove boundary
+// dimensions, as the JLC FA design handbook prints it (D and B, bores 3 to 25), and
+// SKF's bearings of these designations as Maedler North America (608, 6002-6004)
+// and bearingbasement.com (6000, 6001, 6005) list them.
+//
+// The drawing is a plain ring, so no chamfer figure (r_s min) is used here.
 var iso15 = []struct {
 	Series             string
 	Bore, Outer, Width float64
@@ -136,6 +185,13 @@ var iso15 = []struct {
 // en10219 is EN 10219-2:2006, cold-formed square (SHS) and rectangular (RHS)
 // hollow sections: outside B × H and wall t. The corners are the radii the
 // standard gives for calculation when t is 6 mm or less: 2t outside, t inside.
+//
+// Source: EN 10219-2:2006, read from a scan of the standard. B.3 gives the corner
+// radii for calculation (2,0 T outside and 1,0 T inside for T ≤ 6 mm), and Tables
+// C.2 and C.3 list every section below. ‼️ Table 3's 1,6 T to 2,4 T is the TOLERANCE
+// on a delivered tube's outside corner, not the radius to draw; 2 T is inside it.
+// The section drawn encloses the area C.2 and C.3 print to their three figures —
+// 4,21 cm² for SHS 40×40×3 — which the fence checks for every row.
 var en10219 = []struct {
 	Kind    string
 	B, H, T float64
@@ -149,12 +205,27 @@ var en10219 = []struct {
 	{"RHS", 60, 40, 3},
 }
 
-// en10056 is EN 10056-1:2017, hot-rolled equal-leg angles: leg a, thickness t,
-// root radius r1 and toe radius r2.
+// en10056 is EN 10056-1, hot-rolled equal-leg angles: leg a, thickness t, root
+// radius r1 and toe radius r2.
+//
+// Source: EN 10056-1:1998 Table 1 (as DIN EN 10056-1:1998-10), which prints a, t
+// and the root radius. ‼️ It has NO toe-radius column: Note 1 under the table
+// computes every property with a toe radius of half the root radius, so r2 is
+// r1 / 2. The L20x20x3 row had 2 until 2026-09-15, which is what recalling "the
+// table" gives; the note gives 1.75
+// (docs/bugfix/2026-09-15-an-angles-toe-radius-was-not-half-its-root-radius.md).
+//
+// EN 10056-1:2017 Table 1, read from the SIST EN 10056-1:2017 preview
+// (cdn.standards.iteh.ai sample 39755), prints the same a, t, root radius and
+// sectional area for all four rows (1,12, 1,74, 3,08 and 4,80 cm²), and it too has
+// no toe-radius column. ‼️ The preview stops partway through Table 1 and shows no
+// note on the toe radius, so r2 = r1 / 2 is still the 1998 note's rule: what the 2017
+// edition says about the toe radius was NOT reachable. A printed area cannot stand
+// in for it, since 1,12 cm² holds whether the L20's toe is 1.75 or 2.
 var en10056 = []struct {
 	A, T, RootRadius, ToeRadius float64
 }{
-	{20, 3, 3.5, 2},
+	{20, 3, 3.5, 1.75},
 	{30, 3, 5, 2.5},
 	{40, 4, 6, 3},
 	{50, 5, 7, 3.5},

@@ -150,6 +150,10 @@ const (
 	CodeExternalProtocol     Code = "EXTERNAL_PROTOCOL_ERROR"
 	CodeConnectorUnavailable Code = "CONNECTOR_UNAVAILABLE"
 	CodeToolRefused          Code = "TOOL_REFUSED"
+	// CodeKernelTimeout is a CAD kernel build that was still running when its
+	// time ran out. Not CONNECTOR_UNAVAILABLE: the kernel is there and working.
+	// docs/bugfix/2026-09-15-a-kernel-build-that-ran-out-of-time-was-reported-as-no-kernel.md
+	CodeKernelTimeout Code = "CAD_KERNEL_TIMEOUT"
 )
 
 // ---------------------------------------------------------------------------
@@ -292,6 +296,25 @@ var registry = map[Code]Definition{
 	CodeConnectorUnavailable: {CodeConnectorUnavailable, CategoryExternal, 501,
 		"A capability is declared but has no working backend in this deployment.",
 		"Perform this step with the domain's own tool and record the result. Never accept an estimate in place of a run: a value produced without the solver is not an analysis.", false},
+	// # Why a timeout is 504 and NOT retryable
+	//
+	// 504 because the kernel is the upstream this server waited on and it did not
+	// answer in time; 501 said the deployment had no kernel, which sent people to
+	// FORGE_CAD_PYTHON for a design that was simply large.
+	//
+	// Not retryable because the time a build takes is a property of the design: the
+	// 2026-09-15 ceiling spike measured a 30,023-part car at 40-101 s, every run past
+	// the limit. The callers that read the flag would each pay for a retry that
+	// fails the same way — the engine worker (errs.IsRetryable) would spend an
+	// attempt and 30 s of a kernel process per try, and a person would click export
+	// again. The mesh fetch and the agent's render fall back to primitives on any
+	// failure and never read the flag. A build that only crossed the limit because
+	// the machine was busy is the exception, and a person can still ask again.
+	// ‼️ The "30 seconds" in the remedy is cad.buildTimeout; the kernel's own fence
+	// (TestKernel_ABuildThatRunsOutOfTimeIsNotRetriedAndSaysSo) fails if they drift.
+	CodeKernelTimeout: {CodeKernelTimeout, CategoryExternal, 504,
+		"The CAD kernel took too long: it was still building this design when the time a build is allowed ran out, so the build was stopped. The kernel itself is working.",
+		"Do not ask for the same build again straight away: it will take as long again. Build part of the design at a time (open one subassembly), or split the assembly into smaller subassemblies. A kernel build is allowed 30 seconds.", false},
 	CodeToolRefused: {CodeToolRefused, CategoryBusiness, 403,
 		"The policy plane declined to run this tool for this goal.",
 		"Raise the goal's autonomy level or grant the missing capability if that is appropriate. A prohibited (R5) action is refused regardless of permissions.", false},

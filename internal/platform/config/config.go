@@ -13,6 +13,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -52,6 +53,9 @@ type Config struct {
 	CAD CADConfig
 	// Geometry bounds what one stored design may be (Phase 3, stage S0).
 	Geometry GeometryConfig
+	// Blob is content-addressed storage for large geometry. Empty Bucket means
+	// this deployment has none.
+	Blob BlobConfig
 	// TTS is FORGE's voice. An empty Provider means she speaks through the model
 	// client, which is the default and needs no vendor.
 	TTS TTSConfig
@@ -276,6 +280,28 @@ type GeometryConfig struct {
 	MaxOccurrences int
 }
 
+// BlobConfig is where large, immutable geometry bytes go: per-design meshes,
+// B-rep caches, STEP exports (docs/plan-2026-09-13-millions-of-parts.md, Phase 3).
+//
+// UNSET IS A SUPPORTED CONFIGURATION, like the CAD kernel: the document stays in
+// Postgres either way, and a deployment with no bucket refuses the large-model
+// paths with FORGE_BLOB_BUCKET named in the message rather than half-supporting
+// them. Credentials are deliberately not here: production authenticates as the
+// node's instance role, and local S3-compatible servers read the SDK's standard
+// AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY.
+type BlobConfig struct {
+	// Bucket is the S3 bucket. Empty means no blob storage.
+	Bucket string
+	// Region signs the requests. Required when Bucket is set, with no default:
+	// a guessed region fails every request with an error that does not say so.
+	Region string
+	// Endpoint is set only for an S3-compatible server such as MinIO.
+	Endpoint string
+}
+
+// Configured reports whether blob storage was asked for.
+func (b BlobConfig) Configured() bool { return b.Bucket != "" }
+
 type SecurityConfig struct {
 	// DataBoundary is the declared posture of the model endpoint (PRD SEC-01).
 	DataBoundary DataBoundary
@@ -329,6 +355,26 @@ type LLMConfig struct {
 	// endpoint because this provider's OpenAI-compatible surface has no
 	// /audio/transcriptions route — see internal/llm/transcribe.go.
 	Transcriber string
+	// TranscriberBaseURL and TranscriberAPIKey send speech to text somewhere
+	// other than BaseURL. Both empty is the default and means what it always
+	// meant: the transcriber shares the chat endpoint and its key.
+	//
+	// # Why
+	//
+	// An endpoint that serves chat need not serve speech. Measured 2026-09-15:
+	// the production endpoint (a token plan) answers 404 "Model not exist" for
+	// qwen3-asr-flash-2026-02-10 and its chat models reject audio, so the
+	// workbench microphone and room transcripts had no model to reach while
+	// DashScope's ordinary compatible-mode endpoint serves one — under its own
+	// key. Only transcription moves; the speaker and every chat role stay on
+	// BaseURL.
+	//
+	// ‼️ Read them through TranscriberEndpoint, never directly. The fallback
+	// to the chat key is the whole risk here: it is allowed only when the
+	// transcriber endpoint is on the chat endpoint's own origin, so the chat
+	// key is never sent to a host it was not issued for.
+	TranscriberBaseURL string
+	TranscriberAPIKey  string
 	// Speaker turns FORGE's words into audio for a room (PRD AUD-05).
 	//
 	// Reached through the chat endpoint with streaming, because this provider has
@@ -766,15 +812,18 @@ func Load(required ...Section) (*Config, []string, error) {
 		// the defaults on this block had already been moved to the 3.8
 		// generation; this one was missed, so the only role a PERSON waits on
 		// was the only one pointing at a model that no longer existed.
-		Converse:       l.str("FORGE_LLM_CONVERSE_MODEL", "qwen3.7-plus"),
-		Vision:         l.str("FORGE_LLM_VISION_MODEL", ""),
-		Transcriber:    l.str("FORGE_LLM_TRANSCRIBER_MODEL", "qwen3-asr-flash-2026-02-10"),
-		Speaker:        l.str("FORGE_LLM_SPEAKER_MODEL", "qwen3-omni-flash"),
-		Voice:          l.str("FORGE_LLM_VOICE", "Cherry"),
-		Illustrator:    strings.TrimSpace(l.str("FORGE_LLM_IMAGE_MODEL", "")),
-		RequestTimeout: l.dur("FORGE_LLM_REQUEST_TIMEOUT", 3*time.Minute),
-		TurnBudget:     l.dur("FORGE_TURN_BUDGET", DefaultTurnBudget),
-		MaxRetries:     l.intVal("FORGE_LLM_MAX_RETRIES", 3),
+		Converse:    l.str("FORGE_LLM_CONVERSE_MODEL", "qwen3.7-plus"),
+		Vision:      l.str("FORGE_LLM_VISION_MODEL", ""),
+		Transcriber: l.str("FORGE_LLM_TRANSCRIBER_MODEL", "qwen3-asr-flash-2026-02-10"),
+		// No defaults: unset is "the same endpoint and key as chat".
+		TranscriberBaseURL: strings.TrimRight(l.str("FORGE_LLM_TRANSCRIBER_BASE_URL", ""), "/"),
+		TranscriberAPIKey:  l.str("FORGE_LLM_TRANSCRIBER_API_KEY", ""),
+		Speaker:            l.str("FORGE_LLM_SPEAKER_MODEL", "qwen3-omni-flash"),
+		Voice:              l.str("FORGE_LLM_VOICE", "Cherry"),
+		Illustrator:        strings.TrimSpace(l.str("FORGE_LLM_IMAGE_MODEL", "")),
+		RequestTimeout:     l.dur("FORGE_LLM_REQUEST_TIMEOUT", 3*time.Minute),
+		TurnBudget:         l.dur("FORGE_TURN_BUDGET", DefaultTurnBudget),
+		MaxRetries:         l.intVal("FORGE_LLM_MAX_RETRIES", 3),
 	}
 	// A turn budget below one call's timeout puts the old bug back: the turn is
 	// cancelled while a single model call is still inside its own retry window,
@@ -787,6 +836,46 @@ func Load(required ...Section) (*Config, []string, error) {
 				"so its budget must be at least one call's timeout — otherwise a turn is killed "+
 				"mid-call and the failure is reported as the model's.",
 			cfg.LLM.TurnBudget, cfg.LLM.RequestTimeout))
+	}
+	// The transcriber's own endpoint. Checked whichever sections were asked for,
+	// like the speech vendor below: these are not missing values but
+	// contradictory ones, and each half-configuration has exactly one reading
+	// that is safe — the refusal — and one that sends a key to the wrong host.
+	if tURL, tKey := cfg.LLM.TranscriberBaseURL, cfg.LLM.TranscriberAPIKey; tURL == "" && tKey != "" {
+		// A key with no host would go to FORGE_LLM_BASE_URL, which did not issue
+		// it — and quietly change nothing, so the 404 it was set to cure stays.
+		l.fail("FORGE_LLM_TRANSCRIBER_BASE_URL", fmt.Sprintf(
+			"is required when FORGE_LLM_TRANSCRIBER_API_KEY is set. Without it the transcriber key "+
+				"would be sent to FORGE_LLM_BASE_URL (%s), a host it was not issued for. Set both, "+
+				"or neither to transcribe through the chat endpoint", cfg.LLM.BaseURL))
+	} else if tURL != "" {
+		u, err := url.Parse(tURL)
+		switch {
+		case err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "":
+			l.fail("FORGE_LLM_TRANSCRIBER_BASE_URL", fmt.Sprintf(
+				"must be an http:// or https:// URL ending before /chat/completions, such as "+
+					"https://dashscope.aliyuncs.com/compatible-mode/v1; got %q", tURL))
+		case prod && u.Scheme == "http":
+			l.fail("FORGE_LLM_TRANSCRIBER_BASE_URL", "must use https:// in production; every request carries an API key and recorded speech")
+		case tKey == "" && !SameOrigin(tURL, cfg.LLM.BaseURL):
+			// ‼️ The trap this whole setting exists around. Falling back to the chat
+			// key here would hand the token plan's credential to whatever host this
+			// names. DashScope keys are also regional, so it would not even work.
+			l.fail("FORGE_LLM_TRANSCRIBER_API_KEY", fmt.Sprintf(
+				"is required because FORGE_LLM_TRANSCRIBER_BASE_URL (%s) is on a different host from "+
+					"FORGE_LLM_BASE_URL (%s), and FORGE never sends the chat endpoint's key to another "+
+					"host. Put the key that host issued in the forge Secret", tURL, cfg.LLM.BaseURL))
+		case !SameOrigin(tURL, cfg.LLM.BaseURL):
+			// FORGE_DATA_BOUNDARY is a statement about ONE contract. Recorded speech
+			// now leaves by a second door, so say so instead of letting the boundary
+			// read as covering it — the same reason tts_trains_on_input is printed.
+			l.warnings = append(l.warnings, fmt.Sprintf(
+				"FORGE_LLM_TRANSCRIBER_BASE_URL sends recorded speech to %s, a different endpoint from "+
+					"FORGE_LLM_BASE_URL; FORGE_DATA_BOUNDARY (%q) describes the terms of the model endpoint, "+
+					"so confirm they cover this one too", tURL,
+				// Read here rather than from cfg.Security, which is filled in below.
+				strings.ToLower(strings.TrimSpace(os.Getenv("FORGE_DATA_BOUNDARY")))))
+		}
 	}
 	if set.has(SectionLLM) && modelFamily(cfg.LLM.Verifier) == modelFamily(cfg.LLM.Executor) {
 		l.warnings = append(l.warnings, fmt.Sprintf(
@@ -829,6 +918,22 @@ func Load(required ...Section) (*Config, []string, error) {
 	}
 	if cfg.Geometry.MaxOccurrences <= 0 {
 		l.fail("FORGE_GEOMETRY_MAX_OCCURRENCES", "must be a positive number; it bounds how many parts one design places")
+	}
+
+	cfg.Blob = BlobConfig{
+		Bucket:   strings.TrimSpace(l.str("FORGE_BLOB_BUCKET", "")),
+		Region:   strings.TrimSpace(l.str("FORGE_BLOB_REGION", "")),
+		Endpoint: strings.TrimSpace(l.str("FORGE_BLOB_ENDPOINT", "")),
+	}
+	// Both half-configurations are refused at boot, where they are one line to
+	// fix, instead of on the first model large enough to need a blob.
+	if cfg.Blob.Configured() && cfg.Blob.Region == "" {
+		l.fail("FORGE_BLOB_REGION", "FORGE_BLOB_BUCKET is set, so the region it lives in must be too "+
+			"(us-east-1 for the production bucket); S3 requests are signed per region")
+	}
+	if !cfg.Blob.Configured() && (cfg.Blob.Endpoint != "" || cfg.Blob.Region != "") {
+		l.fail("FORGE_BLOB_BUCKET", "FORGE_BLOB_REGION or FORGE_BLOB_ENDPOINT is set but no bucket is; "+
+			"set FORGE_BLOB_BUCKET too, or unset both to run without blob storage")
 	}
 
 	cfg.TTS = TTSConfig{
@@ -960,10 +1065,17 @@ func (c *Config) Redacted() map[string]any {
 		"llm_verifier":       c.LLM.Verifier,
 		"llm_summarizer":     c.LLM.Summarizer,
 		"llm_vision":         visionForPrint(c.LLM.Vision),
+		"llm_transcriber":    c.LLM.Transcriber,
+		// Where recorded speech goes, and a presence marker for its key — never
+		// the key. An operator chasing a microphone 404 needs to see which host
+		// was asked.
+		"llm_transcriber_base_url":    transcriberForPrint(c.LLM.TranscriberBaseURL),
+		"llm_transcriber_api_key_set": c.LLM.TranscriberAPIKey != "",
 		// A path, not a secret, and printed so an operator can see at a glance
 		// whether this deployment can write a parametric file at all.
 		"cad_kernel":  cadForPrint(c.CAD.Python),
 		"cad_scripts": c.CAD.AllowScripts,
+		"blob_store":  blobForPrint(c.Blob),
 		// The speech vendor and, separately, whether its backbone may be trained
 		// on what FORGE says. FORGE_DATA_BOUNDARY answers that question for the
 		// MODEL endpoint and not for this one, so a deployment that reads
@@ -995,6 +1107,57 @@ func visionForPrint(model string) string {
 		return "<none — image input is unavailable in this deployment>"
 	}
 	return model
+}
+
+// transcriberForPrint says what an unset transcriber endpoint MEANS, for the
+// same reason visionForPrint does.
+func transcriberForPrint(baseURL string) string {
+	if baseURL == "" {
+		return "<same as llm_base_url, with its key>"
+	}
+	return redactURL(baseURL)
+}
+
+// TranscriberEndpoint is where speech to text is sent, and with which key.
+//
+// The one place the fallback is decided, so the client and config can never
+// disagree about it:
+//
+//   - no TranscriberBaseURL: the chat endpoint and the chat key, as before this
+//     setting existed. An orphan TranscriberAPIKey is ignored rather than sent
+//     to the chat host (Load refuses that configuration by name).
+//   - TranscriberBaseURL and TranscriberAPIKey: those two.
+//   - TranscriberBaseURL alone: the chat key ONLY if it is on the chat
+//     endpoint's origin.
+//
+// ‼️ Otherwise the key is EMPTY, not the chat key. Load refuses that
+// configuration, but a client built from a hand-made LLMConfig never passes
+// through Load, and "no key" fails with a 401 where "the wrong key" leaks one.
+func (c LLMConfig) TranscriberEndpoint() (baseURL, apiKey string) {
+	chat := strings.TrimRight(c.BaseURL, "/")
+	own := strings.TrimRight(strings.TrimSpace(c.TranscriberBaseURL), "/")
+	switch {
+	case own == "":
+		return chat, c.APIKey
+	case c.TranscriberAPIKey != "":
+		return own, c.TranscriberAPIKey
+	case SameOrigin(own, chat):
+		return own, c.APIKey
+	default:
+		return own, ""
+	}
+}
+
+// SameOrigin reports whether two URLs share a scheme, host and port — the unit a
+// credential is issued to. Anything unparseable is a different origin, because
+// the answer decides whether a key may be sent.
+func SameOrigin(a, b string) bool {
+	ua, errA := url.Parse(strings.TrimSpace(a))
+	ub, errB := url.Parse(strings.TrimSpace(b))
+	if errA != nil || errB != nil || ua.Host == "" || ub.Host == "" {
+		return false
+	}
+	return strings.EqualFold(ua.Scheme, ub.Scheme) && strings.EqualFold(ua.Host, ub.Host)
 }
 
 // shellAllowedForPrint renders the shell allow-list so that "unrestricted" reads
@@ -1073,6 +1236,19 @@ func ttsTrains(t TTSConfig) any {
 // for that fence alone — see backbone_allowlist_test.go for why the duplication
 // is tolerated at all.
 func TTSTrainsForTest(t TTSConfig) any { return ttsTrains(t) }
+
+// blobForPrint says where large geometry goes, or that it has nowhere to go.
+// Printed because "why was this model refused" is answered here first.
+func blobForPrint(b BlobConfig) string {
+	switch {
+	case !b.Configured():
+		return "none — large-model storage is refused (set FORGE_BLOB_BUCKET)"
+	case b.Endpoint != "":
+		return fmt.Sprintf("s3-compatible %s, bucket %s (%s)", b.Endpoint, b.Bucket, b.Region)
+	default:
+		return fmt.Sprintf("s3 bucket %s (%s)", b.Bucket, b.Region)
+	}
+}
 
 func cadForPrint(python string) string {
 	if strings.TrimSpace(python) == "" {

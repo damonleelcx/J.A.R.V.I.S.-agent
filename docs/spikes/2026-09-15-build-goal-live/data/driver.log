@@ -1,0 +1,11 @@
+11:42:16 planning
+11:42:22 goal new exit=0
+UPDATE 1
+active|300000|721
+11:42:24 worker 1 started winpid=26796
+build-step-03|running|1
+11:44:09 spent before stop: 40751
+11:44:09 worker stopped (deliberate mid-step stop) winpid=26796
+11:44:15 worker 2 started winpid=30760
+11:51:30 worker stopped (end) winpid=30760
+11:51:30 done

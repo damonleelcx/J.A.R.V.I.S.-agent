@@ -2,6 +2,8 @@ package httpapi
 
 import (
 	"context"
+	"errors"
+	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -55,6 +57,26 @@ type createGoalRequest struct {
 	//
 	// Omitted means unstated, which is the `general` pack rather than a guess.
 	Industry string `json:"industry"`
+	// Build plans the statement as a BUILD of a model rather than as work
+	// (Phase 2, stage A1): one task per step, each waiting for the step before,
+	// run by forge-worker with the CAD kernel and kept as a version of the design.
+	// The same agent.Intake.PlanBuild `forgectl goal new --build` calls.
+	//
+	// A field on this endpoint rather than a sibling route, because everything
+	// around the plan is identical — the draft, the permission, the refusal
+	// that leaves the draft named, and above all that nothing runs until
+	// POST /v1/goals/{id}/start. A second route would be a second copy of those,
+	// and the copy is where one of them would be forgotten.
+	Build bool `json:"build"`
+}
+
+// replanRequest is POST /v1/goals/{id}/plan's optional body.
+type replanRequest struct {
+	// Build replans the draft as a build. ‼️ Not remembered from the first
+	// attempt: nothing on a goal row says it was meant as a build, so a build
+	// whose planning tripped must be replanned with build:true, or it comes back
+	// as ordinary tasks the executor runs instead of steps the kernel builds.
+	Build bool `json:"build"`
 }
 
 // Field ceilings. These are not security controls — BodyLimit already bounds the
@@ -105,6 +127,36 @@ func (h *GoalHandlers) CreateGoal(w http.ResponseWriter, r *http.Request) {
 	autonomy, risk := defaultsFor(req.Autonomy, req.RiskTier)
 	user, _ := UserFrom(r.Context())
 
+	// ‼️ A named project must be one the caller may plan work in, checked BEFORE
+	// anything is written or any model is asked.
+	//
+	// # Why here and not in Draft
+	//
+	// Nothing checked it. Draft hands the id to EnsureProject, which returns early
+	// on any id it is given — right for a caller that has already authorised it,
+	// and nothing had. So anyone signed in could write a draft goal, with a plan,
+	// into a stranger's project and have the planner's model call run for it. The
+	// stranger was then told 404, because the goal it had just written was one it
+	// could not read, which made the write look refused when it was not; and a
+	// viewer, who can read, got 201.
+	//
+	// Every other goal route resolves the project from the goal's own row
+	// (requireGoalPermission). A create has no goal yet, so the project comes from
+	// the request, and this is the one place it has to be checked by name. The
+	// same permission Replan asks for (goal.create: planning drafts work and
+	// authorises none), and the same answer: a project the caller is not in is
+	// NOT FOUND, never FORBIDDEN.
+	//
+	// No project named needs no check: EnsureProject makes one and the caller is
+	// its owner.
+	// docs/bugfix/2026-09-15-a-goal-could-be-drafted-into-a-project-its-caller-was-not-in.md
+	if req.ProjectID != "" {
+		if err := h.deps.requirePermission(r, req.ProjectID, user.ID, access.PermGoalCreate); err != nil {
+			WriteError(w, r, h.deps.Log, err)
+			return
+		}
+	}
+
 	// Planning is a model call and takes tens of seconds to minutes. The
 	// deadline is derived from the model client's own timeout and set LONGER
 	// than it, not shorter: a handler that dies first kills the call mid-retry
@@ -128,7 +180,11 @@ func (h *GoalHandlers) CreateGoal(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	outcome, err := h.intake.Plan(ctx, h.deps.Pool, goal)
+	plan := h.intake.Plan
+	if req.Build {
+		plan = h.intake.PlanBuild
+	}
+	outcome, err := plan(ctx, h.deps.Pool, goal)
 	if err != nil {
 		// The draft survives, and the reader is told so by id. Rolling it back
 		// would be tidier and less truthful: the goal exists, it is visible in
@@ -154,6 +210,9 @@ func (h *GoalHandlers) CreateGoal(w http.ResponseWriter, r *http.Request) {
 		// Stated rather than implied. A client must not have to infer from an
 		// empty task list that nothing is running (PRD AGT-08).
 		"running": false,
+		// Whether the tasks are the steps of a build. Echoed, so a client that
+		// renders the plan says what starting it will do.
+		"build": req.Build,
 	}
 	if outcome.ClarificationNeeded != "" {
 		// The planner refused to guess. That is the planner working, so this is
@@ -207,6 +266,16 @@ func (h *GoalHandlers) Replan(w http.ResponseWriter, r *http.Request) {
 	user, _ := UserFrom(r.Context())
 	goalID := r.PathValue("id")
 
+	// The body is optional: this endpoint took none before build goals existed,
+	// and a caller that still sends none gets the ordinary plan it always got.
+	var req replanRequest
+	if r.ContentLength != 0 {
+		if err := DecodeJSON(w, r, &req); err != nil && !errors.Is(err, io.EOF) {
+			WriteError(w, r, h.deps.Log, err)
+			return
+		}
+	}
+
 	goal, err := h.loadGoalFor(r, goalID, user.ID, access.PermGoalCreate)
 	if err != nil {
 		WriteError(w, r, h.deps.Log, err)
@@ -220,7 +289,11 @@ func (h *GoalHandlers) Replan(w http.ResponseWriter, r *http.Request) {
 	ctx, cancel := context.WithTimeout(r.Context(), h.deps.Config.LLM.RequestTimeout+15*time.Second)
 	defer cancel()
 
-	outcome, err := h.intake.Replan(ctx, h.deps.Pool, goal)
+	replan := h.intake.Replan
+	if req.Build {
+		replan = h.intake.ReplanBuild
+	}
+	outcome, err := replan(ctx, h.deps.Pool, goal)
 	if err != nil {
 		h.deps.Log.WarnWith(r.Context(), logx.EventGoalPlanFailed, err,
 			"goal_id", goalID, "user_id", user.ID)
