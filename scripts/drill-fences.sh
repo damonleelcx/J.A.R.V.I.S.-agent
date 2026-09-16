@@ -937,16 +937,20 @@ drill "a design too large to draw is meshed anyway" internal/domain/geometry/mes
   's = s.replace("\tif refusal := doc.DrawRefusal(); refusal != \"\" {\n\t\treturn &Mesh{", "\tif refusal := doc.DrawRefusal(); false {\n\t\treturn &Mesh{", 1)' \
   ./internal/domain/geometry 'TestLimits_ThirtyThousandOccurrencesAreStoredButNotDrawn'
 
+# Re-anchored 2026-09-16 merging #110: the refusal split into DrawRefusal (4096)
+# and BuildRefusal (8192), and SolidsAndOperations now refuses at BuildRefusal.
 drill "the kernel request carries a design too large to build" internal/domain/geometry/solid.go \
-  's = s.replace("\tif refusal := d.DrawRefusal(); refusal != \"\" {\n\t\treturn nil, nil, nil, []string{refusal}", "\tif refusal := d.DrawRefusal(); false {\n\t\treturn nil, nil, nil, []string{refusal}", 1)' \
+  's = s.replace("\tif refusal := d.BuildRefusal(); refusal != \"\" {\n\t\treturn nil, nil, nil, []string{refusal}", "\tif refusal := d.BuildRefusal(); false {\n\t\treturn nil, nil, nil, []string{refusal}", 1)' \
   ./internal/domain/geometry 'TestLimits_ThirtyThousandOccurrencesAreStoredButNotDrawn'
 
 drill "a mesh file of a design too large to draw is written" internal/domain/geometry/export.go \
   's = s.replace("\tif refusal := v.Document.DrawRefusal(); refusal != \"\" {\n", "\tif refusal := v.Document.DrawRefusal(); false {\n", 1)' \
   ./internal/domain/geometry 'TestLimits_ThirtyThousandOccurrencesAreStoredButNotDrawn'
 
+# Re-anchored 2026-09-16 merging #110: cad.go now picks DrawRefusal or BuildRefusal
+# by build kind and tests `refusal` once; the mutation disables that single test.
 drill "the kernel is sent a design too large to build" internal/domain/cad/cad.go \
-  's = s.replace("\trefusal := doc.DrawRefusal()\n", "\trefusal := \"\"\n", 1)' \
+  's = s.replace("\tif refusal != \"\" {\n\t\treturn nil, errs.New(op, errs.CodeValidationFailed)", "\tif false {\n\t\treturn nil, errs.New(op, errs.CodeValidationFailed)", 1)' \
   ./internal/domain/cad 'TestKernel_ADesignTooLargeToBuildIsRefusedAndSaysWhy'
 
 drill "the storage door stores a design over the byte ceiling" internal/domain/geometry/service.go \
@@ -3253,8 +3257,11 @@ drill "the frame cache is keyed by part of the matrix" internal/domain/cad/sidec
   's = s.replace("    key = repr(m)\n", "    key = repr(m[:3])\n", 1)' \
   ./internal/domain/cad 'TestKernel_APlacedCopyIsTheCopyBuild123dMade'
 
+# Re-anchored 2026-09-16 merging #121, which builds this Location through
+# _location_of instead of its constructor. Same function, same mutation: drop the
+# inversion.
 drill "a cached placement is not inverted" internal/domain/cad/sidecar.py \
-  's = s.replace("    trsf.Invert()\n    return Location(TopLoc_Location(trsf))\n", "    return Location(TopLoc_Location(trsf))\n", 1)' \
+  's = s.replace("    trsf.Invert()\n    return _location_of(TopLoc_Location(trsf))\n", "    return _location_of(TopLoc_Location(trsf))\n", 1)' \
   ./internal/domain/cad 'TestKernel_APlacedCopyIsTheCopyBuild123dMade'
 
 drill "a located copy shares its definition's attributes" internal/domain/cad/sidecar.py \
@@ -3282,7 +3289,7 @@ drill "an overlap repair is asked about every buried clash however many" interna
   ./internal/agent 'TestInterference_ARepairOfTenThousandClashesIsAskedWithinItsBudget'
 
 drill "a model whose clashes fit is summarized anyway" internal/agent/interference.go \
-  's = s.replace("\tif problemBytes(buried) <= maxRepairProblemBytes {\n", "\tif false && problemBytes(buried) <= maxRepairProblemBytes {\n", 1)' \
+  's = s.replace("\tif problemBytes(buried) <= limit {\n", "\tif false && problemBytes(buried) <= limit {\n", 1)' \
   ./internal/agent 'TestInterference_AFewBuriedClashesAreAskedAboutAsBefore'
 
 drill "the summary counts the list as everything found" internal/agent/interference.go \
@@ -3437,6 +3444,125 @@ drill "the kernel counts buried at a different line than the turn" internal/doma
   's = s.replace("_BURIED_FRACTION = 0.5", "_BURIED_FRACTION = 0.4", 1)' \
   ./internal/domain/cad 'TestKernel_TheBuriedCountIsTheClashesTheTurnCallsBuried'
 
+echo "Last hot spots: a placed copy without a deepcopy, and containment once per group of pairs"
+# Added 2026-09-15 (last hot spots). The shapes phase and what was left of the
+# interference check after #114. A placed occurrence no longer deepcopies every
+# attribute of its definition nor builds a Location through nine keyword arguments,
+# and the check takes each pair's containment once per group of (two definitions, two
+# rotations) instead of once per pair. Every copy and every key must still be
+# build123d's to the bit.
+#
+# ‼️ The two count drills mutate the CODE PATH, not the switch: testdata/placed_copies.py
+# assigns _PLACE_WITHOUT_DEEPCOPY and _LOCATION_WITHOUT_INIT itself for its reference
+# run, so a drill that flipped the constant would be overwritten and stay green.
+# ‼️ FIVE MORE WERE WRITTEN AND REMOVED here, because they stayed green. THREE OF
+# THEM ARE NOW BELOW, in "Fences that can fail", and they go red: re-run on
+# 2026-09-15, two of the three reddened the fences exactly as written, with no
+# change to the fence at all. Only one was a real fence gap. See that section.
+#
+#   - "grouped containment folds its reach into the bound"
+#     (mid - reach >= low  ->  mid >= low + reach)
+#   - "grouped containment adds the translation last"
+#     (((t[r] + p0) + p1) + p2  ->  t[r] + (p0 + p1 + p2))
+#
+#     Both are real floating-point differences and neither changed a single key on any
+#     of the eight fixtures: none of them places a pair within a last-bit of the
+#     containment boundary, which is the only place the two forms can disagree. The
+#     code keeps the exact forms anyway, because the reasoning is sound and they cost
+#     nothing — but nothing measured shows a fixture can tell them apart.
+drill "a copy's rotation is deepcopied per occurrence again" internal/domain/cad/sidecar.py \
+  's = s.replace("setattr(out, key, _location_of(TopLoc_Location(value.wrapped.Transformation())))", "setattr(out, key, copy.deepcopy(value, memo))", 1)' \
+  ./internal/domain/cad 'TestKernel_PlacingMoreCopiesCopiesNoBRepsAndBuildsNoMorePlanes'
+
+drill "a containment plan is keyed by the rotations and not the definitions" internal/domain/cad/sidecar.py \
+  's = s.replace("plans.get((ri, rj, a, b))", "plans.get((ri, rj))", 1); s = s.replace("plans[(ri, rj, a, b)] = g", "plans[(ri, rj)] = g", 1)' \
+  ./internal/domain/cad 'TestKernel_APairKeyWithoutLocationsIsTheKeyBuild123dGave'
+
+echo "Fences that can fail: the three gaps #121 left, and the shape key as a tuple"
+# Added 2026-09-15 (fences that can fail). #121 wrote three drills against its own
+# work, watched them stay green, removed them, and recorded all three as fence gaps:
+# "a copy's attributes are not shared with its definition" and "a placement is not
+# built through Location.__init__" were written down as asserted-but-unfenced.
+#
+# ‼️ TWO OF THE THREE WERE NEVER FENCE GAPS. Re-run against the fences exactly as
+# #121 left them, the empty-container mutation produced 171 differences in
+# TestKernel_APlacedCopyIsTheCopyBuild123dMade ("attribute joints is its definition's
+# own object, not a copy" — the identity check #121 could not explain does fire), and
+# the constructor mutation moved the Locations counter from 24 -> 24 to 83 -> 475 in
+# TestKernel_PlacingMoreCopiesCopiesNoBRepsAndBuildsNoMorePlanes. Both fences held the
+# property all along; what could not fail was the drill run, not the fence. So the
+# code comments claiming those properties stand, and these two drills now prove it.
+#
+# The THIRD was a real gap and is closed in testdata/placed_copies.py: a placement was
+# compared only through transformation(), so a Location missing the one attribute
+# build123d's constructor sets was identical on every number. location_object() now
+# compares the OBJECT — its class, its attribute names and location_index — for the
+# recorded placement and for every Location a placed copy carries, and the copies are
+# checked to hold no Location object in common (fresh per occurrence, never the
+# definition's). Deleting `out.location_index = 0` now gives 270 differences.
+#
+# The last two drills are the shape key's, which became a tuple in this branch.
+# ‼️ A key mutation is invisible to placed_copies.py's comparison, because BOTH sides
+# of it run the same _shape_key: two shapes wrongly sharing a definition agree with
+# each other perfectly. So shape_keys() asserts the key directly — every kind in the
+# fixture is its own definition, and dims written in another key order is not — and
+# these two drills are against that.
+drill "a placed copy shares its definition's empty dict" internal/domain/cad/sidecar.py \
+  's = s.replace("setattr(out, key, {})", "setattr(out, key, value)", 1)' \
+  ./internal/domain/cad 'TestKernel_APlacedCopyIsTheCopyBuild123dMade'
+
+drill "a placed copy shares its definition's empty list" internal/domain/cad/sidecar.py \
+  's = s.replace("setattr(out, key, [])", "setattr(out, key, value)", 1)' \
+  ./internal/domain/cad 'TestKernel_APlacedCopyIsTheCopyBuild123dMade'
+
+drill "a placement's Location is missing the attribute the constructor sets" internal/domain/cad/sidecar.py \
+  's = s.replace("    out.location_index = 0\n", "", 1)' \
+  ./internal/domain/cad 'TestKernel_APlacedCopyIsTheCopyBuild123dMade'
+
+drill "a placement builds its Location through the constructor again" internal/domain/cad/sidecar.py \
+  's = s.replace("return _location_of(TopLoc_Location(trsf))", "return Location(TopLoc_Location(trsf))", 1)' \
+  ./internal/domain/cad 'TestKernel_PlacingMoreCopiesCopiesNoBRepsAndBuildsNoMorePlanes'
+
+drill "the shape key forgets that a mirrored solid is a different solid" internal/domain/cad/sidecar.py \
+  's = s.replace("solid.get(\"step\"), solid.get(\"mirrored\"))", "solid.get(\"step\"), None)", 1)' \
+  ./internal/domain/cad 'TestKernel_APlacedCopyIsTheCopyBuild123dMade'
+
+drill "the shape key stops canonicalizing a solid's dims" internal/domain/cad/sidecar.py \
+  's = s.replace("tuple(sorted(dims.items()))", "tuple(dims.items())", 1)' \
+  ./internal/domain/cad 'TestKernel_APlacedCopyIsTheCopyBuild123dMade'
+
+echo "A repair may not add contacts: the found total is judged beside the buried one"
+# Added 2026-09-15 (a repair may not add contacts). #115 judged a repair by the kernel's
+# BURIED total, because #113's list is capped at 10,000 and so could never fall on a large
+# model, and it ignored the FOUND total deliberately. A repair that pulls a part out of the
+# solid it was inside and leaves it touching ten new neighbours is not a fix, and the found
+# total is the number that says so. Both are judged now: the buried total must fall AND the
+# found total must not rise, and a refusal names the test that failed with both numbers.
+#
+# ‼️ The found total gets the buried one's epistemics. found below buried PROVES found is a
+# floor — a reply carrying interferences_buried and not interferences_found — and a floor is
+# never compared as a total nor read as unchanged. Three of the five below hold that half,
+# because it is the half no reader can check by eye
+# (docs/bugfix/2026-09-15-a-found-floor-was-printed-as-a-total.md).
+drill "a repair that adds contacts is kept as long as fewer are buried" internal/agent/interference.go \
+  's = s.replace("\t\tcase a.found > b.found:\n", "\t\tcase false:\n", 1)' \
+  ./internal/agent 'TestInterference_ARepairThatBuriesFewerPartsButTouchesMoreIsRefused'
+
+drill "the found totals are compared the wrong way round" internal/agent/interference.go \
+  's = s.replace("a.found > b.found", "a.found < b.found", 1)' \
+  ./internal/agent 'TestInterference_(ARepairThatBuriesFewerPartsButTouchesMoreIsRefused|ARepairIsKeptWhenFewerAreBuriedAndNoMorePairsShareMaterial)'
+
+drill "a found total the kernel never took is called a total" internal/agent/interference.go \
+  's = s.replace("\tt.foundCounted = t.found >= t.buried\n", "\tt.foundCounted = true\n", 1)' \
+  ./internal/agent 'TestInterference_AFoundTotalTheKernelDidNotTakeIsNeitherComparedNorCalledUnchanged'
+
+drill "the found totals are compared when only the one after the repair is a total" internal/agent/interference.go \
+  's = s.replace("\t\tcase !b.foundCounted || !a.foundCounted:\n", "\t\tcase !a.foundCounted:\n", 1)' \
+  ./internal/agent 'TestInterference_AFoundTotalTheKernelDidNotTakeIsNeitherComparedNorCalledUnchanged'
+
+drill "a note states the pairs it listed as the pairs sharing material" internal/agent/interference.go \
+  's = s.replace("\tcase !t.foundCounted:\n", "\tcase false && !t.foundCounted:\n", 1)' \
+  ./internal/agent 'TestInterference_AFoundTotalTheKernelDidNotTakeIsNeitherComparedNorCalledUnchanged'
 # Added 2026-09-15 (kernel build ceiling and viewport follow-ups). Three findings of the
 # W2 acceptance run: a mesh reply, which is in millimetres, was drawn on a stage in the
 # document's unit; a search row named a part without saying where it was; and the
@@ -3537,6 +3663,14 @@ drill "a request builds past 4,096" internal/domain/cad/cad.go \
   's = s.replace("refusal := doc.DrawRefusal()\n", "refusal := doc.ExportJobRefusal()\n", 1).replace("expand := geometry.SolidsAndOperations\n", "expand := geometry.ExportJobSolidsAndOperations\n", 1)' \
   ./internal/domain/cad 'TestKernel_AnExportJobBuildsAboveTheBuildingCeilingWithoutTheInterferenceCheck'
 
+drill "an export job is refused at the building ceiling" internal/domain/cad/cad.go \
+  's = s.replace("\tif job {\n\t\trefusal = doc.ExportJobRefusal()\n\t}\n", "", 1)' \
+  ./internal/domain/cad 'TestKernel_AnExportJobIsBoundedByItsOwnCeilingAndNotTheBuildingOnes'
+
+drill "an export job is refused at the view's ceiling" internal/domain/cad/cad.go \
+  's = s.replace("\t\trefusal = doc.ExportJobRefusal()\n", "\t\trefusal = doc.BuildRefusal()\n", 1)' \
+  ./internal/domain/cad 'TestKernel_AnExportJobIsBoundedByItsOwnCeilingAndNotTheBuildingOnes'
+
 drill "the export job asks for the interference check" internal/domain/cad/cad.go \
   's = s.replace("SkipInterferences: job}", "SkipInterferences: false}", 1)' \
   ./internal/domain/cad 'TestKernel_AnExportJobBuildsAboveTheBuildingCeilingWithoutTheInterferenceCheck'
@@ -3592,6 +3726,63 @@ drill "a corrupt file is served whole" internal/httpapi/geometry_exports.go \
 drill "the export status route is registered under its own name" internal/httpapi/router.go \
   's = s.replace("mux.Handle(\"GET /v1/geometry/{id}/{rest}\", authed(geo.ExportRoute))", "mux.Handle(\"GET /v1/geometry/exports/{rest}\", authed(geo.ExportRoute))", 1)' \
   ./internal/httpapi 'TestAPI_EveryGeometryRouteIsMountedAndRequiresASession'
+
+echo "View ceiling on Linux (#110)"
+# Added 2026-09-15 (ceiling on Linux). forged in a container limited like its pod
+# (1 CPU, 1 GiB) built 8,192- and 8,315-part designs through the mesh endpoint in
+# 5.7-13.0 s, three runs each, with the 30 s kernel timeout; 16,556 took up to 21.5 s.
+# So a VIEW is built to 8192 and a STEP export, mass report, Go mesh and mesh file stay
+# at 4096. The cad fence runs against cadtest's fake process; the httpapi ones need node.
+# docs/spikes/2026-09-15-ceiling-on-linux
+drill "the kernel's view ceiling is back at 4096" internal/domain/geometry/limits.go \
+  's = s.replace("const maxBuiltParts = 8192", "const maxBuiltParts = 4096", 1)' \
+  ./internal/domain/geometry 'TestLimits_TheKernelBuildsAViewOf8192PartsAndNothingElsePast4096'
+
+drill "the view ceiling is raised past what was measured" internal/domain/geometry/limits.go \
+  's = s.replace("const maxBuiltParts = 8192", "const maxBuiltParts = 16384", 1)' \
+  ./internal/domain/geometry 'TestLimits_TheKernelBuildsAViewOf8192PartsAndNothingElsePast4096'
+
+drill "every kernel build is allowed the view's ceiling" internal/domain/cad/cad.go \
+  's = s.replace("\tif format == \"mesh\" && !properties {", "\tif true {", 1)' \
+  ./internal/domain/cad 'TestKernel_BuildsAViewOf8192PartsAndRefusesEveryOtherBuildPast4096'
+
+drill "a build that is not a STEP export is allowed the view's ceiling" internal/domain/cad/cad.go \
+  's = s.replace("\tif format == \"mesh\" && !properties {", "\tif format != \"step\" {", 1)' \
+  ./internal/domain/cad 'TestKernel_BuildsAViewOf8192PartsAndRefusesEveryOtherBuildPast4096'
+
+drill "a view is refused at the tighter ceiling" internal/domain/cad/cad.go \
+  's = s.replace("\t\trefusal = doc.BuildRefusal()", "\t\trefusal = doc.DrawRefusal()", 1)' \
+  ./internal/domain/cad 'TestKernel_BuildsAViewOf8192PartsAndRefusesEveryOtherBuildPast4096'
+
+drill "the kernel request is cut at the tighter ceiling" internal/domain/geometry/solid.go \
+  's = s.replace("\tif refusal := d.BuildRefusal(); refusal != \"\" {", "\tif refusal := d.DrawRefusal(); refusal != \"\" {", 1)' \
+  ./internal/domain/geometry 'TestLimits_TheKernelBuildsAViewOf8192PartsAndNothingElsePast4096'
+
+drill "the Go mesh is built to the view's ceiling" internal/domain/geometry/mesh.go \
+  's = s.replace("\tif refusal := doc.DrawRefusal(); refusal != \"\" {", "\tif refusal := doc.BuildRefusal(); refusal != \"\" {", 1)' \
+  ./internal/domain/geometry 'TestLimits_TheKernelBuildsAViewOf8192PartsAndNothingElsePast4096'
+
+drill "a mesh file is exported to the view's ceiling" internal/domain/geometry/export.go \
+  's = s.replace("\tif refusal := v.Document.DrawRefusal(); refusal != \"\" {", "\tif refusal := v.Document.BuildRefusal(); refusal != \"\" {", 1)' \
+  ./internal/domain/geometry 'TestLimits_TheKernelBuildsAViewOf8192PartsAndNothingElsePast4096'
+
+drill "the browser loads a design in pieces that the kernel builds whole" internal/httpapi/assets/forge3d.js \
+  's = s.replace("var LAZY_OCCURRENCES = 8192;", "var LAZY_OCCURRENCES = 4096;", 1)' \
+  ./internal/httpapi 'TestRendererLoadsLazilyExactlyPastTheKernelsViewCeiling'
+
+drill "the browser asks for a whole mesh the kernel refuses" internal/httpapi/assets/forge3d.js \
+  's = s.replace("var LAZY_OCCURRENCES = 8192;", "var LAZY_OCCURRENCES = 16384;", 1)' \
+  ./internal/httpapi 'TestRendererLoadsLazilyExactlyPastTheKernelsViewCeiling'
+
+drill "a subtree past the view ceiling is sent to the kernel" internal/httpapi/geometry_subtree.go \
+  's = s.replace("\tcase parts > geometry.MaxBuiltParts():", "\tcase parts > 2*geometry.MaxBuiltParts():", 1)' \
+  ./internal/httpapi 'TestMeshSubtree_LimitsAreTheSubtreesOwn'
+
+drill "the exported ceiling is still the old one" internal/domain/geometry/subtree.go \
+  's = s.replace("func MaxBuiltParts() int { return maxBuiltParts }", "func MaxBuiltParts() int { return maxDrawnParts }", 1)' \
+  ./internal/httpapi 'TestRendererLoadsLazilyExactlyPastTheKernelsViewCeiling|TestMeshSubtree_LimitsAreTheSubtreesOwn'
+
+echo
 
 if [ "$MODE" = "list" ]; then
   exit 0

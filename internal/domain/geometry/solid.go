@@ -155,8 +155,10 @@ func Solids(d Document, unit Unit) ([]Solid, []string) {
 // Fences: TestRepeat_TheKernelIsSentFeaturesNamingTheCopiesItIsSent,
 // TestKernel_AFeatureNamingARepeatedPartIsApplied.
 func SolidsAndOperations(d Document, unit Unit) ([]Solid, []Operation, []Problem, []string) {
-	// Refused whole, before any expansion (limits.go).
-	if refusal := d.DrawRefusal(); refusal != "" {
+	// Refused whole, before any expansion (limits.go), at the widest bound anything is
+	// built to: a view's (BuildRefusal). cad.Kernel.build refuses every other build at
+	// the tighter bound before it asks for these.
+	if refusal := d.BuildRefusal(); refusal != "" {
 		return nil, nil, nil, []string{refusal}
 	}
 	return solidsAndOperations(d, unit)

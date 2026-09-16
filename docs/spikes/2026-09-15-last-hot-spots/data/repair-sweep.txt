@@ -1,0 +1,20 @@
+REPAIR {"bays":9,"budget_bytes":16384,"buried_listed":10000,"found":158400,"groups_described":1,"lines_bytes":1410000,"lines_ms":4.003,"listed":10000,"summary_bytes":942,"summary_lines":3,"summary_ms":13.64}
+REPAIRSWEEP {"bays":9,"budget_bytes":2048,"budget_kib":2,"groups_described":1,"over_budget":false,"summary_bytes":942,"summary_lines":3}
+REPAIRSWEEP {"bays":9,"budget_bytes":4096,"budget_kib":4,"groups_described":1,"over_budget":false,"summary_bytes":942,"summary_lines":3}
+REPAIRSWEEP {"bays":9,"budget_bytes":8192,"budget_kib":8,"groups_described":1,"over_budget":false,"summary_bytes":942,"summary_lines":3}
+REPAIRSWEEP {"bays":9,"budget_bytes":16384,"budget_kib":16,"groups_described":1,"over_budget":false,"summary_bytes":942,"summary_lines":3}
+REPAIRSWEEP {"bays":9,"budget_bytes":32768,"budget_kib":32,"groups_described":1,"over_budget":false,"summary_bytes":942,"summary_lines":3}
+REPAIRSWEEP {"bays":9,"budget_bytes":65536,"budget_kib":64,"groups_described":1,"over_budget":false,"summary_bytes":942,"summary_lines":3}
+REPAIR {"bays":30,"budget_bytes":16384,"buried_listed":10000,"found":528000,"groups_described":1,"lines_bytes":1410000,"lines_ms":4.001,"listed":10000,"summary_bytes":942,"summary_lines":3,"summary_ms":13.156}
+REPAIRSWEEP {"bays":30,"budget_bytes":2048,"budget_kib":2,"groups_described":1,"over_budget":false,"summary_bytes":942,"summary_lines":3}
+REPAIRSWEEP {"bays":30,"budget_bytes":4096,"budget_kib":4,"groups_described":1,"over_budget":false,"summary_bytes":942,"summary_lines":3}
+REPAIRSWEEP {"bays":30,"budget_bytes":8192,"budget_kib":8,"groups_described":1,"over_budget":false,"summary_bytes":942,"summary_lines":3}
+REPAIRSWEEP {"bays":30,"budget_bytes":16384,"budget_kib":16,"groups_described":1,"over_budget":false,"summary_bytes":942,"summary_lines":3}
+REPAIRSWEEP {"bays":30,"budget_bytes":32768,"budget_kib":32,"groups_described":1,"over_budget":false,"summary_bytes":942,"summary_lines":3}
+REPAIRSWEEP {"bays":30,"budget_bytes":65536,"budget_kib":64,"groups_described":1,"over_budget":false,"summary_bytes":942,"summary_lines":3}
+REPAIRSWEEP {"budget_bytes":2048,"budget_kib":2,"fixture":"600 groups","groups_described":10,"groups_total":600,"over_budget":false,"summary_bytes":1984,"summary_lines":13}
+REPAIRSWEEP {"budget_bytes":4096,"budget_kib":4,"fixture":"600 groups","groups_described":24,"groups_total":600,"over_budget":false,"summary_bytes":3958,"summary_lines":27}
+REPAIRSWEEP {"budget_bytes":8192,"budget_kib":8,"fixture":"600 groups","groups_described":54,"groups_total":600,"over_budget":false,"summary_bytes":8188,"summary_lines":57}
+REPAIRSWEEP {"budget_bytes":16384,"budget_kib":16,"fixture":"600 groups","groups_described":112,"groups_total":600,"over_budget":false,"summary_bytes":16381,"summary_lines":115}
+REPAIRSWEEP {"budget_bytes":32768,"budget_kib":32,"fixture":"600 groups","groups_described":227,"groups_total":600,"over_budget":false,"summary_bytes":32711,"summary_lines":230}
+REPAIRSWEEP {"budget_bytes":65536,"budget_kib":64,"fixture":"600 groups","groups_described":458,"groups_total":600,"over_budget":false,"summary_bytes":65513,"summary_lines":461}

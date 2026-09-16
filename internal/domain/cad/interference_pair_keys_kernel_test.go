@@ -28,7 +28,13 @@ type pairKeyRuns struct {
 		PlainCompared  int    `json:"plain_compared"`
 		PlainDiffer    int    `json:"plain_differ"`
 		Memoized       int    `json:"memoized"`
-		Variants       []struct {
+		// Added 2026-09-15 (last hot spots): the same keys with containment taken
+		// per pair instead of once per group of (two definitions, two rotations),
+		// and how many such groups the fixture reached.
+		PlanlessCompared int `json:"planless_compared"`
+		PlanlessDiffer   int `json:"planless_differ"`
+		Plans            int `json:"plans"`
+		Variants         []struct {
 			Name     string `json:"name"`
 			Compared int    `json:"compared"`
 			Differ   int    `json:"differ"`
@@ -76,19 +82,20 @@ func TestKernel_APairKeyWithoutLocationsIsTheKeyBuild123dGave(t *testing.T) {
 	if len(got.Fixtures) != 8 {
 		t.Fatalf("%d fixture(s), want 8", len(got.Fixtures))
 	}
-	slid, carried, memoized, variants := 0, 0, 0, 0
+	slid, carried, memoized, variants, plans := 0, 0, 0, 0, 0
 	summarized := false
 	for _, f := range got.Fixtures {
 		every := f.Parts * (f.Parts - 1) / 2
 		t.Logf("%s: %d parts, %d pairs keyed, %d slid, %d carried, %d pairs of rotations memoized",
 			f.Name, f.Parts, f.Compared, f.Slid, f.Carried, f.Memoized)
-		if f.Compared != every || f.UnslidCompared != every || f.PlainCompared != every {
-			t.Errorf("%s: %d, %d and %d keys compared, want every pair of %d parts (%d)", f.Name, f.Compared,
-				f.UnslidCompared, f.PlainCompared, f.Parts, every)
+		if f.Compared != every || f.UnslidCompared != every || f.PlainCompared != every || f.PlanlessCompared != every {
+			t.Errorf("%s: %d, %d, %d and %d keys compared, want every pair of %d parts (%d)", f.Name, f.Compared,
+				f.UnslidCompared, f.PlainCompared, f.PlanlessCompared, f.Parts, every)
 		}
-		if f.Differ != 0 || f.UnslidDiffer != 0 || f.PlainDiffer != 0 {
-			t.Errorf("%s: %d key(s) differ with the memo and the slide, %d without the slide, %d without the memo; first: %s",
-				f.Name, f.Differ, f.UnslidDiffer, f.PlainDiffer, f.First)
+		if f.Differ != 0 || f.UnslidDiffer != 0 || f.PlainDiffer != 0 || f.PlanlessDiffer != 0 {
+			t.Errorf("%s: %d key(s) differ with the memo and the slide, %d without the slide, %d without the memo, "+
+				"%d with containment per pair; first: %s",
+				f.Name, f.Differ, f.UnslidDiffer, f.PlainDiffer, f.PlanlessDiffer, f.First)
 		}
 		for _, v := range f.Variants {
 			t.Logf("%s, %s: %d pairs keyed, %d pairs of rotations memoized", f.Name, v.Name, v.Compared, v.Memoized)
@@ -98,6 +105,7 @@ func TestKernel_APairKeyWithoutLocationsIsTheKeyBuild123dGave(t *testing.T) {
 			variants++
 		}
 		memoized += f.Memoized
+		plans += f.Plans
 		if f.BoxesCompared == 0 || f.BoxesDiffer != 0 || f.VolumesDiffer != 0 {
 			t.Errorf("%s: of %d placed solids, %d moved box(es) and %d volume(s) differ from the loop's (_MOVED_BOX_DIRECT)",
 				f.Name, f.BoxesCompared, f.BoxesDiffer, f.VolumesDiffer)
@@ -122,9 +130,12 @@ func TestKernel_APairKeyWithoutLocationsIsTheKeyBuild123dGave(t *testing.T) {
 		carried += f.Carried
 	}
 	// The fixtures have to reach what could go wrong, or the equality above is cheap.
-	if slid < 1000 || carried < 100 || !summarized || memoized < 100 || variants != 2 {
-		t.Errorf("the fixtures reach %d slid keys, %d carried, a summarized list=%v, %d memoized pairs of rotations "+
-			"and %d location variants; the fence needs all of them", slid, carried, summarized, memoized, variants)
+	// ‼️ A fixture that reached no grouped containment would compare the grouped path
+	// against itself and pass saying nothing, so the groups are counted too.
+	if slid < 1000 || carried < 100 || !summarized || memoized < 100 || variants != 2 || plans < 100 {
+		t.Errorf("the fixtures reach %d slid keys, %d carried, a summarized list=%v, %d memoized pairs of rotations, "+
+			"%d location variants and %d containment groups; the fence needs all of them",
+			slid, carried, summarized, memoized, variants, plans)
 	}
 }
 

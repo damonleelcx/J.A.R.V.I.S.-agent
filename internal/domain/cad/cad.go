@@ -579,11 +579,19 @@ func (k *Kernel) buildWith(ctx context.Context, doc geometry.Document, unit geom
 	// kernel had never been sent, and was dropped from every export.
 	// docs/bugfix/2026-09-13-features-on-repeated-parts-were-never-applied.md
 	// A design too large to build is refused as an error, not built as nothing
-	// (geometry/limits.go, Phase 3 stage S0).
+	// (geometry/limits.go, Phase 3 stage S0). A view is built to the kernel's own
+	// measured ceiling (maxBuiltParts); a file, a mass report or any other build to the
+	// tighter one, which nobody has measured past 4096.
 	refusal := doc.DrawRefusal()
+	if format == "mesh" && !properties {
+		refusal = doc.BuildRefusal()
+	}
+	// ‼️ The off-node export job answers to its own ceiling (MaxExportJobParts), and to
+	// nothing else: it is a STEP build, so without this it would fall to DrawRefusal
+	// above and every job would be capped at 4,096. The in-request STEP export is not
+	// a job and still stops at 4,096. Fence:
+	// TestKernel_AnExportJobIsBoundedByItsOwnCeilingAndNotTheBuildingOnes.
 	if job {
-		// The job's ceiling in place of the building one, for the job only. Every
-		// other build, the in-request export included, still stops at 4,096.
 		refusal = doc.ExportJobRefusal()
 	}
 	if refusal != "" {

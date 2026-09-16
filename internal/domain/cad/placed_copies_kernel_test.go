@@ -16,8 +16,13 @@ import (
 // docs/spikes/2026-09-15-next-scale-walls.
 
 type placedCopies struct {
-	Error        string                           `json:"error"`
-	Checked      int                              `json:"checked"`
+	Error   string `json:"error"`
+	Checked int    `json:"checked"`
+	// DistinctKeys is how many definitions the fixture's shape key separates it
+	// into. Added 2026-09-15 (fences that can fail): the key became a tuple, and
+	// a comparison that runs the same key on both sides cannot see a key that
+	// merges two shapes — so the key is asserted directly. See shape_keys().
+	DistinctKeys int                              `json:"distinct_keys"`
 	Problems     []string                         `json:"problems"`
 	ProblemCount int                              `json:"problem_count"`
 	Counts       map[string]map[string]placeTally `json:"counts"`
@@ -30,6 +35,14 @@ type placeTally struct {
 	Occurrences     int `json:"occurrences"`
 	Parts           int `json:"parts"`
 	ShapeBuilds     int `json:"shape_builds"`
+	// Added 2026-09-15 (last hot spots): the two costs a placed occurrence still
+	// paid after #113 — a copy.deepcopy of every attribute of the definition, and a
+	// build123d Location built through __init__'s nine keyword arguments. Fallbacks
+	// counts the attributes _located's per-definition plan did not recognize and
+	// handed to copy.deepcopy anyway.
+	Deepcopies int `json:"deepcopies"`
+	Locations  int `json:"locations"`
+	Fallbacks  int `json:"fallbacks"`
 }
 
 // testdataJSON runs a script under testdata against this package's sidecar and
@@ -75,10 +88,16 @@ func placedCopiesOf(t *testing.T) placedCopies {
 // with a plate a feature changed beside a plate it did not.
 func TestKernel_APlacedCopyIsTheCopyBuild123dMade(t *testing.T) {
 	got := placedCopiesOf(t)
-	t.Logf("%d solid(s) compared across the three formats, %d difference(s)", got.Checked, got.ProblemCount)
+	t.Logf("%d solid(s) compared across the three formats, %d shape key(s), %d difference(s)",
+		got.Checked, got.DistinctKeys, got.ProblemCount)
 	// 7 kinds × 8 matrices + 2 plates, in three formats.
 	if got.Checked < 3*58 {
 		t.Fatalf("compared %d solids; the fixture has 58 in each of three formats", got.Checked)
+	}
+	// The fixture must hold more than one definition, or "the key separates these
+	// shapes" is a claim about nothing. 7 kinds plus the two plates and the drill.
+	if got.DistinctKeys < 8 {
+		t.Fatalf("the fixture has %d distinct shape key(s); it has at least 8 kinds", got.DistinctKeys)
 	}
 	for _, p := range got.Problems {
 		t.Error(p)
@@ -119,5 +138,36 @@ func TestKernel_PlacingMoreCopiesCopiesNoBRepsAndBuildsNoMorePlanes(t *testing.T
 	if eight.VolumeIntegrals != one.VolumeIntegrals {
 		t.Errorf("%d volume integrals at %d occurrences, %d at %d: the assembly integrates every copy again",
 			eight.VolumeIntegrals, eight.Occurrences, one.VolumeIntegrals, one.Occurrences)
+	}
+	// Added 2026-09-15 (last hot spots). Profiled on the barrel, a placed occurrence
+	// still paid a copy.deepcopy of every attribute of its definition (12 a copy at
+	// 90k, and the worst of them rebuilt a Location from a transformation) and a
+	// Location through __init__'s keyword parsing. Both are now per DEFINITION, so
+	// eight times the occurrences asks for no more of either.
+	t.Logf("deepcopies/Locations per run: build123d's %d/%d at one copy, %d/%d at eight; "+
+		"the sidecar's %d/%d and %d/%d, with %d and %d unrecognized attribute(s)",
+		ref1.Deepcopies, ref1.Locations, ref8.Deepcopies, ref8.Locations,
+		one.Deepcopies, one.Locations, eight.Deepcopies, eight.Locations, one.Fallbacks, eight.Fallbacks)
+	// The fixture must pay these per occurrence on build123d's path, or a flat count
+	// on the sidecar's proves nothing.
+	if ref8.Deepcopies-ref1.Deepcopies < eight.Occurrences-one.Occurrences ||
+		ref8.Locations-ref1.Locations < eight.Occurrences-one.Occurrences {
+		t.Fatalf("build123d's path did not deepcopy and build a Location per occurrence here (%+v → %+v); "+
+			"the fixture cannot see the fix", ref1, ref8)
+	}
+	if eight.Deepcopies != one.Deepcopies {
+		t.Errorf("%d deepcopies at %d occurrences, %d at %d: a placed copy deepcopies its definition again",
+			eight.Deepcopies, eight.Occurrences, one.Deepcopies, one.Occurrences)
+	}
+	if eight.Locations != one.Locations {
+		t.Errorf("%d Location.__init__ calls at %d occurrences, %d at %d: a placement parses keyword arguments again",
+			eight.Locations, eight.Occurrences, one.Locations, one.Occurrences)
+	}
+	// ‼️ A fallback is CORRECT — it is the deepcopy loop, for an attribute the plan
+	// does not recognize — but one per occurrence would mean the plan recognizes
+	// nothing that matters, and the counts above would be flat for the wrong reason.
+	if eight.Fallbacks > one.Fallbacks {
+		t.Errorf("%d unrecognized attribute(s) at %d occurrences and %d at %d: _located's plan is not per definition",
+			eight.Fallbacks, eight.Occurrences, one.Fallbacks, one.Occurrences)
 	}
 }
