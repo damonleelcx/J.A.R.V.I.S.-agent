@@ -242,6 +242,9 @@ const (
 	EventCADStarted   Event = "forge.cad.started"
 	EventCADRestarted Event = "forge.cad.restarted"
 	EventCADRefused   Event = "forge.cad.refused"
+	// EventCADTimedOut is a build stopped because it ran out of time. Separate from
+	// Restarted because a timeout is NOT retried: the process was working, not dead.
+	EventCADTimedOut Event = "forge.cad.timed_out"
 )
 
 func init() {
@@ -249,7 +252,7 @@ func init() {
 		EventGeometrySaved, EventGeometryExported, EventGeometryRefused, EventGeometryCompared,
 		EventGeometryUnreadable,
 		EventGeometryAdopted, EventGeometryRespecified,
-		EventCADStarted, EventCADRestarted, EventCADRefused,
+		EventCADStarted, EventCADRestarted, EventCADRefused, EventCADTimedOut,
 	)
 }
 
