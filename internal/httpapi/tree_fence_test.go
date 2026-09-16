@@ -44,7 +44,7 @@ func TestRendererFlattensATreeLikeTheExporter(t *testing.T) {
       const spec = JSON.parse(fs.readFileSync(process.argv[3], 'utf8'));
       process.stdout.write(JSON.stringify(F.partsToDraw(spec).map(function (p) {
         return { id: p.spec.id, label: p.spec.name || p.spec.id,
-                 position: p.spec.position, rotation: p.spec.rotation };
+                 position: p.spec.position, rotation: p.spec.rotation, mirrored: !!p.spec.mirrored };
       })));
     `
 	if err := os.WriteFile(harness, []byte(script), 0o600); err != nil {
@@ -79,6 +79,30 @@ func TestRendererFlattensATreeLikeTheExporter(t *testing.T) {
 		{"a repeat inside a placed definition", func() geometry.Document {
 			d := corner()
 			d.Definitions[0].Repeat = &geometry.Repeat{Count: 5, About: "y"}
+			return d
+		}()},
+		{"children mirrored across x, y and z", func() geometry.Document {
+			d := corner()
+			d.Assemblies[0].Children[0].Mirror = "x"
+			d.Assemblies[0].Children[1].Mirror = "y"
+			d.Assemblies[1].Children[1].Mirror = "z"
+			return d
+		}()},
+		{"a mirror inside a mirror cancels", func() geometry.Document {
+			d := corner()
+			d.Assemblies[0].Children[0].Mirror = "y"
+			d.Assemblies[1].Children[0].Mirror = "x"
+			return d
+		}()},
+		{"a mirrored definition placed by a mirrored child", func() geometry.Document {
+			d := corner()
+			d.Definitions[0].Mirrored = true
+			d.Assemblies[0].Children[1].Mirror = "z"
+			return d
+		}()},
+		{"a mirror across an unknown axis is left out", func() geometry.Document {
+			d := corner()
+			d.Assemblies[1].Children[1].Mirror = "sideways"
 			return d
 		}()},
 		{"top-level parts beside the tree", func() geometry.Document {
@@ -139,6 +163,7 @@ func TestRendererFlattensATreeLikeTheExporter(t *testing.T) {
 			var got []struct {
 				ID, Label          string
 				Position, Rotation []float64
+				Mirrored           bool
 			}
 			if err := json.Unmarshal(out, &got); err != nil {
 				t.Fatalf("unreadable renderer output: %v", err)
@@ -149,6 +174,9 @@ func TestRendererFlattensATreeLikeTheExporter(t *testing.T) {
 			}
 			for i, w := range want {
 				g := got[i]
+				if g.Mirrored != w.Mirrored {
+					t.Fatalf("%s: browser mirrored=%v, exporter mirrored=%v", w.ID, g.Mirrored, w.Mirrored)
+				}
 				if g.ID != w.ID || g.Label != w.Label() {
 					t.Fatalf("part %d: browser %q/%q, exporter %q/%q", i, g.ID, g.Label, w.ID, w.Label())
 				}

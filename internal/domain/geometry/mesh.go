@@ -450,6 +450,9 @@ func place(ts []Triangle, p Part) []Triangle {
 
 	out := make([]Triangle, 0, len(ts))
 	for _, t := range ts {
+		if p.Mirrored {
+			t = mirrorTriangle(t)
+		}
 		nt := Triangle{
 			A: translate(rotate(t.A, rot), pos),
 			B: translate(rotate(t.B, rot), pos),
@@ -463,6 +466,18 @@ func place(ts []Triangle, p Part) []Triangle {
 		out = append(out, nt)
 	}
 	return out
+}
+
+// mirrorTriangle reflects a triangle's local x and swaps two corners.
+//
+// Negating one coordinate turns every triangle inside out, so a mirrored part whose
+// corners kept their order would show its inside faces as its outside: an STL whose
+// normals point inward, and a render lit from within. Swapping two corners restores
+// the winding; the stored normal is reflected with the corners.
+// Fence: TestMirror_TheMeshOfAMirroredPartIsItsReflectionFacingOut.
+func mirrorTriangle(t Triangle) Triangle {
+	flip := func(v [3]float64) [3]float64 { return [3]float64{-v[0], v[1], v[2]} }
+	return Triangle{A: flip(t.A), B: flip(t.C), C: flip(t.B), Normal: flip(t.Normal)}
 }
 
 func padTo3(v []float64) []float64 {

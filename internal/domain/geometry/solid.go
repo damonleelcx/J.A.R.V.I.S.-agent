@@ -47,6 +47,10 @@ type Solid struct {
 	// "part". Never sent to the sidecar — the sidecar receives the STEP.
 	// docs/bugfix/2026-09-13-features-on-repeated-parts-were-never-applied.md
 	Script string `json:"-"`
+	// Mirrored tells the kernel to reflect the solid's own x before placing it
+	// (Part.Mirrored). Sent, not derived: a reflection is not in Matrix, which the
+	// sidecar reads as a rotation.
+	Mirrored bool `json:"mirrored,omitempty"`
 	// Dims are the dimensions this shape reads, defaults applied and converted
 	// to millimetres. Which keys are present depends on the shape and is the
 	// builder's contract.
@@ -400,7 +404,7 @@ func SolidsAndOperations(d Document, unit Unit) ([]Solid, []Operation, []Problem
 		out = append(out, Solid{
 			ID: p.ID, Label: p.Label(), Shape: shape, Dims: dims, HoleParents: holeParents,
 			Outline: outlineCurve, Holes: holeCurves, Path: pathCurve, SectionFrame: frame,
-			Axis: axisOf(p), Matrix: RotationMatrix(rot), Position: pos, Script: script,
+			Axis: axisOf(p), Matrix: RotationMatrix(rot), Position: pos, Script: script, Mirrored: p.Mirrored,
 		})
 	}
 	// ‼️ From `d` as expanded above, never from the caller's document. See the
