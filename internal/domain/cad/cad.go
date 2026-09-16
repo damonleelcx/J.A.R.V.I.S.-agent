@@ -47,6 +47,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	_ "embed"
@@ -87,6 +88,9 @@ type Kernel struct {
 	// that executes text a model produced — see script.go for what the sandbox
 	// does and does not promise.
 	scripts bool
+	// timeout is how long one build may take: buildTimeout, except in the fences
+	// that need a limit short enough to cross on purpose. Not a setting.
+	timeout time.Duration
 
 	mu      sync.Mutex
 	cmd     *exec.Cmd
@@ -102,7 +106,7 @@ type Kernel struct {
 // not an error. Nothing starts here; the process is started on the first build,
 // so a deployment that never exports a parametric file never pays for one.
 func New(python string, log *logx.Logger) *Kernel {
-	return &Kernel{python: strings.TrimSpace(python), log: log}
+	return &Kernel{python: strings.TrimSpace(python), log: log, timeout: buildTimeout}
 }
 
 // WithScripts turns on running model-written build123d.
@@ -362,18 +366,33 @@ func (k *Kernel) BuildDocument(ctx context.Context, doc geometry.Document, unit 
 
 	req := request{Solids: solids, Operations: operations, Format: format}
 	res, err := k.roundTrip(ctx, req)
-	if err != nil {
+	var late *lateError
+	if err != nil && !errors.As(err, &late) {
 		// One retry, and exactly one. The overwhelmingly likely cause of an I/O
 		// failure is a process that died between requests — a machine asleep, an
 		// OOM, somebody's pkill — and restarting answers that. Retrying twice
 		// would turn a kernel that crashes on a particular document into a loop.
+		//
+		// ‼️ A build that ran out of time is NOT retried: its process was working,
+		// and a fresh one takes as long again. Fences:
+		// TestKernel_ABuildThatRunsOutOfTimeIsNotRetriedAndSaysSo, and
+		// TestKernel_AProcessThatDiesMidBuildIsStillRetriedOnce for the retry.
 		k.stopLocked()
 		k.log.Warn(ctx, logx.EventCADRestarted, "detail", err.Error())
 		res, err = k.roundTrip(ctx, req)
-		if err != nil {
-			return nil, errs.Wrap(op, errs.CodeConnectorUnavailable, err).
-				WithDetail("the CAD kernel did not answer, and restarting it did not help")
+	}
+	if err != nil {
+		if errors.As(err, &late) {
+			// The killed process is reaped and the kernel reset NOW, so the next
+			// build starts a fresh process instead of spending its one retry
+			// discovering this one is dead.
+			// Fence: TestKernel_AfterATimeoutTheKernelStartsAFreshProcessForTheNextBuild.
+			k.stopLocked()
+			k.log.Warn(ctx, logx.EventCADTimedOut, "detail", late.Error())
+			return nil, lateRefusal(op, late)
 		}
+		return nil, errs.Wrap(op, errs.CodeConnectorUnavailable, err).
+			WithDetail("the CAD kernel did not answer, and restarting it did not help")
 	}
 	if !res.OK {
 		detail := res.Error
@@ -432,6 +451,57 @@ func (k *Kernel) BuildMesh(ctx context.Context, doc geometry.Document, unit geom
 	return k.BuildDocument(ctx, doc, unit, "mesh")
 }
 
+// lateError is a build whose process was killed because time ran out while it was
+// still working: the kernel's own limit, or the caller's context.
+//
+// # Why it is its own type
+//
+// The retry in BuildDocument is for a process that DIED — an OOM, a pkill, a
+// machine asleep — and a fresh process answers that. A process killed for its time
+// was alive and building, and a fresh one given the same build takes as long
+// again: retrying turned a 31 s build into a 60 s wait, and the second kill into
+// "the CAD kernel did not answer, and restarting it did not help" under
+// CONNECTOR_UNAVAILABLE. BuildDocument asks errors.As for this, and does not
+// retry it.
+type lateError struct {
+	// limit is the kernel's own limit, when that is what ran out.
+	limit time.Duration
+	// caller is the caller's context error, when that ended first.
+	caller error
+}
+
+func (e *lateError) Error() string {
+	if e.caller != nil {
+		return "the request ended before the kernel answered: " + e.caller.Error()
+	}
+	return fmt.Sprintf("the kernel did not answer within %s", e.limit)
+}
+
+func (e *lateError) Unwrap() error { return e.caller }
+
+// lateRefusal is the error for a build stopped because time ran out.
+//
+// CAD_KERNEL_TIMEOUT (504, not retryable — errs/code.go says why), with a detail
+// naming which time ran out. A caller that CANCELLED rather than ran out of time
+// has gone, and keeps CONNECTOR_UNAVAILABLE with a sentence that says what
+// happened: nobody is reading that reply.
+func lateRefusal(op string, late *lateError) error {
+	switch {
+	case late.caller == nil:
+		return errs.Wrap(op, errs.CodeKernelTimeout, late).
+			WithDetail("this build took longer than the CAD kernel's %s limit, so it was stopped and "+
+				"not retried: the same build would take as long again. Build a smaller part of the "+
+				"design, or split it into smaller subassemblies", late.limit)
+	case errors.Is(late.caller, context.DeadlineExceeded):
+		return errs.Wrap(op, errs.CodeKernelTimeout, late).
+			WithDetail("the request's own deadline ended before the CAD kernel finished this build, " +
+				"so it was stopped and not retried: the same build would take at least as long again")
+	default:
+		return errs.Wrap(op, errs.CodeConnectorUnavailable, late).
+			WithDetail("the request ended before the CAD kernel finished, so the build was stopped")
+	}
+}
+
 // roundTrip sends one request and reads one reply. Caller holds the mutex.
 func (k *Kernel) roundTrip(ctx context.Context, req request) (*reply, error) {
 	if err := k.startLocked(ctx); err != nil {
@@ -449,22 +519,33 @@ func (k *Kernel) roundTrip(ctx context.Context, req request) (*reply, error) {
 	// blocking Read on a pipe does not observe a context. Killing is the only
 	// thing that ends it, and it is also the right outcome: a kernel that has
 	// not answered in thirty seconds is not going to.
+	//
+	// ‼️ The goroutine records WHY it killed the process before it does. To the
+	// read below, a process killed for its time and one that crashed are the same
+	// EOF, and until 2026-09-15 they were treated the same: retried on a fresh
+	// process, killed again, reported as "no working backend". See lateError.
 	done := make(chan struct{})
 	defer close(done)
+	var stopped atomic.Pointer[lateError]
 	go func() {
-		timer := time.NewTimer(buildTimeout)
+		timer := time.NewTimer(k.timeout)
 		defer timer.Stop()
 		select {
 		case <-done:
 		case <-ctx.Done():
+			stopped.Store(&lateError{caller: ctx.Err()})
 			k.killLocked()
 		case <-timer.C:
+			stopped.Store(&lateError{limit: k.timeout})
 			k.killLocked()
 		}
 	}()
 
 	line, err := k.stdout.ReadBytes('\n')
 	if err != nil {
+		if late := stopped.Load(); late != nil {
+			return nil, late
+		}
 		return nil, fmt.Errorf("reading from the kernel: %w", err)
 	}
 	var res reply
