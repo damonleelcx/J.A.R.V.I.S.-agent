@@ -133,6 +133,12 @@ func TestKernel_AReplyWithMoreClashesThanItListsCountsThemAll(t *testing.T) {
 	if len(got.Interferences) != 10000 || !got.InterferencesSummarized {
 		t.Errorf("listed %d, summarized=%v; want the worst 10,000 and a summary", len(got.Interferences), got.InterferencesSummarized)
 	}
+	// Added 2026-09-15 (repair judged by the kernel total): every pair is buried, the
+	// least by 7.02 of 10 mm, and all of them are counted, not the 10,000 listed.
+	if got.InterferencesBuried != 11175 || !got.InterferencesBuriedCounted {
+		t.Errorf("the build says %d buried, counted=%v; all 11,175 clashes are buried", got.InterferencesBuried,
+			got.InterferencesBuriedCounted)
+	}
 	if len(got.Interferences) == 0 {
 		return
 	}
@@ -140,5 +146,37 @@ func TestKernel_AReplyWithMoreClashesThanItListsCountsThemAll(t *testing.T) {
 	// Neighbours share 9.98 of 10 mm; the 10,000th pair is 102 steps apart, 7.96.
 	if math.Abs(first.Fraction-0.998) > 1e-6 || math.Abs(last.Fraction-0.796) > 1e-6 {
 		t.Errorf("the list runs from %.6f to %.6f; the worst 10,000 run from 0.998 to 0.796", first.Fraction, last.Fraction)
+	}
+}
+
+// The kernel's buried count is the clashes the turn calls buried
+// (geometry.BuriedFraction), counted at the same line (repair judged by the kernel
+// total). 30 blocks 0.7 mm apart share material up to 14 steps apart (0.2 of 10 mm)
+// and are buried up to 7 (5.1 of 10; 8 steps is 4.4): 315 clashes, 182 buried, listed
+// whole, so the count must be exactly the list's own buried clashes.
+func TestKernel_TheBuriedCountIsTheClashesTheTurnCallsBuried(t *testing.T) {
+	k := kernel(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
+	block := geometry.Part{ID: "block", Name: "Block", Shape: "box", Size: map[string]float64{"width": 10, "height": 10, "depth": 10}}
+	doc := geometry.Document{Name: "stack", Units: "mm", Root: "stack",
+		Definitions: []geometry.Part{block},
+		Assemblies: []geometry.Assembly{{ID: "stack", Children: []geometry.Child{
+			{ID: "blocks", Ref: "block", Pattern: &geometry.Pattern{Kind: "linear", Count: 30, Offset: []float64{0.7, 0, 0}}},
+		}}}}
+	got, err := k.BuildDocument(ctx, doc, geometry.Millimetre, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	listed := len(geometry.InterferenceProblems(got.Interferences))
+	t.Logf("%d found, %d listed, %d buried listed, %d buried counted (counted=%v)",
+		got.InterferencesFound, len(got.Interferences), listed, got.InterferencesBuried, got.InterferencesBuriedCounted)
+	if got.InterferencesTruncated || got.InterferencesSummarized || got.InterferencesFound != 315 || len(got.Interferences) != 315 {
+		t.Fatalf("found %d, listed %d, truncated=%v, summarized=%v; want all 315 listed",
+			got.InterferencesFound, len(got.Interferences), got.InterferencesTruncated, got.InterferencesSummarized)
+	}
+	if listed != 182 || got.InterferencesBuried != 182 || !got.InterferencesBuriedCounted {
+		t.Errorf("%d buried listed, %d counted (counted=%v); want 182 of each", listed, got.InterferencesBuried,
+			got.InterferencesBuriedCounted)
 	}
 }

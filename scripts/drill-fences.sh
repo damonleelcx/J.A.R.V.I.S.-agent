@@ -488,8 +488,11 @@ drill "a described render reports interference it cannot know about" internal/ag
   's = s.replace("sheet == nil || !sheet.FromKernel {", "sheet == nil {", 1)' \
   ./internal/agent 'TestInterference_ADescribedRenderClaimsNothing'
 
+# Re-anchored 2026-09-16 merging #115: the three-part acceptance condition this used
+# to delete is now repairVerdict, which answers the same question and says why. The
+# mutation keeps every repair instead, which is what it always did.
 drill "a repair is accepted without rebuilding" internal/agent/interference.go \
-  's = s.replace("\t\tif after.FromKernel &&\n\t\t\tlen(fixed.Faults()) <= len(reply.Prototype.Faults()) &&\n\t\t\tlen(geometry.InterferenceProblems(after.Interferences)) < len(problems) {", "\t\tif true {", 1)' \
+  's = s.replace("\t\tkeep, why := repairVerdict(*sheet, after, len(fixed.Faults()) <= len(reply.Prototype.Faults()))\n", "\t\tkeep, why := true, \"\"\n\t\t_ = repairVerdict\n", 1)' \
   ./internal/agent 'TestInterference_ARepairThatDoesNotHelpIsRefused'
 
 echo
@@ -1154,9 +1157,13 @@ drill "a part that was never built is never mentioned" internal/agent/interferen
   's = s.replace("\tif n := len(sheet.Skipped); n > 0 {", "\tif n := len(sheet.Skipped); false && n > 0 {", 1)' \
   ./internal/agent 'TestInterference_APartThatWasNotBuiltIsNamedAsUnchecked'
 
+# Re-anchored 2026-09-16 merging #115, which put the kernel's buried count on its own
+# line in this literal. ‼️ It also had a SECOND mutation argument, which drill() has no
+# parameter for: it was read as the package and the package as the test regex, so this
+# drill ran `go test` on nonsense rather than on the fence. Dropped, so the drill tests
+# what its name says. Nothing else in this file passes two mutations.
 drill "the render drops how much was checked" internal/agent/render.go \
-  's = s.replace("\n\t\t\t\t\tChecked: built.Checked, Pairs: built.Pairs, Found: built.Found, Skipped: built.Skipped,", "\n\t\t\t\t\tSkipped: built.Skipped,", 1)' \
-  's = s.replace("\n\t\t\t\t\tChecked: built.Checked, Pairs: built.Pairs, Skipped: built.Skipped,\n\t\t\t\t\tParts: built.Parts}", "\n\t\t\t\t\tParts: built.Parts}", 1)' \
+  's = s.replace("\n\t\t\t\t\tChecked: built.Checked, Pairs: built.Pairs, Found: built.Found,", "", 1)' \
   ./internal/agent 'TestRender_CarriesHowMuchTheCheckCovered'
 
 echo
@@ -3073,12 +3080,19 @@ drill "a summarized list reads as a whole one in the turn" internal/agent/interf
   's = s.replace("\tif listed := len(sheet.Interferences); sheet.Found > listed {", "\tif listed := len(sheet.Interferences); false && sheet.Found > listed {", 1)' \
   ./internal/agent 'TestInterference_ASummarizedListSaysHowManyWereFound'
 
+# ‼️ Re-anchored 2026-09-16. This STAYED GREEN. The anchor was the clamp in list(),
+# but #114 added repairAsks with the same three lines ABOVE it, so replace(…, 1) hit
+# repairAsks and the sentence this fence is about was never touched. Anchored on the
+# line after it, which only list() has. The defect is on main as of #114; the fence
+# itself was always right.
 drill "\"and N more\" counts only the list" internal/agent/interference.go \
-  's = s.replace("\tif total < len(found) {\n\t\ttotal = len(found)\n\t}\n", "\ttotal = len(found)\n", 1)' \
+  's = s.replace("\tif total < len(found) {\n\t\ttotal = len(found)\n\t}\n\tparts := make([]string, 0, most+1)\n", "\ttotal = len(found)\n\tparts := make([]string, 0, most+1)\n", 1)' \
   ./internal/agent 'TestInterference_ASummarizedListSaysHowManyWereFound'
 
+# Re-anchored 2026-09-16 merging #115: Skipped moved to the next line, beside the
+# kernel's buried count.
 drill "the render drops how many were found" internal/agent/render.go \
-  's = s.replace("Pairs: built.Pairs, Found: built.Found, Skipped:", "Pairs: built.Pairs, Skipped:", 1)' \
+  's = s.replace("Pairs: built.Pairs, Found: built.Found,\n", "Pairs: built.Pairs,\n", 1)' \
   ./internal/agent 'TestRender_CarriesHowMuchTheCheckCovered'
 
 drill "a cylinder slides across its round section" internal/domain/cad/sidecar.py \
@@ -3234,6 +3248,64 @@ drill "a moved box forgets its far corner" internal/domain/cad/sidecar.py \
 drill "the check keys a pair through build123d again" internal/domain/cad/sidecar.py \
   's = s.replace("    if not _PAIR_KEY_DIRECT:\n        return lambda i, j:", "    if True:\n        return lambda i, j:", 1)' \
   ./internal/domain/cad 'TestKernel_KeyingMorePairsBuildsNoMoreLocations'
+
+echo "An overlap repair judged by the kernel's total, not by the list it cut"
+# Added 2026-09-15 (repair judged by the kernel total). #113 cut the kernel's clash
+# list to the worst 10,000 and counted all of them; the repair went on comparing the
+# LISTED buried count before and after, which past 10,000 is pinned whatever a repair
+# does. The kernel now counts the buried clashes too, and a repair is kept only when
+# that count falls — never on a count the kernel did not take.
+drill "a repair is judged by the buried clashes listed, not the ones found" internal/agent/interference.go \
+  's = s.replace("\tt.counted = t.found <= t.listed\n\tif s.BuriedCounted {\n", "\tt.counted = true\n\tif false && s.BuriedCounted {\n", 1)' \
+  ./internal/agent 'TestInterference_ARepairPastTheListBoundIsJudgedByTheKernelsTotal'
+
+drill "a cut list with no count is read as the whole count" internal/agent/interference.go \
+  's = s.replace("\tt.counted = t.found <= t.listed\n", "\tt.counted = true\n", 1)' \
+  ./internal/agent 'TestInterference_ARepairIsNotKeptOnACountTheKernelDidNotTake'
+
+drill "a re-check that counted nothing is taken on trust" internal/agent/interference.go \
+  's = s.replace("\tcase !a.counted:\n", "\tcase false && !a.counted:\n", 1)' \
+  ./internal/agent 'TestInterference_ARepairIsNotKeptOnACountTheKernelDidNotTake'
+
+drill "a repair that leaves as many buried is kept" internal/agent/interference.go \
+  's = s.replace("\tcase a.buried < b.buried:\n", "\tcase a.buried <= b.buried:\n", 1)' \
+  ./internal/agent 'TestInterference_ARepairPastTheListBoundIsJudgedByTheKernelsTotal'
+
+drill "a kept repair's note does not say the totals" internal/agent/interference.go \
+  's = s.replace("reply.noteRepair(\"FORGE kept a repair and re-checked it with the kernel: \" + why + \".\")", "reply.noteRepair(\"FORGE kept a repair and re-checked it with the kernel.\")", 1)' \
+  ./internal/agent 'TestInterference_ARepairPastTheListBoundIsJudgedByTheKernelsTotal'
+
+drill "a refused repair does not say why it was refused" internal/agent/interference.go \
+  's = s.replace("\tif refused != \"\" {\n", "\tif false && refused != \"\" {\n", 1)' \
+  ./internal/agent 'TestInterference_(ARepairPastTheListBoundIsJudgedByTheKernelsTotal|ARepairIsNotKeptOnACountTheKernelDidNotTake)'
+
+drill "a re-check stopped part-way says the parts were moved apart" internal/agent/interference.go \
+  's = s.replace("\t\t\tcase after.Truncated:\n", "\t\t\tcase false && after.Truncated:\n", 1)' \
+  ./internal/agent 'TestInterference_ARepairReCheckedOnlyInPartNeverReadsAsClean'
+
+drill "the render drops the kernel's buried count" internal/agent/render.go \
+  's = s.replace("\t\t\t\t\tBuried: built.Buried, BuriedCounted: built.BuriedCounted, Skipped: built.Skipped,\n", "\t\t\t\t\tSkipped: built.Skipped,\n", 1)' \
+  ./internal/agent 'TestRender_CarriesHowMuchTheCheckCovered'
+
+drill "buildOf ignores the buried count the kernel sent" internal/domain/cad/cad.go \
+  's = s.replace("\tif res.InterferencesBuried != nil {\n", "\tif false && res.InterferencesBuried != nil {\n", 1)' \
+  ./internal/domain/cad 'TestBuildOf_ABuriedCountIsNeverBelowTheListAndSaysWhetherItIsAll|TestKernel_AReplyWithMoreClashesThanItListsCountsThemAll'
+
+drill "a buried count below the list is believed" internal/domain/cad/cad.go \
+  's = s.replace("out.InterferencesBuried = max(out.InterferencesBuried, *res.InterferencesBuried)", "out.InterferencesBuried = *res.InterferencesBuried", 1)' \
+  ./internal/domain/cad 'TestBuildOf_ABuriedCountIsNeverBelowTheListAndSaysWhetherItIsAll'
+
+drill "a cut list with no buried count is called counted" internal/domain/cad/cad.go \
+  's = s.replace("out.InterferencesBuriedCounted = !out.InterferencesSummarized", "out.InterferencesBuriedCounted = true", 1)' \
+  ./internal/domain/cad 'TestBuildOf_ABuriedCountIsNeverBelowTheListAndSaysWhetherItIsAll'
+
+drill "the kernel counts the buried clashes it listed" internal/domain/cad/sidecar.py \
+  's = s.replace("buried = sum(1 for f in found if f[0] >= _BURIED_FRACTION)", "buried = sum(1 for f in worst if f[0] >= _BURIED_FRACTION)", 1)' \
+  ./internal/domain/cad 'TestKernel_AReplyWithMoreClashesThanItListsCountsThemAll'
+
+drill "the kernel counts buried at a different line than the turn" internal/domain/cad/sidecar.py \
+  's = s.replace("_BURIED_FRACTION = 0.5", "_BURIED_FRACTION = 0.4", 1)' \
+  ./internal/domain/cad 'TestKernel_TheBuriedCountIsTheClashesTheTurnCallsBuried'
 
 if [ "$MODE" = "list" ]; then
   exit 0

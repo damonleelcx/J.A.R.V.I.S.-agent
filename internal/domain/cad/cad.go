@@ -223,6 +223,23 @@ type Build struct {
 	// "not every pair was checked", and the two are said separately.
 	InterferencesFound      int
 	InterferencesSummarized bool
+	// InterferencesBuried is how many of the pairs found are BURIED
+	// (geometry.BuriedFraction), and InterferencesBuriedCounted says that number is
+	// all of them rather than only the ones listed.
+	//
+	// # Why the kernel counts them (repair judged by the kernel total)
+	//
+	// An overlap repair is kept only when the kernel finds fewer buried clashes after
+	// it. Counted from a list cut at 10,000, the 1M barrel's 768,000 buried rivets
+	// read as 10,000 before a repair and 10,000 after it, whatever the repair did.
+	// docs/bugfix/2026-09-15-an-overlap-repair-was-judged-by-a-list-that-could-not-shrink.md
+	//
+	// ‼️ A reply that does not carry the count (a sidecar from before it did) leaves
+	// the buried ones in the list. That is every buried clash when the list is the
+	// whole list, and only a floor when it is a summary — so Counted is false then,
+	// and a reader must not treat the floor as the total.
+	InterferencesBuried        int
+	InterferencesBuriedCounted bool
 	// InterferenceBoxTests is how many pairs of bounding boxes the interference
 	// check compared to choose which pairs pay for a boolean. Reported so the broad
 	// phase's cost is a count a test can read (Phase 4, stage K2b): sorting and
@@ -391,10 +408,12 @@ type reply struct {
 	// that found nothing (see buildOf).
 	InterferencesFound      *int `json:"interferences_found"`
 	InterferencesSummarized bool `json:"interferences_summarized,omitempty"`
-	InterferenceBoxTests    int  `json:"interference_box_tests"`
-	InterferencePairs       int  `json:"interference_pairs"`
-	InterferenceBooleans    int  `json:"interference_booleans"`
-	InterferenceReused      int  `json:"interference_reused"`
+	// A pointer for the same reason as InterferencesFound.
+	InterferencesBuried  *int `json:"interferences_buried"`
+	InterferenceBoxTests int  `json:"interference_box_tests"`
+	InterferencePairs    int  `json:"interference_pairs"`
+	InterferenceBooleans int  `json:"interference_booleans"`
+	InterferenceReused   int  `json:"interference_reused"`
 
 	STEP            string           `json:"step,omitempty"`
 	Mesh            []meshPart       `json:"mesh,omitempty"`
@@ -685,6 +704,19 @@ func buildOf(res *reply, inferred []string, scriptRuns int) (*Build, error) {
 		out.InterferencesFound = *res.InterferencesFound
 	}
 	out.InterferencesSummarized = res.InterferencesSummarized || out.InterferencesFound > len(res.Interferences)
+	// ‼️ The same rule for the buried count: never fewer than the list holds. Without
+	// the count, the list's own buried clashes are the whole count only when the list
+	// is the whole list.
+	for _, f := range res.Interferences {
+		if f.Buried() {
+			out.InterferencesBuried++
+		}
+	}
+	out.InterferencesBuriedCounted = !out.InterferencesSummarized
+	if res.InterferencesBuried != nil {
+		out.InterferencesBuried = max(out.InterferencesBuried, *res.InterferencesBuried)
+		out.InterferencesBuriedCounted = true
+	}
 	if res.STEP != "" {
 		decoded, err := base64.StdEncoding.DecodeString(res.STEP)
 		if err != nil {
