@@ -19,6 +19,8 @@ specific language governing permissions and limitations under the License.
 Third-party dependencies
 
   github.com/jackc/pgx/v5          MIT
+  github.com/aws/aws-sdk-go-v2     Apache-2.0
+  github.com/aws/smithy-go         Apache-2.0
   golang.org/x/crypto              BSD-3-Clause
   golang.org/x/image               BSD-3-Clause
   golang.org/x/text, x/sync, x/sys BSD-3-Clause

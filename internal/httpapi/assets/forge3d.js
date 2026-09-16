@@ -1618,6 +1618,9 @@
   var MAX_TREE_DEPTH = 16;     // geometry/tree.go maxTreeDepth
   var MAX_DRAWN_PARTS = 4096;  // geometry/limits.go maxDrawnParts
   var PATH_SEPARATOR = '/';
+  // A tree part's display name: every child above it, then its own name (tree.go,
+  // NameSeparator; docs/bugfix/2026-09-14-tree-copies-shared-display-names.md).
+  var NAME_SEPARATOR = ' / ';
 
   function degreesToRadians3(r) {
     var p = pad3(r);
@@ -1935,7 +1938,7 @@
         features.push(q);
       });
     }
-    function walk(a, path, onPath, frame, index) {
+    function walk(a, path, names, onPath, frame, index) {
       if (path.length >= MAX_TREE_DEPTH) return true;
       var ids = {}, children = a.children || [];
       for (var i = 0; i < children.length; i++) {
@@ -1962,12 +1965,13 @@
           var slot = slots[s], slotStart = parts.length;
           var childPath = path.concat([cid + slot.suffix]);
           var slotName = childPath.join(PATH_SEPARATOR);
-          var childName = c.name && slot.number ? c.name + ' ' + slot.number : c.name;
+          // The occurrence's display path, a label per level (tree.go, NameSeparator).
+          var childNames = names.concat([(c.name || cid) + (slot.number ? ' ' + slot.number : '')]);
           var childFrame = thenPlacement(frame, thenPlacement(reference, thenPlacement(slot.at, local)));
           if (sub) {
             onPath[sub.id] = true;
             var subIndex = {};
-            var stop = walk(sub, childPath, onPath, childFrame, subIndex);
+            var stop = walk(sub, childPath, childNames, onPath, childFrame, subIndex);
             delete onPath[sub.id];
             for (var rel in subIndex) index[cid + slot.suffix + PATH_SEPARATOR + rel] = subIndex[rel];
             index[cid + slot.suffix] = [slotStart, parts.length];
@@ -1978,7 +1982,7 @@
             var lp = defCopies[j], q = shallowCopy(lp), partStart = parts.length;
             var suffix = lp.id.indexOf(def.id) === 0 ? lp.id.slice(def.id.length) : lp.id;
             q.id = slotName + suffix;
-            if (childName) q.name = suffix ? childName + ' ' + suffix.replace(/^-/, '') : childName;
+            q.name = childNames.concat([lp.name || lp.id]).join(NAME_SEPARATOR);
             var st = storedPlacement(thenPlacement(childFrame, placementOf(lp.position, lp.rotation, !!lp.mirrored)));
             q.position = st.position;
             q.rotation = st.rotation;
@@ -1996,7 +2000,7 @@
     }
     var onPath = {};
     onPath[root.id] = true;
-    walk(root, [], onPath, placementOf(null, null, false), {});
+    walk(root, [], [], onPath, placementOf(null, null, false), {});
     return { parts: parts, definitionOf: definitionOf, features: features };
   }
 

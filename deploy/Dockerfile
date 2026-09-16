@@ -32,13 +32,19 @@ RUN go build -trimpath -ldflags="-s -w" -o /out/forged       ./cmd/forged      &
 # --- CAD kernel venv --------------------------------------------------------
 # Built in its own stage so the ~1GB of pip cache and build metadata does not
 # reach the runtime layer. Only the finished venv is copied forward.
+#
+# The packages are the pinned list the tests and CI use
+# (internal/domain/cad/requirements.txt), so the kernel in the image is the one
+# the kernel tests proved — not whatever PyPI held on the day of the build.
 FROM python:3.13-slim-bookworm AS cad-build
 ARG PIP_INDEX_URL=https://pypi.org/simple
+COPY internal/domain/cad/requirements.txt /tmp/cad-requirements.txt
 RUN python3 -m venv /opt/cad/venv && \
     /opt/cad/venv/bin/pip install --no-cache-dir --index-url ${PIP_INDEX_URL} \
         --upgrade pip && \
     /opt/cad/venv/bin/pip install --no-cache-dir --index-url ${PIP_INDEX_URL} \
-        build123d
+        --no-deps -r /tmp/cad-requirements.txt && \
+    /opt/cad/venv/bin/pip check
 
 # --- Runtime ----------------------------------------------------------------
 FROM python:3.13-slim-bookworm
