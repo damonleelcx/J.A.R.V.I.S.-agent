@@ -171,6 +171,10 @@ FILES=(
   internal/domain/engine/queue.go
   internal/agent/executor.go
   internal/agent/settle.go
+  # Added 2026-09-16: the off-node STEP export drills (PR #99) target these two
+  # files, which were never listed, so drill() refused all ten as NOT BACKED UP.
+  internal/agent/stepexport.go
+  internal/httpapi/geometry_exports.go
 )
 
 BACKUP=""
