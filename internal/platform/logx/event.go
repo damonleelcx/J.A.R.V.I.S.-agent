@@ -218,7 +218,10 @@ func init() { allEvents = append(allEvents, EventGoalDrafted, EventGoalPlanFaile
 const (
 	EventGeometrySaved    Event = "forge.geometry.saved"
 	EventGeometryExported Event = "forge.geometry.exported"
-	EventGeometryRefused  Event = "forge.geometry.export_refused"
+	// EventGeometryMeshed is a surface built for the viewport, with where the kernel
+	// spent the build (Phase 4, stage K2).
+	EventGeometryMeshed  Event = "forge.geometry.meshed"
+	EventGeometryRefused Event = "forge.geometry.export_refused"
 	// EventGeometryTooLarge is a design refused at the storage door for its size
 	// (Phase 3, stage S0): more bytes or definitions than one design may hold.
 	EventGeometryTooLarge Event = "forge.geometry.too_large"
@@ -252,7 +255,7 @@ const (
 
 func init() {
 	allEvents = append(allEvents,
-		EventGeometrySaved, EventGeometryExported, EventGeometryRefused, EventGeometryCompared,
+		EventGeometrySaved, EventGeometryExported, EventGeometryMeshed, EventGeometryRefused, EventGeometryCompared,
 		EventGeometryUnreadable,
 		EventGeometryAdopted, EventGeometryRespecified, EventGeometryTooLarge,
 		EventCADStarted, EventCADRestarted, EventCADRefused, EventCADTimedOut,

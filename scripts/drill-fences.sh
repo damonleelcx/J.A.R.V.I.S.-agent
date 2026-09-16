@@ -951,12 +951,33 @@ drill "a mirrored copy shares the unmirrored build" internal/domain/cad/sidecar.
   ./internal/domain/cad 'TestKernel_DistinctShapesAreBuiltOnceEach'
 
 drill "the build does not say how many shapes it built" internal/domain/cad/cad.go \
-  's = s.replace("ShapeBuilds: res.ShapeBuilds, ScriptRuns: scriptRuns}", "ScriptRuns: scriptRuns}", 1)' \
+  's = s.replace("ShapeBuilds: res.ShapeBuilds, ScriptRuns: scriptRuns,", "ScriptRuns: scriptRuns,", 1)' \
   ./internal/domain/cad 'TestKernel_OneDefinitionPlacedManyTimesIsBuiltOnce'
 
 drill "a repeated scripted part runs its script once per copy" internal/domain/cad/cad.go \
   's = s.replace("outcome, ran := scripts[source]", "outcome, ran := scripts[\"\"]", 1)' \
   ./internal/domain/cad 'TestKernel_ARepeatedScriptedPartRunsItsScriptOnce'
+
+echo
+echo "A STEP export is one assembly of shared definitions"
+# Added 2026-09-14 (Phase 4, stage K2). The sidecar writes STEP from an XDE document
+# (one shape label per definition, a located component per occurrence), assembles
+# in one pass, and reports its time per phase.
+drill "the assembly attaches its children one by one again" internal/domain/cad/sidecar.py \
+  "s = s.replace('    assembly = Compound(built)\n', '    assembly = Compound(children=built)\n', 1)" \
+  ./internal/domain/cad 'TestKernel_ExportingManyOccurrencesGrowsLinearly'
+
+drill "a shared shape is written with its own location left on" internal/domain/cad/sidecar.py \
+  "s = s.replace('tool.AddShape(solid.wrapped.Located(TopLoc_Location()), False, False)', 'tool.AddShape(solid.wrapped, False, False)', 1)" \
+  ./internal/domain/cad 'TestKernel_AnExportedFilePlacesEveryPartWhereTheBuildDid'
+
+drill "an occurrence is written without its placement" internal/domain/cad/sidecar.py \
+  "s = s.replace('tool.AddComponent(root, label, solid.wrapped.Location())', 'tool.AddComponent(root, label, TopLoc_Location())', 1)" \
+  ./internal/domain/cad 'TestKernel_AnExportedFilePlacesEveryPartWhereTheBuildDid'
+
+drill "the build does not say where its time went" internal/domain/cad/sidecar.py \
+  "s = s.replace('        \"phases\": phases,\n', '', 1)" \
+  ./internal/domain/cad 'TestKernel_ExportingManyOccurrencesGrowsLinearly'
 
 echo
 echo "Islands"
