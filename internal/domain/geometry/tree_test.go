@@ -125,7 +125,8 @@ func TestTree_ARepeatInsideADefinitionTurnsWithThePlacement(t *testing.T) {
 		if want := "wheel-" + string(rune('1'+i)); p.ID != want {
 			t.Errorf("copy %d id %q, want %q", i, p.ID, want)
 		}
-		if want := "Spoke " + string(rune('1'+i)); p.Name != want {
+		// The child's name, then the definition copy's own (NameSeparator).
+		if want := "Spoke / Spoke " + string(rune('1'+i)); p.Name != want {
 			t.Errorf("copy %d name %q, want %q", i, p.Name, want)
 		}
 		v := [3]float64{2, -1, 30}
@@ -323,7 +324,7 @@ func TestTree_BindEvaluatesADefinitionsSizesForEveryPlacement(t *testing.T) {
 func TestTree_TheStorageDoorChecksThePartsATreePlaces(t *testing.T) {
 	d := Document{Definitions: []Part{{ID: "blank", Size: map[string]float64{"width": 1}}},
 		Assemblies: []Assembly{{ID: "root", Children: []Child{{ID: "slot", Ref: "blank"}}}}, Root: "root"}
-	if err := store(d); err == nil || !strings.Contains(err.Error(), `part "slot" has no shape`) {
+	if err := store(d); err == nil || !strings.Contains(err.Error(), `part "slot / blank" has no shape`) {
 		t.Errorf("a placed definition with no shape was stored: %v", err)
 	}
 }
