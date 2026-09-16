@@ -970,3 +970,106 @@ func TestUnattributedEventIsRefused(t *testing.T) {
 		t.Errorf("the error should explain why attribution matters: %v", err)
 	}
 }
+
+// ---------------------------------------------------------------------------
+// release
+// ---------------------------------------------------------------------------
+
+// Release is how a worker that is stopping hands back the task it holds.
+//
+// # Why these exist
+//
+// Release had no caller on the executor path and no test, so nothing said what it
+// meant. What it must mean is the reason a graceful stop exists: the task is back in
+// the queue at once rather than after its lease, and the attempt its claim counted is
+// given back, because the task did not fail; its worker was asked to stop.
+// docs/bugfix/2026-09-15-a-stopped-worker-left-its-task-to-run-out-its-lease.md
+
+// A released task can be claimed again at once, and the attempt the stopped claim
+// counted is not counted.
+func TestQueue_AReleasedTaskIsClaimableAtOnceAndItsAttemptIsNotCounted(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	task := h.addTask(t, "released", engine.StatusReady)
+
+	claimed, err := h.queue.Claim(ctx, h.pool, "worker-stopping", time.Minute, h.clk.Now())
+	if err != nil || claimed == nil || claimed.ID != task.ID {
+		t.Fatalf("claim = %v, %v; want the one ready task", claimed, err)
+	}
+	if claimed.AttemptCount != 1 {
+		t.Fatalf("a first claim counted %d attempts, want 1", claimed.AttemptCount)
+	}
+
+	if err := h.queue.Release(ctx, h.pool, task.ID, "worker-stopping", h.clk.Now()); err != nil {
+		t.Fatalf("releasing a task the worker holds: %v", err)
+	}
+	got, err := h.repo.GetTask(ctx, h.pool, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != engine.StatusReady || got.LeaseOwner != nil || got.LeaseExpiresAt != nil {
+		t.Errorf("a released task is %s, leased to %v until %v; want ready and held by nobody",
+			got.Status, got.LeaseOwner, got.LeaseExpiresAt)
+	}
+	if got.AttemptCount != 0 {
+		t.Errorf("a released task has used %d attempts; a stop is not an attempt, so it should be back to 0",
+			got.AttemptCount)
+	}
+
+	again, err := h.queue.Claim(ctx, h.pool, "worker-next", time.Minute, h.clk.Now())
+	if err != nil || again == nil || again.ID != task.ID {
+		t.Fatalf("the next claim = %v, %v; the released task should be claimable at once", again, err)
+	}
+	if again.AttemptCount != 1 {
+		t.Errorf("the next worker's claim is attempt %d, want 1", again.AttemptCount)
+	}
+}
+
+// A worker stopped while its task is being verified hands it back too, which is where
+// the lease reaper would have put it anyway, later.
+func TestQueue_ATaskStoppedDuringVerificationCanBeReleased(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	h.addTask(t, "verifying", engine.StatusReady)
+
+	claimed, err := h.queue.Claim(ctx, h.pool, "worker-stopping", time.Minute, h.clk.Now())
+	if err != nil || claimed == nil {
+		t.Fatalf("claim = %v, %v", claimed, err)
+	}
+	for _, next := range []engine.TaskStatus{engine.StatusRunning, engine.StatusVerifying} {
+		if err := h.repo.TransitionTask(ctx, h.pool, claimed, next, h.clk.Now(), engine.TaskMutation{}); err != nil {
+			t.Fatalf("→ %s: %v", next, err)
+		}
+	}
+
+	if err := h.queue.Release(ctx, h.pool, claimed.ID, "worker-stopping", h.clk.Now()); err != nil {
+		t.Fatalf("releasing a task stopped during verification: %v", err)
+	}
+	if s := h.status(t, claimed.ID); s != engine.StatusReady {
+		t.Errorf("a task released during verification is %s, want ready", s)
+	}
+}
+
+// A worker can hand back only what it holds: releasing another worker's task changes
+// nothing and says so.
+func TestQueue_AWorkerCannotReleaseATaskItDoesNotHold(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	task := h.addTask(t, "held", engine.StatusReady)
+	if _, err := h.queue.Claim(ctx, h.pool, "worker-holding", time.Minute, h.clk.Now()); err != nil {
+		t.Fatal(err)
+	}
+
+	err := h.queue.Release(ctx, h.pool, task.ID, "worker-other", h.clk.Now())
+	if errs.CodeOf(err) != errs.CodeConflict {
+		t.Fatalf("releasing a task another worker holds returned %v, want CONFLICT", err)
+	}
+	got, err := h.repo.GetTask(ctx, h.pool, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Status != engine.StatusClaimed || got.LeaseOwner == nil || *got.LeaseOwner != "worker-holding" ||
+		got.AttemptCount != 1 {
+		t.Errorf("the refused release changed the task: %s, leased to %v, %d attempts", got.Status, got.LeaseOwner, got.AttemptCount)
+	}
+}

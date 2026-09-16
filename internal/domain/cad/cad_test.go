@@ -32,7 +32,7 @@ func kernel(t *testing.T) *cad.Kernel {
 	python := os.Getenv("FORGE_CAD_PYTHON")
 	if python == "" {
 		t.Skip("FORGE_CAD_PYTHON is unset; skipping the CAD kernel tests. " +
-			"python3 -m venv venv && ./venv/bin/pip install build123d, then point it at ./venv/bin/python")
+			"Run `make test-cad` (after `make cad-venv`, which installs the pinned internal/domain/cad/requirements.txt).")
 	}
 	k := cad.New(python, logx.Discard())
 	t.Cleanup(k.Close)

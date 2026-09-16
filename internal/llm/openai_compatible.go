@@ -36,10 +36,19 @@ const defaultMaxTokens = 8192
 type OpenAICompatible struct {
 	baseURL string
 	apiKey  string
-	models  map[Role]string
-	client  *http.Client
-	log     *logx.Logger
-	clock   clock.Clock
+	// transcriberURL and transcriberKey are where speech to text goes, resolved
+	// once by config.LLMConfig.TranscriberEndpoint. Equal to baseURL and apiKey
+	// unless FORGE_LLM_TRANSCRIBER_BASE_URL is set.
+	//
+	// ‼️ Nothing else may read them, and Transcribe may read nothing else. The
+	// workbench and the media plane both reach speech through Transcribe, so
+	// this is the one pair that decides which host hears a recording.
+	transcriberURL string
+	transcriberKey string
+	models         map[Role]string
+	client         *http.Client
+	log            *logx.Logger
+	clock          clock.Clock
 
 	maxRetries int
 	// voice is which synthesised voice FORGE speaks in (PRD AUD-05: "voice
@@ -64,10 +73,13 @@ type OpenAICompatible struct {
 func NewOpenAICompatible(cfg config.LLMConfig, log *logx.Logger, clk clock.Clock) *OpenAICompatible {
 	base := strings.TrimRight(cfg.BaseURL, "/")
 	field, _ := noDeliberation(base)
+	sttURL, sttKey := cfg.TranscriberEndpoint()
 	return &OpenAICompatible{
-		baseURL:       base,
-		apiKey:        cfg.APIKey,
-		thinkingField: field,
+		baseURL:        base,
+		apiKey:         cfg.APIKey,
+		transcriberURL: sttURL,
+		transcriberKey: sttKey,
+		thinkingField:  field,
 		models: map[Role]string{
 			RoleVision:      cfg.Vision,
 			RolePlanner:     cfg.Planner,
@@ -376,15 +388,21 @@ func (c *OpenAICompatible) classifyHTTPError(ctx context.Context, status int, bo
 // /models returns an error here, which is reported rather than swallowed — the
 // caller's message says the list could not be read, so nobody reads a short list
 // as a complete one.
-func (c *OpenAICompatible) servedModels(ctx context.Context) ([]string, error) {
+//
+// It asks the endpoint the failing request went to, with that endpoint's key:
+// the list a transcriber 404 needs is the transcriber endpoint's, and asking the
+// chat host would both answer the wrong question and send it a key.
+func (c *OpenAICompatible) servedModels(ctx context.Context, baseURL, apiKey string) ([]string, error) {
 	ctx, cancel := context.WithTimeout(ctx, modelListTimeout)
 	defer cancel()
 
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.baseURL+"/models", nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, baseURL+"/models", nil)
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	if apiKey != "" {
+		req.Header.Set("Authorization", "Bearer "+apiKey)
+	}
 	resp, err := c.client.Do(req)
 	if err != nil {
 		return nil, err
@@ -436,19 +454,53 @@ func (c *OpenAICompatible) whatIsServed(ctx context.Context, status int, role Ro
 	if status != http.StatusNotFound {
 		return ""
 	}
-	served, err := c.servedModels(ctx)
+	base, key := c.endpointFor(role)
+	served, err := c.servedModels(ctx, base, key)
 	if err != nil {
 		return fmt.Sprintf(" This endpoint's model list could not be read either (%v), so check "+
-			"the model id against the provider's console.", err)
+			"the model id against the provider's console.", err) + c.whereSpeechGoes(role)
 	}
 	if len(served) == 0 {
 		return " This endpoint lists NO models at all, which usually means the key is scoped to " +
-			"a different product or region than the host."
+			"a different product or region than the host." + c.whereSpeechGoes(role)
 	}
 	return fmt.Sprintf(" This endpoint currently serves: %s. Set FORGE_LLM_%s_MODEL to one of "+
 		"those — a provider that retires a model answers exactly like this, and the deployment "+
 		"that was working yesterday changed nothing.",
-		strings.Join(served, ", "), strings.ToUpper(string(role)))
+		strings.Join(served, ", "), strings.ToUpper(string(role))) + c.whereSpeechGoes(role)
+}
+
+// endpointFor is the host and key a role's requests go to.
+func (c *OpenAICompatible) endpointFor(role Role) (baseURL, apiKey string) {
+	if role == RoleTranscriber {
+		return c.transcriberURL, c.transcriberKey
+	}
+	return c.baseURL, c.apiKey
+}
+
+// whereSpeechGoes is the rest of a transcriber 404's sentence: the model may be
+// right and the ENDPOINT wrong.
+//
+// # Why
+//
+// "Set FORGE_LLM_TRANSCRIBER_MODEL to one of those" is no advice at all when
+// none of those is a speech model — which is exactly what the production token
+// plan answered on 2026-09-15. The fix there is a different endpoint, and a
+// message that names only the model sends the operator hunting through a list
+// that cannot contain the answer.
+func (c *OpenAICompatible) whereSpeechGoes(role Role) string {
+	if role != RoleTranscriber {
+		return ""
+	}
+	if c.transcriberURL == c.baseURL {
+		return " Speech to text is using the chat endpoint (FORGE_LLM_BASE_URL). If it serves no " +
+			"speech-to-text model, set FORGE_LLM_TRANSCRIBER_BASE_URL and FORGE_LLM_TRANSCRIBER_API_KEY " +
+			"to an endpoint that does and the key it issued — DashScope's compatible-mode endpoint " +
+			"serves qwen3-asr-flash."
+	}
+	return fmt.Sprintf(" Speech to text is using its own endpoint, FORGE_LLM_TRANSCRIBER_BASE_URL (%s): "+
+		"check FORGE_LLM_TRANSCRIBER_MODEL against that endpoint, and that FORGE_LLM_TRANSCRIBER_API_KEY "+
+		"was issued for its region.", c.transcriberURL)
 }
 
 // backoff returns an exponential delay with jitter.
