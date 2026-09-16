@@ -251,6 +251,8 @@ func NewRouter(d Deps) http.Handler {
 	// The built solid's surface, so the viewport can draw what the kernel makes
 	// rather than the primitives it was assembled from.
 	mux.Handle("GET /v1/geometry/{id}/mesh", authed(geo.Mesh))
+	// Mass, centre of gravity and envelope, rolled up through the tree (V3).
+	mux.Handle("GET /v1/geometry/{id}/mass", authed(geo.Mass))
 	mux.Handle("GET /v1/geometry/{id}/export", authed(geo.Export))
 	mux.Handle("GET /v1/geometry/{id}/export/label", authed(geo.ExportLabel))
 

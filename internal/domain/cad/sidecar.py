@@ -814,6 +814,65 @@ def _measures(solids, placed=None):
     return boxes, volumes
 
 
+# # Each part's volume, centre and box, on request (Phase 5, stage V3)
+#
+# Mass, centre of gravity and envelope roll up through the tree in Go
+# (geometry/mass.go), which knows each part's material. What only the kernel can
+# say is where a solid's volume IS. Sent when asked for, not always: 30,000 parts
+# are about 3 MB of numbers that every other reader would carry for nothing.
+#
+# A copy's volume and centre are its shape's, the centre moved by the copy's
+# placement — measured once per shape, like the interference check's (see
+# _measures). Its box is read from the placed solid itself: a turned box's moved
+# box is larger than the box, which a broad phase can afford and an envelope
+# cannot.
+#
+# _PROPERTIES_PER_DEFINITION turns the per-shape path off; it exists so the direct
+# measurement stays available as the reference the fence compares against
+# (testdata/part_properties.py).
+_PROPERTIES_PER_DEFINITION = True
+
+
+def _centre_of(solid):
+    """A solid's centre of volume as (x, y, z), or None."""
+    try:
+        from build123d import CenterOf
+
+        c = solid.center(CenterOf.MASS)
+        return (float(c.X), float(c.Y), float(c.Z))
+    except Exception:
+        return None
+
+
+def _moved_point(point, location):
+    """A point moved by a placement."""
+    if point is None:
+        return None
+    t = location.wrapped.Transformation()
+    x, y, z = point
+    return tuple(t.Value(r, 1) * x + t.Value(r, 2) * y + t.Value(r, 3) * z + t.Value(r, 4) for r in (1, 2, 3))
+
+
+def _properties(solids, ids, placed=None):
+    """Each kept solid's id, volume (mm3), centre of volume (mm) and box (mm)."""
+    out, local = [], {}
+    for i, solid in enumerate(solids):
+        p = placed[i] if (_PROPERTIES_PER_DEFINITION and placed) else None
+        if p is None:
+            volume, centre = _volume_of(solid), _centre_of(solid)
+        else:
+            key, location, shape = p
+            if key not in local:
+                local[key] = (_volume_of(shape), _centre_of(shape))
+            volume, centre = local[key]
+            centre = _moved_point(centre, location)
+        box = _box_of(solid)
+        out.append({"id": ids[i], "volume": volume,
+                    "centroid": list(centre) if centre is not None else None,
+                    "bounds": list(box[0]) + list(box[1]) if box is not None else None})
+    return out
+
+
 def _boxes_miss(a, b):
     if a is None or b is None:
         return True
@@ -1259,6 +1318,10 @@ def _build(request):
     # deployment that needed it, and the broad phase makes the usual case free.
     clashes, clash_truncated, box_tests, clash_pairs = _interferences(built, ids, names, kept_placed)
     mark = _lap(phases, "interferences", mark)
+    properties = None
+    if request.get("properties"):
+        properties = _properties(built, ids, kept_placed)
+        mark = _lap(phases, "properties", mark)
     out = {
         "shape_builds": shape_builds,
         "ok": True,
@@ -1276,6 +1339,8 @@ def _build(request):
         "skipped": skipped,
         "features_failed": failed,
     }
+    if properties is not None:
+        out["part_properties"] = properties
 
     fmt = request.get("format")
     if fmt == "mesh":

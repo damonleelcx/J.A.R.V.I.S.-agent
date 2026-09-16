@@ -124,6 +124,7 @@ FILES=(
   internal/agent/interference.go
   internal/domain/geometry/render.go
   internal/domain/geometry/assembly.go
+  internal/domain/geometry/mass.go
   internal/agent/turned.go
   internal/domain/geometry/tree.go
   internal/domain/geometry/binding.go
@@ -1069,6 +1070,35 @@ drill "a part that was never built is never mentioned" internal/agent/interferen
 drill "the render drops how much was checked" internal/agent/render.go \
   's = s.replace("\n\t\t\t\t\tChecked: built.Checked, Pairs: built.Pairs, Skipped: built.Skipped}", "}", 1)' \
   ./internal/agent 'TestRender_CarriesHowMuchTheCheckCovered'
+
+echo
+echo "Mass, centre of gravity and envelope roll up through the tree"
+# Added 2026-09-15 (Phase 5, stage V3). The kernel measures each part's volume and centre
+# once per shape (moved by each copy's placement) and its box from the placed solid; Go
+# weighs them by density, or by volume and says so, for the model and every assembly.
+drill "a copy's centre stays where its shape was built" internal/domain/cad/sidecar.py \
+  "s = s.replace('    return tuple(t.Value(r, 1) * x + t.Value(r, 2) * y + t.Value(r, 3) * z + t.Value(r, 4) for r in (1, 2, 3))', '    return point', 1)" \
+  ./internal/domain/cad 'TestKernel_APartsCentreMeasuredPerShapeIsItsSolidsCentre'
+
+drill "every part is weighed by volume however dense it is" internal/domain/geometry/mass.go \
+  's = s.replace("\t\tif report.Basis == MassByDensity {\n\t\t\tweight = mass\n\t\t}\n", "", 1)' \
+  ./internal/domain/geometry 'TestMassProperties_WeighsEachPartByItsDensity'
+
+drill "a part without a density still lets mass be claimed" internal/domain/geometry/mass.go \
+  's = s.replace("\tif len(report.WithoutDensity) > 0 {\n\t\treport.Basis = MassByVolume\n\t}\n", "", 1)' \
+  ./internal/domain/geometry 'TestMassProperties_WithoutEveryDensityIsWeighedByVolumeAndSaysSo'
+
+drill "the roll-up forgets the assemblies a part is placed under" internal/domain/geometry/mass.go \
+  's = s.replace("\t\tfor n := 1; n < len(segments); n++ {", "\t\tfor n := len(segments); n < len(segments); n++ {", 1)' \
+  ./internal/domain/geometry 'TestMassProperties_RollsUpThroughTheTree'
+
+drill "the build drops each part's measurements" internal/domain/cad/cad.go \
+  's = s.replace("\t\tout.Properties = append(out.Properties, m)\n", "", 1)' \
+  ./internal/domain/cad 'TestKernel_EachPartIsMeasuredWhereItWasBuilt'
+
+drill "a density no material has is accepted" internal/domain/geometry/assembly.go \
+  's = s.replace("\tif m.Density < 0 || m.Density != m.Density || m.Density > maxDensity {", "\tif false {", 1)' \
+  ./internal/domain/geometry 'TestMaterial_RefusesADensityNoMaterialHas'
 
 echo
 echo "A pool of kernel processes builds side by side"
