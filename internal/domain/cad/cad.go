@@ -234,8 +234,18 @@ type Build struct {
 	//
 	// This is the same solid the exporter writes, tessellated. It is not a
 	// second model that could disagree with the first.
+	//
+	// Since Phase 4, stage K4 it holds only the parts a feature CHANGED. Every
+	// other part is a placed copy of a shape built once, and arrives as one of
+	// MeshInstances: its definition's triangles, tessellated once, and the matrix
+	// that places them. WorldMeshes gives every part in assembly coordinates.
 	Mesh []MeshPart
-	// Triangles is the whole mesh's count, and Deflection the tolerance in
+	// MeshDefinitions is each distinct shape's surface in its own frame, and
+	// MeshInstances each placed copy of one. Empty unless a mesh was asked for.
+	MeshDefinitions []MeshDefinition
+	MeshInstances   []MeshInstance
+	// Triangles is the whole mesh's count — each definition's triangles counted
+	// once, however many copies place it — and Deflection the tolerance in
 	// millimetres it was reached with. Simplified says the tolerance was
 	// COARSENED to fit the budget: the shape is the same shape, described less
 	// finely, and a caller that shows the mesh should be able to say so rather
@@ -262,6 +272,51 @@ type MeshPart struct {
 	Label     string
 	Vertices  []float64
 	Triangles []int32
+}
+
+// MeshDefinition is one shape's surface in its own frame, in millimetres, drawn
+// once however many copies place it.
+type MeshDefinition struct {
+	Vertices  []float64
+	Triangles []int32
+}
+
+// MeshInstance is one placed copy of a MeshDefinition.
+//
+// Matrix is the 4×4 placement in COLUMN-major order — the order WebGL reads a
+// uniform or an instance attribute in — so a point p lands at
+// (m[0]p.x + m[4]p.y + m[8]p.z + m[12], m[1]… + m[13], m[2]… + m[14]). A mirrored
+// copy's reflection is in its definition, not its matrix: K1 builds the mirrored
+// shape as a shape of its own.
+type MeshInstance struct {
+	ID         string
+	Label      string
+	Definition int
+	Matrix     [16]float64
+}
+
+// WorldMeshes is every surviving part's surface in assembly coordinates: the
+// parts a feature changed as the kernel sent them, then each placed copy of a
+// definition moved by its matrix. It is what Mesh held before stage K4, for a
+// reader that draws parts rather than instances.
+func (b *Build) WorldMeshes() []MeshPart {
+	out := make([]MeshPart, 0, len(b.Mesh)+len(b.MeshInstances))
+	out = append(out, b.Mesh...)
+	for _, in := range b.MeshInstances {
+		if in.Definition < 0 || in.Definition >= len(b.MeshDefinitions) {
+			continue
+		}
+		d, m := b.MeshDefinitions[in.Definition], in.Matrix
+		v := make([]float64, len(d.Vertices))
+		for i := 0; i+2 < len(d.Vertices); i += 3 {
+			x, y, z := d.Vertices[i], d.Vertices[i+1], d.Vertices[i+2]
+			v[i] = m[0]*x + m[4]*y + m[8]*z + m[12]
+			v[i+1] = m[1]*x + m[5]*y + m[9]*z + m[13]
+			v[i+2] = m[2]*x + m[6]*y + m[10]*z + m[14]
+		}
+		out = append(out, MeshPart{ID: in.ID, Label: in.Label, Vertices: v, Triangles: d.Triangles})
+	}
+	return out
 }
 
 type request struct {
@@ -291,12 +346,14 @@ type reply struct {
 	InterferencesTruncated bool                    `json:"interferences_truncated,omitempty"`
 	InterferenceBoxTests   int                     `json:"interference_box_tests"`
 
-	STEP           string     `json:"step,omitempty"`
-	Mesh           []meshPart `json:"mesh,omitempty"`
-	MeshTriangles  int        `json:"mesh_triangles,omitempty"`
-	MeshDeflection float64    `json:"mesh_deflection,omitempty"`
-	MeshSimplified bool       `json:"mesh_simplified,omitempty"`
-	MeshError      string     `json:"mesh_error,omitempty"`
+	STEP            string           `json:"step,omitempty"`
+	Mesh            []meshPart       `json:"mesh,omitempty"`
+	MeshDefinitions []meshDefinition `json:"mesh_definitions,omitempty"`
+	MeshInstances   []meshInstance   `json:"mesh_instances,omitempty"`
+	MeshTriangles   int              `json:"mesh_triangles,omitempty"`
+	MeshDeflection  float64          `json:"mesh_deflection,omitempty"`
+	MeshSimplified  bool             `json:"mesh_simplified,omitempty"`
+	MeshError       string           `json:"mesh_error,omitempty"`
 }
 
 // phaseSeconds is the reply's "phases": seconds per phase of a build, written by
@@ -321,6 +378,18 @@ type meshPart struct {
 	Label     string    `json:"label"`
 	Vertices  []float64 `json:"vertices"`
 	Triangles []int32   `json:"triangles"`
+}
+
+type meshDefinition struct {
+	Vertices  []float64 `json:"vertices"`
+	Triangles []int32   `json:"triangles"`
+}
+
+type meshInstance struct {
+	ID         string      `json:"id"`
+	Label      string      `json:"label"`
+	Definition int         `json:"definition"`
+	Matrix     [16]float64 `json:"matrix"`
 }
 
 // Phases is the kernel's time per phase of one build. Scripts run before the
@@ -548,6 +617,14 @@ func (k *Kernel) BuildDocument(ctx context.Context, doc geometry.Document, unit 
 				ID: m.ID, Label: m.Label, Vertices: m.Vertices, Triangles: m.Triangles,
 			})
 		}
+	}
+	for _, d := range res.MeshDefinitions {
+		out.MeshDefinitions = append(out.MeshDefinitions, MeshDefinition{Vertices: d.Vertices, Triangles: d.Triangles})
+	}
+	for _, in := range res.MeshInstances {
+		out.MeshInstances = append(out.MeshInstances, MeshInstance{
+			ID: in.ID, Label: in.Label, Definition: in.Definition, Matrix: in.Matrix,
+		})
 	}
 	out.Triangles = res.MeshTriangles
 	out.Deflection = res.MeshDeflection

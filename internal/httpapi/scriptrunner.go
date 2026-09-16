@@ -97,8 +97,11 @@ func (r kernelSolids) BuildSurface(ctx context.Context, doc *geometry.Document) 
 	if err != nil {
 		return agent.Built{}, err
 	}
-	out := make([]geometry.RenderPart, 0, len(built.Mesh))
-	for _, m := range built.Mesh {
+	// Every part in assembly coordinates: a picture draws parts, not instances,
+	// and since stage K4 most parts arrive as placed copies of a definition.
+	meshes := built.WorldMeshes()
+	out := make([]geometry.RenderPart, 0, len(meshes))
+	for _, m := range meshes {
 		tris := geometry.TrianglesFrom(m.Vertices, m.Triangles)
 		if len(tris) == 0 {
 			continue

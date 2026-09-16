@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/access"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/cad"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/geometry"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/errs"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/logx"
@@ -229,19 +230,20 @@ func (h *GeometryHandlers) Mesh(w http.ResponseWriter, r *http.Request) {
 	// With the kernel's time per phase, so a slow viewport says which step of the
 	// build was slow (Phase 4, stage K2).
 	h.deps.Log.Info(r.Context(), logx.EventGeometryMeshed, append([]any{
-		"version_id", v.VersionID, "project_id", v.ProjectID, "parts", len(built.Mesh),
+		"version_id", v.VersionID, "project_id", v.ProjectID,
+		"parts", len(built.Mesh) + len(built.MeshInstances), "definitions", len(built.MeshDefinitions),
 		"triangles", built.Triangles, "skipped", len(built.Skipped)}, built.Phases.LogFields()...)...)
 
-	parts := make([]meshPartDTO, 0, len(built.Mesh))
-	for _, m := range built.Mesh {
-		parts = append(parts, meshPartDTO{
-			ID: m.ID, Label: m.Label, Vertices: m.Vertices, Triangles: m.Triangles,
-		})
-	}
+	parts, definitions, instances := meshPayload(built)
 	WriteJSON(w, http.StatusOK, map[string]any{
 		"version_id": v.VersionID,
-		"parts":      parts,
-		"triangles":  built.Triangles,
+		// The parts a feature changed, each in assembly coordinates; and every other
+		// part as a placed copy of one definition, tessellated once (Phase 4, stage
+		// K4). The browser expands them with Forge3D.expandMeshInstances.
+		"parts":       parts,
+		"definitions": definitions,
+		"instances":   instances,
+		"triangles":   built.Triangles,
 		// The tolerance the shape is described to, and whether it was coarsened
 		// to fit the budget. Reported rather than hidden: a coarse model shown
 		// as an exact one is the same class of claim this endpoint exists to
@@ -277,6 +279,43 @@ type meshPartDTO struct {
 	Label     string    `json:"label"`
 	Vertices  []float64 `json:"vertices"`
 	Triangles []int32   `json:"triangles"`
+}
+
+// meshDefinitionDTO is one shape's surface in its own frame, in millimetres.
+type meshDefinitionDTO struct {
+	Vertices  []float64 `json:"vertices"`
+	Triangles []int32   `json:"triangles"`
+}
+
+// meshInstanceDTO is one placed copy of a definition. Matrix is 4×4 and
+// COLUMN-major, as WebGL reads it: see cad.MeshInstance.
+type meshInstanceDTO struct {
+	ID         string      `json:"id"`
+	Label      string      `json:"label"`
+	Definition int         `json:"definition"`
+	Matrix     [16]float64 `json:"matrix"`
+}
+
+// meshPayload is the mesh reply's surfaces, shared with the fence that holds the
+// browser's expansion to cad.Build.WorldMeshes.
+func meshPayload(built *cad.Build) ([]meshPartDTO, []meshDefinitionDTO, []meshInstanceDTO) {
+	parts := make([]meshPartDTO, 0, len(built.Mesh))
+	for _, m := range built.Mesh {
+		parts = append(parts, meshPartDTO{
+			ID: m.ID, Label: m.Label, Vertices: m.Vertices, Triangles: m.Triangles,
+		})
+	}
+	definitions := make([]meshDefinitionDTO, 0, len(built.MeshDefinitions))
+	for _, d := range built.MeshDefinitions {
+		definitions = append(definitions, meshDefinitionDTO{Vertices: d.Vertices, Triangles: d.Triangles})
+	}
+	instances := make([]meshInstanceDTO, 0, len(built.MeshInstances))
+	for _, in := range built.MeshInstances {
+		instances = append(instances, meshInstanceDTO{
+			ID: in.ID, Label: in.Label, Definition: in.Definition, Matrix: in.Matrix,
+		})
+	}
+	return parts, definitions, instances
 }
 
 // Compare handles GET /v1/geometry/compare?ids=a,b,c.

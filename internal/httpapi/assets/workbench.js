@@ -1232,13 +1232,16 @@
     fetch('/v1/geometry/' + encodeURIComponent(versionID) + '/mesh')
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (b) {
-        if (!b || !b.parts || !b.parts.length) return;
+        /* Placed copies arrive as a definition and a matrix (Phase 4, stage K4);
+         * expanded here to the placed surfaces the renderer draws. */
+        var meshes = b ? window.Forge3D.expandMeshInstances(b) : [];
+        if (!meshes.length) return;
         /* Still the same prototype on screen? A slow tessellation must not
          * repaint a model the person has already moved on from. */
         if (state.prototype !== proto) return;
 
         var byID = {};
-        b.parts.forEach(function (m) { byID[m.id] = m; });
+        meshes.forEach(function (m) { byID[m.id] = m; });
         /* Joined by the DRAWN id, onto the part it was drawn from. The kernel
          * answers "spoke-3", which no authored part is called; joining against the
          * authored list left every copy of a repeat as its primitive.
