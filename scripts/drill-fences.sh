@@ -145,6 +145,7 @@ FILES=(
   internal/platform/config/config.go
   internal/httpapi/assets/workbench.js
   internal/agent/car_tree_measure_test.go
+  internal/agent/repetition.go
   internal/domain/geometry/compare_structure.go
   internal/httpapi/geometry.go
   internal/httpapi/goals_start.go
@@ -2435,6 +2436,105 @@ drill "the browser still stops drawing at the kernel's 4096" internal/httpapi/as
 drill "the viewport's ceiling is the kernel's" internal/domain/geometry/limits.go \
   's = s.replace("const maxViewportParts = DefaultMaxOccurrences", "const maxViewportParts = maxDrawnParts", 1)' \
   ./internal/domain/geometry 'TestLimits_TheViewportDrawsWhatStorageAcceptsAndNoMore'
+
+echo "A3's gaps: the catalogue read, a real build, the turn told, flat parts, density taught"
+# Added 2026-09-15 (A3 gaps and density). Every catalogue family was read against a
+# published table (standard.go names each), which found the L20x20x3 toe radius
+# wrong; one standard part per family is built by OCCT and measured against the
+# published figures; an ordinary turn's model is told what could be one pattern;
+# a flat document's top-level parts are checked like siblings; and the contract
+# teaches "density" with the ceiling and the mass rule the code applies.
+drill "an L20 angle's toe radius is 2 again" internal/domain/geometry/standard.go \
+  's = s.replace("{20, 3, 3.5, 1.75},", "{20, 3, 3.5, 2},", 1)' \
+  ./internal/domain/geometry 'TestStandard_EveryFamilyCarriesTheFiguresItsSourcePublishes'
+
+drill "OCCT builds an L20 angle with a toe radius of 2" internal/domain/geometry/standard.go \
+  's = s.replace("{20, 3, 3.5, 1.75},", "{20, 3, 3.5, 2},", 1)' \
+  ./internal/domain/cad 'TestKernel_EveryStandardFamilyBuildsTheSolidItsFiguresDescribe'
+
+drill "the browser's L20 angle's toe radius is 2 again" internal/httpapi/assets/forge3d.js \
+  's = s.replace("[20, 3, 3.5, 1.75]", "[20, 3, 3.5, 2]", 1)' \
+  ./internal/httpapi 'TestRendererDrawsTheSameStandardPartAsTheExporter'
+
+drill "an M10 nut is DIN 934's 17 across flats" internal/domain/geometry/standard.go \
+  's = s.replace("{\"M10\", 10, 16, 8.4},", "{\"M10\", 10, 17, 8.4},", 1)' \
+  ./internal/domain/geometry 'TestStandard_EveryFamilyCarriesTheFiguresItsSourcePublishes'
+
+drill "an M6 washer's hole is the thread's 6" internal/domain/geometry/standard.go \
+  's = s.replace("{\"M6\", 6.4, 12, 1.6},", "{\"M6\", 6, 12, 1.6},", 1)' \
+  ./internal/domain/geometry 'TestStandard_EveryFamilyCarriesTheFiguresItsSourcePublishes'
+
+drill "a 6003 bearing is 11 wide" internal/domain/geometry/standard.go \
+  's = s.replace("{\"6003\", 17, 35, 10},", "{\"6003\", 17, 35, 11},", 1)' \
+  ./internal/domain/geometry 'TestStandard_EveryFamilyCarriesTheFiguresItsSourcePublishes'
+
+drill "M8 cap screws run to 90, as one supplier stocks them" internal/domain/geometry/standard.go \
+  's = s.replace("{\"M8\", 8, 13, 8, 12, 80},", "{\"M8\", 8, 13, 8, 12, 90},", 1)' \
+  ./internal/domain/geometry 'TestStandard_EveryFamilyCarriesTheFiguresItsSourcePublishes'
+
+drill "a hollow section's inside corner is 1.5T" internal/domain/geometry/standard.go \
+  's = s.replace("outside, inside := 2*h.T*k, h.T*k", "outside, inside := 2*h.T*k, 1.5*h.T*k", 1)' \
+  ./internal/domain/geometry 'TestStandard_EveryFamilyCarriesTheFiguresItsSourcePublishes'
+
+drill "OCCT turns a revolve half way round" internal/domain/cad/sidecar.py \
+  's = s.replace("revolve(f, axis, 360)", "revolve(f, axis, 180)", 1)' \
+  ./internal/domain/cad 'TestKernel_EveryStandardFamilyBuildsTheSolidItsFiguresDescribe'
+
+drill "OCCT extrudes a section twice its depth" internal/domain/cad/sidecar.py \
+  's = s.replace("amount=d[\"depth\"] / 2.0, both=True", "amount=d[\"depth\"], both=True", 1)' \
+  ./internal/domain/cad 'TestKernel_EveryStandardFamilyBuildsTheSolidItsFiguresDescribe'
+
+drill "an outline is sent to the kernel in the document's unit" internal/domain/geometry/solid.go \
+  's = s.replace("c, err := section.Outer.scaled(toMM).exact(\"outline\")", "c, err := section.Outer.exact(\"outline\")", 1)' \
+  ./internal/domain/cad 'TestKernel_EveryStandardFamilyBuildsTheSolidItsFiguresDescribe'
+
+drill "an ordinary turn is not told what could be one pattern" internal/agent/converse_stream.go \
+  's = s.replace("\"]\" + repetitionForTurn(current) + \"\\n\\n\" + message", "\"]\" + \"\\n\\n\" + message", 1)' \
+  ./internal/agent 'TestBuildMessages_ATurnIsToldWhatCouldBeOnePattern'
+
+drill "a turn is told every run, however many" internal/agent/repetition.go \
+  's = s.replace("if i == maxRepetitionNotes {", "if i == 1000 {", 1)' \
+  ./internal/agent 'TestBuildMessages_ATurnIsToldWhatCouldBeOnePattern'
+
+drill "top-level parts are never looked at" internal/domain/geometry/repetition.go \
+  's = s.replace("\tout := topLevelRepetition(d)\n", "\tvar out []Repetition\n", 1)' \
+  ./internal/domain/geometry 'TestRepetition_FindsARowOfTopLevelPartsAndTheRepeatThatWritesThemOut'
+
+drill "top-level parts are reported after the assemblies" internal/domain/geometry/repetition.go \
+  's = s.replace("\tout := topLevelRepetition(d)\n\tfor _, a := range d.Assemblies {\n\t\tout = append(out, assemblyRepetition(a)...)\n\t}\n", "\tvar out []Repetition\n\tfor _, a := range d.Assemblies {\n\t\tout = append(out, assemblyRepetition(a)...)\n\t}\n\tout = append(out, topLevelRepetition(d)...)\n", 1)' \
+  ./internal/domain/geometry 'TestRepetition_TopLevelPartsComeFirstInWrittenOrder'
+
+drill "top-level groups are read in map order" internal/domain/geometry/repetition.go \
+  'a = "\tfor _, g := range groups {"; i = s.index(a); j = s.index(a, i + 1); s = s[:j] + "\tfor _, g := range byKey {" + s[j + len(a):]' \
+  ./internal/domain/geometry 'TestRepetition_TopLevelPartsComeFirstInWrittenOrder'
+
+drill "a part of another size counts as the same part" internal/domain/geometry/repetition.go \
+  's = s.replace("\tq.Position, q.Rotation = nil, nil\n", "\tq.Position, q.Rotation, q.Size = nil, nil, nil\n", 1)' \
+  ./internal/domain/geometry 'TestRepetition_TopLevelPartsThatAreNotOneRunAreNotFlagged'
+
+drill "a feature's tool is folded into a repeat" internal/domain/geometry/repetition.go \
+  's = s.replace("\t\t\tnamed[w] = true\n", "\t\t\t_ = w\n", 1)' \
+  ./internal/domain/geometry 'TestRepetition_TopLevelPartsThatAreNotOneRunAreNotFlagged'
+
+drill "the offered repeat's turn is not checked" internal/domain/geometry/repetition.go \
+  's = s.replace("if !run.unturned && !sameMatrix(s.m, m) {", "if false && !sameMatrix(s.m, m) {", 1)' \
+  ./internal/domain/geometry 'TestRepetition_FindsARingOfTopLevelParts'
+
+drill "the contract never teaches density" internal/agent/converse.go \
+  's = s.replace("geometry.FinishGuide() + \".\\n\" + densityContract + ", "geometry.FinishGuide() + \".\\n\" + ", 1)' \
+  ./internal/agent 'TestTheContractTeachesDensityAsTheValidatorReadsIt'
+
+drill "the contract's material shows no density" internal/agent/converse.go \
+  's = s.replace("\"finish\": \"metal\", \"density\": 2700,", "\"finish\": \"metal\",", 1)' \
+  ./internal/agent 'TestTheContractTeachesDensityAsTheValidatorReadsIt'
+
+drill "the contract states a ceiling the validator does not enforce" internal/agent/converse.go \
+  's = s.replace("`, geometry.MaxDensity)", "`, 50000)", 1)' \
+  ./internal/agent 'TestTheContractTeachesDensityAsTheValidatorReadsIt'
+
+drill "the validator enforces a ceiling the contract does not state" internal/domain/geometry/assembly.go \
+  's = s.replace("const maxDensity = MaxDensity", "const maxDensity = 50000", 1)' \
+  ./internal/agent 'TestTheContractTeachesDensityAsTheValidatorReadsIt'
 
 if [ "$MODE" = "list" ]; then
   exit 0

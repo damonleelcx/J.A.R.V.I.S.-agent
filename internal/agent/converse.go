@@ -117,7 +117,7 @@ var geometryContractTemplate = `Reply with JSON only:
         "color": "#b8bcc4",
         "opacity": 1.0,
         "note": "what this part is for",
-        "material": null or {"name": "aluminium 6061-T6", "finish": "metal",
+        "material": null or {"name": "aluminium 6061-T6", "finish": "metal", "density": 2700,
                              "how": "observed|retrieved|inferred|assumed", "source": ""}
       }
     ],
@@ -636,8 +636,34 @@ About "prototype":
   a real answer and it is shown as one. "finish" is only how it catches light:
   `
 
-var converseFraming = converseManner + geometryContract + geometry.FinishGuide() + `.
-- "states" are named configurations: which parts are shown, and where they sit.
+// densityContract teaches "density" where materials are taught.
+//
+// # The problem this solves
+//
+// Phase 5, stage V3 added Material.Density and a mass roll-up, and the contract
+// never said the field existed. A model cannot write a field it was never shown,
+// so every mass report on a model's document was "weighted by volume, no mass
+// claimed" — correct, and useless.
+//
+// # Why the ceiling is rendered and the mass rule spelled out
+//
+// The ceiling is the validator's own constant (geometry.MaxDensity), so the two
+// cannot disagree. The rule — mass only when EVERY part has a density — is what
+// geometry.MassProperties does, and a model that is not told it puts a density on
+// the three parts it is sure of and expects a mass. It gets none, and is told why.
+// TestTheContractTeachesDensityAsTheValidatorReadsIt holds all three to the code.
+var densityContract = fmt.Sprintf(`  "density" is the material's density in KILOGRAMS PER CUBIC METRE: aluminium
+  about 2700, steel about 7850, ABS about 1050. Write steel as 7850, never 7.85 —
+  that is grams per cubic centimetre, and the part would weigh a thousand times too
+  little. It is part of the same claim as the name, labelled by the same "how",
+  and a density above %d is refused, because no material is that dense. Leave it
+  out when you do not know the material.
+  FORGE reports the model's MASS only when every part has a density. When any part
+  has none, the roll-up is weighted by volume instead, says so, and names the parts
+  without one: a density on some parts and not others gives no mass at all.
+`, geometry.MaxDensity)
+
+var converseFraming = converseManner + geometryContract + geometry.FinishGuide() + ".\n" + densityContract + `- "states" are named configurations: which parts are shown, and where they sit.
   A state with "offsets" says these pieces separate along this path, and
   NOTHING here checks that they can — there is no interference, clearance or
   kinematic test in this deployment. Offer states when somebody is asking how a
