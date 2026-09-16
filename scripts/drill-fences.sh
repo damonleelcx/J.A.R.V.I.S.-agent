@@ -123,6 +123,7 @@ FILES=(
   internal/domain/geometry/binding.go
   internal/domain/geometry/variant.go
   internal/domain/geometry/frame.go
+  internal/domain/geometry/pattern.go
   internal/httpapi/goals_start.go
   internal/agent/worker.go
   internal/domain/engine/repository.go
@@ -544,7 +545,7 @@ drill "a clone shares the tree with its original" internal/domain/geometry/bindi
   ./internal/domain/geometry 'TestTree_ACloneSharesNothingWithTheOriginal'
 
 drill "a placement ignores the definition's own frame" internal/domain/geometry/tree.go \
-  's = s.replace("\t\t\t\tq.Position, q.Rotation, q.Mirrored = childFrame.then(placementOf(lp.Position, lp.Rotation, lp.Mirrored)).stored()\n", "\t\t\t\tq.Position, q.Rotation, q.Mirrored = childFrame.stored()\n", 1)' \
+  's = s.replace("\t\t\t\t\tq.Position, q.Rotation, q.Mirrored = childFrame.then(placementOf(lp.Position, lp.Rotation, lp.Mirrored)).stored()\n", "\t\t\t\t\tq.Position, q.Rotation, q.Mirrored = childFrame.stored()\n", 1)' \
   ./internal/domain/geometry 'TestTree_APartIsPlacedThroughEveryFrameAboveIt'
 
 drill "the storage door reads only top-level parts" internal/domain/geometry/variant.go \
@@ -559,7 +560,7 @@ echo
 echo "The browser flattens a tree like the exporter"
 # Added 2026-09-14 (Phase 1, stage D1b). forge3d.js holds a copy of tree.go and frame.go.
 drill "the browser places a definition ignoring its own frame" internal/httpapi/assets/forge3d.js \
-  "s = s.replace('          var st = storedPlacement(thenPlacement(childFrame, placementOf(lp.position, lp.rotation, !!lp.mirrored)));\n', '          var st = storedPlacement(childFrame);\n', 1)" \
+  "s = s.replace('            var st = storedPlacement(thenPlacement(childFrame, placementOf(lp.position, lp.rotation, !!lp.mirrored)));\n', '            var st = storedPlacement(childFrame);\n', 1)" \
   ./internal/httpapi 'TestRendererFlattensATreeLikeTheExporter'
 
 drill "the browser reads a rotation back with the wrong sign" internal/httpapi/assets/forge3d.js \
@@ -608,6 +609,78 @@ drill "the browser tree ignores a child's mirror" internal/httpapi/assets/forge3
 
 drill "the browser stores no reflection" internal/httpapi/assets/forge3d.js \
   "s = s.replace('    if (det3(m) < 0) {\n', '    if (false) {\n', 1)" \
+  ./internal/httpapi 'TestRendererFlattensATreeLikeTheExporter'
+
+echo
+echo "Patterns on a placed child"
+# Added 2026-09-14 (Phase 1, stage D1c-2). A pattern is a transform per copy in the
+# PARENT's frame; each drill breaks one term of that, in Go and in the browser's copy.
+drill "a linear pattern forgets which copy it is placing" internal/domain/geometry/pattern.go \
+  's = s.replace("k := float64(n - 1)", "k := float64(n)", 1)' \
+  ./internal/domain/geometry 'TestPattern_Linear'
+
+drill "a polar pattern starts one step round" internal/domain/geometry/pattern.go \
+  's = s.replace("axisRotation(p.About, between*float64(n-1))", "axisRotation(p.About, between*float64(n))", 1)' \
+  ./internal/domain/geometry 'TestPattern_PolarFullAndPartial'
+
+drill "a grid is numbered column by column" internal/domain/geometry/pattern.go \
+  's = s.replace("r, c := float64(n/p.Columns), float64(n%p.Columns)", "r, c := float64(n%p.Columns), float64(n/p.Columns)", 1)' \
+  ./internal/domain/geometry 'TestPattern_GridIsNumberedRowByRow'
+
+drill "a copy on a path corner follows the incoming segment" internal/domain/geometry/pattern.go \
+  's = s.replace("if s < sg.start+sg.length {", "if s <= sg.start+sg.length {", 1)' \
+  ./internal/domain/geometry 'TestPattern_PathSpacingAndAlignment'
+
+drill "the alignment turns about the wrong axis" internal/domain/geometry/pattern.go \
+  's = s.replace("axis := [3]float64{0, -d[2], d[1]}", "axis := [3]float64{0, d[2], -d[1]}", 1)' \
+  ./internal/domain/geometry 'TestPattern_AlignmentIsTheSmallestTurn'
+
+drill "a path corner radius is silently ignored" internal/domain/geometry/pattern.go \
+  's = s.replace("case q.Radius != 0 || q.RadiusFrom != \"\":", "case false:", 1)' \
+  ./internal/domain/geometry 'TestPattern_RefusesWhatItCannotPlace'
+
+drill "the pattern moves the child inside its own frame" internal/domain/geometry/tree.go \
+  's = s.replace("childFrame := frame.then(slot.at.then(local))", "childFrame := frame.then(local.then(slot.at))", 1)' \
+  ./internal/domain/geometry 'TestPattern_Linear'
+
+drill "the storage door accepts an id placed twice" internal/domain/geometry/variant.go \
+  's = s.replace("if seen[p.ID] {\n\t\t\t// Comparison matches", "if false {\n\t\t\t// Comparison matches", 1)' \
+  ./internal/domain/geometry 'TestPattern_ACopyThatTakesASiblingsIdIsRefusedAtTheStorageDoor|TestTree_TheStorageDoorReadsThePlacedParts'
+
+drill "a clone shares its pattern with the original" internal/domain/geometry/binding.go \
+  's = s.replace("c.Pattern = &p", "_ = p", 1)' \
+  ./internal/domain/geometry 'TestPattern_ACloneDoesNotShareAPattern'
+
+drill "the kernel is sent one copy of a patterned child" internal/domain/geometry/tree.go \
+  's = s.replace("slots, patternProblem := c.Pattern.copies()", "slots, patternProblem := (*Pattern)(nil).copies()", 1)' \
+  ./internal/domain/cad 'TestKernel_BuildsAGridAndACircleOfCopies'
+
+drill "the browser forgets which linear copy it is placing" internal/httpapi/assets/forge3d.js \
+  "s = s.replace('step[0] * (n - 1), step[1] * (n - 1), step[2] * (n - 1)', 'step[0] * n, step[1] * n, step[2] * n', 1)" \
+  ./internal/httpapi 'TestRendererFlattensATreeLikeTheExporter'
+
+drill "the browser polar pattern ignores a partial sweep" internal/httpapi/assets/forge3d.js \
+  "s = s.replace('repeatSweep({ count: count, angle: p.angle })', 'repeatSweep({ count: count })', 1)" \
+  ./internal/httpapi 'TestRendererFlattensATreeLikeTheExporter'
+
+drill "the browser numbers a grid column by column" internal/httpapi/assets/forge3d.js \
+  "s = s.replace('var r = Math.floor(n / columns), cc = n % columns;', 'var r = n % columns, cc = Math.floor(n / columns);', 1)" \
+  ./internal/httpapi 'TestRendererFlattensATreeLikeTheExporter'
+
+drill "the browser never aligns copies to a path" internal/httpapi/assets/forge3d.js \
+  "s = s.replace('if (p.align) at.m = rotationTaking(st.direction);', 'if (false) at.m = rotationTaking(st.direction);', 1)" \
+  ./internal/httpapi 'TestRendererFlattensATreeLikeTheExporter'
+
+drill "the browser turns a doubled-back path about y" internal/httpapi/assets/forge3d.js \
+  "s = s.replace(': [-1, 0, 0, 0, -1, 0, 0, 0, 1];', ': [-1, 0, 0, 0, 1, 0, 0, 0, -1];', 1)" \
+  ./internal/httpapi 'TestRendererFlattensATreeLikeTheExporter'
+
+drill "the browser draws a path with a corner radius" internal/httpapi/assets/forge3d.js \
+  "s = s.replace('if (q.radius || q.radius_from', 'if (q.radius_from', 1)" \
+  ./internal/httpapi 'TestRendererFlattensATreeLikeTheExporter'
+
+drill "the browser moves the child inside its own frame" internal/httpapi/assets/forge3d.js \
+  "s = s.replace('thenPlacement(frame, thenPlacement(slot.at, local))', 'thenPlacement(frame, thenPlacement(local, slot.at))', 1)" \
   ./internal/httpapi 'TestRendererFlattensATreeLikeTheExporter'
 
 echo

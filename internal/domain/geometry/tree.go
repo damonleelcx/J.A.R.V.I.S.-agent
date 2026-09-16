@@ -58,6 +58,9 @@ type Child struct {
 	// own frame, before it is rotated and placed — a whole sub-assembly included.
 	// Two mirrors on the way down cancel. Empty means no reflection.
 	Mirror string `json:"mirror,omitempty"`
+	// Pattern writes the child out as several copies, each placed by the pattern
+	// in this assembly's frame (pattern.go). Nil means one copy.
+	Pattern *Pattern `json:"pattern,omitempty"`
 }
 
 // PathSeparator joins child ids into the id of a flattened part.
@@ -180,8 +183,7 @@ func expandAssemblies(d Document) (Document, []Problem) {
 				continue
 			}
 			ids[c.ID] = true
-			childPath := append(append([]string(nil), path...), c.ID)
-			name := strings.Join(childPath, PathSeparator)
+			name := strings.Join(append(append([]string(nil), path...), c.ID), PathSeparator)
 			reflect, ok := reflectionAcross(c.Mirror)
 			if !ok {
 				fail(name, "mirrors across %q; a mirror is across \"x\", \"y\" or \"z\"", c.Mirror)
@@ -189,55 +191,79 @@ func expandAssemblies(d Document) (Document, []Problem) {
 			}
 			local := placementOf(c.Position, c.Rotation, false)
 			local.m = mulMat3(local.m, reflect)
-			childFrame := frame.then(local)
 
-			if sub, isAsm := asms[c.Ref]; isAsm {
-				if onPath[sub.ID] {
-					fail(name, "places assembly %q inside itself", sub.ID)
-					continue
-				}
-				onPath[sub.ID] = true
-				stop := walk(sub, childPath, onPath, childFrame)
-				delete(onPath, sub.ID)
-				if stop {
-					return true
-				}
+			// What the child places is resolved ONCE, before its copies: an unknown
+			// ref or a cycle is one problem about the child, not one per copy.
+			sub, isAsm := asms[c.Ref]
+			def, isDef := defs[c.Ref]
+			if isAsm && onPath[sub.ID] {
+				fail(name, "places assembly %q inside itself", sub.ID)
 				continue
 			}
-			def, isDef := defs[c.Ref]
-			if !isDef {
+			if !isAsm && !isDef {
 				fail(name, "places %q, which is neither a definition nor an assembly in this document", c.Ref)
 				continue
 			}
-			// The definition's own repeat is written out in the DEFINITION's frame
-			// first, so a pattern "about the origin" turns about the part's own origin
-			// wherever the part is then placed.
-			copies, repeatProblems := expandRepeats(Document{Parts: []Part{def}})
-			for _, rp := range repeatProblems {
-				rp.Name = name
-				problems = append(problems, rp)
+			// A pattern writes the child out as copies, each placed by the pattern in
+			// THIS assembly's frame (pattern.go). No pattern is one copy, unnamed.
+			slots, patternProblem := c.Pattern.copies()
+			if patternProblem != nil {
+				patternProblem.Name = name
+				problems = append(problems, *patternProblem)
+				if patternProblem.Severity == Error {
+					continue
+				}
 			}
-			for _, lp := range copies.Parts {
-				if placed >= maxTreeParts {
-					fail(d.Root, "places more than %d parts, which is the most one tree may place until "+
-						"instanced drawing and one build per design land", maxTreeParts)
-					return true
+			// The definition's own repeat, once, in the DEFINITION's frame, so a pattern
+			// "about the origin" turns about the part's own origin wherever it is placed.
+			var defCopies []Part
+			if isDef {
+				expanded, repeatProblems := expandRepeats(Document{Parts: []Part{def}})
+				for _, rp := range repeatProblems {
+					rp.Name = name
+					problems = append(problems, rp)
 				}
-				q := lp
-				// "" for the definition itself, "-k" for its k-th copy: read off the
-				// expansion's own answer rather than restating its naming rule.
-				suffix := strings.TrimPrefix(lp.ID, def.ID)
-				q.ID = name + suffix
-				if c.Name != "" {
-					q.Name = c.Name
-					if suffix != "" {
-						q.Name = c.Name + " " + strings.TrimPrefix(suffix, "-")
+				defCopies = expanded.Parts
+			}
+			for _, slot := range slots {
+				childPath := append(append([]string(nil), path...), c.ID+slot.suffix)
+				slotName := strings.Join(childPath, PathSeparator)
+				childName := c.Name
+				if childName != "" && slot.number != "" {
+					childName = c.Name + " " + slot.number
+				}
+				childFrame := frame.then(slot.at.then(local))
+				if isAsm {
+					onPath[sub.ID] = true
+					stop := walk(sub, childPath, onPath, childFrame)
+					delete(onPath, sub.ID)
+					if stop {
+						return true
 					}
+					continue
 				}
-				q.Position, q.Rotation, q.Mirrored = childFrame.then(placementOf(lp.Position, lp.Rotation, lp.Mirrored)).stored()
-				q.Size = cloneSize(lp.Size)
-				out.Parts = append(out.Parts, q)
-				placed++
+				for _, lp := range defCopies {
+					if placed >= maxTreeParts {
+						fail(d.Root, "places more than %d parts, which is the most one tree may place until "+
+							"instanced drawing and one build per design land", maxTreeParts)
+						return true
+					}
+					q := lp
+					// "" for the definition itself, "-k" for its k-th copy: read off the
+					// expansion's own answer rather than restating its naming rule.
+					suffix := strings.TrimPrefix(lp.ID, def.ID)
+					q.ID = slotName + suffix
+					if childName != "" {
+						q.Name = childName
+						if suffix != "" {
+							q.Name = childName + " " + strings.TrimPrefix(suffix, "-")
+						}
+					}
+					q.Position, q.Rotation, q.Mirrored = childFrame.then(placementOf(lp.Position, lp.Rotation, lp.Mirrored)).stored()
+					q.Size = cloneSize(lp.Size)
+					out.Parts = append(out.Parts, q)
+					placed++
+				}
 			}
 		}
 		return false
