@@ -92,6 +92,23 @@ func asked(t *testing.T, prompt string) (string, int) {
 	return section, len(section) + 1
 }
 
+// asksAsLines is what a repair is shown for a list small enough to be asked as it
+// is, and its size: every buried clash, told which child placed its parts
+// (placedByNotes), written the way repairGeometry writes a problem — named.
+//
+// ‼️ Both halves of that are the merge of #113's stack with this branch: main gave
+// every buried finding its placement sentence and gave every problem line its part's
+// name, and both are inside what maxRepairProblemBytes bounds. "As it was asked
+// before" is measured here so it cannot drift from georepair.go silently.
+func asksAsLines(doc *Prototype, found []geometry.Interference) ([]string, int) {
+	problems := placedByNotes(doc, found, geometry.InterferenceProblems(found))
+	lines := make([]string, len(problems))
+	for i, p := range problems {
+		lines[i] = "- " + strings.TrimSpace(p.Name+" "+p.Detail)
+	}
+	return lines, problemBytes(problems)
+}
+
 func buriedIn(found []geometry.Interference) int {
 	n := 0
 	for _, f := range found {
@@ -153,12 +170,7 @@ func checkSummaryCounts(t *testing.T, section string, buried int) {
 	if of != buried {
 		t.Errorf("the summary says %d buried, the list has %d", of, buried)
 	}
-	// ‼️ The optional name is georepair.go's, not this summary's: since #120 every
-	// fault line the repair is shown is prefixed with the part it is about, so a
-	// group line reads "- <part> Group 1 of 2, …". Anchored on "^- Group" this found
-	// no lines at all and read as a summary that had lost every count. What the
-	// fence holds is unchanged: the numbering and the clash counts.
-	lines := regexp.MustCompile(`(?m)^- (?:\S+ )?Group (\d+) of (\d+), (\d+) buried clash`).FindAllStringSubmatch(section, -1)
+	lines := regexp.MustCompile(`(?m)^- Group (\d+) of (\d+), (\d+) buried clash`).FindAllStringSubmatch(section, -1)
 	sum := 0
 	for n, l := range lines {
 		if atoi(l[1]) != n+1 || atoi(l[2]) != groups {
@@ -282,15 +294,13 @@ func TestInterference_AFewBuriedClashesAreAskedAboutAsBefore(t *testing.T) {
 		{A: "right-upright", B: "right-front-rotor", Volume: 300, Fraction: 0.7},
 		{A: "tyre", B: "rim", Volume: 20, Fraction: 0.02},
 	}
-	// ‼️ Sized on the lines AS SENT, which since #122 carry a placement note each
-	// (placedByNotes, inside repairAsks and inside the bound). Sized on un-noted
-	// bytes this fixture asks for a list that no longer fits and gets a summary.
-	asLines := func(found []geometry.Interference) []geometry.Problem {
-		return placedByNotes(barrelLike(), found, geometry.InterferenceProblems(found))
-	}
 	fits := barrelClashes(1)
-	for problemBytes(asLines(barrelClashes(len(fits)+1))) <= maxRepairProblemBytes {
-		fits = barrelClashes(len(fits) + 1)
+	for {
+		next := barrelClashes(len(fits) + 1)
+		if _, size := asksAsLines(barrelLike(), next); size > maxRepairProblemBytes {
+			break
+		}
+		fits = next
 	}
 	for name, found := range map[string][]geometry.Interference{"the live car": car, "the longest list that fits": fits} {
 		t.Run(name, func(t *testing.T) {
@@ -301,18 +311,19 @@ func TestInterference_AFewBuriedClashesAreAskedAboutAsBefore(t *testing.T) {
 
 			c.repairIfPartsOverlap(context.Background(), reply, &sheet)
 
-			section, _ := asked(t, stub.asked)
-			var want []string
-			// ‼️ NAMED, and noted. georepair.go prefixes each line with the part it is
-			// about (#120's live-car finding), and placedByNotes adds where a copy in a
-			// tree came from (#122). Both are deliberate changes to what a repair is
-			// shown; what this fence holds is unchanged — a list that fits is asked as
-			// one line per finding, in order, and never as a summary.
-			for _, p := range asLines(found) {
-				want = append(want, "- "+strings.TrimSpace(p.Name+" "+p.Detail))
-			}
+			section, size := asked(t, stub.asked)
+			want, wantSize := asksAsLines(barrelLike(), found)
 			if section != strings.Join(want, "\n") {
 				t.Errorf("a list that fits was not asked as it was:\n%.600s", section)
+			}
+			// ‼️ And problemBytes counted those same bytes. The budget is checked against
+			// it, so a counter that skipped the part each line names would let the bound
+			// be passed by a path per line without any fence noticing.
+			if size != wantSize {
+				t.Errorf("the prompt is %d bytes of problems, problemBytes counted %d", size, wantSize)
+			}
+			if size > maxRepairProblemBytes {
+				t.Errorf("a list said to fit was asked %d bytes, over the %d budget", size, maxRepairProblemBytes)
 			}
 		})
 	}

@@ -143,7 +143,9 @@ FILES=(
   internal/domain/geometry/export.go
   internal/domain/geometry/service.go
   internal/platform/config/config.go
-  internal/httpapi/assets/workbench.js
+  internal/agent/buildgoal.go
+  internal/agent/spend.go
+  internal/domain/engine/repository.go
   internal/agent/car_tree_measure_test.go
   internal/agent/repetition.go
   internal/agent/stepgates.go
@@ -157,8 +159,6 @@ FILES=(
   internal/domain/geometry/compare_structure.go
   internal/httpapi/geometry.go
   internal/httpapi/goals_start.go
-  internal/agent/worker.go
-  internal/domain/engine/repository.go
   internal/domain/engine/queue.go
   internal/agent/executor.go
   internal/agent/settle.go
@@ -1264,6 +1264,45 @@ drill "the view carries every subsystem" internal/agent/subtree.go \
 drill "a placement's interfaces are not carried" internal/agent/subtree.go \
   's = s.replace("\t\tview.AttachesTo = append(view.AttachesTo, attachment{Assembly: a.ID, Interfaces: a.Interfaces})\n", "", 1)' \
   ./internal/agent 'TestSubtreeModel_CarriesWhatTheFocusPlacesAndAttachesTo'
+
+echo
+echo "A build runs as an engine goal"
+# Added 2026-09-15 (Phase 2, stage A1, and Phase 7, stage E3). A build's plan is one
+# task per step, each waiting for the one before; forge-worker builds a step, keeps
+# it as a version inside the goal, and charges every model call to the goal. Three
+# engine defects this stage found are drilled here too: a finished task released
+# nothing, a budget refusal could not fail a claimed task, and events were hashed at
+# a precision they are not stored at. Needs FORGE_TEST_DATABASE_URL.
+drill "the steps do not wait for each other" internal/agent/buildgoal.go \
+  's = s.replace("\t\t\tpt.DependsOn = []string{prev}\n", "\t\t\t_ = prev\n", 1)' \
+  ./internal/agent 'TestBuildGoal_EachStepIsATaskThatWaitsForTheOneBefore'
+
+drill "a build's model calls are charged to nobody" internal/agent/spend.go \
+  's = s.replace("\tif err := c.budget.RecordSpend(", "\tif err := error(nil); err != nil && c.budget.RecordSpend(", 1).replace("resp.Usage.TotalTokens, 0); err != nil {", "resp.Usage.TotalTokens, 0) != nil {", 1)' \
+  ./internal/agent 'TestBuildGoal_EveryModelCallIsChargedToTheGoal'
+
+drill "a step keeps asking after the budget is spent" internal/agent/spend.go \
+  's = s.replace("\tif breach != nil {\n\t\treturn nil, breach.Error()\n\t}\n\n\tresp, err", "\tresp, err", 1)' \
+  ./internal/agent 'TestBuildGoal_AStepStopsAskingOnceTheBudgetIsSpent'
+
+drill "a kept step is built again" internal/agent/buildgoal.go \
+  's = s.replace("\tif cp != nil && cp.Kind == checkpointBuildStepSaved {", "\tif false {", 1)' \
+  ./internal/agent 'TestBuildGoal_AStepKeptBeforeItsWorkerStoppedIsNotBuiltAgain'
+
+drill "a step starts from an empty model" internal/agent/buildgoal.go \
+  's = s.replace("\tdeps, err := b.repo.ListDependencies(ctx, b.pool, task.ID)", "\tdeps, err := []string(nil), error(nil)", 1)' \
+  ./internal/agent 'TestBuildGoal_AWorkerThatHangsIsResumedFromTheLastStepKept'
+
+# There is no drill here for a stopped worker handing its step back. There was,
+# against runBuildStep's own release, and it went green the moment main's hand-back
+# landed: Run releases EVERY stopped task through handBack, so nothing runBuildStep
+# does or omits can leave a step leased, and a drill against it tests nothing. The
+# property is fenced where it now lives — "a stopped worker leaves its task to its
+# lease" and the rest of the hand-back drills below.
+
+drill "a goal's save names no task" internal/domain/geometry/service.go \
+  's = s.replace("\t\tTaskID:  taskOf(n),\n", "", 1)' \
+  ./internal/agent 'TestBuildGoal_AStepKeptInsideAGoalWritesAChainedArtifactEvent'
 
 echo
 echo "A pool of kernel processes builds side by side"
@@ -2682,8 +2721,11 @@ drill "the contract no longer says where a polar pattern turns" internal/agent/c
   's = s.replace("about an axis THROUGH THE ORIGIN of the", "about an axis of the", 1)' \
   ./internal/agent 'TestTheContractSaysWhereAPolarPatternTurns'
 
+# Re-anchored 2026-09-16 merging #114: placedByNotes moved from the call site into
+# repairAsks, so the notes are counted against the 16 KiB bound rather than added
+# past it. Same mutation, same fence — the line it deletes now lives one call deeper.
 drill "a buried copy's repair is not told which child places it" internal/agent/interference.go \
-  's = s.replace("problems = placedByNotes(reply.Prototype, found, problems)", "_ = placedByNotes", 1)' \
+  's = s.replace("placedByNotes(doc, found, geometry.InterferenceProblems(found))", "geometry.InterferenceProblems(found)", 1)' \
   ./internal/agent 'TestInterference_ARepairIsToldWhichChildPlacesABuriedCopy'
 
 drill "a pattern copy is not traced to its child" internal/domain/geometry/placedby.go \
@@ -3135,6 +3177,12 @@ drill "a line is cut inside a character" internal/agent/interference.go \
 drill "the budget keeps no room for the header's count" internal/agent/interference.go \
   's = s.replace("problemBytes(out) - len(coverage(len(groups), count)) -", "problemBytes(out) -", 1)' \
   ./internal/agent 'TestInterference_ARepairSummaryNeverPassesItsBudget'
+
+# Added 2026-09-16 merging #114 with #113's stack: repairGeometry now writes
+# "- " + Name + " " + Detail, so the bound has to count the part each line names.
+drill "the bound counts a problem line without the part it names" internal/agent/interference.go \
+  's = s.replace("len(strings.TrimSpace(p.Name+\" \"+p.Detail))", "len(p.Detail)", 1)' \
+  ./internal/agent 'TestInterference_AFewBuriedClashesAreAskedAboutAsBefore'
 
 drill "the budget keeps no room for the last line" internal/agent/interference.go \
   's = s.replace("\t\tlen(\"- \\n\") - len(tail(len(groups), count))\n", "\t\t0\n", 1)' \

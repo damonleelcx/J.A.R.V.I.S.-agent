@@ -48,6 +48,11 @@ token ceiling before the worker starts, and runs the real worker on Postgres: th
 `failed` and `skipped`, `budget.exceeded` must be on the timeline, and the model must never be asked. Without the fix
 it times out with the first task claimed.
 
+`TestBuildGoal_ABudgetRefusalStopsTheGoalCleanly` (internal/agent/buildgoal_db_test.go, stage A1) covers the same fence
+on the path the defect was found on: a three-step build whose ceiling is crossed by step 1 must end the goal `failed`
+with steps `succeeded, failed, skipped`, `budget.exceeded` on the timeline and step 1's version kept. Without the fix it
+times out with step 2 claimed.
+
 ## Regression prevention
 
 A drill in `scripts/drill-fences.sh` ("a budget refusal fails a task that is only claimed") removes the transition; the

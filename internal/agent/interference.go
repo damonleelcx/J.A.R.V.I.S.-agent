@@ -82,12 +82,14 @@ func (c *Conversation) repairIfPartsOverlap(ctx context.Context, reply *Reply, s
 	// Only the prompt is summarized (repairAsks; repair bound and check profile). The
 	// repair is judged by every buried clash the kernel FOUND, which past the list's
 	// bound is its count, not the list (repairVerdict).
+	//
 	// ‼️ A buried part in a tree is named by where it IS ("wheel/lug-nut-3"), and that
 	// path is not something a repair can edit: the copy comes from a child, its
 	// pattern and a definition. The 2026-09-15 live car buried every lug nut in its
 	// hub, rim and tyre and the repair was shown only the paths. So each finding says
 	// which child places it and, for a pattern copy, which pattern about which axis.
-	// #122 added that; repairAsks now does it, inside the bound — see there for why.
+	// That is placedByNotes, and it is inside repairAsks — the notes are part of what
+	// is sent, so they are counted against the bound rather than added past it.
 	// Fence: TestInterference_ARepairIsToldWhichChildPlacesABuriedCopy.
 	refused := ""
 	if fixed := c.repairGeometry(ctx, reply.Prototype, repairAsks(reply.Prototype, found, sheet.Found)); fixed != nil {
@@ -314,17 +316,11 @@ func repairAsks(doc *Prototype, found []geometry.Interference, total int) []geom
 // path is repairAsks and only it chooses the budget; nothing else passes one but
 // TestScaleUp_MeasureTheRepairPrompt, which sweeps candidates to choose the constant.
 func repairAsksWithin(doc *Prototype, found []geometry.Interference, total, limit int) []geometry.Problem {
-	// ‼️ #122's placement notes go on the LINES, and BEFORE the bound is measured.
-	//
-	// A line-per-finding says "Rivet is 83% inside Stringer" and nothing about where
-	// the rivet came from, so a repair shown it cannot edit anything: the copy comes
-	// from a child, its pattern and a definition (placedByNotes). The SUMMARY below
-	// needs no note — a group is keyed by where its parts came from and already
-	// prints `placed by bay/sector/stringer-rivets` (describeGroup).
-	//
-	// Measured before the bound, so the bound still holds on what is actually sent:
-	// a list of lines that only fits WITHOUT its notes is summarized instead, which
-	// is the same trade the bound already makes everywhere else.
+	// Each line first says which child places its parts (placedByNotes), because a
+	// list that fits is asked line for line and a path alone is not editable. The
+	// budget is then measured on those lines, notes included: they are sent, so they
+	// are spent. A summary needs no notes — it is already told BY placement, and
+	// repeating the sentence per clash is what it exists to replace.
 	buried := placedByNotes(doc, found, geometry.InterferenceProblems(found))
 	if problemBytes(buried) <= limit {
 		return buried
@@ -381,15 +377,21 @@ func repairAsksWithin(doc *Prototype, found []geometry.Interference, total, limi
 	if total > len(found) {
 		listed = fmt.Sprintf("the kernel listed the %d that share the most", len(found))
 	}
+	// ‼️ Unnamed, all four of them. repairGeometry prefixes a problem with the part it
+	// is about, because a fault's sentence does not say. A summary's sentences do, and
+	// none of them is about one part: the header is about the whole model, a group is
+	// about a pair of PLACEMENTS, the last line is about the groups left out. Naming
+	// them would put "bay-1/sector-1/stringer-rivets-7" in front of "FORGE found
+	// 1760000 pairs…", which is the opposite of saying what the line is about.
 	out := []geometry.Problem{
-		{Severity: geometry.Error, Name: found[worst].A, Detail: clip(fmt.Sprintf(
+		{Severity: geometry.Error, Detail: clip(fmt.Sprintf(
 			"FORGE found %d pairs of parts sharing material; %s, and %d of those are buried. "+
 				"That is too many to list one by one, so they are grouped by the placements in this "+
 				"document that put the parts there: fix the placement and every copy of it moves.",
 			total, listed, count))},
 		// By id as well as label: a label is shared by every copy of a definition, and
 		// "Rivet is 83% inside Stringer" is true of 768,000 pairs on the barrel.
-		{Severity: geometry.Error, Name: found[worst].A, Detail: clip(fmt.Sprintf("The worst, %s in %s: %s",
+		{Severity: geometry.Error, Detail: clip(fmt.Sprintf("The worst, %s in %s: %s",
 			found[worst].A, found[worst].B, found[worst].Describe()))},
 	}
 	// What the header will add once the groups are counted, and the last line: both
@@ -411,13 +413,13 @@ func repairAsksWithin(doc *Prototype, found []geometry.Interference, total, limi
 			break
 		}
 		budget -= len("- \n") + len(line)
-		out = append(out, geometry.Problem{Severity: geometry.Error, Name: g.clashes[0].A, Detail: line})
+		out = append(out, geometry.Problem{Severity: geometry.Error, Detail: line})
 		described++
 		covered += len(g.clashes)
 	}
 	out[0].Detail += coverage(described, covered)
 	if described < len(groups) {
-		out = append(out, geometry.Problem{Severity: geometry.Error, Name: found[worst].A,
+		out = append(out, geometry.Problem{Severity: geometry.Error,
 			Detail: tail(len(groups)-described, count-covered)})
 	}
 	return out
@@ -550,10 +552,16 @@ func describeGroup(n, of int, a, b placement, clashes []geometry.Interference, l
 }
 
 // problemBytes is how many bytes problems take as repairGeometry writes them.
+//
+// ‼️ Named, because repairGeometry is: it writes "- " + Name + " " + Detail, trimmed
+// (georepair.go, TestRepair_EveryFaultTheRepairIsShownNamesThePartItIsAbout). A
+// counter that measured Detail alone would under-count every per-clash line by its
+// part's path — 33 bytes each on the barrel — and the bound would be spent past
+// without anything noticing.
 func problemBytes(problems []geometry.Problem) int {
 	n := 0
 	for _, p := range problems {
-		n += len("- \n") + len(p.Detail)
+		n += len("- \n") + len(strings.TrimSpace(p.Name+" "+p.Detail))
 	}
 	return n
 }

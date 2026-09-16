@@ -64,6 +64,9 @@ either: the only triggers maintain `updated_at`.
   Without the fix it times out with the second task pending.
 - `TestWorker_ATaskLeftWaitingByACrashIsReleasedOnTheIdlePoll` finishes the first task by hand, as a worker that died
   before releasing would, and requires the idle poll to release and run the second.
+- `TestBuildGoal_*` (internal/agent/buildgoal_db_test.go, stage A1) run three-step chains through a real worker on
+  Postgres, where the defect was found. The harness polls once an hour, so a step reaches the next one only if the
+  finished step released it. Before the fix, every chain test timed out with step 2 pending.
 
 ## Regression prevention
 
