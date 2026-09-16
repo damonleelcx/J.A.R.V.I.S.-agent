@@ -76,13 +76,26 @@ echo "=== 9. Blob store round-trips from inside both pods ==="
 #
 # The bytes are fixed, so running this again stores nothing; the role has no
 # delete, and a check that left an object behind per run would do so forever.
+# ‼️ When ONLY forge-worker fails this check, suspect its egress policy before
+# the bucket or the role: 32-worker-egress.yaml rule 4 excludes the private ranges,
+# so S3 reached through a VPC interface endpoint (whose private DNS resolves into
+# 172.31/16) is blocked there; and rule 3 cannot beat an instance metadata hop limit
+# of 1, which deploy/bootstrap-s3.sh reports. forged runs on the host network, where
+# neither applies, which is why a worker-only failure points at the policy rather
+# than at S3.
 for d in forged forge-worker; do
   POD=$($K -n forge get pod -l app.kubernetes.io/name=$d -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
   if [ -z "$POD" ]; then bad "no $d pod"; continue; fi
   OUT=$($K -n forge exec "$POD" -c "$d" -- /usr/local/bin/forgectl blob check 2>&1 | tr -d '\r')
   R=$(echo "$OUT" | grep -o 'BLOB-ROUNDTRIP-OK [0-9a-f]\{64\}' | tail -1)
   WHY=$(echo "$OUT" | grep -m1 'error :' || echo "$OUT" | tail -1)
-  [ -n "$R" ] && ok "$d: $R" || bad "$d: no blob round trip: $WHY"
+  if [ -n "$R" ]; then ok "$d: $R"; else
+    if [ "$d" = "forge-worker" ]; then
+      bad "$d: no blob round trip: $WHY (worker only: check 32-worker-egress.yaml rule 4 and the IMDS hop limit)"
+    else
+      bad "$d: no blob round trip: $WHY"
+    fi
+  fi
 done
 
 echo
