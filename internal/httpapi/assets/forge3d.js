@@ -242,14 +242,16 @@
   /* size, d1, d2, h */
   var ISO7089 = [['M3', 3.2, 7, 0.5], ['M4', 4.3, 9, 0.8], ['M5', 5.3, 10, 1], ['M6', 6.4, 12, 1.6],
                  ['M8', 8.4, 16, 1.6], ['M10', 10.5, 20, 2], ['M12', 13, 24, 2.5]];
-  /* series, bore, outside diameter, width */
+  /* series, bore, outside diameter, width: ISO/R 15/1-1968 Table 3, dimension series 10
+   * (standard.go names the source, and that ISO 15:2017's own table went unread) */
   var ISO15 = [['608', 8, 22, 7], ['6000', 10, 26, 8], ['6001', 12, 28, 8], ['6002', 15, 32, 9],
                ['6003', 17, 35, 10], ['6004', 20, 42, 12], ['6005', 25, 47, 12]];
   /* kind, B, H, t */
   var EN10219 = [['SHS', 20, 20, 2], ['SHS', 30, 30, 3], ['SHS', 40, 40, 3], ['SHS', 40, 40, 4],
                  ['SHS', 50, 50, 5], ['RHS', 40, 20, 2], ['RHS', 60, 40, 3]];
-  /* leg a, t, root radius r1, toe radius r2 — half the root radius, as EN 10056-1
-   * states (standard.go names the source; the L20's was 2 until 2026-09-15) */
+  /* leg a, t, root radius r1, toe radius r2 — half the root radius, as EN 10056-1:1998
+   * Note 1 states; the 2017 edition prints the same r1 (standard.go names the sources;
+   * the L20's was 2 until 2026-09-15) */
   var EN10056 = [[20, 3, 3.5, 1.75], [30, 3, 5, 2.5], [40, 4, 6, 3], [50, 5, 7, 3.5]];
   /* geometry/units.go unitTable: the factor to millimetres and every alias. */
   var UNIT_TABLE = [[1, ['mm', 'millimetre', 'millimeter', 'millimetres', 'millimeters']],
