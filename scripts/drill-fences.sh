@@ -1101,6 +1101,35 @@ drill "a density no material has is accepted" internal/domain/geometry/assembly.
   ./internal/domain/geometry 'TestMaterial_RefusesADensityNoMaterialHas'
 
 echo
+echo "The vision check looks at sub-assemblies on their own"
+# Added 2026-09-15 (Phase 5, stage V4). Beside the whole model, each assembly the root
+# places is drawn once from the same build and looked at on its own — clashing ones
+# first, at most four a turn — and the turn says how many of how many.
+drill "sub-assemblies are never looked at" internal/agent/look.go \
+  's = s.replace("\tsubs, of := subAssemblySheets(doc, sheet)", "\tsubs, of := []subSheet(nil), 0", 1)' \
+  ./internal/agent 'TestLook_LooksAtEachDistinctSubAssemblyOnce'
+
+drill "every occurrence of an assembly is stacked into one picture" internal/agent/look.go \
+  's = s.replace("\t\tif seg == g.path {", "\t\tif true {", 1)' \
+  ./internal/agent 'TestLook_LooksAtEachDistinctSubAssemblyOnce'
+
+drill "every sub-assembly is looked at however many there are" internal/agent/look.go \
+  's = s.replace("\tif len(groups) > maxSubAssemblyLooks {", "\tif false {", 1)' \
+  ./internal/agent 'TestLook_CapsSubAssemblyLooksAndSaysHowMany'
+
+drill "a clash does not move its sub-assembly forward" internal/agent/look.go \
+  's = s.replace("\t\tif groups[i].clash != groups[j].clash {\n\t\t\treturn groups[i].clash\n\t\t}\n", "", 1)' \
+  ./internal/agent 'TestLook_AClashingSubAssemblyIsLookedAtFirst'
+
+drill "a tree's parts go unnamed in the prompt" internal/agent/look.go \
+  's = s.replace("\tif doc.Root != \"\" {\n\t\tsource = doc.Expanded().Parts\n\t}\n", "", 1)' \
+  ./internal/agent 'TestLook_ATreesPartsAreNamedInThePrompt'
+
+drill "the turn does not say how closely it looked" internal/agent/look.go \
+  's = s.replace("\tif covered.Of > covered.Looked {", "\tif false {", 1)' \
+  ./internal/agent 'TestLook_CapsSubAssemblyLooksAndSaysHowMany'
+
+echo
 echo "A pool of kernel processes builds side by side"
 # Added 2026-09-15 (Phase 4, stage K3). A Kernel is FORGE_CAD_POOL processes behind a
 # FIFO channel; a build takes a free one, retries once on that slot, and gives it back.
