@@ -3406,6 +3406,21 @@ drill "a search row names a part without saying where it is" internal/httpapi/as
   's = s.replace("return treeRow(h.id, h.label, 0, false, false, null, h.id);", "return treeRow(h.id, h.label, 0, false, false, null);", 1)' \
   ./internal/httpapi 'TestWorkbenchSearchRowsSayWhereEachOccurrenceIs'
 
+# Added 2026-09-16. #70 made geometry.Part.Name the whole occurrence path, so a search
+# row that takes its name from it says where twice and what never. These two hold the
+# other half of the same fence: the name column is the occurrence's OWN name.
+drill "a search row is named by its whole occurrence path" internal/httpapi/assets/forge3d.js \
+  "s = s.replace(\"return String(p.spec.occurrenceName || p.spec.name || '') || p.id;\", \"return String(p.spec.name || '') || p.id;\", 1)" \
+  ./internal/httpapi 'TestWorkbenchSearchRowsSayWhereEachOccurrenceIs'
+
+drill "an occurrence is named by its definition, not by the child placing it" internal/httpapi/assets/forge3d.js \
+  's = s.replace("              : childNames[childNames.length - 1];", "              : (lp.name || lp.id);", 1)' \
+  ./internal/httpapi 'TestWorkbenchSearchRowsSayWhereEachOccurrenceIs'
+
+drill "a search row's name column shows the path instead of the name" internal/httpapi/assets/workbench.js \
+  's = s.replace("return treeRow(h.id, h.label, 0, false, false, null, h.id);", "return treeRow(h.id, h.id, 0, false, false, null, h.id);", 1)' \
+  ./internal/httpapi 'TestWorkbenchSearchRowsSayWhereEachOccurrenceIs'
+
 drill "the provenance banner's details are never folded" internal/httpapi/assets/workbench.js \
   's = s.replace("var open = !!state.provenanceOpen;", "var open = true;", 1)' \
   ./internal/httpapi 'TestWorkbenchProvenanceBannerFoldsItsDetailsOffTheStage'

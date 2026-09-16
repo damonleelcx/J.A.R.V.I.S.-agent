@@ -208,7 +208,9 @@ const searchRowsHarness = `
   const hits = studio.findOccurrences(input.query, 50);
   const html = made.searchRows(hits);
   const rows = html.split('<div class="tnode"').slice(1).map((r) => ({
-    path: (r.match(/data-path="([^"]*)"/) || [])[1], text: visible('<x' + r) }));
+    path: (r.match(/data-path="([^"]*)"/) || [])[1],
+    name: visible((r.match(/<span class="nm"[^>]*>([\s\S]*?)<\/span>/) || [])[1] || ''),
+    text: visible('<x' + r) }));
   process.stdout.write(JSON.stringify({ found: hits.found, total: hits.total, rows: rows }));
 `
 
@@ -238,7 +240,7 @@ func TestWorkbenchSearchRowsSayWhereEachOccurrenceIs(t *testing.T) {
 	var got struct {
 		Total int
 		Found []struct{ ID, Label string }
-		Rows  []struct{ Path, Text string }
+		Rows  []struct{ Path, Name, Text string }
 	}
 	if err := json.Unmarshal(out, &got); err != nil {
 		t.Fatalf("unreadable harness output: %s (%v)", out, err)
@@ -260,6 +262,17 @@ func TestWorkbenchSearchRowsSayWhereEachOccurrenceIs(t *testing.T) {
 		}
 		if !strings.Contains(r.Text, r.Path) {
 			t.Errorf("the row for %s reads %q, which does not say where it is", r.Path, r.Text)
+		}
+		// The name column says WHAT the occurrence is; the path column says WHERE. The
+		// row's whole text is unique either way once the path is in it, so these two
+		// assertions — not the seen[r.Text] check below — are what hold the division.
+		// geometry.Part.Name is the whole occurrence path since #70 ("Seam 1 / Rivet 1 /
+		// rivet"); a row that took its name from it would say where twice and what never.
+		if r.Name != got.Found[i].Label {
+			t.Errorf("the row for %s is named %q in its name column; the search called it %q", r.Path, r.Name, got.Found[i].Label)
+		}
+		if strings.Contains(r.Name, "Seam") || strings.Contains(r.Name, geometry.NameSeparator) {
+			t.Errorf("the row for %s is named %q, which carries the path above it; the path column says where it is", r.Path, r.Name)
 		}
 		if other, dup := seen[r.Text]; dup {
 			t.Errorf("the rows for %s and %s both read %q", other, r.Path, r.Text)
