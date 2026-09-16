@@ -118,6 +118,22 @@ func TestRendererFlattensATreeLikeTheExporter(t *testing.T) {
 			d.Assemblies[1].Children[1].Pattern = &geometry.Pattern{Kind: "polar", Count: 5, About: "x", Angle: 130}
 			return d
 		}()},
+		// 2026-09-15 (bound child positions): the browser never evaluates a binding. It
+		// reads the numbers Bind wrote, so a re-specified tree must draw where Go builds it.
+		{"children and an interface bound to parameters, re-specified", func() geometry.Document {
+			d := corner()
+			d.Parameters = []geometry.Parameter{{Name: "half_track", Value: 1000, Unit: "mm", How: geometry.Chosen}}
+			d.Assemblies[0].Children[0].PositionFrom = map[string]string{"x": "half_track", "z": "half_track / 2"}
+			d.Assemblies[0].Children[1].PositionFrom = map[string]string{"x": "-half_track"}
+			d.Assemblies[1].Interfaces = []geometry.Interface{{ID: "mount", Position: []float64{0, 50, 0},
+				PositionFrom: map[string]string{"y": "half_track / 20"}}}
+			d.Assemblies[1].Children[1].At = "mount"
+			v, problems := d.WithParameters(map[string]float64{"half_track": 1234})
+			if len(problems) != 0 || v.Assemblies[0].Children[0].Position[0] != 1234 || v.Assemblies[1].Interfaces[0].Position[1] != 61.7 {
+				panic("the re-specified tree did not move its bound placements")
+			}
+			return *v
+		}()},
 		{"a named grid", func() geometry.Document {
 			d := corner()
 			d.Assemblies[1].Children[0].Name = "Bolt"
@@ -169,6 +185,25 @@ func TestRendererFlattensATreeLikeTheExporter(t *testing.T) {
 				Children:   []geometry.Child{{ID: "pin", Ref: "damper"}}})
 			d.Assemblies[0].Children = append(d.Assemblies[0].Children,
 				geometry.Child{ID: "wheel", Ref: "damper", At: "front-left/knuckle/hub", Position: []float64{0, 0, 9}})
+			return d
+		}()},
+		// The contract's cross-subsystem mount (2026-09-15, attach and bind): a wheel
+		// assembly with a polar ring of nuts, placed FROM THE ROOT at a nested
+		// interface of a sibling, one side mirrored and turned.
+		{"a subsystem placed from the root at a mirrored sibling's nested interface", func() geometry.Document {
+			d := corner()
+			d.Assemblies[0].Children[1].Mirror = "x"
+			d.Assemblies[1].Children = append(d.Assemblies[1].Children,
+				geometry.Child{ID: "knuckle", Ref: "knuckle", Position: []float64{-50, 10, 0}, Rotation: []float64{0, 15, 0}})
+			d.Assemblies = append(d.Assemblies,
+				geometry.Assembly{ID: "knuckle",
+					Interfaces: []geometry.Interface{{ID: "hub", Position: []float64{-20, 5, 0}, Rotation: []float64{0, 0, 90}}},
+					Children:   []geometry.Child{{ID: "pin", Ref: "damper"}}},
+				geometry.Assembly{ID: "wheel", Children: []geometry.Child{{ID: "tyre", Ref: "damper"},
+					{ID: "nut", Ref: "damper", Position: []float64{60, 0, 0}, Pattern: &geometry.Pattern{Kind: "polar", Count: 5, About: "y"}}}})
+			d.Assemblies[0].Children = append(d.Assemblies[0].Children,
+				geometry.Child{ID: "left-wheel", Ref: "wheel", At: "front-left/knuckle/hub", Rotation: []float64{0, 0, 90}},
+				geometry.Child{ID: "right-wheel", Ref: "wheel", At: "front-right/knuckle/hub", Rotation: []float64{0, 0, 90}})
 			return d
 		}()},
 		{"a pattern around an interface, and a part on one copy", func() geometry.Document {
@@ -243,16 +278,27 @@ func TestRendererFlattensATreeLikeTheExporter(t *testing.T) {
 			return geometry.Document{Name: "deep", Units: "mm", Definitions: []geometry.Part{box("damper")},
 				Assemblies: asms, Root: id(0)}
 		}()},
-		// Carried over the ceiling by a PATTERN: the first refusal case reaches it through
-		// repeats alone, so the browser could forget to multiply by a pattern's copies
-		// and still agree with Go there.
-		{"a pattern that carries a design over the ceiling is refused whole", func() geometry.Document {
+		// Past the KERNEL's ceiling (4096) and well inside the viewport's: drawn, copy for
+		// copy, since Phase 6, stage W1. A browser still holding 4096 draws nothing here.
+		{"a design past the kernel's ceiling is drawn", func() geometry.Document {
 			return geometry.Document{Name: "panel", Units: "mm", Root: "panel",
 				Definitions: []geometry.Part{{ID: "rivet", Shape: "cylinder",
 					Size:   map[string]float64{"radius": 1, "height": 2},
 					Repeat: &geometry.Repeat{Count: 500, Offset: []float64{3, 0, 0}}}},
 				Assemblies: []geometry.Assembly{{ID: "panel", Children: []geometry.Child{
 					{ID: "row", Ref: "rivet", Pattern: &geometry.Pattern{Kind: "linear", Count: 10, Offset: []float64{0, 5, 0}}},
+				}}}}
+		}()},
+		// Carried over the viewport's ceiling by a PATTERN: the next refusal case reaches it
+		// through repeats alone, so the browser could forget to multiply by a pattern's
+		// copies and still agree with Go there.
+		{"a pattern that carries a design over the ceiling is refused whole", func() geometry.Document {
+			return geometry.Document{Name: "panel", Units: "mm", Root: "panel",
+				Definitions: []geometry.Part{{ID: "rivet", Shape: "cylinder",
+					Size:   map[string]float64{"radius": 1, "height": 2},
+					Repeat: &geometry.Repeat{Count: 500, Offset: []float64{3, 0, 0}}}},
+				Assemblies: []geometry.Assembly{{ID: "panel", Children: []geometry.Child{
+					{ID: "row", Ref: "rivet", Pattern: &geometry.Pattern{Kind: "linear", Count: 201, Offset: []float64{0, 5, 0}}},
 				}}}}
 		}()},
 		{"a design too large to draw is refused whole, in Go's words", func() geometry.Document {
@@ -262,8 +308,8 @@ func TestRendererFlattensATreeLikeTheExporter(t *testing.T) {
 					Repeat: &geometry.Repeat{Count: 512, Offset: []float64{3, 0, 0}}}},
 				Root: "panel"}
 			panel := geometry.Assembly{ID: "panel"}
-			for i := 0; i < 9; i++ {
-				panel.Children = append(panel.Children, geometry.Child{ID: "row" + string(rune('a'+i)), Ref: "rivet",
+			for i := 0; i < 196; i++ {
+				panel.Children = append(panel.Children, geometry.Child{ID: "row" + string(rune('a'+i%26)) + string(rune('a'+i/26)), Ref: "rivet",
 					Position: []float64{0, float64(i) * 5, 0}})
 			}
 			d.Assemblies = []geometry.Assembly{panel}
@@ -296,15 +342,18 @@ func TestRendererFlattensATreeLikeTheExporter(t *testing.T) {
 				t.Fatalf("unreadable renderer output: %v", err)
 			}
 			got := drawn.Parts
-			expanded := tc.doc.Expanded()
-			want := expanded.Parts
-			// A design too large to draw draws nothing, and says why in Go's words (S0).
-			if refusal := tc.doc.DrawRefusal(); refusal != "" || drawn.Refusal != "" {
+			// A design too large to draw draws nothing, and says why in Go's words (S0). The
+			// ceiling is the VIEWPORT's since Phase 6, stage W1, and a refused design is not
+			// expanded here either: that would cost the test what the refusal saves.
+			var expanded geometry.Document
+			if refusal := tc.doc.ViewportRefusal(); refusal != "" || drawn.Refusal != "" {
 				if drawn.Refusal != refusal {
 					t.Fatalf("the browser refuses with %q, the exporter with %q", drawn.Refusal, refusal)
 				}
-				want = nil
+			} else {
+				expanded = tc.doc.Expanded()
 			}
+			want := expanded.Parts
 			// Material being removed is drawn ghosted: the tools of a cut or a loft,
 			// including those an assembly's own features name (D1e).
 			removed := map[string]bool{}

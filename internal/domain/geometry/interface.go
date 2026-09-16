@@ -2,6 +2,7 @@ package geometry
 
 import (
 	"fmt"
+	"math"
 	"strings"
 )
 
@@ -33,6 +34,10 @@ type Interface struct {
 	// document's units and in DEGREES about x then y then z, as a child's do.
 	Position []float64 `json:"position,omitempty"`
 	Rotation []float64 `json:"rotation,omitempty"`
+	// PositionFrom binds the frame's position to parameters, as a child's does
+	// (tree.go): a hub face at half_track moves every wheel attached at it when the
+	// track changes.
+	PositionFrom map[string]string `json:"position_from,omitempty"`
 }
 
 // interfaceProblems checks the interfaces one assembly declares: an id a path can
@@ -168,4 +173,207 @@ func declaredInterfaces(a Assembly) string {
 		ids = append(ids, f.ID)
 	}
 	return " (it declares " + strings.Join(ids, ", ") + ")"
+}
+
+// An `at` that leaves its assembly, refused with the fix.
+//
+// # The problem this solves
+//
+// Measured live 2026-09-15 (docs/spikes/2026-09-15-car-quality, run 2): the wheels
+// step attached each wheel at "rear-suspension/left-hub/hub-face" from INSIDE its own
+// "wheels" assembly. It was refused as `assembly "wheels" has no child
+// "rear-suspension"`: true, and no use. The fault repair was sent that sentence, moved
+// the path to "left-hub/hub-face" — still inside "wheels" — and back again, four
+// times, and the step was lost with a correct wheel in it.
+//
+// # Why the root, and why FORGE does not move the child itself
+//
+// An assembly is written once and may be placed many times, so a path inside it can
+// name only what it contains: its own interfaces and its own children's. Naming
+// another subsystem from inside it would break define-once — which suspension would a
+// wheels assembly placed twice be on? The one place both subsystems are placed is the
+// assembly that places them, for a build the root, and a longer path from there
+// ("suspension-left/hub") names exactly one frame. So the refusal says to attach from
+// the root, with the path to write there, and what is still wrong with that path when
+// it would fail too. FORGE does not rewrite it: which child belongs in which assembly
+// is the design, and a moved wheel is one the author never placed.
+// docs/bugfix/2026-09-15-an-attachment-into-another-assembly-was-refused-without-the-fix.md
+// Fence: TestInterface_AnAttachmentThatLeavesItsAssemblyIsRefusedWithTheFix.
+
+// leaves reports whether the `at` path on a child of a names something outside a: a
+// first segment that is none of a's children or pattern copies, or a lone interface a
+// does not declare and the root does. Never for a child of the root itself, whose
+// paths are the ones this tells everyone else to write.
+func leaves(a, root Assembly, at string) bool {
+	if a.ID == root.ID {
+		return false
+	}
+	first, _, nested := strings.Cut(at, PathSeparator)
+	if strings.TrimSpace(first) == "" {
+		return false
+	}
+	if !nested {
+		return !declares(a, first) && declares(root, first)
+	}
+	for _, c := range a.Children {
+		if c.ID == first {
+			return false
+		}
+		slots, _ := c.Pattern.copies()
+		for _, slot := range slots {
+			if c.ID+slot.suffix == first {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+func declares(a Assembly, id string) bool {
+	for _, f := range a.Interfaces {
+		if f.ID == id {
+			return true
+		}
+	}
+	return false
+}
+
+// outsideProblem is the refusal for a path that leaves assembly a, with the path to
+// write from the root instead. A path that already starts at the root's id loses it:
+// from the root, "rear-suspension/left-hub/hub-face" is "left-hub/hub-face".
+//
+// ‼️ The fix comes FIRST and the reason after it: a build step's note clips each fault
+// at 200 characters, and the repair and the person need the instruction, not only why.
+func (r *attachments) outsideProblem(a, root Assembly, at string) string {
+	fromRoot := at
+	if first, rest, ok := strings.Cut(at, PathSeparator); ok && first == root.ID && rest != "" {
+		fromRoot = rest
+	}
+	out := fmt.Sprintf("is attached at %q, outside its assembly %q; attach it from the root %q instead, as a "+
+		"child there with \"at\": %q. An assembly is written once and may be placed anywhere, so a child in it "+
+		"attaches only at the assembly's own interfaces or its own children's", at, a.ID, root.ID, fromRoot)
+	if _, problem := r.interfaceIn(root, fromRoot, fromRoot); problem != "" {
+		if _, why, ok := strings.Cut(problem, ", but "); ok {
+			problem = why
+		}
+		out += "; from the root that path fails too: " + problem
+	}
+	return out
+}
+
+// RootInterface is one mounting frame a child of the root can be attached at: the
+// `at` path to write on that child, and where the frame sits in the root's frame.
+type RootInterface struct {
+	At       string    `json:"at"`
+	Position []float64 `json:"position"`
+	Rotation []float64 `json:"rotation,omitempty"`
+	// Mirrored says the frame is reflected: something above it mirrors its placement.
+	Mirrored bool `json:"mirrored,omitempty"`
+}
+
+// rootInterfaceDepth is how many placements deep a listed path may reach from the
+// root: "suspension-left/hub" is 1, "suspension-left/knuckle/hub" 2.
+const rootInterfaceDepth = 3
+
+// rootInterfaceBudget bounds how many candidate frames one listing looks at, so a
+// pattern of a thousand copies costs a bounded walk rather than a thousand of them.
+const rootInterfaceBudget = 4096
+
+// InterfacesFromRoot lists the interfaces a child of the root can attach at, on every
+// assembly the root already places except those placing except, in document order.
+// Each path is resolved by the same code a placement is, so a listed path is one
+// that attaches: one refused (a mirror across an unknown axis, a cycle) is not
+// listed. At most limit are returned; more counts those left out.
+//
+// Phase 2, stage A2 (2026-09-15): a step that mounts its subsystem on another is
+// shown these instead of the other subsystem's contents.
+// Fence: TestInterfacesFromRoot_ListsWhereAChildOfTheRootCanAttach.
+func (d Document) InterfacesFromRoot(except string, limit int) (list []RootInterface, more int) {
+	asms := map[string]Assembly{}
+	for _, a := range d.Assemblies {
+		if _, dup := asms[a.ID]; !dup {
+			asms[a.ID] = a
+		}
+	}
+	root, ok := asms[d.Root]
+	if !ok {
+		return nil, 0
+	}
+	attach := newAttachments(asms)
+	budget := rootInterfaceBudget
+	var visit func(a Assembly, prefix string, depth int, onPath map[string]bool)
+	visit = func(a Assembly, prefix string, depth int, onPath map[string]bool) {
+		for _, f := range a.Interfaces {
+			if budget == 0 {
+				return
+			}
+			budget--
+			if len(list) >= limit {
+				more++
+				continue
+			}
+			path := prefix + PathSeparator + f.ID
+			frame, problem := attach.interfaceIn(root, path, path)
+			if problem != "" {
+				continue
+			}
+			pos, rot, mirrored := frame.stored()
+			list = append(list, RootInterface{At: path, Position: tidyCoordinates(pos), Rotation: tidyRotation(rot), Mirrored: mirrored})
+		}
+		if depth >= rootInterfaceDepth {
+			return
+		}
+		for _, c := range a.Children {
+			sub, isAsm := asms[c.Ref]
+			if !isAsm || onPath[sub.ID] {
+				continue
+			}
+			slots, problem := c.Pattern.copies()
+			if problem != nil && problem.Severity == Error {
+				continue
+			}
+			onPath[sub.ID] = true
+			for _, slot := range slots {
+				visit(sub, prefix+PathSeparator+c.ID+slot.suffix, depth+1, onPath)
+			}
+			delete(onPath, sub.ID)
+		}
+	}
+	for _, c := range root.Children {
+		sub, isAsm := asms[c.Ref]
+		if !isAsm || c.Ref == except || sub.ID == root.ID {
+			continue
+		}
+		slots, problem := c.Pattern.copies()
+		if problem != nil && problem.Severity == Error {
+			continue
+		}
+		for _, slot := range slots {
+			visit(sub, c.ID+slot.suffix, 1, map[string]bool{root.ID: true, sub.ID: true})
+		}
+	}
+	return list, more
+}
+
+// tidyCoordinates rounds away the float noise composing frames leaves (1e-13 for a
+// zero), so a listing reads as the numbers the author wrote.
+func tidyCoordinates(v []float64) []float64 {
+	out := make([]float64, len(v))
+	for i, x := range v {
+		out[i] = math.Round(x*1e6) / 1e6
+		if out[i] == 0 {
+			out[i] = 0 // not -0
+		}
+	}
+	return out
+}
+
+func tidyRotation(v []float64) []float64 {
+	out := tidyCoordinates(v)
+	for _, x := range out {
+		if x != 0 {
+			return out
+		}
+	}
+	return nil
 }

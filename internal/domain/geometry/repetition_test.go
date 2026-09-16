@@ -242,3 +242,233 @@ func TestRepetition_IsDeterministic(t *testing.T) {
 		}
 	}
 }
+
+// ---- Top-level parts of a flat document (added 2026-09-15) ----------------------
+
+// boltPart is one bolt as a flat document writes it: its own name and note, which
+// are not what makes two bolts different.
+func boltPart(id string, position, rotation []float64) Part {
+	return Part{ID: id, Name: "Bolt " + id, Note: "the bolt called " + id, Shape: "cylinder",
+		Size: map[string]float64{"radius": 3, "height": 20}, Position: position, Rotation: rotation}
+}
+
+func flatRow(positions ...[]float64) Document {
+	d := Document{Name: "rail", Units: "mm"}
+	for i, p := range positions {
+		d.Parts = append(d.Parts, boltPart(fmt.Sprintf("bolt-%c", 'a'+i), p, []float64{0, 0, 0}))
+	}
+	return d
+}
+
+// builtSet is every part a document builds — repeats written out — as a position
+// and a rotation matrix, rounded and sorted.
+func builtSet(d Document) []string {
+	var out []string
+	for _, p := range d.Expanded().Parts {
+		at := placementOf(p.Position, p.Rotation, p.Mirrored)
+		var b strings.Builder
+		for _, v := range append(at.pos[:], at.m[:]...) {
+			fmt.Fprintf(&b, "%.2f,", v+0)
+		}
+		out = append(out, strings.ReplaceAll(b.String(), "-0.00", "0.00"))
+	}
+	sort.Strings(out)
+	return out
+}
+
+// asRepeat replaces a top-level run with the one repeated part the warning offers.
+func asRepeat(d Document, r Repetition) Document {
+	var kept []Part
+	for _, p := range d.Parts {
+		switch {
+		case p.ID == r.Children[0]:
+			rep := *r.Repeat
+			p.Repeat = &rep
+			kept = append(kept, p)
+		case strings.Contains(strings.Join(r.Children, "\x00")+"\x00", p.ID+"\x00"):
+		default:
+			kept = append(kept, p)
+		}
+	}
+	d.Parts = kept
+	return d
+}
+
+func theRepeatWritesOutTheSameParts(t *testing.T, d Document, r Repetition) {
+	t.Helper()
+	if r.Repeat == nil {
+		t.Fatalf("no repeat is offered for %+v", r)
+	}
+	rewritten := asRepeat(d, r)
+	if a, b := builtSet(d), builtSet(rewritten); strings.Join(a, "\n") != strings.Join(b, "\n") {
+		t.Errorf("the offered repeat %+v does not write out what the parts were:\nwritten out:\n%s\nas the repeat:\n%s",
+			*r.Repeat, strings.Join(a, "\n"), strings.Join(b, "\n"))
+	}
+	if again := rewritten.EnumeratedRepetition(); len(again) != 0 {
+		t.Errorf("the rewritten document is still flagged: %+v", again)
+	}
+}
+
+// A flat document's parts written out in a row are found like children are, and the
+// warning offers the "repeat" that writes out the same parts — checked by writing it
+// out — and the assembly pattern as the other spelling.
+func TestRepetition_FindsARowOfTopLevelPartsAndTheRepeatThatWritesThemOut(t *testing.T) {
+	d := flatRow([]float64{0, 5, 0}, []float64{25, 5, 0}, []float64{50, 5, 0}, []float64{75, 5, 0}, []float64{100, 5, 0})
+	r := onlyRepetition(t, d)
+	if !r.TopLevel || r.Assembly != "" || r.Ref != "" || len(r.Children) != 5 || r.Pattern.Kind != "linear" ||
+		r.Repeat == nil || r.Repeat.Count != 5 || fmt.Sprint(r.Repeat.Offset) != "[25 0 0]" {
+		t.Fatalf("found %+v (repeat %+v)", r, r.Repeat)
+	}
+	for _, want := range []string{"Top-level parts bolt-a, bolt-b, bolt-c, bolt-d, bolt-e", "written out 5 times",
+		`"repeat": {"count":5,"offset":[25,0,0]}`, `"definitions"`, `"pattern": {"kind":"linear","count":5,"offset":[25,0,0]}`} {
+		if !strings.Contains(r.Warning(), want) {
+			t.Errorf("the warning does not say %s:\n%s", want, r.Warning())
+		}
+	}
+	theRepeatWritesOutTheSameParts(t, d, r)
+}
+
+// A ring of parts turned with the circle, rounded the way a model writes it, is one
+// circular repeat about that axis.
+func TestRepetition_FindsARingOfTopLevelParts(t *testing.T) {
+	d := Document{Name: "hub", Units: "mm"}
+	r3 := func(v float64) float64 { return math.Round(v*1000) / 1000 }
+	for k := 0; k < 8; k++ {
+		p := mulMatVec(RotationMatrix(axisRotation("y", float64(k)*math.Pi/4)), [3]float64{0, 0, 60})
+		d.Parts = append(d.Parts, boltPart(fmt.Sprintf("spoke-%d", k), []float64{r3(p[0]), r3(p[1]), r3(p[2])}, []float64{0, float64(k) * 45, 0}))
+	}
+	r := onlyRepetition(t, d)
+	if !r.TopLevel || r.Pattern.Kind != "polar" || r.Unturned || r.Repeat == nil || r.Repeat.About != "y" || r.Repeat.Count != 8 || r.Repeat.Angle != 0 {
+		t.Fatalf("found %+v (repeat %+v)", r, r.Repeat)
+	}
+	theRepeatWritesOutTheSameParts(t, d, r)
+
+	// The same ring with every spoke leaning 30° about x, turned with the circle as a
+	// pattern turns a child. A repeat turns a copy by adding to its y angle, and a
+	// turn about y applied before a lean about x is not the one applied after it — so
+	// the repeat would lean each spoke a different way, no repeat is offered, and the
+	// pattern is. (A lean about z commutes with that sum, and there the check finds
+	// the repeat does place the same spokes and offers it: it is checked, not assumed.)
+	tilted := Document{Name: "hub", Units: "mm"}
+	lean := RotationMatrix(degreesToRadians3([]float64{30, 0, 0}))
+	for k := 0; k < 8; k++ {
+		turn := RotationMatrix(axisRotation("y", float64(k)*math.Pi/4))
+		p := mulMatVec(turn, [3]float64{0, 0, 60})
+		e := EulerDegreesFromMatrix(mulMat3(turn, lean))
+		tilted.Parts = append(tilted.Parts, boltPart(fmt.Sprintf("spoke-%d", k), []float64{r3(p[0]), r3(p[1]), r3(p[2])},
+			[]float64{r3(e[0]), r3(e[1]), r3(e[2])}))
+	}
+	r = onlyRepetition(t, tilted)
+	if r.Pattern.Kind != "polar" || r.Unturned || r.Repeat != nil {
+		t.Errorf("a leaning ring: found %+v, repeat %+v; want the polar pattern and no repeat", r.Pattern, r.Repeat)
+	}
+	if strings.Contains(r.Warning(), `"repeat": {`) || !strings.Contains(r.Warning(), `"pattern": {"kind":"polar"`) {
+		t.Errorf("a leaning ring is offered a repeat that would lean its spokes the wrong way:\n%s", r.Warning())
+	}
+}
+
+// A grid is found, and no repeat is offered for it, because a repeat is a line or a
+// circle; the assembly pattern is.
+func TestRepetition_ATopLevelGridIsOfferedThePatternNotARepeat(t *testing.T) {
+	var at [][]float64
+	for row := 0; row < 3; row++ {
+		for col := 0; col < 4; col++ {
+			at = append(at, []float64{float64(col) * 20, 0, float64(row) * 30})
+		}
+	}
+	r := onlyRepetition(t, flatRow(at...))
+	if !r.TopLevel || r.Pattern.Kind != "grid" || r.Pattern.Rows != 3 || r.Pattern.Columns != 4 || r.Repeat != nil {
+		t.Fatalf("found %+v (repeat %+v)", r, r.Repeat)
+	}
+	for _, want := range []string{`not a grid`, `"pattern": {"kind":"grid","rows":3,"columns":4`} {
+		if !strings.Contains(r.Warning(), want) {
+			t.Errorf("the warning does not say %s:\n%s", want, r.Warning())
+		}
+	}
+	if strings.Contains(r.Warning(), `"repeat": {`) {
+		t.Errorf("a grid is offered a repeat, which cannot place one:\n%s", r.Warning())
+	}
+}
+
+// Irregular spacing, too few, parts that differ in anything but place and name, and
+// parts something else names by id are not flagged.
+func TestRepetition_TopLevelPartsThatAreNotOneRunAreNotFlagged(t *testing.T) {
+	row := func() Document {
+		return flatRow([]float64{0, 0, 0}, []float64{10, 0, 0}, []float64{20, 0, 0}, []float64{30, 0, 0})
+	}
+	for name, d := range map[string]Document{
+		"one step off by a millimetre": flatRow([]float64{0, 0, 0}, []float64{10, 0, 0}, []float64{20, 0, 0}, []float64{31, 0, 0}, []float64{45, 0, 0}),
+		"three in a row":               flatRow([]float64{0, 0, 0}, []float64{10, 0, 0}, []float64{20, 0, 0}),
+		"a ring off its radius": flatRow([]float64{40, 0, 0}, []float64{0, 0, -40}, []float64{-40, 0, 0},
+			[]float64{0, 0, 42}),
+		"one of them a different size": func() Document {
+			d := row()
+			d.Parts[2].Size = map[string]float64{"radius": 4, "height": 20}
+			return d
+		}(),
+		"one of them another material": func() Document {
+			d := row()
+			d.Parts[1].Material = &Material{Name: "brass"}
+			return d
+		}(),
+		"one of them mirrored": func() Document {
+			d := row()
+			d.Parts[3].Mirrored = true
+			return d
+		}(),
+		"one of them turned": func() Document {
+			d := row()
+			d.Parts[3].Rotation = []float64{0, 5, 0}
+			return d
+		}(),
+		"one of them is a feature's tool": func() Document {
+			d := row()
+			d.Features = []Feature{{ID: "hole", Op: "cut", Of: "plate", With: []string{"bolt-c"}}}
+			return d
+		}(),
+		"one of them hidden in a state": func() Document {
+			d := row()
+			d.States = []AssemblyState{{ID: "open", Hidden: []string{"bolt-b"}}}
+			return d
+		}(),
+		"one of them placed by an expression": func() Document {
+			d := row()
+			d.Parts[0].PositionFrom = map[string]string{"x": "0"}
+			return d
+		}(),
+		"already repeats": func() Document {
+			d := row()
+			for i := range d.Parts {
+				d.Parts[i].Repeat = &Repeat{Count: 2, Offset: []float64{0, 5, 0}}
+			}
+			return d
+		}(),
+	} {
+		if got := d.EnumeratedRepetition(); len(got) != 0 {
+			t.Errorf("%s is flagged: %s", name, got[0].Warning())
+		}
+	}
+}
+
+// Top-level parts are reported before any assembly — the order every reader sees
+// parts in — and their groups in the order each group's first part is written.
+func TestRepetition_TopLevelPartsComeFirstInWrittenOrder(t *testing.T) {
+	d := plateOf(placed("bolt", []float64{0, 0, 0}, []float64{10, 0, 0}, []float64{20, 0, 0}, []float64{30, 0, 0})...)
+	for i := 0; i < 4; i++ {
+		d.Parts = append(d.Parts,
+			Part{ID: fmt.Sprintf("nut-%d", i), Shape: "box", Size: map[string]float64{"width": 10, "height": 5, "depth": 10},
+				Position: []float64{float64(i) * 15, 40, 0}},
+			boltPart(fmt.Sprintf("pin-%d", i), []float64{float64(i) * 15, 80, 0}, nil))
+	}
+	got := d.EnumeratedRepetition()
+	if len(got) != 3 || !got[0].TopLevel || got[0].Children[0] != "nut-0" || !got[1].TopLevel || got[1].Children[0] != "pin-0" ||
+		got[2].TopLevel || got[2].Assembly != "plate" {
+		t.Fatalf("found, in order: %+v", got)
+	}
+	want, _ := json.Marshal(got)
+	for i := 0; i < 50; i++ {
+		if again, _ := json.Marshal(d.EnumeratedRepetition()); string(again) != string(want) {
+			t.Fatalf("run %d found a different answer:\n%s\n%s", i, again, want)
+		}
+	}
+}

@@ -117,7 +117,7 @@ var geometryContractTemplate = `Reply with JSON only:
         "color": "#b8bcc4",
         "opacity": 1.0,
         "note": "what this part is for",
-        "material": null or {"name": "aluminium 6061-T6", "finish": "metal",
+        "material": null or {"name": "aluminium 6061-T6", "finish": "metal", "density": 2700,
                              "how": "observed|retrieved|inferred|assumed", "source": ""}
       }
     ],
@@ -191,6 +191,7 @@ instead of "prototype". Never both.
         "features": [ ...whole features, by id... ],
         "definitions": [ ...whole definitions, by id... ],
         "assemblies": [ ...whole assemblies, by id... ],
+        "root": "ONLY when the model has no root yet: the assembly that will hold everything",
         "parameters": [ ... ], "derived": [ ... ],
         "assumptions": ["what you chose for THIS change"],
         "not_verified": ["what this change does not establish"]
@@ -209,6 +210,9 @@ instead of "prototype". Never both.
   id like "axle/left-wheel/hub" says where a part IS; to change it, edit the
   definition "hub" or the assembly "wheel" it comes from. "children" removes
   one child from one assembly, written "assembly-id/child-id".
+- A patched ASSEMBLY is replaced whole, children and all. To add a child to one,
+  send it with every child it already has and the new one after them; an
+  assembly sent with only the new child loses the others.
 - "assumptions" and "not_verified" in a patch are ADDED to what is already there.
   The earlier ones still hold; do not restate them.
 - Send a whole "prototype" instead when there is nothing on screen yet, or when
@@ -218,6 +222,11 @@ About "prototype":
 
 - Positions are in the stated units, Y is up, and the origin is the assembly's
   centre. Parts are centred on their own position.
+- A "cylinder" or "cone" STANDS UPRIGHT: its "height" runs along the part's own
+  Y, with its round faces at the top and bottom. So a wheel, a brake disc or a
+  pulley on an axle that runs across the model, along X, is turned
+  "rotation": [0, 0, 90]. Left unturned it lies flat like a plate, and turned
+  [90, 0, 0] it faces forward and would roll sideways.
 - Part ids are STABLE ACROSS TURNS. When you revise an assembly, the part that
   was "base-plate" stays "base-plate" — that is what lets somebody put the two
   versions side by side and see what changed rather than two unrelated designs.
@@ -271,12 +280,29 @@ About "prototype":
   "align": true}, along straight segments only. The copies are named "child-1",
   "child-2" and so on. "pattern" repeats a placed child, a whole sub-assembly
   included; "repeat" is still how one part appears many times.
+  A "polar" pattern turns its copies about an axis THROUGH THE ORIGIN of the
+  frame the child is measured in: its assembly's, or its interface's when it has
+  "at". So the child's "position" is where the FIRST copy sits on the circle, off
+  that axis: [57, 0, 0] with "about": "y" is a ring of radius 57 round Y, and a
+  child ON the axis puts every copy in the same place. "about" must be the axis
+  of the thing the copies go round. Draw a wheel upright in its own assembly, its
+  axis Y and its lug nuts a ring "about": "y" at its outer face, and turn the
+  whole wheel where it is placed; a rim turned inside the wheel leaves its nuts
+  circling an axis the rim no longer has, straight through the rim and the tyre.
   "interfaces" on an assembly are named mounting frames, each an "id", a
   "position" and a "rotation". A child with "at" is measured in that frame
   instead of its assembly's: "at": "mount" names an interface of its own
   assembly, and "at": "front-left/hub" names the interface "hub" on the sibling
   placed as "front-left" (a pattern copy by its copy id, "bolt-3/seat"). Move
   the interface and everything attached to it follows.
+  An "at" never leaves its own assembly. An assembly is written once and may be
+  placed many times, so a child in it attaches only at that assembly's own
+  interfaces or its own children's ("hub", "knuckle/hub"), never at another
+  subsystem's, and FORGE refuses a path that leaves it. One subsystem mounts on
+  another where BOTH are placed, from the root, by the longer path from there.
+  This child of the root puts the wheel on the "hub" of the suspension the root
+  placed as "suspension-left"; a deeper frame is "suspension-left/knuckle/hub":
+      {"id": "left-wheel", "ref": "wheel", "at": "suspension-left/hub", "rotation": [0, 0, 90]}
   "features" on an assembly are cuts, fuses and fillets between the parts that
   assembly places, written once and applied in EVERY placement of it. Their "of"
   and "with" are paths from that assembly: "hub", "spoke" (every copy of a
@@ -403,6 +429,13 @@ About "prototype":
   repeat the number. Bind every dimension that follows from a parameter; a
   thickness you simply chose and that follows nothing needs no entry.
   "position_from" keys are "x", "y" and "z", and Y is up.
+  In a tree a definition is bound the same way, and a child or an interface is
+  placed by a parameter's name written in its "position", which FORGE works out
+  from the parameters and keeps as its "position_from", so it follows them:
+      {"id": "rail", "shape": "box", "size": {"width": 50, "height": 80, "depth": 2700}, "size_from": {"depth": "wheelbase"}}
+      {"id": "front-axle", "ref": "axle", "position": ["half_wheelbase", 0, 0]}
+  Never type the number a parameter holds: 1350 where half_wheelbase is 1350 is
+  a position that stays put when the wheelbase changes.
   Fill in "size" and "position" as well, with the values as they stand now. They
   are what gets drawn if an expression cannot be read, and FORGE tells the reader
   when your number and your own expression disagree — so a rib bound to
@@ -636,8 +669,45 @@ About "prototype":
   a real answer and it is shown as one. "finish" is only how it catches light:
   `
 
-var converseFraming = converseManner + geometryContract + geometry.FinishGuide() + `.
-- "states" are named configurations: which parts are shown, and where they sit.
+// densityContract teaches "density" where materials are taught.
+//
+// # The problem this solves
+//
+// Phase 5, stage V3 added Material.Density and a mass roll-up, and the contract
+// never said the field existed. A model cannot write a field it was never shown,
+// so every mass report on a model's document was "weighted by volume, no mass
+// claimed" — correct, and useless.
+//
+// # Why the ceiling is rendered and the mass rule spelled out
+//
+// The ceiling is the validator's own constant (geometry.MaxDensity), so the two
+// cannot disagree. The rule — mass only when EVERY part has a density — is what
+// geometry.MassProperties does, and a model that is not told it puts a density on
+// the three parts it is sure of and expects a mass. It gets none, and is told why.
+// TestTheContractTeachesDensityAsTheValidatorReadsIt holds all three to the code.
+var densityContract = fmt.Sprintf(`  "density" is the material's density in KILOGRAMS PER CUBIC METRE: aluminium
+  about 2700, steel about 7850, ABS about 1050. Write steel as 7850, never 7.85 —
+  that is grams per cubic centimetre, and the part would weigh a thousand times too
+  little. It is part of the same claim as the name, labelled by the same "how",
+  and a density above %d is refused, because no material is that dense. Leave it
+  out when you do not know the material.
+  FORGE reports the model's MASS only when every part has a density. When any part
+  has none, the roll-up is weighted by volume instead, says so, and names the parts
+  without one: a density on some parts and not others gives no mass at all.
+`, geometry.MaxDensity)
+
+// buildContract is the document contract a build step is sent (assemble.go).
+//
+// ‼️ Not geometryContract alone. The template's material paragraph ends on
+// ""finish" is only how it catches light:" and the finish list and the density rule
+// that finish that paragraph are spliced in by converseFraming only, so every build
+// step read a sentence that stopped mid-way and met "density" solely inside the
+// example material — never its unit, its ceiling or the all-parts rule for a mass
+// (2026-09-15; the conversation contract has had them since PR #92).
+// Fence: TestAssemble_EveryStepIsTaughtFinishesAndDensity.
+var buildContract = geometryContract + geometry.FinishGuide() + ".\n" + densityContract
+
+var converseFraming = converseManner + geometryContract + geometry.FinishGuide() + ".\n" + densityContract + `- "states" are named configurations: which parts are shown, and where they sit.
   A state with "offsets" says these pieces separate along this path, and
   NOTHING here checks that they can — there is no interference, clearance or
   kinematic test in this deployment. Offer states when somebody is asking how a
@@ -945,12 +1015,17 @@ func parseReply(resp *llm.Response) (Reply, error) {
 	//
 	// Only after the strict parse has already failed, so a reply that parses is
 	// never rewritten.
-	if repaired, moved := repairDimensions(body); moved {
+	if repaired, relocated, evaluated := repairDimensionsNoted(body); relocated || evaluated {
 		var second Reply
 		if json.Unmarshal(repaired, &second) == nil {
-			second.Repaired = "One or more dimensions arrived as expressions written in the " +
-				"place of a number. They were read as the expressions they are — the " +
-				"contract has a field for each — rather than the reply being discarded."
+			if relocated {
+				second.noteRepair("One or more dimensions arrived as expressions written in the " +
+					"place of a number. They were read as the expressions they are — the " +
+					"contract has a field for each — rather than the reply being discarded.")
+			}
+			if evaluated {
+				second.noteRepair(childPositionNote)
+			}
 			return second, nil
 		}
 	}
@@ -1180,10 +1255,16 @@ func (c *Conversation) Respond(ctx context.Context, projectID string, history []
 		return nil, err
 	}
 
+	// A child an edit places by the name of a parameter the model on screen has, as
+	// the contract teaches, is read over that model's parameters (dimensionrepair.go).
+	resp, overModel := placementsOverModel(resp, current)
 	reply, err := parseReply(resp)
 	if err != nil {
 		return nil, errs.Wrap(op, errs.CodeExternalProtocol, err).
 			WithDetail("the model returned neither usable JSON nor any text")
+	}
+	if overModel {
+		reply.noteRepair(childPositionNote)
 	}
 	reply.Model = resp.Model
 	reply.Usage = resp.Usage

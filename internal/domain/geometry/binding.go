@@ -110,6 +110,18 @@ func (d *Document) bind(compareToAuthored bool) []Problem {
 	// wording for both makes the second read like the first.
 	profiles, paths, _ := d.resolvedProfiles()
 
+	// ‼️ Everything below writes into COPIES of the lists, maps and slices it changes,
+	// never into storage the document may share with the one it was made from.
+	// Edit.Apply copies a document's lists but not the size maps, positions and
+	// outlines inside them, and clone did not copy outlines: binding an edit that
+	// changed a parameter rewrote the model it was applied to, so a build step
+	// refused afterwards left the kept model with half_track = 800 and an arm bound to
+	// it 900 wide; and a respec rewrote its source's outline.
+	// docs/bugfix/2026-09-15-binding-a-document-rewrote-the-document-it-was-made-from.md
+	// Fence: TestBind_BindingAnEditedModelLeavesTheModelItWasMadeFromAlone.
+	if partsBound(d.Parts, profiles, paths) {
+		d.Parts = append([]Part(nil), d.Parts...)
+	}
 	for i := range d.Parts {
 		problems = append(problems, bindPart(&d.Parts[i], profiles, paths, lookup, compareToAuthored)...)
 	}
@@ -122,12 +134,79 @@ func (d *Document) bind(compareToAuthored bool) []Problem {
 	if len(d.Definitions) > 0 {
 		defs := Document{Parts: d.Definitions, Parameters: d.Parameters, Derived: d.Derived}
 		defProfiles, defPaths, _ := defs.resolvedProfiles()
+		if partsBound(d.Definitions, defProfiles, defPaths) {
+			d.Definitions = append([]Part(nil), d.Definitions...)
+		}
 		for i := range d.Definitions {
 			problems = append(problems, bindPart(&d.Definitions[i], defProfiles, defPaths, lookup, compareToAuthored)...)
 		}
 	}
+	// And where the tree places things: a child's or an interface's position_from,
+	// by the code a part's position is bound with (2026-09-15, bound child positions).
+	// Fence: TestBind_AChildsAndAnInterfacesPositionFollowTheirParameters.
+	if placementsBound(d.Assemblies) {
+		d.Assemblies = append([]Assembly(nil), d.Assemblies...)
+		for i := range d.Assemblies {
+			problems = append(problems, bindPlacements(&d.Assemblies[i], lookup, compareToAuthored)...)
+		}
+	}
 
 	sortProblems(problems)
+	return problems
+}
+
+// partsBound reports whether bindPart would write anything into one of parts.
+func partsBound(parts []Part, profiles map[string]outline, paths map[string]polyline) bool {
+	for _, p := range parts {
+		_, outlined := profiles[p.ID]
+		_, routed := paths[p.ID]
+		if len(p.SizeFrom) > 0 || len(p.PositionFrom) > 0 || outlined || routed {
+			return true
+		}
+	}
+	return false
+}
+
+// placementsBound reports whether any child or interface in asms binds its position.
+func placementsBound(asms []Assembly) bool {
+	for _, a := range asms {
+		for _, c := range a.Children {
+			if len(c.PositionFrom) > 0 {
+				return true
+			}
+		}
+		for _, f := range a.Interfaces {
+			if len(f.PositionFrom) > 0 {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// bindPlacements binds one assembly's children and interfaces, into copies of its
+// lists. A placement is named "assembly/child" (the path an edit removes it by) or
+// "assembly interface id", so a problem says which of a car's many children it is.
+func bindPlacements(a *Assembly, lookup func(string) (float64, bool), compareToAuthored bool) []Problem {
+	var problems []Problem
+	onPlacement := func(list []Problem) {
+		for _, p := range list {
+			p.Detail = strings.Replace(p.Detail, "on the part was kept", "on the placement was kept", 1)
+			problems = append(problems, p)
+		}
+	}
+	a.Children = append([]Child(nil), a.Children...)
+	for j := range a.Children {
+		c := &a.Children[j]
+		onPlacement(bindPosition(&c.Position, c.PositionFrom, a.ID+PathSeparator+c.ID, lookup, compareToAuthored))
+	}
+	if a.Interfaces != nil {
+		a.Interfaces = append([]Interface(nil), a.Interfaces...)
+	}
+	for j := range a.Interfaces {
+		f := &a.Interfaces[j]
+		onPlacement(bindPosition(&f.Position, f.PositionFrom, a.ID+" interface "+f.ID, lookup, compareToAuthored))
+	}
 	return problems
 }
 
@@ -140,6 +219,8 @@ func bindPart(p *Part, profiles map[string]outline, paths map[string]polyline,
 	label := p.Label()
 
 	if section, ok := profiles[p.ID]; ok {
+		p.Profile = clonePoints(p.Profile)
+		p.Holes = cloneLoops(p.Holes)
 		writeBack(p.Profile, section.Outer)
 		for j := range p.Holes {
 			if j < len(section.Holes) {
@@ -152,6 +233,7 @@ func bindPart(p *Part, profiles map[string]outline, paths map[string]polyline,
 	// parameter context, and a path coordinate they cannot read would become
 	// a zero that quietly moves the bend somewhere else.
 	if route, ok := paths[p.ID]; ok && len(route.Points) == len(p.Path) {
+		p.Path = clonePoints(p.Path)
 		for j := range p.Path {
 			p.Path[j].X = route.Points[j][0]
 			p.Path[j].Y = route.Points[j][1]
@@ -160,6 +242,9 @@ func bindPart(p *Part, profiles map[string]outline, paths map[string]polyline,
 		}
 	}
 
+	if len(p.SizeFrom) > 0 {
+		p.Size = copyFloatMap(p.Size)
+	}
 	for _, key := range sortedKeys(p.SizeFrom) {
 		expr := p.SizeFrom[key]
 		value, prob := evalBinding(expr, label, key, lookup)
@@ -181,8 +266,25 @@ func bindPart(p *Part, profiles map[string]outline, paths map[string]polyline,
 		p.Size[key] = value
 	}
 
-	for _, axis := range sortedKeys(p.PositionFrom) {
-		expr := p.PositionFrom[axis]
+	return append(problems, bindPosition(&p.Position, p.PositionFrom, label, lookup, compareToAuthored)...)
+}
+
+// bindPosition writes a position's bound axes from their expressions into a copy of
+// the slice, and reports what could not be bound. One copy of this for parts,
+// definitions, children and interfaces, so a placement is bound, compared with its
+// stated number and refused in exactly the words a part is.
+func bindPosition(position *[]float64, from map[string]string, label string,
+	lookup func(string) (float64, bool), compareToAuthored bool) []Problem {
+	if len(from) == 0 {
+		return nil
+	}
+	var problems []Problem
+	var pos []float64
+	if *position != nil {
+		pos = append(make([]float64, 0, len(*position)), *position...)
+	}
+	for _, axis := range sortedKeys(from) {
+		expr := from[axis]
 		index, ok := axisIndex(axis)
 		if !ok {
 			problems = append(problems, Problem{
@@ -196,19 +298,40 @@ func bindPart(p *Part, profiles map[string]outline, paths map[string]polyline,
 			problems = append(problems, *prob)
 			continue
 		}
-		for len(p.Position) < 3 {
-			p.Position = append(p.Position, 0)
+		for len(pos) < 3 {
+			pos = append(pos, 0)
 		}
-		if was := p.Position[index]; compareToAuthored && !nearlyEqual(was, value) && was != 0 {
+		if was := pos[index]; compareToAuthored && !nearlyEqual(was, value) && was != 0 {
 			problems = append(problems, Problem{
 				Severity: Warning, Name: label,
 				Detail: fmt.Sprintf("states position %s = %g but its own expression %q works out "+
 					"to %g; the expression was used", axis, was, expr, value),
 			})
 		}
-		p.Position[index] = value
+		pos[index] = value
 	}
+	*position = pos
 	return problems
+}
+
+// clonePoints and cloneLoops copy an outline, a path or a section's holes. nil stays
+// nil, so a part without one stores exactly as it did.
+func clonePoints(in []Point) []Point {
+	if in == nil {
+		return nil
+	}
+	return append(make([]Point, 0, len(in)), in...)
+}
+
+func cloneLoops(in [][]Point) [][]Point {
+	if in == nil {
+		return nil
+	}
+	out := make([][]Point, len(in))
+	for i, loop := range in {
+		out[i] = clonePoints(loop)
+	}
+	return out
 }
 
 // evalBinding parses and evaluates one expression, naming the part and the
@@ -353,6 +476,13 @@ func clonePartList(parts []Part) []Part {
 		q.PositionFrom = copyStringMap(p.PositionFrom)
 		q.Position = append([]float64(nil), p.Position...)
 		q.Rotation = append([]float64(nil), p.Rotation...)
+		// ‼️ The outline, its holes and the path too: Bind writes an expression's
+		// coordinates into them, so a variant sharing them re-specified its SOURCE's
+		// outline. docs/bugfix/2026-09-15-binding-a-document-rewrote-the-document-it-was-made-from.md
+		// Fence: TestWithParameters_LeavesTheSourcesOutlineAlone.
+		q.Profile = clonePoints(p.Profile)
+		q.Holes = cloneLoops(p.Holes)
+		q.Path = clonePoints(p.Path)
 		if p.Material != nil {
 			m := *p.Material
 			q.Material = &m
@@ -374,6 +504,7 @@ func cloneAssemblies(in []Assembly) []Assembly {
 			for k, f := range a.Interfaces {
 				f.Position = append([]float64(nil), f.Position...)
 				f.Rotation = append([]float64(nil), f.Rotation...)
+				f.PositionFrom = copyStringMap(f.PositionFrom)
 				b.Interfaces[k] = f
 			}
 		}
@@ -388,6 +519,7 @@ func cloneAssemblies(in []Assembly) []Assembly {
 		for j, c := range a.Children {
 			c.Position = append([]float64(nil), c.Position...)
 			c.Rotation = append([]float64(nil), c.Rotation...)
+			c.PositionFrom = copyStringMap(c.PositionFrom)
 			if c.Pattern != nil {
 				p := *c.Pattern
 				p.Offset = append([]float64(nil), p.Offset...)

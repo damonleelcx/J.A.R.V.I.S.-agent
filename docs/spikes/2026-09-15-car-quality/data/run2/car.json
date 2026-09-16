@@ -1,0 +1,1257 @@
+{
+  "name": "Front Suspension Assembly",
+  "units": "mm",
+  "parts": null,
+  "parameters": [
+    {
+      "name": "track_width",
+      "value": 1600,
+      "unit": "mm",
+      "how": "standard",
+      "source": "Typical sports car rear track"
+    },
+    {
+      "name": "wheel_diameter",
+      "value": 450,
+      "unit": "mm",
+      "how": "standard",
+      "source": "18-inch wheel approx"
+    },
+    {
+      "name": "wishbone_length",
+      "value": 350,
+      "unit": "mm",
+      "how": "chosen"
+    },
+    {
+      "name": "damper_length",
+      "value": 400,
+      "unit": "mm",
+      "how": "chosen"
+    },
+    {
+      "name": "arm_thickness",
+      "value": 20,
+      "unit": "mm",
+      "how": "chosen"
+    }
+  ],
+  "assumptions": [
+    "Left side suspension geometry defined; right side is mirrored in chassis assembly.",
+    "Mounting points are relative to the local assembly origin."
+  ],
+  "not_verified": [
+    "Kinematic motion simulation.",
+    "Clearance with wheel and tire.",
+    "Structural stress analysis."
+  ],
+  "definitions": [
+    {
+      "id": "upper-arm",
+      "name": "Upper Wishbone",
+      "shape": "extrusion",
+      "size": {
+        "depth": 10
+      },
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "profile": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 100,
+          "y": 0
+        },
+        {
+          "x": 100,
+          "y": 10
+        },
+        {
+          "x": 0,
+          "y": 10
+        }
+      ],
+      "rotation": [
+        0,
+        0,
+        -15
+      ],
+      "color": "#a0a0a0",
+      "opacity": 0,
+      "note": "Upper control arm"
+    },
+    {
+      "id": "lower-arm",
+      "name": "Lower Wishbone",
+      "shape": "extrusion",
+      "size": {
+        "depth": 12
+      },
+      "position": [
+        0,
+        -50,
+        0
+      ],
+      "profile": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 120,
+          "y": 0
+        },
+        {
+          "x": 120,
+          "y": 15
+        },
+        {
+          "x": 0,
+          "y": 15
+        }
+      ],
+      "rotation": [
+        0,
+        0,
+        10
+      ],
+      "color": "#a0a0a0",
+      "opacity": 0,
+      "note": "Lower control arm"
+    },
+    {
+      "id": "damper",
+      "name": "Shock Absorber",
+      "shape": "cylinder",
+      "size": {
+        "height": 300,
+        "radius": 25
+      },
+      "position": [
+        20,
+        150,
+        0
+      ],
+      "rotation": [
+        0,
+        0,
+        -5
+      ],
+      "color": "#d4af37",
+      "opacity": 0,
+      "note": "Coilover damper"
+    },
+    {
+      "id": "knuckle",
+      "name": "Steering Knuckle",
+      "shape": "box",
+      "size": {
+        "depth": 40,
+        "height": 80,
+        "width": 40
+      },
+      "position": [
+        100,
+        -20,
+        0
+      ],
+      "rotation": null,
+      "color": "#505050",
+      "opacity": 0,
+      "note": "Hub carrier and brake mount"
+    },
+    {
+      "id": "tie-rod",
+      "name": "Tie Rod End",
+      "shape": "cylinder",
+      "size": {
+        "height": 150,
+        "radius": 8
+      },
+      "position": [
+        100,
+        -40,
+        20
+      ],
+      "rotation": [
+        90,
+        0,
+        0
+      ],
+      "color": "#303030",
+      "opacity": 0,
+      "note": "Steering linkage"
+    },
+    {
+      "id": "diff-housing",
+      "name": "Differential Housing",
+      "shape": "box",
+      "size": {
+        "depth": 300,
+        "height": 250,
+        "width": 400
+      },
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "rotation": null,
+      "color": "#4a4a4a",
+      "opacity": 0,
+      "note": "Central differential unit"
+    },
+    {
+      "id": "rear-upper-arm",
+      "name": "Rear Upper Control Arm",
+      "shape": "box",
+      "size": {
+        "depth": 40,
+        "height": 20,
+        "width": 300
+      },
+      "position": [
+        -50,
+        100,
+        0
+      ],
+      "rotation": [
+        0,
+        0,
+        -15
+      ],
+      "color": "#b8bcc4",
+      "opacity": 0,
+      "note": "Upper link controlling camber and toe"
+    },
+    {
+      "id": "rear-lower-arm",
+      "name": "Rear Lower Control Arm",
+      "shape": "box",
+      "size": {
+        "depth": 50,
+        "height": 25,
+        "width": 320
+      },
+      "position": [
+        -40,
+        -50,
+        0
+      ],
+      "rotation": [
+        0,
+        0,
+        5
+      ],
+      "color": "#b8bcc4",
+      "opacity": 0,
+      "note": "Lower link carrying vertical loads"
+    },
+    {
+      "id": "rear-trailing-arm",
+      "name": "Rear Trailing Arm",
+      "shape": "box",
+      "size": {
+        "depth": 400,
+        "height": 20,
+        "width": 20
+      },
+      "position": [
+        0,
+        -50,
+        100
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "color": "#b8bcc4",
+      "opacity": 0,
+      "note": "Longitudinal link controlling wheelbase dynamics"
+    },
+    {
+      "id": "rear-damper",
+      "name": "Rear Damper Assembly",
+      "shape": "cylinder",
+      "size": {
+        "height": 350,
+        "radius": 25
+      },
+      "position": [
+        -150,
+        150,
+        0
+      ],
+      "rotation": [
+        0,
+        0,
+        10
+      ],
+      "color": "#d9534f",
+      "opacity": 0,
+      "note": "Shock absorber and spring unit"
+    },
+    {
+      "id": "rear-hub",
+      "name": "Rear Wheel Hub",
+      "shape": "cylinder",
+      "size": {
+        "height": 40,
+        "radius": 60
+      },
+      "position": [
+        -300,
+        0,
+        100
+      ],
+      "rotation": [
+        0,
+        90,
+        0
+      ],
+      "color": "#silver",
+      "opacity": 0,
+      "note": "Hub mounting the wheel and brake disc"
+    },
+    {
+      "id": "rear-brake-disc",
+      "name": "Rear Brake Disc",
+      "shape": "cylinder",
+      "size": {
+        "depth": 20,
+        "radius": 160
+      },
+      "position": [
+        -300,
+        0,
+        120
+      ],
+      "rotation": [
+        0,
+        90,
+        0
+      ],
+      "color": "#gray",
+      "opacity": 0,
+      "note": "Ventilated brake rotor"
+    },
+    {
+      "id": "engine-block",
+      "name": "V8 Engine Block",
+      "shape": "box",
+      "size": {
+        "depth": 700,
+        "height": 500,
+        "width": 600
+      },
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "rotation": null,
+      "color": "#333333",
+      "opacity": 0,
+      "note": "Main engine casting"
+    },
+    {
+      "id": "transmission-unit",
+      "name": "Transmission",
+      "shape": "box",
+      "size": {
+        "depth": 500,
+        "height": 400,
+        "width": 300
+      },
+      "position": [
+        0,
+        -700,
+        0
+      ],
+      "rotation": null,
+      "color": "#555555",
+      "opacity": 0,
+      "note": "Gearbox attached to engine rear"
+    },
+    {
+      "id": "driveshaft",
+      "name": "Driveshaft",
+      "shape": "cylinder",
+      "size": {
+        "height": 1200,
+        "radius": 40
+      },
+      "position": [
+        0,
+        -1300,
+        0
+      ],
+      "rotation": [
+        90,
+        0,
+        0
+      ],
+      "color": "#silver",
+      "opacity": 0,
+      "note": "Connects transmission to differential"
+    },
+    {
+      "id": "nose-cone",
+      "name": "Nose Cone",
+      "shape": "extrusion",
+      "size": {
+        "depth": 1200
+      },
+      "position": [
+        0,
+        0,
+        -1000
+      ],
+      "profile": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 400,
+          "y": -100
+        },
+        {
+          "x": 800,
+          "y": 50
+        },
+        {
+          "x": 0,
+          "y": 200
+        }
+      ],
+      "rotation": null,
+      "color": "#1a1a1a",
+      "opacity": 0,
+      "note": "Carbon fiber aerodynamic nose"
+    },
+    {
+      "id": "side-pod-left",
+      "name": "Left Side Pod",
+      "shape": "extrusion",
+      "size": {
+        "depth": 1800
+      },
+      "position": [
+        -600,
+        0,
+        -100
+      ],
+      "profile": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 300,
+          "y": -50
+        },
+        {
+          "x": 400,
+          "y": 100
+        },
+        {
+          "x": 100,
+          "y": 200
+        }
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "color": "#1a1a1a",
+      "opacity": 0,
+      "note": "Carbon fiber side pod for cooling and aerodynamics"
+    },
+    {
+      "id": "rear-diffuser",
+      "name": "Rear Diffuser",
+      "shape": "extrusion",
+      "size": {
+        "depth": 1400
+      },
+      "position": [
+        0,
+        0,
+        1000
+      ],
+      "profile": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 500,
+          "y": -100
+        },
+        {
+          "x": 600,
+          "y": 50
+        },
+        {
+          "x": 100,
+          "y": 150
+        }
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "color": "#1a1a1a",
+      "opacity": 0,
+      "note": "Carbon fiber rear diffuser for downforce"
+    },
+    {
+      "id": "racing-seat",
+      "name": "Racing Bucket Seat",
+      "shape": "extrusion",
+      "size": {
+        "depth": 600
+      },
+      "position": [
+        0,
+        0,
+        -300
+      ],
+      "profile": [
+        {
+          "x": -250,
+          "y": 0,
+          "radius": 10
+        },
+        {
+          "x": 250,
+          "y": 0,
+          "radius": 10
+        },
+        {
+          "x": 250,
+          "y": 400,
+          "radius": 10
+        },
+        {
+          "x": 200,
+          "y": 500,
+          "radius": 10
+        },
+        {
+          "x": -200,
+          "y": 500,
+          "radius": 10
+        },
+        {
+          "x": -250,
+          "y": 400,
+          "radius": 10
+        }
+      ],
+      "rotation": null,
+      "color": "#333333",
+      "opacity": 0,
+      "note": "Carbon fiber bucket seat"
+    },
+    {
+      "id": "pedal-box",
+      "name": "Pedal Box Assembly",
+      "shape": "box",
+      "size": {
+        "depth": 200,
+        "height": 150,
+        "width": 300
+      },
+      "position": [
+        0,
+        100,
+        -400
+      ],
+      "rotation": null,
+      "color": "#b8bcc4",
+      "opacity": 0,
+      "note": "Hydraulic pedal box"
+    },
+    {
+      "id": "steering-column",
+      "name": "Steering Column",
+      "shape": "cylinder",
+      "size": {
+        "height": 600,
+        "radius": 15
+      },
+      "position": [
+        0,
+        200,
+        -300
+      ],
+      "rotation": [
+        0,
+        0,
+        90
+      ],
+      "color": "#b8bcc4",
+      "opacity": 0,
+      "note": "Adjustable steering column"
+    },
+    {
+      "id": "dashboard-frame",
+      "name": "Dashboard Frame",
+      "shape": "extrusion",
+      "size": {
+        "depth": 50
+      },
+      "position": [
+        0,
+        300,
+        -200
+      ],
+      "profile": [
+        {
+          "x": -400,
+          "y": 0,
+          "radius": 5
+        },
+        {
+          "x": 400,
+          "y": 0,
+          "radius": 5
+        },
+        {
+          "x": 400,
+          "y": 200,
+          "radius": 5
+        },
+        {
+          "x": -400,
+          "y": 200,
+          "radius": 5
+        }
+      ],
+      "rotation": null,
+      "color": "#222222",
+      "opacity": 0,
+      "note": "Instrument panel support"
+    },
+    {
+      "id": "wiring-harness",
+      "name": "Wiring Harness",
+      "shape": "sweep",
+      "size": null,
+      "position": null,
+      "profile": [
+        {
+          "x": -5,
+          "y": -5,
+          "radius": 2
+        },
+        {
+          "x": 5,
+          "y": -5,
+          "radius": 2
+        },
+        {
+          "x": 5,
+          "y": 5,
+          "radius": 2
+        },
+        {
+          "x": -5,
+          "y": 5,
+          "radius": 2
+        }
+      ],
+      "path": [
+        {
+          "x": 0,
+          "y": 250,
+          "z": -200
+        },
+        {
+          "x": 0,
+          "y": 250,
+          "z": -400
+        },
+        {
+          "x": -200,
+          "y": 200,
+          "z": -400
+        },
+        {
+          "x": 200,
+          "y": 200,
+          "z": -400
+        }
+      ],
+      "rotation": null,
+      "color": "#ff0000",
+      "opacity": 0,
+      "note": "Main electrical loom"
+    }
+  ],
+  "assemblies": [
+    {
+      "id": "front-suspension",
+      "name": "Front Suspension Left",
+      "interfaces": [
+        {
+          "id": "chassis-mount-upper",
+          "position": [
+            0,
+            100,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "chassis-mount-lower",
+          "position": [
+            0,
+            -100,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "chassis-mount-damper",
+          "position": [
+            50,
+            150,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "hub-face",
+          "position": [
+            120,
+            -20,
+            0
+          ],
+          "rotation": [
+            0,
+            90,
+            0
+          ]
+        }
+      ],
+      "children": [
+        {
+          "id": "upper-arm",
+          "ref": "upper-arm",
+          "position": [
+            0,
+            100,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "lower-arm",
+          "ref": "lower-arm",
+          "position": [
+            0,
+            -100,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "damper",
+          "ref": "damper",
+          "position": [
+            50,
+            150,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "knuckle",
+          "ref": "knuckle",
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "tie-rod",
+          "ref": "tie-rod",
+          "position": [
+            120,
+            -20,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "id": "rear-suspension",
+      "name": "Rear Multi-Link Suspension",
+      "interfaces": [
+        {
+          "id": "chassis-mount-left-upper",
+          "position": [
+            -200,
+            100,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "chassis-mount-left-lower",
+          "position": [
+            -200,
+            -100,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "chassis-mount-right-upper",
+          "position": [
+            200,
+            100,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "chassis-mount-right-lower",
+          "position": [
+            200,
+            -100,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "diff-mount",
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "children": [
+        {
+          "id": "diff-housing",
+          "ref": "diff-housing"
+        },
+        {
+          "id": "left-upper-arm",
+          "ref": "rear-upper-arm",
+          "mirror": "x",
+          "at": "chassis-mount-left-upper"
+        },
+        {
+          "id": "right-upper-arm",
+          "ref": "rear-upper-arm",
+          "at": "chassis-mount-right-upper"
+        },
+        {
+          "id": "left-lower-arm",
+          "ref": "rear-lower-arm",
+          "mirror": "x",
+          "at": "chassis-mount-left-lower"
+        },
+        {
+          "id": "right-lower-arm",
+          "ref": "rear-lower-arm",
+          "at": "chassis-mount-right-lower"
+        },
+        {
+          "id": "left-trailing-arm",
+          "ref": "rear-trailing-arm",
+          "position": [
+            -200,
+            -50,
+            0
+          ],
+          "mirror": "x"
+        },
+        {
+          "id": "right-trailing-arm",
+          "ref": "rear-trailing-arm",
+          "position": [
+            200,
+            -50,
+            0
+          ]
+        },
+        {
+          "id": "left-damper",
+          "ref": "rear-damper",
+          "position": [
+            -150,
+            150,
+            0
+          ],
+          "mirror": "x"
+        },
+        {
+          "id": "right-damper",
+          "ref": "rear-damper",
+          "position": [
+            150,
+            150,
+            0
+          ]
+        },
+        {
+          "id": "left-hub",
+          "ref": "rear-hub",
+          "position": [
+            -300,
+            0,
+            100
+          ],
+          "mirror": "x"
+        },
+        {
+          "id": "right-hub",
+          "ref": "rear-hub",
+          "position": [
+            300,
+            0,
+            100
+          ]
+        },
+        {
+          "id": "left-brake-disc",
+          "ref": "rear-brake-disc",
+          "position": [
+            -300,
+            0,
+            120
+          ],
+          "mirror": "x"
+        },
+        {
+          "id": "right-brake-disc",
+          "ref": "rear-brake-disc",
+          "position": [
+            300,
+            0,
+            120
+          ]
+        },
+        {
+          "id": "powertrain",
+          "ref": "powertrain"
+        },
+        {
+          "id": "bodywork",
+          "ref": "bodywork"
+        }
+      ]
+    },
+    {
+      "id": "powertrain",
+      "name": "Powertrain Assembly",
+      "interfaces": [
+        {
+          "id": "engine-mount-front-left",
+          "position": [
+            -250,
+            100,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "engine-mount-front-right",
+          "position": [
+            250,
+            100,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "engine-mount-rear-left",
+          "position": [
+            -250,
+            -100,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "engine-mount-rear-right",
+          "position": [
+            250,
+            -100,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "children": [
+        {
+          "id": "engine",
+          "ref": "engine-block",
+          "position": [
+            0,
+            800,
+            0
+          ]
+        },
+        {
+          "id": "transmission",
+          "ref": "transmission-unit",
+          "position": [
+            0,
+            -200,
+            0
+          ]
+        },
+        {
+          "id": "shaft",
+          "ref": "driveshaft",
+          "position": [
+            0,
+            -400,
+            0
+          ]
+        }
+      ]
+    },
+    {
+      "id": "bodywork",
+      "name": "Bodywork Assembly",
+      "interfaces": [
+        {
+          "id": "chassis-front",
+          "position": [
+            0,
+            0,
+            -1000
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "chassis-rear",
+          "position": [
+            0,
+            0,
+            1000
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "children": [
+        {
+          "id": "nose",
+          "ref": "nose-cone",
+          "at": "chassis-front"
+        },
+        {
+          "id": "left-pod",
+          "ref": "side-pod-left",
+          "position": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "right-pod",
+          "ref": "side-pod-left",
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "mirror": "x"
+        },
+        {
+          "id": "diffuser",
+          "ref": "rear-diffuser",
+          "at": "chassis-rear"
+        }
+      ]
+    },
+    {
+      "id": "cockpit",
+      "name": "Cockpit Assembly",
+      "interfaces": [
+        {
+          "id": "floor-mount",
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "children": [
+        {
+          "id": "driver-seat",
+          "ref": "racing-seat",
+          "position": [
+            -250,
+            100,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "passenger-seat",
+          "ref": "racing-seat",
+          "position": [
+            250,
+            100,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "pedals",
+          "ref": "pedal-box",
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "at": "floor-mount"
+        },
+        {
+          "id": "steering",
+          "ref": "steering-column",
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "at": "floor-mount"
+        },
+        {
+          "id": "dash",
+          "ref": "dashboard-frame",
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "at": "floor-mount"
+        },
+        {
+          "id": "wiring",
+          "ref": "wiring-harness",
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "at": "floor-mount"
+        }
+      ]
+    }
+  ],
+  "root": "cockpit"
+}
