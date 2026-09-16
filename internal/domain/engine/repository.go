@@ -406,6 +406,12 @@ func (r *Repository) AppendEvent(ctx context.Context, ex db.Querier, e *Event, n
 	if err != nil {
 		return err
 	}
+	// ‼️ Hashed at the precision the row is stored at. timestamptz keeps
+	// microseconds; the system clock reads nanoseconds, and a hash over a
+	// timestamp the database cannot give back fails verification on every
+	// event it covers. The chain's own tests ran on a whole-second fake clock.
+	// docs/bugfix/2026-09-15-every-event-written-by-the-real-clock-failed-the-audit-chain.md
+	now = now.Truncate(time.Microsecond)
 	e.Seq = prevSeq + 1
 	e.CreatedAt = now
 	hash := EventHash(link, e, digest)

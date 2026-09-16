@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/engine"
 	domainpack "github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/pack"
 	domainworkspace "github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/workspace"
@@ -49,6 +51,14 @@ type Worker struct {
 	workspace  string
 	clock      clock.Clock
 	log        *logx.Logger
+
+	// approvalRowWrittenForTest runs between checkApproval writing a request row and
+	// recording it on the timeline. Nil outside the fence that stops a worker there.
+	approvalRowWrittenForTest func()
+	// afterTransitionForTest runs after a transition has been written, and an error it
+	// returns replaces the result transition actually got. Nil outside the fence for a
+	// statement the stop cancelled after Postgres had committed it.
+	afterTransitionForTest func(to engine.TaskStatus) error
 }
 
 // WorkerDeps is what a worker needs.
@@ -122,6 +132,9 @@ func (w *Worker) Run(ctx context.Context) error {
 
 		task, err := w.queue.Claim(ctx, w.pool, w.ID, w.cfg.LeaseDuration, w.clock.Now())
 		if err != nil {
+			if ctx.Err() != nil {
+				continue // stopped while claiming; the check above says so and returns
+			}
 			w.log.ErrorWith(ctx, logx.EventWorkerIdle, err, "worker_id", w.ID)
 			if !w.sleep(ctx, w.cfg.PollInterval) {
 				return nil
@@ -132,6 +145,12 @@ func (w *Worker) Run(ctx context.Context) error {
 			// Reconcile on the idle path. Settling only when a task finishes
 			// makes goal state depend on event timing; this is the read that
 			// converges it regardless of what was missed. See settleFinishedGoals.
+			// What a finished task left waiting, released here too, for the reason
+			// goals are settled here: a worker that died between a task's last
+			// write and releasing its dependents leaves them with nothing to move
+			// them. See releaseWaitingGoals.
+			w.releaseWaitingGoals(ctx)
+
 			w.settleFinishedGoals(ctx)
 
 			// An idle queue is the normal state of a long-running agent, not a
@@ -145,11 +164,139 @@ func (w *Worker) Run(ctx context.Context) error {
 
 		goalID := task.GoalID
 		w.runTask(ctx, task)
-		// A task settling is the only moment a goal can become terminal, and the
-		// worker is already here holding that fact. A separate sweeper would be a
-		// second authority for goal status.
-		w.settleGoal(ctx, goalID)
+		if ctx.Err() != nil {
+			w.handBack(ctx, task)
+		}
+		w.afterTask(ctx, goalID)
 	}
+}
+
+// afterTaskTimeout bounds what a task's end sets moving when the worker is stopping,
+// so a database that really has gone away cannot hold a stopping worker past the 30 s
+// forge-worker gives its loops to return.
+const afterTaskTimeout = 10 * time.Second
+
+// outliving is the context for a write that records something that has already
+// happened (an event, a spent token, a tool call that ran), bounded for afterTask's
+// reason.
+//
+// # Why records and not decisions
+//
+// ‼️ A stop abandons the attempt, not the record of it. Written on the run context, a
+// record that a stop overtook failed as DATABASE_UNAVAILABLE and was lost: tokens the
+// budget never counted, a tool call the ledger never saw, so the next attempt ran it
+// again. A DECISION (a transition, failing or retrying a task) is the opposite. It is
+// left on the run context and skipped when stopping, because handBack gives the task
+// and the decision to the next worker, which decides again from the row.
+// docs/bugfix/2026-09-15-a-stopped-worker-lost-what-it-had-done-and-blamed-the-database.md
+func outliving(ctx context.Context) (context.Context, context.CancelFunc) {
+	return context.WithTimeout(context.WithoutCancel(ctx), afterTaskTimeout)
+}
+
+// afterTask is what the end of a task sets moving, whether the task finished or
+// the worker is stopping under it.
+//
+// # Why on a context of its own
+//
+// ‼️ A stop cancels ctx while a task runs, and both calls below used to run on that
+// cancelled ctx: each failed at once and was logged as DATABASE_UNAVAILABLE, so every
+// graceful stop in the middle of a task told whoever read the log that the database
+// was down, and a task that finished in the instant the stop arrived left the tasks
+// waiting on it pending until some worker's idle poll found them. Found stopping a
+// live forge-worker with a console Ctrl-Break (#104).
+// docs/bugfix/2026-09-15-a-stopping-worker-reported-its-own-stop-as-a-database-outage.md
+//
+// Bounded rather than unbounded: these are two short statements, and the bound is what
+// keeps "outlives the stop" from becoming "outlives the process".
+func (w *Worker) afterTask(ctx context.Context, goalID string) {
+	book, cancel := context.WithTimeout(context.WithoutCancel(ctx), afterTaskTimeout)
+	defer cancel()
+	// ‼️ A finished task releases the tasks waiting on it, before the next
+	// claim. Nothing did: a plan's first layer was made ready and every task
+	// after it stayed pending forever. On the idle poll alone, a busy worker
+	// would never get round to it.
+	// docs/bugfix/2026-09-15-a-finished-task-never-released-the-tasks-waiting-on-it.md
+	w.releaseWaiting(book, goalID)
+	// A task settling is the only moment a goal can become terminal, and the
+	// worker is already here holding that fact. A separate sweeper would be a
+	// second authority for goal status.
+	w.settleGoal(book, goalID)
+}
+
+// AfterTaskForTest exposes afterTask so a test can hand it the cancelled context a
+// stop leaves Run holding, instead of racing a stop against a task's last write.
+func (w *Worker) AfterTaskForTest(ctx context.Context, goalID string) { w.afterTask(ctx, goalID) }
+
+// OnApprovalRowWrittenForTest makes hook run the moment checkApproval has written an
+// approval request and before it records approval.requested, so a test can land a
+// stop exactly there instead of racing one against two statements.
+func (w *Worker) OnApprovalRowWrittenForTest(hook func()) { w.approvalRowWrittenForTest = hook }
+
+// OnTransitionWrittenForTest makes hook run after every transition has been written, and
+// lets it replace what the transition returned.
+//
+// # Why a seam and not a race
+//
+// ‼️ The case this reproduces is a statement the stop cancelled while it was on the wire,
+// after Postgres had already committed it: the row moved and the caller was told only
+// that its context was done. Which of the cancel request and the commit reaches the
+// server first is not something a test can decide, so there is no way to land that
+// instant by racing a real stop against a real statement. The seam produces exactly its
+// shape — a committed transition whose caller sees a cancellation — and nothing else. It
+// is nil outside the fence.
+func (w *Worker) OnTransitionWrittenForTest(hook func(to engine.TaskStatus) error) {
+	w.afterTransitionForTest = hook
+}
+
+// PollSweepsForTest runs the three reconciliations Run makes on its polling path — the
+// lease reaper, and the two sweeps it runs when the queue is idle — so a test can hand
+// them the cancelled context a stop leaves Run holding, instead of racing a stop against
+// a sweep that takes one indexed query. AfterTaskForTest exists for the same reason.
+func (w *Worker) PollSweepsForTest(ctx context.Context) {
+	w.reapExpired(ctx)
+	w.releaseWaitingGoals(ctx)
+	w.settleFinishedGoals(ctx)
+}
+
+// handBack returns the task a stopping worker still holds to the queue, at once and
+// without counting the stopped attempt.
+//
+// # Why once, after runTask, rather than wherever runTask can be stopped
+//
+// ‼️ A stop can land anywhere in runTask: before the task starts, at the approval gate,
+// inside a model call, during verification, or just after its last write. Each used to
+// end the same way. The next write ran on the cancelled context and failed, and the
+// task stayed claimed or running under its lease until the reaper recovered it minutes
+// later, with the stop counted as an attempt. That is the opposite of what Run's own
+// comment promised.
+// docs/bugfix/2026-09-15-a-stopped-worker-left-its-task-to-run-out-its-lease.md
+//
+// A single call covers every one of those points because Release decides from the row,
+// not from how far runTask got: it hands back only a task this worker still holds under
+// a lease. A task that finished, failed or parked at the gate before the stop holds no
+// lease, and one the reaper gave to another worker is not this worker's. Both come back
+// as a CONFLICT, and nothing happens, which is right.
+//
+// On a context that outlives the stop, for afterTask's reason. A hand-back that cannot
+// be written leaves the task to the reaper, which is where it was before this existed.
+func (w *Worker) handBack(ctx context.Context, task *engine.Task) {
+	book, cancel := context.WithTimeout(context.WithoutCancel(ctx), afterTaskTimeout)
+	defer cancel()
+	switch err := w.queue.Release(book, w.pool, task.ID, w.ID, w.clock.Now()); {
+	case err == nil:
+	case errs.CodeOf(err) == errs.CodeConflict:
+		return
+	default:
+		w.log.WarnWith(book, logx.EventTaskHandBackFailed, err,
+			"task_id", task.ID, "goal_id", task.GoalID, "worker_id", w.ID,
+			"detail", "a stopping worker could not hand its task back; the lease reaper will return it when the lease expires")
+		return
+	}
+	w.log.Info(book, logx.EventTaskHandedBack,
+		"task_id", task.ID, "goal_id", task.GoalID, "worker_id", w.ID, "stopped_while", string(task.Status))
+	w.appendEvent(book, task.GoalID, &task.ID, engine.EventTaskHandedBack, engine.ActorExecutor,
+		"The worker running this task was stopped. The task was handed back to the queue, and the stopped attempt does not count against it.",
+		map[string]any{"worker": w.ID, "stopped_while": string(task.Status)})
 }
 
 // sleep waits, returning false if the context was cancelled.
@@ -164,9 +311,17 @@ func (w *Worker) sleep(ctx context.Context, d time.Duration) bool {
 
 // reapExpired returns crashed workers' tasks to the queue.
 func (w *Worker) reapExpired(ctx context.Context) {
+	// A stopping worker recovers nobody else's task on its way out. See the note on
+	// settleFinishedGoals: a reconciliation the stop cancelled is the next worker's
+	// poll, not something that failed.
+	if ctx.Err() != nil {
+		return
+	}
 	reaped, err := w.queue.ReapExpiredLeases(ctx, w.pool, w.clock.Now(), 20)
 	if err != nil {
-		w.log.WarnWith(ctx, logx.EventWorkerReaped, err, "worker_id", w.ID)
+		if ctx.Err() == nil {
+			w.log.WarnWith(ctx, logx.EventWorkerReaped, err, "worker_id", w.ID)
+		}
 		return
 	}
 	for _, t := range reaped {
@@ -196,6 +351,14 @@ func (w *Worker) runTask(ctx context.Context, task *engine.Task) {
 		w.appendEvent(ctx, goal.ID, &task.ID, engine.EventBudgetExceeded, engine.ActorSystem,
 			fmt.Sprintf("Budget exhausted on %s: used %s of %s.", breach.Kind, breach.Used, breach.Limit),
 			map[string]any{"limit_kind": string(breach.Kind), "used": breach.Used, "limit": breach.Limit})
+		// ‼️ Through running, because the task is still only claimed and claimed
+		// cannot move to failed. Failing it straight from claimed was refused, the
+		// refusal was only logged, and the task sat claimed until its lease ran
+		// out, to be claimed and refused again: the goal never stopped.
+		// docs/bugfix/2026-09-15-a-budget-refusal-left-its-task-claimed.md
+		if err := w.transition(ctx, task, engine.StatusRunning, engine.TaskMutation{}); err != nil {
+			return
+		}
 		w.failTask(ctx, task, errs.CodeForbidden, breach.Error().Error())
 		return
 	}
@@ -219,6 +382,9 @@ func (w *Worker) runTask(ctx context.Context, task *engine.Task) {
 		"attempt", task.AttemptCount, "risk_tier", string(task.RiskTier))
 
 	if err := w.repo.TransitionTask(ctx, w.pool, task, engine.StatusRunning, w.clock.Now(), engine.TaskMutation{}); err != nil {
+		if ctx.Err() != nil {
+			return // stopped before the task started; Run hands it back
+		}
 		// Losing the race here means the reaper already took the task. Abandon
 		// it quietly rather than continuing under a lease we no longer hold.
 		w.log.Info(ctx, logx.EventTaskCycleEnded,
@@ -289,6 +455,13 @@ func (w *Worker) runTask(ctx context.Context, task *engine.Task) {
 	case outcome.Status == "blocked":
 		// Blocked is a truthful terminal state, not a failure to retry. Retrying
 		// a task that needs a human is how a queue spins.
+		//
+		// ‼️ Unless the stop arrived with the answer. The event below outlives the stop
+		// and failTask does not, so without this the timeline would say the task failed
+		// while Run handed it back. The stop wins, as it does over a failure.
+		if ctx.Err() != nil {
+			return
+		}
 		w.appendEvent(ctx, goal.ID, &task.ID, engine.EventTaskFailed, engine.ActorExecutor,
 			"Blocked: "+outcome.BlockedReason, map[string]any{"status": "blocked"})
 		w.failTask(ctx, task, errs.CodeForbidden, "blocked: "+outcome.BlockedReason)
@@ -316,7 +489,13 @@ func (w *Worker) completeTask(ctx context.Context, goal *engine.Goal, task *engi
 		// Recorded as succeeded, and deliberately NOT as verified. The two are
 		// different facts, and a low-tier task that nobody checked must not
 		// present as one that was checked.
-		w.transition(ctx, task, engine.StatusSucceeded, engine.TaskMutation{Result: resultJSON})
+		//
+		// ‼️ Only a success that was written is recorded. The event outlives a stop and
+		// the transition does not; recording one the stop refused would put a success on
+		// the timeline of a task Run hands back.
+		if err := w.transition(ctx, task, engine.StatusSucceeded, engine.TaskMutation{Result: resultJSON}); err != nil {
+			return
+		}
 		w.appendEvent(ctx, goal.ID, &task.ID, engine.EventTaskSucceeded, engine.ActorExecutor,
 			outcome.Summary,
 			map[string]any{"verified": false, "reason": "tier " + string(task.RiskTier) + " does not require verification"})
@@ -335,7 +514,16 @@ func (w *Worker) completeTask(ctx context.Context, goal *engine.Goal, task *engi
 		// A verifier that could not produce a verdict has verified nothing.
 		// Treating that as a pass is exactly the failure the verifier exists to
 		// prevent, so it becomes a retry.
-		w.log.WarnWith(ctx, logx.EventVerificationRan, err, "task_id", task.ID)
+		//
+		// ‼️ Unless the stop cancelled the call. Nothing was verified either way, but the
+		// line this wrote — forge.verification.ran with error="context canceled" — is the
+		// same line a verifier that really could produce no verdict writes, so every
+		// graceful stop during verification read as a verifier failure. Not a database
+		// error, so #109's fences never saw it. retryOrFail already returns on a stop;
+		// this is the line beside it.
+		if ctx.Err() == nil {
+			w.log.WarnWith(ctx, logx.EventVerificationRan, err, "task_id", task.ID)
+		}
 		w.retryOrFail(ctx, goal, task, err)
 		return
 	}
@@ -348,9 +536,12 @@ func (w *Worker) completeTask(ctx context.Context, goal *engine.Goal, task *engi
 
 	if verdict.Passed() {
 		now := w.clock.Now()
-		w.transition(ctx, task, engine.StatusSucceeded, engine.TaskMutation{
+		// Only a success that was written is recorded, for the reason above.
+		if err := w.transition(ctx, task, engine.StatusSucceeded, engine.TaskMutation{
 			Result: resultJSON, Verdict: verdictJSON, VerifiedAt: &now,
-		})
+		}); err != nil {
+			return
+		}
 		w.appendEvent(ctx, goal.ID, &task.ID, engine.EventVerificationOK, engine.ActorVerifier,
 			verdict.Reasoning,
 			map[string]any{"confidence": verdict.Confidence, "verifier_model": verdict.Model})
@@ -376,6 +567,14 @@ func (w *Worker) completeTask(ctx context.Context, goal *engine.Goal, task *engi
 
 // retryOrFail applies backoff and returns the task to the queue, or fails it.
 func (w *Worker) retryOrFail(ctx context.Context, goal *engine.Goal, task *engine.Task, cause error) {
+	// ‼️ A stop is not a failed attempt. What brings a stopping worker here is almost
+	// always the stop itself, as a cancelled model or verifier call, and every write
+	// below would run on the cancelled context: it used to log a retry, lose its event
+	// and fail its transition as DATABASE_UNAVAILABLE, and leave the task under its
+	// lease. Run hands the task back instead (handBack).
+	if ctx.Err() != nil {
+		return
+	}
 	if breach := w.budget.CheckAttempts(task); breach != nil || !errs.IsRetryable(cause) {
 		reason := "no attempts remain"
 		if breach == nil {
@@ -460,20 +659,42 @@ func (w *Worker) checkApproval(ctx context.Context, goal *engine.Goal, task *eng
 		"expected_output": task.ExpectedOutput,
 	})
 
-	if _, err := w.pool.Exec(ctx, `
-		insert into forge_approvals (id, goal_id, task_id, risk_tier, summary, preview, requested_at)
-		values ($1,$2,$3,$4,$5,$6,$7)
-		on conflict do nothing`,
-		id.New(id.PrefixApproval), goal.ID, task.ID, string(task.RiskTier),
-		summary, preview, w.clock.Now()); err != nil {
-		return false, errs.Wrap("agent.Worker.checkApproval", errs.CodeDatabaseUnavail, err)
+	// # Why the request and its event are one transaction
+	//
+	// ‼️ They were two writes. A stop between them wrote the request and lost the event:
+	// the next worker found the request pending and parked on it, and the approvals
+	// table held a request that the timeline never mentioned. One transaction means a
+	// stop, or a crash, leaves both or neither. With neither, the next worker opens the
+	// gate afresh.
+	// docs/bugfix/2026-09-15-a-stopped-worker-lost-what-it-had-done-and-blamed-the-database.md
+	//
+	// Not on a context that outlives the stop: opening the gate is a decision, and a
+	// stopped worker leaves it to the next one. A reconciliation that writes the missing
+	// event later would be a second place that records a request, and would still leave
+	// the gap until some worker came back to the task.
+	requested, _ := json.Marshal(map[string]any{"risk_tier": string(task.RiskTier)})
+	if err := db.InTx(ctx, w.pool, func(tx pgx.Tx) error {
+		if _, err := tx.Exec(ctx, `
+			insert into forge_approvals (id, goal_id, task_id, risk_tier, summary, preview, requested_at)
+			values ($1,$2,$3,$4,$5,$6,$7)
+			on conflict do nothing`,
+			id.New(id.PrefixApproval), goal.ID, task.ID, string(task.RiskTier),
+			summary, preview, w.clock.Now()); err != nil {
+			return errs.Wrap("agent.Worker.checkApproval", errs.CodeDatabaseUnavail, err)
+		}
+		if w.approvalRowWrittenForTest != nil {
+			w.approvalRowWrittenForTest()
+		}
+		return w.repo.AppendEvent(ctx, tx, &engine.Event{
+			GoalID: goal.ID, TaskID: &task.ID, Kind: engine.EventApprovalRequested, Actor: engine.ActorExecutor,
+			Summary: "Waiting for a human to approve this action.", Payload: requested,
+		}, w.clock.Now())
+	}); err != nil {
+		return false, err
 	}
 
 	w.log.Info(ctx, logx.EventApprovalOpened,
 		"task_id", task.ID, "goal_id", goal.ID, "risk_tier", string(task.RiskTier))
-	w.appendEvent(ctx, goal.ID, &task.ID, engine.EventApprovalRequested, engine.ActorExecutor,
-		"Waiting for a human to approve this action.",
-		map[string]any{"risk_tier": string(task.RiskTier)})
 
 	w.transition(ctx, task, engine.StatusAwaitingApproval, engine.TaskMutation{})
 	return false, nil
@@ -490,6 +711,12 @@ func (w *Worker) heartbeat(ctx context.Context, taskID string) {
 			return
 		case <-ticker.C:
 			if err := w.queue.Heartbeat(ctx, w.pool, taskID, w.ID, w.cfg.LeaseDuration, w.clock.Now()); err != nil {
+				// A beat the task's end or a stop cancelled in flight has lost nothing:
+				// the task is over, or Run is handing it back. It used to be logged as
+				// the database being unavailable and the lease being lost.
+				if ctx.Err() != nil {
+					return
+				}
 				// Losing the lease means another worker now owns this task.
 				// Logged loudly and the heartbeat stops; the executor will fail
 				// its next write against the compare-and-set guard.
@@ -508,14 +735,75 @@ func (w *Worker) heartbeat(ctx context.Context, taskID string) {
 
 func (w *Worker) transition(ctx context.Context, task *engine.Task, to engine.TaskStatus, mut engine.TaskMutation) error {
 	err := w.repo.TransitionTask(ctx, w.pool, task, to, w.clock.Now(), mut)
-	if err != nil {
+	if w.afterTransitionForTest != nil {
+		if forced := w.afterTransitionForTest(to); forced != nil {
+			err = forced
+		}
+	}
+	// A failure a stop is involved in may not be a failure at all: the statement can have
+	// been on the wire when the stop cancelled it. Ask the row before deciding.
+	if err != nil && ctx.Err() != nil && w.stopLanded(ctx, task, to) {
+		return nil
+	}
+	// A transition is a decision, and a stopping worker's decisions are skipped, not
+	// failed: the stop refused it, and handBack gives the task to a worker that decides
+	// again. Logging it said the database was down. See outliving.
+	if err != nil && ctx.Err() == nil {
 		w.log.WarnWith(ctx, logx.EventTaskCycleEnded, err,
 			"task_id", task.ID, "target", string(to))
 	}
 	return err
 }
 
+// stopLanded reports whether a write the stop appeared to cancel had in fact been
+// committed, by reading the row back.
+//
+// # Why the row is asked rather than the error read
+//
+// ‼️ pgx refuses a statement on a context that is ALREADY cancelled, and cancels one
+// that is already ON THE WIRE — and in the second case Postgres may have committed it
+// before the cancel request arrived. The caller is told the same thing either way:
+// context canceled. #109 made a stopping worker skip its failed transitions on the
+// grounds that handBack passes the decision on, which is right for the first case and
+// wrong for the second: a task that really did reach succeeded had no task.succeeded
+// event, and nothing ever came back to notice, because nobody claims a succeeded task.
+// docs/bugfix/2026-09-15-a-stop-still-guessed-at-a-committed-write-and-lost-a-security-record.md
+//
+// The row is the only thing that knows, so this asks it, on a context that outlives the
+// stop for appendEvent's reason. A "no" — including a row some other worker has since
+// moved on from, which this worker's lease makes remote — records nothing, which is the
+// side to be wrong on: a decision that was not made is made again by the next worker.
+// A read that cannot be made at all says the outcome is unknown, in those words, rather
+// than claiming a success or a failure that nobody established.
+func (w *Worker) stopLanded(ctx context.Context, task *engine.Task, to engine.TaskStatus) bool {
+	rec, cancel := outliving(ctx)
+	defer cancel()
+
+	current, err := w.repo.GetTask(rec, w.pool, task.ID)
+	if err != nil {
+		w.log.WarnWith(rec, logx.EventTaskCycleEnded, err,
+			"task_id", task.ID, "target", string(to),
+			"detail", "the stop cancelled this transition while it was on the wire and the row could not be "+
+				"read back, so whether Postgres applied it is UNKNOWN; nothing has been recorded either way")
+		return false
+	}
+	if current.Status != to {
+		return false
+	}
+	// It landed, so the decision was made and its record is owed. TransitionTask sets
+	// this on the way out of its own success, and every caller reads it afterwards.
+	task.Status = to
+	return true
+}
+
 func (w *Worker) failTask(ctx context.Context, task *engine.Task, code errs.Code, detail string) {
+	// ‼️ A failure reached while stopping is the stop's (a read the stop cancelled, the
+	// approval transaction it rolled back) or loses to it, for retryOrFail's reason.
+	// Both writes below would fail on the cancelled context and be logged as the
+	// database being unavailable. Run hands the task back instead.
+	if ctx.Err() != nil {
+		return
+	}
 	_ = w.transition(ctx, task, engine.StatusFailed, engine.TaskMutation{
 		ErrorCode: string(code), ErrorDetail: detail,
 	})
@@ -533,7 +821,11 @@ func (w *Worker) appendEvent(ctx context.Context, goalID string, taskID *string,
 		GoalID: goalID, TaskID: taskID, Kind: kind, Actor: actor,
 		Summary: summary, Payload: raw,
 	}
-	if err := w.repo.AppendEvent(ctx, w.pool, ev, w.clock.Now()); err != nil {
+	// An event records what already happened, so a stop that arrives after it must not
+	// lose it. See outliving.
+	rec, cancel := outliving(ctx)
+	defer cancel()
+	if err := w.repo.AppendEvent(rec, w.pool, ev, w.clock.Now()); err != nil {
 		// The timeline is how anyone reconstructs what happened. A gap in it is
 		// worth shouting about, but not worth failing work over.
 		w.log.WarnWith(ctx, logx.EventTaskCycleEnded, err,
@@ -612,8 +904,13 @@ func (w *Worker) rawToolOutput(ctx context.Context, taskID string) []string {
 		select tool_name, coalesce(raw_output, ''), status
 		  from forge_tool_calls where task_id = $1 order by created_at asc limit 20`, taskID)
 	if err != nil {
-		w.log.WarnWith(ctx, logx.EventVerificationRan, err, "task_id", taskID,
-			"detail", "raw tool output could not be read; the verifier is judging the executor's account of it instead")
+		// Not when the stop cancelled the read, for the reason above: no verdict is
+		// being reached on thinner evidence, because the verifier call after this one
+		// is cancelled too.
+		if ctx.Err() == nil {
+			w.log.WarnWith(ctx, logx.EventVerificationRan, err, "task_id", taskID,
+				"detail", "raw tool output could not be read; the verifier is judging the executor's account of it instead")
+		}
 		return nil
 	}
 	defer rows.Close()
