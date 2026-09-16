@@ -230,6 +230,11 @@ func TestTranscribe_ADeploymentWithoutATranscriberSaysWhatTurnsItOn(t *testing.T
 		if !strings.Contains(rec.Body.String(), "FORGE_LLM_TRANSCRIBER_MODEL") {
 			t.Errorf("%s: the refusal does not name the setting that turns it on: %s", name, rec.Body.String())
 		}
+		// The model alone is not enough where the chat endpoint serves no speech
+		// model, which is production (measured 2026-09-15).
+		if !strings.Contains(rec.Body.String(), "FORGE_LLM_TRANSCRIBER_BASE_URL") {
+			t.Errorf("%s: the refusal does not name the endpoint that can serve one: %s", name, rec.Body.String())
+		}
 	}
 }
 
