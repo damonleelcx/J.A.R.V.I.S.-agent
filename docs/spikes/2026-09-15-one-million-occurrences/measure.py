@@ -117,6 +117,10 @@ def child(mode, path, out_dir, tag):
               "interferences_truncated", "mesh_triangles", "mesh_error", "mesh_simplified"):
         res[k] = reply.get(k)
     res["found"] = len(reply.get("interferences") or [])
+    # Added 2026-09-15 (large-box index). The mesh and step modes replace the check,
+    # and their rows used to read interferences_truncated false and found 0 — a
+    # check that never ran, recorded as a clean one.
+    res["interference_checked"] = mode == "full"
     if mode == "mesh":
         t = time.perf_counter()
         body = json.dumps({k: reply[k] for k in MESH_FIELDS if k in reply})
@@ -135,6 +139,20 @@ def child(mode, path, out_dir, tag):
     res["peak_rss_gb"] = getattr(mem, "peak_wset", mem.rss) / 1e9
     sys.stdout.write("RESULT " + json.dumps(res) + "\n")
     sys.stdout.flush()
+
+
+def interference_answer(res):
+    """What the run says about interference, never blank: a truncated check and a
+    check that did not run are said, not left to read as a clean one."""
+    if not res.get("interference_checked"):
+        if res.get("mode") == "full":
+            return "interference: NO ANSWER (the build did not finish)"
+        return "interference: NOT CHECKED (this mode runs the grid only)"
+    pairs = res.get("interference_pairs") or 0
+    checked = (res.get("interference_booleans") or 0) + (res.get("interference_reused") or 0)
+    return "interference: %s%d of %d pairs checked, %d found, %s booleans, %s reused, %s box tests" % (
+        "TRUNCATED — " if res.get("interferences_truncated") else "", checked, pairs, res.get("found") or 0,
+        res.get("interference_booleans"), res.get("interference_reused"), res.get("interference_box_tests"))
 
 
 def parent(args):
@@ -190,6 +208,7 @@ def parent(args):
                           bays, mode, run, res.get("ok"), res.get("build_s") or 0, ph.get("shapes", 0),
                           ph.get("assembly", 0), ph.get("interferences", 0), ph.get("properties", 0),
                           ph.get("mesh", 0), ph.get("export", 0), res.get("peak_rss_gb") or peak, cpu, stopped))
+                print("  " + interference_answer(res))
                 sys.stdout.flush()
                 if stopped:
                     break

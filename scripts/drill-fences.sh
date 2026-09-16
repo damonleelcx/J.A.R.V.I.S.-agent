@@ -1033,12 +1033,15 @@ drill "every box lands in one cell" internal/domain/cad/sidecar.py \
   "s = s.replace('    cell = max(longest[len(longest) // 2], 1e-6)\n', '    cell = 1e12\n', 1)" \
   ./internal/domain/cad 'TestKernel_APlaneOfPartsCostsAFewBoxTestsEach'
 
+# ‼️ The next two anchors moved on 2026-09-15 (large-box index): cell indices became
+# integers computed once, and the every-box loop for long boxes became passes between
+# groups of boxes with the same grid level on each axis.
 drill "a pair is tested where the earlier box starts, which the other may not reach" internal/domain/cad/sidecar.py \
-  "s = s.replace('if (_cell(max(boxes[a][0][0], boxes[b][0][0]), cell) != home[0]', 'if (_cell(min(boxes[a][0][0], boxes[b][0][0]), cell) != home[0]', 1)" \
+  "s = s.replace('if (max(qa[0], qb[0]) >> sx != home[0]', 'if (min(qa[0], qb[0]) >> sx != home[0]', 1)" \
   ./internal/domain/cad 'TestKernel_TheBroadPhaseFindsWhatEveryPairFinds'
 
 drill "a box too long for the grid is never tested" internal/domain/cad/sidecar.py \
-  "s = s.replace('    for a in large:\n', '    for a in []:\n', 1)" \
+  "s = s.replace('            filed, looking = groups[level_a], groups[level_b]\n', '            continue\n', 1)" \
   ./internal/domain/cad 'TestKernel_TheBroadPhaseFindsWhatEveryPairFinds'
 
 drill "every clash is measured again" internal/domain/cad/sidecar.py \
@@ -1056,6 +1059,54 @@ drill "the budget counts answers it did not pay for" internal/domain/cad/sidecar
 drill "the build does not say how many booleans it paid for" internal/domain/cad/cad.go \
   's = s.replace(" InterferenceBooleans: res.InterferenceBooleans,", "", 1)' \
   ./internal/domain/cad 'TestKernel_RepeatedClashesPayForOneBooleanEachPose'
+
+echo
+echo "The interference check's large boxes: a level per axis, and a clash slid along a box"
+# Added 2026-09-15 (large-box index). A box longer than four cells was tested against
+# every box, which is quadratic when the long parts grow with the model: an airframe
+# barrel's panels, frames and stringers made 16.2 billion tests at 1M occurrences. Each
+# box now has a grid level per axis, and two groups of boxes are tested in the grid of
+# their larger levels. A clash is reused along a box the other solid lies wholly inside,
+# and only then: a finite stringer is not the same at its ends.
+drill "a long box is tested against every box of another size again" internal/domain/cad/sidecar.py \
+  "s = s.replace('            sz = _GRID_LEVEL_SHIFT * max(level_a[2], level_b[2])\n', '            sz = _GRID_LEVEL_SHIFT * max(level_a[2], level_b[2])\n            if level_a != level_b:\n                sx = sy = sz = 64\n', 1)" \
+  ./internal/domain/cad 'TestKernel_BoxTestsGrowLinearlyWhenTheLongPartsGrowWithTheModel'
+
+drill "one level for all three axes, a cubic cell as long as the longest side" internal/domain/cad/sidecar.py \
+  "s = s.replace('        groups.setdefault(level, []).append(k)\n', '        groups.setdefault((max(level),) * 3, []).append(k)\n', 1)" \
+  ./internal/domain/cad 'TestKernel_BoxTestsGrowLinearlyWhenTheLongPartsGrowWithTheModel'
+
+drill "a pair from two groups is tested where it does not begin" internal/domain/cad/sidecar.py \
+  "s = s.replace('if (max(qa[0], qb[0]) >> sx != cx', 'if (min(qa[0], qb[0]) >> sx != cx', 1)" \
+  ./internal/domain/cad 'TestKernel_LongBoxesAreFoundAsEveryPairFindsThem'
+
+drill "a box is filed without the last cell it reaches" internal/domain/cad/sidecar.py \
+  "s = s.replace('            for cx in range(q[0] >> sx, (r[0] >> sx) + 1):\n', '            for cx in range(q[0] >> sx, r[0] >> sx):\n', 1)" \
+  ./internal/domain/cad 'TestKernel_LongBoxesAreFoundAsEveryPairFindsThem'
+
+drill "a clash is slid along a box it is not inside" internal/domain/cad/sidecar.py \
+  "s = s.replace('        if mid - reach >= _SLIDE_MARGIN - half[r] and mid + reach <= half[r] - _SLIDE_MARGIN:\n', '        if True:\n', 1)" \
+  ./internal/domain/cad 'TestKernel_PinsAlongARailPayForOneBooleanAndTheEndsAreMeasured'
+
+drill "containment is checked at one end of the box only" internal/domain/cad/sidecar.py \
+  "s = s.replace('        if mid - reach >= _SLIDE_MARGIN - half[r] and mid + reach <= half[r] - _SLIDE_MARGIN:\n', '        if mid - reach >= _SLIDE_MARGIN - half[r]:\n', 1)" \
+  ./internal/domain/cad 'TestKernel_PinsAlongARailPayForOneBooleanAndTheEndsAreMeasured'
+
+drill "a pin along a rail is measured at every pose again" internal/domain/cad/sidecar.py \
+  "s = s.replace('_INTERFERENCE_SLIDE = True\n', '_INTERFERENCE_SLIDE = False\n', 1)" \
+  ./internal/domain/cad 'TestKernel_PinsAlongARailPayForOneBooleanAndTheEndsAreMeasured'
+
+drill "a slide seen only from the other box is not carried" internal/domain/cad/sidecar.py \
+  "s = s.replace('    out = []\n    for v in axes:\n', '    out = []\n    for v in []:\n', 1)" \
+  ./internal/domain/cad 'TestKernel_PinsAlongARailPayForOneBooleanAndTheEndsAreMeasured'
+
+drill "a carried slide ignores a rotation that does not line the axes up" internal/domain/cad/sidecar.py \
+  "s = s.replace('            if (abs(pose[4 * w + v]) >= 1 - 1e-9\n                    and all(abs(pose[4 * o + v]) <= 1e-9 for o in range(3) if o != w)):\n', '            if w == v:\n', 1)" \
+  ./internal/domain/cad 'TestKernel_AReusedClashIsTheClashMeasuredAgain'
+
+drill "a clash is keyed in the frame that slides less" internal/domain/cad/sidecar.py \
+  "s = s.replace('        return forward if marked_f > marked_b else backward\n', '        return backward if marked_f > marked_b else forward\n', 1)" \
+  ./internal/domain/cad 'TestKernel_PinsAlongARailPayForOneBooleanAndTheEndsAreMeasured'
 
 echo
 echo "A check that covered part of the model says how much"

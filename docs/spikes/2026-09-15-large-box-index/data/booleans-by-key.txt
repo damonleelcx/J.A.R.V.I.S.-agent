@@ -1,0 +1,37 @@
+# Distinct pose keys that paid for a boolean, by shape pair, final sidecar (sha1 2be3bd48).
+# A scratch script wrapped _pair_key. slide on: _INTERFERENCE_SLIDE True; off: False.
+# 'slid on' lists only key slots marked +inf (inside the frame's box); slots marked -inf (carried
+# from the other box) show in the example poses, given as (i, j, [tx, ty, tz]) in the frame.
+
+barrel-1.json: slide on booleans 14 pairs 22060 found 17600 truncated False
+     4  Rivet in the frame of Rivet, slid on (); e.g. [(472, 473, [0.0, 0.0, -8.0]), (626, 674, [0.0, 0.0, -10.0]), (867, 972, [0.0, -0.459881, 11.704764])]
+     3  Stringer in the frame of Rivet, slid on (); e.g. [(1, 10160, [-inf, -5.5, -inf]), (728, 10165, [-inf, -5.5, 21.0]), (1236, 10169, [-inf, -5.5, -21.0])]
+     2  Frame segment in the frame of Skin panel, slid on (11,); e.g. [(375, 10003, [-250.0, -73.5, inf]), (375, 10083, [250.0, -73.5, inf])]
+     2  Stringer in the frame of Frame segment, slid on (11,); e.g. [(10001, 10161, [250.0, 62.0, inf]), (10081, 10161, [-250.0, 62.0, inf])]
+     1  Rivet in the frame of Skin panel, slid on (3, 11); e.g. [(0, 1, [inf, -6.0, inf])]
+     1  Stringer in the frame of Skin panel, slid on (11,); e.g. [(125, 10161, [-inf, -11.5, inf])]
+     1  Frame segment in the frame of Frame segment, slid on (); e.g. [(10001, 10002, [0.0, -5.665479, 144.196071])]
+barrel-1.json: slide off booleans 234 pairs 22060 found 17600 truncated False
+   124  Rivet in the frame of Skin panel, slid on (); e.g. [(0, 1, [-235.0, -6.0, -5.0]), (0, 2, [-225.0, -6.0, -5.0]), (0, 3, [-215.0, -6.0, -5.0])]
+   100  Stringer in the frame of Rivet, slid on (); e.g. [(1, 10160, [235.0, -5.5, 5.0]), (2, 10160, [225.0, -5.5, 5.0]), (3, 10160, [215.0, -5.5, 5.0])]
+     4  Rivet in the frame of Rivet, slid on (); e.g. [(472, 473, [0.0, 0.0, -8.0]), (626, 674, [0.0, 0.0, -10.0]), (867, 972, [0.0, -0.459881, 11.704764])]
+     2  Frame segment in the frame of Skin panel, slid on (); e.g. [(375, 10003, [-250.0, -73.5, 0.0]), (375, 10083, [250.0, -73.5, 0.0])]
+     2  Stringer in the frame of Frame segment, slid on (); e.g. [(10001, 10161, [250.0, 62.0, 0.0]), (10081, 10161, [-250.0, 62.0, 0.0])]
+     1  Stringer in the frame of Skin panel, slid on (); e.g. [(125, 10161, [0.0, -11.5, 0.0])]
+     1  Frame segment in the frame of Frame segment, slid on (); e.g. [(10001, 10002, [0.0, -5.665479, 144.196071])]
+barrel-9.json: slide on booleans 15 pairs 197356 found 158400 truncated False
+     4  Rivet in the frame of Rivet, slid on (); e.g. [(472, 473, [0.0, 0.0, -8.0]), (626, 674, [0.0, 0.0, -10.0]), (867, 972, [0.0, -0.459881, 11.704764])]
+     3  Stringer in the frame of Rivet, slid on (); e.g. [(1, 90800, [-inf, -5.5, -inf]), (728, 90805, [-inf, -5.5, 21.0]), (1236, 90809, [-inf, -5.5, -21.0])]
+     3  Stringer in the frame of Frame segment, slid on (11,); e.g. [(90001, 90801, [2250.0, 62.0, inf]), (90081, 90801, [-inf, 62.0, inf]), (90721, 90801, [-2250.0, 62.0, inf])]
+     2  Frame segment in the frame of Skin panel, slid on (11,); e.g. [(375, 90003, [-250.0, -73.5, inf]), (375, 90083, [250.0, -73.5, inf])]
+     1  Rivet in the frame of Skin panel, slid on (3, 11); e.g. [(0, 1, [inf, -6.0, inf])]
+     1  Stringer in the frame of Skin panel, slid on (11,); e.g. [(125, 90801, [-inf, -11.5, inf])]
+     1  Frame segment in the frame of Frame segment, slid on (); e.g. [(90001, 90002, [0.0, -5.665479, 144.196071])]
+barrel-9.json: slide off booleans 1050 pairs 197356 found 158400 truncated False
+   900  Stringer in the frame of Rivet, slid on (); e.g. [(1, 90800, [2235.0, -5.5, 5.0]), (2, 90800, [2225.0, -5.5, 5.0]), (3, 90800, [2215.0, -5.5, 5.0])]
+   124  Rivet in the frame of Skin panel, slid on (); e.g. [(0, 1, [-235.0, -6.0, -5.0]), (0, 2, [-225.0, -6.0, -5.0]), (0, 3, [-215.0, -6.0, -5.0])]
+    10  Stringer in the frame of Frame segment, slid on (); e.g. [(90001, 90801, [2250.0, 62.0, 0.0]), (90081, 90801, [1750.0, 62.0, 0.0]), (90161, 90801, [1250.0, 62.0, 0.0])]
+     9  Stringer in the frame of Skin panel, slid on (); e.g. [(125, 90801, [2000.0, -11.5, 0.0]), (10125, 90801, [1500.0, -11.5, 0.0]), (20125, 90801, [1000.0, -11.5, 0.0])]
+     4  Rivet in the frame of Rivet, slid on (); e.g. [(472, 473, [0.0, 0.0, -8.0]), (626, 674, [0.0, 0.0, -10.0]), (867, 972, [0.0, -0.459881, 11.704764])]
+     2  Frame segment in the frame of Skin panel, slid on (); e.g. [(375, 90003, [-250.0, -73.5, 0.0]), (375, 90083, [250.0, -73.5, 0.0])]
+     1  Frame segment in the frame of Frame segment, slid on (); e.g. [(90001, 90002, [0.0, -5.665479, 144.196071])]
