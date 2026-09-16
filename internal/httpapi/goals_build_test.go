@@ -240,6 +240,14 @@ func TestCreateGoal_RefusesAProjectTheCallerIsNotAMemberOf(t *testing.T) {
 }
 
 // A viewer reads a project and plans nothing in it.
+//
+// ‼️ Load-bearing again since 2026-09-15, and left exactly as strict: requesting a
+// STEP export stopped needing goal.create, because exporting is reading and the
+// goal FORGE writes to do it off-node is FORGE's own mechanism rather than work
+// the person authored (httpapi.RequestExport). THIS route is the other case — the
+// statement is the caller's and the planner's model is asked on their behalf — so
+// a viewer who may now export must still be refused here, or #91's defect is back
+// by a different door.
 func TestCreateGoal_RefusesAViewerOfTheProject(t *testing.T) {
 	stub := &buildLLM{replies: []string{buildThreeSteps}}
 	h, pool, user := buildHandlers(t, stub)

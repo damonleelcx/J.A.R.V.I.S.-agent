@@ -1865,10 +1865,6 @@ drill "a worker with no bucket builds anyway" internal/agent/stepexport.go \
   's = s.replace("\tif !x.blobs.Available() {\n", "\tif false {\n", 1)' \
   ./internal/agent 'TestStepExport_AWorkerWithNoBlobStoreFailsTheJobNamingTheSetting'
 
-drill "a viewer may ask for an export" internal/httpapi/geometry_exports.go \
-  's = s.replace("v.ProjectID, user.ID, access.PermGoalCreate", "v.ProjectID, user.ID, access.PermProjectRead", 1)' \
-  ./internal/httpapi 'TestExports_AViewerMayFollowAnExportButNotAskForOne'
-
 drill "a non-member reads an export" internal/httpapi/geometry_exports.go \
   's = s.replace("e.ProjectID, user.ID, access.PermProjectRead", "e.ProjectID, map[bool]string{true: e.RequestedBy, false: user.ID}[user.ID != \"\"], access.PermProjectRead", 1)' \
   ./internal/httpapi 'TestExports_ANonMemberIsToldThereIsNoSuchDesignOrExport'
@@ -1904,6 +1900,32 @@ drill "a corrupt file is served whole" internal/httpapi/geometry_exports.go \
 drill "the export status route is registered under its own name" internal/httpapi/router.go \
   's = s.replace("mux.Handle(\"GET /v1/geometry/{id}/{rest}\", authed(geo.ExportRoute))", "mux.Handle(\"GET /v1/geometry/exports/{rest}\", authed(geo.ExportRoute))", 1)' \
   ./internal/httpapi 'TestAPI_EveryGeometryRouteIsMountedAndRequiresASession'
+
+echo
+echo "Viewers may export"
+# Added 2026-09-15 (viewers may export). Requesting a STEP export needs only the
+# permission to READ the design: exporting is reading, and the goal FORGE writes to do
+# it off-node is FORGE's own mechanism rather than work the person authored
+# (httpapi.RequestExport). The requester is still recorded as the goal's creator. What
+# that opens is a reader spending forge-worker's kernel, bounded by
+# MaxLiveExportJobsPerRequester = 3 live jobs per person per project
+# (internal/agent/stepexport.go), refused 429 by name. POST /v1/goals still needs
+# goal.create, so #91's defect cannot come back this way. Needs FORGE_TEST_DATABASE_URL.
+drill "a viewer is refused an export again" internal/httpapi/geometry_exports.go \
+  's = s.replace("\tformat := r.URL.Query().Get(\"format\")", "\tif err := h.deps.requirePermission(r, v.ProjectID, user.ID, access.PermGoalCreate); err != nil {\n\t\tWriteError(w, r, h.deps.Log, err)\n\t\treturn\n\t}\n\tformat := r.URL.Query().Get(\"format\")", 1)' \
+  ./internal/httpapi 'TestExports_AViewerMayRequestFollowAndDownloadAnExportOfADesignTheyMayRead'
+
+drill "the live export job limit is never reached" internal/agent/stepexport.go \
+  's = s.replace("if inFlight >= MaxLiveExportJobsPerRequester {", "if inFlight >= MaxLiveExportJobsPerRequester && false {", 1)' \
+  ./internal/httpapi 'TestExports_MoreLiveExportJobsThanTheLimitAreRefusedNamingIt'
+
+drill "the limit is shared by everybody in the project" internal/agent/stepexport.go \
+  's = s.replace("e.project_id = $1 and e.requested_by = $2", "e.project_id = $1 and $2 = $2", 1)' \
+  ./internal/httpapi 'TestExports_MoreLiveExportJobsThanTheLimitAreRefusedNamingIt'
+
+drill "planning work needs only read access too" internal/httpapi/goals_start.go \
+  's = s.replace("requirePermission(r, req.ProjectID, user.ID, access.PermGoalCreate)", "requirePermission(r, req.ProjectID, user.ID, access.PermProjectRead)", 1)' \
+  ./internal/httpapi 'TestCreateGoal_RefusesAViewerOfTheProject'
 
 if [ "$MODE" = "list" ]; then
   exit 0
