@@ -56,6 +56,10 @@ type Comparison struct {
 	// headed "not compared" and finding rows that WERE compared learns to skim
 	// the box.
 	MatchNotes []string
+	// Structure is how the variants' trees differ — definitions, assemblies and
+	// the root, matched by id (compare_structure.go). Nil when no variant is a
+	// tree, so a comparison of flat documents is exactly what it always was.
+	Structure *Structure
 }
 
 // FieldRow is one provenance fact across every variant.
@@ -116,6 +120,12 @@ func Compare(variants []Variant) *Comparison {
 	}
 	c.Provenance = provenanceRows(variants)
 	c.Parts, c.NotComparable, c.MatchNotes = partRows(variants)
+	// After the part rows, and appended rather than merged into them: for flat
+	// documents there is no structure and nothing to append, so the part rows and
+	// their notes are exactly what they were before trees could be compared.
+	var structureNotes []string
+	c.Structure, structureNotes = structureOf(variants)
+	c.NotComparable = append(c.NotComparable, structureNotes...)
 	return c
 }
 

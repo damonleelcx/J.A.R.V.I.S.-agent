@@ -82,6 +82,15 @@ func (c *Conversation) repairIfPartsOverlap(ctx context.Context, reply *Reply, s
 	// problems stays every buried clash the kernel listed, so "fewer buried after"
 	// counts the same things it always did. Only the prompt is summarized
 	// (repairAsks; repair bound and check profile).
+	//
+	// ‼️ A buried part in a tree is named by where it IS ("wheel/lug-nut-3"), and that
+	// path is not something a repair can edit: the copy comes from a child, its
+	// pattern and a definition. The 2026-09-15 live car buried every lug nut in its
+	// hub, rim and tyre and the repair was shown only the paths. So each finding says
+	// which child places it and, for a pattern copy, which pattern about which axis.
+	// That is placedByNotes, and it is inside repairAsks — the notes are part of what
+	// is sent, so they are counted against the bound rather than added past it.
+	// Fence: TestInterference_ARepairIsToldWhichChildPlacesABuriedCopy.
 	if fixed := c.repairGeometry(ctx, reply.Prototype, repairAsks(reply.Prototype, found, sheet.Found)); fixed != nil {
 		// Re-built, not re-read: the question "is it still inside" can only be
 		// answered by the kernel, and a repair that claimed success against the
@@ -213,7 +222,12 @@ const maxRepairExamples = 3
 // total is how many pairs the kernel found, which is more than found when it
 // summarized its list.
 func repairAsks(doc *Prototype, found []geometry.Interference, total int) []geometry.Problem {
-	buried := geometry.InterferenceProblems(found)
+	// Each line first says which child places its parts (placedByNotes), because a
+	// list that fits is asked line for line and a path alone is not editable. The
+	// budget is then measured on those lines, notes included: they are sent, so they
+	// are spent. A summary needs no notes — it is already told BY placement, and
+	// repeating the sentence per clash is what it exists to replace.
+	buried := placedByNotes(doc, found, geometry.InterferenceProblems(found))
 	if problemBytes(buried) <= maxRepairProblemBytes {
 		return buried
 	}
@@ -269,15 +283,21 @@ func repairAsks(doc *Prototype, found []geometry.Interference, total int) []geom
 	if total > len(found) {
 		listed = fmt.Sprintf("the kernel listed the %d that share the most", len(found))
 	}
+	// ‼️ Unnamed, all four of them. repairGeometry prefixes a problem with the part it
+	// is about, because a fault's sentence does not say. A summary's sentences do, and
+	// none of them is about one part: the header is about the whole model, a group is
+	// about a pair of PLACEMENTS, the last line is about the groups left out. Naming
+	// them would put "bay-1/sector-1/stringer-rivets-7" in front of "FORGE found
+	// 1760000 pairs…", which is the opposite of saying what the line is about.
 	out := []geometry.Problem{
-		{Severity: geometry.Error, Name: found[worst].A, Detail: clip(fmt.Sprintf(
+		{Severity: geometry.Error, Detail: clip(fmt.Sprintf(
 			"FORGE found %d pairs of parts sharing material; %s, and %d of those are buried. "+
 				"That is too many to list one by one, so they are grouped by the placements in this "+
 				"document that put the parts there: fix the placement and every copy of it moves.",
 			total, listed, count))},
 		// By id as well as label: a label is shared by every copy of a definition, and
 		// "Rivet is 83% inside Stringer" is true of 768,000 pairs on the barrel.
-		{Severity: geometry.Error, Name: found[worst].A, Detail: clip(fmt.Sprintf("The worst, %s in %s: %s",
+		{Severity: geometry.Error, Detail: clip(fmt.Sprintf("The worst, %s in %s: %s",
 			found[worst].A, found[worst].B, found[worst].Describe()))},
 	}
 	// What the header will add once the groups are counted, and the last line: both
@@ -299,13 +319,13 @@ func repairAsks(doc *Prototype, found []geometry.Interference, total int) []geom
 			break
 		}
 		budget -= len("- \n") + len(line)
-		out = append(out, geometry.Problem{Severity: geometry.Error, Name: g.clashes[0].A, Detail: line})
+		out = append(out, geometry.Problem{Severity: geometry.Error, Detail: line})
 		described++
 		covered += len(g.clashes)
 	}
 	out[0].Detail += coverage(described, covered)
 	if described < len(groups) {
-		out = append(out, geometry.Problem{Severity: geometry.Error, Name: found[worst].A,
+		out = append(out, geometry.Problem{Severity: geometry.Error,
 			Detail: tail(len(groups)-described, count-covered)})
 	}
 	return out
@@ -438,10 +458,16 @@ func describeGroup(n, of int, a, b placement, clashes []geometry.Interference, l
 }
 
 // problemBytes is how many bytes problems take as repairGeometry writes them.
+//
+// ‼️ Named, because repairGeometry is: it writes "- " + Name + " " + Detail, trimmed
+// (georepair.go, TestRepair_EveryFaultTheRepairIsShownNamesThePartItIsAbout). A
+// counter that measured Detail alone would under-count every per-clash line by its
+// part's path — 33 bytes each on the barrel — and the bound would be spent past
+// without anything noticing.
 func problemBytes(problems []geometry.Problem) int {
 	n := 0
 	for _, p := range problems {
-		n += len("- \n") + len(p.Detail)
+		n += len("- \n") + len(strings.TrimSpace(p.Name+" "+p.Detail))
 	}
 	return n
 }
@@ -457,6 +483,53 @@ func clip(s string) string {
 		cut--
 	}
 	return s[:cut] + more
+}
+
+// placedByNotes adds to each buried finding in a tree which child places the part,
+// so the repair edits the design that put it there. A finding about top-level parts
+// is returned unchanged.
+func placedByNotes(doc *Prototype, found []geometry.Interference, problems []geometry.Problem) []geometry.Problem {
+	if doc == nil || doc.Root == "" {
+		return problems
+	}
+	other := map[string]string{}
+	for _, f := range found {
+		other[f.A+"\x00"+f.Describe()] = f.B
+	}
+	out := make([]geometry.Problem, len(problems))
+	for i, p := range problems {
+		out[i] = p
+		var where []string
+		for _, id := range []string{p.Name, other[p.Name+"\x00"+p.Detail]} {
+			if s := placedBySentence(*doc, id); s != "" {
+				where = append(where, s)
+			}
+		}
+		if len(where) > 0 {
+			out[i].Detail = p.Detail + " (" + strings.Join(where, "; ") + ")"
+		}
+	}
+	return out
+}
+
+// placedBySentence says what places one flattened part, or "".
+func placedBySentence(doc geometry.Document, id string) string {
+	at, ok := doc.PlacedBy(id)
+	if !ok {
+		return ""
+	}
+	if at.Copy > 0 && at.Pattern != nil {
+		kind := strings.ToLower(strings.TrimSpace(at.Pattern.Kind))
+		how := fmt.Sprintf("a %s pattern", kind)
+		if kind == "polar" {
+			how = fmt.Sprintf("a polar pattern about %q, which turns every copy about that axis through the "+
+				"origin of the frame the child is measured in", at.Pattern.About)
+		}
+		return fmt.Sprintf("%s is copy %d of child %q of assembly %q, placed by %s: move that child or change "+
+			"its pattern or the definition %q, not the copy", id, at.Copy, at.Child, at.Assembly, how, at.Ref)
+	}
+	return fmt.Sprintf("%s is placed by child %q of assembly %q: move that child or change %q, not the placed path",
+		id, at.Child, at.Assembly, at.Ref)
 }
 
 // list is the reader's sentence for a set of findings.
