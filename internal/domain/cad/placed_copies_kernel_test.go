@@ -30,6 +30,14 @@ type placeTally struct {
 	Occurrences     int `json:"occurrences"`
 	Parts           int `json:"parts"`
 	ShapeBuilds     int `json:"shape_builds"`
+	// Added 2026-09-15 (last hot spots): the two costs a placed occurrence still
+	// paid after #113 — a copy.deepcopy of every attribute of the definition, and a
+	// build123d Location built through __init__'s nine keyword arguments. Fallbacks
+	// counts the attributes _located's per-definition plan did not recognize and
+	// handed to copy.deepcopy anyway.
+	Deepcopies int `json:"deepcopies"`
+	Locations  int `json:"locations"`
+	Fallbacks  int `json:"fallbacks"`
 }
 
 // testdataJSON runs a script under testdata against this package's sidecar and
@@ -119,5 +127,36 @@ func TestKernel_PlacingMoreCopiesCopiesNoBRepsAndBuildsNoMorePlanes(t *testing.T
 	if eight.VolumeIntegrals != one.VolumeIntegrals {
 		t.Errorf("%d volume integrals at %d occurrences, %d at %d: the assembly integrates every copy again",
 			eight.VolumeIntegrals, eight.Occurrences, one.VolumeIntegrals, one.Occurrences)
+	}
+	// Added 2026-09-15 (last hot spots). Profiled on the barrel, a placed occurrence
+	// still paid a copy.deepcopy of every attribute of its definition (12 a copy at
+	// 90k, and the worst of them rebuilt a Location from a transformation) and a
+	// Location through __init__'s keyword parsing. Both are now per DEFINITION, so
+	// eight times the occurrences asks for no more of either.
+	t.Logf("deepcopies/Locations per run: build123d's %d/%d at one copy, %d/%d at eight; "+
+		"the sidecar's %d/%d and %d/%d, with %d and %d unrecognized attribute(s)",
+		ref1.Deepcopies, ref1.Locations, ref8.Deepcopies, ref8.Locations,
+		one.Deepcopies, one.Locations, eight.Deepcopies, eight.Locations, one.Fallbacks, eight.Fallbacks)
+	// The fixture must pay these per occurrence on build123d's path, or a flat count
+	// on the sidecar's proves nothing.
+	if ref8.Deepcopies-ref1.Deepcopies < eight.Occurrences-one.Occurrences ||
+		ref8.Locations-ref1.Locations < eight.Occurrences-one.Occurrences {
+		t.Fatalf("build123d's path did not deepcopy and build a Location per occurrence here (%+v → %+v); "+
+			"the fixture cannot see the fix", ref1, ref8)
+	}
+	if eight.Deepcopies != one.Deepcopies {
+		t.Errorf("%d deepcopies at %d occurrences, %d at %d: a placed copy deepcopies its definition again",
+			eight.Deepcopies, eight.Occurrences, one.Deepcopies, one.Occurrences)
+	}
+	if eight.Locations != one.Locations {
+		t.Errorf("%d Location.__init__ calls at %d occurrences, %d at %d: a placement parses keyword arguments again",
+			eight.Locations, eight.Occurrences, one.Locations, one.Occurrences)
+	}
+	// ‼️ A fallback is CORRECT — it is the deepcopy loop, for an attribute the plan
+	// does not recognize — but one per occurrence would mean the plan recognizes
+	// nothing that matters, and the counts above would be flat for the wrong reason.
+	if eight.Fallbacks > one.Fallbacks {
+		t.Errorf("%d unrecognized attribute(s) at %d occurrences and %d at %d: _located's plan is not per definition",
+			eight.Fallbacks, eight.Occurrences, one.Fallbacks, one.Occurrences)
 	}
 }

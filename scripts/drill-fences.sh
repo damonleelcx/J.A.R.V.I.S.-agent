@@ -3254,8 +3254,11 @@ drill "the frame cache is keyed by part of the matrix" internal/domain/cad/sidec
   's = s.replace("    key = repr(m)\n", "    key = repr(m[:3])\n", 1)' \
   ./internal/domain/cad 'TestKernel_APlacedCopyIsTheCopyBuild123dMade'
 
+# Re-anchored 2026-09-16 merging #121, which builds this Location through
+# _location_of instead of its constructor. Same function, same mutation: drop the
+# inversion.
 drill "a cached placement is not inverted" internal/domain/cad/sidecar.py \
-  's = s.replace("    trsf.Invert()\n    return Location(TopLoc_Location(trsf))\n", "    return Location(TopLoc_Location(trsf))\n", 1)' \
+  's = s.replace("    trsf.Invert()\n    return _location_of(TopLoc_Location(trsf))\n", "    return _location_of(TopLoc_Location(trsf))\n", 1)' \
   ./internal/domain/cad 'TestKernel_APlacedCopyIsTheCopyBuild123dMade'
 
 drill "a located copy shares its definition's attributes" internal/domain/cad/sidecar.py \
@@ -3283,7 +3286,7 @@ drill "an overlap repair is asked about every buried clash however many" interna
   ./internal/agent 'TestInterference_ARepairOfTenThousandClashesIsAskedWithinItsBudget'
 
 drill "a model whose clashes fit is summarized anyway" internal/agent/interference.go \
-  's = s.replace("\tif problemBytes(buried) <= maxRepairProblemBytes {\n", "\tif false && problemBytes(buried) <= maxRepairProblemBytes {\n", 1)' \
+  's = s.replace("\tif problemBytes(buried) <= limit {\n", "\tif false && problemBytes(buried) <= limit {\n", 1)' \
   ./internal/agent 'TestInterference_AFewBuriedClashesAreAskedAboutAsBefore'
 
 drill "the summary counts the list as everything found" internal/agent/interference.go \
@@ -3437,6 +3440,56 @@ drill "the kernel counts the buried clashes it listed" internal/domain/cad/sidec
 drill "the kernel counts buried at a different line than the turn" internal/domain/cad/sidecar.py \
   's = s.replace("_BURIED_FRACTION = 0.5", "_BURIED_FRACTION = 0.4", 1)' \
   ./internal/domain/cad 'TestKernel_TheBuriedCountIsTheClashesTheTurnCallsBuried'
+
+echo "Last hot spots: a placed copy without a deepcopy, and containment once per group of pairs"
+# Added 2026-09-15 (last hot spots). The shapes phase and what was left of the
+# interference check after #114. A placed occurrence no longer deepcopies every
+# attribute of its definition nor builds a Location through nine keyword arguments,
+# and the check takes each pair's containment once per group of (two definitions, two
+# rotations) instead of once per pair. Every copy and every key must still be
+# build123d's to the bit.
+#
+# ‼️ The two count drills mutate the CODE PATH, not the switch: testdata/placed_copies.py
+# assigns _PLACE_WITHOUT_DEEPCOPY and _LOCATION_WITHOUT_INIT itself for its reference
+# run, so a drill that flipped the constant would be overwritten and stay green.
+# ‼️ FIVE MORE WERE WRITTEN AND REMOVED, because they stayed green. Recorded here so
+# the next person does not write them again expecting them to hold
+# (docs/spikes/2026-09-15-last-hot-spots, "Drills"):
+#
+#   - "a placed copy shares its definition's empty containers"
+#     (setattr(out, key, {}) -> setattr(out, key, value))
+#   - "a placement's Location is missing the attribute the constructor sets"
+#     (deleting out.location_index = 0)
+#   - "a placement builds its Location through the constructor again"
+#     (_location_of(TopLoc_Location(trsf)) -> Location(TopLoc_Location(trsf)))
+#
+#     None of these three was caught. testdata/placed_copies.py compares a PLACEMENT
+#     only through its transformation numbers and compares __dict__ only for the
+#     placed SOLID, so the Location object's own attributes are never inspected; and
+#     the count fence did not move on the third. These are gaps in the fence, not
+#     properties that cannot be broken — see the spike's Recommendations.
+#
+#   - "grouped containment folds its reach into the bound"
+#     (mid - reach >= low  ->  mid >= low + reach)
+#   - "grouped containment adds the translation last"
+#     (((t[r] + p0) + p1) + p2  ->  t[r] + (p0 + p1 + p2))
+#
+#     Both are real floating-point differences and neither changed a single key on any
+#     of the eight fixtures: none of them places a pair within a last-bit of the
+#     containment boundary, which is the only place the two forms can disagree. The
+#     code keeps the exact forms anyway, because the reasoning is sound and they cost
+#     nothing — but nothing measured shows a fixture can tell them apart.
+drill "a copy's rotation is deepcopied per occurrence again" internal/domain/cad/sidecar.py \
+  's = s.replace("setattr(out, key, _location_of(TopLoc_Location(value.wrapped.Transformation())))", "setattr(out, key, copy.deepcopy(value, memo))", 1)' \
+  ./internal/domain/cad 'TestKernel_PlacingMoreCopiesCopiesNoBRepsAndBuildsNoMorePlanes'
+
+drill "a containment plan is keyed by the rotations and not the definitions" internal/domain/cad/sidecar.py \
+  's = s.replace("plans.get((ri, rj, a, b))", "plans.get((ri, rj))", 1); s = s.replace("plans[(ri, rj, a, b)] = g", "plans[(ri, rj)] = g", 1)' \
+  ./internal/domain/cad 'TestKernel_APairKeyWithoutLocationsIsTheKeyBuild123dGave'
+
+drill "the direction that cannot win is skipped on a tie too" internal/domain/cad/sidecar.py \
+  's = s.replace("            if a < b:\n", "            if a <= b:\n", 1)' \
+  ./internal/domain/cad 'TestKernel_APairKeyWithoutLocationsIsTheKeyBuild123dGave'
 
 # Added 2026-09-15 (kernel build ceiling and viewport follow-ups). Three findings of the
 # W2 acceptance run: a mesh reply, which is in millimetres, was drawn on a stage in the
