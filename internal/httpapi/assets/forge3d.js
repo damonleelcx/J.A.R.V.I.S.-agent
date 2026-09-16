@@ -1423,8 +1423,11 @@
    * one thing a CAD viewport must not do.
    *
    * See docs/plan-2026-09-08-solids-the-viewport-can-show.md */
-  function kernelGeometry(mesh) {
+  function kernelGeometry(mesh, scale) {
     var positions = mesh.vertices || [];
+    /* A mesh reply is in MILLIMETRES and the stage is in the document's unit; scale
+     * is the factor between them (drawBatches), and 1 or absent for a design in mm. */
+    if (scale && scale !== 1) positions = Array.prototype.map.call(positions, function (v) { return v * scale; });
     var indices = mesh.triangles || [];
     var normals = new Array(positions.length);
     for (var n = 0; n < normals.length; n++) normals[n] = 0;
@@ -2165,10 +2168,25 @@
   }
 
   /* drawn is partsToDraw's list; built is the mesh reply (GET /v1/geometry/{id}/mesh)
-   * or null; opts.wide says whether this browser indexes past 65,535 vertices. */
+   * or null; opts.wide says whether this browser indexes past 65,535 vertices; opts.toMM
+   * is unitToMM of the document's units.
+   *
+   * # Why a reply is scaled here (2026-09-15)
+   *
+   * Every mesh reply — the kernel's, the Go tessellator's, the whole design's and a
+   * subtree's — is in MILLIMETRES (cad.Kernel, geometry.TessellateInstances), and
+   * everything else on the stage is in the DOCUMENT's unit: the primitives, the
+   * dimension overlays, and the boxes a design loaded a subtree at a time draws until
+   * its geometry arrives. They were drawn as they arrived, so an inch design's built
+   * surface was 25.4 times its own boxes and dimensions, and a metre design's a
+   * thousand. The reply is put in the document's unit, once, where both the whole
+   * load and addSubtree read it.
+   * docs/bugfix/2026-09-15-mesh-replies-were-drawn-in-millimetres-on-a-stage-in-the-documents-units.md
+   * Fence: TestMeshSubtree_ADesignInInchesOrMetresIsDrawnWhereItsPrimitivesAre. */
   function drawBatches(drawn, built, opts) {
     opts = opts || {};
     var wide = opts.wide !== false;
+    var fromMM = opts.toMM > 0 ? 1 / opts.toMM : 1;
     var definitions = (built && built.definitions) || [];
     var placedMesh = {}, instanceOf = {};
     ((built && built.parts) || []).forEach(function (m) {
@@ -2193,7 +2211,10 @@
       if (mesh && !narrow) {
         key = inst ? 'definition:' + inst.definition : 'placed:' + part.id;
         matrix = inst ? Array.prototype.slice.call(inst.matrix) : IDENTITY.slice();
-        make = function () { return kernelGeometry(mesh); };
+        /* The copy's translation and its definition's vertices, from millimetres. A
+         * placed part's vertices are already where it is, so only they are scaled. */
+        if (inst) { matrix[12] *= fromMM; matrix[13] *= fromMM; matrix[14] *= fromMM; }
+        make = function () { return kernelGeometry(mesh, fromMM); };
       } else {
         var shape = { shape: part.shape, size: part.size, profile: part.profile, holes: part.holes,
                       path: part.path, path_closed: part.path_closed, axis: part.axis };
@@ -2850,7 +2871,7 @@
      * — and `built`, the mesh reply when the kernel answered, is how a definition's
      * triangles and its copies' matrices reach it (Phase 6, stage W1). */
     var wide = this.webgl2 || !!gl.getExtension('OES_element_index_uint');
-    var plan = drawBatches(partsToDraw(this.spec), built || null, { wide: wide });
+    var plan = drawBatches(partsToDraw(this.spec), built || null, { wide: wide, toMM: unitToMM(this.spec.units) });
     this.approximations = plan.approximations;
     this.batches = plan.batches.map(function (b) { return self._upload(b, wide); });
 
@@ -3293,7 +3314,7 @@
       delete lazy.loaded[key];
     });
     var drawn = lazy.drawn.filter(function (d) { return under(d.spec.id, d.repeatOf); });
-    var plan = drawBatches(drawn, reply || null, { wide: lazy.wide });
+    var plan = drawBatches(drawn, reply || null, { wide: lazy.wide, toMM: unitToMM(this.spec.units) });
     var batches = plan.batches.map(function (p) {
       p.key = path + '|' + p.key;
       return self._upload(p, lazy.wide);
