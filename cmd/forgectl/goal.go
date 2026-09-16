@@ -46,6 +46,8 @@ func cmdGoalNew(ctx context.Context, cfg *config.Config, log *logx.Logger, args 
 	industry := fs.String("industry", "", "industry for the NEW project: "+industryChoices()+
 		"\n\t(omit to file the project as \"Other\", which lowers autonomy and triggers expert review)")
 	start := fs.Bool("start", false, "activate the goal immediately after planning")
+	build := fs.Bool("build", false, "plan the statement as a BUILD of a model: one task per step, run by\n"+
+		"\tforge-worker with the CAD kernel, each step kept as a version of the design")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -106,7 +108,11 @@ func cmdGoalNew(ctx context.Context, cfg *config.Config, log *logx.Logger, args 
 	// time, which is all that is actually known.
 	fmt.Printf("planning with %s …\n", intake.PlannerModel())
 	stopTicker := startElapsedTicker("  still planning")
-	outcome, err := intake.Plan(ctx, pool, goal)
+	plan := intake.Plan
+	if *build {
+		plan = intake.PlanBuild
+	}
+	outcome, err := plan(ctx, pool, goal)
 	stopTicker()
 	if err != nil {
 		return err

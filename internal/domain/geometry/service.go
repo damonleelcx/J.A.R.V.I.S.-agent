@@ -129,6 +129,7 @@ func (s *Service) Save(ctx context.Context, n NewVariant) (*Variant, error) {
 
 		InitiatorID: n.InitiatorID,
 		Agent:       n.Agent,
+		ToolCallID:  toolCallOf(n),
 		Inputs:      n.Inputs,
 		// A geometry version has no textual diff. Empty is a legal, stated
 		// value here — "nothing textual to show" — rather than a gap, which is
@@ -136,6 +137,7 @@ func (s *Service) Save(ctx context.Context, n NewVariant) (*Variant, error) {
 		Diff: "",
 
 		GoalID:  n.GoalID,
+		TaskID:  taskOf(n),
 		Summary: "proposed " + doc.Name,
 
 		// The same list that is recorded in Inputs above, drawn as edges too.
@@ -442,4 +444,22 @@ func (s *Service) Respec(ctx context.Context, versionID, byUserID string, overri
 		"version_id", saved.VersionID, "respecified_from", source.VersionID,
 		"project_id", saved.ProjectID, "by", byUserID, "parameters", len(changed))
 	return saved, problems, nil
+}
+
+// taskOf is the task a goal's save names on its timeline event, or nil.
+func taskOf(n NewVariant) *string {
+	t := strings.TrimSpace(n.TaskID)
+	if strings.TrimSpace(n.GoalID) == "" || t == "" {
+		return nil
+	}
+	return &t
+}
+
+// toolCallOf is the tool call a save names, or nil.
+func toolCallOf(n NewVariant) *string {
+	t := strings.TrimSpace(n.ToolCallID)
+	if t == "" {
+		return nil
+	}
+	return &t
 }

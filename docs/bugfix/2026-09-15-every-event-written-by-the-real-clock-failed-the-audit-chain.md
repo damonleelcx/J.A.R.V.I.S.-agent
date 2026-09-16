@@ -43,7 +43,8 @@ place events are written.
 
 `TestAuditChain_AnEventStampedAtNanosecondsVerifies` (internal/domain/engine/audit_integration_test.go) appends events
 stamped at `.123456789 s` and requires the chain to verify; it fails without the fix. On the stacked branches (#85) a
-build goal's whole timeline, written by a real worker on the system clock, is verified as well.
+build goal's whole timeline, written by a real worker on the system clock, is verified as well, by
+`TestBuildGoal_AStepKeptInsideAGoalWritesAChainedArtifactEvent` (internal/agent/buildgoal_db_test.go).
 
 ## Regression prevention
 
