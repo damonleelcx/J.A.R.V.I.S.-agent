@@ -99,6 +99,7 @@ FILES=(
   internal/httpapi/converse.go
   internal/agent/look.go
   internal/domain/cad/script.py
+  internal/domain/cad/script_test.go
   internal/domain/cad/script.go
   internal/domain/geometry/expression.go
   internal/domain/geometry/parameters.go
@@ -111,6 +112,14 @@ FILES=(
   internal/httpapi/transcribe.go
   internal/httpapi/router.go
   internal/llm/transcribe.go
+  internal/domain/geometry/interference.go
+  internal/agent/interference.go
+  internal/httpapi/goals_start.go
+  internal/agent/worker.go
+  internal/domain/engine/repository.go
+  internal/domain/engine/queue.go
+  internal/agent/executor.go
+  internal/agent/settle.go
 )
 
 BACKUP=""
@@ -394,6 +403,47 @@ drill "the renderer has no gear" internal/httpapi/assets/forge3d.js \
 drill "the contract still sends a spur gear to a script" internal/agent/converse.go \
   's = s.replace("above — a spiral, a lattice, a helical gear, a \"", "above — an involute gear tooth, a spiral, a \"", 1)' \
   ./internal/agent 'TestTheContractNoLongerSendsASpurGearToAScript'
+
+echo
+echo "Interference"
+# Added 2026-09-12 with the check. Found by measuring a live car build that came
+# back with document faults ZERO, a clean kernel build and a passing visual
+# check, with the master cylinder entirely inside the engine block:
+# docs/spikes/2026-09-12-car-ceiling/README.md
+#
+# The first two are the DESIGN, not the arithmetic. The whole reason the numbers
+# come from the kernel on the solids that survive the features is that anything
+# computed earlier reports every bolt hole as an interference.
+drill "nothing is ever reported as interfering" internal/domain/cad/sidecar.py \
+  "s = s.replace('    found.sort(key=lambda f: f[\"fraction\"], reverse=True)', '    found = []', 1)" \
+  ./internal/domain/cad 'TestKernel_TwoSolidsInTheSameSpaceAreReported'
+
+# ‼️ The first version of this drill substituted `shapes` at the call site and
+# STAYED GREEN, which looked like a vacuous fence and was a wrong mutation: by
+# then `shapes` holds the solids AFTER the booleans, so the plate already has its
+# hole and the drill sits in the void — no overlap, nothing to report, fence
+# correctly silent. Reproducing "before the tools are consumed" means stashing
+# the solids as they are BEFORE the feature loop, which is what this does.
+drill "interference is measured BEFORE the tools are consumed" internal/domain/cad/sidecar.py \
+  's = s.replace("    shapes = dict(zip(ids, built))", "    shapes = dict(zip(ids, built))\n    _pre = (list(built), list(ids), list(names))", 1)
+s = s.replace("clashes, clash_truncated = _interferences(built, ids, names)", "clashes, clash_truncated = _interferences(*_pre)", 1)' \
+  ./internal/domain/cad 'TestKernel_ACutToolIsNotAnInterference'
+
+drill "the pair is reported in build order, not smaller first" internal/domain/cad/sidecar.py \
+  "s = s.replace('            lo, hi = (i, j) if volumes[i] <= volumes[j] else (j, i)', '            lo, hi = i, j', 1)" \
+  ./internal/domain/cad 'TestKernel_ASwallowedPartIsReportedAsBuried'
+
+drill "every graze counts as buried, so a weld drives a rewrite" internal/domain/geometry/interference.go \
+  's = s.replace("func (i Interference) Buried() bool { return i.Fraction >= BuriedFraction }", "func (i Interference) Buried() bool { return i.Fraction > 0 }", 1)' \
+  ./internal/agent 'TestInterference_AGrazeIsReportedAndNotRepaired'
+
+drill "a described render reports interference it cannot know about" internal/agent/interference.go \
+  's = s.replace("sheet == nil || !sheet.FromKernel {", "sheet == nil {", 1)' \
+  ./internal/agent 'TestInterference_ADescribedRenderClaimsNothing'
+
+drill "a repair is accepted without rebuilding" internal/agent/interference.go \
+  's = s.replace("\t\tif after.FromKernel &&\n\t\t\tlen(fixed.Faults()) <= len(reply.Prototype.Faults()) &&\n\t\t\tlen(geometry.InterferenceProblems(after.Interferences)) < len(problems) {", "\t\tif true {", 1)' \
+  ./internal/agent 'TestInterference_ARepairThatDoesNotHelpIsRefused'
 
 echo
 echo "Islands"
@@ -942,6 +992,183 @@ drill "a retired model is reported without naming the survivors" internal/llm/op
   ./internal/llm 'TestAMissingModelNamesWhatTheEndpointDoesServe'
 
 echo
+echo "A worker carries a plan to its end"
+# Added 2026-09-15. Three engine defects found building stage A1 (#85): a finished
+# task released nothing, so a plan stopped after its first layer; a budget refusal
+# could not fail a task that was only claimed, so a spent goal never stopped; and
+# events were hashed at nanoseconds but stored at microseconds, so every event the
+# real clock wrote failed the audit chain. Needs FORGE_TEST_DATABASE_URL.
+drill "a finished task releases nothing" internal/agent/worker.go \
+  's = s.replace("\tw.releaseWaiting(book, goalID)\n", "", 1)' \
+  ./internal/agent 'TestWorker_AFinishedTaskReleasesTheTasksWaitingOnIt'
+
+drill "the idle poll releases nothing" internal/agent/worker.go \
+  's = s.replace("\t\t\tw.releaseWaitingGoals(ctx)\n", "", 1)' \
+  ./internal/agent 'TestWorker_ATaskLeftWaitingByACrashIsReleasedOnTheIdlePoll'
+
+drill "a budget refusal fails a task that is only claimed" internal/agent/worker.go \
+  's = s.replace("\t\tif err := w.transition(ctx, task, engine.StatusRunning, engine.TaskMutation{}); err != nil {\n\t\t\treturn\n\t\t}\n", "", 1)' \
+  ./internal/agent 'TestWorker_ABudgetRefusalStopsTheGoal'
+
+drill "an event is hashed at a precision it is not stored at" internal/domain/engine/repository.go \
+  's = s.replace("\tnow = now.Truncate(time.Microsecond)\n", "", 1)' \
+  ./internal/domain/engine 'TestAuditChain_AnEventStampedAtNanosecondsVerifies'
+
+echo
+echo "A stopping worker's bookkeeping"
+# Added 2026-09-15, found exercising a live build goal (#104). A graceful stop cancels
+# the worker's context mid-task, and what the task's end sets moving (releasing waiting
+# tasks, settling the goal) must run on a context of its own, or each fails on the
+# cancelled one and is logged as the database being unavailable. See
+# docs/bugfix/2026-09-15-a-stopping-worker-reported-its-own-stop-as-a-database-outage.md.
+# Needs FORGE_TEST_DATABASE_URL.
+drill "a stopping worker's bookkeeping runs on the cancelled context" internal/agent/worker.go \
+  's = s.replace("context.WithTimeout(context.WithoutCancel(ctx), afterTaskTimeout)", "context.WithTimeout(ctx, afterTaskTimeout)", 1)' \
+  ./internal/agent 'TestWorker_AWorkerStoppedMidTaskDoesNotReportItsBookkeepingAsADatabaseFailure|TestWorker_ATaskFinishedAsTheStopArrivesStillReleasesItsDependentsAndSettlesItsGoal'
+
+echo
+echo "A stopped worker hands its task back"
+# Added 2026-09-15 (a stopped worker hands its task back). A graceful stop cancels the
+# worker's context mid-task; the task must go back to the queue at once, its stopped
+# attempt not counted, instead of staying leased until the reaper finds it, and a real
+# failure must still be retried and failed. See
+# docs/bugfix/2026-09-15-a-stopped-worker-left-its-task-to-run-out-its-lease.md.
+# Needs FORGE_TEST_DATABASE_URL.
+drill "a stopped worker leaves its task to its lease" internal/agent/worker.go \
+  's = s.replace("\t\tif ctx.Err() != nil {\n\t\t\tw.handBack(ctx, task)\n\t\t}\n", "", 1)' \
+  ./internal/agent 'TestWorker_AWorkerStoppedInsideAModelCallHandsItsTaskBackAtOnce|TestWorker_AWorkerStoppedBeforeItsTaskStartsHandsItBackUnstarted|TestWorker_AWorkerStoppedAtTheApprovalGateHandsItsTaskBackAndTheGateIsOpenedOnce'
+
+drill "a stop still counts as an attempt" internal/domain/engine/queue.go \
+  's = s.replace("not_before = $3,\n\t\t       attempt_count = greatest(attempt_count - 1, 0)\n", "not_before = $3\n", 1)' \
+  ./internal/domain/engine 'TestQueue_AReleasedTaskIsClaimableAtOnceAndItsAttemptIsNotCounted'
+
+drill "a stop still counts as an attempt, through the worker" internal/domain/engine/queue.go \
+  's = s.replace("not_before = $3,\n\t\t       attempt_count = greatest(attempt_count - 1, 0)\n", "not_before = $3\n", 1)' \
+  ./internal/agent 'TestWorker_AWorkerStoppedInsideAModelCallHandsItsTaskBackAtOnce'
+
+drill "a task stopped in verification cannot be released" internal/domain/engine/queue.go \
+  's = s.replace("where id = $1 and lease_owner = $2 and status in (\x27claimed\x27,\x27running\x27,\x27verifying\x27)", "where id = $1 and lease_owner = $2 and status in (\x27claimed\x27,\x27running\x27)", 1)' \
+  ./internal/domain/engine 'TestQueue_ATaskStoppedDuringVerificationCanBeReleased'
+
+drill "a stop is recorded as a failed attempt" internal/agent/worker.go \
+  's = s.replace("\tif ctx.Err() != nil {\n\t\treturn\n\t}\n\tif breach := w.budget.CheckAttempts(task)", "\tif breach := w.budget.CheckAttempts(task)", 1)' \
+  ./internal/agent 'TestWorker_AWorkerStoppedInsideAModelCallHandsItsTaskBackAtOnce'
+
+drill "a genuine failure is dropped as if it were a stop" internal/agent/worker.go \
+  's = s.replace("\tif ctx.Err() != nil {\n\t\treturn\n\t}\n\tif breach := w.budget.CheckAttempts(task)", "\tif ctx.Err() != nil || true {\n\t\treturn\n\t}\n\tif breach := w.budget.CheckAttempts(task)", 1)' \
+  ./internal/agent 'TestWorker_ATaskThatFailsWhileItsWorkerRunsIsStillRetriedAndThenFailed'
+
+echo
+echo "A stopped worker keeps what it did"
+# Added 2026-09-15 (stop leftovers). A stop must leave an approval request and its
+# approval.requested event both or neither; must still record what had happened before
+# it (an event, spent tokens, a tool call that ran); must skip, not fail, what it cut
+# short (a decision, a tool call, a checkpoint); and must log no DATABASE_UNAVAILABLE.
+# Mutations keep the code compiling, so a red here is the fence and not the build. See
+# docs/bugfix/2026-09-15-a-stopped-worker-lost-what-it-had-done-and-blamed-the-database.md.
+# Needs FORGE_TEST_DATABASE_URL.
+drill "the approval request and its event are written apart" internal/agent/worker.go \
+  's = s.replace("if _, err := tx.Exec(ctx, `\n\t\t\tinsert into forge_approvals", "if _, err := w.pool.Exec(ctx, `\n\t\t\tinsert into forge_approvals", 1)' \
+  ./internal/agent 'TestWorker_AStopBetweenOpeningAnApprovalRequestAndRecordingItLeavesTheTimelineAndTheApprovalsAgreeing'
+
+drill "a failure reached while stopping is still written" internal/agent/worker.go \
+  's = s.replace("\t// database being unavailable. Run hands the task back instead.\n\tif ctx.Err() != nil {\n\t\treturn\n\t}\n", "\t// database being unavailable. Run hands the task back instead.\n", 1)' \
+  ./internal/agent 'TestWorker_AStopBetweenOpeningAnApprovalRequestAndRecordingItLeavesTheTimelineAndTheApprovalsAgreeing'
+
+drill "a decision the stop refused is logged as a database failure" internal/agent/worker.go \
+  's = s.replace("if err != nil && ctx.Err() == nil {\n\t\tw.log.WarnWith(ctx, logx.EventTaskCycleEnded, err,", "if err != nil {\n\t\tw.log.WarnWith(ctx, logx.EventTaskCycleEnded, err,", 1)' \
+  ./internal/agent 'TestWorker_AWorkerStoppedAnywhereInATaskKeepsWhatItDidAndLogsNoDatabaseFailure/^at_the_approval_gate$'
+
+drill "a heartbeat the stop cancelled reports a lost lease" internal/agent/worker.go \
+  's = s.replace("\t\t\t\tif ctx.Err() != nil {\n\t\t\t\t\treturn\n\t\t\t\t}\n\t\t\t\t// Losing the lease", "\t\t\t\t// Losing the lease", 1)' \
+  ./internal/agent 'TestWorker_AWorkerStoppedAnywhereInATaskKeepsWhatItDidAndLogsNoDatabaseFailure'
+
+drill "a blocked answer that arrives with the stop is recorded as a failure" internal/agent/worker.go \
+  's = s.replace("\t\tif ctx.Err() != nil {\n\t\t\treturn\n\t\t}\n\t\tw.appendEvent(ctx, goal.ID, &task.ID, engine.EventTaskFailed", "\t\tw.appendEvent(ctx, goal.ID, &task.ID, engine.EventTaskFailed", 1)' \
+  ./internal/agent 'TestWorker_AWorkerStoppedAnywhereInATaskKeepsWhatItDidAndLogsNoDatabaseFailure/^as_a_model_call_answers_that_the_task_is_blocked$'
+
+drill "a success the stop refused is recorded" internal/agent/worker.go \
+  's = s.replace("if err := w.transition(ctx, task, engine.StatusSucceeded, engine.TaskMutation{Result: resultJSON}); err != nil {\n\t\t\treturn\n\t\t}\n", "w.transition(ctx, task, engine.StatusSucceeded, engine.TaskMutation{Result: resultJSON})\n", 1)' \
+  ./internal/agent 'TestWorker_AWorkerStoppedAnywhereInATaskKeepsWhatItDidAndLogsNoDatabaseFailure/^as_a_model_call_answers_that_the_task_is_done$'
+
+drill "an event is written on the context the stop cancelled" internal/agent/worker.go \
+  's = s.replace("\trec, cancel := outliving(ctx)\n\tdefer cancel()\n\tif err := w.repo.AppendEvent(rec", "\trec, cancel := context.WithCancel(ctx)\n\tdefer cancel()\n\tif err := w.repo.AppendEvent(rec", 1)' \
+  ./internal/agent 'TestWorker_AWorkerStoppedAsItRecoversACrashedWorkersTaskRecordsTheRecoveryAndLogsNoDatabaseFailure'
+
+drill "a claim the stop refused is logged as a database failure" internal/agent/worker.go \
+  's = s.replace("\t\t\tif ctx.Err() != nil {\n\t\t\t\tcontinue // stopped while claiming", "\t\t\tif false {\n\t\t\t\tcontinue // stopped while claiming", 1)' \
+  ./internal/agent 'TestWorker_AWorkerStoppedAsItRecoversACrashedWorkersTaskRecordsTheRecoveryAndLogsNoDatabaseFailure'
+
+drill "the tokens a stopped call spent go uncounted" internal/agent/executor.go \
+  's = s.replace("rec, cancelRec := outliving(ctx)", "rec, cancelRec := context.WithCancel(ctx)", 1)' \
+  ./internal/agent 'TestWorker_AWorkerStoppedAnywhereInATaskKeepsWhatItDidAndLogsNoDatabaseFailure/^as_a_model_call_answers_that_the_task_is_done$'
+
+drill "a stopped worker runs its next tool call" internal/agent/executor.go \
+  's = s.replace("\t\t\tif ctx.Err() != nil {\n\t\t\t\treturn nil, ctx.Err()\n\t\t\t}\n\t\t\ttotalCalls++", "\t\t\ttotalCalls++", 1)' \
+  ./internal/agent 'TestWorker_AWorkerStoppedAnywhereInATaskKeepsWhatItDidAndLogsNoDatabaseFailure/^as_a_tool_call_finishes$'
+
+drill "a tool call that ran is lost from the ledger" internal/agent/executor.go \
+  's = s.replace("rec, cancel := outliving(ctx)\n\tdefer cancel()\n\terr := db.InTx(rec", "rec, cancel := context.WithCancel(ctx)\n\tdefer cancel()\n\terr := db.InTx(rec", 1)' \
+  ./internal/agent 'TestWorker_AWorkerStoppedAnywhereInATaskKeepsWhatItDidAndLogsNoDatabaseFailure/^as_a_tool_call_finishes$'
+
+drill "a tool call the stop cut short is recorded as failed" internal/agent/executor.go \
+  's = s.replace("\t\tif ctx.Err() != nil {\n\t\t\treturn toolError(", "\t\tif false {\n\t\t\treturn toolError(", 1)' \
+  ./internal/agent 'TestWorker_AWorkerStoppedAnywhereInATaskKeepsWhatItDidAndLogsNoDatabaseFailure/^inside_a_tool_call$'
+
+drill "a checkpoint is saved from an iteration the stop cut short" internal/agent/executor.go \
+  's = s.replace("\t\tif ctx.Err() != nil {\n\t\t\treturn nil, ctx.Err()\n\t\t}\n\t\tstate, _ := json.Marshal(", "\t\tstate, _ := json.Marshal(", 1)' \
+  ./internal/agent 'TestWorker_AWorkerStoppedAnywhereInATaskKeepsWhatItDidAndLogsNoDatabaseFailure/^inside_a_tool_call$'
+
+echo
+echo "The last four things a stop got wrong"
+# Added 2026-09-15 (last stop items). The four things #109's doc left open. A statement
+# the stop cancelled AFTER Postgres committed it must be read back, not guessed at, and
+# not guessed at in the other direction either. A stop during verification must not warn
+# that the verifier failed. A suspected injection found as the worker stops must survive
+# on the timeline. And the polling path's three reconciliations must be skipped quietly
+# when a stop cancels them, without becoming sweeps that never run. Mutations keep the
+# code compiling, so a red here is the fence and not the build. See
+# docs/bugfix/2026-09-15-a-stop-still-guessed-at-a-committed-write-and-lost-a-security-record.md.
+# Needs FORGE_TEST_DATABASE_URL.
+drill "a transition the stop cancelled in flight is assumed refused" internal/agent/worker.go \
+  's = s.replace("if err != nil && ctx.Err() != nil && w.stopLanded(ctx, task, to) {\n\t\treturn nil\n\t}\n", "", 1)' \
+  ./internal/agent 'TestWorker_ASuccessTheStopCancelledAfterPostgresHadCommittedItIsStillOnTheTimeline'
+
+drill "a transition the stop cancelled in flight is assumed to have landed" internal/agent/worker.go \
+  's = s.replace("if current.Status != to {", "if false \x26\x26 current.Status != to {", 1)' \
+  ./internal/agent 'TestWorker_AWorkerStoppedAnywhereInATaskKeepsWhatItDidAndLogsNoDatabaseFailure/^as_a_model_call_answers_that_the_task_is_done$'
+
+drill "a stop during verification is logged as a verifier failure" internal/agent/worker.go \
+  's = s.replace("\t\tif ctx.Err() == nil {\n\t\t\tw.log.WarnWith(ctx, logx.EventVerificationRan, err, \x22task_id\x22, task.ID)", "\t\tif true {\n\t\t\tw.log.WarnWith(ctx, logx.EventVerificationRan, err, \x22task_id\x22, task.ID)", 1)' \
+  ./internal/agent 'TestWorker_AStopDuringVerificationDoesNotWarnThatTheVerifierFailed'
+
+drill "a suspected injection is recorded on the context the stop cancelled" internal/agent/executor.go \
+  's = s.replace("\trec, cancel := outliving(ctx)\n\tdefer cancel()\n\tif err := e.repo.AppendEvent(rec", "\trec, cancel := context.WithCancel(ctx)\n\tdefer cancel()\n\tif err := e.repo.AppendEvent(rec", 1)' \
+  ./internal/agent 'TestWorker_ASuspectedInjectionFoundAsTheWorkerStopsIsStillRecordedOnTheTimeline'
+
+drill "the lease reaper runs on the context the stop cancelled" internal/agent/worker.go \
+  's = s.replace("\tif ctx.Err() != nil {\n\t\treturn\n\t}\n\treaped, err := w.queue.ReapExpiredLeases", "\tif false {\n\t\treturn\n\t}\n\treaped, err := w.queue.ReapExpiredLeases", 1); s = s.replace("\t\tif ctx.Err() == nil {\n\t\t\tw.log.WarnWith(ctx, logx.EventWorkerReaped", "\t\tif true {\n\t\t\tw.log.WarnWith(ctx, logx.EventWorkerReaped", 1)' \
+  ./internal/agent 'TestWorker_ThePollSweepsAStopCancelledAreSkippedQuietlyAndStillRunWhenNothingStoppedThem'
+
+drill "the release sweep runs on the context the stop cancelled" internal/agent/settle.go \
+  's = s.replace("\tif ctx.Err() != nil {\n\t\treturn\n\t}\n\trows, err := w.pool.Query(ctx, `\n\t\tselect distinct t.goal_id", "\tif false {\n\t\treturn\n\t}\n\trows, err := w.pool.Query(ctx, `\n\t\tselect distinct t.goal_id", 1); s = s.replace("\t\tif ctx.Err() == nil {\n\t\t\tw.log.WarnWith(ctx, logx.EventTaskReleaseFailed", "\t\tif true {\n\t\t\tw.log.WarnWith(ctx, logx.EventTaskReleaseFailed", 1)' \
+  ./internal/agent 'TestWorker_ThePollSweepsAStopCancelledAreSkippedQuietlyAndStillRunWhenNothingStoppedThem'
+
+drill "the settle sweep runs on the context the stop cancelled" internal/agent/settle.go \
+  's = s.replace("\tif ctx.Err() != nil {\n\t\treturn\n\t}\n\trows, err := w.pool.Query(ctx, `\n\t\tselect g.id", "\tif false {\n\t\treturn\n\t}\n\trows, err := w.pool.Query(ctx, `\n\t\tselect g.id", 1); s = s.replace("if ctx.Err() == nil {\n\t\t\tw.log.WarnWith(ctx, logx.EventGoalSettleFailed, err,\n", "if true {\n\t\t\tw.log.WarnWith(ctx, logx.EventGoalSettleFailed, err,\n", 1)' \
+  ./internal/agent 'TestWorker_ThePollSweepsAStopCancelledAreSkippedQuietlyAndStillRunWhenNothingStoppedThem'
+
+# The other direction: a guard that skips the sweep whether or not anything stopped it is
+# a reconciliation that never reconciles, which is what these two sweeps exist to be.
+drill "the release sweep is skipped even when nothing stopped it" internal/agent/settle.go \
+  's = s.replace("\tif ctx.Err() != nil {\n\t\treturn\n\t}\n\trows, err := w.pool.Query(ctx, `\n\t\tselect distinct t.goal_id", "\tif true {\n\t\treturn\n\t}\n\trows, err := w.pool.Query(ctx, `\n\t\tselect distinct t.goal_id", 1)' \
+  ./internal/agent 'TestWorker_ThePollSweepsAStopCancelledAreSkippedQuietlyAndStillRunWhenNothingStoppedThem'
+
+drill "the settle sweep is skipped even when nothing stopped it" internal/agent/settle.go \
+  's = s.replace("\tif ctx.Err() != nil {\n\t\treturn\n\t}\n\trows, err := w.pool.Query(ctx, `\n\t\tselect g.id", "\tif true {\n\t\treturn\n\t}\n\trows, err := w.pool.Query(ctx, `\n\t\tselect g.id", 1)' \
+  ./internal/agent 'TestReconciliationSweepSettlesWhatTheEventMissed'
+
+echo
 echo "The kernel"
 drill "the kernel uses OCCT's default transition" internal/domain/cad/sidecar.py \
   "s = s.replace('transition=Transition.RIGHT', 'transition=Transition.TRANSFORMED', 1)" \
@@ -1078,6 +1305,39 @@ drill "a 200 with no choices is indistinguishable from silence" internal/llm/tra
   's = s.replace("return &Transcript{Model: model, Unanswered: true}, nil", "return &Transcript{Model: model}, nil", 1)' \
   ./internal/llm 'TestTranscribe_AnAnswerWithNoTranscriptIsMarkedUnanswered'
 
+echo
+echo "Scripts run their kernel on one thread"
+# Added 2026-09-14. Under the 1 GiB address-space cap a multi-threaded build hung
+# on 4+ CPU machines. docs/bugfix/2026-09-14-scripts-hung-on-machines-with-four-or-more-cores.md
+drill "a script's kernel starts a thread per core again" internal/domain/cad/script.go \
+  's = s.replace("\"OMP_NUM_THREADS=1\", ", "", 1)' \
+  ./internal/domain/cad 'TestScriptEnv_RunsTheKernelOnOneThread'
+echo "Goal project permission"
+# Added 2026-09-15 (goal project permission). POST /v1/goals never checked the
+# project_id it was given: a stranger could draft a goal, and spend a planning call,
+# in someone else's project, and a viewer could plan in one it only reads. Create now
+# requires goal.create on a named project before Draft; replan already required it
+# through the goal's row, and is fenced so it stays that way. Both drills need
+# FORGE_TEST_DATABASE_URL. See
+# docs/bugfix/2026-09-15-a-goal-could-be-drafted-into-a-project-its-caller-was-not-in.md.
+drill "a goal is drafted into a project its caller is not in" internal/httpapi/goals_start.go \
+  's = s.replace("\tif req.ProjectID != \"\" {\n\t\tif err := h.deps.requirePermission(", "\tif false {\n\t\tif err := h.deps.requirePermission(", 1)' \
+  ./internal/httpapi 'TestCreateGoal_RefusesAProjectTheCallerIsNotAMemberOf|TestCreateGoal_RefusesAViewerOfTheProject'
+
+drill "a viewer replans a goal it can only read" internal/httpapi/goals_start.go \
+  's = s.replace("h.loadGoalFor(r, goalID, user.ID, access.PermGoalCreate)", "h.loadGoalFor(r, goalID, user.ID, access.PermProjectRead)", 1)' \
+  ./internal/httpapi 'TestReplan_RefusesAStrangerAndAViewerOfTheGoalsProject'
+echo "Script refusals without a kernel"
+# Added 2026-09-14. CI's check job has Python and no build123d on purpose; a refusal
+# must still say why there, and a test that needs the kernel must skip there.
+# docs/bugfix/2026-09-14-script-refusals-needed-a-kernel-to-say-why.md
+drill "the refusal hint imports the kernel again" internal/domain/cad/script.py \
+  's = s.replace("ns, _ = namespace(importlib.util.find_spec(\"build123d\") is not None)", "ns, _ = namespace(True)", 1)' \
+  ./internal/domain/cad 'TestScript_RefusalsSayWhyWithoutAKernel'
+
+drill "a test that needs the kernel runs without it" internal/domain/cad/script_test.go \
+  's = s.replace("\tif !hasBuild123d(py) {\n\t\tt.Skip(", "\tif false {\n\t\tt.Skip(", 1)' \
+  ./internal/domain/cad 'TestScript_ATestThatNeedsTheKernelSkipsWithoutIt'
 
 if [ "$MODE" = "list" ]; then
   exit 0

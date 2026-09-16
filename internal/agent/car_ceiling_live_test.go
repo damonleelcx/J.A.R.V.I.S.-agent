@@ -1,0 +1,470 @@
+package agent_test
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"log/slog"
+	"math"
+	"os"
+	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
+	"sync"
+	"testing"
+	"time"
+
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/agent"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/cad"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/geometry"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/llm"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/persona"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/clock"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/config"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/errs"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/logx"
+)
+
+// TestLiveCarCeiling measures WHERE the current build stops, rather than whether
+// it passes.
+//
+// # Why this exists when TestLiveAssemble already builds a car
+//
+// TestLiveAssemble asserts the build beat one reply — more than six parts, no
+// faults — and that is the right assertion for a regression test. It answers
+// none of the questions asked of it on 2026-09-12: how far does this actually
+// go, and which of the limits in
+// docs/research-2026-09-12-vehicles-aircraft-and-structures.md is the one that
+// bites first. Two of its blind spots matter enough to name:
+//
+//   - it checks doc.Faults(), which is the DOCUMENT's opinion of itself. Stage 11
+//     measured 6 of 10 scripts "running" and 0 of 10 surviving to the export, so
+//     a document that reports no faults is not a model that builds. This runs the
+//     real kernel over the finished assembly when one is configured.
+//   - a car whose parts sit inside each other has no fault and looks fine in a
+//     part count. Nothing in this system performs an interference test
+//     (geometry/assembly.go), so this reports a bounding-box proxy for it and
+//     says, in the name of the line it prints, that a proxy is what it is.
+//
+// Everything after the build is computed from the finished document and costs no
+// further model call, which is why this measures nine things for the price of the
+// one build it was already going to run.
+//
+// # The spend ceiling is part of the measurement, not a nicety
+//
+// This endpoint is a shared weekly token plan, and one earlier live spike on it
+// spent the week in eighteen calls. So every call goes through a counter that
+// REFUSES to place one once the budget is gone: the build then degrades exactly
+// as it does when the provider is down — each remaining step reports it could not
+// be built, the passes already made are kept, and the measurement is of a partial
+// car rather than of nothing. FORGE_MEASURE_TOKEN_BUDGET sets it; the default is
+// deliberately low enough to survive a surprise.
+//
+// Run it with: make measure-car
+func TestLiveCarCeiling(t *testing.T) {
+	if os.Getenv("FORGE_LIVE_LLM_TESTS") == "" || os.Getenv("FORGE_LLM_API_KEY") == "" {
+		t.Skip("set FORGE_LLM_API_KEY and FORGE_LIVE_LLM_TESTS=1 to run the live car ceiling measurement")
+	}
+	budget := int64(400_000)
+	if s := os.Getenv("FORGE_MEASURE_TOKEN_BUDGET"); s != "" {
+		n, err := strconv.ParseInt(s, 10, 64)
+		if err != nil || n <= 0 {
+			t.Fatalf("FORGE_MEASURE_TOKEN_BUDGET must be a positive number of tokens, got %q", s)
+		}
+		budget = n
+	}
+	log := logx.New(logx.Options{Level: slog.LevelError, Output: os.Stderr, Service: "car-ceiling"})
+
+	// The kernel is OPTIONAL and its absence is reported rather than skipped
+	// over: a run without it still measures eight of the nine things, and a run
+	// that silently omitted the build check would read as a car that builds.
+	var kernel *cad.Kernel
+	if python := os.Getenv("FORGE_CAD_PYTHON"); python != "" {
+		kernel = cad.New(python, log).WithScripts(true)
+		defer kernel.Close()
+	}
+
+	inner := llm.NewOpenAICompatible(config.LLMConfig{
+		BaseURL:        envOrDefault("FORGE_LLM_BASE_URL", "https://dashscope.aliyuncs.com/compatible-mode/v1"),
+		APIKey:         os.Getenv("FORGE_LLM_API_KEY"),
+		Converse:       envOrDefault("FORGE_LLM_CONVERSE_MODEL", "qwen3.7-plus"),
+		Vision:         envOrDefault("FORGE_LLM_VISION_MODEL", "qwen3.8-max"),
+		RequestTimeout: 3 * time.Minute,
+		MaxRetries:     2,
+	}, log, clock.System{})
+	meter := &meteredClient{inner: inner, budget: budget}
+
+	conv := agent.NewConversation(meter, persona.DefaultCharacter())
+	if kernel != nil {
+		conv = conv.WithScripts(liveRunner{kernel})
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Minute)
+	defer cancel()
+
+	const asked = "a sports car, in as much mechanical detail as you can manage"
+	start := time.Now()
+	var steps []agent.BuildStep
+	doc, notes, err := agent.AssembleForTest(ctx, conv, asked, nil, func(s agent.BuildStep) error {
+		steps = append(steps, s)
+		t.Logf("step %d/%d %-24s parts=%-3d %s", s.N, s.Of, s.Name, s.Parts, s.Note)
+		return nil
+	})
+	elapsed := time.Since(start)
+	spent, calls, refused := meter.report()
+
+	t.Logf("CAR-SPEND tokens=%d of %d calls=%d refused=%d seconds=%.0f",
+		spent, budget, calls, refused, elapsed.Seconds())
+	if refused > 0 {
+		t.Logf("‼️  the token budget ran out mid-build: %d calls were refused. Everything below "+
+			"describes a PARTIAL car and is a floor on the ceiling, not the ceiling.", refused)
+	}
+	if err != nil {
+		t.Fatalf("the build did not run at all: %v", err)
+	}
+	if doc == nil {
+		t.Fatal("the build returned no document and no error")
+	}
+	for _, n := range notes {
+		t.Logf("note: %s", n)
+	}
+
+	unit, ok := geometry.ParseUnit(doc.Units)
+	if !ok {
+		unit = geometry.Millimetre
+		t.Logf("CAR-UNIT unreadable=%q assuming=mm", doc.Units)
+	}
+
+	// 1 — the raw ceiling, the number every earlier stage quoted.
+	planned := 0
+	if len(steps) > 0 {
+		planned = steps[len(steps)-1].Of
+	}
+	t.Logf("CAR-CEILING steps_run=%d steps_planned=%d parts=%d features=%d minutes=%.1f",
+		len(steps), planned, len(doc.Parts), len(doc.Features), elapsed.Minutes())
+
+	// 2 — what it reached for. A car built entirely out of boxes and a car that
+	// used lofts and revolves are the same part count and not the same model.
+	t.Logf("CAR-SHAPES %s", histogram(shapesOf(*doc)))
+	t.Logf("CAR-FEATURES %s", histogram(opsOf(*doc)))
+
+	// 3 — does the finished assembly build in the real kernel? The document's own
+	// Faults() is the weaker question and is reported beside it, because the gap
+	// between the two is the thing Stage 11 was about.
+	faults := doc.Faults()
+	t.Logf("CAR-FAULTS document_faults=%d", len(faults))
+	for _, f := range faults {
+		t.Logf("  fault: %s — %s", f.Name, f.Detail)
+	}
+	var kernelBuild *cad.Build
+	if kernel == nil {
+		t.Logf("CAR-KERNEL absent — set FORGE_CAD_PYTHON to answer whether this car builds")
+	} else {
+		bctx, bcancel := context.WithTimeout(context.Background(), 10*time.Minute)
+		build, berr := kernel.BuildDocument(bctx, *doc, unit, "step")
+		bcancel()
+		kernelBuild = build
+		switch {
+		case berr != nil:
+			t.Logf("CAR-KERNEL builds=no reason=%s", errs.DetailOf(berr))
+		default:
+			missing := 0
+			for _, n := range build.Inferred {
+				if strings.Contains(n, "not in this file") {
+					missing++
+				}
+			}
+			t.Logf("CAR-KERNEL builds=yes volume=%.0f skipped=%d feature_failures=%d parts_not_in_file=%d",
+				build.Volume, len(build.Skipped), len(build.FeatureFailures), missing)
+			for _, s := range build.Skipped {
+				t.Logf("  skipped: %s", s)
+			}
+			for _, f := range build.FeatureFailures {
+				t.Logf("  feature failed: %s", f)
+			}
+		}
+	}
+
+	// 4 — interference, from the kernel. This was a bounding-box PROXY when the
+	// measurement was first run on 2026-09-12; the proxy is what showed the gap
+	// was worth closing, and geometry/interference.go closed it. There is one
+	// answer now and it is the kernel's, because a proxy kept alongside the real
+	// thing is a second truth that will eventually disagree with it.
+	//
+	// Every finding is printed whatever its fraction, not just the buried ones,
+	// because this is where geometry.BuriedFraction gets calibrated: the
+	// constant was chosen without live data and the distribution below is what
+	// should decide it.
+	if kernelBuild == nil {
+		t.Logf("CAR-INTERFERENCE unknown — no kernel, and a bounding-box guess would report " +
+			"every bolt hole and every part inside a hollow case")
+	} else {
+		buried := len(geometry.InterferenceProblems(kernelBuild.Interferences))
+		t.Logf("CAR-INTERFERENCE pairs=%d buried=%d truncated=%v of parts=%d",
+			len(kernelBuild.Interferences), buried, kernelBuild.InterferencesTruncated, len(doc.Parts))
+		for i, f := range kernelBuild.Interferences {
+			if i == 10 {
+				t.Logf("  … and %d more", len(kernelBuild.Interferences)-10)
+				break
+			}
+			t.Logf("  %s is %.0f%% inside %s (%.0f mm³)", f.A, f.Fraction*100, f.B, f.Volume)
+		}
+	}
+
+	// 5 — what a "mirror" would have saved. Wall B. Bounding boxes are the right
+	// tool HERE, unlike for interference: "same size, opposite x" is a question
+	// about extents, and a box answers it exactly.
+	boxes := boundingBoxes(*doc, unit)
+	pairs := mirrorPairs(boxes)
+	t.Logf("CAR-SYMMETRY mirror_pairs=%d parts_in_a_pair=%d of %d",
+		pairs, pairs*2, len(boxes))
+
+	// 6 — how the model placed things. Wall A: a literal position is arithmetic
+	// the model did in its head; a bound one is arithmetic the document does.
+	literal, bound, subsystems := placement(*doc)
+	t.Logf("CAR-PLACEMENT literal_positions=%d bound_positions=%d id_prefixes=%d",
+		literal, bound, subsystems)
+
+	// 7 — is anything hollow? Wall C. A car whose every part is solid is a car
+	// that weighs four tonnes.
+	hollow, cuts := hollowness(*doc)
+	t.Logf("CAR-HOLLOW parts_with_holes=%d cut_features=%d of parts=%d", hollow, cuts, len(doc.Parts))
+
+	// 8 — did any pass fail or lose work? Wall G, and the silent-drop bug.
+	failed := 0
+	for _, n := range notes {
+		if strings.Contains(n, "could not be built") || strings.Contains(n, "left out") ||
+			strings.Contains(n, "no geometry") || strings.Contains(n, "unreadable") ||
+			strings.Contains(n, "removed") {
+			failed++
+		}
+	}
+	t.Logf("CAR-PASSES with_a_problem=%d of %d", failed, len(steps))
+
+	// The document itself, kept. The 2026-09-12 run did not save it, and the
+	// threshold in geometry.BuriedFraction could not then be calibrated against
+	// the only real car this system has ever built without paying for another
+	// one. A measurement that throws away its subject can only be repeated, not
+	// examined.
+	if raw, mErr := json.MarshalIndent(doc, "", "  "); mErr == nil {
+		path := filepath.Join(t.TempDir(), "car.json")
+		if os.WriteFile(path, raw, 0o600) == nil {
+			t.Logf("CAR-DOCUMENT saved=%s bytes=%d", path, len(raw))
+		}
+	}
+
+	// 9 — the mesh the viewport would have to draw.
+	t.Logf("CAR-MESH triangles=%d", len(geometry.Tessellate(*doc, unit).Triangles()))
+
+	// This is a MEASUREMENT, and the only thing it fails on is not having
+	// measured anything. Asserting a part count here would turn a number that is
+	// supposed to move into a fence that has to be edited every time it does.
+	if len(doc.Parts) == 0 {
+		t.Fatal("the build produced no parts at all, so there is nothing to measure")
+	}
+}
+
+// meteredClient counts tokens and refuses to spend past a budget.
+//
+// It fails the CALL rather than the run: assemble already handles a provider that
+// will not answer, by keeping the passes it has and noting the ones it lost, and
+// a partial car measured honestly is worth more than a cancelled run.
+type meteredClient struct {
+	inner   llm.Client
+	budget  int64
+	mu      sync.Mutex
+	spent   int64
+	calls   int
+	refused int
+}
+
+func (m *meteredClient) Complete(ctx context.Context, req llm.Request) (*llm.Response, error) {
+	m.mu.Lock()
+	if m.spent >= m.budget {
+		m.refused++
+		spent, budget := m.spent, m.budget
+		m.mu.Unlock()
+		return nil, fmt.Errorf("the measurement's token budget is spent: %d of %d tokens used, "+
+			"so no further model call was placed (FORGE_MEASURE_TOKEN_BUDGET)", spent, budget)
+	}
+	m.mu.Unlock()
+
+	resp, err := m.inner.Complete(ctx, req)
+
+	m.mu.Lock()
+	m.calls++
+	if resp != nil {
+		total := resp.Usage.TotalTokens
+		if total == 0 {
+			total = resp.Usage.PromptTokens + resp.Usage.CompletionTokens
+		}
+		m.spent += total
+	}
+	m.mu.Unlock()
+	return resp, err
+}
+
+func (m *meteredClient) ModelFor(role llm.Role) string { return m.inner.ModelFor(role) }
+
+func (m *meteredClient) report() (spent int64, calls, refused int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.spent, m.calls, m.refused
+}
+
+// box is one part's axis-aligned bounds in the assembly frame.
+type box struct {
+	id       string
+	lo, hi   [3]float64
+	volume   float64
+	centreX  float64
+	extents  [3]float64
+	hasSolid bool
+}
+
+// boundingBoxes measures the same triangles the viewport draws, for the same
+// reason PartExtents does: "size" does not describe an extrusion or a sweep.
+func boundingBoxes(d geometry.Document, unit geometry.Unit) []box {
+	m := geometry.Tessellate(d, unit)
+	out := make([]box, 0, len(m.Groups))
+	for _, g := range m.Groups {
+		if len(g.Triangles) == 0 {
+			continue
+		}
+		b := box{id: g.PartID,
+			lo: [3]float64{math.Inf(1), math.Inf(1), math.Inf(1)},
+			hi: [3]float64{math.Inf(-1), math.Inf(-1), math.Inf(-1)}}
+		for _, t := range g.Triangles {
+			for _, v := range [3][3]float64{t.A, t.B, t.C} {
+				for i := 0; i < 3; i++ {
+					b.lo[i] = math.Min(b.lo[i], v[i])
+					b.hi[i] = math.Max(b.hi[i], v[i])
+				}
+			}
+		}
+		for i := 0; i < 3; i++ {
+			b.extents[i] = b.hi[i] - b.lo[i]
+		}
+		b.volume = b.extents[0] * b.extents[1] * b.extents[2]
+		b.centreX = (b.lo[0] + b.hi[0]) / 2
+		b.hasSolid = b.volume > 0
+		out = append(out, b)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].id < out[j].id })
+	return out
+}
+
+// mirrorPairs counts parts that are each other's reflection in the x=0 plane:
+// the same size, the same y and z, and opposite x. Each such pair is a part a
+// "mirror" would not have had to be authored twice.
+func mirrorPairs(boxes []box) int {
+	used := make(map[int]bool, len(boxes))
+	pairs := 0
+	near := func(a, b, tol float64) bool { return math.Abs(a-b) <= tol }
+	for i := range boxes {
+		if used[i] || !boxes[i].hasSolid || math.Abs(boxes[i].centreX) < 1 {
+			continue
+		}
+		for j := i + 1; j < len(boxes); j++ {
+			if used[j] || !boxes[j].hasSolid {
+				continue
+			}
+			tol := 1.0
+			if !near(boxes[i].centreX, -boxes[j].centreX, tol) {
+				continue
+			}
+			if !near(boxes[i].lo[1], boxes[j].lo[1], tol) || !near(boxes[i].lo[2], boxes[j].lo[2], tol) {
+				continue
+			}
+			same := true
+			for k := 0; k < 3; k++ {
+				if !near(boxes[i].extents[k], boxes[j].extents[k], tol) {
+					same = false
+					break
+				}
+			}
+			if !same {
+				continue
+			}
+			used[i], used[j] = true, true
+			pairs++
+			break
+		}
+	}
+	return pairs
+}
+
+// placement separates the positions the model computed in its head from the ones
+// the document computes, and counts how many subsystems the ids imply.
+func placement(d geometry.Document) (literal, bound, prefixes int) {
+	seen := map[string]bool{}
+	for _, p := range d.Parts {
+		if len(p.PositionFrom) > 0 {
+			bound++
+		} else {
+			literal++
+		}
+		if i := strings.Index(p.ID, "-"); i > 0 {
+			seen[p.ID[:i]] = true
+		} else if p.ID != "" {
+			seen[p.ID] = true
+		}
+	}
+	return literal, bound, len(seen)
+}
+
+func hollowness(d geometry.Document) (partsWithHoles, cuts int) {
+	for _, p := range d.Parts {
+		if len(p.Holes) > 0 {
+			partsWithHoles++
+		}
+	}
+	for _, f := range d.Features {
+		if strings.EqualFold(f.Op, "cut") {
+			cuts++
+		}
+	}
+	return partsWithHoles, cuts
+}
+
+func shapesOf(d geometry.Document) map[string]int {
+	out := map[string]int{}
+	for _, p := range d.Parts {
+		s := strings.ToLower(strings.TrimSpace(p.Shape))
+		if s == "" {
+			s = "(none)"
+		}
+		out[s]++
+	}
+	return out
+}
+
+func opsOf(d geometry.Document) map[string]int {
+	out := map[string]int{}
+	for _, f := range d.Features {
+		out[strings.ToLower(strings.TrimSpace(f.Op))]++
+	}
+	return out
+}
+
+func histogram(m map[string]int) string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if m[keys[i]] != m[keys[j]] {
+			return m[keys[i]] > m[keys[j]]
+		}
+		return keys[i] < keys[j]
+	})
+	parts := make([]string, 0, len(keys))
+	for _, k := range keys {
+		parts = append(parts, fmt.Sprintf("%s=%d", k, m[k]))
+	}
+	if len(parts) == 0 {
+		return "(none)"
+	}
+	return strings.Join(parts, " ")
+}
