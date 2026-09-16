@@ -4,9 +4,21 @@
 # # Why this cross-compiles on the host instead of building in the image
 #
 # #110's harness/build.sh untarred a `git archive` inside forge-linux-test and ran Go
-# there, so no CRLF working tree reached Linux. That is not available here: this image
-# carries no Go module cache (`/root/go/pkg/mod` is absent) and no reachable Go proxy, so
-# `go mod download` inside it cannot resolve this module's dependencies.
+# there, so no CRLF working tree reached Linux. This takes a different route, for a
+# weaker reason than "it was impossible":
+#
+#   - This image carries NO Go module cache — `/root/go/pkg/mod` is absent — so an
+#     in-container build would fetch this module's whole dependency set cold.
+#   - The host's cache IS warm: 7.3 GB, and `GOPROXY=off go list -deps ./cmd/forged`
+#     resolves every dependency offline.
+#
+# ‼️ A Go proxy IS reachable from this image — goproxy.cn and proxy.golang.org both
+# answer 200 — so #110's in-container build would have worked. An earlier draft of this
+# header claimed the proxy was unreachable; that was wrong, and wrong in an instructive
+# way: the probe behind it ran `wget`, which this image does not have, so the command
+# failed for a missing binary and the failure was read as a network result. Retested with
+# the image's own python, both proxies answer. Building on the host is therefore a choice
+# for speed and repeatability, NOT a blocker.
 #
 # Cross-compiling on the Windows host reaches the same end by the same reasoning. The
 # CRLF tree is never bind-mounted; only $BIN, a directory of finished ELF binaries, is

@@ -244,10 +244,14 @@ source, and this spike changed none.
   processes for. **No cProfile** — that is what turned #114's 1M check into 230 s and what #121's killed profile was
   doing. `--rss-cap-gb 24`, so a run that grows past 24 GB is stopped and recorded as stopped.
 - **Binaries for the container runs** ([`harness/build.sh`](harness/build.sh)): cross-compiled on the Windows host
-  (`GOOS=linux GOARCH=amd64 CGO_ENABLED=0`), because this `forge-linux-test` image has **no Go module cache and no
-  reachable Go proxy**, so #110's build-inside-the-image is not available here. Only the finished ELF binaries are
-  bind-mounted (`-v $BIN:/opt/forge:ro`), so the CRLF working tree still never reaches Linux — the reason #110 used
-  `git archive`. `forged` and `forged-lifted` from this branch; `forge-worker-a1` and `forgectl-a1` from
+  (`GOOS=linux GOARCH=amd64 CGO_ENABLED=0`), because this `forge-linux-test` image carries **no Go module cache**
+  (`/root/go/pkg/mod` is absent) so an in-container build would fetch every dependency cold, while the host's cache
+  is warm (7.3 GB; `GOPROXY=off go list -deps ./cmd/forged` resolves offline). ‼️ A Go proxy **is** reachable from
+  the image (goproxy.cn and proxy.golang.org both answer 200), so #110's build-inside-the-image would have worked —
+  this is a choice for speed, not a blocker. An earlier draft of this spike said the proxy was unreachable, inferred
+  from a probe that ran `wget`, which the image does not have: the command failed for a missing binary and was read
+  as a network result. Only the finished ELF binaries are bind-mounted (`-v $BIN:/opt/forge:ro`), so the CRLF
+  working tree still never reaches Linux — the reason #110 used `git archive`. `forged` and `forged-lifted` from this branch; `forge-worker-a1` and `forgectl-a1` from
   `agent/build-goal-entry` (`917d9a2`), the branch where the worker holds a kernel; `store` from #110's `store.go`;
   the planning `stub` from #90's `stub.go`.
 - **Designs.** The 8,192-occurrence barrel from #95's `barrel.go` (four definitions, patterned), stored through
