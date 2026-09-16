@@ -1,0 +1,27 @@
+- FORGE found 600 pairs of parts sharing material; the kernel listed all 600, and 600 of those are buried. That is too many to list one by one, so they are grouped by the placements in this document that put the parts there: fix the placement and every copy of it moves. 600 group(s); the 24 described below cover 24 of the 600 buried.
+- The worst, pin-aa in housing: Pin is 90% inside Housing: they occupy the same material (90 mm³). Move one of them, or make the part that contains the other hollow.
+- Group 1 of 600, 1 buried clash(es): Pin (part pin-aa) is 90% inside Housing (part housing). For example pin-aa in housing (90%, 90 mm³).
+- Group 2 of 600, 1 buried clash(es): Pin (part pin-ab) is 90% inside Housing (part housing). For example pin-ab in housing (90%, 90 mm³).
+- Group 3 of 600, 1 buried clash(es): Pin (part pin-ac) is 90% inside Housing (part housing). For example pin-ac in housing (90%, 90 mm³).
+- Group 4 of 600, 1 buried clash(es): Pin (part pin-ad) is 90% inside Housing (part housing). For example pin-ad in housing (90%, 90 mm³).
+- Group 5 of 600, 1 buried clash(es): Pin (part pin-ae) is 90% inside Housing (part housing). For example pin-ae in housing (90%, 90 mm³).
+- Group 6 of 600, 1 buried clash(es): Pin (part pin-af) is 90% inside Housing (part housing). For example pin-af in housing (90%, 90 mm³).
+- Group 7 of 600, 1 buried clash(es): Pin (part pin-ag) is 90% inside Housing (part housing). For example pin-ag in housing (90%, 90 mm³).
+- Group 8 of 600, 1 buried clash(es): Pin (part pin-ah) is 90% inside Housing (part housing). For example pin-ah in housing (90%, 90 mm³).
+- Group 9 of 600, 1 buried clash(es): Pin (part pin-ai) is 90% inside Housing (part housing). For example pin-ai in housing (90%, 90 mm³).
+- Group 10 of 600, 1 buried clash(es): Pin (part pin-aj) is 90% inside Housing (part housing). For example pin-aj in housing (90%, 90 mm³).
+- Group 11 of 600, 1 buried clash(es): Pin (part pin-ak) is 90% inside Housing (part housing). For example pin-ak in housing (90%, 90 mm³).
+- Group 12 of 600, 1 buried clash(es): Pin (part pin-al) is 90% inside Housing (part housing). For example pin-al in housing (90%, 90 mm³).
+- Group 13 of 600, 1 buried clash(es): Pin (part pin-am) is 90% inside Housing (part housing). For example pin-am in housing (90%, 90 mm³).
+- Group 14 of 600, 1 buried clash(es): Pin (part pin-an) is 90% inside Housing (part housing). For example pin-an in housing (90%, 90 mm³).
+- Group 15 of 600, 1 buried clash(es): Pin (part pin-ao) is 90% inside Housing (part housing). For example pin-ao in housing (90%, 90 mm³).
+- Group 16 of 600, 1 buried clash(es): Pin (part pin-ap) is 90% inside Housing (part housing). For example pin-ap in housing (90%, 90 mm³).
+- Group 17 of 600, 1 buried clash(es): Pin (part pin-aq) is 90% inside Housing (part housing). For example pin-aq in housing (90%, 90 mm³).
+- Group 18 of 600, 1 buried clash(es): Pin (part pin-ar) is 90% inside Housing (part housing). For example pin-ar in housing (90%, 90 mm³).
+- Group 19 of 600, 1 buried clash(es): Pin (part pin-as) is 90% inside Housing (part housing). For example pin-as in housing (90%, 90 mm³).
+- Group 20 of 600, 1 buried clash(es): Pin (part pin-at) is 90% inside Housing (part housing). For example pin-at in housing (90%, 90 mm³).
+- Group 21 of 600, 1 buried clash(es): Pin (part pin-au) is 90% inside Housing (part housing). For example pin-au in housing (90%, 90 mm³).
+- Group 22 of 600, 1 buried clash(es): Pin (part pin-av) is 90% inside Housing (part housing). For example pin-av in housing (90%, 90 mm³).
+- Group 23 of 600, 1 buried clash(es): Pin (part pin-aw) is 90% inside Housing (part housing). For example pin-aw in housing (90%, 90 mm³).
+- Group 24 of 600, 1 buried clash(es): Pin (part pin-ax) is 90% inside Housing (part housing). For example pin-ax in housing (90%, 90 mm³).
+- 576 more group(s), 576 buried clash(es) between them, are not described here.

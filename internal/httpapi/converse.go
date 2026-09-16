@@ -567,13 +567,23 @@ func userFacing(err error) string {
 // Exposed because PRD SAF-03's independence claim is only checkable if a user
 // can see that the verifier is not the executor. A claim about independence that
 // cannot be inspected is a claim, not a control.
+//
+// `transcription` tells the workbench whether push-to-talk can be transcribed
+// here and by which model, so the page can say which speech path it is using
+// before anybody presses the button — and pick the browser's recogniser only
+// when the server has none. "server": true means a model is CONFIGURED, not that
+// the endpoint serves it; a retired model is found on first use and reported
+// then, by name (see transcribe.go).
 func (h *ConverseHandlers) Models(w http.ResponseWriter, r *http.Request) {
+	_, transcriber := transcriberOf(h.deps.LLM)
+	transcription := map[string]any{"server": transcriber != "", "model": transcriber}
 	if h.deps.LLM == nil {
-		WriteJSON(w, http.StatusOK, map[string]any{"configured": false})
+		WriteJSON(w, http.StatusOK, map[string]any{"configured": false, "transcription": transcription})
 		return
 	}
 	WriteJSON(w, http.StatusOK, map[string]any{
-		"configured": true,
+		"configured":    true,
+		"transcription": transcription,
 		"roles": map[string]string{
 			"planner":    h.deps.LLM.ModelFor(llm.RolePlanner),
 			"executor":   h.deps.LLM.ModelFor(llm.RoleExecutor),

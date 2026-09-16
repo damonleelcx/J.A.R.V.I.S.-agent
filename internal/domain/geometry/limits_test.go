@@ -136,7 +136,9 @@ func hasOccurrenceError(problems []Problem) bool {
 }
 
 // A 30k-occurrence design is stored — the tree accepts it and places every part —
-// and it is not drawn, meshed, exported or sent to the kernel in part.
+// and it is not meshed in Go, exported or sent to the kernel in part: that is the
+// kernel's ceiling. Since Phase 6, stage W1 the viewport draws it (instanced), and
+// refuses only past maxViewportParts.
 func TestLimits_ThirtyThousandOccurrencesAreStoredButNotDrawn(t *testing.T) {
 	d := rows(60, 500)
 	for _, p := range d.TreeProblems() {
@@ -154,7 +156,7 @@ func TestLimits_ThirtyThousandOccurrencesAreStoredButNotDrawn(t *testing.T) {
 	if !strings.Contains(refusal, "more than 4096 parts") {
 		t.Fatalf("no drawing refusal for 30k parts: %q", refusal)
 	}
-	if solids, ops, _, inferred := SolidsAndOperations(d, Millimetre); len(solids) != 0 || len(ops) != 0 || len(inferred) != 1 || inferred[0] != refusal {
+	if solids, ops, _, inferred := SolidsAndOperations(d, Millimetre); len(solids) != 0 || len(ops) != 0 || len(inferred) != 1 || inferred[0] != d.BuildRefusal() {
 		t.Errorf("the kernel request was %d solids, %d operations, notes %q; want nothing but the refusal", len(solids), len(ops), inferred)
 	}
 	if m := Tessellate(d, Millimetre); len(m.Groups) != 0 || len(m.Inferences) != 1 || m.Inferences[0] != refusal {
@@ -164,8 +166,28 @@ func TestLimits_ThirtyThousandOccurrencesAreStoredButNotDrawn(t *testing.T) {
 	if _, err := Export(v, "stl"); err == nil || errs.CodeOf(err) != errs.CodeValidationFailed || !strings.Contains(err.Error(), "more than 4096 parts") {
 		t.Errorf("exporting a 30k design as a mesh file was not refused with the reason: %v", err)
 	}
+	if r := d.ViewportRefusal(); r != "" {
+		t.Errorf("the viewport refuses a 30k design, which instanced drawing draws: %q", r)
+	}
 	if small := rows(4, 1024/4); small.DrawRefusal() != "" {
 		t.Errorf("a design of 1024 parts was refused for drawing: %q", small.DrawRefusal())
+	}
+}
+
+// The viewport draws a design as large as storage accepts by default, and refuses
+// the first one past it whole and in its own words — never the first 100,000 parts
+// of it. Phase 6, stage W1.
+func TestLimits_TheViewportDrawsWhatStorageAcceptsAndNoMore(t *testing.T) {
+	if r := rows(200, 500).ViewportRefusal(); r != "" {
+		t.Errorf("the viewport refuses a design of exactly 100,000 parts: %q", r)
+	}
+	over := rows(201, 500)
+	r := over.ViewportRefusal()
+	if !strings.Contains(r, "more than 100000 parts") || !strings.Contains(r, "nothing was drawn") {
+		t.Fatalf("a design of 100,500 parts is not refused by the viewport in its words: %q", r)
+	}
+	if over.DrawRefusal() == "" {
+		t.Error("a design the viewport refuses is not refused by the kernel either")
 	}
 }
 

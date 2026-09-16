@@ -66,7 +66,8 @@ func TestLiveCarCeiling(t *testing.T) {
 	if os.Getenv("FORGE_LIVE_LLM_TESTS") == "" || os.Getenv("FORGE_LLM_API_KEY") == "" {
 		t.Skip("set FORGE_LLM_API_KEY and FORGE_LIVE_LLM_TESTS=1 to run the live car ceiling measurement")
 	}
-	budget := int64(400_000)
+	// 300k: the ceiling damon approved for the Phase 2 live milestone (A4, 2026-09-15).
+	budget := int64(300_000)
 	if s := os.Getenv("FORGE_MEASURE_TOKEN_BUDGET"); s != "" {
 		n, err := strconv.ParseInt(s, 10, 64)
 		if err != nil || n <= 0 {
@@ -93,21 +94,38 @@ func TestLiveCarCeiling(t *testing.T) {
 		RequestTimeout: 3 * time.Minute,
 		MaxRetries:     2,
 	}, log, clock.System{})
-	meter := &meteredClient{inner: inner, budget: budget}
+	meter := &meteredClient{inner: inner, budget: budget, step: 1}
 
 	conv := agent.NewConversation(meter, persona.DefaultCharacter())
 	if kernel != nil {
-		conv = conv.WithScripts(liveRunner{kernel})
+		// ‼️ And the kernel draws what every step's checks look at, as it does in
+		// production (httpapi: WithSolids). The 2026-09-15 run gave the build only the
+		// script runner, so each step's look was of the DESCRIBED model and its
+		// interference check never ran: the 77 overlaps were found after the build,
+		// by this harness, when no repair could act on them. Measured runs before
+		// 2026-09-15 (car-quality) are therefore not comparable on repair calls.
+		conv = conv.WithScripts(liveRunner{kernel}).WithSolids(liveSolids{kernel})
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 40*time.Minute)
 	defer cancel()
+
+	// Everything this run keeps, in one directory that outlives the test: the car,
+	// every model call's prompt and reply, and every step's note. Not t.TempDir(),
+	// which Go removes when the test ends (the 2026-09-15 run lost its car to it).
+	outDir := filepath.Join(os.TempDir(), "forge-car-"+time.Now().Format("20060102-150405"))
+	if err := os.MkdirAll(filepath.Join(outDir, "calls"), 0o700); err != nil {
+		t.Fatalf("cannot keep this run's output: %v", err)
+	}
+	meter.dir = filepath.Join(outDir, "calls")
+	t.Logf("CAR-OUTPUT dir=%s", outDir)
 
 	const asked = "a sports car, in as much mechanical detail as you can manage"
 	start := time.Now()
 	var steps []agent.BuildStep
 	doc, notes, err := agent.AssembleForTest(ctx, conv, asked, nil, func(s agent.BuildStep) error {
 		steps = append(steps, s)
+		meter.setStep(s.N + 1)
 		t.Logf("step %d/%d %-24s parts=%-3d %s", s.N, s.Of, s.Name, s.Parts, s.Note)
 		return nil
 	})
@@ -129,6 +147,27 @@ func TestLiveCarCeiling(t *testing.T) {
 	for _, n := range notes {
 		t.Logf("note: %s", n)
 	}
+	// Which gate refused each step that lost its work, and the reply it read.
+	records := meter.recorded()
+	for _, s := range steps {
+		gate := agent.StepGateOf(s.Note)
+		reply := ""
+		for _, r := range records {
+			if r.Step == s.N && r.Role == string(llm.RoleConverse) && strings.HasPrefix(r.Prompt, "Building:") {
+				reply = fmt.Sprintf("%s finish=%s completion_tokens=%d", r.File, r.FinishReason, r.CompletionTokens)
+				break
+			}
+		}
+		t.Logf("CAR-STEP step=%d gate=%s reply=%s", s.N, orNone(gate), reply)
+	}
+	if raw, mErr := json.MarshalIndent(steps, "", "  "); mErr == nil {
+		_ = os.WriteFile(filepath.Join(outDir, "steps.json"), raw, 0o600)
+	}
+	// The visual check, per step and per sub-assembly (stage V4): read from the
+	// calls themselves, so the product needs no hook to be measured.
+	for _, line := range lookLines(looksOf(records)) {
+		t.Logf("%s", line)
+	}
 
 	unit, ok := geometry.ParseUnit(doc.Units)
 	if !ok {
@@ -141,13 +180,33 @@ func TestLiveCarCeiling(t *testing.T) {
 	if len(steps) > 0 {
 		planned = steps[len(steps)-1].Of
 	}
+	// ‼️ A car written as a tree has no top-level parts, so it is counted by what
+	// it places (car_tree_measure_test.go). Counted by len(doc.Parts) it measured
+	// as nothing.
+	tree := countTree(*doc)
+	expanded := doc.Expanded()
+	placed := *doc
+	placed.Parts = doc.PlacedParts()
 	t.Logf("CAR-CEILING steps_run=%d steps_planned=%d parts=%d features=%d minutes=%.1f",
-		len(steps), planned, len(doc.Parts), len(doc.Features), elapsed.Minutes())
+		len(steps), planned, tree.Occurrences, len(expanded.Features), elapsed.Minutes())
+
+	// 1b — the tree (Phase 2, stage A4): what was described once, how often it is
+	// placed, and what each distinct design cost.
+	t.Logf("CAR-TREE %s", tree.line())
+	t.Logf("CAR-TOKENS per_design=%d per_occurrence=%d designs=%d",
+		tokensPer(spent, tree.Designs()), tokensPer(spent, tree.Occurrences), tree.Designs())
+	for i, r := range doc.EnumeratedRepetition() {
+		if i == 5 {
+			t.Logf("  … and %d more", tree.Repetitions-5)
+			break
+		}
+		t.Logf("  could be one pattern: %d × %s in %s", len(r.Children), r.Ref, r.Assembly)
+	}
 
 	// 2 — what it reached for. A car built entirely out of boxes and a car that
 	// used lofts and revolves are the same part count and not the same model.
-	t.Logf("CAR-SHAPES %s", histogram(shapesOf(*doc)))
-	t.Logf("CAR-FEATURES %s", histogram(opsOf(*doc)))
+	t.Logf("CAR-SHAPES %s", histogram(shapesOf(placed)))
+	t.Logf("CAR-FEATURES %s", histogram(opsOf(expanded)))
 
 	// 3 — does the finished assembly build in the real kernel? The document's own
 	// Faults() is the weaker question and is reported beside it, because the gap
@@ -202,7 +261,8 @@ func TestLiveCarCeiling(t *testing.T) {
 	} else {
 		buried := len(geometry.InterferenceProblems(kernelBuild.Interferences))
 		t.Logf("CAR-INTERFERENCE pairs=%d buried=%d truncated=%v of parts=%d",
-			len(kernelBuild.Interferences), buried, kernelBuild.InterferencesTruncated, len(doc.Parts))
+			len(kernelBuild.Interferences), buried, kernelBuild.InterferencesTruncated, tree.Occurrences)
+		t.Logf("CAR-COVERAGE %s", coverageLine(kernelBuild))
 		for i, f := range kernelBuild.Interferences {
 			if i == 10 {
 				t.Logf("  … and %d more", len(kernelBuild.Interferences)-10)
@@ -215,28 +275,38 @@ func TestLiveCarCeiling(t *testing.T) {
 	// 5 — what a "mirror" would have saved. Wall B. Bounding boxes are the right
 	// tool HERE, unlike for interference: "same size, opposite x" is a question
 	// about extents, and a box answers it exactly.
-	boxes := boundingBoxes(*doc, unit)
+	boxes := boundingBoxes(expanded, unit)
 	pairs := mirrorPairs(boxes)
 	t.Logf("CAR-SYMMETRY mirror_pairs=%d parts_in_a_pair=%d of %d",
 		pairs, pairs*2, len(boxes))
 
 	// 6 — how the model placed things. Wall A: a literal position is arithmetic
 	// the model did in its head; a bound one is arithmetic the document does.
-	literal, bound, subsystems := placement(*doc)
+	literal, bound, subsystems := placement(placed)
 	t.Logf("CAR-PLACEMENT literal_positions=%d bound_positions=%d id_prefixes=%d",
 		literal, bound, subsystems)
+	// ‼️ In a tree most positions are children's and interfaces', and since 2026-09-15
+	// (bound child positions) they carry "position_from" too, so they are counted apart
+	// from the flattened parts above, which carry none of it. Attaching "at" an
+	// interface is the other way a place follows the design, so it is counted beside it.
+	children, attached, interfaces, boundPlacements := attachments(*doc)
+	t.Logf("CAR-ATTACH children=%d attached_at_an_interface=%d at_coordinates=%d interfaces_declared=%d "+
+		"bound_placements=%d", children, attached, children-attached, interfaces, boundPlacements)
+	// And designs nothing places: built, paid for, and not in the car (run 1 of
+	// 2026-09-15 car-quality held five of them).
+	unplaced := unplacedAssemblies(*doc)
+	t.Logf("CAR-UNPLACED assemblies=%d ids=%s", len(unplaced), strings.Join(unplaced, ","))
 
 	// 7 — is anything hollow? Wall C. A car whose every part is solid is a car
 	// that weighs four tonnes.
-	hollow, cuts := hollowness(*doc)
-	t.Logf("CAR-HOLLOW parts_with_holes=%d cut_features=%d of parts=%d", hollow, cuts, len(doc.Parts))
+	hollow, cuts := hollowness(expanded)
+	t.Logf("CAR-HOLLOW parts_with_holes=%d cut_features=%d of parts=%d", hollow, cuts, tree.Occurrences)
 
-	// 8 — did any pass fail or lose work? Wall G, and the silent-drop bug.
+	// 8 — did any pass fail or lose work? Wall G, and the silent-drop bug. By the
+	// gate the step's own note names (stepgates.go), plus a pass that removed something.
 	failed := 0
-	for _, n := range notes {
-		if strings.Contains(n, "could not be built") || strings.Contains(n, "left out") ||
-			strings.Contains(n, "no geometry") || strings.Contains(n, "unreadable") ||
-			strings.Contains(n, "removed") {
+	for _, s := range steps {
+		if agent.StepGateOf(s.Note) != "" || strings.Contains(s.Note, "removed") {
 			failed++
 		}
 	}
@@ -248,7 +318,10 @@ func TestLiveCarCeiling(t *testing.T) {
 	// one. A measurement that throws away its subject can only be repeated, not
 	// examined.
 	if raw, mErr := json.MarshalIndent(doc, "", "  "); mErr == nil {
-		path := filepath.Join(t.TempDir(), "car.json")
+		// ‼️ Not t.TempDir(): Go removes it when the test ends, and the 2026-09-15 run
+		// lost its car to exactly that. The run's own directory keeps it, beside the
+		// replies that built it.
+		path := filepath.Join(outDir, "car.json")
 		if os.WriteFile(path, raw, 0o600) == nil {
 			t.Logf("CAR-DOCUMENT saved=%s bytes=%d", path, len(raw))
 		}
@@ -260,7 +333,7 @@ func TestLiveCarCeiling(t *testing.T) {
 	// This is a MEASUREMENT, and the only thing it fails on is not having
 	// measured anything. Asserting a part count here would turn a number that is
 	// supposed to move into a fence that has to be edited every time it does.
-	if len(doc.Parts) == 0 {
+	if !doc.HasGeometry() {
 		t.Fatal("the build produced no parts at all, so there is nothing to measure")
 	}
 }
@@ -277,6 +350,43 @@ type meteredClient struct {
 	spent   int64
 	calls   int
 	refused int
+	// step is the build step the next call belongs to; the plan's call is step 0.
+	step int
+	// dir keeps every call's prompt and reply when set (see callRecord).
+	dir     string
+	records []callRecord
+}
+
+// callRecord is one model call as this run saw it: what the model was asked and
+// what it answered, word for word.
+//
+// # Why every reply is kept
+//
+// Two live car builds lost their first step and neither kept the reply, so
+// "produced no geometry" could not be diagnosed after about 330,000 tokens between
+// them. The note now names the gate (stepgates.go); the reply is what the gate read.
+// Images are not kept: they are the model's own render, rebuilt from the car.
+type callRecord struct {
+	N                int     `json:"n"`
+	Step             int     `json:"step"`
+	Role             string  `json:"role"`
+	Model            string  `json:"model"`
+	System           string  `json:"system,omitempty"`
+	Prompt           string  `json:"prompt"`
+	Images           int     `json:"images,omitempty"`
+	Reply            string  `json:"reply"`
+	FinishReason     string  `json:"finish_reason"`
+	PromptTokens     int64   `json:"prompt_tokens"`
+	CompletionTokens int64   `json:"completion_tokens"`
+	Seconds          float64 `json:"seconds"`
+	Error            string  `json:"error,omitempty"`
+	File             string  `json:"-"`
+}
+
+func (m *meteredClient) setStep(n int) {
+	m.mu.Lock()
+	m.step = n
+	m.mu.Unlock()
 }
 
 func (m *meteredClient) Complete(ctx context.Context, req llm.Request) (*llm.Response, error) {
@@ -290,19 +400,53 @@ func (m *meteredClient) Complete(ctx context.Context, req llm.Request) (*llm.Res
 	}
 	m.mu.Unlock()
 
+	began := time.Now()
 	resp, err := m.inner.Complete(ctx, req)
+	took := time.Since(began)
 
 	m.mu.Lock()
+	defer m.mu.Unlock()
 	m.calls++
+	rec := callRecord{N: m.calls, Step: m.step, Role: string(req.Role), Model: m.inner.ModelFor(req.Role),
+		Seconds: took.Seconds()}
+	for _, msg := range req.Messages {
+		switch msg.Role {
+		case llm.System:
+			rec.System = msg.Content
+		case llm.User:
+			rec.Prompt = msg.Content
+			rec.Images += len(msg.Images)
+		}
+	}
+	if strings.HasPrefix(rec.Prompt, "Plan the build of:") {
+		rec.Step = 0
+	}
+	if err != nil {
+		rec.Error = err.Error()
+	}
 	if resp != nil {
 		total := resp.Usage.TotalTokens
 		if total == 0 {
 			total = resp.Usage.PromptTokens + resp.Usage.CompletionTokens
 		}
 		m.spent += total
+		rec.Reply, rec.FinishReason = resp.Content, resp.FinishReason
+		rec.PromptTokens, rec.CompletionTokens = resp.Usage.PromptTokens, resp.Usage.CompletionTokens
 	}
-	m.mu.Unlock()
+	if m.dir != "" {
+		rec.File = filepath.Join(m.dir, fmt.Sprintf("%03d-step%02d-%s.json", rec.N, rec.Step, rec.Role))
+		if raw, mErr := json.MarshalIndent(rec, "", "  "); mErr == nil {
+			_ = os.WriteFile(rec.File, raw, 0o600)
+		}
+	}
+	m.records = append(m.records, rec)
 	return resp, err
+}
+
+func (m *meteredClient) recorded() []callRecord {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return append([]callRecord(nil), m.records...)
 }
 
 func (m *meteredClient) ModelFor(role llm.Role) string { return m.inner.ModelFor(role) }
@@ -311,6 +455,127 @@ func (m *meteredClient) report() (spent int64, calls, refused int) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.spent, m.calls, m.refused
+}
+
+// The kernel renders the build's checks through liveSolids (scriptrepair_live_test.go).
+
+// lookCall is one vision call of the build's visual check (stage V4), read back
+// from what was sent: the whole model, or one sub-assembly drawn on its own.
+type lookCall struct {
+	Step     int
+	Sub      string // the sub-assembly's path, "" for the whole model
+	Findings int    // -1 when the answer could not be read
+	Seconds  float64
+	Tokens   int64
+}
+
+// subAssemblyLook is how look.go opens the prompt for one sub-assembly.
+const subAssemblyLook = "This is one sub-assembly of the model, "
+
+// looksOf reads the vision calls out of a run's records.
+func looksOf(records []callRecord) []lookCall {
+	var out []lookCall
+	for _, r := range records {
+		if r.Role != string(llm.RoleVision) || r.Images == 0 {
+			continue
+		}
+		l := lookCall{Step: r.Step, Seconds: r.Seconds, Tokens: r.PromptTokens + r.CompletionTokens, Findings: -1}
+		if rest, ok := strings.CutPrefix(r.Prompt, subAssemblyLook); ok {
+			l.Sub, _, _ = strings.Cut(rest, " (an occurrence of")
+		}
+		var answer struct {
+			Problems []json.RawMessage `json:"problems"`
+		}
+		if r.Error == "" && json.Unmarshal([]byte(r.Reply), &answer) == nil {
+			l.Findings = len(answer.Problems)
+		}
+		out = append(out, l)
+	}
+	return out
+}
+
+// lookLines are the CAR-LOOKS lines: one per step that looked, and the total.
+func lookLines(looks []lookCall) []string {
+	type perStep struct {
+		whole, subs, findings int
+		paths                 []string
+		seconds               []float64
+		tokens                int64
+	}
+	byStep := map[int]*perStep{}
+	var order []int
+	var all []float64
+	var total perStep
+	for _, l := range looks {
+		s := byStep[l.Step]
+		if s == nil {
+			s = &perStep{}
+			byStep[l.Step] = s
+			order = append(order, l.Step)
+		}
+		for _, acc := range []*perStep{s, &total} {
+			if l.Sub == "" {
+				acc.whole++
+			} else {
+				acc.subs++
+				acc.paths = append(acc.paths, l.Sub)
+			}
+			if l.Findings > 0 {
+				acc.findings += l.Findings
+			}
+			acc.tokens += l.Tokens
+		}
+		s.seconds = append(s.seconds, l.Seconds)
+		all = append(all, l.Seconds)
+	}
+	sort.Ints(order)
+	lines := make([]string, 0, len(order)+1)
+	for _, n := range order {
+		s := byStep[n]
+		lines = append(lines, fmt.Sprintf("CAR-LOOKS step=%d whole=%d sub_assemblies=%d findings=%d tokens=%d "+
+			"seconds_per_call=%s looked_at=%s", n, s.whole, s.subs, s.findings, s.tokens, secondsList(s.seconds),
+			strings.Join(s.paths, ",")))
+	}
+	mean, most := 0.0, 0.0
+	for _, x := range all {
+		mean += x / float64(len(all))
+		most = math.Max(most, x)
+	}
+	lines = append(lines, fmt.Sprintf("CAR-LOOKS-TOTAL calls=%d whole=%d sub_assemblies=%d findings=%d tokens=%d "+
+		"mean_seconds=%.1f max_seconds=%.1f", len(looks), total.whole, total.subs, total.findings, total.tokens, mean, most))
+	return lines
+}
+
+func secondsList(xs []float64) string {
+	parts := make([]string, len(xs))
+	for i, x := range xs {
+		parts[i] = strconv.FormatFloat(x, 'f', 1, 64)
+	}
+	return strings.Join(parts, ",")
+}
+
+// attachments counts how a tree's children are placed: at an interface, or at
+// coordinates in their assembly's frame, how many interfaces were declared, and how
+// many children and interfaces bind their position to the parameters.
+func attachments(d geometry.Document) (children, attached, interfaces, bound int) {
+	for _, a := range d.Assemblies {
+		interfaces += len(a.Interfaces)
+		for _, f := range a.Interfaces {
+			if len(f.PositionFrom) > 0 {
+				bound++
+			}
+		}
+		for _, c := range a.Children {
+			children++
+			if strings.TrimSpace(c.At) != "" {
+				attached++
+			}
+			if len(c.PositionFrom) > 0 {
+				bound++
+			}
+		}
+	}
+	return children, attached, interfaces, bound
 }
 
 // box is one part's axis-aligned bounds in the assembly frame.

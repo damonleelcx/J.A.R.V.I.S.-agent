@@ -1,0 +1,99 @@
+== 9: by own time ==
+         18423697 function calls (16793839 primitive calls) in 9.039 seconds
+
+   Ordered by: internal time
+   List reduced from 108 to 40 due to restriction <40>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+1265934/3    1.249    0.000    0.000    0.000 C:\Users\damon\AppData\Local\Programs\Python\Python313\Lib\copy.py:119(deepcopy)
+ 181761/0    0.855    0.000    0.000          C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\geometry.py:1712(__init__)
+  4080615    0.579    0.000    0.579    0.000 {method 'get' of 'dict' objects}
+  91276/9    0.576    0.000    0.000    0.000 C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\geometry.py:203(__init__)
+    89281    0.576    0.000    1.118    0.000 C:\Users\damon\AppData\Local\Programs\Python\Python313\Lib\copy.py:201(_deepcopy_tuple)
+        5    0.545    0.109    0.545    0.109 {built-in method OCP.OCP.BRepTools.Clean_s}
+  90801/0    0.526    0.000    0.000          C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\geometry.py:508(to_pnt)
+        5    0.458    0.092    0.458    0.092 {built-in method OCP.OCP.BRepBndLib.AddOptimal_s}
+    90880    0.446    0.000    0.446    0.000 C:\Users\damon\AppData\Local\Programs\Python\Python313\Lib\json\encoder.py:205(iterencode)
+    90881    0.303    0.000    1.078    0.000 C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\geometry.py:1891(__deepcopy__)
+  1820791    0.281    0.000    0.282    0.000 {built-in method builtins.isinstance}
+    90880    0.249    0.000    1.149    0.000 C:/Users/damon/AppData/Local/Temp/claude/C--Users-damon-Downloads-agents/9c73bcba-7500-4641-9433-f7c8efd05843/scratchpad/meas/before/sidecar.py:1650(_shape_key)
+    90880    0.226    0.000    0.226    0.000 {built-in method builtins.repr}
+  2173146    0.216    0.000    0.216    0.000 {built-in method builtins.id}
+  1636634    0.203    0.000    0.203    0.000 {method 'pop' of 'dict' objects}
+   272644    0.166    0.000    0.234    0.000 C:\Users\damon\AppData\Local\Programs\Python\Python313\Lib\copy.py:232(_keep_alive)
+   272715    0.161    0.000    0.161    0.000 C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\topology\shape_core.py:317(wrapped)
+    90880    0.146    0.000    0.785    0.000 C:\Users\damon\AppData\Local\Programs\Python\Python313\Lib\json\__init__.py:183(dumps)
+  1088972    0.134    0.000    0.134    0.000 {built-in method builtins.setattr}
+   999707    0.134    0.000    0.134    0.000 {method 'append' of 'list' objects}
+    90880    0.115    0.000    0.607    0.000 C:\Users\damon\AppData\Local\Programs\Python\Python313\Lib\json\encoder.py:183(encode)
+    90911    0.099    0.000    0.099    0.000 {built-in method OCP.OCP.TopoDS.TopoDS.Compound}
+   365043    0.093    0.000    0.125    0.000 C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\geometry.py:211(<genexpr>)
+    91896    0.081    0.000    0.206    0.000 {built-in method builtins.all}
+    90881    0.063    0.000    0.091    0.000 C:\Users\damon\AppData\Local\Programs\Python\Python313\Lib\copy.py:218(_deepcopy_dict)
+   358725    0.062    0.000    0.062    0.000 {built-in method builtins.getattr}
+   636167    0.055    0.000    0.055    0.000 C:\Users\damon\AppData\Local\Programs\Python\Python313\Lib\copy.py:173(_deepcopy_atomic)
+    90881    0.055    0.000    0.064    0.000 C:\Users\damon\AppData\Local\Programs\Python\Python313\Lib\copy.py:192(_deepcopy_list)
+   182746    0.053    0.000    0.053    0.000 {method 'join' of 'str' objects}
+   358725    0.046    0.000    0.046    0.000 {built-in method builtins.issubclass}
+   181762    0.039    0.000    0.039    0.000 {method 'items' of 'dict' objects}
+    91866    0.036    0.000    0.036    0.000 {method 'difference' of 'set' objects}
+    90880    0.031    0.000    0.031    0.000 C:\Users\damon\AppData\Local\Programs\Python\Python313\Lib\json\encoder.py:105(__init__)
+    90881    0.027    0.000    0.027    0.000 {built-in method __new__ of type object at 0x00007FFC69A398A0}
+   183806    0.026    0.000    0.026    0.000 {built-in method builtins.len}
+   267843    0.023    0.000    0.023    0.000 C:\Users\damon\AppData\Local\Programs\Python\Python313\Lib\enum.py:1318(__deepcopy__)
+    91866    0.020    0.000    0.020    0.000 {method 'keys' of 'dict' objects}
+   181782    0.020    0.000    0.020    0.000 C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\geometry.py:1805(wrapped)
+    90881    0.019    0.000    0.019    0.000 {method 'values' of 'dict' objects}
+    91059    0.016    0.000    0.016    0.000 {built-in method builtins.max}
+
+
+
+== 9: by cumulative time ==
+         18423697 function calls (16793839 primitive calls) in 9.039 seconds
+
+   Ordered by: cumulative time
+   List reduced from 108 to 40 due to restriction <40>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+    90880    0.249    0.000    1.149    0.000 C:/Users/damon/AppData/Local/Temp/claude/C--Users-damon-Downloads-agents/9c73bcba-7500-4641-9433-f7c8efd05843/scratchpad/meas/before/sidecar.py:1650(_shape_key)
+    89281    0.576    0.000    1.118    0.000 C:\Users\damon\AppData\Local\Programs\Python\Python313\Lib\copy.py:201(_deepcopy_tuple)
+    90881    0.303    0.000    1.078    0.000 C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\geometry.py:1891(__deepcopy__)
+    90880    0.146    0.000    0.785    0.000 C:\Users\damon\AppData\Local\Programs\Python\Python313\Lib\json\__init__.py:183(dumps)
+    90880    0.115    0.000    0.607    0.000 C:\Users\damon\AppData\Local\Programs\Python\Python313\Lib\json\encoder.py:183(encode)
+  4080615    0.579    0.000    0.579    0.000 {method 'get' of 'dict' objects}
+        5    0.545    0.109    0.545    0.109 {built-in method OCP.OCP.BRepTools.Clean_s}
+        5    0.458    0.092    0.458    0.092 {built-in method OCP.OCP.BRepBndLib.AddOptimal_s}
+    90880    0.446    0.000    0.446    0.000 C:\Users\damon\AppData\Local\Programs\Python\Python313\Lib\json\encoder.py:205(iterencode)
+  1820791    0.281    0.000    0.282    0.000 {built-in method builtins.isinstance}
+   272644    0.166    0.000    0.234    0.000 C:\Users\damon\AppData\Local\Programs\Python\Python313\Lib\copy.py:232(_keep_alive)
+    90880    0.226    0.000    0.226    0.000 {built-in method builtins.repr}
+  2173146    0.216    0.000    0.216    0.000 {built-in method builtins.id}
+    91896    0.081    0.000    0.206    0.000 {built-in method builtins.all}
+  1636634    0.203    0.000    0.203    0.000 {method 'pop' of 'dict' objects}
+   272715    0.161    0.000    0.161    0.000 C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\topology\shape_core.py:317(wrapped)
+  1088972    0.134    0.000    0.134    0.000 {built-in method builtins.setattr}
+   999707    0.134    0.000    0.134    0.000 {method 'append' of 'list' objects}
+   365043    0.093    0.000    0.125    0.000 C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\geometry.py:211(<genexpr>)
+    90911    0.099    0.000    0.099    0.000 {built-in method OCP.OCP.TopoDS.TopoDS.Compound}
+    90881    0.063    0.000    0.091    0.000 C:\Users\damon\AppData\Local\Programs\Python\Python313\Lib\copy.py:218(_deepcopy_dict)
+    90881    0.055    0.000    0.064    0.000 C:\Users\damon\AppData\Local\Programs\Python\Python313\Lib\copy.py:192(_deepcopy_list)
+   358725    0.062    0.000    0.062    0.000 {built-in method builtins.getattr}
+   636167    0.055    0.000    0.055    0.000 C:\Users\damon\AppData\Local\Programs\Python\Python313\Lib\copy.py:173(_deepcopy_atomic)
+   182746    0.053    0.000    0.053    0.000 {method 'join' of 'str' objects}
+   358725    0.046    0.000    0.046    0.000 {built-in method builtins.issubclass}
+   181762    0.039    0.000    0.039    0.000 {method 'items' of 'dict' objects}
+    91866    0.036    0.000    0.036    0.000 {method 'difference' of 'set' objects}
+    90880    0.031    0.000    0.031    0.000 C:\Users\damon\AppData\Local\Programs\Python\Python313\Lib\json\encoder.py:105(__init__)
+    90881    0.027    0.000    0.027    0.000 {built-in method __new__ of type object at 0x00007FFC69A398A0}
+   183806    0.026    0.000    0.026    0.000 {built-in method builtins.len}
+   267843    0.023    0.000    0.023    0.000 C:\Users\damon\AppData\Local\Programs\Python\Python313\Lib\enum.py:1318(__deepcopy__)
+    91866    0.020    0.000    0.020    0.000 {method 'keys' of 'dict' objects}
+   181782    0.020    0.000    0.020    0.000 C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\geometry.py:1805(wrapped)
+    90881    0.019    0.000    0.019    0.000 {method 'values' of 'dict' objects}
+    91059    0.016    0.000    0.016    0.000 {built-in method builtins.max}
+    90881    0.012    0.000    0.012    0.000 C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\topology\shape_core.py:323(wrapped)
+    92163    0.012    0.000    0.012    0.000 C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\geometry.py:279(wrapped)
+        4    0.001    0.000    0.001    0.000 C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\topology\shape_core.py:802(compute_mass)
+        4    0.001    0.000    0.001    0.000 {built-in method OCP.OCP.BRepGProp.VolumeProperties_s}
+
+

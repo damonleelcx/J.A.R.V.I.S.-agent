@@ -153,10 +153,10 @@ live spike noted.
 **Defect: the stop was logged as a database outage.** At 14:10:37.481 the stopping worker wrote
 `forge.task.release_failed … DATABASE_UNAVAILABLE … context canceled` and `forge.goal.settle_failed …` — the task had
 been handed back through the same pool 6 ms earlier. `Run` did the end-of-task bookkeeping on the cancelled context.
-Fixed with `Worker.afterTask` on a context that outlives the stop (bounded at 10 s); fenced by
-`TestWorker_AStoppingWorkerStillReleasesWhatItsLastTaskLeftWaiting` and
-`TestBuildGoal_AStoppedWorkerDoesNotReportTheDatabaseUnavailable`; drill "a stopping worker's bookkeeping runs on the
-cancelled context" went red, and "a finished task releases nothing" (re-anchored) still goes red.
+Fixed with `Worker.afterTask` on a context that outlives the stop (bounded at 10 s), ported to main in #105 with its
+own fences and drill "a stopping worker's bookkeeping runs on the cancelled context"; the build-step path it was found
+on stays fenced by `TestBuildGoal_AStoppedWorkerDoesNotReportTheDatabaseUnavailable` and the drill "…, through a build
+step". See docs/bugfix/2026-09-15-a-stopping-worker-reported-its-own-stop-as-a-database-outage.md.
 
 ## 3. The viewport with the pane hidden (#93)
 

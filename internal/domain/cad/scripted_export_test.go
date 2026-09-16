@@ -85,7 +85,10 @@ func TestKernel_AScriptedPartIsExportedAndMeshed(t *testing.T) {
 				t.Fatalf("the viewport's built mesh refused a document with a scripted part: %v", err)
 			}
 			meshed := false
-			for _, m := range mesh.Mesh {
+			// WorldMeshes, not Mesh: a scripted part the kernel could copy unchanged
+			// arrives as a definition and a matrix since stage K4, and Mesh holds only
+			// the parts a feature changed. See the note in cad_test.go.
+			for _, m := range mesh.WorldMeshes() {
 				if m.ID == "block" && len(m.Triangles) > 0 {
 					meshed = true
 				}

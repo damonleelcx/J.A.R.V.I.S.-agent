@@ -184,6 +184,13 @@ Drills:
   drill run [--only a,b] [--verbose] [--keep]  Inject real faults; exit 1 if any invariant broke
                                                OR if a drill disturbed nothing.
 
+Blob storage:
+  blob check          Store fixed bytes, confirm they are there, read them back and
+                      compare. Prints BLOB-ROUNDTRIP-OK <sha256> and exits 0, or exits 1.
+      Proves configuration, credentials, network path and permissions from wherever
+      it runs; deploy/verify.sh runs it inside both pods. The bytes never change, so
+      a repeated check stores nothing — the production role cannot delete.
+
 Audit:
   audit verify <goal-id>   Check a goal's timeline against its hash chain
   audit verify --all       Check every goal
@@ -518,6 +525,14 @@ func run(ctx context.Context, cmd string, args []string) error {
 				WithDetail("unknown drill subcommand %q; expected list or run", args[0])
 		}
 
+	case "blob":
+		if len(args) == 0 || args[0] != "check" {
+			fmt.Fprint(os.Stderr, usage)
+			return errs.New("forgectl.run", errs.CodeValidationFailed).
+				WithDetail("blob needs a subcommand: check")
+		}
+		return cmdBlobCheck(ctx, cfg, log)
+
 	case "audit":
 		if len(args) == 0 {
 			return errs.New("forgectl.run", errs.CodeValidationFailed).
@@ -653,6 +668,12 @@ func sectionsFor(cmd string) []config.Section {
 		return []config.Section{config.SectionDB, config.SectionLLM, config.SectionEngine}
 	case "approve", "reject":
 		return []config.Section{config.SectionDB, config.SectionEngine}
+	case "blob":
+		// The round trip touches the bucket and nothing else. Blob settings are
+		// parsed, and their half-configurations refused, whatever sections are
+		// asked for — so requiring none still refuses a bucket with no region,
+		// without demanding a database URL of a check that never opens one.
+		return []config.Section{config.SectionNone}
 	case "config":
 		// `forgectl config` is a diagnostic: it must be able to print a partial
 		// or broken configuration, which is exactly when someone runs it. So it

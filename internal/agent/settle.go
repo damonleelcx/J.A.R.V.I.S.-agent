@@ -39,7 +39,13 @@ import (
 func (w *Worker) settleGoal(ctx context.Context, goalID string) {
 	depth, err := w.queue.Depth(ctx, w.pool, goalID)
 	if err != nil {
-		w.log.WarnWith(ctx, logx.EventGoalSettleFailed, err, "goal_id", goalID)
+		// Quiet when it is the stop's own cancellation. afterTask calls this on a
+		// context that outlives the stop, so a real outage still says so; the sweep
+		// calls it on the run context, where the only thing that has happened is that
+		// the worker was asked to stop. See settleFinishedGoals.
+		if ctx.Err() == nil {
+			w.log.WarnWith(ctx, logx.EventGoalSettleFailed, err, "goal_id", goalID)
+		}
 		return
 	}
 
@@ -86,7 +92,9 @@ func (w *Worker) settleGoal(ctx context.Context, goalID string) {
 		 where id = $1 and status = 'active'`,
 		goalID, string(final), now, summary, failureCode)
 	if err != nil {
-		w.log.WarnWith(ctx, logx.EventGoalSettleFailed, err, "goal_id", goalID)
+		if ctx.Err() == nil {
+			w.log.WarnWith(ctx, logx.EventGoalSettleFailed, err, "goal_id", goalID)
+		}
 		return
 	}
 	if tag.RowsAffected() == 0 {
@@ -101,7 +109,7 @@ func (w *Worker) settleGoal(ctx context.Context, goalID string) {
 	if err := w.repo.AppendEvent(ctx, w.pool, &engine.Event{
 		GoalID: goalID, Kind: engine.EventGoalEnded, Actor: engine.ActorSystem,
 		Summary: summary, Payload: payload,
-	}, now); err != nil {
+	}, now); err != nil && ctx.Err() == nil {
 		w.log.WarnWith(ctx, logx.EventGoalSettleFailed, err, "goal_id", goalID,
 			"detail", "the goal was settled but the timeline entry was lost")
 	}
@@ -132,7 +140,23 @@ func (w *Worker) settleGoal(ctx context.Context, goalID string) {
 // This is the general rule for any "A must be followed by B" invariant: the
 // event-driven write needs an idempotent reconciliation read on a path that is
 // necessarily travelled.
+//
+// # Why a stop skips it rather than running it
+//
+// ‼️ This runs on the run context, and a stop cancels that. Every statement below then
+// failed the instant it was issued and was logged as the database being unavailable —
+// three WARNs on the way out of a worker whose only news was that it had been asked to
+// stop. It is the shape #105 and #109 fixed elsewhere, left here because a stop almost
+// always lands in the idle sleep rather than in the sweep, so nobody saw it often.
+// Skipped rather than moved onto a context that outlives the stop, which is the rule for
+// a RECORD of something that happened (see outliving): a reconciliation is neither a
+// record nor a decision. It is a read that converges, it has no deadline, and the next
+// worker's poll — or this one's, after a restart — does it in a second's time.
+// docs/bugfix/2026-09-15-a-stop-still-guessed-at-a-committed-write-and-lost-a-security-record.md
 func (w *Worker) settleFinishedGoals(ctx context.Context) {
+	if ctx.Err() != nil {
+		return
+	}
 	rows, err := w.pool.Query(ctx, `
 		select g.id
 		  from forge_goals g
@@ -145,8 +169,10 @@ func (w *Worker) settleFinishedGoals(ctx context.Context) {
 		   )
 		 limit 25`)
 	if err != nil {
-		w.log.WarnWith(ctx, logx.EventGoalSettleFailed, err,
-			"detail", "the goal reconciliation sweep could not run; finished goals may stay marked active")
+		if ctx.Err() == nil {
+			w.log.WarnWith(ctx, logx.EventGoalSettleFailed, err,
+				"detail", "the goal reconciliation sweep could not run; finished goals may stay marked active")
+		}
 		return
 	}
 	defer rows.Close()
@@ -160,12 +186,17 @@ func (w *Worker) settleFinishedGoals(ctx context.Context) {
 		ids = append(ids, gid)
 	}
 	if err := rows.Err(); err != nil {
-		w.log.WarnWith(ctx, logx.EventGoalSettleFailed, err)
+		if ctx.Err() == nil {
+			w.log.WarnWith(ctx, logx.EventGoalSettleFailed, err)
+		}
 		return
 	}
 	// Settle outside the row iteration: settleGoal writes, and holding a cursor
 	// open across writes on the same table invites lock ordering surprises.
 	for _, gid := range ids {
+		if ctx.Err() != nil {
+			return // stopped part-way through the sweep; the next poll starts it again
+		}
 		w.settleGoal(ctx, gid)
 	}
 }
@@ -228,7 +259,9 @@ func (w *Worker) SettleGoalForTest(ctx context.Context, goalID string) { w.settl
 // Readiness is still PromoteReadyTasks' decision, made from the edges exactly as
 // Apply's is; this only asks it at the moment the answer can have changed.
 func (w *Worker) releaseWaiting(ctx context.Context, goalID string) {
-	if _, err := w.queue.PromoteReadyTasks(ctx, w.pool, goalID, w.clock.Now()); err != nil {
+	if _, err := w.queue.PromoteReadyTasks(ctx, w.pool, goalID, w.clock.Now()); err != nil && ctx.Err() == nil {
+		// Quiet on a stop, for settleGoal's reason: afterTask's context outlives one, and
+		// the sweep's does not.
 		w.log.WarnWith(ctx, logx.EventTaskReleaseFailed, err, "goal_id", goalID,
 			"detail", "the tasks waiting on a finished task were not released; the idle poll retries")
 	}
@@ -237,7 +270,12 @@ func (w *Worker) releaseWaiting(ctx context.Context, goalID string) {
 // releaseWaitingGoals is releaseWaiting's reconciliation, on the idle poll, for
 // the reason settleFinishedGoals exists beside settleGoal: the per-task call is
 // missed by a worker that dies between a task's last write and it.
+//
+// Skipped on a stop, and quiet about it, for the reason written on settleFinishedGoals.
 func (w *Worker) releaseWaitingGoals(ctx context.Context) {
+	if ctx.Err() != nil {
+		return
+	}
 	rows, err := w.pool.Query(ctx, `
 		select distinct t.goal_id
 		  from forge_tasks t
@@ -245,8 +283,10 @@ func (w *Worker) releaseWaitingGoals(ctx context.Context) {
 		 where g.status = 'active' and t.status = 'pending'
 		 limit 25`)
 	if err != nil {
-		w.log.WarnWith(ctx, logx.EventTaskReleaseFailed, err,
-			"detail", "the release sweep could not run; tasks waiting on finished work may stay pending")
+		if ctx.Err() == nil {
+			w.log.WarnWith(ctx, logx.EventTaskReleaseFailed, err,
+				"detail", "the release sweep could not run; tasks waiting on finished work may stay pending")
+		}
 		return
 	}
 	var ids []string
@@ -258,6 +298,9 @@ func (w *Worker) releaseWaitingGoals(ctx context.Context) {
 	}
 	rows.Close()
 	for _, gid := range ids {
+		if ctx.Err() != nil {
+			return // stopped part-way through the sweep; the next poll starts it again
+		}
 		w.releaseWaiting(ctx, gid)
 	}
 }

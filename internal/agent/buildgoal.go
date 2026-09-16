@@ -330,14 +330,14 @@ func (w *Worker) runBuildStep(ctx context.Context, goal *engine.Goal, task *engi
 	outcome, err := w.builds.run(ctx, goal, task, in)
 	if err != nil {
 		if ctx.Err() != nil {
-			// Stopping, not failing. Handed back now so the next worker takes the
-			// step at once rather than after the lease runs out; a release that
-			// cannot be written leaves it to the reaper, which is the same outcome
-			// later.
-			if rerr := w.queue.Release(context.WithoutCancel(ctx), w.pool, task.ID, w.ID, w.clock.Now()); rerr != nil {
-				w.log.WarnWith(ctx, logx.EventTaskCycleEnded, rerr, "task_id", task.ID,
-					"detail", "a stopping worker could not hand its build step back; the reaper will")
-			}
+			// Stopping, not failing. The attempt is abandoned and must not be
+			// counted against the step.
+			//
+			// ‼️ The hand-back itself is Run's, not this function's — see handBack,
+			// which releases every stopped task and records it on the timeline.
+			// Releasing here as well made that release a no-op conflict, which
+			// handBack swallows by design, so a stopped build step was handed back
+			// without the event that says so.
 			return
 		}
 		w.retryOrFail(ctx, goal, task, err)
