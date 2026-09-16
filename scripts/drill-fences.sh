@@ -109,6 +109,7 @@ FILES=(
   internal/domain/geometry/mesh.go
   internal/agent/worker.go
   internal/domain/engine/repository.go
+  internal/domain/engine/queue.go
 )
 
 BACKUP=""
@@ -973,6 +974,38 @@ echo "A stopping worker's bookkeeping"
 drill "a stopping worker's bookkeeping runs on the cancelled context" internal/agent/worker.go \
   's = s.replace("context.WithTimeout(context.WithoutCancel(ctx), afterTaskTimeout)", "context.WithTimeout(ctx, afterTaskTimeout)", 1)' \
   ./internal/agent 'TestWorker_AWorkerStoppedMidTaskDoesNotReportItsBookkeepingAsADatabaseFailure|TestWorker_ATaskFinishedAsTheStopArrivesStillReleasesItsDependentsAndSettlesItsGoal'
+
+echo
+echo "A stopped worker hands its task back"
+# Added 2026-09-15 (a stopped worker hands its task back). A graceful stop cancels the
+# worker's context mid-task; the task must go back to the queue at once, its stopped
+# attempt not counted, instead of staying leased until the reaper finds it, and a real
+# failure must still be retried and failed. See
+# docs/bugfix/2026-09-15-a-stopped-worker-left-its-task-to-run-out-its-lease.md.
+# Needs FORGE_TEST_DATABASE_URL.
+drill "a stopped worker leaves its task to its lease" internal/agent/worker.go \
+  's = s.replace("\t\tif ctx.Err() != nil {\n\t\t\tw.handBack(ctx, task)\n\t\t}\n", "", 1)' \
+  ./internal/agent 'TestWorker_AWorkerStoppedInsideAModelCallHandsItsTaskBackAtOnce|TestWorker_AWorkerStoppedBeforeItsTaskStartsHandsItBackUnstarted|TestWorker_AWorkerStoppedAtTheApprovalGateHandsItsTaskBackAndTheGateIsOpenedOnce'
+
+drill "a stop still counts as an attempt" internal/domain/engine/queue.go \
+  's = s.replace("not_before = $3,\n\t\t       attempt_count = greatest(attempt_count - 1, 0)\n", "not_before = $3\n", 1)' \
+  ./internal/domain/engine 'TestQueue_AReleasedTaskIsClaimableAtOnceAndItsAttemptIsNotCounted'
+
+drill "a stop still counts as an attempt, through the worker" internal/domain/engine/queue.go \
+  's = s.replace("not_before = $3,\n\t\t       attempt_count = greatest(attempt_count - 1, 0)\n", "not_before = $3\n", 1)' \
+  ./internal/agent 'TestWorker_AWorkerStoppedInsideAModelCallHandsItsTaskBackAtOnce'
+
+drill "a task stopped in verification cannot be released" internal/domain/engine/queue.go \
+  's = s.replace("where id = $1 and lease_owner = $2 and status in (\x27claimed\x27,\x27running\x27,\x27verifying\x27)", "where id = $1 and lease_owner = $2 and status in (\x27claimed\x27,\x27running\x27)", 1)' \
+  ./internal/domain/engine 'TestQueue_ATaskStoppedDuringVerificationCanBeReleased'
+
+drill "a stop is recorded as a failed attempt" internal/agent/worker.go \
+  's = s.replace("\tif ctx.Err() != nil {\n\t\treturn\n\t}\n\tif breach := w.budget.CheckAttempts(task)", "\tif breach := w.budget.CheckAttempts(task)", 1)' \
+  ./internal/agent 'TestWorker_AWorkerStoppedInsideAModelCallHandsItsTaskBackAtOnce'
+
+drill "a genuine failure is dropped as if it were a stop" internal/agent/worker.go \
+  's = s.replace("\tif ctx.Err() != nil {\n\t\treturn\n\t}\n\tif breach := w.budget.CheckAttempts(task)", "\tif ctx.Err() != nil || true {\n\t\treturn\n\t}\n\tif breach := w.budget.CheckAttempts(task)", 1)' \
+  ./internal/agent 'TestWorker_ATaskThatFailsWhileItsWorkerRunsIsStillRetriedAndThenFailed'
 
 echo
 echo "The kernel"
