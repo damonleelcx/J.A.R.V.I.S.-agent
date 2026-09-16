@@ -33,6 +33,7 @@ escape. Layer 2 is what stands if layer 1 is ever wrong.
 
 import ast
 import difflib
+import importlib.util
 import json
 import os
 import re
@@ -872,7 +873,14 @@ def main():
         # whether build123d is worth loading at all. A refusal that suggested a
         # name can now also say how that name is called, and on a machine with no
         # kernel the namespace is empty and it simply says less.
-        ns, _ = namespace(True)
+        #
+        # Builders only when the kernel is installed. namespace(True) imports
+        # build123d, and on a machine without it - CI's check job, on purpose, see
+        # _builder_names - that import raised ModuleNotFoundError INSIDE this
+        # handler, so every refusal came back as the missing module instead of its
+        # reason. Without a kernel the hint says less, which is what the line above
+        # promises. docs/bugfix/2026-09-14-script-refusals-needed-a-kernel-to-say-why.md
+        ns, _ = namespace(importlib.util.find_spec("build123d") is not None)
         detail = str(exc)
         # A name that is a METHOD is answered as one, and the spelling suggestion
         # is suppressed: `rotate` is real, and pointing at `Rotation` — a

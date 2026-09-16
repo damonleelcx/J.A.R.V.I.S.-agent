@@ -8,6 +8,7 @@ import (
 	"sort"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/cad"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/logx"
@@ -16,6 +17,14 @@ import (
 // scriptKernel is a kernel with scripts turned on, skipped when there is no
 // Python to run them.
 func scriptKernel(t *testing.T) *cad.Kernel {
+	t.Helper()
+	return cad.New(scriptPython(t), logx.Discard()).WithScripts(true)
+}
+
+// scriptPython is the interpreter scripts run with. It falls back to a bare
+// python3 ON PURPOSE: the refusals must be exercised on a machine with no kernel,
+// which is what CI's check job is.
+func scriptPython(t *testing.T) string {
 	t.Helper()
 	py := os.Getenv("FORGE_CAD_KERNEL")
 	if py == "" {
@@ -34,7 +43,27 @@ func scriptKernel(t *testing.T) *cad.Kernel {
 	if py == "" {
 		t.Skip("no python to run scripts with")
 	}
+	return py
+}
+
+// buildingKernel is scriptKernel for a test whose answer depends on build123d
+// being there - it builds, or it reads a builder's signature - and it skips where
+// build123d is not. scriptKernel alone is not enough for those: its bare-python3
+// fallback makes them fail on CI's check job instead of skipping, which is how #49
+// turned main red. docs/bugfix/2026-09-14-script-refusals-needed-a-kernel-to-say-why.md
+func buildingKernel(t *testing.T) *cad.Kernel {
+	t.Helper()
+	py := scriptPython(t)
+	if !hasBuild123d(py) {
+		t.Skip("build123d is not installed, so there is nothing for this test to build or read")
+	}
 	return cad.New(py, logx.Discard()).WithScripts(true)
+}
+
+// hasBuild123d says whether py can import build123d, asked without importing it.
+func hasBuild123d(py string) bool {
+	probe := exec.Command(py, "-c", "import importlib.util, sys; sys.exit(0 if importlib.util.find_spec('build123d') else 1)")
+	return probe.Run() == nil
 }
 
 // The sandbox refuses what it says it refuses.
@@ -459,7 +488,7 @@ func kernelPython(t *testing.T) string {
 // script used min(range(n), key=lambda i: ...) and spent a whole repair round
 // being told Lambda was not allowed.
 func TestScript_ALambdaRunsAndItsParameterResolves(t *testing.T) {
-	k := scriptKernel(t)
+	k := buildingKernel(t)
 	source := `pts = [(3.0, 0.0), (1.0, 0.0), (2.0, 0.0)]
 nearest = min(range(len(pts)), key=lambda i: abs(pts[i][0] - 2.0))
 side = 10.0 + nearest
@@ -613,7 +642,7 @@ func TestScript_AnUnavailableNameSuggestsTheCloseOnes(t *testing.T) {
 // at build time would be a second artifact to keep in step with the library, and
 // a wrong signature is worse than none because it reads as authoritative.
 func TestScript_AFailureSaysHowTheBuilderIsCalled(t *testing.T) {
-	k := scriptKernel(t)
+	k := buildingKernel(t)
 	cases := []struct {
 		name, source string
 		want         []string
@@ -663,7 +692,7 @@ func TestScript_AFailureSaysHowTheBuilderIsCalled(t *testing.T) {
 // at — the same failure one step later, and a second round trip out of a small
 // budget. Both questions are answered in one refusal.
 func TestScript_ASuggestedNameComesWithItsSignature(t *testing.T) {
-	k := scriptKernel(t)
+	k := buildingKernel(t)
 	_, err := k.RunScript(context.Background(), "result = Cylindr(radius=5, height=10)", nil)
 	if err == nil {
 		t.Fatal("Cylindr built, which it must not")
@@ -758,7 +787,7 @@ func TestScript_ARefusalNamesWhatWasWritten(t *testing.T) {
 // half of a documented pair was arbitrary, and it cost a real run — a model
 // reached for `@`, was refused, and spent repair attempts on it.
 func TestScript_TheAtOperatorRunsAndComputesTheRightPoint(t *testing.T) {
-	k := scriptKernel(t)
+	k := buildingKernel(t)
 	// The point half way along a 10mm line is (5,0,0); the box is then 5mm on a
 	// side. Asserted through the VOLUME, because an `@` that silently produced
 	// something else would still build a box.
@@ -794,7 +823,7 @@ result = Box(side, side, side)`
 // is the one shape in a document that cannot be parametric, which is the
 // opposite of why scripts exist.
 func TestScript_ReadsTheDocumentsParameters(t *testing.T) {
-	k := scriptKernel(t)
+	k := buildingKernel(t)
 	params := map[string]float64{"module": 2, "teeth_count": 20, "thickness": 6}
 
 	// The volume is asserted, not just "it built": a parameter that silently
@@ -815,7 +844,7 @@ func TestScript_ReadsTheDocumentsParameters(t *testing.T) {
 // The names come from a model, and they go straight into the namespace a script
 // executes in. Each of these is a way that could go wrong.
 func TestScript_AParameterCannotHijackTheNamespace(t *testing.T) {
-	k := scriptKernel(t)
+	k := buildingKernel(t)
 
 	t.Run("a builder wins over a parameter of the same name", func(t *testing.T) {
 		// A document with a parameter called Box must not turn Box(...) into a
@@ -892,7 +921,7 @@ func TestScript_AParameterCannotHijackTheNamespace(t *testing.T) {
 // is true division, so nothing downstream can tell except the places that
 // require an int — which is exactly the point.
 func TestScript_AWholeNumberedParameterIsAnInt(t *testing.T) {
-	k := scriptKernel(t)
+	k := buildingKernel(t)
 
 	t.Run("range() over a count", func(t *testing.T) {
 		res, err := k.RunScript(context.Background(),
@@ -940,7 +969,7 @@ func TestScript_AWholeNumberedParameterIsAnInt(t *testing.T) {
 // nothing about that, so the general signature help was no help here. What the
 // model needs is which names a `with` can take, and the library knows.
 func TestScript_AMisusedWithIsToldWhatItCanUse(t *testing.T) {
-	k := scriptKernel(t)
+	k := buildingKernel(t)
 	_, err := k.RunScript(context.Background(),
 		"with Rotation(0, 0, 45) as r:\n    Box(1, 1, 1)\nresult = r", nil)
 	if err == nil {
@@ -967,7 +996,7 @@ func TestScript_AMisusedWithIsToldWhatItCanUse(t *testing.T) {
 // the first version answered "a method on Airfoil and ArcArcTangentArc", which
 // are alphabetically-first leaves inheriting it from Shape. True and useless.
 func TestScript_AMethodIsNotASpellingMistake(t *testing.T) {
-	k := scriptKernel(t)
+	k := buildingKernel(t)
 	_, err := k.RunScript(context.Background(),
 		"b = Box(10, 10, 10)\nresult = rotate(b, 45)", nil)
 	if err == nil {
@@ -992,5 +1021,62 @@ func TestScript_AMethodIsNotASpellingMistake(t *testing.T) {
 			t.Errorf("the failure names %q, an alphabetically-first leaf that merely "+
 				"inherits the method:\n%s", leaf, got)
 		}
+	}
+}
+
+// Refusals must hold, and say why, on a machine with no kernel: CI's check job has
+// Python and no build123d on purpose, so that the part of the sandbox that matters
+// most is exercised where nothing can be built. After #49 a refusal built its hint
+// by importing build123d, and there the import itself failed, so every refusal read
+// "No module named 'build123d'" instead of its reason.
+// docs/bugfix/2026-09-14-script-refusals-needed-a-kernel-to-say-why.md
+func TestScript_RefusalsSayWhyWithoutAKernel(t *testing.T) {
+	k := cad.New(pythonWithoutKernel(t), logx.Discard()).WithScripts(true)
+	t.Cleanup(k.Close)
+	for _, tc := range []struct{ name, source, want string }{
+		{"an import", "import os\nresult = os.environ", "not allowed"},
+		{"a name that is not on the list", "result = Rotate(1)", "is not available here"},
+		{"reading a file", "result = open('/etc/passwd').read()", "not available"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+			defer cancel()
+			_, err := k.RunScript(ctx, tc.source, nil)
+			if err == nil || !strings.Contains(err.Error(), tc.want) || strings.Contains(err.Error(), "No module named") {
+				t.Errorf("without a kernel, %q was not refused for its reason (want %q): %v", tc.source, tc.want, err)
+			}
+		})
+	}
+}
+
+// pythonWithoutKernel is an interpreter on PATH that cannot import build123d, or a
+// skip. Probed rather than assumed: a laptop's python3 may well have it.
+func pythonWithoutKernel(t *testing.T) string {
+	t.Helper()
+	for _, name := range []string{"python3", "python3.13", "python3.14", "python3.12"} {
+		p, err := exec.LookPath(name)
+		if err != nil {
+			continue
+		}
+		if !hasBuild123d(p) {
+			return p
+		}
+	}
+	t.Skip("every python on PATH has build123d, so there is none to run the kernel-less refusals with")
+	return ""
+}
+
+// A test that needs the kernel skips where there is none, instead of failing.
+// Pinned to a kernel-less interpreter so this holds on a laptop that has build123d.
+// docs/bugfix/2026-09-14-script-refusals-needed-a-kernel-to-say-why.md
+func TestScript_ATestThatNeedsTheKernelSkipsWithoutIt(t *testing.T) {
+	t.Setenv("FORGE_CAD_KERNEL", pythonWithoutKernel(t))
+	ran := false
+	t.Run("needs the kernel", func(t *testing.T) {
+		buildingKernel(t)
+		ran = true
+	})
+	if ran {
+		t.Error("buildingKernel went on without build123d; a test that needs the kernel would fail on CI's check job instead of skipping")
 	}
 }
