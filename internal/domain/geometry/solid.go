@@ -155,8 +155,10 @@ func Solids(d Document, unit Unit) ([]Solid, []string) {
 // Fences: TestRepeat_TheKernelIsSentFeaturesNamingTheCopiesItIsSent,
 // TestKernel_AFeatureNamingARepeatedPartIsApplied.
 func SolidsAndOperations(d Document, unit Unit) ([]Solid, []Operation, []Problem, []string) {
-	// Refused whole, before any expansion (limits.go).
-	if refusal := d.DrawRefusal(); refusal != "" {
+	// Refused whole, before any expansion (limits.go), at the widest bound anything is
+	// built to: a view's (BuildRefusal). cad.Kernel.build refuses every other build at
+	// the tighter bound before it asks for these.
+	if refusal := d.BuildRefusal(); refusal != "" {
 		return nil, nil, nil, []string{refusal}
 	}
 	return solidsAndOperations(d, unit)
@@ -188,6 +190,9 @@ func solidsAndOperations(d Document, unit Unit) ([]Solid, []Operation, []Problem
 	// parts they place, so everything below reads ordinary parts — including the
 	// gear notes, which must see gears that live inside a definition.
 	d, treeProblems := expandAssemblies(d)
+	// Standard parts become the revolves and extrusions they are (standard.go), so
+	// the kernel has no case for the word and needs none.
+	d, standardProblems := expandStandards(d)
 	gearNotes := gearFacetNotes(d, unit)
 	d, gearProblems := expandGears(d)
 	// Patterns are written out before anything reads the parts, so every shape
@@ -211,7 +216,7 @@ func solidsAndOperations(d Document, unit Unit) ([]Solid, []Operation, []Problem
 		// the file says so rather than being quietly smaller.
 		infer("%s %s, so it is not in this file.", p.Name, p.Detail)
 	}
-	for _, p := range gearProblems {
+	for _, p := range append(standardProblems, gearProblems...) {
 		if p.Severity == Error {
 			infer("%s %s, so it is not in this file.", p.Name, p.Detail)
 			continue

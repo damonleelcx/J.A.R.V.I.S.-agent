@@ -1,0 +1,14 @@
+14:06:06.497 drill for gol_01M2K3TY26RX7JT522ECSVPYNE: stop 20s into step 2, restart 5s after exit
+14:06:51.068 goal is succeeded before the stop; drill not run (succeeded,succeeded,succeeded,succeeded,succeeded)
+14:10:17.483 drill for gol_01M2K3ZDBK3V0077NQ5QWHNFRP: stop 10s into step 2, restart 5s after exit
+14:10:36.070 before stop: build-step-02 running attempt=1 owner=MSI/15484/01M2K467 lease_expires=18:11:23
+14:10:37.301 spent before stop: 2637
+14:10:37.393 STOP sent (stop-1 created; ctrlrun polls every 200 ms)
+14:10:37.906 step 2 handed back: ready owner=- (sample 1)
+14:10:38.078 ctrlrun: 14:10:37.474 ctrlrun GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, 15484)=1 (The operation completed successfully.) 14:10:37.493 ctrlrun child exited code=0 err=<nil> 19ms after CTRL_BREAK 
+14:10:38.549 after stop: build-step-02 ready attempt=1 owner=-
+14:10:39.014 events since stop: goal.activated@18:10:17.013 task.started@18:10:17.559 artifact.changed@18:10:23.471 task.succeeded@18:10:23.502 task.started@18:10:23.518
+14:10:44.130 worker 2 started
+14:10:44.682 step 2 claimed again: running attempt=2 owner=MSI/16468/01M2K477 (after 1x0.5s)
+14:10:45.159 all tasks: build-step-01:succeeded:1 build-step-02:running:2
+14:10:45.214 drill done; worker 2 keeps running

@@ -1,0 +1,280 @@
+{
+  "speech": "Added suspension uprights and wheel hubs for front and rear axles, mounted to the chassis pickup points.",
+  "prototype_edit": {
+    "patch": {
+      "definitions": [
+        {
+          "id": "upright",
+          "name": "Suspension Upright",
+          "shape": "extrusion",
+          "size": {
+            "depth": 40
+          },
+          "profile": [
+            {
+              "x": 0,
+              "y": 0,
+              "radius": 5
+            },
+            {
+              "x": 20,
+              "y": -10,
+              "radius": 2
+            },
+            {
+              "x": 20,
+              "y": 60,
+              "radius": 2
+            },
+            {
+              "x": 0,
+              "y": 70,
+              "radius": 5
+            }
+          ],
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            90,
+            0
+          ],
+          "color": "#a0a0a0",
+          "material": {
+            "name": "aluminium 7075-T6",
+            "finish": "metal",
+            "density": 2810,
+            "how": "assumed"
+          },
+          "note": "Forged aluminium upright connecting hub to suspension arms"
+        },
+        {
+          "id": "wheel-hub",
+          "name": "Wheel Hub",
+          "shape": "cylinder",
+          "size": {
+            "radius": 35,
+            "height": 50
+          },
+          "position": [
+            0,
+            35,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            90
+          ],
+          "color": "#c0c0c0",
+          "material": {
+            "name": "steel 4140",
+            "finish": "metal",
+            "density": 7850,
+            "how": "assumed"
+          },
+          "note": "Hub assembly with bearing seats"
+        }
+      ],
+      "assemblies": [
+        {
+          "id": "suspension-mounts",
+          "name": "Suspension Mounts",
+          "interfaces": [
+            {
+              "id": "front-left-hub",
+              "position": [
+                0,
+                0,
+                0
+              ],
+              "rotation": [
+                0,
+                0,
+                0
+              ]
+            },
+            {
+              "id": "front-right-hub",
+              "position": [
+                0,
+                0,
+                0
+              ],
+              "rotation": [
+                0,
+                0,
+                0
+              ]
+            },
+            {
+              "id": "rear-left-hub",
+              "position": [
+                0,
+                0,
+                0
+              ],
+              "rotation": [
+                0,
+                0,
+                0
+              ]
+            },
+            {
+              "id": "rear-right-hub",
+              "position": [
+                0,
+                0,
+                0
+              ],
+              "rotation": [
+                0,
+                0,
+                0
+              ]
+            }
+          ],
+          "children": [
+            {
+              "id": "front-left-upright",
+              "ref": "upright",
+              "at": "chassis/front-suspension-left",
+              "position": [
+                0,
+                0,
+                0
+              ],
+              "rotation": [
+                0,
+                0,
+                0
+              ]
+            },
+            {
+              "id": "front-left-hub-assembly",
+              "ref": "wheel-hub",
+              "at": "front-left-upright",
+              "position": [
+                20,
+                35,
+                20
+              ],
+              "rotation": [
+                0,
+                0,
+                0
+              ]
+            },
+            {
+              "id": "front-right-upright",
+              "ref": "upright",
+              "at": "chassis/front-suspension-right",
+              "position": [
+                0,
+                0,
+                0
+              ],
+              "rotation": [
+                0,
+                0,
+                0
+              ],
+              "mirror": "z"
+            },
+            {
+              "id": "front-right-hub-assembly",
+              "ref": "wheel-hub",
+              "at": "front-right-upright",
+              "position": [
+                20,
+                35,
+                -20
+              ],
+              "rotation": [
+                0,
+                0,
+                0
+              ]
+            },
+            {
+              "id": "rear-left-upright",
+              "ref": "upright",
+              "at": "chassis/rear-suspension-left",
+              "position": [
+                0,
+                0,
+                0
+              ],
+              "rotation": [
+                0,
+                0,
+                0
+              ]
+            },
+            {
+              "id": "rear-left-hub-assembly",
+              "ref": "wheel-hub",
+              "at": "rear-left-upright",
+              "position": [
+                20,
+                35,
+                20
+              ],
+              "rotation": [
+                0,
+                0,
+                0
+              ]
+            },
+            {
+              "id": "rear-right-upright",
+              "ref": "upright",
+              "at": "chassis/rear-suspension-right",
+              "position": [
+                0,
+                0,
+                0
+              ],
+              "rotation": [
+                0,
+                0,
+                0
+              ],
+              "mirror": "z"
+            },
+            {
+              "id": "rear-right-hub-assembly",
+              "ref": "wheel-hub",
+              "at": "rear-right-upright",
+              "position": [
+                20,
+                35,
+                -20
+              ],
+              "rotation": [
+                0,
+                0,
+                0
+              ]
+            }
+          ]
+        }
+      ]
+    },
+    "placements": [
+      {
+        "id": "suspension-mounts",
+        "ref": "suspension-mounts",
+        "at": "chassis/cockpit-floor",
+        "rotation": [
+          0,
+          0,
+          0
+        ]
+      }
+    ]
+  }
+}

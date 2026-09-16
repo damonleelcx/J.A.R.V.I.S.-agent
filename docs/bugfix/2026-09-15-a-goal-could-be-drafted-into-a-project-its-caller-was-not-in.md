@@ -1,6 +1,6 @@
 # A goal could be drafted into a project its caller was not in
 
-**Date:** 2026-09-15 · **Status:** fixed (stacked on #85, A1 follow-ups) · **Severity:** high — anyone signed in could write work into a stranger's project and spend a model call on it
+**Date:** 2026-09-15 · **Status:** fixed on main (found building #90, the build goal entry; the stacked build branches carry the same fix) · **Severity:** high — anyone signed in could write work into a stranger's project and spend a model call on it
 
 ## Summary
 
@@ -15,20 +15,30 @@ other goal endpoint gives.
 
 ## Symptom
 
-- Found while adding `build: true` to the endpoint (A1 follow-ups). A fence posting another account's `project_id`
-  got **502** (the stub's reply was not a plan), and afterwards the stranger's project held **2 goals** and the model
-  had been **asked once**.
-- With a real model the caller got **404** instead: the plan landed, then the handler's own read of the goal it had
-  just written was refused, because the caller could not read that project. The goal stayed.
+Reproduced on main with a stub model before the fix:
+
+- A caller who is not a member of project P posts a goal naming P: **404** — but only from the handler's own read
+  of the goal it had just written, which the caller could not see. By then P held **2 goals** (its own and the
+  stranger's, planned, with a task) and the model had been **asked once**.
+- A **viewer** of P posts the same: **201** with the whole plan. P held 2 goals, the model was asked once.
+
+On the build stack (#90), where it was found, the stranger's case surfaced as a **502** rather than a 404: that
+branch's fence posts `build: true`, the stub's reply was not a build plan, and the planner's own refusal answered
+before the handler's failing read could. The writes underneath were the same — the stranger's project held
+**2 goals** and the model had been **asked once**. Worth recording because the status code alone names a different
+culprit on each branch, and neither names this one.
 
 ## Impact
 
-- Any account could put draft goals, with plans, into any project it had an id for. A draft runs nothing, and
-  starting one needs `goal.start` in that project, which is checked. But the goal, its tasks and the planner's
-  project-graph notes are written under someone else's project, and they appear in its console.
-- The planner's call is charged to the stranger's goal, and for `build: true` the planning call is recorded in that
-  goal's budget.
-- A viewer of a project could plan work in it, although `goal.create` is not a viewer's permission.
+- Any account could put draft goals, with planned tasks, into any project it had an id for. A draft runs nothing,
+  and starting one needs `goal.start` in that project, which is checked. But the goal, its tasks, its plan, any
+  clarifying question and the planner's industry-reading note are written under someone else's project, and they
+  appear in its console and timeline.
+- The planner's call is made on the stranger's behalf, against the operator's model budget, for a goal in a project
+  the caller has no standing in. On the build stack, a `build: true` plan also records that planning call in the
+  stranger's goal's own budget, so the spend shows up under their project's accounting too.
+- A viewer of a project could plan work in it, although `goal.create` is not a viewer's permission (contributor and
+  above).
 
 Project ids are not published, but they appear in URLs, exports and the console of every member.
 
@@ -47,25 +57,58 @@ goal yet to resolve a project from, so it was the one path the migration to memb
 ## Why it did not show up before
 
 The endpoint's only fence covered the no-model refusal. The workbench always sends the project of the conversation
-the person is in, so a person never hits it.
+the person is in, so a person never hits it. And the stranger's case even LOOKED refused — a 404 — because the
+handler's closing read failed; only counting rows shows the write.
 
 ## Fix
 
 `CreateGoal` calls `h.deps.requirePermission(r, req.ProjectID, user.ID, access.PermGoalCreate)` when a project is
-named, before `Draft`. An unnamed project is created for the caller, as before.
+named, before `Draft` and before the model deadline starts. An unnamed project is created for the caller, as before,
+and needs no check: the caller becomes its owner.
+
+`goal.create` is the permission that already exists on main for this act ("plan work"), and the one `Replan` asks
+for.
+
+## Audit of the other goal routes on main
+
+Main's goal routes are the ones below; the later routes named in the build stack (answer, criteria, options, choose)
+do not exist on main.
+
+| Route | Check | Evidence |
+|---|---|---|
+| `GET /v1/goals` | projects from `visibleProjects` (membership) | `goals.go` ListGoals |
+| `POST /v1/goals` | **none on the named project — this defect** | fixed here |
+| `POST /v1/goals/{id}/plan` | `loadGoalFor(..., goal.create)`, project from the goal row, before the model call | `goals_start.go` Replan; now fenced, see below |
+| `POST /v1/goals/{id}/start` | `loadGoalFor(..., goal.start)` | `TestStartGoal_OtherOwnersGoalIsNotFound` |
+| `GET /v1/goals/{id}`, `GET /v1/goals/{id}/timeline` | `loadGoal` → `project.read` | `goals.go` |
+| `GET /v1/approvals`, `POST /v1/approvals/{id}` | `visibleProjects`; `approval.decide` on the approval's goal | `goals.go` |
+
+Every route that takes a goal id resolves the project from the goal's row (`requireGoalPermission`), so a caller
+cannot name a project they are in and a goal they are not. Create was the only route taking a project id from the
+request.
 
 ## Verification
 
-- `TestCreateGoal_RefusesAProjectTheCallerIsNotAMemberOf` (plain and build): 404, the project still holds only its
-  own goal, and the model was not asked. On the handler before the fix: 502, two goals, one call.
-- `TestCreateGoal_RefusesAViewerOfTheProject`: 403, no goal, no call.
+- `TestCreateGoal_RefusesAProjectTheCallerIsNotAMemberOf`: 404, the project still holds only its own goal, and the
+  model was not asked. On main before the fix: 404, **two goals, one call**.
+- `TestCreateGoal_RefusesAViewerOfTheProject`: 403, no goal, no call. Before the fix: 201, two goals, one call.
+- `TestCreateGoal_AContributorPlansIntoTheProjectAndNoProjectStillMakesOne`: a contributor is 201 into the project
+  with one call, and a request with no `project_id` still lands in a new project the caller owns.
+- `TestReplan_RefusesAStrangerAndAViewerOfTheGoalsProject`: the replan route's existing check — 404 for a stranger,
+  403 for a viewer, no call, no tasks. Green before and after; it holds the route that was already right.
+
+On the build stack, two further fences in `goals_build_test.go` —
+`TestCreateGoal_RefusesAProjectTheCallerIsNotAMemberOfWhenAskedForABuild` and
+`TestCreateGoal_RefusesAViewerOfTheProjectWhenAskedForABuild` — send the same two requests with `build: true`, so
+the refusal is proved on the request shape the fences above do not send. The check is shared (it runs before `Plan`
+or `PlanBuild` is chosen), so these add coverage rather than a second check; `-run` matches by substring, so the
+drill below exercises them too.
 
 ## Regression prevention
 
-A drill in `scripts/drill-fences.sh` ("a goal is drafted into a project its caller is not in") removes the check;
-both fences go red.
+Two drills in `scripts/drill-fences.sh` ("Goal project permission"): one removes the new check on create, and both
+create fences go red; one lowers replan's permission to `project.read`, and the replan fence goes red.
 
 ## Not in this fix
 
-**Main has the same defect** and needs the same change in its own PR. `forgectl goal new --project` is an operator
-command with database access and is not checked, as before.
+`forgectl goal new --project` is an operator command with database access and is not checked, as before.

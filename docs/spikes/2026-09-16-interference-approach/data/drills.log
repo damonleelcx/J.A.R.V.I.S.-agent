@@ -1,0 +1,57 @@
+Interference approach: the narrow phase one array at a time
+  ✅ went red      — the rows are told apart by their first column alone
+           interference_bulk_keys_kernel_test.go:82: rails and crossbars: 1378 keys compared, 772 unequal, 7 equal with the other zero's sign, 25 groups, 30 rows, 534 distinct keys, 556 pairs handed back; answer 5759 B 010f14f107b4
+           interference_bulk_keys_kernel_test.go:82: rails and crossbars: 772 of 1378 key(s) are not the key build123d's Locations gave; first: 0 and 4: (0, 0, (1.0, 0.0, 0.0, -200.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0)) against (0, 0, (1.0, 0.0, 0.0, -100.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0))
+  ❌ STAYED GREEN  — a row forgets the pose in the other frame
+        TestKernel_TheArrayNarrowPhaseGivesTheLoopsAnswerOnThreeFixtures does not hold this. Either the fence asserts something that
+        cannot fail, or it is asserting it somewhere the mutation misses.
+  ✅ went red      — a group is keyed by its definitions and not its rotations
+           interference_bulk_keys_kernel_test.go:82: rails and crossbars: 1378 keys compared, 696 unequal, 0 equal with the other zero's sign, 24 groups, 1020 rows, 1117 distinct keys, 153 pairs handed back; answer 5759 B 010f14f107b4
+           interference_bulk_keys_kernel_test.go:82: rails and crossbars: 696 of 1378 key(s) are not the key build123d's Locations gave; first: 0 and 5: (0, 1, (0.819152044, -0.573576436, 0.0, 203.0, 0.573576436, 0.819152044, 0.0, 0.0, 0.0, 0.0, 1.0, inf)) against (0, 1, (1.0, 0.0, 0.0, 203.0, 0.0, 1.0, 0.0, -inf, 0.0, 0.0, 1.0, inf))
+  ✅ went red      — a group is keyed by its rotations and not its definitions
+           interference_bulk_keys_kernel_test.go:82: rails and crossbars: 1378 keys compared, 1086 unequal, 0 equal with the other zero's sign, 15 groups, 953 rows, 1055 distinct keys, 145 pairs handed back; answer 5754 B 18a47da82a72
+           interference_bulk_keys_kernel_test.go:82: rails and crossbars: the array narrow phase is not the loop's answer (5761 B ce954b7b7b7c against 5754 B 18a47da82a72), first difference at byte 14:
+  ✅ went red      — the relative translation is read in the other solid's frame
+           interference_bulk_keys_kernel_test.go:82: rails and crossbars: 1378 keys compared, 630 unequal, 13 equal with the other zero's sign, 25 groups, 706 rows, 1152 distinct keys, 556 pairs handed back; answer 5759 B 010f14f107b4
+           interference_bulk_keys_kernel_test.go:82: rails and crossbars: 630 of 1378 key(s) are not the key build123d's Locations gave; first: 0 and 3: (0, 1, (1.0, 0.0, 0.0, 103.0, 0.0, 1.0, 0.0, -inf, 0.0, 0.0, 1.0, inf)) against (0, 1, (1.0, 0.0, 0.0, -103.0, 0.0, 1.0, 0.0, -inf, 0.0, 0.0, 1.0, inf))
+  ✅ went red      — the placement's inverse is added rather than subtracted
+           interference_bulk_keys_kernel_test.go:82: rails and crossbars: 1378 keys compared, 790 unequal, 7 equal with the other zero's sign, 25 groups, 724 rows, 1213 distinct keys, 556 pairs handed back; answer 5759 B 010f14f107b4
+           interference_bulk_keys_kernel_test.go:82: rails and crossbars: 790 of 1378 key(s) are not the key build123d's Locations gave; first: 0 and 2: (0, 0, (1.0, 0.0, 0.0, -100.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0)) against (0, 0, (1.0, 0.0, 0.0, 100.0, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0))
+  ✅ went red      — the group's rotation is read by rows rather than transposed
+           interference_bulk_keys_kernel_test.go:82: rails and crossbars: 1378 keys compared, 94 unequal, 50 equal with the other zero's sign, 25 groups, 707 rows, 1197 distinct keys, 556 pairs handed back; answer 5759 B 010f14f107b4
+           interference_bulk_keys_kernel_test.go:82: rails and crossbars: 94 of 1378 key(s) are not the key build123d's Locations gave; first: 5 and 39: (1, 5, (0.996194698, 0.087155743, 0.0, 2960.891107, -0.087155743, 0.996194698, 0.0, -2164.796367, 0.0, 0.0, 1.0, -2.0)) against (1, 5, (0.996194698, 0.087155743, 0.0, 3046.927573, -0.087155743, 0.996194698, 0.0, 2041.923561, 0.0, 0.0, 1.0, -2.0))
+  ✅ went red      — a group's containment is tested against one axis for all three
+           interference_bulk_keys_kernel_test.go:82: rails and crossbars: 1378 keys compared, 598 unequal, 15 equal with the other zero's sign, 25 groups, 706 rows, 1151 distinct keys, 556 pairs handed back; answer 5759 B 010f14f107b4
+           interference_bulk_keys_kernel_test.go:82: rails and crossbars: 598 of 1378 key(s) are not the key build123d's Locations gave; first: 0 and 1: (0, 1, (1.0, 0.0, 0.0, inf, 0.0, 1.0, 0.0, -inf, 0.0, 0.0, 1.0, inf)) against (0, 1, (1.0, 0.0, 0.0, inf, 0.0, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, inf))
+  ❌ STAYED GREEN  — only the forward pose is marked before the rows are deduped
+        TestKernel_TheArrayNarrowPhaseGivesTheLoopsAnswerOnThreeFixtures does not hold this. Either the fence asserts something that
+        cannot fail, or it is asserting it somewhere the mutation misses.
+  ✅ went red      — a solid with no placement is left out of the translations
+           interference_bulk_keys_kernel_test.go:82: interference_bulk_keys.py: exit status 1
+       --- FAIL: TestKernel_TheArrayNarrowPhaseGivesTheLoopsAnswerOnThreeFixtures (0.12s)
+  ✅ went red      — the search stops at the key's number, not the pair it was met at
+           interference_bulk_keys_kernel_test.go:82: rails and crossbars: 1378 keys compared, 0 unequal, 23 equal with the other zero's sign, 25 groups, 706 rows, 1151 distinct keys, 556 pairs handed back; answer 5759 B 010f14f107b4
+           interference_bulk_keys_kernel_test.go:82: rails and crossbars, a feature-changed solid: 1378 keys compared, 0 unequal, 13 equal with the other zero's sign, 18 groups, 447 rows, 1245 distinct keys, 860 pairs handed back; answer 5754 B aa3a954ece62
+  ✅ went red      — a reuse is counted for every pair, not those the search reached
+           interference_bulk_keys_kernel_test.go:82: rails and crossbars: 1378 keys compared, 0 unequal, 23 equal with the other zero's sign, 25 groups, 706 rows, 1151 distinct keys, 556 pairs handed back; answer 5759 B 010f14f107b4
+           interference_bulk_keys_kernel_test.go:82: rails and crossbars, a feature-changed solid: 1378 keys compared, 0 unequal, 13 equal with the other zero's sign, 18 groups, 447 rows, 1245 distinct keys, 860 pairs handed back; answer 5754 B aa3a954ece62
+  ✅ went red      — the list's ties are broken by an unstable sort
+           interference_bulk_keys_kernel_test.go:82: rails and crossbars: 1378 keys compared, 0 unequal, 23 equal with the other zero's sign, 25 groups, 706 rows, 1151 distinct keys, 556 pairs handed back; answer 5759 B a076fe08be64
+           interference_bulk_keys_kernel_test.go:82: rails and crossbars: the array narrow phase is not the loop's answer (5759 B 010f14f107b4 against 5759 B a076fe08be64), first difference at byte 20:
+  ✅ went red      — the larger solid is reported first
+           interference_bulk_keys_kernel_test.go:82: rails and crossbars: 1378 keys compared, 0 unequal, 23 equal with the other zero's sign, 25 groups, 706 rows, 1151 distinct keys, 556 pairs handed back; answer 5759 B d98d2143e92c
+           interference_bulk_keys_kernel_test.go:82: rails and crossbars: the array narrow phase is not the loop's answer (5759 B 010f14f107b4 against 5759 B d98d2143e92c), first difference at byte 16:
+  ❌ STAYED GREEN  — a clash under the minimum volume is listed
+        TestKernel_TheArrayNarrowPhaseGivesTheLoopsAnswerOnThreeFixtures does not hold this. Either the fence asserts something that
+        cannot fail, or it is asserting it somewhere the mutation misses.
+  ✅ went red      — every clash found is counted buried
+           interference_bulk_keys_kernel_test.go:82: rails and crossbars: 1378 keys compared, 0 unequal, 23 equal with the other zero's sign, 25 groups, 706 rows, 1151 distinct keys, 556 pairs handed back; answer 5759 B f41b09003c85
+           interference_bulk_keys_kernel_test.go:82: rails and crossbars: the array narrow phase is not the loop's answer (5759 B 010f14f107b4 against 5759 B f41b09003c85), first difference at byte 5755:
+  ❌ STAYED GREEN  — two solids at one location are keyed by the array path
+        TestKernel_TheArrayNarrowPhaseGivesTheLoopsAnswerOnThreeFixtures does not hold this. Either the fence asserts something that
+        cannot fail, or it is asserting it somewhere the mutation misses.
+
+The tree is byte-identical to how the drill found it.
+13 went red, 4 stayed green, 0 unproven, 0 anchor(s) moved.
+Covered: the sweep fences. NOT covered: the extrusion and revolve fences,
+which have no drills — see the note in this script.

@@ -206,40 +206,43 @@ func TestCreateGoal_ABuildOfOneStepIsRefusedAndTheDraftSurvives(t *testing.T) {
 	}
 }
 
-// A goal cannot be drafted into a project the caller is not a member of, build
-// or not. Bugfix 2026-09-15: nothing checked the project a request named.
-func TestCreateGoal_RefusesAProjectTheCallerIsNotAMemberOf(t *testing.T) {
-	for _, build := range []bool{false, true} {
-		t.Run(map[bool]string{false: "plan", true: "build"}[build], func(t *testing.T) {
-			stub := &buildLLM{replies: []string{buildThreeSteps}}
-			h, pool, user := buildHandlers(t, stub)
-			other := insertUser(t, pool, "owner-elsewhere@example.com")
-			projectID := projectOf(t, pool, seedGoal(t, pool, other.ID, engine.GoalDraft, 0))
+// The refusal on a named project holds when the request asks for a BUILD, not
+// only for ordinary work.
+//
+// The check itself is shared — it runs before Plan or PlanBuild is chosen — and
+// its reviewed fences are TestCreateGoal_RefusesAProjectTheCallerIsNotAMemberOf
+// and TestCreateGoal_RefusesAViewerOfTheProject in goals_permission_test.go,
+// which send the plain request. These two are the build stack's own coverage of
+// the same refusal on the request shape those do not send. Go's -run matches by
+// substring, so the drill that removes the check runs these as well.
+//
+// Worth fencing separately because the build path is where the defect was found,
+// and it did not look the same there: with build:true the stub's reply is not a
+// build plan, so an unchecked create answered 502 rather than the 404 main
+// reproduced. The status code alone named a different culprit on each branch.
+// docs/bugfix/2026-09-15-a-goal-could-be-drafted-into-a-project-its-caller-was-not-in.md
+func TestCreateGoal_RefusesAProjectTheCallerIsNotAMemberOfWhenAskedForABuild(t *testing.T) {
+	stub := &buildLLM{replies: []string{buildThreeSteps}}
+	h, pool, user := buildHandlers(t, stub)
+	other := insertUser(t, pool, "owner-elsewhere-build@example.com")
+	projectID := projectOf(t, pool, seedGoal(t, pool, other.ID, engine.GoalDraft, 0))
 
-			rec := httptest.NewRecorder()
-			// The plain case sends the request the endpoint has always taken, so it
-			// fails on the handler as it was, not on a field it did not know.
-			req := map[string]any{"title": "Mine now", "statement": "a car", "project_id": projectID}
-			if build {
-				req["build"] = true
-			}
-			body, _ := json.Marshal(req)
-			h.CreateGoal(rec, postAs(user, "/v1/goals", string(body)))
+	rec := httptest.NewRecorder()
+	h.CreateGoal(rec, postAs(user, "/v1/goals",
+		`{"title":"Mine now","statement":"a car","build":true,"project_id":"`+projectID+`"}`))
 
-			if rec.Code != http.StatusNotFound {
-				t.Errorf("want 404, got %d: %s", rec.Code, rec.Body.String())
-			}
-			if n := goalsIn(t, pool, projectID); n != 1 {
-				t.Errorf("the project now holds %d goals; a stranger wrote one into it", n)
-			}
-			if asked := stub.calls(); len(asked) != 0 {
-				t.Errorf("the model was asked %d time(s) on behalf of a stranger to the project", len(asked))
-			}
-		})
+	if rec.Code != http.StatusNotFound {
+		t.Errorf("want 404, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if n := goalsIn(t, pool, projectID); n != 1 {
+		t.Errorf("the project now holds %d goals; a stranger wrote a build into it", n)
+	}
+	if asked := stub.calls(); len(asked) != 0 {
+		t.Errorf("the model was asked %d time(s) on behalf of a stranger to the project", len(asked))
 	}
 }
 
-// A viewer reads a project and plans nothing in it.
+// A viewer reads a project and plans no build in it.
 //
 // ‼️ Load-bearing again since 2026-09-15, and left exactly as strict: requesting a
 // STEP export stopped needing goal.create, because exporting is reading and the
@@ -248,10 +251,10 @@ func TestCreateGoal_RefusesAProjectTheCallerIsNotAMemberOf(t *testing.T) {
 // statement is the caller's and the planner's model is asked on their behalf — so
 // a viewer who may now export must still be refused here, or #91's defect is back
 // by a different door.
-func TestCreateGoal_RefusesAViewerOfTheProject(t *testing.T) {
+func TestCreateGoal_RefusesAViewerOfTheProjectWhenAskedForABuild(t *testing.T) {
 	stub := &buildLLM{replies: []string{buildThreeSteps}}
 	h, pool, user := buildHandlers(t, stub)
-	other := insertUser(t, pool, "owner-viewed@example.com")
+	other := insertUser(t, pool, "owner-viewed-build@example.com")
 	projectID := projectOf(t, pool, seedGoal(t, pool, other.ID, engine.GoalDraft, 0))
 	if _, err := pool.Exec(context.Background(), `
 		insert into forge_project_members (project_id, user_id, role, granted_by, granted_at, updated_at)

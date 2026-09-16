@@ -269,8 +269,9 @@ func (c *Conversation) RespondStream(
 				// than leaving the person with silence.
 				text := strings.TrimSpace(accumulated.String())
 				if text == "" {
-					return errs.Wrap(op, errs.CodeExternalProtocol, err).
-						WithDetail("the stream produced neither usable JSON nor any text")
+					return unusable(errs.Wrap(op, errs.CodeExternalProtocol, err).
+						WithDetail("the stream produced neither usable JSON nor any text"),
+						"", chunk.Model, chunk.Usage)
 				}
 				return emit(StreamEvent{Kind: "speech", Text: text, FirstTokenMS: firstTokenMS})
 			}
@@ -282,7 +283,11 @@ func (c *Conversation) RespondStream(
 			})
 		}
 		if err := reply.validate(); err != nil {
-			return err
+			/* ‼️ With the reply and what it cost, not the bare refusal. The
+			 * tokens were spent the moment the stream finished, and a refusal
+			 * returned alone left the handler nothing to keep and nothing to
+			 * charge — see unusable.go. */
+			return unusable(err, accumulated.String(), chunk.Model, chunk.Usage)
 		}
 		/* An edit becomes the document it describes BEFORE anything is emitted.
 		 * Downstream — the viewport, the store, compare, export — only ever sees
@@ -356,6 +361,9 @@ func (c *Conversation) RespondStream(
 		 * omission, so a part nobody discussed can disappear while the reply
 		 * talks about something else — see vanished.go. */
 		noteVanished(&reply, current)
+		/* And what is written out one child at a time where one pattern would place
+		 * it: a warning, never a refusal — see repetition.go. */
+		noteRepetition(&reply)
 
 		if !speechSent && reply.Speech != "" {
 			if err := emit(StreamEvent{Kind: "speech", Text: reply.Speech, FirstTokenMS: firstTokenMS}); err != nil {
@@ -435,9 +443,13 @@ func (c *Conversation) buildMessages(char persona.Character, domain domainpack.D
 	 * as the fallback for a deployment with no database, where there is no record
 	 * to read and the summary is all there is. */
 	if model := CurrentModel(current); model != "" {
+		// What the check found written out one at a time in that model rides next to
+		// it (agent/repetition.go). Before, only the PERSON was told, as a notice; the
+		// model revising the document never heard it, so the next turn wrote the same
+		// forty children again. Fence: TestBuildMessages_ATurnIsToldWhatCouldBeOnePattern.
 		user = "[The model on screen right now, which you are revising. Reuse these part " +
 			"ids; change only what was asked for and copy every other dimension EXACTLY " +
-			"as it appears here:\n" + model + "]\n\n" + message
+			"as it appears here:\n" + model + "]" + repetitionForTurn(current) + "\n\n" + message
 	} else if workspaceNote != "" {
 		user = "[What is on screen right now: " + workspaceNote + "]\n\n" + message
 	}

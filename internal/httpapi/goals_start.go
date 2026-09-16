@@ -68,6 +68,14 @@ type createGoalRequest struct {
 	// POST /v1/goals/{id}/start. A second route would be a second copy of those,
 	// and the copy is where one of them would be forgotten.
 	Build bool `json:"build"`
+	// MaxTokens is the goal's own token ceiling, build or not. Omitted, the goal
+	// inherits the engine's (FORGE_MAX_TOKENS_PER_GOAL); given, it must be positive
+	// and not above the engine's, or the request is refused before anything is
+	// written or any model is asked — agent.Intake.Draft holds the rule, so
+	// `forgectl goal new --max-tokens` refuses the same values.
+	//
+	// A pointer, so an explicit 0 is refused rather than read as "not given".
+	MaxTokens *int64 `json:"max_tokens"`
 }
 
 // replanRequest is POST /v1/goals/{id}/plan's optional body.
@@ -130,13 +138,25 @@ func (h *GoalHandlers) CreateGoal(w http.ResponseWriter, r *http.Request) {
 	// ‼️ A named project must be one the caller may plan work in, checked BEFORE
 	// anything is written or any model is asked.
 	//
+	// # Why here and not in Draft
+	//
 	// Nothing checked it. Draft hands the id to EnsureProject, which returns early
-	// on any id it is given, so anyone signed in could write a draft goal into a
-	// stranger's project and have the planner's call run on their behalf — and
-	// was then told 404, because the goal it had just written was one it could
-	// not read. The same project-scoped check every other goal endpoint makes
-	// (goal.create, as Replan asks for), and the same answer: a project the
-	// caller is not in is NOT FOUND, never FORBIDDEN.
+	// on any id it is given — right for a caller that has already authorised it,
+	// and nothing had. So anyone signed in could write a draft goal, with a plan,
+	// into a stranger's project and have the planner's model call run for it. The
+	// stranger was then told 404, because the goal it had just written was one it
+	// could not read, which made the write look refused when it was not; and a
+	// viewer, who can read, got 201.
+	//
+	// Every other goal route resolves the project from the goal's own row
+	// (requireGoalPermission). A create has no goal yet, so the project comes from
+	// the request, and this is the one place it has to be checked by name. The
+	// same permission Replan asks for (goal.create: planning drafts work and
+	// authorises none), and the same answer: a project the caller is not in is
+	// NOT FOUND, never FORBIDDEN.
+	//
+	// No project named needs no check: EnsureProject makes one and the caller is
+	// its owner.
 	// docs/bugfix/2026-09-15-a-goal-could-be-drafted-into-a-project-its-caller-was-not-in.md
 	if req.ProjectID != "" {
 		if err := h.deps.requirePermission(r, req.ProjectID, user.ID, access.PermGoalCreate); err != nil {
@@ -162,6 +182,7 @@ func (h *GoalHandlers) CreateGoal(w http.ResponseWriter, r *http.Request) {
 		Statement: req.Statement,
 		Autonomy:  autonomy,
 		RiskTier:  risk,
+		MaxTokens: req.MaxTokens,
 	})
 	if err != nil {
 		WriteError(w, r, h.deps.Log, err)

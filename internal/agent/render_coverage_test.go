@@ -20,7 +20,7 @@ func (s coverageSolids) BuildSurface(context.Context, *Prototype) (Built, error)
 func TestRender_CarriesHowMuchTheCheckCovered(t *testing.T) {
 	c := &Conversation{solids: coverageSolids{built: Built{
 		Parts:     []geometry.RenderPart{cube("plate")},
-		Truncated: true, Checked: 2000, Pairs: 5000,
+		Truncated: true, Checked: 2000, Pairs: 5000, Found: 11175, Buried: 768, BuriedCounted: true,
 		Skipped: []string{"Bracket: Standard_Failure"},
 	}}}
 
@@ -32,6 +32,16 @@ func TestRender_CarriesHowMuchTheCheckCovered(t *testing.T) {
 	if !sheet.Truncated || sheet.Checked != 2000 || sheet.Pairs != 5000 {
 		t.Errorf("the sheet says truncated=%v, checked %d of %d; the kernel said true, 2000 of 5000",
 			sheet.Truncated, sheet.Checked, sheet.Pairs)
+	}
+	// Added 2026-09-15 (next scale walls): how many were found, when the list is
+	// the worst of them.
+	if sheet.Found != 11175 {
+		t.Errorf("the sheet says %d clashes were found; the kernel said 11,175", sheet.Found)
+	}
+	// Added 2026-09-15 (repair judged by the kernel total): how many are buried, the
+	// number an overlap repair is judged by.
+	if sheet.Buried != 768 || !sheet.BuriedCounted {
+		t.Errorf("the sheet says %d buried, counted=%v; the kernel counted 768", sheet.Buried, sheet.BuriedCounted)
 	}
 	if len(sheet.Skipped) != 1 || sheet.Skipped[0] != "Bracket: Standard_Failure" {
 		t.Errorf("the sheet lost the part the kernel could not build: %v", sheet.Skipped)

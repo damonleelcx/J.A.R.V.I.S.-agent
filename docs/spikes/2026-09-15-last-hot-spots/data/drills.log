@@ -1,0 +1,30 @@
+Last hot spots: a placed copy without a deepcopy, and containment once per group of pairs
+  ❌ STAYED GREEN  — a placed copy shares its definition's empty containers
+        TestKernel_APlacedCopyIsTheCopyBuild123dMade does not hold this. Either the fence asserts something that
+        cannot fail, or it is asserting it somewhere the mutation misses.
+  ❌ STAYED GREEN  — a placement's Location is missing the attribute the constructor sets
+        TestKernel_APlacedCopyIsTheCopyBuild123dMade does not hold this. Either the fence asserts something that
+        cannot fail, or it is asserting it somewhere the mutation misses.
+  ✅ went red      — a copy's rotation is deepcopied per occurrence again
+           placed_copies_kernel_test.go:107: build123d's path: {BRepCopies:63 Planes:67 VolumeIntegrals:58 Occurrences:59 Parts:58 ShapeBuilds:9 Deepcopies:705 Locations:118 Fallbacks:0} at one copy, {BRepCopies:455 Planes:459 VolumeIntegrals:450 Occurrences:451 Parts:450 ShapeBuilds:9 Deepcopies:5017 Locations:734 Fallbacks:0} at eight
+           placed_copies_kernel_test.go:108: the sidecar's:    {BRepCopies:4 Planes:16 VolumeIntegrals:9 Occurrences:59 Parts:58 ShapeBuilds:9 Deepcopies:91 Locations:59 Fallbacks:0} at one copy, {BRepCopies:4 Planes:16 VolumeIntegrals:9 Occurrences:451 Parts:450 ShapeBuilds:9 Deepcopies:315 Locations:283 Fallbacks:0} at eight
+  ❌ STAYED GREEN  — a placement builds its Location through the constructor again
+        TestKernel_PlacingMoreCopiesCopiesNoBRepsAndBuildsNoMorePlanes does not hold this. Either the fence asserts something that
+        cannot fail, or it is asserting it somewhere the mutation misses.
+  ❌ STAYED GREEN  — grouped containment folds its reach into the bound
+        TestKernel_APairKeyWithoutLocationsIsTheKeyBuild123dGave does not hold this. Either the fence asserts something that
+        cannot fail, or it is asserting it somewhere the mutation misses.
+  ❌ STAYED GREEN  — grouped containment adds the translation last
+        TestKernel_APairKeyWithoutLocationsIsTheKeyBuild123dGave does not hold this. Either the fence asserts something that
+        cannot fail, or it is asserting it somewhere the mutation misses.
+  ✅ went red      — a containment plan is keyed by the rotations and not the definitions
+           interference_pair_keys_kernel_test.go:89: prisms seed 1: 275 parts, 37675 pairs keyed, 7139 slid, 3862 carried, 334 pairs of rotations memoized
+           interference_pair_keys_kernel_test.go:96: prisms seed 1: 16698 key(s) differ with the memo and the slide, 0 without the slide, 0 without the memo, 0 with containment per pair; first: 0 and 43: (0, 1, (0.0, -1.0, 0.0, -135.673337, 1.0, 0.0, 0.0, inf, 0.0, 0.0, 1.0, 3000.0)) against (0, 1, (0.0, -1.0, 0.0, -inf, 1.0, 0.0, 0.0, inf, 0.0, 0.0, 1.0, 3000.0))
+  ✅ went red      — the direction that cannot win is skipped on a tie too
+           interference_pair_keys_kernel_test.go:89: prisms seed 1: 275 parts, 37675 pairs keyed, 7139 slid, 3862 carried, 334 pairs of rotations memoized
+           interference_pair_keys_kernel_test.go:96: prisms seed 1: 4402 key(s) differ with the memo and the slide, 4583 without the slide, 4402 without the memo, 4402 with containment per pair; first: 1 and 6: (1, 1, (1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, -7.48462, 0.0, 0.0, 1.0, 0.0)) against (1, 1, (1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 7.48462, 0.0, 0.0, 1.0, 0.0))
+
+The tree is byte-identical to how the drill found it.
+3 went red, 5 stayed green, 0 unproven, 0 anchor(s) moved.
+Covered: the sweep fences. NOT covered: the extrusion and revolve fences,
+which have no drills — see the note in this script.

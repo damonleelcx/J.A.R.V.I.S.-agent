@@ -1,0 +1,49 @@
+== 30: by own time ==
+         30449989 function calls (29437409 primitive calls) in 9.670 seconds
+
+   Ordered by: internal time
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+  1315016    3.042    0.000    3.799    0.000 C:/Users/damon/AppData/Local/Temp/claude/C--Users-damon-Downloads-agents/9c73bcba-7500-4641-9433-f7c8efd05843/scratchpad/meas/before/sidecar.py:1453(_inside_split)
+  3947784    1.561    0.000    1.561    0.000 {built-in method builtins.round}
+   544080    1.487    0.000    2.039    0.000 C:/Users/damon/AppData/Local/Temp/claude/C--Users-damon-Downloads-agents/9c73bcba-7500-4641-9433-f7c8efd05843/scratchpad/meas/before/sidecar.py:1473(_carried_fast)
+ 12619224    1.006    0.000    1.006    0.000 {built-in method builtins.abs}
+  1315016    0.760    0.000    2.320    0.000 C:/Users/damon/AppData/Local/Temp/claude/C--Users-damon-Downloads-agents/9c73bcba-7500-4641-9433-f7c8efd05843/scratchpad/meas/before/sidecar.py:1447(_pose_of)
+  1079192    0.562    0.000    0.562    0.000 C:/Users/damon/AppData/Local/Temp/claude/C--Users-damon-Downloads-agents/9c73bcba-7500-4641-9433-f7c8efd05843/scratchpad/meas/before/sidecar.py:1331(_slid)
+  2144160    0.302    0.000    0.302    0.000 {method 'append' of 'list' objects}
+  3237576    0.289    0.000    0.289    0.000 {built-in method math.isinf}
+   657508    0.140    0.000    0.140    0.000 {method 'get' of 'dict' objects}
+  1315016    0.138    0.000    0.138    0.000 C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\geometry.py:1805(wrapped)
+1012580/0    0.133    0.000    0.000          C:/Users/damon/AppData/Local/Temp/claude/C--Users-damon-Downloads-agents/9c73bcba-7500-4641-9433-f7c8efd05843/scratchpad/meas/before/sidecar.py:1499(rotation_id)
+   657508    0.122    0.000    0.122    0.000 {built-in method builtins.min}
+   302436    0.078    0.000    0.078    0.000 {method 'setdefault' of 'dict' objects}
+   302588    0.049    0.000    0.049    0.000 {built-in method builtins.len}
+      304    0.000    0.000    0.001    0.000 C:/Users/damon/AppData/Local/Temp/claude/C--Users-damon-Downloads-agents/9c73bcba-7500-4641-9433-f7c8efd05843/scratchpad/meas/before/sidecar.py:1441(_rounded_rotation)
+        1    0.000    0.000    0.000    0.000 {method 'disable' of '_lsprof.Profiler' objects}
+
+
+
+== 30: by cumulative time ==
+         30449989 function calls (29437409 primitive calls) in 9.670 seconds
+
+   Ordered by: cumulative time
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+  1315016    3.042    0.000    3.799    0.000 C:/Users/damon/AppData/Local/Temp/claude/C--Users-damon-Downloads-agents/9c73bcba-7500-4641-9433-f7c8efd05843/scratchpad/meas/before/sidecar.py:1453(_inside_split)
+  1315016    0.760    0.000    2.320    0.000 C:/Users/damon/AppData/Local/Temp/claude/C--Users-damon-Downloads-agents/9c73bcba-7500-4641-9433-f7c8efd05843/scratchpad/meas/before/sidecar.py:1447(_pose_of)
+   544080    1.487    0.000    2.039    0.000 C:/Users/damon/AppData/Local/Temp/claude/C--Users-damon-Downloads-agents/9c73bcba-7500-4641-9433-f7c8efd05843/scratchpad/meas/before/sidecar.py:1473(_carried_fast)
+  3947784    1.561    0.000    1.561    0.000 {built-in method builtins.round}
+ 12619224    1.006    0.000    1.006    0.000 {built-in method builtins.abs}
+  1079192    0.562    0.000    0.562    0.000 C:/Users/damon/AppData/Local/Temp/claude/C--Users-damon-Downloads-agents/9c73bcba-7500-4641-9433-f7c8efd05843/scratchpad/meas/before/sidecar.py:1331(_slid)
+  2144160    0.302    0.000    0.302    0.000 {method 'append' of 'list' objects}
+  3237576    0.289    0.000    0.289    0.000 {built-in method math.isinf}
+   657508    0.140    0.000    0.140    0.000 {method 'get' of 'dict' objects}
+  1315016    0.138    0.000    0.138    0.000 C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\geometry.py:1805(wrapped)
+   657508    0.122    0.000    0.122    0.000 {built-in method builtins.min}
+   302436    0.078    0.000    0.078    0.000 {method 'setdefault' of 'dict' objects}
+   302588    0.049    0.000    0.049    0.000 {built-in method builtins.len}
+      304    0.000    0.000    0.001    0.000 C:/Users/damon/AppData/Local/Temp/claude/C--Users-damon-Downloads-agents/9c73bcba-7500-4641-9433-f7c8efd05843/scratchpad/meas/before/sidecar.py:1441(_rounded_rotation)
+        1    0.000    0.000    0.000    0.000 {method 'disable' of '_lsprof.Profiler' objects}
+1012580/0    0.133    0.000    0.000          C:/Users/damon/AppData/Local/Temp/claude/C--Users-damon-Downloads-agents/9c73bcba-7500-4641-9433-f7c8efd05843/scratchpad/meas/before/sidecar.py:1499(rotation_id)
+
+

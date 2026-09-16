@@ -26,6 +26,8 @@ DB_PORT      ?= 55840
 # The CAD kernel's interpreter. Not committed: it is 60+ MB of OpenCASCADE, and
 # a deployment without it refuses parametric export rather than faking it.
 CAD_VENV     ?= .cadvenv
+# Every package in it, pinned. The same file the image and CI install from.
+CAD_REQUIREMENTS := internal/domain/cad/requirements.txt
 DB_USER      ?= forge
 DB_PASS      ?= forge_dev_pw
 DB_NAME      ?= forge
@@ -117,12 +119,23 @@ cad-venv: ## Create the Python venv the CAD kernel runs in (PRD VIS-05)
 	@#
 	@# Not committed and not required: a deployment without it declares STEP and
 	@# refuses it, which is the default and a supported configuration.
+	@#
+	@# The versions come from $(CAD_REQUIREMENTS), never from PyPI's latest: the
+	@# kernel tests prove one OpenCASCADE, and this is the one they prove.
+	@# --no-deps + pip check: a dependency missing from the list fails here.
 	python3 -m venv $(CAD_VENV)
 	$(CAD_VENV)/bin/pip install --quiet --upgrade pip
-	$(CAD_VENV)/bin/pip install --quiet build123d
+	$(CAD_VENV)/bin/pip install --quiet --no-deps -r $(CAD_REQUIREMENTS)
+	$(CAD_VENV)/bin/pip check
 	@$(CAD_VENV)/bin/python -c "import build123d; print('build123d', build123d.__version__)"
 	@echo
 	@echo "export FORGE_CAD_PYTHON=$(abspath $(CAD_VENV))/bin/python"
+
+.PHONY: cad-script-timing
+cad-script-timing: ## Time a scripted part end to end under FORGE's limits, and describe the machine (never fails)
+	@# Diagnosis for the open script timeout on CI runners; see scripts/cad_script_timing.py.
+	@test -x $(CAD_VENV)/bin/python || { echo "no CAD venv: run \`make cad-venv\` first"; exit 1; }
+	@$(CAD_VENV)/bin/python scripts/cad_script_timing.py internal/domain/cad/script.py internal/domain/cad/script_test.go internal/domain/cad/script.go || true
 
 .PHONY: test-cad
 test-cad: ## Run the CAD kernel tests against the real kernel (needs `make cad-venv`)
@@ -130,8 +143,33 @@ test-cad: ## Run the CAD kernel tests against the real kernel (needs `make cad-v
 	@# valid, that its volume is right, that a cylinder points the way this
 	@# system draws it — is a property of OpenCASCADE and not of our code, and a
 	@# stub would be asserting that the test author knows what OCCT does.
+	@# ‼️ -timeout, because this package outgrew `go test`'s 10m default. On
+	@# 2026-09-16, once the stack landed on main, the CI kernel job died with
+	@# "panic: test timed out after 10m0s" in the MIDDLE of a passing test
+	@# (TestScript_AWholeNumberedParameterIsAnInt): nothing was hung, there was
+	@# simply more work than the default allows. Each scripted-part test spends
+	@# 2-3 s starting a real build123d, and there are now well over a hundred.
+	@#
+	@# 30m rather than no limit: a genuinely hung kernel — a python child waiting
+	@# on a pipe nobody writes to — has to still fail the job rather than run
+	@# until the runner's own 6h ceiling. Raise it again only with a run that
+	@# shows the honest work exceeding it, never to get past a hang.
 	@test -x $(CAD_VENV)/bin/python || { echo "no CAD venv: run \`make cad-venv\` first"; exit 1; }
-	FORGE_CAD_PYTHON="$(abspath $(CAD_VENV))/bin/python" go test -count=1 -v ./internal/domain/cad/
+	FORGE_CAD_PYTHON="$(abspath $(CAD_VENV))/bin/python" go test -count=1 -v -timeout 30m ./internal/domain/cad/
+
+.PHONY: test-cad-exhaustive
+test-cad-exhaustive: ## Run the kernel fences too slow for every PR (~18 min on CI; nightly)
+	@# Only the tests gated behind FORGE_EXHAUSTIVE_KERNEL_TESTS. Today that is
+	@# TestKernel_TheArrayNarrowPhaseGivesTheLoopsAnswer: eight fixtures, four
+	@# placement variants, 1,059 s on ubuntu-24.04-arm (CI run 35097920395), against
+	@# 686 s for the whole rest of this package. test-cad skips it and runs the
+	@# three-fixture fence instead; the nightly kernel-exhaustive job runs this.
+	@#
+	@# 40m: 2.3x the 18 minutes measured, because runner speed drifts, and still a
+	@# ceiling a genuinely hung kernel hits — the reason test-cad has one too.
+	@test -x $(CAD_VENV)/bin/python || { echo "no CAD venv: run \`make cad-venv\` first"; exit 1; }
+	FORGE_EXHAUSTIVE_KERNEL_TESTS=1 FORGE_CAD_PYTHON="$(abspath $(CAD_VENV))/bin/python" \
+		go test -count=1 -v -timeout 40m -run '^TestKernel_TheArrayNarrowPhaseGivesTheLoopsAnswer$$' ./internal/domain/cad/
 
 .PHONY: measure-car
 measure-car: ## Measure how far a live car build actually gets (SPENDS REAL TOKENS — read the budget note)
@@ -144,9 +182,11 @@ measure-car: ## Measure how far a live car build actually gets (SPENDS REAL TOKE
 	@# ceiling enforced in the harness: once it is gone no further model call is
 	@# placed, the passes already built are kept, and the run reports that what it
 	@# measured is a partial car. Raise it deliberately, never by habit.
+	@# 300k is the ceiling damon approved for the Phase 2 live milestone (A4,
+	@# decided 2026-09-15); it was 400k.
 	@test -n "$$FORGE_LLM_API_KEY" || { echo "FORGE_LLM_API_KEY is not set — source .env first"; exit 1; }
 	FORGE_LIVE_LLM_TESTS=1 \
-	FORGE_MEASURE_TOKEN_BUDGET="$${FORGE_MEASURE_TOKEN_BUDGET:-400000}" \
+	FORGE_MEASURE_TOKEN_BUDGET="$${FORGE_MEASURE_TOKEN_BUDGET:-300000}" \
 	FORGE_CAD_PYTHON="$${FORGE_CAD_PYTHON:-$(abspath $(CAD_VENV))/bin/python}" \
 	go test -count=1 -v -timeout 60m -run TestLiveCarCeiling ./internal/agent/
 
@@ -203,6 +243,14 @@ cad-builders: ## Regenerate the list of build123d names a script may use
 .PHONY: test-extrusion-size
 test-extrusion-size: ## Check the parts panel reports how big an extrusion really is
 	@node scripts/extrusion-size-check.js
+
+.PHONY: test-viewport
+test-viewport: ## Check a 30k-occurrence car draws as one call per definition (stub GL; NOT a frame time)
+	@# Phase 6, stage W1. Drives the shipped forge3d.js through scripts/webgl-stub.js
+	@# over WebGL2, WebGL1 with ANGLE_instanced_arrays and WebGL1 without it. The
+	@# milliseconds it prints are CPU in node against a context that draws nothing;
+	@# the frame time in a real browser is docs/spikes/2026-09-15-instanced-viewport.
+	@node scripts/viewport-instancing-check.js
 
 check: fmt-check vet test-integration test-echo test-voice-fallback test-extrusion-size drill ## Everything CI runs on every commit
 	@# The fence drills run LAST and from the recipe rather than as a
@@ -412,6 +460,21 @@ health: ## Check database connectivity
 
 .PHONY: run
 run: db-wait ## Run the API server against the local database
+	go run ./cmd/forged
+
+.PHONY: restart
+restart: db-wait ## Stop a running API server and start it again with the source as it is now
+	@# Phase 6's acceptance is a browser run "on make restart": the assets are
+	@# embedded in the binary (assetFS), so a change to forge3d.js reaches the
+	@# workbench only through a rebuild, and a server left running keeps serving the
+	@# old viewport while the page looks reloaded.
+	@#
+	@# ‼️ By process NAME. `go run` builds into a temporary directory and runs the
+	@# binary as `forged`, so `pkill -f ./cmd/forged` would miss it and kill only the
+	@# `go` wrapper — leaving the old server on the port and the new one failing to
+	@# bind. The wait is for the port, not a fixed sleep.
+	-@pkill -x forged 2>/dev/null && echo "stopped the running forged" || echo "no forged was running"
+	@for i in $$(seq 1 20); do pgrep -x forged >/dev/null || break; sleep 0.5; done
 	go run ./cmd/forged
 
 .PHONY: work
