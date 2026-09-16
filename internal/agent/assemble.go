@@ -206,7 +206,7 @@ func (c *Conversation) buildOneStep(ctx context.Context, doc *Prototype, asked s
 	// back {"type":"box_beam","dimensions":{...}} on every step and produced
 	// nothing seven times out of eight.
 	system, sofar := stepSystem+"\n\n"+geometryContract, fmt.Sprintf("\n\nThe model so far:\n%s", body)
-	if len(doc.Parts) == 0 {
+	if !doc.HasGeometry() {
 		system, sofar = firstStepSystem+"\n\n"+geometryContract, ""
 	}
 	resp, err := c.client.Complete(ctx, llm.Request{
@@ -313,7 +313,7 @@ func (c *Conversation) buildInPasses(ctx context.Context, reply *Reply, asked st
 	}
 
 	doc, notes, err := c.assemble(ctx, asked, current, onStep)
-	if err != nil || doc == nil || len(doc.Parts) == 0 {
+	if err != nil || doc == nil || !doc.HasGeometry() {
 		if err != nil && !errors.Is(err, errNotWorthPlanning) {
 			reply.noteRepair("FORGE tried to build this a piece at a time and could not: " + err.Error())
 		}
