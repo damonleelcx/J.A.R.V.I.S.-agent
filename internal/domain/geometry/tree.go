@@ -196,7 +196,7 @@ func expandAssemblies(d Document) (Document, []Problem) {
 		return out, problems
 	}
 
-	attach := newAttachments(asms)
+	attach := newAttachments(asms, d.Root)
 	// The frame is a placement (frame.go), not a position and three angles, so a
 	// reflection anywhere above a part reaches the part.
 	//
@@ -263,8 +263,15 @@ func expandAssemblies(d Document) (Document, []Problem) {
 				// against that sentence and lost (interface.go, leaves).
 				if leaves(a, root, c.At) {
 					attachProblem = attach.outsideProblem(a, root, c.At)
+				} else {
+					// ‼️ And every other attachment refusal carries what to write instead:
+					// the paths that attach here. Without one, run 4's repair was told what
+					// had failed and nothing it could do (interface.go, attachRemedy).
+					attachProblem += "; " + attach.attachRemedy(a, c)
 				}
-				fail(name, "%s", attachProblem)
+				// The child's own name before it, so the sentence says WHICH child even
+				// where it travels without the fault's Name (the repair's prompt did).
+				fail(name, "%s", namedChild(c)+attachProblem)
 				continue
 			}
 			// The definition's own repeat, once, in the DEFINITION's frame, so a pattern
