@@ -206,6 +206,39 @@ func TestRendererFlattensATreeLikeTheExporter(t *testing.T) {
 				geometry.Child{ID: "right-wheel", Ref: "wheel", At: "front-right/knuckle/hub", Rotation: []float64{0, 0, 90}})
 			return d
 		}()},
+		// 2026-09-15 (root-id placement): a path a child of the root writes may begin
+		// with the root's own id, and Go places that child — so the browser must place
+		// it in the same frame rather than leaving it out.
+		//
+		// ‼️ No child of the root is named "car" here, on purpose. A first attempt at
+		// this case added a second assembly with the root's own id: the duplicate was
+		// ignored, the path resolved through the child on BOTH sides, and the case
+		// agreed with Go whatever forge3d.js did about the leading id. The drill caught
+		// it ("the browser refuses a path that names the root" stayed green) — which is
+		// the whole reason the drills exist.
+		{"a placement from the root whose path names the root", func() geometry.Document {
+			d := corner()
+			d.Assemblies[0].Interfaces = []geometry.Interface{{ID: "floor", Position: []float64{0, 10, -20}, Rotation: []float64{0, 25, 0}}}
+			d.Assemblies[1].Interfaces = []geometry.Interface{{ID: "hub", Position: []float64{0, 50, 0}, Rotation: []float64{0, 0, 30}}}
+			d.Assemblies[0].Children[1].Mirror = "x"
+			d.Assemblies[0].Children = append(d.Assemblies[0].Children,
+				geometry.Child{ID: "on-the-roots-own", Ref: "damper", At: "car/floor", Rotation: []float64{0, 0, 45}},
+				geometry.Child{ID: "on-a-mirrored-sibling", Ref: "damper", At: "car/front-right/hub"})
+			return d
+		}()},
+		// And a real child of the root named like the root keeps its meaning on both
+		// sides: "car/hub" reaches THAT child's interface, and the root's own "floor" is
+		// not reachable past it.
+		{"a real child named like the root keeps its meaning", func() geometry.Document {
+			d := corner()
+			d.Assemblies[0].Interfaces = []geometry.Interface{{ID: "floor", Position: []float64{0, 10, -20}}}
+			d.Assemblies[1].Interfaces = []geometry.Interface{{ID: "hub", Position: []float64{0, 50, 0}, Rotation: []float64{0, 0, 30}}}
+			d.Assemblies[0].Children = append(d.Assemblies[0].Children,
+				geometry.Child{ID: "car", Ref: "corner", Position: []float64{7, 0, -3}, Rotation: []float64{0, 0, 12}},
+				geometry.Child{ID: "through-the-child", Ref: "damper", At: "car/hub"},
+				geometry.Child{ID: "past-the-child", Ref: "damper", At: "car/floor"})
+			return d
+		}()},
 		{"a pattern around an interface, and a part on one copy", func() geometry.Document {
 			d := corner()
 			d.Assemblies[0].Interfaces = []geometry.Interface{{ID: "axle", Position: []float64{0, 0, 300}, Rotation: []float64{90, 0, 0}}}

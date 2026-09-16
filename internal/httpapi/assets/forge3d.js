@@ -1800,11 +1800,33 @@
    * on a sibling's placement ("front-left/hub", "bolt-3/seat"). reference answers
    * null where Go refuses the attachment, so the child is left out here too.
    * TestRendererFlattensATreeLikeTheExporter holds this to Go's answer. */
-  function makeAttachments(asms) {
+  function makeAttachments(asms, rootId) {
     var resolving = {};
+    /* Whether a places a child, or one copy of a patterned child, under this id
+     * (interface.go, places). */
+    function places(a, id) {
+      var children = a.children || [];
+      for (var i = 0; i < children.length; i++) {
+        var c = children[i] || {}, cid = String(c.id || '');
+        if (cid === id) return true;
+        var slots = patternCopies(c.pattern) || [];
+        for (var s = 0; s < slots.length; s++) if (cid + slots[s].suffix === id) return true;
+      }
+      return false;
+    }
     function interfaceIn(a, at) {
       var segs = String(at).split(PATH_SEPARATOR);
       for (var i = 0; i < segs.length; i++) if (!segs[i].trim()) return null;
+      /* ‼️ A path resolved FROM THE ROOT may begin with the root's own id and means
+       * the same without it (interface.go, interfaceIn). Go places that child, so the
+       * browser must place it too — a copy that refuses what Go accepts draws a model
+       * the exporter does not.
+       * Fence: TestRendererFlattensATreeLikeTheExporter, "a placement from the root
+       * whose path names the root". */
+      if (segs.length > 1 && a.id === rootId && segs[0] === rootId && !places(a, segs[0])) {
+        segs = segs.slice(1);
+        at = segs.join(PATH_SEPARATOR);
+      }
       if (segs.length === 1) {
         var faces = a.interfaces || [];
         for (var k = 0; k < faces.length; k++) {
@@ -1875,7 +1897,7 @@
     var root = asms[spec.root];
     if (!root) return { parts: parts, definitionOf: definitionOf, features: features };
 
-    var attach = makeAttachments(asms);
+    var attach = makeAttachments(asms, spec.root);
     /* geometry occurrenceFeatures (tree_features.go): an assembly's features in one
      * occurrence, naming the parts its placements wrote out. `of` takes a group's
      * first part, `with` all of them; a path that places nothing is left out. */

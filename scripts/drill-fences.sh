@@ -2962,6 +2962,43 @@ drill "the car harness does not count bound placements" internal/agent/car_ceili
   's = s.replace("\t\t\tif len(c.PositionFrom) > 0 {\n\t\t\t\tbound++", "\t\t\tif false {\n\t\t\t\tbound++", 1)' \
   ./internal/agent 'TestCarMeasure_CountsChildrenAttachedAtAnInterface'
 
+echo "Root-id placement: a path from the root may name the root, and every refusal carries a remedy"
+# Added 2026-09-15 (root-id placement).
+drill "a path from the root may not name the root" internal/domain/geometry/interface.go \
+  's = s.replace("if len(segs) > 1 && a.ID == r.root && segs[0] == r.root && !places(a, segs[0]) {", "if false {", 1)' \
+  ./internal/domain/geometry 'TestInterface_APathFromTheRootMayBeginWithTheRootsOwnID'
+
+drill "the live step 2 placement is refused as it was live" internal/domain/geometry/interface.go \
+  's = s.replace("if len(segs) > 1 && a.ID == r.root && segs[0] == r.root && !places(a, segs[0]) {", "if false {", 1)' \
+  ./internal/agent 'TestReplay_CarVerifiedsDeclaredPlacementFromTheRootNamesTheRoot'
+
+drill "the leading root id is dropped over a real child of that name" internal/domain/geometry/interface.go \
+  's = s.replace(" && !places(a, segs[0])", "", 1)' \
+  ./internal/domain/geometry 'TestInterface_APathFromTheRootMayBeginWithTheRootsOwnID'
+
+drill "an attachment refusal does not name the child" internal/domain/geometry/tree.go \
+  's = s.replace("fail(name, \"%s\", namedChild(c)+attachProblem)", "fail(name, \"%s\", attachProblem)", 1)' \
+  ./internal/domain/geometry 'TestInterface_EveryAttachmentFaultNamesTheChildAndWhatToWriteInstead'
+
+drill "an attachment refusal carries no remedy" internal/domain/geometry/tree.go \
+  's = s.replace("attachProblem += \"; \" + attach.attachRemedy(a, c)", "_ = c", 1)' \
+  ./internal/domain/geometry 'TestInterface_EveryAttachmentFaultNamesTheChildAndWhatToWriteInstead'
+
+drill "the remedy offers only the assembly's own interfaces" internal/domain/geometry/interface.go \
+  's = s.replace("nested, more := r.interfacesUnder(a, c.Ref, maxRemedyPaths)", "var nested []RootInterface\n\tmore := 0", 1)' \
+  ./internal/domain/geometry 'TestInterface_EveryAttachmentFaultNamesTheChildAndWhatToWriteInstead'
+
+drill "the remedy is unbounded" internal/domain/geometry/interface.go \
+  's = s.replace("if len(paths) > maxRemedyPaths {", "if false {", 1)' \
+  ./internal/domain/geometry 'TestInterface_EveryAttachmentFaultNamesTheChildAndWhatToWriteInstead'
+
+drill "the repair is shown faults that name nothing" internal/agent/georepair.go \
+  's = s.replace("\"- \"+strings.TrimSpace(f.Name+\" \"+f.Detail)", "\"- \"+f.Detail", 1)' \
+  ./internal/agent 'TestRepair_EveryFaultTheRepairIsShownNamesThePartItIsAbout|TestReplay_CarVerifiedsRepairsAreToldWhichChildAndWhatToWrite'
+
+drill "the browser refuses a path that names the root" internal/httpapi/assets/forge3d.js \
+  's = s.replace("if (segs.length > 1 && a.id === rootId && segs[0] === rootId && !places(a, segs[0])) {", "if (false) {", 1)' \
+  ./internal/httpapi 'TestRendererFlattensATreeLikeTheExporter'
 echo
 echo "Next scale walls: the interference list's bound, clashes slid along prisms, placed copies"
 # Added 2026-09-15 (next scale walls). The 1M airframe barrel's reply listed 1,760,000

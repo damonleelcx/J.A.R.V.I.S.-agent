@@ -63,14 +63,16 @@ func interfaceProblems(a Assembly) []string {
 // attachments resolves `at` paths against the assemblies of one document.
 // resolving holds the children whose frame is being worked out right now, so
 // attachments that lead back to themselves are refused instead of recursing
-// forever.
+// forever. root is the document's root id, which a path resolved FROM the root may
+// repeat as its first segment (interfaceIn).
 type attachments struct {
 	asms      map[string]Assembly
+	root      string
 	resolving map[string]bool
 }
 
-func newAttachments(asms map[string]Assembly) *attachments {
-	return &attachments{asms: asms, resolving: map[string]bool{}}
+func newAttachments(asms map[string]Assembly, root string) *attachments {
+	return &attachments{asms: asms, root: root, resolving: map[string]bool{}}
 }
 
 // reference is the frame a child of a is measured in, expressed in a's frame: a's
@@ -103,6 +105,24 @@ func (r *attachments) interfaceIn(a Assembly, at, whole string) (placement, stri
 			return placement{}, fmt.Sprintf("is attached at %q, which has an empty segment; write it as "+
 				"\"interface\" or \"child/…/interface\"", whole)
 		}
+	}
+	// ‼️ A path resolved FROM THE ROOT may begin with the root's own id, and it means
+	// the same as the path without it: from the root "chassis", "chassis/cockpit-floor"
+	// IS "cockpit-floor". Measured live 2026-09-15 (docs/spikes/2026-09-15-car-verified):
+	// a step declared its placement that way and was refused `assembly "chassis" has no
+	// child "chassis"`, and the step, the hubs and the wheels after it were lost. #111
+	// dropped the leading id only when SUGGESTING a path (outsideProblem), never when
+	// resolving one, so nothing a step could write actually resolved.
+	//
+	// Only from the root, and only when the root places no child of that name: a real
+	// child keeps its meaning, and a path inside another assembly that names the root
+	// is told to attach from the root instead (leaves, outsideProblem) rather than
+	// silently reaching out of its own assembly, which is the rule D1d rests on.
+	// docs/bugfix/2026-09-15-a-placement-from-the-root-could-not-name-the-root.md
+	// Fence: TestInterface_APathFromTheRootMayBeginWithTheRootsOwnID.
+	if len(segs) > 1 && a.ID == r.root && segs[0] == r.root && !places(a, segs[0]) {
+		segs = segs[1:]
+		at = strings.Join(segs, PathSeparator)
 	}
 	if len(segs) == 1 {
 		for _, f := range a.Interfaces {
@@ -238,6 +258,24 @@ func declares(a Assembly, id string) bool {
 	return false
 }
 
+// places reports whether a places a child — or one copy of a patterned child — under
+// this id. A real child of the root named like the root keeps its meaning, which is
+// what makes dropping a leading root id safe.
+func places(a Assembly, id string) bool {
+	for _, c := range a.Children {
+		if c.ID == id {
+			return true
+		}
+		slots, _ := c.Pattern.copies()
+		for _, slot := range slots {
+			if c.ID+slot.suffix == id {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // outsideProblem is the refusal for a path that leaves assembly a, with the path to
 // write from the root instead. A path that already starts at the root's id loses it:
 // from the root, "rear-suspension/left-hub/hub-face" is "left-hub/hub-face".
@@ -259,6 +297,58 @@ func (r *attachments) outsideProblem(a, root Assembly, at string) string {
 		out += "; from the root that path fails too: " + problem
 	}
 	return out
+}
+
+// maxRemedyPaths bounds the `at` paths a refusal offers. A build step's note clips
+// each fault at 200 characters, so a refusal that listed forty of them would be cut
+// off before the instruction that matters.
+const maxRemedyPaths = 6
+
+// attachRemedy is what to write instead on the child c of a, for an `at` that did not
+// resolve and does not leave the assembly: the paths that DO attach here — a's own
+// interfaces first, then those on what a places, which is the very list the step view
+// shows as "root_interfaces" — or, when there are none, to leave "at" out.
+//
+// ‼️ Every attachment refusal carries one. Measured live 2026-09-15
+// (docs/spikes/2026-09-15-car-verified): the repair was shown a refusal that said only
+// what had failed, and spent both its attempts moving the path to another one that
+// does not exist. A refusal a repair cannot act on costs the whole step.
+// docs/bugfix/2026-09-15-a-placement-from-the-root-could-not-name-the-root.md
+// Fence: TestInterface_EveryAttachmentFaultNamesTheChildAndWhatToWriteInstead.
+func (r *attachments) attachRemedy(a Assembly, c Child) string {
+	var paths []string
+	for _, f := range a.Interfaces {
+		if id := strings.TrimSpace(f.ID); id != "" && !strings.Contains(id, PathSeparator) {
+			paths = append(paths, id)
+		}
+	}
+	nested, more := r.interfacesUnder(a, c.Ref, maxRemedyPaths)
+	for _, f := range nested {
+		paths = append(paths, f.At)
+	}
+	if len(paths) == 0 {
+		return fmt.Sprintf("nothing %q places declares an interface, so leave \"at\" out to place this child in "+
+			"%q's own frame, or declare the frame it mounts on here", a.ID, a.ID)
+	}
+	if len(paths) > maxRemedyPaths {
+		more += len(paths) - maxRemedyPaths
+		paths = paths[:maxRemedyPaths]
+	}
+	out := fmt.Sprintf("write \"at\" on this child as one of %s", strings.Join(paths, ", "))
+	if more > 0 {
+		out += fmt.Sprintf(" (and %d more)", more)
+	}
+	return out + fmt.Sprintf(", or leave it out to place it in %q's own frame", a.ID)
+}
+
+// namedChild is the child's own name, ready to read before "is attached at …", so a
+// refusal says WHICH child wherever the sentence travels. Empty for a child with no
+// name; the fault's Name carries the id either way.
+func namedChild(c Child) string {
+	if n := strings.TrimSpace(c.Name); n != "" {
+		return "(" + n + ") "
+	}
+	return ""
 }
 
 // RootInterface is one mounting frame a child of the root can be attached at: the
@@ -299,7 +389,17 @@ func (d Document) InterfacesFromRoot(except string, limit int) (list []RootInter
 	if !ok {
 		return nil, 0
 	}
-	attach := newAttachments(asms)
+	return newAttachments(asms, d.Root).interfacesUnder(root, except, limit)
+}
+
+// interfacesUnder is that listing from any assembly: the paths a child of `from` can
+// be attached at, on everything `from` places except those placing except.
+//
+// Taken out of InterfacesFromRoot so a refusal's remedy can ask the same question
+// about the assembly the refused child is written in (attachRemedy). One walker: the
+// paths a reader is offered are exactly the paths a placement resolves, because the
+// same resolver answers both.
+func (r *attachments) interfacesUnder(from Assembly, except string, limit int) (list []RootInterface, more int) {
 	budget := rootInterfaceBudget
 	var visit func(a Assembly, prefix string, depth int, onPath map[string]bool)
 	visit = func(a Assembly, prefix string, depth int, onPath map[string]bool) {
@@ -313,7 +413,7 @@ func (d Document) InterfacesFromRoot(except string, limit int) (list []RootInter
 				continue
 			}
 			path := prefix + PathSeparator + f.ID
-			frame, problem := attach.interfaceIn(root, path, path)
+			frame, problem := r.interfaceIn(from, path, path)
 			if problem != "" {
 				continue
 			}
@@ -324,7 +424,7 @@ func (d Document) InterfacesFromRoot(except string, limit int) (list []RootInter
 			return
 		}
 		for _, c := range a.Children {
-			sub, isAsm := asms[c.Ref]
+			sub, isAsm := r.asms[c.Ref]
 			if !isAsm || onPath[sub.ID] {
 				continue
 			}
@@ -339,9 +439,9 @@ func (d Document) InterfacesFromRoot(except string, limit int) (list []RootInter
 			delete(onPath, sub.ID)
 		}
 	}
-	for _, c := range root.Children {
-		sub, isAsm := asms[c.Ref]
-		if !isAsm || c.Ref == except || sub.ID == root.ID {
+	for _, c := range from.Children {
+		sub, isAsm := r.asms[c.Ref]
+		if !isAsm || c.Ref == except || sub.ID == from.ID {
 			continue
 		}
 		slots, problem := c.Pattern.copies()
@@ -349,7 +449,7 @@ func (d Document) InterfacesFromRoot(except string, limit int) (list []RootInter
 			continue
 		}
 		for _, slot := range slots {
-			visit(sub, c.ID+slot.suffix, 1, map[string]bool{root.ID: true, sub.ID: true})
+			visit(sub, c.ID+slot.suffix, 1, map[string]bool{from.ID: true, sub.ID: true})
 		}
 	}
 	return list, more
