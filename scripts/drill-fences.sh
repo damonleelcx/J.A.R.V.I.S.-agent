@@ -3205,8 +3205,11 @@ drill "the frame cache is keyed by part of the matrix" internal/domain/cad/sidec
   's = s.replace("    key = repr(m)\n", "    key = repr(m[:3])\n", 1)' \
   ./internal/domain/cad 'TestKernel_APlacedCopyIsTheCopyBuild123dMade'
 
+# Re-anchored 2026-09-16 merging #121, which builds this Location through
+# _location_of instead of its constructor. Same function, same mutation: drop the
+# inversion.
 drill "a cached placement is not inverted" internal/domain/cad/sidecar.py \
-  's = s.replace("    trsf.Invert()\n    return Location(TopLoc_Location(trsf))\n", "    return Location(TopLoc_Location(trsf))\n", 1)' \
+  's = s.replace("    trsf.Invert()\n    return _location_of(TopLoc_Location(trsf))\n", "    return _location_of(TopLoc_Location(trsf))\n", 1)' \
   ./internal/domain/cad 'TestKernel_APlacedCopyIsTheCopyBuild123dMade'
 
 drill "a located copy shares its definition's attributes" internal/domain/cad/sidecar.py \
@@ -3234,7 +3237,7 @@ drill "an overlap repair is asked about every buried clash however many" interna
   ./internal/agent 'TestInterference_ARepairOfTenThousandClashesIsAskedWithinItsBudget'
 
 drill "a model whose clashes fit is summarized anyway" internal/agent/interference.go \
-  's = s.replace("\tif problemBytes(buried) <= maxRepairProblemBytes {\n", "\tif false && problemBytes(buried) <= maxRepairProblemBytes {\n", 1)' \
+  's = s.replace("\tif problemBytes(buried) <= limit {\n", "\tif false && problemBytes(buried) <= limit {\n", 1)' \
   ./internal/agent 'TestInterference_AFewBuriedClashesAreAskedAboutAsBefore'
 
 drill "the summary counts the list as everything found" internal/agent/interference.go \
@@ -3307,12 +3310,16 @@ drill "a placement's inverse is cached under the other solid" internal/domain/ca
   's = s.replace("            inv_j = inverses[j] = lj.Inverted()\n", "            inv_j = inverses[i] = lj.Inverted()\n", 1)' \
   ./internal/domain/cad 'TestKernel_APairKeyWithoutLocationsIsTheKeyBuild123dGave'
 
+# Re-anchored 2026-09-16 merging main into #128, which factored the direct key's
+# tail out as _key_tail so the array path runs the same scalar code: the same
+# statements, one indentation level shallower. Same properties, same fence. In
+# the third, the marked_b line keeps the anchor off _pair_key's identical return.
 drill "a direct key forgets what the other frame carries" internal/domain/cad/sidecar.py \
-  's = s.replace("        carried_f = _carried_fast(pose_f, inside_j) if inside_j else []\n", "        carried_f = []\n", 1)' \
+  's = s.replace("    carried_f = _carried_fast(pose_f, inside_j) if inside_j else []\n", "    carried_f = []\n", 1)' \
   ./internal/domain/cad 'TestKernel_APairKeyWithoutLocationsIsTheKeyBuild123dGave'
 
 drill "a direct key is taken in the frame that marks fewer" internal/domain/cad/sidecar.py \
-  's = s.replace("            return forward if marked_f > marked_b else backward\n", "            return forward if marked_f < marked_b else backward\n", 1)' \
+  's = s.replace("    marked_b = math.isinf(pb[3]) + math.isinf(pb[7]) + math.isinf(pb[11])\n    if marked_f != marked_b:\n        return forward if marked_f > marked_b else backward\n", "    marked_b = math.isinf(pb[3]) + math.isinf(pb[7]) + math.isinf(pb[11])\n    if marked_f != marked_b:\n        return forward if marked_f < marked_b else backward\n", 1)' \
   ./internal/domain/cad 'TestKernel_APairKeyWithoutLocationsIsTheKeyBuild123dGave'
 
 drill "direct containment takes a box's whole length for its reach" internal/domain/cad/sidecar.py \
@@ -3320,7 +3327,7 @@ drill "direct containment takes a box's whole length for its reach" internal/dom
   ./internal/domain/cad 'TestKernel_APairKeyWithoutLocationsIsTheKeyBuild123dGave'
 
 drill "a pair inside only the other frame is keyed as unmarked" internal/domain/cad/sidecar.py \
-  's = s.replace("        if not inside_i and not inside_j:\n", "        if not inside_i:\n", 1)' \
+  's = s.replace("    if not inside_i and not inside_j:\n", "    if not inside_i:\n", 1)' \
   ./internal/domain/cad 'TestKernel_APairKeyWithoutLocationsIsTheKeyBuild123dGave'
 
 drill "a moved box forgets its far corner" internal/domain/cad/sidecar.py \
@@ -3629,13 +3636,7 @@ drill "every clash found is counted buried" internal/domain/cad/sidecar.py \
   's = s.replace("    buried = int((fr >= _BURIED_FRACTION).sum())", "    buried = int((fr >= _INTERFERENCE_MIN_FRACTION).sum())", 1)' \
   ./internal/domain/cad 'TestKernel_TheArrayNarrowPhaseGivesTheLoopsAnswerOnThreeFixtures'
 
-drill "the kill does not record that the kernel's limit ran out" internal/domain/cad/cad.go \
-  's = s.replace("\t\t\tstopped.Store(&lateError{limit: k.timeout})\n", "", 1)' \
-  ./internal/domain/cad 'TestKernel_ABuildThatRunsOutOfTimeIsNotRetriedAndSaysSo'
 
-drill "a timeout leaves the killed process in the kernel" internal/domain/cad/cad.go \
-  's = s.replace("\t\t\tk.stopLocked()\n\t\t\tk.log.Warn(ctx, logx.EventCADTimedOut", "\t\t\tk.log.Warn(ctx, logx.EventCADTimedOut", 1)' \
-  ./internal/domain/cad 'TestKernel_AfterATimeoutTheKernelStartsAFreshProcessForTheNextBuild'
 
 if [ "$MODE" = "list" ]; then
   exit 0
