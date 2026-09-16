@@ -143,8 +143,19 @@ test-cad: ## Run the CAD kernel tests against the real kernel (needs `make cad-v
 	@# valid, that its volume is right, that a cylinder points the way this
 	@# system draws it — is a property of OpenCASCADE and not of our code, and a
 	@# stub would be asserting that the test author knows what OCCT does.
+	@# ‼️ -timeout, because this package outgrew `go test`'s 10m default. On
+	@# 2026-09-16, once the stack landed on main, the CI kernel job died with
+	@# "panic: test timed out after 10m0s" in the MIDDLE of a passing test
+	@# (TestScript_AWholeNumberedParameterIsAnInt): nothing was hung, there was
+	@# simply more work than the default allows. Each scripted-part test spends
+	@# 2-3 s starting a real build123d, and there are now well over a hundred.
+	@#
+	@# 30m rather than no limit: a genuinely hung kernel — a python child waiting
+	@# on a pipe nobody writes to — has to still fail the job rather than run
+	@# until the runner's own 6h ceiling. Raise it again only with a run that
+	@# shows the honest work exceeding it, never to get past a hang.
 	@test -x $(CAD_VENV)/bin/python || { echo "no CAD venv: run \`make cad-venv\` first"; exit 1; }
-	FORGE_CAD_PYTHON="$(abspath $(CAD_VENV))/bin/python" go test -count=1 -v ./internal/domain/cad/
+	FORGE_CAD_PYTHON="$(abspath $(CAD_VENV))/bin/python" go test -count=1 -v -timeout 30m ./internal/domain/cad/
 
 .PHONY: measure-car
 measure-car: ## Measure how far a live car build actually gets (SPENDS REAL TOKENS — read the budget note)
