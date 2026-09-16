@@ -50,6 +50,14 @@ type Edit struct {
 type Removals struct {
 	Parts    []string `json:"parts,omitempty"`
 	Features []string `json:"features,omitempty"`
+	// A tree is changed through its DESIGN (decided 2026-09-14, stage D1f of
+	// docs/plan-2026-09-13-millions-of-parts.md): a definition or an assembly by id,
+	// and one child of one assembly as "assembly-id/child-id". Never a placed part's
+	// path: that would fork one occurrence away from the definition every other
+	// occurrence still follows.
+	Definitions []string `json:"definitions,omitempty"`
+	Assemblies  []string `json:"assemblies,omitempty"`
+	Children    []string `json:"children,omitempty"`
 }
 
 // Empty reports whether this edit would change nothing.
@@ -59,7 +67,9 @@ type Removals struct {
 // version recording a change nobody made.
 func (e Edit) Empty() bool {
 	return len(e.Remove.Parts) == 0 && len(e.Remove.Features) == 0 &&
+		len(e.Remove.Definitions) == 0 && len(e.Remove.Assemblies) == 0 && len(e.Remove.Children) == 0 &&
 		(e.Patch == nil || (len(e.Patch.Parts) == 0 && len(e.Patch.Features) == 0 &&
+			len(e.Patch.Definitions) == 0 && len(e.Patch.Assemblies) == 0 && strings.TrimSpace(e.Patch.Root) == "" &&
 			len(e.Patch.Parameters) == 0 && len(e.Patch.Derived) == 0 &&
 			len(e.Patch.Assumptions) == 0 && len(e.Patch.NotVerified) == 0 &&
 			len(e.Patch.Overlays) == 0 && len(e.Patch.States) == 0 &&
@@ -91,6 +101,10 @@ func (e Edit) Apply(base Document) (Document, []Problem) {
 	out.NotVerified = append([]string(nil), base.NotVerified...)
 	out.Overlays = append([]Overlay(nil), base.Overlays...)
 	out.States = append([]AssemblyState(nil), base.States...)
+	// The tree is carried, not shared: an edit result that aliased the base's
+	// definitions would let a later bind of the result change the base.
+	out.Definitions = append([]Part(nil), base.Definitions...)
+	out.Assemblies = append([]Assembly(nil), base.Assemblies...)
 
 	for _, id := range e.Remove.Parts {
 		kept := out.Parts[:0]
@@ -123,6 +137,40 @@ func (e Edit) Apply(base Document) (Document, []Problem) {
 		}
 	}
 
+	for _, id := range e.Remove.Definitions {
+		kept := out.Definitions[:0]
+		found := false
+		for _, d := range out.Definitions {
+			if d.ID == id {
+				found = true
+				continue
+			}
+			kept = append(kept, d)
+		}
+		out.Definitions = kept
+		if !found {
+			fail("cannot remove definition %q, which is not in this design", id)
+		}
+	}
+	for _, id := range e.Remove.Assemblies {
+		kept := out.Assemblies[:0]
+		found := false
+		for _, a := range out.Assemblies {
+			if a.ID == id {
+				found = true
+				continue
+			}
+			kept = append(kept, a)
+		}
+		out.Assemblies = kept
+		if !found {
+			fail("cannot remove assembly %q, which is not in this design", id)
+		}
+	}
+	for _, path := range e.Remove.Children {
+		out.Assemblies = removeChild(out.Assemblies, path, fail)
+	}
+
 	if e.Patch != nil {
 		p := e.Patch
 		if strings.TrimSpace(p.Name) != "" {
@@ -136,6 +184,17 @@ func (e Edit) Apply(base Document) (Document, []Problem) {
 		}
 		for _, in := range p.Features {
 			out.Features = upsertFeature(out.Features, in)
+		}
+		// The design of a tree, by id and whole, like parts: a definition changed here
+		// changes every placement of it.
+		for _, in := range p.Definitions {
+			out.Definitions = upsertPart(out.Definitions, in)
+		}
+		for _, in := range p.Assemblies {
+			out.Assemblies = upsertAssembly(out.Assemblies, in)
+		}
+		if strings.TrimSpace(p.Root) != "" {
+			out.Root = p.Root
 		}
 		for _, in := range p.Parameters {
 			out.Parameters = upsertParameter(out.Parameters, in)
@@ -167,6 +226,50 @@ func upsertPart(list []Part, in Part) []Part {
 		}
 	}
 	return append(list, in)
+}
+
+func upsertAssembly(list []Assembly, in Assembly) []Assembly {
+	for i := range list {
+		if list[i].ID == in.ID {
+			list[i] = in
+			return list
+		}
+	}
+	return append(list, in)
+}
+
+// removeChild removes "assembly-id/child-id" from list. The assembly gets a NEW
+// children slice: list is a copy of the base's assemblies, but each one still
+// shares its children with the base, and filtering them in place would change
+// the stored variant this edit must never touch.
+func removeChild(list []Assembly, path string, fail func(format string, args ...any)) []Assembly {
+	asmID, childID, ok := strings.Cut(path, PathSeparator)
+	if !ok || asmID == "" || childID == "" || strings.Contains(childID, PathSeparator) {
+		fail("cannot remove child %q: name it as \"assembly-id/child-id\", one child of one assembly", path)
+		return list
+	}
+	for i := range list {
+		if list[i].ID != asmID {
+			continue
+		}
+		kept := make([]Child, 0, len(list[i].Children))
+		found := false
+		for _, c := range list[i].Children {
+			if c.ID == childID {
+				found = true
+				continue
+			}
+			kept = append(kept, c)
+		}
+		if !found {
+			fail("cannot remove child %q, which assembly %q does not place", childID, asmID)
+			return list
+		}
+		list[i].Children = kept
+		return list
+	}
+	fail("cannot remove child %q: there is no assembly %q in this design", path, asmID)
+	return list
 }
 
 func upsertFeature(list []Feature, in Feature) []Feature {

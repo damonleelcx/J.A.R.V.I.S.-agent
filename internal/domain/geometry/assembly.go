@@ -185,8 +185,15 @@ func (s *AssemblyState) Moves() bool {
 func ValidateStates(states []AssemblyState, parts []Part) error {
 	const op = "geometry.ValidateStates"
 
+	// A state may name a part as written ("spoke": every copy) or one copy of a
+	// pattern ("spoke-3"). Copies used to be refused as "not a part of this
+	// assembly", so nothing could hide one spoke of a wheel.
+	// docs/bugfix/2026-09-13-repeat-copies-were-invisible-to-most-readers.md
 	known := map[string]bool{}
 	for _, p := range parts {
+		known[p.ID] = true
+	}
+	for _, p := range (Document{Parts: parts}).Expanded().Parts {
 		known[p.ID] = true
 	}
 	seen := map[string]bool{}

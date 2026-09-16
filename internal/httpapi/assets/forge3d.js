@@ -1324,6 +1324,561 @@
     return { geo: { positions: positions, normals: normals, indices: indices }, fromKernel: true };
   }
 
+  /* ---- Repeats, mirroring geometry/repeat.go step for step -----------------
+   *
+   * Until 2026-09-13 this file had no repeat expansion at all. A part carrying
+   * "repeat" was drawn ONCE, at its authored position, while the exporter, the
+   * kernel and the contact sheet all built every copy — a sixty-spoke wheel on
+   * screen had one spoke. The browser cannot call Go, so like the gear it holds a
+   * copy of the rule, and TestRendererExpandsARepeatLikeTheExporter holds that
+   * copy to Go's answer: ids, names, positions, rotations, dropped patterns and
+   * which copies are tools being removed.
+   * docs/bugfix/2026-09-13-repeat-copies-were-invisible-to-most-readers.md */
+  var MAX_REPEAT = 512;   // geometry/repeat.go maxRepeat
+
+  function repeatSweep(r) {
+    var angle = r.angle || 0;
+    if (angle === 0 || Math.abs(angle) >= 360) return 2 * Math.PI / r.count;
+    return (angle * Math.PI / 180) / (r.count - 1);
+  }
+
+  /* geometry.RotationMatrix: row-major, RADIANS, term for term. The one copy of
+   * the formula in this file; rotating a point and composing frames both read it. */
+  function rowMajor(r) {
+    var cx = Math.cos(r[0]), sx = Math.sin(r[0]);
+    var cy = Math.cos(r[1]), sy = Math.sin(r[1]);
+    var cz = Math.cos(r[2]), sz = Math.sin(r[2]);
+    return [cy * cz, -cy * sz, sy,
+            sx * sy * cz + cx * sz, -sx * sy * sz + cx * cz, -sx * cy,
+            -cx * sy * cz + sx * sz, cx * sy * sz + sx * cz, cx * cy];
+  }
+
+  /* geometry rotate: a point turned by RotationMatrix. */
+  function rotateLikeTheExporter(v, r) {
+    var m = rowMajor(r);
+    return [m[0] * v[0] + m[1] * v[1] + m[2] * v[2],
+            m[3] * v[0] + m[4] * v[1] + m[5] * v[2],
+            m[6] * v[0] + m[7] * v[1] + m[8] * v[2]];
+  }
+
+  function pad3(v) {
+    return [(v && v[0]) || 0, (v && v[1]) || 0, (v && v[2]) || 0];
+  }
+
+  /* placeCopy */
+  function repeatPosition(p, r, k) {
+    var pos = pad3(p.position);
+    if (!r.about) {
+      var step = pad3(r.offset);
+      return [pos[0] + step[0] * k, pos[1] + step[1] * k, pos[2] + step[2] * k];
+    }
+    var a = repeatSweep(r) * k;
+    var rot = r.about === 'x' ? [a, 0, 0] : r.about === 'y' ? [0, a, 0] : [0, 0, a];
+    return rotateLikeTheExporter(pos, rot);
+  }
+
+  /* turnCopy — a straight pattern keeps the part's own rotation untouched. */
+  function repeatRotation(p, r, k) {
+    if (!r.about) return p.rotation;
+    var base = pad3(p.rotation);
+    var a = repeatSweep(r) * k * 180 / Math.PI;   // rotation is in DEGREES
+    if (r.about === 'x') return [base[0] + a, base[1], base[2]];
+    if (r.about === 'y') return [base[0], base[1] + a, base[2]];
+    return [base[0], base[1], base[2] + a];
+  }
+
+  function shallowCopy(o) {
+    var out = {};
+    for (var key in o) if (Object.prototype.hasOwnProperty.call(o, key)) out[key] = o[key];
+    return out;
+  }
+
+  /* expandRepeats: every repeated part written out as its copies, features
+   * retargeted to them. copyOf maps each copy's id to the part it came from. */
+  function expandRepeats(parts, features) {
+    var out = [], copies = {}, copyOf = {};
+    (parts || []).forEach(function (p) {
+      if (!p) return;
+      var r = p.repeat;
+      if (!r) { out.push(p); return; }
+      if (!(r.count >= 2)) {
+        var once = shallowCopy(p);
+        delete once.repeat;
+        out.push(once);
+        return;
+      }
+      if (r.count > MAX_REPEAT) return;   // refused, as the exporter refuses it
+      var label = p.name || p.id, made = [];
+      for (var k = 0; k < r.count; k++) {
+        var q = shallowCopy(p);
+        delete q.repeat;
+        q.id = p.id + '-' + (k + 1);
+        q.name = label + ' ' + (k + 1);
+        q.position = repeatPosition(p, r, k);
+        q.rotation = repeatRotation(p, r, k);
+        out.push(q);
+        made.push(q.id);
+        copyOf[q.id] = p.id;
+      }
+      copies[p.id] = made;
+    });
+    var retargeted = (features || []).map(function (f) {
+      if (!f) return f;
+      var g = shallowCopy(f);
+      if (copies[f.of] && copies[f.of].length) g.of = copies[f.of][0];
+      var withIDs = [];
+      (f.with || []).forEach(function (id) {
+        if (copies[id]) withIDs.push.apply(withIDs, copies[id]);
+        else withIDs.push(id);
+      });
+      g.with = withIDs;
+      return g;
+    });
+    return { parts: out, features: retargeted, copyOf: copyOf };
+  }
+
+  /* ---- Designs placed inside assemblies, mirroring geometry/tree.go + frame.go ---
+   *
+   * Phase 1, stage D1b of docs/plan-2026-09-13-millions-of-parts.md. A document may
+   * place definitions through assemblies from a root; the exporter flattens that tree
+   * into ordinary parts whose ids are the path of child ids ("front-left/damper"),
+   * and this does the same, term for term, so the browser draws what the file holds.
+   * TestRendererFlattensATreeLikeTheExporter holds it to Go's answer. */
+  var MAX_TREE_DEPTH = 16;     // geometry/tree.go maxTreeDepth
+  var MAX_TREE_PARTS = 4096;   // geometry/tree.go maxTreeParts
+  var PATH_SEPARATOR = '/';
+
+  function degreesToRadians3(r) {
+    var p = pad3(r);
+    return [p[0] * Math.PI / 180, p[1] * Math.PI / 180, p[2] * Math.PI / 180];
+  }
+
+  function mulMat3(a, b) {
+    var out = new Array(9);
+    for (var r = 0; r < 3; r++) {
+      for (var c = 0; c < 3; c++) {
+        out[r * 3 + c] = a[r * 3] * b[c] + a[r * 3 + 1] * b[3 + c] + a[r * 3 + 2] * b[6 + c];
+      }
+    }
+    return out;
+  }
+
+  /* geometry.EulerDegreesFromMatrix: the inverse of RotationMatrix, in degrees. */
+  function eulerDegreesFromMatrix(m) {
+    var sy = Math.max(-1, Math.min(1, m[2]));
+    var y = Math.asin(sy), cy = Math.cos(y), x, z;
+    if (cy > 1e-9) {
+      x = Math.atan2(-m[5], m[8]);
+      z = Math.atan2(-m[1], m[0]);
+    } else {
+      z = 0;
+      x = Math.atan2(m[3] * sy, m[4]);
+    }
+    var deg = 180 / Math.PI;
+    return [x * deg, y * deg, z * deg];
+  }
+
+  /* ---- Placements with reflection, mirroring geometry/frame.go ------------------
+   *
+   * A placement is a position and a 3x3 matrix that may include one reflection. A
+   * part STORES it as a rotation plus one flag, mirrored: "negate local x, then
+   * rotate" (Phase 1, stage D1c). */
+  var MIRROR_X = [-1, 0, 0, 0, 1, 0, 0, 0, 1];
+
+  function reflectionAcross(axis) {
+    if (axis === '') return [1, 0, 0, 0, 1, 0, 0, 0, 1];
+    if (axis === 'x') return MIRROR_X;
+    if (axis === 'y') return [1, 0, 0, 0, -1, 0, 0, 0, 1];
+    if (axis === 'z') return [1, 0, 0, 0, 1, 0, 0, 0, -1];
+    return null;
+  }
+
+  function placementOf(pos, rotDeg, mirrored) {
+    var m = rowMajor(degreesToRadians3(rotDeg));
+    if (mirrored) m = mulMat3(m, MIRROR_X);
+    return { pos: pad3(pos), m: m };
+  }
+
+  function applyPlacement(p, v) {
+    var m = p.m;
+    return [m[0] * v[0] + m[1] * v[1] + m[2] * v[2] + p.pos[0],
+            m[3] * v[0] + m[4] * v[1] + m[5] * v[2] + p.pos[1],
+            m[6] * v[0] + m[7] * v[1] + m[8] * v[2] + p.pos[2]];
+  }
+
+  function thenPlacement(p, child) {
+    return { pos: applyPlacement(p, child.pos), m: mulMat3(p.m, child.m) };
+  }
+
+  function det3(m) {
+    return m[0] * (m[4] * m[8] - m[5] * m[7]) - m[1] * (m[3] * m[8] - m[5] * m[6]) +
+           m[2] * (m[3] * m[7] - m[4] * m[6]);
+  }
+
+  /* geometry placement.stored */
+  function storedPlacement(p) {
+    var m = p.m, mirrored = false;
+    if (det3(m) < 0) {
+      m = mulMat3(m, MIRROR_X);
+      mirrored = true;
+    }
+    return { position: p.pos.slice(), rotation: eulerDegreesFromMatrix(m), mirrored: mirrored };
+  }
+
+  /* ---- Patterns on a placed child, mirroring geometry/pattern.go ---------------
+   *
+   * Phase 1, stage D1c-2 of docs/plan-2026-09-13-millions-of-parts.md. A child may
+   * carry "pattern" (linear, polar, grid, path); each copy is the child's own
+   * placement carried by the pattern's transform in the parent's frame. patternCopies
+   * answers null where Go refuses the pattern (an Error), and one unnamed slot where
+   * Go draws it once with a warning. TestRendererFlattensATreeLikeTheExporter holds
+   * this to Go's answer. */
+  function patternSlot(n, at) {
+    return { suffix: '-' + n, number: String(n), at: at };
+  }
+
+  function movedBy(v) {
+    var at = placementOf(null, null, false);
+    at.pos = v;
+    return at;
+  }
+
+  function usableVector(v) {
+    if (!v || !v.length) return null;
+    var p = pad3(v);
+    for (var i = 0; i < 3; i++) if (!isFinite(p[i])) return null;
+    return p;
+  }
+
+  /* geometry pathStations */
+  function pathStations(pts, count) {
+    var segs = [], total = 0;
+    for (var i = 0; i + 1 < pts.length; i++) {
+      var d = [pts[i + 1][0] - pts[i][0], pts[i + 1][1] - pts[i][1], pts[i + 1][2] - pts[i][2]];
+      var l = Math.sqrt(d[0] * d[0] + d[1] * d[1] + d[2] * d[2]);
+      if (l === 0) continue;
+      segs.push({ from: pts[i], dir: [d[0] / l, d[1] / l, d[2] / l], start: total, length: l });
+      total += l;
+    }
+    if (!segs.length) return null;
+    if (count < 2) return [{ point: segs[0].from, direction: segs[0].dir }];
+    var out = [];
+    for (var n = 0; n < count; n++) {
+      var s = total * n / (count - 1), k = segs.length - 1;
+      for (var j = 0; j < segs.length; j++) {
+        if (s < segs[j].start + segs[j].length) { k = j; break; }
+      }
+      var sg = segs[k], t = Math.min(s - sg.start, sg.length);
+      out.push({ point: [sg.from[0] + sg.dir[0] * t, sg.from[1] + sg.dir[1] * t, sg.from[2] + sg.dir[2] * t],
+                 direction: sg.dir });
+    }
+    return out;
+  }
+
+  /* geometry rotationTaking: the smallest turn taking +X onto d (Rodrigues). */
+  function rotationTaking(d) {
+    var ay = -d[2], az = d[1];
+    var s = Math.sqrt(ay * ay + az * az), c = d[0];
+    if (s < 1e-12) return c > 0 ? [1, 0, 0, 0, 1, 0, 0, 0, 1] : [-1, 0, 0, 0, -1, 0, 0, 0, 1];
+    var kx = 0, ky = ay / s, kz = az / s, v = 1 - c;
+    return [c + kx * kx * v, kx * ky * v - kz * s, kx * kz * v + ky * s,
+            ky * kx * v + kz * s, c + ky * ky * v, ky * kz * v - kx * s,
+            kz * kx * v - ky * s, kz * ky * v + kx * s, c + kz * kz * v];
+  }
+
+  /* geometry Pattern.copies */
+  function patternCopies(p) {
+    var once = [{ suffix: '', number: '', at: placementOf(null, null, false) }];
+    if (!p) return once;
+    var out = [], n, count = p.count || 0;
+    switch (String(p.kind || '').trim().toLowerCase()) {
+      case 'linear': {
+        var step = usableVector(p.offset);
+        if (!step || count > MAX_REPEAT) return null;
+        if (count < 2) return once;
+        for (n = 1; n <= count; n++) {
+          out.push(patternSlot(n, movedBy([step[0] * (n - 1), step[1] * (n - 1), step[2] * (n - 1)])));
+        }
+        return out;
+      }
+      case 'polar': {
+        if (p.about !== 'x' && p.about !== 'y' && p.about !== 'z') return null;
+        if (count > MAX_REPEAT) return null;
+        if (count < 2) return once;
+        var between = repeatSweep({ count: count, angle: p.angle });
+        for (n = 1; n <= count; n++) {
+          var a = between * (n - 1), at = placementOf(null, null, false);
+          at.m = rowMajor(p.about === 'x' ? [a, 0, 0] : p.about === 'y' ? [0, a, 0] : [0, 0, a]);
+          out.push(patternSlot(n, at));
+        }
+        return out;
+      }
+      case 'grid': {
+        var rows = p.rows || 0, columns = p.columns || 0;
+        if (rows < 1 || columns < 1 || rows * columns > MAX_REPEAT) return null;
+        var row = usableVector(p.row_offset), col = usableVector(p.column_offset);
+        if ((rows > 1 && !row) || (columns > 1 && !col)) return null;
+        if (rows * columns < 2) return once;
+        row = row || [0, 0, 0];
+        col = col || [0, 0, 0];
+        for (n = 0; n < rows * columns; n++) {
+          var r = Math.floor(n / columns), cc = n % columns;
+          out.push(patternSlot(n + 1, movedBy([row[0] * r + col[0] * cc, row[1] * r + col[1] * cc,
+                                               row[2] * r + col[2] * cc])));
+        }
+        return out;
+      }
+      case 'path': {
+        var path = p.path || [];
+        if (path.length < 2) return null;
+        var pts = [];
+        for (var i = 0; i < path.length; i++) {
+          var q = path[i] || {};
+          if (q.radius || q.radius_from || q.via || q.x_from || q.y_from || q.z_from) return null;
+          pts.push([q.x || 0, q.y || 0, q.z || 0]);
+        }
+        if (count > MAX_REPEAT) return null;
+        var stations = pathStations(pts, count);
+        if (!stations) return null;
+        if (count < 2) return once;
+        stations.forEach(function (st, k) {
+          var at = movedBy(st.point);
+          if (p.align) at.m = rotationTaking(st.direction);
+          out.push(patternSlot(k + 1, at));
+        });
+        return out;
+      }
+    }
+    return null;
+  }
+
+  /* ---- Interfaces, mirroring geometry/interface.go --------------------------
+   *
+   * Phase 1, stage D1d. A child attached `at` an interface is measured in that
+   * interface's frame. The path names the parent's own interface ("mount") or one
+   * on a sibling's placement ("front-left/hub", "bolt-3/seat"). reference answers
+   * null where Go refuses the attachment, so the child is left out here too.
+   * TestRendererFlattensATreeLikeTheExporter holds this to Go's answer. */
+  function makeAttachments(asms) {
+    var resolving = {};
+    function interfaceIn(a, at) {
+      var segs = String(at).split(PATH_SEPARATOR);
+      for (var i = 0; i < segs.length; i++) if (!segs[i].trim()) return null;
+      if (segs.length === 1) {
+        var faces = a.interfaces || [];
+        for (var k = 0; k < faces.length; k++) {
+          var f = faces[k] || {};
+          if (f.id === at) return placementOf(f.position, f.rotation, false);
+        }
+        return null;
+      }
+      var hit = childFrameIn(a, segs[0]);
+      if (!hit) return null;
+      var rest = interfaceIn(hit.sub, segs.slice(1).join(PATH_SEPARATOR));
+      return rest ? thenPlacement(hit.frame, rest) : null;
+    }
+    /* A patterned sibling named without a copy id falls through to null, as an
+     * unknown child does: Go words the two refusals differently, the outcome is
+     * the same, so there is nothing for the browser to tell apart. */
+    function childFrameIn(a, seg) {
+      var children = a.children || [];
+      for (var i = 0; i < children.length; i++) {
+        var c = children[i] || {};
+        var slots = patternCopies(c.pattern);
+        if (!slots) continue;
+        for (var s = 0; s < slots.length; s++) {
+          if (String(c.id || '') + slots[s].suffix !== seg) continue;
+          var sub = asms[c.ref];
+          if (!sub) return null;
+          var reflect = reflectionAcross(c.mirror || '');
+          if (!reflect) return null;
+          var ref = reference(a, c);
+          if (!ref) return null;
+          var local = placementOf(c.position, c.rotation, false);
+          local.m = mulMat3(local.m, reflect);
+          return { frame: thenPlacement(ref, thenPlacement(slots[s].at, local)), sub: sub };
+        }
+      }
+      return null;
+    }
+    function reference(a, c) {
+      if (!c.at) return placementOf(null, null, false);
+      var key = a.id + '\u0000' + c.id;
+      if (resolving[key]) return null;   // attachments that lead back to themselves
+      resolving[key] = true;
+      try { return interfaceIn(a, c.at); } finally { delete resolving[key]; }
+    }
+    return { reference: reference };
+  }
+
+  /* geometry expandAssemblies: top-level parts, then every part the tree places.
+   * definitionOf maps each placed part's id to the definition it came from. A
+   * placement Go refuses is left out here too; Go says why, in the export notes. */
+  function expandAssemblies(spec) {
+    var definitionOf = {};
+    var hasTree = !!(spec.root || (spec.assemblies && spec.assemblies.length) ||
+                     (spec.definitions && spec.definitions.length));
+    if (!hasTree) return { parts: spec.parts || [], definitionOf: definitionOf, features: [] };
+    var parts = (spec.parts || []).slice(), features = [];
+    if (!spec.root) return { parts: parts, definitionOf: definitionOf, features: features };
+
+    var defs = {}, asms = {};
+    (spec.definitions || []).forEach(function (p) {
+      if (!p || !String(p.id || '').trim() || defs[p.id]) return;
+      defs[p.id] = p;
+    });
+    (spec.assemblies || []).forEach(function (a) {
+      if (!a || !String(a.id || '').trim() || asms[a.id] || defs[a.id]) return;
+      asms[a.id] = a;
+    });
+    var root = asms[spec.root];
+    if (!root) return { parts: parts, definitionOf: definitionOf, features: features };
+
+    var placed = 0, attach = makeAttachments(asms);
+    /* geometry occurrenceFeatures (tree_features.go): an assembly's features in one
+     * occurrence, naming the parts its placements wrote out. `of` takes a group's
+     * first part, `with` all of them; a path that places nothing is left out. */
+    function occurrenceFeatures(a, path, index) {
+      var prefix = path.join(PATH_SEPARATOR);
+      var placedIDs = function (p) {
+        var r = index[p];
+        if (!r || r[1] <= r[0]) return [];
+        return parts.slice(r[0], r[1]).map(function (q) { return q.id; });
+      };
+      (a.features || []).forEach(function (f, n) {
+        if (!f) return;
+        var id = String(f.id || '').trim() || ('feature-' + (n + 1));
+        var of = placedIDs(f.of);
+        if (!of.length) return;   // refused by the exporter
+        var tools = [], refused = false;
+        (f.with || []).forEach(function (w) {
+          var got = placedIDs(w);
+          if (!got.length) refused = true;
+          tools = tools.concat(got);
+        });
+        if (refused) return;
+        var q = shallowCopy(f);
+        q.id = prefix ? prefix + PATH_SEPARATOR + id : id;
+        q.of = of[0];
+        q.with = tools;
+        features.push(q);
+      });
+    }
+    function walk(a, path, onPath, frame, index) {
+      if (path.length >= MAX_TREE_DEPTH) return true;
+      var ids = {}, children = a.children || [];
+      for (var i = 0; i < children.length; i++) {
+        var c = children[i] || {};
+        var cid = String(c.id || '');
+        if (!cid.trim() || cid.indexOf(PATH_SEPARATOR) >= 0 || ids[cid]) continue;
+        ids[cid] = true;
+        var reflect = reflectionAcross(c.mirror || '');
+        if (!reflect) continue;   // refused by the exporter, left out here too
+        var local = placementOf(c.position, c.rotation, false);
+        local.m = mulMat3(local.m, reflect);
+        var sub = asms[c.ref], def = defs[c.ref];
+        if (sub && onPath[sub.id]) continue;
+        if (!sub && !def) continue;
+        var slots = patternCopies(c.pattern);
+        if (!slots) continue;
+        // Measured in the interface's frame when attached (interface.go).
+        var reference = attach.reference(a, c);
+        if (!reference) continue;   // refused by the exporter, left out here too
+        // The definition's own repeat, once, in the DEFINITION's frame (see tree.go).
+        var defCopies = sub ? [] : expandRepeats([def], []).parts;
+        var childStart = parts.length;
+        for (var s = 0; s < slots.length; s++) {
+          var slot = slots[s], slotStart = parts.length;
+          var childPath = path.concat([cid + slot.suffix]);
+          var slotName = childPath.join(PATH_SEPARATOR);
+          var childName = c.name && slot.number ? c.name + ' ' + slot.number : c.name;
+          var childFrame = thenPlacement(frame, thenPlacement(reference, thenPlacement(slot.at, local)));
+          if (sub) {
+            onPath[sub.id] = true;
+            var subIndex = {};
+            var stop = walk(sub, childPath, onPath, childFrame, subIndex);
+            delete onPath[sub.id];
+            for (var rel in subIndex) index[cid + slot.suffix + PATH_SEPARATOR + rel] = subIndex[rel];
+            index[cid + slot.suffix] = [slotStart, parts.length];
+            if (stop) return true;
+            continue;
+          }
+          for (var j = 0; j < defCopies.length; j++) {
+            if (placed >= MAX_TREE_PARTS) return true;
+            var lp = defCopies[j], q = shallowCopy(lp), partStart = parts.length;
+            var suffix = lp.id.indexOf(def.id) === 0 ? lp.id.slice(def.id.length) : lp.id;
+            q.id = slotName + suffix;
+            if (childName) q.name = suffix ? childName + ' ' + suffix.replace(/^-/, '') : childName;
+            var st = storedPlacement(thenPlacement(childFrame, placementOf(lp.position, lp.rotation, !!lp.mirrored)));
+            q.position = st.position;
+            q.rotation = st.rotation;
+            q.mirrored = st.mirrored;
+            parts.push(q);
+            definitionOf[q.id] = def.id;
+            placed++;
+            if (suffix) index[cid + slot.suffix + suffix] = [partStart, parts.length];
+          }
+          index[cid + slot.suffix] = [slotStart, parts.length];
+        }
+        if (slots.length > 1) index[cid] = [childStart, parts.length];
+      }
+      occurrenceFeatures(a, path, index);
+      return false;
+    }
+    var onPath = {};
+    onPath[root.id] = true;
+    walk(root, [], onPath, placementOf(null, null, false), {});
+    return { parts: parts, definitionOf: definitionOf, features: features };
+  }
+
+  /* partsToDraw is the list Studio.load draws: every part as the exporter builds
+   * it, each marked with whether it is material being removed and, for a copy,
+   * which part it is a copy of — so a state or a selection that names the part
+   * applies to every copy. A kernel mesh is found by the DRAWN id on the part it
+   * came from, and travels on the wrapper, never written into the document. */
+  function partsToDraw(spec) {
+    spec = spec || {};
+    // The tree first, then repeats — the exporter's order (geometry.Expanded).
+    var tree = expandAssemblies(spec);
+    // Top-level features first, then the tree's, as the exporter orders them.
+    var expanded = expandRepeats(tree.parts, (spec.features || []).concat(tree.features));
+    var removed = {};
+    expanded.features.forEach(function (f) {
+      if (!f) return;
+      var op = String(f.op).toLowerCase();
+      /* A cut's tool is material being removed. A loft's stations are consumed
+       * too — the kernel blends them into one body and they cease to exist as
+       * parts — so they are ghosted for the same reason: drawn solid, two
+       * stations read as two flat plates somebody meant to keep. */
+      if (op !== 'cut' && op !== 'loft') return;
+      (f.with || []).forEach(function (id) { removed[id] = true; });
+    });
+    var authored = {}, definitions = {};
+    (spec.parts || []).forEach(function (p) { if (p) authored[p.id] = p; });
+    (spec.definitions || []).forEach(function (p) { if (p && !definitions[p.id]) definitions[p.id] = p; });
+    return expanded.parts.map(function (part) {
+      var repeatOf = expanded.copyOf[part.id] || '';
+      // The object this drawn part came from: a top-level part, the part a copy
+      // was written out from, or the definition a placement names. Its kernel mesh
+      // is kept there, keyed by the DRAWN id, so every placement keeps its own.
+      var placedID = repeatOf || part.id;
+      var definitionID = tree.definitionOf[placedID] || '';
+      var source = (definitionID ? definitions[definitionID] : authored[placedID]) || part;
+      var mesh = (source.meshes && source.meshes[part.id]) || part.mesh || null;
+      return {
+        spec: part,
+        source: source,
+        removed: !!removed[part.id],
+        repeatOf: repeatOf,
+        mesh: mesh,
+        // Whether this part will be drawn from the kernel's mesh, which is already
+        // in assembly coordinates — see modelMatrix. Load clears it when it falls
+        // back to the primitive.
+        fromKernel: !!(mesh && mesh.triangles && mesh.triangles.length)
+      };
+    });
+  }
+
   function buildGeometry(part) {
     /* The built solid wins over the primitive that approximated it. */
     if (part.mesh && part.mesh.triangles && part.mesh.triangles.length) {
@@ -1791,22 +2346,15 @@
      * a post: a tool is drawn as a ghost, and the provenance banner says which
      * shape the exported file has. Same stance as "Drawn approximately" — say
      * what was done instead of hiding it. */
-    var removed = {};
-    (this.spec.features || []).forEach(function (f) {
-      if (!f) return;
-      var op = String(f.op).toLowerCase();
-      /* A cut's tool is material being removed. A loft's stations are consumed
-       * too — the kernel blends them into one body and they cease to exist as
-       * parts — so they are ghosted for the same reason: drawn solid, two
-       * stations read as two flat plates somebody meant to keep. */
-      if (op !== 'cut' && op !== 'loft') return;
-      (f.with || []).forEach(function (id) { removed[id] = true; });
-    });
+    /* Which parts are removed material, and every copy of every repeat, are
+     * decided in ONE place — partsToDraw — so what the parity fence checks is
+     * what is drawn. */
 
     var wide = !!gl.getExtension('OES_element_index_uint');
 
-    this.parts = (this.spec.parts || []).map(function (part) {
-      var built = buildGeometry(part);
+    this.parts = partsToDraw(this.spec).map(function (drawn) {
+      var part = drawn.spec;
+      var built = buildGeometry(drawn.mesh ? withMesh(part, drawn.mesh) : part);
       /* A tessellation this browser cannot index. Drawn as its primitive
        * instead, and named — truncating to 65,535 vertices would draw a shape
        * nobody built, which is worse than drawing the approximation everybody
@@ -1843,7 +2391,13 @@
         // Held on the WRAPPER and never written into spec: the document on
         // screen has to stay the document that was stored, so a presentation
         // decision must not become a value the model appears to have stated.
-        removed: !!removed[part.id]
+        removed: drawn.removed,
+        // The part this is a copy of, so a state or a selection naming the
+        // pattern reaches every copy. Empty for a part that is not a copy.
+        repeatOf: drawn.repeatOf,
+        // From what was BUILT, not what was asked for: a mesh this browser cannot
+        // index falls back to its primitive, and a primitive must be placed.
+        fromKernel: !!built.fromKernel
       };
     });
 
@@ -1851,6 +2405,40 @@
     this.draw();
     return this.parts.length;
   };
+
+  /* modelMatrix is where one drawn part goes on screen, given the displacement the
+   * view adds to it (an exploded view's gap, an assembly state's offset).
+   *
+   * A primitive is built in its own frame, so it is turned by its rotation and
+   * moved to its position. A KERNEL mesh is not: the sidecar tessellates each solid
+   * after placing it, so the vertices arrive already in assembly coordinates — a
+   * 20 mm box at x=100 turned 30 degrees arrives spanning x 86.34 to 113.66. Until
+   * 2026-09-13 it was placed and turned AGAIN, so every kernel-built part away from
+   * the origin was drawn somewhere it is not: that box at about (187, 50), turned
+   * 60 degrees, outside the frame. The contact sheet the vision check reads was
+   * right all along; only what a person saw was wrong.
+   * docs/bugfix/2026-09-13-kernel-built-parts-were-placed-twice.md
+   * Fence: TestRendererDoesNotPlaceAKernelMeshTwice. */
+  function modelMatrix(part, displacement) {
+    var d = displacement || [0, 0, 0];
+    if (part.fromKernel) return translation(d);
+    var s = part.spec;
+    /* A mirrored primitive reflects its own x first (Part.Mirrored) — the same
+     * rule the kernel and the Go mesh follow. draw() flips its front face, because
+     * a reflection turns every triangle inside out. */
+    var sc = s.scale || [1, 1, 1];
+    if (s.mirrored) sc = [-sc[0], sc[1], sc[2]];
+    return multiply(translation(add(s.position || [0, 0, 0], d)),
+             multiply(rotationXYZ(s.rotation || [0, 0, 0]), scaling(sc)));
+  }
+
+  /* A drawn part carrying its kernel mesh, without writing the mesh into the
+   * document the part belongs to. */
+  function withMesh(part, mesh) {
+    var out = shallowCopy(part);
+    out.mesh = mesh;
+    return out;
+  }
 
   function makeBuffer(gl, target, data) {
     var b = gl.createBuffer();
@@ -1994,7 +2582,8 @@
 
     order.forEach(function (part) {
       var s = part.spec;
-      var pos = (s.position || [0, 0, 0]).slice();
+      var base = (s.position || [0, 0, 0]).slice();
+      var pos = base.slice();
 
       // Exploded view: parts move outward from the assembly centre, so the
       // relationship between them stays readable while the gap opens.
@@ -2008,18 +2597,17 @@
        * applied here rather than baked into the loaded geometry so that
        * switching states costs a redraw instead of a rebuild, and so the
        * document on screen stays the document that was stored. */
-      var st = self._stateFor(s.id);
+      var st = self._stateFor(s.id, part.repeatOf);
       if (st.hidden) return;
       if (st.offset) pos = add(pos, st.offset);
 
-      var model = multiply(translation(pos),
-                    multiply(rotationXYZ(s.rotation || [0,0,0]),
-                             scaling(s.scale || [1,1,1])));
+      var model = modelMatrix(part, sub(pos, base));
       gl.uniformMatrix4fv(loc.model, false, model);
       gl.uniformMatrix3fv(loc.nmat, false, normalMatrix(model));
       gl.uniform3fv(loc.color, hexToRGB(part.removed ? g.removed : (s.color || g.part)));
       gl.uniform1f(loc.opacity, alphaOf(part));
-      gl.uniform1f(loc.highlight, self.selected === s.id ? 1 : 0);
+      gl.uniform1f(loc.highlight,
+        (self.selected === s.id || (part.repeatOf && self.selected === part.repeatOf)) ? 1 : 0);
       /* The finish, as the document declared it. Not looked up from the material
        * NAME: that table would have to exist here and in Go, and this codebase
        * has already recorded what two copies of one rule cost. */
@@ -2034,8 +2622,13 @@
       gl.enableVertexAttribArray(loc.nrm);
       gl.vertexAttribPointer(loc.nrm, 3, gl.FLOAT, false, 0, 0);
       gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, part.buffers.index);
+      /* A reflected primitive's triangles wind the other way, so with back faces
+       * culled it would be drawn inside out. A kernel mesh arrives already
+       * reflected with its winding intact, so only the primitive flips. */
+      gl.frontFace(s.mirrored && !part.fromKernel ? gl.CW : gl.CCW);
       gl.drawElements(gl.TRIANGLES, part.count, part.indexType || gl.UNSIGNED_SHORT, 0);
     });
+    gl.frontFace(gl.CCW);
 
     /* PRD VIS-03, drawn last so the marks sit over the model rather than
      * inside it, and placed last so the numbers follow the same camera the
@@ -2117,11 +2710,16 @@
   }
 
   /* _stateFor resolves what the active assembly state does to one part. */
-  Studio.prototype._stateFor = function (id) {
+  Studio.prototype._stateFor = function (id, repeatOf) {
     var st = this.state;
     if (!st) return {};
-    if (st.hidden && st.hidden.indexOf(id) >= 0) return { hidden: true };
-    var off = st.offsets && st.offsets[id];
+    /* A state names a part as written ("spoke": every copy) or one copy
+     * ("spoke-3"), exactly the ids geometry.ValidateStates accepts. */
+    var names = function (list) {
+      return list && (list.indexOf(id) >= 0 || (repeatOf && list.indexOf(repeatOf) >= 0));
+    };
+    if (names(st.hidden)) return { hidden: true };
+    var off = st.offsets && (st.offsets[id] || (repeatOf && st.offsets[repeatOf]));
     return off && off.length === 3 ? { offset: off } : {};
   };
 
@@ -2400,6 +2998,13 @@
      * diameter the way the stage draws it, and for the fence that holds this copy
      * of gear.go to Go's answer point for point. */
     gearOutline: gearOutline,
+    /* The list Studio.load draws, exported so TestRendererExpandsARepeatLikeTheExporter
+     * holds the browser's copies to the exporter's, and so the workbench attaches a
+     * kernel mesh to the copy it belongs to. */
+    partsToDraw: partsToDraw,
+    /* Where a drawn part goes, exported so TestRendererDoesNotPlaceAKernelMeshTwice
+     * can hold a kernel mesh to the position the exporter gives it. */
+    modelMatrix: modelMatrix,
     rotationRadians: rotationRadians,
     /* Exported so a Go fence can read it. The browser and the exporter each
      * hold a copy of the retirement table, and the failure they guard against
