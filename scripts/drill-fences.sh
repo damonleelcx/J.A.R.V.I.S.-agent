@@ -107,6 +107,8 @@ FILES=(
   internal/llm/illustrate.go
   internal/agent/render.go
   internal/domain/geometry/mesh.go
+  internal/agent/worker.go
+  internal/domain/engine/repository.go
 )
 
 BACKUP=""
@@ -936,6 +938,29 @@ drill "the host match is a bare suffix, not a domain one" internal/llm/deliberat
 drill "a retired model is reported without naming the survivors" internal/llm/openai_compatible.go \
   's = s.replace("\tserved, err := c.servedModels(ctx)", "\tserved, err := []string(nil), error(nil)\n\t_ = c.servedModels", 1)' \
   ./internal/llm 'TestAMissingModelNamesWhatTheEndpointDoesServe'
+
+echo
+echo "A worker carries a plan to its end"
+# Added 2026-09-15. Three engine defects found building stage A1 (#85): a finished
+# task released nothing, so a plan stopped after its first layer; a budget refusal
+# could not fail a task that was only claimed, so a spent goal never stopped; and
+# events were hashed at nanoseconds but stored at microseconds, so every event the
+# real clock wrote failed the audit chain. Needs FORGE_TEST_DATABASE_URL.
+drill "a finished task releases nothing" internal/agent/worker.go \
+  's = s.replace("\t\tw.releaseWaiting(ctx, goalID)\n", "", 1)' \
+  ./internal/agent 'TestWorker_AFinishedTaskReleasesTheTasksWaitingOnIt'
+
+drill "the idle poll releases nothing" internal/agent/worker.go \
+  's = s.replace("\t\t\tw.releaseWaitingGoals(ctx)\n", "", 1)' \
+  ./internal/agent 'TestWorker_ATaskLeftWaitingByACrashIsReleasedOnTheIdlePoll'
+
+drill "a budget refusal fails a task that is only claimed" internal/agent/worker.go \
+  's = s.replace("\t\tif err := w.transition(ctx, task, engine.StatusRunning, engine.TaskMutation{}); err != nil {\n\t\t\treturn\n\t\t}\n", "", 1)' \
+  ./internal/agent 'TestWorker_ABudgetRefusalStopsTheGoal'
+
+drill "an event is hashed at a precision it is not stored at" internal/domain/engine/repository.go \
+  's = s.replace("\tnow = now.Truncate(time.Microsecond)\n", "", 1)' \
+  ./internal/domain/engine 'TestAuditChain_AnEventStampedAtNanosecondsVerifies'
 
 echo
 echo "The kernel"

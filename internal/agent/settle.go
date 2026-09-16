@@ -211,3 +211,52 @@ func GoalCompletion(ctx context.Context, ex db.Querier, queue *engine.Queue, goa
 // Exported rather than duplicated in the test: a test that reimplements the
 // logic it is checking proves only that two copies agree.
 func (w *Worker) SettleGoalForTest(ctx context.Context, goalID string) { w.settleGoal(ctx, goalID) }
+
+// releaseWaiting makes ready the tasks of a goal whose dependencies have all
+// finished.
+//
+// # The defect this closes
+//
+// Apply made a plan's first layer ready — the tasks that wait on nothing — and
+// nothing in the worker ever promoted again. A task that succeeded left the
+// tasks depending on it pending, a pending task is invisible to Claim, and so
+// every plan with a dependency stopped after its first layer: the goal stayed
+// active, with work outstanding that no worker would ever take.
+// docs/bugfix/2026-09-15-a-finished-task-never-released-the-tasks-waiting-on-it.md
+//
+// Readiness is still PromoteReadyTasks' decision, made from the edges exactly as
+// Apply's is; this only asks it at the moment the answer can have changed.
+func (w *Worker) releaseWaiting(ctx context.Context, goalID string) {
+	if _, err := w.queue.PromoteReadyTasks(ctx, w.pool, goalID, w.clock.Now()); err != nil {
+		w.log.WarnWith(ctx, logx.EventTaskReleaseFailed, err, "goal_id", goalID,
+			"detail", "the tasks waiting on a finished task were not released; the idle poll retries")
+	}
+}
+
+// releaseWaitingGoals is releaseWaiting's reconciliation, on the idle poll, for
+// the reason settleFinishedGoals exists beside settleGoal: the per-task call is
+// missed by a worker that dies between a task's last write and it.
+func (w *Worker) releaseWaitingGoals(ctx context.Context) {
+	rows, err := w.pool.Query(ctx, `
+		select distinct t.goal_id
+		  from forge_tasks t
+		  join forge_goals g on g.id = t.goal_id
+		 where g.status = 'active' and t.status = 'pending'
+		 limit 25`)
+	if err != nil {
+		w.log.WarnWith(ctx, logx.EventTaskReleaseFailed, err,
+			"detail", "the release sweep could not run; tasks waiting on finished work may stay pending")
+		return
+	}
+	var ids []string
+	for rows.Next() {
+		var gid string
+		if rows.Scan(&gid) == nil {
+			ids = append(ids, gid)
+		}
+	}
+	rows.Close()
+	for _, gid := range ids {
+		w.releaseWaiting(ctx, gid)
+	}
+}
