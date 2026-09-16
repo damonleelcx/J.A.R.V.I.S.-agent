@@ -279,6 +279,7 @@ const (
 	EventTaskCancelled     = "task.cancelled"
 	EventTaskSkipped       = "task.skipped"
 	EventTaskLeaseExpired  = "task.lease_expired"
+	EventTaskHandedBack    = "task.handed_back" // a stopped worker gave it back; see Queue.Release
 	EventToolCalled        = "tool.called"
 	EventToolSucceeded     = "tool.succeeded"
 	EventToolFailed        = "tool.failed"

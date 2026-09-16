@@ -124,10 +124,10 @@ func (e Edit) ApplyAndReport(base Document) (Document, []Reached, []Problem) {
 	// report finds the occurrences a change reached.
 	touchesTree := len(e.Remove.Definitions) > 0 || len(e.Remove.Assemblies) > 0 || len(e.Remove.Children) > 0 ||
 		(e.Patch != nil && (len(e.Patch.Definitions) > 0 || len(e.Patch.Assemblies) > 0))
-	var before placements
+	var before placedTree
 	defIDs, asmIDs := map[string]bool{}, map[string]bool{}
 	if touchesTree {
-		before = placementsOf(base)
+		before = placedTreeOf(base)
 		for _, d := range base.Definitions {
 			defIDs[d.ID] = true
 		}
@@ -280,9 +280,9 @@ func (e Edit) ApplyAndReport(base Document) (Document, []Reached, []Problem) {
 		out.NotVerified = appendNew(out.NotVerified, p.NotVerified)
 	}
 
-	var after placements
+	var after placedTree
 	if touchesTree {
-		after = placementsOf(out)
+		after = placedTreeOf(out)
 	}
 	return out, fillReached(reached, base, out, before, after), problems
 }

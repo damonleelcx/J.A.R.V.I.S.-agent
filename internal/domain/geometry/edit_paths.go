@@ -61,9 +61,9 @@ type Reached struct {
 	Occurrences []string `json:"occurrences"`
 }
 
-// placements is a document's tree written out once, with the record of which
+// placedTree is a document's tree written out once, with the record of which
 // placement wrote which part.
-type placements struct {
+type placedTree struct {
 	parts []Part
 	spans []treeSpan
 	// byPath is every placed path, to the span that names it. A path two
@@ -73,10 +73,10 @@ type placements struct {
 	ambiguous map[string]bool
 }
 
-func placementsOf(d Document) placements {
+func placedTreeOf(d Document) placedTree {
 	var spans []treeSpan
 	e, _ := expandAssembliesTraced(d, &spans)
-	p := placements{parts: e.Parts, spans: spans, byPath: map[string]treeSpan{}, ambiguous: map[string]bool{}}
+	p := placedTree{parts: e.Parts, spans: spans, byPath: map[string]treeSpan{}, ambiguous: map[string]bool{}}
 	for _, s := range spans {
 		if s.path == "" {
 			continue
@@ -93,7 +93,7 @@ func placementsOf(d Document) placements {
 // occurrences returns the ids of the parts written by every span match accepts,
 // in the order the expansion wrote them. Aliases are skipped: they rename parts
 // another span already counts.
-func (p placements) occurrences(match func(treeSpan) bool) []string {
+func (p placedTree) occurrences(match func(treeSpan) bool) []string {
 	var ids []string
 	end := -1
 	for _, s := range p.spans {
@@ -120,7 +120,7 @@ func (p placements) occurrences(match func(treeSpan) bool) []string {
 // a placed path names the design that path places. Anything else is still an id —
 // a new one, for a patch — unless it contains PathSeparator, which no id placed
 // by a child can, and is refused as a path that places nothing.
-func (p placements) resolveDesign(name string, assembly bool, ids map[string]bool, verb string,
+func (p placedTree) resolveDesign(name string, assembly bool, ids map[string]bool, verb string,
 	fail func(format string, args ...any)) (id, path string, ok bool) {
 	kind, other, otherList := "definition", "assembly", "assemblies"
 	if assembly {
@@ -156,7 +156,7 @@ func (p placements) resolveDesign(name string, assembly bool, ids map[string]boo
 
 // fillReached works out every entry's occurrences from the document before the
 // edit and after it, and folds entries that name the same thing into one.
-func fillReached(reached []Reached, base, out Document, before, after placements) []Reached {
+func fillReached(reached []Reached, base, out Document, before, after placedTree) []Reached {
 	merged := make([]Reached, 0, len(reached))
 	at := map[string]int{}
 	for _, r := range reached {
