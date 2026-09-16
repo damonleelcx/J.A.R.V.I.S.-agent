@@ -28,3 +28,9 @@ coverage.*
 internal/media/testdata/pipeline-output.ogg
 eval-report.json
 .cadvenv/
+
+# Python bytecode. Rebuilt by Python on every run, tied to the interpreter version,
+# and never the source of truth: a committed .pyc can disagree with the .py beside it
+# and is rewritten (leaving the tree dirty) every time the kernel tests run.
+__pycache__/
+*.pyc
