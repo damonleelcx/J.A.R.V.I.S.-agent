@@ -1141,6 +1141,10 @@ drill "a box is filed without the last cell it reaches" internal/domain/cad/side
 # Containment is _inside_planned's test (the same comparison, bounds precomputed):
 # every pair on the rail is memoizable, so breaking _inside_split's copy instead stays
 # green here. That copy is held by the pair-key fence.
+# The keying drill anchors in _key_tail (#128), on the same lines as "a direct key is
+# taken in the frame that marks fewer" and to the same effect. Kept deliberately: that
+# drill proves the pair-key EQUIVALENCE fence sees it, this one that the rail's own
+# boolean count does, and either fence could be weakened without the other.
 drill "a clash is slid along a box it is not inside" internal/domain/cad/sidecar.py \
   "s = s.replace('        if mid - reach >= low and mid + reach <= high:\n', '        if True:\n', 1)" \
   ./internal/domain/cad 'TestKernel_PinsAlongARailPayForOneBooleanAndTheEndsAreMeasured'
@@ -1162,7 +1166,7 @@ drill "a carried slide ignores a rotation that does not line the axes up" intern
   ./internal/domain/cad 'TestKernel_AReusedClashIsTheClashMeasuredAgain'
 
 drill "a clash is keyed in the frame that slides less" internal/domain/cad/sidecar.py \
-  "s = s.replace('            return forward if marked_f > marked_b else backward\n', '            return backward if marked_f > marked_b else forward\n', 1)" \
+  "s = s.replace('    marked_b = math.isinf(pb[3]) + math.isinf(pb[7]) + math.isinf(pb[11])\n    if marked_f != marked_b:\n        return forward if marked_f > marked_b else backward\n', '    marked_b = math.isinf(pb[3]) + math.isinf(pb[7]) + math.isinf(pb[11])\n    if marked_f != marked_b:\n        return backward if marked_f > marked_b else forward\n', 1)" \
   ./internal/domain/cad 'TestKernel_PinsAlongARailPayForOneBooleanAndTheEndsAreMeasured'
 
 echo
