@@ -1900,13 +1900,24 @@ func TestKernel_ReturnsTheSurfaceOfTheSolidItBuilt(t *testing.T) {
 	if got.MeshError != "" {
 		t.Fatalf("the solid built and could not be tessellated: %s", got.MeshError)
 	}
-	if len(got.Mesh) != 2 {
-		t.Fatalf("two parts were built and %d meshes came back", len(got.Mesh))
+	// ‼️ Read through WorldMeshes, not Mesh. Since Phase 4, stage K4, Mesh holds
+	// only the parts a feature CHANGED; an unchanged part is a placed copy of a
+	// definition tessellated once, and arrives as a MeshInstance. WorldMeshes is
+	// "what Mesh held before stage K4" (cad.go) and is what every drawing caller
+	// uses — httpapi/geometry.go and httpapi/scriptrunner.go both do.
+	//
+	// This fence asserted the pre-K4 shape and so read 0 meshes for a two-part
+	// plate whose parts a feature never touched. What it holds is unchanged: two
+	// drawable surfaces, whole points and triangles, every index addressing a
+	// real vertex, and a reported tolerance.
+	meshes := got.WorldMeshes()
+	if len(meshes) != 2 {
+		t.Fatalf("two parts were built and %d meshes came back", len(meshes))
 	}
 	if got.Triangles == 0 {
 		t.Fatal("a mesh came back with no triangles, so there is nothing to draw")
 	}
-	for _, m := range got.Mesh {
+	for _, m := range meshes {
 		if len(m.Vertices) == 0 || len(m.Vertices)%3 != 0 {
 			t.Errorf("%s has %d vertex floats, which is not a whole number of points",
 				m.ID, len(m.Vertices))
