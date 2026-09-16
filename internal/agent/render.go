@@ -49,6 +49,13 @@ type builtSheet struct {
 	// the document's own tessellation, with the holes unfilled and the scripts
 	// unrun — which is what the notes in look.go and sketch.go describe.
 	FromKernel bool
+	// Interferences is what the kernel found while it was building this picture,
+	// and is meaningful ONLY when FromKernel is true. An empty list from a
+	// described render means "nobody looked", and saying "no parts overlap"
+	// because a deployment has no kernel would be the silent downgrade this
+	// product refuses (PRD promise 5).
+	Interferences []geometry.Interference
+	Truncated     bool
 }
 
 // SolidBuilder builds the real surface of a document.
@@ -60,11 +67,40 @@ type builtSheet struct {
 //
 // nil is a deployment with no kernel, and then every render is the described one.
 type SolidBuilder interface {
-	// BuildSurface returns one entry per part the kernel actually built. A part
-	// it could not build is absent rather than approximated — the caller is
-	// drawing a picture of what exists, and inventing a shape for a part that
-	// failed would put it in front of a checker as though it were fine.
-	BuildSurface(ctx context.Context, doc *Prototype) ([]geometry.RenderPart, error)
+	// BuildSurface returns what the kernel made. A part it could not build is
+	// absent rather than approximated — the caller is drawing a picture of what
+	// exists, and inventing a shape for a part that failed would put it in front
+	// of a checker as though it were fine.
+	BuildSurface(ctx context.Context, doc *Prototype) (Built, error)
+}
+
+// Built is one kernel round-trip's worth of answers.
+//
+// ‼️ Why this is a struct and not the triangle slice it used to be.
+//
+// Interference is knowable ONLY from the built solids — a bounding-box test over
+// the document reports every bolt hole and every part inside a hollow case (both
+// measured; see cad/interference_kernel_test.go). So it has to come from the
+// kernel, and the kernel is already run here, once per turn. Stage 7 settled
+// that deliberately: "One render per turn, not one per check — building the
+// surface runs the kernel and, for a scripted part, the script."
+//
+// Asking for interferences through a second method would mean a second build per
+// turn and would quietly reverse that decision. Widening what ONE build hands
+// back does not. The narrowness the interface was written for is intact: this
+// still carries only what the kernel alone can know, and nothing that is
+// derivable from the document.
+type Built struct {
+	// Parts is one entry per part the kernel actually built.
+	Parts []geometry.RenderPart
+	// Interferences is every pair of surviving parts that share material, worst
+	// first. Empty from a deployment with no kernel — which is NOT the same as
+	// "none", and callers must not report it as none. FromKernel on the sheet is
+	// how they tell.
+	Interferences []geometry.Interference
+	// Truncated says the kernel's pair budget stopped the search early, so a
+	// clean list is not evidence of a clean model.
+	Truncated bool
 }
 
 // render draws the built solid, falling back to the described one.
@@ -79,9 +115,10 @@ func (c *Conversation) render(ctx context.Context, doc *Prototype) builtSheet {
 		return builtSheet{}
 	}
 	if c != nil && c.solids != nil {
-		if parts, err := c.solids.BuildSurface(ctx, doc); err == nil && len(parts) > 0 {
-			if img := geometry.ContactSheetOf(*doc, parts, sheetSize); img != "" {
-				return builtSheet{Image: img, FromKernel: true}
+		if built, err := c.solids.BuildSurface(ctx, doc); err == nil && len(built.Parts) > 0 {
+			if img := geometry.ContactSheetOf(*doc, built.Parts, sheetSize); img != "" {
+				return builtSheet{Image: img, FromKernel: true,
+					Interferences: built.Interferences, Truncated: built.Truncated}
 			}
 		}
 	}

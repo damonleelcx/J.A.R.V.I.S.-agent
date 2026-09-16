@@ -105,6 +105,36 @@ func (h *GoalHandlers) CreateGoal(w http.ResponseWriter, r *http.Request) {
 	autonomy, risk := defaultsFor(req.Autonomy, req.RiskTier)
 	user, _ := UserFrom(r.Context())
 
+	// ‼️ A named project must be one the caller may plan work in, checked BEFORE
+	// anything is written or any model is asked.
+	//
+	// # Why here and not in Draft
+	//
+	// Nothing checked it. Draft hands the id to EnsureProject, which returns early
+	// on any id it is given — right for a caller that has already authorised it,
+	// and nothing had. So anyone signed in could write a draft goal, with a plan,
+	// into a stranger's project and have the planner's model call run for it. The
+	// stranger was then told 404, because the goal it had just written was one it
+	// could not read, which made the write look refused when it was not; and a
+	// viewer, who can read, got 201.
+	//
+	// Every other goal route resolves the project from the goal's own row
+	// (requireGoalPermission). A create has no goal yet, so the project comes from
+	// the request, and this is the one place it has to be checked by name. The
+	// same permission Replan asks for (goal.create: planning drafts work and
+	// authorises none), and the same answer: a project the caller is not in is
+	// NOT FOUND, never FORBIDDEN.
+	//
+	// No project named needs no check: EnsureProject makes one and the caller is
+	// its owner.
+	// docs/bugfix/2026-09-15-a-goal-could-be-drafted-into-a-project-its-caller-was-not-in.md
+	if req.ProjectID != "" {
+		if err := h.deps.requirePermission(r, req.ProjectID, user.ID, access.PermGoalCreate); err != nil {
+			WriteError(w, r, h.deps.Log, err)
+			return
+		}
+	}
+
 	// Planning is a model call and takes tens of seconds to minutes. The
 	// deadline is derived from the model client's own timeout and set LONGER
 	// than it, not shorter: a handler that dies first kills the call mid-retry

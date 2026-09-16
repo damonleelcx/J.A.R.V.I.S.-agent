@@ -333,14 +333,14 @@ func TestLiveSketchLoop(t *testing.T) {
 // conversion httpapi uses, sharing geometry.TrianglesFrom rather than copying it.
 type liveSolids struct{ k *cad.Kernel }
 
-func (r liveSolids) BuildSurface(ctx context.Context, doc *geometry.Document) ([]geometry.RenderPart, error) {
+func (r liveSolids) BuildSurface(ctx context.Context, doc *geometry.Document) (agent.Built, error) {
 	unit, known := geometry.ParseUnit(doc.Units)
 	if !known {
 		unit = geometry.Millimetre
 	}
 	built, err := r.k.BuildMesh(ctx, *doc, unit)
 	if err != nil {
-		return nil, err
+		return agent.Built{}, err
 	}
 	out := make([]geometry.RenderPart, 0, len(built.Mesh))
 	for _, m := range built.Mesh {
@@ -348,7 +348,8 @@ func (r liveSolids) BuildSurface(ctx context.Context, doc *geometry.Document) ([
 			out = append(out, geometry.RenderPart{ID: m.ID, Triangles: tris})
 		}
 	}
-	return out, nil
+	return agent.Built{Parts: out, Interferences: built.Interferences,
+		Truncated: built.InterferencesTruncated}, nil
 }
 
 // TestLiveKernelRenderShowsTheHole is the whole point of rendering the kernel's
