@@ -32,6 +32,9 @@ func geometryService(ctx context.Context, cfg *config.Config, log *logx.Logger) 
 	if err != nil {
 		return nil, nil, err
 	}
+	// What one stored design may be (Phase 3, stage S0), set once for every reader
+	// of geometry in this process.
+	geometry.ConfigureLimits(cfg.Geometry)
 	return geometry.NewService(pool, clock.System{}, log), pool, nil
 }
 

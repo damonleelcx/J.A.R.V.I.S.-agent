@@ -1445,7 +1445,7 @@
    * and this does the same, term for term, so the browser draws what the file holds.
    * TestRendererFlattensATreeLikeTheExporter holds it to Go's answer. */
   var MAX_TREE_DEPTH = 16;     // geometry/tree.go maxTreeDepth
-  var MAX_TREE_PARTS = 4096;   // geometry/tree.go maxTreeParts
+  var MAX_DRAWN_PARTS = 4096;  // geometry/limits.go maxDrawnParts
   var PATH_SEPARATOR = '/';
 
   function degreesToRadians3(r) {
@@ -1734,7 +1734,7 @@
     var root = asms[spec.root];
     if (!root) return { parts: parts, definitionOf: definitionOf, features: features };
 
-    var placed = 0, attach = makeAttachments(asms);
+    var attach = makeAttachments(asms);
     /* geometry occurrenceFeatures (tree_features.go): an assembly's features in one
      * occurrence, naming the parts its placements wrote out. `of` takes a group's
      * first part, `with` all of them; a path that places nothing is left out. */
@@ -1804,7 +1804,6 @@
             continue;
           }
           for (var j = 0; j < defCopies.length; j++) {
-            if (placed >= MAX_TREE_PARTS) return true;
             var lp = defCopies[j], q = shallowCopy(lp), partStart = parts.length;
             var suffix = lp.id.indexOf(def.id) === 0 ? lp.id.slice(def.id.length) : lp.id;
             q.id = slotName + suffix;
@@ -1815,7 +1814,6 @@
             q.mirrored = st.mirrored;
             parts.push(q);
             definitionOf[q.id] = def.id;
-            placed++;
             if (suffix) index[cid + slot.suffix + suffix] = [partStart, parts.length];
           }
           index[cid + slot.suffix] = [slotStart, parts.length];
@@ -1836,8 +1834,59 @@
    * which part it is a copy of — so a state or a selection that names the part
    * applies to every copy. A kernel mesh is found by the DRAWN id on the part it
    * came from, and travels on the wrapper, never written into the document. */
+  /* geometry occurrences (limits.go): how many parts a design places, counted
+   * without placing them and saturating past `limit`, so a runaway description
+   * costs nothing to refuse. The expansions' own rules: a refused pattern or repeat
+   * places nothing, one of one places one, and a cycle counts nothing. */
+  function repeatCount(p) {
+    var r = p && p.repeat;
+    if (!r || !(r.count >= 2)) return 1;
+    return r.count > MAX_REPEAT ? 0 : r.count;
+  }
+  function occurrences(spec, limit) {
+    var sat = function (n) { return n > limit ? limit + 1 : n; };
+    var total = 0;
+    (spec.parts || []).forEach(function (p) { if (p) total = sat(total + repeatCount(p)); });
+    if (!spec.root) return total;
+    var defs = {}, asms = {}, memo = {}, onPath = {};
+    (spec.definitions || []).forEach(function (p) {
+      if (p && String(p.id || '').trim() && !defs[p.id]) defs[p.id] = p;
+    });
+    (spec.assemblies || []).forEach(function (a) {
+      if (a && String(a.id || '').trim() && !asms[a.id] && !defs[a.id]) asms[a.id] = a;
+    });
+    function count(id) {
+      if (defs[id]) return repeatCount(defs[id]);
+      var a = asms[id];
+      if (!a || onPath[id]) return 0;
+      if (memo[id] !== undefined) return memo[id];
+      onPath[id] = true;
+      var n = 0;
+      (a.children || []).forEach(function (c) {
+        c = c || {};
+        var slots = patternCopies(c.pattern);
+        n = sat(n + sat((slots ? slots.length : 0) * count(c.ref)));
+      });
+      delete onPath[id];
+      memo[id] = n;
+      return n;
+    }
+    return sat(total + count(spec.root));
+  }
+
+  /* geometry Document.DrawRefusal: why a design is not drawn, in Go's words, or ''.
+   * A design over the ceiling draws NOTHING — the first 4096 parts of a car would
+   * pass for the car. TestRendererFlattensATreeLikeTheExporter holds the text. */
+  function drawRefusal(spec) {
+    if (occurrences(spec || {}, MAX_DRAWN_PARTS) <= MAX_DRAWN_PARTS) return '';
+    return 'This design places more than ' + MAX_DRAWN_PARTS + ' parts, which is the most FORGE draws or ' +
+      'builds at once until instanced drawing and one build per design land. It is stored as it is; ' +
+      'nothing was drawn or built.';
+  }
+
   function partsToDraw(spec) {
     spec = spec || {};
+    if (drawRefusal(spec)) return [];
     // The tree first, then repeats — the exporter's order (geometry.Expanded).
     var tree = expandAssemblies(spec);
     // Top-level features first, then the tree's, as the exporter orders them.
@@ -2333,6 +2382,10 @@
 
     this.spec = spec || { parts: [] };
     this.approximations = [];
+    /* Refused whole and said out loud (Phase 3, stage S0): partsToDraw draws nothing
+     * for a design over the ceiling, and an empty stage must not read as an empty design. */
+    var refusal = drawRefusal(this.spec);
+    if (refusal) this.onError(refusal);
 
     /* Parts that are material being REMOVED, not material that is there.
      *
@@ -3001,7 +3054,7 @@
     /* The list Studio.load draws, exported so TestRendererExpandsARepeatLikeTheExporter
      * holds the browser's copies to the exporter's, and so the workbench attaches a
      * kernel mesh to the copy it belongs to. */
-    partsToDraw: partsToDraw,
+    partsToDraw: partsToDraw, drawRefusal: drawRefusal,
     /* Where a drawn part goes, exported so TestRendererDoesNotPlaceAKernelMeshTwice
      * can hold a kernel mesh to the position the exporter gives it. */
     modelMatrix: modelMatrix,

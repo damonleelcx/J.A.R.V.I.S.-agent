@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/cad"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/geometry"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/identity"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/httpapi"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/llm"
@@ -66,6 +67,9 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	// What one stored design may be (Phase 3, stage S0), set once for every reader
+	// of geometry in this process.
+	geometry.ConfigureLimits(cfg.Geometry)
 
 	log := logx.New(logx.Options{
 		Level:   parseLevel(cfg.Log.Level),

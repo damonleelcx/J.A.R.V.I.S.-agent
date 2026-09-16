@@ -213,6 +213,10 @@ func LabelFor(v *Variant, format string) (*Label, *Mesh, error) {
 				strings.ToLower(strings.TrimSuffix(v.UnitsNote(), ".")))
 	}
 
+	// A mesh file of a design too large to draw would be empty and look written.
+	if refusal := v.Document.DrawRefusal(); refusal != "" {
+		return nil, nil, errs.New(op, errs.CodeValidationFailed).WithDetail("%s", refusal)
+	}
 	mesh := Tessellate(v.Document, v.Units)
 	label := &Label{
 		Format: f.Name, FormatKind: f.Kind,

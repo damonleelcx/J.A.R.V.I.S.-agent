@@ -51,6 +51,8 @@ type Config struct {
 	Security SecurityConfig
 	// CAD is the parametric kernel. Empty Python means this deployment has none.
 	CAD CADConfig
+	// Geometry bounds what one stored design may be (Phase 3, stage S0).
+	Geometry GeometryConfig
 	// Blob is content-addressed storage for large geometry. Empty Bucket means
 	// this deployment has none.
 	Blob BlobConfig
@@ -258,6 +260,19 @@ type CADConfig struct {
 	// container, and a deployment that cannot accept that should leave this
 	// unset — the feature then does not exist rather than half-existing.
 	AllowScripts bool
+}
+
+// GeometryConfig is what one stored design may be (Phase 3, stage S0 of
+// docs/plan-2026-09-13-millions-of-parts.md). geometry.ConfigureLimits applies it,
+// once, in every process that reads geometry.
+type GeometryConfig struct {
+	// MaxDocumentBytes bounds the stored JSON of one design.
+	MaxDocumentBytes int64
+	// MaxDefinitions bounds how many parts one design defines.
+	MaxDefinitions int
+	// MaxOccurrences bounds how many parts one design places, counted before it
+	// is expanded.
+	MaxOccurrences int
 }
 
 // BlobConfig is where large, immutable geometry bytes go: per-design meshes,
@@ -875,6 +890,25 @@ func Load(required ...Section) (*Config, []string, error) {
 	cfg.CAD = CADConfig{
 		Python:       strings.TrimSpace(l.str("FORGE_CAD_PYTHON", "")),
 		AllowScripts: l.boolVal("FORGE_ALLOW_SCRIPTS", false),
+	}
+
+	// Phase 3, stage S0. Defaults decided 2026-09-14 from measurements: a car stored
+	// as a tree is ~96 KiB and 150 definitions, and expanding 100k occurrences costs
+	// ~20 ms and ~52 MiB. Loaded whatever the sections, like the kernel: every
+	// process that reads geometry needs the same bounds.
+	cfg.Geometry = GeometryConfig{
+		MaxDocumentBytes: l.int64Val("FORGE_GEOMETRY_MAX_DOCUMENT_BYTES", 2<<20),
+		MaxDefinitions:   l.intVal("FORGE_GEOMETRY_MAX_DEFINITIONS", 2000),
+		MaxOccurrences:   l.intVal("FORGE_GEOMETRY_MAX_OCCURRENCES", 100000),
+	}
+	if cfg.Geometry.MaxDocumentBytes <= 0 {
+		l.fail("FORGE_GEOMETRY_MAX_DOCUMENT_BYTES", "must be a positive number of bytes; it bounds the stored JSON of one design")
+	}
+	if cfg.Geometry.MaxDefinitions <= 0 {
+		l.fail("FORGE_GEOMETRY_MAX_DEFINITIONS", "must be a positive number; it bounds how many parts one design defines")
+	}
+	if cfg.Geometry.MaxOccurrences <= 0 {
+		l.fail("FORGE_GEOMETRY_MAX_OCCURRENCES", "must be a positive number; it bounds how many parts one design places")
 	}
 
 	cfg.Blob = BlobConfig{

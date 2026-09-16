@@ -133,6 +133,11 @@ FILES=(
   internal/domain/geometry/tree_features.go
   internal/domain/geometry/edit.go
   internal/agent/currentmodel.go
+  internal/domain/geometry/limits.go
+  internal/domain/geometry/repeat.go
+  internal/domain/geometry/export.go
+  internal/domain/geometry/service.go
+  internal/platform/config/config.go
   internal/httpapi/goals_start.go
   internal/agent/worker.go
   internal/domain/engine/repository.go
@@ -860,6 +865,78 @@ drill "the contract's tree example drifts from the schema" internal/agent/conver
 drill "the contract's remove names a field an edit does not have" internal/agent/converse.go \
   's = s.replace("\"children\": [\"assembly-id/child-id\"]}", "\"kids\": [\"assembly-id/child-id\"]}", 1)' \
   ./internal/agent 'TestTheContractNamesTheTreeEditFieldsAnEditHas'
+
+echo
+echo "What one stored design may be"
+# Added 2026-09-14 (Phase 3, stage S0). Storage is bounded by bytes, definitions and
+# occurrences counted before expanding; drawing and building are bounded at 4096.
+drill "the tree expands past the occurrence bound" internal/domain/geometry/tree.go \
+  's = s.replace("\tif p := occurrenceProblem(d); p != nil {\n\t\tproblems = append(problems, *p)", "\tif p := occurrenceProblem(Document{}); p != nil {\n\t\tproblems = append(problems, *p)", 1)' \
+  ./internal/domain/geometry 'TestLimits_TheOccurrenceBoundHoldsEverywhere'
+
+drill "a flat document's repeats expand past the occurrence bound" internal/domain/geometry/repeat.go \
+  's = s.replace("\tif p := occurrenceProblem(d); p != nil {\n\t\tout := d", "\tif p := occurrenceProblem(Document{}); p != nil {\n\t\tout := d", 1)' \
+  ./internal/domain/geometry 'TestLimits_TheOccurrenceBoundHoldsEverywhere'
+
+drill "the storage door does not count occurrences" internal/domain/geometry/variant.go \
+  's = s.replace("if p := occurrenceProblem(n.Document); p != nil {", "if p := occurrenceProblem(Document{}); p != nil {", 1)' \
+  ./internal/domain/geometry 'TestLimits_TheOccurrenceBoundHoldsEverywhere'
+
+drill "the count forgets a pattern's copies" internal/domain/geometry/limits.go \
+  's = s.replace("n = sat(n + mul(len(slots), count(c.Ref)))", "n = sat(n + count(c.Ref))", 1)' \
+  ./internal/domain/geometry 'TestOccurrences_CountsWithoutPlacing'
+
+drill "the count does not saturate" internal/domain/geometry/limits.go \
+  's = s.replace("\t\tif n > limit {\n\t\t\treturn limit + 1\n\t\t}\n\t\treturn n\n", "\t\treturn n\n", 1)' \
+  ./internal/domain/geometry 'TestOccurrences_CountsWithoutPlacing'
+
+drill "a zero setting switches a bound off" internal/domain/geometry/limits.go \
+  's = s.replace("\tif l.MaxDocumentBytes <= 0 {\n", "\tif false {\n", 1)' \
+  ./internal/domain/geometry 'TestLimits_ANonPositiveSettingKeepsItsDefault'
+
+drill "a design too large to draw is meshed anyway" internal/domain/geometry/mesh.go \
+  's = s.replace("\tif refusal := doc.DrawRefusal(); refusal != \"\" {\n\t\treturn &Mesh{", "\tif refusal := doc.DrawRefusal(); false {\n\t\treturn &Mesh{", 1)' \
+  ./internal/domain/geometry 'TestLimits_ThirtyThousandOccurrencesAreStoredButNotDrawn'
+
+drill "the kernel request carries a design too large to build" internal/domain/geometry/solid.go \
+  's = s.replace("\tif refusal := d.DrawRefusal(); refusal != \"\" {\n\t\treturn nil, nil, nil, []string{refusal}", "\tif refusal := d.DrawRefusal(); false {\n\t\treturn nil, nil, nil, []string{refusal}", 1)' \
+  ./internal/domain/geometry 'TestLimits_ThirtyThousandOccurrencesAreStoredButNotDrawn'
+
+drill "a mesh file of a design too large to draw is written" internal/domain/geometry/export.go \
+  's = s.replace("\tif refusal := v.Document.DrawRefusal(); refusal != \"\" {\n", "\tif refusal := v.Document.DrawRefusal(); false {\n", 1)' \
+  ./internal/domain/geometry 'TestLimits_ThirtyThousandOccurrencesAreStoredButNotDrawn'
+
+drill "the kernel is sent a design too large to build" internal/domain/cad/cad.go \
+  's = s.replace("\tif refusal := doc.DrawRefusal(); refusal != \"\" {\n", "\tif refusal := doc.DrawRefusal(); false {\n", 1)' \
+  ./internal/domain/cad 'TestKernel_ADesignTooLargeToBuildIsRefusedAndSaysWhy'
+
+drill "the storage door stores a design over the byte ceiling" internal/domain/geometry/service.go \
+  's = s.replace("\tif int64(len(body)) > lim.MaxDocumentBytes {\n", "\tif false {\n", 1)' \
+  ./internal/domain/geometry 'TestSizeFence_RefusesADesignOverTheByteCeiling'
+
+drill "the storage door stores more definitions than the ceiling" internal/domain/geometry/service.go \
+  's = s.replace("\tif len(doc.Definitions) > lim.MaxDefinitions {\n", "\tif false {\n", 1)' \
+  ./internal/domain/geometry 'TestSizeFence_RefusesMoreDefinitionsThanTheCeiling'
+
+drill "the saved record does not say how big the design is" internal/domain/geometry/service.go \
+  's = s.replace("\t\t\"bytes\", len(body), \"definitions\", len(v.Document.Definitions),\n", "\t\t\"definitions\", len(v.Document.Definitions),\n", 1)' \
+  ./internal/domain/geometry 'TestSizeFence_AThirtyThousandOccurrenceCarIsStoredAndItsSizeRecorded'
+
+drill "configuration accepts a zero occurrence bound" internal/platform/config/config.go \
+  's = s.replace("\tif cfg.Geometry.MaxOccurrences <= 0 {\n", "\tif false {\n", 1)' \
+  ./internal/platform/config 'TestGeometryLimitsMustBePositive'
+
+drill "the browser draws a design too large to draw" internal/httpapi/assets/forge3d.js \
+  "s = s.replace('    if (drawRefusal(spec)) return [];\n', '', 1)" \
+  ./internal/httpapi 'TestRendererFlattensATreeLikeTheExporter'
+
+drill "the browser's count forgets a pattern's copies" internal/httpapi/assets/forge3d.js \
+  "s = s.replace('n = sat(n + sat((slots ? slots.length : 0) * count(c.ref)));', 'n = sat(n + count(c.ref));', 1)" \
+  ./internal/httpapi 'TestRendererFlattensATreeLikeTheExporter'
+
+drill "the browser refuses in other words than the exporter" internal/httpapi/assets/forge3d.js \
+  "s = s.replace(\"'nothing was drawn or built.'\", \"'nothing was drawn.'\", 1)" \
+  ./internal/httpapi 'TestRendererFlattensATreeLikeTheExporter'
 
 echo
 echo "Islands"

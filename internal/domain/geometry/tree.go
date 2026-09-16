@@ -82,15 +82,8 @@ const PathSeparator = "/"
 // is a way for one document to spend the whole turn.
 const maxTreeDepth = 16
 
-// maxTreeParts bounds what one tree may flatten to.
-//
-// ‼️ This is a PRE-INSTANCING ceiling, not a statement of what a tree can describe.
-// Until Phase 4 (K1, one build per definition) and Phase 6 (W1, instanced drawing)
-// land, every flattened part is an independent solid in the kernel request and an
-// independent draw call in the browser, and the measured cost of checking one
-// against another is already 0.66 s at 120 parts. It is raised on measured numbers
-// when those stages land.
-const maxTreeParts = 4096
+// The ceiling on how many parts are drawn or built at once lives in limits.go
+// (maxDrawnParts): since Phase 3, stage S0 it bounds drawing and building, not the tree.
 
 // hasTree reports whether the document uses definitions and assemblies at all.
 func (d Document) hasTree() bool {
@@ -180,8 +173,14 @@ func expandAssemblies(d Document) (Document, []Problem) {
 		fail(d.Root, "is named as the root but is not an assembly in this document")
 		return out, problems
 	}
+	// Counted before anything is placed (limits.go, Phase 3 stage S0): nested
+	// patterns can describe more occurrences than any machine can hold, and every
+	// reader of a tree comes through here.
+	if p := occurrenceProblem(d); p != nil {
+		problems = append(problems, *p)
+		return out, problems
+	}
 
-	placed := 0
 	attach := newAttachments(asms)
 	// The frame is a placement (frame.go), not a position and three angles, so a
 	// reflection anywhere above a part reaches the part.
@@ -282,11 +281,6 @@ func expandAssemblies(d Document) (Document, []Problem) {
 					continue
 				}
 				for _, lp := range defCopies {
-					if placed >= maxTreeParts {
-						fail(d.Root, "places more than %d parts, which is the most one tree may place until "+
-							"instanced drawing and one build per design land", maxTreeParts)
-						return index, true
-					}
 					partStart := len(out.Parts)
 					q := lp
 					// "" for the definition itself, "-k" for its k-th copy: read off the
@@ -302,7 +296,6 @@ func expandAssemblies(d Document) (Document, []Problem) {
 					q.Position, q.Rotation, q.Mirrored = childFrame.then(placementOf(lp.Position, lp.Rotation, lp.Mirrored)).stored()
 					q.Size = cloneSize(lp.Size)
 					out.Parts = append(out.Parts, q)
-					placed++
 					// A definition's own repeat copy, by its copy id ("rivet-2").
 					if suffix != "" {
 						index[c.ID+slot.suffix+suffix] = partRange{partStart, len(out.Parts)}

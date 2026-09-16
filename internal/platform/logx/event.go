@@ -219,6 +219,9 @@ const (
 	EventGeometrySaved    Event = "forge.geometry.saved"
 	EventGeometryExported Event = "forge.geometry.exported"
 	EventGeometryRefused  Event = "forge.geometry.export_refused"
+	// EventGeometryTooLarge is a design refused at the storage door for its size
+	// (Phase 3, stage S0): more bytes or definitions than one design may hold.
+	EventGeometryTooLarge Event = "forge.geometry.too_large"
 	EventGeometryCompared Event = "forge.geometry.compared"
 	// EventGeometryUnreadable is a turn answered WITHOUT the model on screen,
 	// because the record could not be read. Not fatal and not silent: the agent
@@ -251,7 +254,7 @@ func init() {
 	allEvents = append(allEvents,
 		EventGeometrySaved, EventGeometryExported, EventGeometryRefused, EventGeometryCompared,
 		EventGeometryUnreadable,
-		EventGeometryAdopted, EventGeometryRespecified,
+		EventGeometryAdopted, EventGeometryRespecified, EventGeometryTooLarge,
 		EventCADStarted, EventCADRestarted, EventCADRefused, EventCADTimedOut,
 	)
 }

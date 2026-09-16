@@ -2,6 +2,7 @@ package geometry
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/pack"
@@ -68,6 +69,32 @@ func (s *Service) Save(ctx context.Context, n NewVariant) (*Variant, error) {
 	}
 	if doc.NotVerified == nil {
 		doc.NotVerified = []string{}
+	}
+
+	// What one stored design may be (limits.go, Phase 3 stage S0). Measured on the
+	// document as it is stored, and refused naming the threshold and the setting.
+	lim := CurrentLimits()
+	body, err := json.Marshal(doc)
+	if err != nil {
+		return nil, errs.Wrap(op, errs.CodeSerializationFail, err).
+			WithDetail("the geometry for %q cannot be encoded as JSON", doc.Name)
+	}
+	if int64(len(body)) > lim.MaxDocumentBytes {
+		s.log.Warn(ctx, logx.EventGeometryTooLarge, "name", doc.Name,
+			"bytes", len(body), "limit_bytes", lim.MaxDocumentBytes)
+		return nil, errs.New(op, errs.CodeValidationFailed).
+			WithDetail("this design is %d bytes of JSON, and FORGE stores at most %d in one design "+
+				"(FORGE_GEOMETRY_MAX_DOCUMENT_BYTES). A design grows with what it describes once, not with "+
+				"how often it is placed: write parts that repeat as definitions placed by assemblies, or "+
+				"raise the setting", len(body), lim.MaxDocumentBytes)
+	}
+	if len(doc.Definitions) > lim.MaxDefinitions {
+		s.log.Warn(ctx, logx.EventGeometryTooLarge, "name", doc.Name,
+			"definitions", len(doc.Definitions), "limit_definitions", lim.MaxDefinitions)
+		return nil, errs.New(op, errs.CodeValidationFailed).
+			WithDetail("this design has %d definitions, and FORGE stores at most %d in one design "+
+				"(FORGE_GEOMETRY_MAX_DEFINITIONS); split it into separate designs, or raise the setting",
+				len(doc.Definitions), lim.MaxDefinitions)
 	}
 
 	tx, err := s.pool.Begin(ctx)
@@ -150,6 +177,8 @@ func (s *Service) Save(ctx context.Context, n NewVariant) (*Variant, error) {
 	s.log.Info(ctx, logx.EventGeometrySaved,
 		"version_id", v.VersionID, "project_id", v.ProjectID, "path", v.Path,
 		"version", v.Version, "parts", len(v.Document.Parts),
+		"bytes", len(body), "definitions", len(v.Document.Definitions),
+		"occurrences", occurrences(v.Document, lim.MaxOccurrences),
 		"units", string(v.Units), "generator", v.Generator)
 	return v, nil
 }
