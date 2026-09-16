@@ -204,10 +204,22 @@ func (n *NewVariant) Validate() error {
 		return errs.New(op, errs.CodeValidationFailed).
 			WithDetail("a variant must be named; an unnamed row is one a person cannot pick out of a list")
 	}
-	if len(n.Document.Parts) == 0 {
+	if !n.Document.HasGeometry() {
 		return errs.New(op, errs.CodeValidationFailed).
 			WithDetail("this geometry has no parts, so there is nothing to draw, compare, or export")
 	}
+	// A tree that cannot be placed is refused at the same door as a part with no
+	// shape: storing it would store a model whose parts nobody can find.
+	for _, p := range n.Document.TreeProblems() {
+		if p.Severity == Error {
+			return errs.New(op, errs.CodeValidationFailed).
+				WithDetail("the assembly tree cannot be placed: %s %s", p.Name, p.Detail)
+		}
+	}
+	// Every check below reads the parts the document PLACES — top-level and
+	// tree — because an id that repeats across the two is exactly as ambiguous to
+	// comparison as one that repeats within either.
+	placed := n.Document.PlacedParts()
 	// 2. inputs
 	if n.Inputs == nil {
 		return errs.New(op, errs.CodeValidationFailed).
@@ -223,7 +235,7 @@ func (n *NewVariant) Validate() error {
 			WithDetail("VIS-06: geometry cannot be stored without stating what it does NOT establish. " +
 				"A render with nothing in that list is the one that gets mistaken for an analysis.")
 	}
-	for i, p := range n.Document.Parts {
+	for i, p := range placed {
 		if strings.TrimSpace(p.ID) == "" {
 			return errs.New(op, errs.CodeValidationFailed).
 				WithDetail("part %d has no id, so it cannot be matched against the same part in another variant", i+1)
@@ -234,7 +246,7 @@ func (n *NewVariant) Validate() error {
 		}
 	}
 	seen := map[string]bool{}
-	for _, p := range n.Document.Parts {
+	for _, p := range placed {
 		if seen[p.ID] {
 			// Comparison matches parts across variants BY ID. Two parts sharing
 			// one inside a single variant makes that matching ambiguous, and a
@@ -258,14 +270,14 @@ func (n *NewVariant) Validate() error {
 		return err
 	}
 	// PRD VIS-02. Same door, same reason.
-	for i := range n.Document.Parts {
-		if m := n.Document.Parts[i].Material; m != nil {
+	for i := range placed {
+		if m := placed[i].Material; m != nil {
 			if err := m.Validate(); err != nil {
 				return err
 			}
 		}
 	}
-	if err := ValidateStates(n.Document.States, n.Document.Parts); err != nil {
+	if err := ValidateStates(n.Document.States, placed); err != nil {
 		return err
 	}
 	// A state that moves parts claims they can move that way, and nothing here

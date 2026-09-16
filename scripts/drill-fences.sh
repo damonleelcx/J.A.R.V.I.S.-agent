@@ -119,6 +119,9 @@ FILES=(
   internal/domain/geometry/render.go
   internal/domain/geometry/assembly.go
   internal/agent/turned.go
+  internal/domain/geometry/tree.go
+  internal/domain/geometry/binding.go
+  internal/domain/geometry/variant.go
   internal/httpapi/goals_start.go
   internal/agent/worker.go
   internal/domain/engine/repository.go
@@ -495,7 +498,7 @@ echo "Every reader sees repeat copies"
 # without a name, and the browser drew each pattern once.
 # docs/bugfix/2026-09-13-repeat-copies-were-invisible-to-most-readers.md
 drill "Measure reads the parts as written again" internal/domain/geometry/overlay.go \
-  's = s.replace("\twithCopies, _ := expandRepeats(doc)\n", "\twithCopies := doc\n", 1)' \
+  's = s.replace("\twithCopies, _ := expandRepeats(tree)\n", "\twithCopies := tree\n", 1)' \
   ./internal/domain/geometry 'TestMeasure_IncludesEveryCopyOfARepeatedPart'
 
 drill "copies are coloured from the authored list again" internal/domain/geometry/render.go \
@@ -526,6 +529,41 @@ echo "A kernel mesh is already placed"
 drill "the browser places a kernel mesh a second time" internal/httpapi/assets/forge3d.js \
   "s = s.replace('    if (part.fromKernel) return translation(d);\n', '', 1)" \
   ./internal/httpapi 'TestRendererDoesNotPlaceAKernelMeshTwice'
+
+echo
+echo "Designs placed inside assemblies"
+# Added 2026-09-14 with the tree (Phase 1, stage D1b). Each guards one way a tree
+# could be read as something other than the parts it places.
+drill "Faults does not read the tree" internal/domain/geometry/faults.go \
+  's = s.replace("\ttree, treeProblems := expandAssemblies(*d)\n", "\ttree, treeProblems := *d, []Problem(nil)\n", 1)' \
+  ./internal/domain/geometry 'TestTree_ABrokenTreeIsAFaultAndTheFileSaysSo'
+
+drill "a clone shares the tree with its original" internal/domain/geometry/binding.go \
+  's = s.replace("\tout.Definitions = clonePartList(d.Definitions)\n", "\tout.Definitions = d.Definitions\n", 1)' \
+  ./internal/domain/geometry 'TestTree_ACloneSharesNothingWithTheOriginal'
+
+drill "a placement ignores the definition's own frame" internal/domain/geometry/tree.go \
+  's = s.replace("\t\t\t\tq.Position, q.Rotation = placeInFrame(cpos, crot, lp.Position, lp.Rotation)\n", "\t\t\t\tq.Position, q.Rotation = cpos, crot\n", 1)' \
+  ./internal/domain/geometry 'TestTree_APartIsPlacedThroughEveryFrameAboveIt'
+
+drill "the storage door reads only top-level parts" internal/domain/geometry/variant.go \
+  's = s.replace("\tplaced := n.Document.PlacedParts()\n", "\tplaced := n.Document.Parts\n", 1)' \
+  ./internal/domain/geometry 'TestTree_TheStorageDoorReadsThePlacedParts'
+
+drill "Bind skips definitions" internal/domain/geometry/binding.go \
+  's = s.replace("\tif len(d.Definitions) > 0 {\n", "\tif false {\n", 1)' \
+  ./internal/domain/geometry 'TestTree_BindEvaluatesADefinitionsSizesForEveryPlacement'
+
+echo
+echo "The browser flattens a tree like the exporter"
+# Added 2026-09-14 (Phase 1, stage D1b). forge3d.js holds a copy of tree.go and frame.go.
+drill "the browser places a definition ignoring its own frame" internal/httpapi/assets/forge3d.js \
+  "s = s.replace('          var pl = placeInFrame(cp.position, cp.rotation, lp.position, lp.rotation);\n', '          var pl = { position: cp.position, rotation: cp.rotation };\n', 1)" \
+  ./internal/httpapi 'TestRendererFlattensATreeLikeTheExporter'
+
+drill "the browser reads a rotation back with the wrong sign" internal/httpapi/assets/forge3d.js \
+  "s = s.replace('      x = Math.atan2(-m[5], m[8]);\n', '      x = Math.atan2(m[5], m[8]);\n', 1)" \
+  ./internal/httpapi 'TestRendererFlattensATreeLikeTheExporter'
 
 echo
 echo "Islands"

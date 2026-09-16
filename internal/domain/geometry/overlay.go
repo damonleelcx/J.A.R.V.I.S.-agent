@@ -299,7 +299,7 @@ func ValidateOverlays(overlays []Overlay) error {
 // bounding boxes would be inventing intent, and it would look exactly like a
 // datum somebody chose.
 func Measure(doc Document, unit Unit) []Overlay {
-	if len(doc.Parts) == 0 {
+	if !doc.HasGeometry() {
 		return nil
 	}
 	min, max := bounds(doc)
@@ -371,7 +371,8 @@ func bounds(doc Document) (min, max [3]float64) {
 	// which is what the gear case below exists for. A copy of a gear is still a
 	// gear, so it keeps that exact case too.
 	// Fences: TestAGearIsDrawnAndMeasuredAtItsOwnSize, TestAGearFollowsItsParameters.
-	withCopies, _ := expandRepeats(doc)
+	tree, _ := expandAssemblies(doc)
+	withCopies, _ := expandRepeats(tree)
 	for _, p := range withCopies.Parts {
 		pos := padTo3(p.Position)
 		loLocal, hiLocal := localBox(p)
