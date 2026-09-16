@@ -194,11 +194,19 @@ func collect(rows pgx.Rows) ([]Variant, error) {
 // with no state to keep and nothing for a client to assert.
 //
 // The cost, stated: a model that renames slightly — "NEMA 17 bracket" then
-// "NEMA-17 motor bracket" — starts a second history. That is visible and
-// harmless, because comparison takes arbitrary version ids and can span
-// artifacts. The alternative, threading a variant id through the conversation,
-// puts a piece of state in the client that the client would then be trusted to
-// report back honestly.
+// "NEMA-17 motor bracket" — starts a second history. For a CONVERSATION that is
+// visible and harmless, because comparison takes arbitrary version ids and can
+// span artifacts. The alternative, threading a variant id through the
+// conversation, puts a piece of state in the client that the client would then
+// be trusted to report back honestly.
+//
+// ‼️ For a BUILD the same cost is not harmless, and this function is not the
+// whole rule any more. A build's steps are one piece of work; a step that
+// renamed the model split that work across two artifacts, each holding half a
+// history (#119). A build goal therefore PINS the artifact its first kept step
+// created and passes it as NewVariant.ArtifactID, and this path is then only
+// what opened that artifact in the first place. See
+// workspace.Service.artifactFor.
 func artifactPath(name string) string {
 	slug := strings.Map(func(r rune) rune {
 		switch {
