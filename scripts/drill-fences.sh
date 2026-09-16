@@ -3764,6 +3764,20 @@ drill "POST /v1/goals drops the ceiling" internal/httpapi/goals_start.go \
   's = s.replace("\t\tMaxTokens: req.MaxTokens,\n", "", 1)' \
   ./internal/httpapi 'TestCreateGoal_ATokenCeilingIsStoredOnTheGoal'
 
+# Added 2026-09-15 (card checked), from watching the card drive a build in a real browser
+# against a stand-in model: docs/spikes/2026-09-15-card-checked. Two defects the fences above
+# could not see — the card sent no project, and it showed a budget stop as a permissions error.
+
+# rsplit, not replace: "project_id: state.projectID" is sent by the conversation turn too, and
+# that one comes FIRST in the file. The last occurrence is the card's.
+drill "the card starts a goal with no project" internal/httpapi/assets/workbench.js \
+  's = "project_idX: state.projectID".join(s.rsplit("project_id: state.projectID", 1))' \
+  ./internal/httpapi 'TestWorkbench_TheCardStartsAGoalInTheConversationsProject'
+
+drill "a budget stop is shown as a raw error" internal/httpapi/assets/workbench.js \
+  's = s.replace("if (withCode) return withCode[1].trim();", "if (false) return withCode[1].trim();", 1)' \
+  ./internal/httpapi 'TestWorkbench_TheCardSaysWhatABudgetStopMeantWithoutTheErrorsPlumbing'
+
 if [ "$MODE" = "list" ]; then
   exit 0
 fi
