@@ -127,6 +127,7 @@ FILES=(
   internal/domain/geometry/repeat.go
   internal/domain/geometry/export.go
   internal/domain/geometry/service.go
+  internal/domain/workspace/service.go
   internal/platform/config/config.go
   internal/agent/buildgoal.go
   internal/agent/spend.go
@@ -1904,6 +1905,52 @@ drill "the card starts a goal with no project" internal/httpapi/assets/workbench
 drill "a budget stop is shown as a raw error" internal/httpapi/assets/workbench.js \
   's = s.replace("if (withCode) return withCode[1].trim();", "if (false) return withCode[1].trim();", 1)' \
   ./internal/httpapi 'TestWorkbench_TheCardSaysWhatABudgetStopMeantWithoutTheErrorsPlumbing'
+
+# Added 2026-09-15 (one artifact per build), from the decision that a build goal pins the
+# artifact its first kept step created. A step that renamed the model used to open a SECOND
+# artifact and split one build's history in two, each half in its own file (#119).
+#
+# ‼️ These six need FORGE_TEST_DATABASE_URL. Every property is a property of rows — which
+# artifact a version hangs off — so without a database they SKIP, and the drill reports them
+# as UNPROVEN rather than as fences that held.
+
+drill "a build step drops its build's artifact" internal/agent/buildgoal.go \
+  's = s.replace("\t\t\tArtifactID: prev.ArtifactID,\n", "", 1)' \
+  ./internal/agent 'TestBuildGoal_ABuildThatRenamesTheModelKeepsOneArtifactWithAVersionPerStep'
+
+drill "a save ignores the artifact it was pinned to" internal/domain/geometry/service.go \
+  's = s.replace("ArtifactID: strings.TrimSpace(n.ArtifactID),", "ArtifactID: \"\",", 1)' \
+  ./internal/domain/geometry 'TestSave_APinnedSaveAppendsToThatArtifactAndStillStoresTheNewName'
+
+drill "a change ignores the artifact it pins" internal/domain/workspace/service.go \
+  's = s.replace("pinned := strings.TrimSpace(c.ArtifactID)", "pinned := \"\"", 1)' \
+  ./internal/domain/geometry 'TestSave_APinnedSaveAppendsToThatArtifactAndStillStoresTheNewName'
+
+# The pin applied UNCONDITIONALLY — the plausible wrong version of this change. The first step
+# that keeps anything has no artifact to pin, and pinning nothing finds nothing.
+drill "the artifact is pinned even when nothing pinned one" internal/domain/workspace/service.go \
+  's = s.replace("\tif pinned == \"\" {", "\tif false {", 1)' \
+  ./internal/agent 'TestBuildGoal_AStepWhosePredecessorKeptNothingStillCreatesTheArtifact'
+
+drill "a pinned artifact is not checked against the project" internal/domain/workspace/service.go \
+  's = s.replace("if artifact.ProjectID != c.ProjectID {", "if false {", 1)' \
+  ./internal/domain/geometry 'TestSave_APinnedArtifactFromAnotherProjectIsRefused'
+
+# "ArtifactID: source.ArtifactID," appears twice — Adopt first, then Respec — so replace(..., 1)
+# takes Adopt's and the rsplit below takes Respec's. One drill each: they are two call sites and
+# either could lose the pin on its own.
+#
+# ‼️ The adopt fence had to be STRENGTHENED before this drill could redden it. It adopted v1,
+# whose own name still resolves to the artifact v1 is on — the name rule and the artifact rule
+# agree there, so removing the pin changed nothing and the drill stayed green. It now adopts the
+# RENAMED version, which is where the two rules disagree.
+drill "adopting forgets which artifact it came from" internal/domain/geometry/service.go \
+  's = s.replace("\t\tArtifactID: source.ArtifactID,\n", "", 1)' \
+  ./internal/domain/geometry 'TestAdopt_AppendsToTheArtifactTheSourceIsOnAfterARename'
+
+drill "re-specifying forgets which artifact it came from" internal/domain/geometry/service.go \
+  's = "".join(s.rsplit("\t\tArtifactID: source.ArtifactID,\n", 1))' \
+  ./internal/domain/geometry 'TestRespec_AppendsToTheArtifactTheSourceIsOnAfterARename'
 
 if [ "$MODE" = "list" ]; then
   exit 0

@@ -125,7 +125,12 @@ func (s *Service) Save(ctx context.Context, n NewVariant) (*Variant, error) {
 	artifact, version, err := s.ws.RecordChangeIn(ctx, tx, workspace.Change{
 		ProjectID: projectID,
 		Path:      artifactPath(doc.Name),
-		Kind:      workspace.ArtifactModel,
+		// Pinned by a build goal, empty for everything else. When it is set the
+		// version lands on THAT artifact and Path above is not used to resolve
+		// one — the model's new name still reaches the version below, and the
+		// artifact keeps the path its history was opened under.
+		ArtifactID: strings.TrimSpace(n.ArtifactID),
+		Kind:       workspace.ArtifactModel,
 
 		InitiatorID: n.InitiatorID,
 		Agent:       n.Agent,
@@ -244,6 +249,13 @@ func (s *Service) Adopt(ctx context.Context, versionID, byUserID, reason string)
 	adopted, err := s.Save(ctx, NewVariant{
 		ProjectID:   source.ProjectID,
 		InitiatorID: byUserID,
+		// The artifact the source is a version OF, not the one its name resolves
+		// to. They are the same thing for a conversational variant and NOT for a
+		// build's, whose artifact is pinned and whose document may have been
+		// renamed since (workspace.Service.artifactFor). Adopting by name would
+		// append the copy to a different history from the one the check above
+		// just ruled on, and "we went back to v1" would appear in neither list.
+		ArtifactID: source.ArtifactID,
 		// A human chose this. The GEOMETRY was drawn by the generator recorded
 		// below, and the two facts stay separate: WRK-04's agent says which part
 		// of FORGE acted, and adopting is an act of a person.
@@ -366,11 +378,15 @@ const MaxCompare = 6
 //
 // # Why it appends a version rather than editing in place
 //
-// The result keeps the source document's NAME, so it lands on the same artifact
-// path and becomes the next version of the same thing. That is what makes the
-// two comparable side by side (PRD VIS-04) rather than two unrelated designs —
-// and it leaves the original exactly as the model produced it, which is what a
-// replay depends on.
+// The result lands on the SOURCE'S OWN ARTIFACT and becomes the next version of
+// the same thing. That is what makes the two comparable side by side (PRD
+// VIS-04) rather than two unrelated designs — and it leaves the original exactly
+// as the model produced it, which is what a replay depends on.
+//
+// It used to reach that artifact by keeping the document's name, which is the
+// same answer only while a name and an artifact are the same fact. A build pins
+// its artifact and renames its document freely, so the artifact is now named
+// outright.
 //
 // # Why an override naming nothing is refused rather than ignored
 //
@@ -420,6 +436,10 @@ func (s *Service) Respec(ctx context.Context, versionID, byUserID string, overri
 	saved, err := s.Save(ctx, NewVariant{
 		ProjectID:   source.ProjectID,
 		InitiatorID: byUserID,
+		// The source's own artifact, for the reason Adopt names: a re-specified
+		// build step must land beside the step it was computed from, and a
+		// build's artifact is pinned rather than derived from the name.
+		ArtifactID: source.ArtifactID,
 		// A person chose the new value; the geometry that follows from it was
 		// computed by FORGE. WRK-04's agent says which part of FORGE acted, and
 		// choosing a dimension is an act of a person.
