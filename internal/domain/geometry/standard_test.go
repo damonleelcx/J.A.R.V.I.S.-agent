@@ -296,15 +296,16 @@ func TestStandard_EveryFamilyCarriesTheFiguresItsSourcePublishes(t *testing.T) {
 	}
 	rows("ISO 7089", 7)
 
-	// ISO 15 boundary dimensions, as SKF's bearings of these designations are listed.
-	// ISO 15 itself was not read, and standard.go says so.
+	// ISO/R 15/1-1968 Table 3, diameter series 0, dimension series 10: d, D and B.
+	// ISO 15:2017's own table was not reachable; standard.go says what carries these
+	// figures forward to it.
 	for _, b := range []struct {
 		series  string
 		d, D, B float64
 	}{{"608", 8, 22, 7}, {"6000", 10, 26, 8}, {"6001", 12, 28, 8}, {"6002", 15, 32, 9}, {"6003", 17, 35, 10}, {"6004", 20, 42, 12}, {"6005", 25, 47, 12}} {
 		minX, maxX, minY, maxY := loopBounds(expandedStandard(t, "ISO 15 "+b.series, "mm", nil).Profile)
 		if !closeTo(minX*2, b.d) || !closeTo(maxX*2, b.D) || !closeTo(maxY-minY, b.B) {
-			t.Errorf("%s is %v × %v × %v; SKF lists %v × %v × %v", b.series, minX*2, maxX*2, maxY-minY, b.d, b.D, b.B)
+			t.Errorf("%s is %v × %v × %v; ISO/R 15/1 Table 3 has %v × %v × %v", b.series, minX*2, maxX*2, maxY-minY, b.d, b.D, b.B)
 		}
 	}
 	rows("ISO 15", 7)
@@ -335,8 +336,10 @@ func TestStandard_EveryFamilyCarriesTheFiguresItsSourcePublishes(t *testing.T) {
 	}
 	rows("EN 10219", 7)
 
-	// EN 10056-1:1998 Table 1: a, t and the root radius, and its Note 1's toe radius of
-	// half the root radius; the sectional area by that note's formula is the printed one.
+	// EN 10056-1:1998 Table 1 and EN 10056-1:2017 Table 1, which print the same a, t, root
+	// radius and area for these rows; the 1998 Note 1's toe radius of half the root radius
+	// (what the 2017 edition says of it was not reachable); and the sectional area by that
+	// note's formula is the printed one.
 	for _, a := range []struct {
 		size             string
 		a, t, root, area float64

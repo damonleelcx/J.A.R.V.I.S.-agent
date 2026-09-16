@@ -74,7 +74,8 @@ func isStandard(p Part) bool {
 // standard's is 1.75 — and was corrected
 // (docs/bugfix/2026-09-15-an-angles-toe-radius-was-not-half-its-root-radius.md).
 // TestStandard_EveryFamilyCarriesTheFiguresItsSourcePublishes holds several
-// figures per family to those tables.
+// figures per family to those tables. The bearings and the angles were read again
+// the same day, against ISO/R 15/1-1968 and EN 10056-1:2017, and nothing changed.
 //
 // ‼️ A row added here is read off a source, and the source is named on its
 // family. A figure from memory is the thing this catalogue exists to take away
@@ -148,16 +149,26 @@ var iso7089 = []struct {
 	{"M12", 13, 24, 2.5},
 }
 
-// iso15 is ISO 15:2017's boundary dimensions for single-row deep-groove ball
-// bearings: bore d, outside diameter D and width B. 608 is diameter series 0 in
-// the 8 mm bore; the 6000 series continues it.
+// iso15 is ISO 15's boundary dimensions for single-row deep-groove ball bearings:
+// bore d, outside diameter D and width B. 608 is diameter series 0 in the 8 mm
+// bore; the 6000 series continues it. All seven are dimension series 10.
 //
-// Source: ‼️ UNVERIFIED against ISO 15 itself — no copy of its tables was
-// reachable. Every row was checked instead against SKF's bearing of that
-// designation, as SKF's distributors list it: Maedler North America for 608, 6002,
-// 6003 and 6004, bearingbasement.com for 6000, 6001 and 6005. d × D × B agrees on
-// all seven. ISO 15 is what makes a 6003 17 × 35 × 10 from every maker, so these
-// are the standard's figures second hand, and are named that way here.
+// Source: ISO/R 15/1-1968 Table 3 (diameter series 0), read from ISO's own preview
+// (cdn.standards.iteh.ai sample 3599). Its dimension-series-10 width against each
+// bore and outside diameter matches all seven rows, 8 × 22 × 7 to 25 × 47 × 12.
+// ‼️ That is ISO 15's first form, not ISO 15:2017. The current edition's diameter
+// series 0 table (Table 4) was NOT reachable: the 2017, 2011 and 1998 previews all
+// stop before it. What carries the figures forward is each later edition's
+// foreword, read from the same previews: ISO 15:1998 (sample 20513) extended
+// diameter series 7, 1 and 2 and names no change to series 0; ISO 15:2011 (sample
+// 55216) revised only references and terminology; ISO 15:2017 (sample 69977)
+// extended the tables to very large bearings. Two copies of the standard's figures
+// agree on all seven as well: GB/T 276-2013, China's deep-groove boundary
+// dimensions, as the JLC FA design handbook prints it (D and B, bores 3 to 25), and
+// SKF's bearings of these designations as Maedler North America (608, 6002-6004)
+// and bearingbasement.com (6000, 6001, 6005) list them.
+//
+// The drawing is a plain ring, so no chamfer figure (r_s min) is used here.
 var iso15 = []struct {
 	Series             string
 	Bore, Outer, Width float64
@@ -203,7 +214,14 @@ var en10219 = []struct {
 // r1 / 2. The L20x20x3 row had 2 until 2026-09-15, which is what recalling "the
 // table" gives; the note gives 1.75
 // (docs/bugfix/2026-09-15-an-angles-toe-radius-was-not-half-its-root-radius.md).
-// The 2017 edition was not read.
+//
+// EN 10056-1:2017 Table 1, read from the SIST EN 10056-1:2017 preview
+// (cdn.standards.iteh.ai sample 39755), prints the same a, t, root radius and
+// sectional area for all four rows (1,12, 1,74, 3,08 and 4,80 cm²), and it too has
+// no toe-radius column. ‼️ The preview stops partway through Table 1 and shows no
+// note on the toe radius, so r2 = r1 / 2 is still the 1998 note's rule: what the 2017
+// edition says about the toe radius was NOT reachable. A printed area cannot stand
+// in for it, since 1,12 cm² holds whether the L20's toe is 1.75 or 2.
 var en10056 = []struct {
 	A, T, RootRadius, ToeRadius float64
 }{

@@ -1,0 +1,24 @@
+definition faces=7 volume=749.7345
+Q1 located copies share the TShape (exact, no duplication): True
+Q1 IsPartner(base): True  IsSame(base): False
+Q2 copy volume=749.7345 (base 749.7345)  copy bbox min=(90.00,-5.00,-2.00)
+
+Q3 shared-TShape compound, export_step:
+  N       build s    export s   STEP bytes   bytes/copy
+  1       0.000      0.048      20604        20604
+  10      0.000      0.004      25672        2567
+  100     0.002      0.006      77453        775
+  1000    0.140      0.035      610982       611
+  10000   13.828     0.492      6184025      618
+
+Q3b rebuilt-every-time (no sharing), for contrast:
+  N=1      build 0.003s export 0.004s STEP 20611 bytes (20611/copy)
+  N=100    build 0.228s export 0.065s STEP 2086181 bytes (20862/copy)
+  N=1000   build 2.235s export 0.870s STEP 21790633 bytes (21791/copy)
+
+Q4 XDE assembly (one product definition, N instances):
+  N=1      build 0.000s export 0.001s STEP 20673      bytes (20673/copy) ok=True
+  N=10     build 0.000s export 0.001s STEP 25804      bytes (2580/copy) ok=True
+  N=100    build 0.000s export 0.002s STEP 78069      bytes (781/copy) ok=True
+  N=1000   build 0.002s export 0.020s STEP 612934     bytes (613/copy) ok=True
+  N=10000  build 0.023s export 0.251s STEP 6192977    bytes (619/copy) ok=True

@@ -70,7 +70,7 @@ func (c *Conversation) repairIfPartsOverlap(ctx context.Context, reply *Reply, s
 	if len(problems) == 0 {
 		// Real overlaps, none of them buried. Said once, plainly, and nothing is
 		// rewritten: these are the cases a concept model is allowed to have.
-		reply.noteRepair("Some parts share material: " + list(found) +
+		reply.noteRepair("Some parts share material: " + list(found, sheet.Found) +
 			" That can be deliberate at this stage, so nothing was moved.")
 		return
 	}
@@ -108,7 +108,7 @@ func (c *Conversation) repairIfPartsOverlap(ctx context.Context, reply *Reply, s
 	// Still wrong: say it, with the parts named. A reader looking at a model that
 	// builds, reports no faults and passes the visual check has no other way to
 	// learn that two of its parts are in the same place.
-	reply.noteRepair("Parts are inside each other and FORGE could not correct it: " + list(found))
+	reply.noteRepair("Parts are inside each other and FORGE could not correct it: " + list(found, sheet.Found))
 }
 
 // coverageNote says how much of the model the kernel's interference check looked
@@ -132,6 +132,13 @@ func coverageNote(sheet *builtSheet) string {
 			notes = append(notes, "FORGE stopped checking parts for shared material before it finished, "+
 				"so the model is not known to be clear.")
 		}
+	}
+	// ‼️ A list the kernel summarized says so. It is the worst of what was found,
+	// not all of it, and "and N more" alone would count only the list (next scale
+	// walls; cad.Build.InterferencesFound).
+	if listed := len(sheet.Interferences); sheet.Found > listed {
+		notes = append(notes, fmt.Sprintf("FORGE found %d pairs of parts sharing material and lists the %d "+
+			"that share the most; the rest were counted, not listed.", sheet.Found, listed))
 	}
 	if n := len(sheet.Skipped); n > 0 {
 		const most = 3
@@ -198,15 +205,24 @@ func placedBySentence(doc geometry.Document, id string) string {
 // Capped, because a broken assembly can produce dozens and a note nobody
 // finishes reading is a note nobody reads. The worst are first — the kernel
 // sorts by fraction — so a cap never hides the biggest one.
-func list(found []geometry.Interference) string {
+//
+// total is how many were found, which is more than the list when the kernel
+// summarized it; "and N more" counts from it, so a summarized list is never read
+// as a short one.
+func list(found []geometry.Interference, total int) string {
 	const most = 3
-	parts := make([]string, 0, most)
+	if total < len(found) {
+		total = len(found)
+	}
+	parts := make([]string, 0, most+1)
 	for i, f := range found {
 		if i == most {
-			parts = append(parts, fmt.Sprintf("and %d more", len(found)-most))
 			break
 		}
 		parts = append(parts, f.Describe())
+	}
+	if more := total - len(parts); more > 0 {
+		parts = append(parts, fmt.Sprintf("and %d more", more))
 	}
 	return strings.Join(parts, " ")
 }

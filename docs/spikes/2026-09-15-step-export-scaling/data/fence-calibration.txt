@@ -1,0 +1,6 @@
+== calibration fixed 4096 vs 65536, load before: %
+{"small": 4096, "large": 65536, "parts": 65536, "bounds": [-2.0, -3.0, -5.0, 3061.5, 21.5, 6125.0], "small_export_s": 0.9692838999981177, "large_export_s": 10.684979100005876, "small_transfer_s": 0.150149600005534, "large_transfer_s": 4.837687499995809, "walked_export_s": 18.13147580000077, "walked_transfer_s": 12.947455200002878, "props_mode_shipped": false, "bytes": 42315691, "same_file": false, "instances": 65536, "breps": 2}
+load after: 47%
+== calibration base 4096 vs 65536, load before: 56%
+{"small": 4096, "large": 65536, "parts": 65536, "bounds": [-2.0, -3.0, -5.0, 3061.5, 21.5, 6125.0], "small_export_s": 1.416651899999124, "large_export_s": 18.181850900000427, "small_transfer_s": 0.0, "large_transfer_s": 0.0, "walked_export_s": 18.694667499999923, "walked_transfer_s": 0.0, "props_mode_shipped": true, "bytes": 42315691, "same_file": false, "instances": 65536, "breps": 2}
+load after: 36%

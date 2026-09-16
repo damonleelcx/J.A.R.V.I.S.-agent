@@ -69,6 +69,14 @@ type Transcript struct {
 	Model string
 	// AudioTokens is what the provider billed for the audio, when it says.
 	AudioTokens int64
+	// Unanswered is true when the provider answered 200 with no choices at all.
+	//
+	// The media plane treats that as an empty segment and must go on doing so
+	// (see the warning below). The workbench cannot: a person who held the
+	// button and spoke is not a quiet room, and "nothing was heard" would be a
+	// false account of a model that never answered. Measured 2026-09-15:
+	// qwen-audio-3.0-realtime-plus answers every input_audio request this way.
+	Unanswered bool
 }
 
 // Transcribe converts one segment of audio to text.
@@ -116,12 +124,24 @@ func (c *OpenAICompatible) Transcribe(ctx context.Context, audio []byte, mimeTyp
 		return nil, errs.Wrap(op, errs.CodeSerializationFail, err)
 	}
 
+	// The transcriber's own endpoint and key when FORGE_LLM_TRANSCRIBER_BASE_URL
+	// is set, otherwise the chat endpoint's — resolved once at construction by
+	// config.LLMConfig.TranscriberEndpoint. Same http.Client, so the same
+	// FORGE_LLM_REQUEST_TIMEOUT, and still no retry loop: a room re-segments
+	// and a person holds the button again, and either is cheaper than a stale
+	// transcript arriving late.
+	//
+	// ‼️ c.baseURL and c.apiKey must not appear in this function. The production
+	// chat endpoint serves no speech model, and its key must never reach the host
+	// that does.
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
-		c.baseURL+"/chat/completions", bytes.NewReader(body))
+		c.transcriberURL+"/chat/completions", bytes.NewReader(body))
 	if err != nil {
 		return nil, errs.Wrap(op, errs.CodeInternal, err)
 	}
-	req.Header.Set("Authorization", "Bearer "+c.apiKey)
+	if c.transcriberKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.transcriberKey)
+	}
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.client.Do(req)
@@ -157,9 +177,23 @@ func (c *OpenAICompatible) Transcribe(ctx context.Context, audio []byte, mimeTyp
 		// helper the chat path uses. Measured 2026-09-06: this provider retired
 		// the models behind all three roles at once, and this surface said only
 		// "Model not exist."
-		return nil, errs.New(op, errs.CodeExternalUnavailable).
-			WithDetail("the transcription provider returned %d: %s%s",
-				resp.StatusCode, truncate(raw.String(), 300),
+		//
+		// ‼️ And a 404 is CONNECTOR_UNAVAILABLE, not EXTERNAL_UNAVAILABLE.
+		//
+		// An outage is a 503, and a 503's detail is withheld from the HTTP
+		// response — so the workbench microphone told its user "an external
+		// service could not be reached" while the log held the one sentence that
+		// fixes it. Nothing is down: the endpoint is up and says it does not serve
+		// this model. Measured 2026-09-15 on the production endpoint, which
+		// serves no speech-to-text model at all. The media plane logs either code
+		// the same way, so rooms are unaffected.
+		code := errs.CodeExternalUnavailable
+		if resp.StatusCode == http.StatusNotFound {
+			code = errs.CodeConnectorUnavailable
+		}
+		return nil, errs.New(op, code).
+			WithDetail("the transcription provider at %s returned %d: %s%s",
+				c.transcriberURL, resp.StatusCode, truncate(raw.String(), 300),
 				c.whatIsServed(ctx, resp.StatusCode, RoleTranscriber))
 	}
 	if err := json.Unmarshal(raw.Bytes(), &parsed); err != nil {
@@ -177,7 +211,9 @@ func (c *OpenAICompatible) Transcribe(ctx context.Context, audio []byte, mimeTyp
 		// same in the transcript.
 		c.log.Warn(ctx, logx.EventASREmptyResponse,
 			"model", model, "bytes", len(audio), "body", truncate(raw.String(), 200))
-		return &Transcript{Model: model}, nil
+		// Text stays empty so the media plane is unchanged; Unanswered is what
+		// lets the workbench refuse to call it silence.
+		return &Transcript{Model: model, Unanswered: true}, nil
 	}
 
 	text := strings.TrimSpace(parsed.Choices[0].Message.Content)
