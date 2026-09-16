@@ -1,0 +1,5 @@
+start 1M Tue Sep 15 09:46:42 EDT 2026
+bays=100 mesh run 1: ok=True build 479.8s [shapes 241.5 assembly 166.2 interf 18.8 props 32.8 mesh 15.9 export 0.0] peak 5.8 GB cpu 22% 
+bays=100 mesh run 2: ok=True build 492.9s [shapes 249.3 assembly 169.8 interf 19.2 props 33.6 mesh 16.1 export 0.0] peak 5.8 GB cpu 23% 
+bays=100 full run 1: ok=False build 0.0s [shapes 0.0 assembly 0.0 interf 0.0 props 0.0 mesh 0.0 export 0.0] peak 5.2 GB cpu 21% over 2400 s
+done 1M Tue Sep 15 10:43:24 EDT 2026

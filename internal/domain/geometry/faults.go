@@ -43,6 +43,8 @@ func (d *Document) Faults() []Problem {
 	// unknown ref, a tree that places itself — is a part NOT in the model, which is
 	// exactly what this check exists to hand to the repair loop.
 	tree, treeProblems := expandAssemblies(*d)
+	// A designation FORGE does not have is a part NOT in the model (standard.go).
+	tree, standardProblems := expandStandards(tree)
 	d = &tree
 	expanded, gearProblems := expandGears(*d)
 	expanded, repeatProblems := expandRepeats(expanded)
@@ -56,6 +58,7 @@ func (d *Document) Faults() []Problem {
 	profileProblems = append(profileProblems, repeatProblems...)
 	profileProblems = append(profileProblems, treeProblems...)
 	profileProblems = append(profileProblems, gearProblems...)
+	profileProblems = append(profileProblems, standardProblems...)
 	for _, p := range append(profileProblems, featureProblems...) {
 		if p.Severity == Error {
 			out = append(out, p)

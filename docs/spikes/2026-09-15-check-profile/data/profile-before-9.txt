@@ -1,0 +1,99 @@
+== 9: by own time ==
+         44224182 function calls (43236796 primitive calls) in 11.589 seconds
+
+   Ordered by: internal time
+   List reduced from 114 to 40 due to restriction <40>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+   789424    2.374    0.000    3.735    0.000 C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\geometry.py:1712(__init__)
+  4736544    1.359    0.000    1.359    0.000 {built-in method builtins.round}
+        1    1.233    1.233    2.584    2.584 <scratch>/frozen-before/sidecar.py:988(_candidate_pairs)
+  7104848    0.705    0.000    0.705    0.000 {method 'pop' of 'dict' objects}
+  5921300    0.691    0.000    0.691    0.000 {built-in method builtins.isinstance}
+   394712    0.681    0.000    2.598    0.000 C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\geometry.py:1904(__mul__)
+   394712    0.451    0.000    0.975    0.000 <scratch>/frozen-before/sidecar.py:1260(_carried)
+  4905954    0.407    0.000    0.438    0.000 {built-in method builtins.max}
+ 197356/1    0.403    0.000    0.000    0.000 C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\geometry.py:1883(inverse)
+       21    0.377    0.018    0.495    0.024 <scratch>/frozen-before/sidecar.py:1071(file)
+  3787652    0.324    0.000    0.324    0.000 {built-in method builtins.abs}
+  1037960    0.269    0.000    0.370    0.000 <scratch>/frozen-before/sidecar.py:1291(<genexpr>)
+  2536876    0.220    0.000    0.220    0.000 {built-in method builtins.min}
+  1791962    0.207    0.000    0.207    0.000 {method 'append' of 'list' objects}
+   964872    0.197    0.000    0.245    0.000 <scratch>/frozen-before/sidecar.py:1270(<genexpr>)
+   394712    0.181    0.000    0.181    0.000 <scratch>/frozen-before/sidecar.py:1275(_slid)
+   394712    0.180    0.000    0.720    0.000 <scratch>/frozen-before/sidecar.py:1290(_marks)
+ 394725/0    0.169    0.000    0.000          {built-in method builtins.sum}
+   321676    0.160    0.000    0.405    0.000 {built-in method builtins.all}
+  2064440    0.159    0.000    0.159    0.000 C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\geometry.py:1805(wrapped)
+  1144657    0.140    0.000    0.140    0.000 {method 'get' of 'dict' objects}
+   425480    0.135    0.000    0.135    0.000 <scratch>/frozen-before/sidecar.py:957(_boxes_miss)
+   545280    0.108    0.000    0.145    0.000 <scratch>/frozen-before/sidecar.py:975(_cell)
+  1184136    0.101    0.000    0.101    0.000 {built-in method math.isinf}
+   611176    0.084    0.000    0.084    0.000 {method 'setdefault' of 'dict' objects}
+ 394712/0    0.048    0.000    0.000          <scratch>/frozen-before/sidecar.py:1195(<genexpr>)
+   272640    0.048    0.000    0.070    0.000 <scratch>/frozen-before/sidecar.py:979(_grid_level)
+   545280    0.037    0.000    0.037    0.000 {built-in method math.floor}
+   363520    0.032    0.000    0.032    0.000 <scratch>/frozen-before/sidecar.py:1059(<genexpr>)
+        1    0.026    0.026    0.045    0.045 C:\Users\damon\AppData\Local\Programs\Python\Python313\Lib\heapq.py:463(nsmallest)
+   277044    0.023    0.000    0.023    0.000 {built-in method math.ldexp}
+   158513    0.021    0.000    0.021    0.000 {built-in method builtins.len}
+   158400    0.012    0.000    0.012    0.000 <scratch>/frozen-before/sidecar.py:1386(<lambda>)
+       17    0.009    0.001    0.113    0.007 {built-in method builtins.sorted}
+        2    0.008    0.004    0.008    0.004 {method 'sort' of 'list' objects}
+     5680    0.004    0.000    0.004    0.000 {built-in method _heapq._heapreplace_max}
+    149/3    0.001    0.000    0.000    0.000 C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\topology\shape_core.py:3779(shapetype)
+        1    0.001    0.001    0.001    0.001 {built-in method _heapq._heapify_max}
+        6    0.001    0.000    0.001    0.000 C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\topology\shape_core.py:802(compute_mass)
+        8    0.001    0.000    0.001    0.000 C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\geometry.py:1051(__init__)
+
+
+
+== 9: by cumulative time ==
+         44224182 function calls (43236796 primitive calls) in 11.589 seconds
+
+   Ordered by: cumulative time
+   List reduced from 114 to 40 due to restriction <40>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+   789424    2.374    0.000    3.735    0.000 C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\geometry.py:1712(__init__)
+   394712    0.681    0.000    2.598    0.000 C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\geometry.py:1904(__mul__)
+        1    1.233    1.233    2.584    2.584 <scratch>/frozen-before/sidecar.py:988(_candidate_pairs)
+  4736544    1.359    0.000    1.359    0.000 {built-in method builtins.round}
+   394712    0.451    0.000    0.975    0.000 <scratch>/frozen-before/sidecar.py:1260(_carried)
+   394712    0.180    0.000    0.720    0.000 <scratch>/frozen-before/sidecar.py:1290(_marks)
+  7104848    0.705    0.000    0.705    0.000 {method 'pop' of 'dict' objects}
+  5921300    0.691    0.000    0.691    0.000 {built-in method builtins.isinstance}
+       21    0.377    0.018    0.495    0.024 <scratch>/frozen-before/sidecar.py:1071(file)
+  4905954    0.407    0.000    0.438    0.000 {built-in method builtins.max}
+   321676    0.160    0.000    0.405    0.000 {built-in method builtins.all}
+  1037960    0.269    0.000    0.370    0.000 <scratch>/frozen-before/sidecar.py:1291(<genexpr>)
+  3787652    0.324    0.000    0.324    0.000 {built-in method builtins.abs}
+   964872    0.197    0.000    0.245    0.000 <scratch>/frozen-before/sidecar.py:1270(<genexpr>)
+  2536876    0.220    0.000    0.220    0.000 {built-in method builtins.min}
+  1791962    0.207    0.000    0.207    0.000 {method 'append' of 'list' objects}
+   394712    0.181    0.000    0.181    0.000 <scratch>/frozen-before/sidecar.py:1275(_slid)
+  2064440    0.159    0.000    0.159    0.000 C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\geometry.py:1805(wrapped)
+   545280    0.108    0.000    0.145    0.000 <scratch>/frozen-before/sidecar.py:975(_cell)
+  1144657    0.140    0.000    0.140    0.000 {method 'get' of 'dict' objects}
+   425480    0.135    0.000    0.135    0.000 <scratch>/frozen-before/sidecar.py:957(_boxes_miss)
+       17    0.009    0.001    0.113    0.007 {built-in method builtins.sorted}
+  1184136    0.101    0.000    0.101    0.000 {built-in method math.isinf}
+   611176    0.084    0.000    0.084    0.000 {method 'setdefault' of 'dict' objects}
+   272640    0.048    0.000    0.070    0.000 <scratch>/frozen-before/sidecar.py:979(_grid_level)
+        1    0.026    0.026    0.045    0.045 C:\Users\damon\AppData\Local\Programs\Python\Python313\Lib\heapq.py:463(nsmallest)
+   545280    0.037    0.000    0.037    0.000 {built-in method math.floor}
+   363520    0.032    0.000    0.032    0.000 <scratch>/frozen-before/sidecar.py:1059(<genexpr>)
+   277044    0.023    0.000    0.023    0.000 {built-in method math.ldexp}
+   158513    0.021    0.000    0.021    0.000 {built-in method builtins.len}
+   158400    0.012    0.000    0.012    0.000 <scratch>/frozen-before/sidecar.py:1386(<lambda>)
+        2    0.008    0.004    0.008    0.004 {method 'sort' of 'list' objects}
+     5680    0.004    0.000    0.004    0.000 {built-in method _heapq._heapreplace_max}
+        8    0.001    0.000    0.001    0.000 C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\geometry.py:1051(__init__)
+        1    0.001    0.001    0.001    0.001 {built-in method _heapq._heapify_max}
+        6    0.001    0.000    0.001    0.000 C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\topology\shape_core.py:802(compute_mass)
+        6    0.000    0.000    0.000    0.000 {built-in method OCP.OCP.BRepGProp.VolumeProperties_s}
+       30    0.000    0.000    0.000    0.000 C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\topology\composite.py:517(__bool__)
+       17    0.000    0.000    0.000    0.000 C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\topology\shape_core.py:1196(copy_attributes_to)
+       24    0.000    0.000    0.000    0.000 C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\geometry.py:203(__init__)
+
+

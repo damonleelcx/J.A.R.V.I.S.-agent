@@ -247,6 +247,11 @@ func cmdGeometryCompare(ctx context.Context, cfg *config.Config, log *logx.Logge
 			fmt.Printf("  - %s\n", d)
 		}
 	}
+	// How the trees differ, before the notes: a length in a tree that could not
+	// be compared is listed under NOT COMPARED with the parts' own.
+	if err := printStructure(os.Stdout, cmp.Structure); err != nil {
+		return err
+	}
 	// Three lists, never folded together. "These differ" is a finding; "these
 	// could not be compared" is a judgement withheld; "these were matched by
 	// name" is a judgement qualified.

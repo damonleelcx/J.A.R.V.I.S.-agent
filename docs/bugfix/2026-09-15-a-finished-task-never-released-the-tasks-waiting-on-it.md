@@ -1,6 +1,6 @@
 # A finished task never released the tasks waiting on it, so every plan with a dependency stopped after its first layer
 
-**Date:** 2026-09-15 · **Status:** fixed (stacked on #82, stage A1) · **Severity:** high: a goal stalls silently and stays active forever
+**Date:** 2026-09-15 · **Status:** fixed on main (found building stage A1, #85) · **Severity:** high: a goal stalls silently and stays active forever
 
 ## Summary
 
@@ -58,11 +58,15 @@ either: the only triggers maintain `updated_at`.
 
 ## Verification
 
-- `TestBuildGoal_*` (internal/agent/buildgoal_db_test.go) run three-step chains through a real worker on Postgres. The
-  harness polls once an hour, so a step reaches the next one only if the finished step released it. Before the fix,
-  every chain test timed out with step 2 pending.
-- `TestWorker_ATaskLeftWaitingByACrashIsReleasedOnTheIdlePoll` finishes step 1 by hand, as a worker that died before
-  releasing would, and requires the idle poll to release and run step 2.
+- `TestWorker_AFinishedTaskReleasesTheTasksWaitingOnIt` (internal/agent/worker_release_test.go) plans two tasks, the
+  second depending on the first, and runs them through the real worker, queue and executor on Postgres with a model that
+  completes every task at once. The idle poll is set to an hour, so the second task runs only if the first released it.
+  Without the fix it times out with the second task pending.
+- `TestWorker_ATaskLeftWaitingByACrashIsReleasedOnTheIdlePoll` finishes the first task by hand, as a worker that died
+  before releasing would, and requires the idle poll to release and run the second.
+- `TestBuildGoal_*` (internal/agent/buildgoal_db_test.go, stage A1) run three-step chains through a real worker on
+  Postgres, where the defect was found. The harness polls once an hour, so a step reaches the next one only if the
+  finished step released it. Before the fix, every chain test timed out with step 2 pending.
 
 ## Regression prevention
 
@@ -71,7 +75,6 @@ removes one call, and each fence above goes red.
 
 ## Not in this fix
 
-- **Main has the same defect.** This fix is stacked on the millions-of-parts branches because stage A1 found it; `main`
-  needs the same two calls in its own PR.
-- **The executor path is not fenced end to end.** A planner-written plan with a dependency runs through the same `Run`
-  loop, so it is covered by construction, but no test drives one through a model.
+- **The stacked branches carry the same change** in #85 (stage A1), where the fences run through build goals.
+- **No real model has driven a dependent plan through this fix.** The fences use a stub model that completes every task;
+  the planner and executor paths are otherwise the production ones.

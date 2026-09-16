@@ -1,0 +1,80 @@
+started 18:16:36
+
+Repair bound and check profile: what an overlap repair asks, and a clash's key without Locations
+  ✅ went red      — an overlap repair is asked about every buried clash however many
+           interference_repair_test.go:125: the repair was asked 1271000 bytes of problems, over the 16384 budget
+           interference_repair_test.go:137: the repair was not told "FORGE found 1760000 pairs of parts sharing material":
+  ✅ went red      — a model whose clashes fit is summarized anyway
+           interference_repair_test.go:299: a list that fits was not asked as it was:
+           interference_repair_test.go:299: a list that fits was not asked as it was:
+  ✅ went red      — the summary counts the list as everything found
+           interference_repair_test.go:137: the repair was not told "FORGE found 1760000 pairs of parts sharing material":
+       --- FAIL: TestInterference_ARepairOfTenThousandClashesIsAskedWithinItsBudget (0.09s)
+  ✅ went red      — the worst clash is the first listed, not the deepest
+           interference_repair_test.go:234: the worst clash, last in the list, is not named second after the counts:
+       --- FAIL: TestInterference_TheWorstClashIsNamedWhateverTheBudget (0.03s)
+  ✅ went red      — groups are told in a map's order, with no tiebreak
+           interference_repair_test.go:200: run 0 asked something different:
+       --- FAIL: TestInterference_ARepairSummaryIsTheSamePromptEveryTime (0.00s)
+  ✅ went red      — clashes are grouped by their labels, not their placements
+           interference_repair_test.go:137: the repair was not told "Rivet (definition \"rivet\", placed by bay/sector/stringer-rivets) is 82% to 83% inside Stringer (definition \"stringer\", placed by stringer)":
+           interference_repair_test.go:137: the repair was not told "placed by bay/sector/frame-rivets-port) is 60% inside Skin panel (definition \"skin\", placed by bay/sector/skin)":
+  ✅ went red      — a pattern copy is not traced to the child that placed it
+           interference_repair_test.go:350: bay-3/sector-7/stringer-rivets-12 traced to {path:bay-3/sector-7/stringer-rivets-12 definition: label:}, want {path:bay/sector/stringer-rivets definition:rivet label:}
+           interference_repair_test.go:350: bay-3/sector-7/stringer-rivets-2 traced to {path:bay-3/sector-7/stringer-rivets-2 definition: label:}, want {path:bay/sector/stringer-rivets-2 definition:rivet label:}
+  ✅ went red      — a child's own id is read as a copy number
+           interference_repair_test.go:350: bay-3/sector-7/stringer-rivets-2 traced to {path:bay/sector/stringer-rivets definition:rivet label:}, want {path:bay/sector/stringer-rivets-2 definition:rivet label:}
+           interference_repair_test.go:350: bay-1/sector-80/skin traced to {path:bay-1/sector-80/skin definition: label:}, want {path:bay/sector/skin definition:skin label:}
+  ✅ went red      — the shorter of two matching child ids wins
+           interference_repair_test.go:350: bay-3/sector-7/stringer-rivets-2-5 traced to {path:bay/sector/stringer-rivets definition:rivet label:}, want {path:bay/sector/stringer-rivets-2 definition:rivet label:}
+       --- FAIL: TestInterference_AClashIsTracedToThePlacementThatMadeIt (0.00s)
+  ✅ went red      — a line is cut inside a character
+           interference_repair_test.go:238: a line was cut inside a character: "éé\xc3…"
+           interference_repair_test.go:238: a line was cut inside a character: "éé\xc3…"
+  ✅ went red      — the budget keeps no room for the header's count
+           interference_repair_test.go:258: labels 1 bytes longer: 16418 bytes of problems, over the 16384 budget
+       --- FAIL: TestInterference_ARepairSummaryNeverPassesItsBudget (0.00s)
+  ✅ went red      — the budget keeps no room for the last line
+           interference_repair_test.go:258: labels 0 bytes longer: 16453 bytes of problems, over the 16384 budget
+       --- FAIL: TestInterference_ARepairSummaryNeverPassesItsBudget (0.00s)
+  ✅ went red      — a direct key rounds its translation like its rotation
+           interference_pair_keys_kernel_test.go:83: prisms seed 1: 275 parts, 37675 pairs keyed, 7139 slid, 3862 carried, 334 pairs of rotations memoized
+           interference_pair_keys_kernel_test.go:90: prisms seed 1: 20732 key(s) differ with the memo and the slide, 21163 without the slide, 20732 without the memo; first: 0 and 43: (0, 1, (0.0, -1.0, 0.0, -135.673337, 1.0, 0.0, 0.0, inf, 0.0, 0.0, 1.0, 3000.0)) against (0, 1, (0.0, -1.0, 0.0, -135.673336587, 1.0, 0.0, 0.0, inf, 0.0, 0.0, 1.0, 3000.0))
+  ✅ went red      — the rotation memo is keyed by one placement's rotation
+           interference_pair_keys_kernel_test.go:83: prisms seed 1: 275 parts, 37675 pairs keyed, 7139 slid, 3862 carried, 24 pairs of rotations memoized
+           interference_pair_keys_kernel_test.go:90: prisms seed 1: 33700 key(s) differ with the memo and the slide, 33700 without the slide, 0 without the memo; first: 0 and 20: (1, 0, (0.79863551, 0.0, -0.601815023, inf, 0.0, 1.0, 0.0, -inf, 0.601815023, 0.0, 0.79863551, inf)) against (0, 1, (1.0, 0.0, 0.0, -inf, 0.0, 1.0, 0.0, inf, 0.0, 0.0, 1.0, -inf))
+  ✅ went red      — a rotation is told apart by its first row alone
+           interference_pair_keys_kernel_test.go:83: prisms seed 1: 275 parts, 37675 pairs keyed, 7139 slid, 3862 carried, 217 pairs of rotations memoized
+           interference_pair_keys_kernel_test.go:90: prisms seed 1: 14906 key(s) differ with the memo and the slide, 14906 without the slide, 0 without the memo; first: 0 and 23: (0, 1, (1.0, 0.0, 0.0, -inf, 0.0, 0.939692621, -0.342020143, inf, 0.0, 0.342020143, 0.939692621, -0.0)) against (0, 1, (1.0, 0.0, 0.0, -inf, 0.0, 1.0, 0.0, inf, 0.0, 0.0, 1.0, -0.0))
+  ❌ STAYED GREEN  — two solids at one location are keyed from the memo
+        TestKernel_APairKeyWithoutLocationsIsTheKeyBuild123dGave does not hold this. Either the fence asserts something that
+        cannot fail, or it is asserting it somewhere the mutation misses.
+  ✅ went red      — a placement's inverse is cached under the other solid
+           interference_pair_keys_kernel_test.go:83: prisms seed 1: 275 parts, 37675 pairs keyed, 7139 slid, 3862 carried, 334 pairs of rotations memoized
+           interference_pair_keys_kernel_test.go:90: prisms seed 1: 31154 key(s) differ with the memo and the slide, 29313 without the slide, 30489 without the memo; first: 0 and 7: (0, 1, (1.0, 0.0, 0.0, -inf, 0.0, 1.0, 0.0, 195.0, 0.0, 0.0, 1.0, -inf)) against (0, 1, (1.0, 0.0, 0.0, -inf, 0.0, 1.0, 0.0, inf, 0.0, 0.0, 1.0, -inf))
+  ✅ went red      — a direct key forgets what the other frame carries
+           interference_pair_keys_kernel_test.go:83: prisms seed 1: 275 parts, 37675 pairs keyed, 7139 slid, 3862 carried, 334 pairs of rotations memoized
+           interference_pair_keys_kernel_test.go:90: prisms seed 1: 3377 key(s) differ with the memo and the slide, 0 without the slide, 3377 without the memo; first: 0 and 1: (0, 1, (1.0, 0.0, 0.0, -inf, 0.0, 1.0, 0.0, inf, 0.0, 0.0, 1.0, -inf)) against (1, 0, (1.0, 0.0, 0.0, inf, 0.0, 1.0, 0.0, -inf, 0.0, 0.0, 1.0, inf))
+  ✅ went red      — a direct key is taken in the frame that marks fewer
+           interference_pair_keys_kernel_test.go:83: prisms seed 1: 275 parts, 37675 pairs keyed, 7139 slid, 3862 carried, 334 pairs of rotations memoized
+           interference_pair_keys_kernel_test.go:90: prisms seed 1: 1810 key(s) differ with the memo and the slide, 0 without the slide, 1810 without the memo; first: 0 and 20: (1, 0, (0.79863551, 0.0, -0.601815023, inf, 0.0, 1.0, 0.0, -inf, 0.601815023, 0.0, 0.79863551, inf)) against (0, 1, (0.79863551, 0.0, 0.601815023, 0.0, 0.0, 1.0, 0.0, inf, -0.601815023, 0.0, 0.79863551, 0.0))
+  ✅ went red      — direct containment takes a box's whole length for its reach
+           interference_pair_keys_kernel_test.go:83: prisms seed 1: 275 parts, 37675 pairs keyed, 7139 slid, 3862 carried, 334 pairs of rotations memoized
+           interference_pair_keys_kernel_test.go:90: prisms seed 1: 6158 key(s) differ with the memo and the slide, 0 without the slide, 6158 without the memo; first: 0 and 1: (0, 1, (1.0, 0.0, 0.0, -inf, 0.0, 1.0, 0.0, inf, 0.0, 0.0, 1.0, -inf)) against (0, 1, (1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, inf, 0.0, 0.0, 1.0, 0.0))
+  ✅ went red      — a pair inside only the other frame is keyed as unmarked
+           interference_pair_keys_kernel_test.go:83: prisms seed 1: 275 parts, 37675 pairs keyed, 7139 slid, 3862 carried, 334 pairs of rotations memoized
+           interference_pair_keys_kernel_test.go:90: prisms seed 1: 3239 key(s) differ with the memo and the slide, 0 without the slide, 3239 without the memo; first: 0 and 7: (0, 1, (1.0, 0.0, 0.0, -inf, 0.0, 1.0, 0.0, 195.0, 0.0, 0.0, 1.0, -inf)) against (0, 1, (1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, 195.0, 0.0, 0.0, 1.0, 0.0))
+  ✅ went red      — a moved box forgets its far corner
+           interference_pair_keys_kernel_test.go:83: prisms seed 1: 275 parts, 37675 pairs keyed, 7139 slid, 3862 carried, 334 pairs of rotations memoized
+           interference_pair_keys_kernel_test.go:102: prisms seed 1: of 275 placed solids, 28 moved box(es) and 0 volume(s) differ from the loop's (_MOVED_BOX_DIRECT)
+  ✅ went red      — the check keys a pair through build123d again
+           interference_pair_keys_kernel_test.go:135: interference_pair_keys.py: exit status 1
+       --- FAIL: TestKernel_KeyingMorePairsBuildsNoMoreLocations (8.76s)
+
+The tree is byte-identical to how the drill found it.
+22 went red, 1 stayed green, 0 unproven, 0 anchor(s) moved.
+Covered: the sweep fences. NOT covered: the extrusion and revolve fences,
+which have no drills — see the note in this script.
+exit 1 finished 18:33:31
+
+[exited with code 0]
