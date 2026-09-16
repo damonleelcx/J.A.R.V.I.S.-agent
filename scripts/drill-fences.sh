@@ -519,6 +519,15 @@ drill "the browser turns a copy differently from the exporter" internal/httpapi/
   ./internal/httpapi 'TestRendererExpandsARepeatLikeTheExporter'
 
 echo
+echo "A kernel mesh is already placed"
+# Added 2026-09-13. The sidecar tessellates each solid after placing it; the browser
+# placed and turned the mesh a second time, so every kernel-built part away from the
+# origin was drawn somewhere else. docs/bugfix/2026-09-13-kernel-built-parts-were-placed-twice.md
+drill "the browser places a kernel mesh a second time" internal/httpapi/assets/forge3d.js \
+  "s = s.replace('    if (part.fromKernel) return translation(d);\n', '', 1)" \
+  ./internal/httpapi 'TestRendererDoesNotPlaceAKernelMeshTwice'
+
+echo
 echo "Islands"
 drill "an island is cut away with its hole" internal/domain/geometry/triangulate.go \
   's = s.replace("\t\tif depth[i]%2 != 0 {\n\t\t\tcontinue // a void, and it belongs to whatever contains it\n\t\t}", "\t\tif i != 0 {\n\t\t\tcontinue\n\t\t}", 1)' \
