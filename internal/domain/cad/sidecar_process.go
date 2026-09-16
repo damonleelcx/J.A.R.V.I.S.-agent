@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/logx"
@@ -42,6 +43,9 @@ type sidecar struct {
 	// slot is this process's place in the pool, logged so a restart names which
 	// process was replaced.
 	slot int
+	// timeout is how long one build on this process may take, copied from the
+	// kernel when the pool is made. Not a setting: see Kernel.timeout.
+	timeout time.Duration
 
 	// proc guards cmd, because kill is also called by the deadline goroutine in
 	// roundTrip while the holder is blocked reading, and stop clears cmd after.
@@ -59,7 +63,7 @@ func (k *Kernel) pool() chan *sidecar {
 	k.once.Do(func() {
 		k.slots = make(chan *sidecar, k.size)
 		for i := 0; i < k.size; i++ {
-			s := &sidecar{python: k.python, log: k.log, slot: i}
+			s := &sidecar{python: k.python, log: k.log, slot: i, timeout: k.timeout}
 			k.all = append(k.all, s)
 			k.slots <- s
 		}
@@ -118,22 +122,33 @@ func (s *sidecar) roundTrip(ctx context.Context, req request) (*reply, error) {
 	// blocking Read on a pipe does not observe a context. Killing is the only
 	// thing that ends it, and it is also the right outcome: a kernel that has
 	// not answered in thirty seconds is not going to.
+	//
+	// ‼️ The goroutine records WHY it killed the process before it does. To the
+	// read below, a process killed for its time and one that crashed are the same
+	// EOF, and until 2026-09-15 they were treated the same: retried on a fresh
+	// process, killed again, reported as "no working backend". See lateError.
 	done := make(chan struct{})
 	defer close(done)
+	var stopped atomic.Pointer[lateError]
 	go func() {
-		timer := time.NewTimer(buildTimeout)
+		timer := time.NewTimer(s.timeout)
 		defer timer.Stop()
 		select {
 		case <-done:
 		case <-ctx.Done():
+			stopped.Store(&lateError{caller: ctx.Err()})
 			s.kill()
 		case <-timer.C:
+			stopped.Store(&lateError{limit: s.timeout})
 			s.kill()
 		}
 	}()
 
 	line, err := s.stdout.ReadBytes('\n')
 	if err != nil {
+		if late := stopped.Load(); late != nil {
+			return nil, late
+		}
 		return nil, fmt.Errorf("reading from the kernel: %w", err)
 	}
 	var res reply

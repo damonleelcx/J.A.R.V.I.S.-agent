@@ -395,7 +395,22 @@ func (h *GeometryHandlers) Compare(w http.ResponseWriter, r *http.Request) {
 			WithDetail("no geometry variant %s", strings.Join(ids, ", ")))
 		return
 	}
+	h.deps.Log.Info(r.Context(), logx.EventGeometryCompared,
+		"user_id", user.ID, "project_id", cmp.ProjectID, "variants", len(cmp.Variants))
 
+	WriteJSON(w, http.StatusOK, comparisonBody(cmp))
+}
+
+// comparisonBody is the compare response, apart from the handler.
+//
+// # Why it is a function of its own
+//
+// The handler reads from Postgres, so a test of the handler skips on any machine
+// without one — and the shape that comes back is the one thing the workbench
+// depends on. Split out, the wire shape is fenced offline
+// (compare_structure_fence_test.go), including that a comparison of flat
+// documents still comes back exactly as it did before trees could be compared.
+func comparisonBody(cmp *geometry.Comparison) map[string]any {
 	variants := make([]VariantDTO, 0, len(cmp.Variants))
 	for _, v := range cmp.Variants {
 		variants = append(variants, toVariantDTO(v))
@@ -428,10 +443,7 @@ func (h *GeometryHandlers) Compare(w http.ResponseWriter, r *http.Request) {
 			"differs":      p.Differs(),
 		})
 	}
-	h.deps.Log.Info(r.Context(), logx.EventGeometryCompared,
-		"user_id", user.ID, "project_id", cmp.ProjectID, "variants", len(cmp.Variants))
-
-	WriteJSON(w, http.StatusOK, map[string]any{
+	body := map[string]any{
 		"project_id": cmp.ProjectID,
 		"variants":   variants,
 		"provenance": provenance,
@@ -442,7 +454,60 @@ func (h *GeometryHandlers) Compare(w http.ResponseWriter, r *http.Request) {
 		// compared" and finding rows that WERE compared learns to skim the box.
 		"not_comparable": orEmptyStrings(cmp.NotComparable),
 		"match_notes":    orEmptyStrings(cmp.MatchNotes),
-	})
+	}
+	// ABSENT, not null, when no variant is a tree: a comparison of flat documents
+	// is then the response it always was, byte for byte, and a client that has
+	// never heard of trees reads nothing new.
+	if cmp.Structure != nil {
+		body["structure"] = structureBody(cmp.Structure)
+	}
+	return body
+}
+
+// structureBody is how the variants' trees differ, on the wire (Phase 7, stage E2;
+// geometry/compare_structure.go).
+//
+// A definition carries how many times each variant places it, one number per
+// column, and never a row per placed part: a wheel placed four times that changed
+// is one row, and a million placements are still one row.
+func structureBody(s *geometry.Structure) map[string]any {
+	members := func(rows []geometry.MemberRow) []map[string]any {
+		out := make([]map[string]any, 0, len(rows))
+		for _, m := range rows {
+			out = append(out, map[string]any{
+				"id": m.ID, "missing_from": orEmptyInts(m.MissingFrom),
+				"changed": orEmptyStrings(m.Changed), "differs": m.Differs(),
+			})
+		}
+		return out
+	}
+	definitions := make([]map[string]any, 0, len(s.Definitions))
+	for _, d := range s.Definitions {
+		definitions = append(definitions, map[string]any{
+			"id": d.ID, "label": d.Label,
+			"occurrences":  d.Occurrences,
+			"missing_from": orEmptyInts(d.MissingFrom),
+			"changed":      orEmptyStrings(d.Changed),
+			"differs":      d.Differs(),
+		})
+	}
+	assemblies := make([]map[string]any, 0, len(s.Assemblies))
+	for _, a := range s.Assemblies {
+		assemblies = append(assemblies, map[string]any{
+			"id": a.ID, "label": a.Label,
+			"missing_from": orEmptyInts(a.MissingFrom),
+			"changed":      orEmptyStrings(a.Changed),
+			"differs":      a.Differs(),
+			"children":     members(a.Children),
+			"interfaces":   members(a.Interfaces),
+			"features":     members(a.Features),
+		})
+	}
+	return map[string]any{
+		"root":        map[string]any{"field": s.Root.Field, "values": s.Root.Values, "differs": s.Root.Differs},
+		"definitions": definitions,
+		"assemblies":  assemblies,
+	}
 }
 
 type adoptRequest struct {

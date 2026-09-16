@@ -821,7 +821,12 @@ const pageTemplates = `
       <div class="voice-opts">
         <label class="sw"><input type="checkbox" id="handsfree"><span>hands-free</span></label>
         <label class="sw"><input type="checkbox" id="speakback" checked><span>speak replies</span></label>
-        <span id="voice-note" class="bad hidden"></span>
+        <!-- Which speech path the microphone is using. The browser's recogniser
+             and FORGE's own transcription fail in different places, so a note
+             in #voice-note can only be read against the path that produced it.
+             docs/bugfix/2026-09-15-the-microphone-sent-nothing.md -->
+        <span id="voice-path" class="voice-path" aria-live="polite"></span>
+        <span id="voice-note" class="bad hidden" role="status"></span>
       </div>
     </div>
   </div>
@@ -903,6 +908,7 @@ const pageTemplates = `
 <script src="{{asset "theme.js"}}"></script>
 <script src="{{asset "sigil.js"}}"></script>
 <script src="{{asset "forge3d.js"}}"></script>
+<script src="{{asset "audio-input.js"}}"></script>
 <script src="{{asset "voice.js"}}"></script>
 <script src="{{asset "orb.js"}}"></script>
 <script src="{{asset "stage.js"}}"></script>
