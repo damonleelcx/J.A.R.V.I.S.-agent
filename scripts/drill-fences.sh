@@ -1942,8 +1942,10 @@ echo "A stopping worker's bookkeeping"
 # cancelled one and is logged as the database being unavailable. See
 # docs/bugfix/2026-09-15-a-stopping-worker-reported-its-own-stop-as-a-database-outage.md.
 # Needs FORGE_TEST_DATABASE_URL.
+# Anchored on afterTask's own line: the same WithTimeout(WithoutCancel(ctx)) also opens
+# outliving and handBack, and the bare expression hit outliving first and tested nothing.
 drill "a stopping worker's bookkeeping runs on the cancelled context" internal/agent/worker.go \
-  's = s.replace("context.WithTimeout(context.WithoutCancel(ctx), afterTaskTimeout)", "context.WithTimeout(ctx, afterTaskTimeout)", 1)' \
+  's = s.replace("book, cancel := context.WithTimeout(context.WithoutCancel(ctx), afterTaskTimeout)\n\tdefer cancel()\n\t// ", "book, cancel := context.WithTimeout(ctx, afterTaskTimeout)\n\tdefer cancel()\n\t// ", 1)' \
   ./internal/agent 'TestWorker_AWorkerStoppedMidTaskDoesNotReportItsBookkeepingAsADatabaseFailure|TestWorker_ATaskFinishedAsTheStopArrivesStillReleasesItsDependentsAndSettlesItsGoal'
 
 echo
@@ -1957,6 +1959,13 @@ echo "A stopped worker hands its task back"
 drill "a stopped worker leaves its task to its lease" internal/agent/worker.go \
   's = s.replace("\t\tif ctx.Err() != nil {\n\t\t\tw.handBack(ctx, task)\n\t\t}\n", "", 1)' \
   ./internal/agent 'TestWorker_AWorkerStoppedInsideAModelCallHandsItsTaskBackAtOnce|TestWorker_AWorkerStoppedBeforeItsTaskStartsHandsItBackUnstarted|TestWorker_AWorkerStoppedAtTheApprovalGateHandsItsTaskBackAndTheGateIsOpenedOnce'
+
+# A hand-back written on the context the stop cancelled fails as DATABASE_UNAVAILABLE and
+# leaves the task leased. Read through a worker stopped inside a build step (#104), where
+# the stop was first exercised live.
+drill "a stopped build step is handed back on the cancelled context" internal/agent/worker.go \
+  's = s.replace("book, cancel := context.WithTimeout(context.WithoutCancel(ctx), afterTaskTimeout)\n\tdefer cancel()\n\tswitch err := w.queue.Release(book", "book, cancel := context.WithTimeout(ctx, afterTaskTimeout)\n\tdefer cancel()\n\tswitch err := w.queue.Release(book", 1)' \
+  ./internal/agent 'TestBuildGoal_AStoppedWorkerDoesNotReportTheDatabaseUnavailable'
 
 drill "a stop still counts as an attempt" internal/domain/engine/queue.go \
   's = s.replace("not_before = $3,\n\t\t       attempt_count = greatest(attempt_count - 1, 0)\n", "not_before = $3\n", 1)' \
