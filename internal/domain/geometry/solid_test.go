@@ -235,3 +235,36 @@ func TestSolids_ConvertsACornerRadiusToo(t *testing.T) {
 			"radius 6.35", d)
 	}
 }
+
+// A feature's radius reaches the kernel in millimetres, like every other length.
+//
+// It used to arrive in the document's own units: a cm model's 1 cm fillet was
+// built as a 1 mm fillet in a file declaring millimetres. Runs in CI without a
+// kernel; the real-kernel half is TestKernel_AFilletIsTheSameSizeInEveryUnit.
+// docs/bugfix/2026-09-13-feature-radii-were-sent-in-the-documents-units.md
+func TestSolids_ConvertsAFeatureRadiusToMillimetres(t *testing.T) {
+	for _, tc := range []struct {
+		units  string
+		unit   geometry.Unit
+		radius float64
+		wantMM float64
+	}{
+		{"mm", geometry.Millimetre, 10, 10},
+		{"cm", geometry.Centimetre, 1, 10},
+		{"in", geometry.Inch, 0.5, 12.7},
+		{"m", geometry.Metre, 0.01, 10},
+	} {
+		d := geometry.Document{Name: "cube", Units: tc.units, Parts: []geometry.Part{{
+			ID: "cube", Name: "Cube", Shape: "box",
+			Size: map[string]float64{"width": 100, "height": 100, "depth": 100}}},
+			Features: []geometry.Feature{{ID: "round", Op: "fillet", Of: "cube", Radius: tc.radius, Edges: "all"}}}
+		_, ops, problems, _ := geometry.SolidsAndOperations(d, tc.unit)
+		if len(problems) > 0 || len(ops) != 1 {
+			t.Fatalf("%s: ops=%v problems=%v", tc.units, ops, problems)
+		}
+		if math.Abs(ops[0].Radius-tc.wantMM) > 1e-9 {
+			t.Errorf("%s: a %g %s fillet reaches the kernel as %g mm, want %g mm",
+				tc.units, tc.radius, tc.units, ops[0].Radius, tc.wantMM)
+		}
+	}
+}

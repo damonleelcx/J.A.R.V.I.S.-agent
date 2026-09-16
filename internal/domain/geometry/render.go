@@ -109,8 +109,13 @@ func ContactSheetOf(d Document, parts []RenderPart, size int) string {
 	// because every surface looks like the same surface. And a colour invented
 	// here would put the agent and the reader in front of different pictures.
 	var groups []shadedGroup
+	colours := partColours(d)
 	for _, p := range parts {
-		groups = append(groups, shadedGroup{tris: p.Triangles, col: partColour(d, p.ID)})
+		col, ok := colours[p.ID]
+		if !ok {
+			col = unknownPartColour
+		}
+		groups = append(groups, shadedGroup{tris: p.Triangles, col: col})
 	}
 	views := StandardViews()
 	sheet := image.NewRGBA(image.Rect(0, 0, size*len(views), size))
@@ -135,17 +140,42 @@ type shadedGroup struct {
 // uncoloured parts touching must not read as one part, which is precisely the
 // judgement the picture is being used for.
 func partColour(d Document, id string) [3]float64 {
-	for i, p := range d.Parts {
-		if p.ID != id {
-			continue
-		}
-		if c, ok := parseHexColour(p.Color); ok {
-			return c
-		}
-		// Golden-ratio hue stepping: adjacent parts land far apart on the wheel.
-		return hueToRGB(math.Mod(float64(i)*0.618033988749895, 1))
+	if c, ok := partColours(d)[id]; ok {
+		return c
 	}
-	return [3]float64{0.7, 0.7, 0.72}
+	return unknownPartColour
+}
+
+// unknownPartColour is a surface whose id names no part of the document.
+var unknownPartColour = [3]float64{0.7, 0.7, 0.72}
+
+// partColours is the colour of everything a render can draw, keyed by the ids it
+// draws — the EXPANDED ids, because the mesh and the kernel both hand back
+// "spoke-3", never "spoke".
+//
+// Each authored part is expanded ON ITS OWN, and every surface it becomes takes
+// that part's colour. So sixty spokes are one colour, as the person wrote them,
+// and the hue a part gets does not shift because a pattern earlier in the list
+// grew. It reuses the real expansion rather than rebuilding the "-N" naming here,
+// which would be a second opinion about what a copy is called.
+//
+// Until 2026-09-13 this looked ids up in the authored list, so every copy of a
+// repeated part was drawn in the grey kept for "no such part" — in the picture the
+// vision check reads. docs/bugfix/2026-09-13-repeat-copies-were-invisible-to-most-readers.md
+func partColours(d Document) map[string][3]float64 {
+	placed := d.PlacedParts()
+	out := make(map[string][3]float64, len(placed))
+	for i, p := range placed {
+		c, ok := parseHexColour(p.Color)
+		if !ok {
+			// Golden-ratio hue stepping: adjacent parts land far apart on the wheel.
+			c = hueToRGB(math.Mod(float64(i)*0.618033988749895, 1))
+		}
+		for _, q := range (Document{Parts: []Part{p}}).Expanded().Parts {
+			out[q.ID] = c
+		}
+	}
+	return out
 }
 
 func parseHexColour(s string) ([3]float64, bool) {
