@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/geometry"
@@ -82,23 +83,50 @@ Return JSON: {"steps": [{"name": "short name", "what": "one sentence", "assembly
 
 // planBuild asks for the order to build something in.
 func (c *Conversation) planBuild(ctx context.Context, asked string) ([]buildTask, error) {
+	steps, _, err := c.planBuildNoted(ctx, asked)
+	return steps, err
+}
+
+// planBuildNoted is planBuild, and also says what was done to the plan to keep
+// to a limit the person stated — empty when nothing was.
+//
+// # A stated step limit (2026-09-15)
+//
+// Asked from the workbench for a desk lamp "three steps at most", the live
+// planner planned five. The prompt said "between 2 and 10 steps" and nothing
+// else, so the person's own limit never reached the model — and a model told it
+// would still be free to ignore it. So both: the limit is said in the request,
+// and a plan that comes back over it is brought within it here, deterministically,
+// and the caller is told so it can say so.
+//
+// ‼️ Combined, not cut. The steps past the limit are folded into the last step
+// allowed rather than dropped: dropping the tail of a lamp's plan drops its shade,
+// which the person asked for as surely as the limit. A step with more in it is
+// still one step.
+func (c *Conversation) planBuildNoted(ctx context.Context, asked string) ([]buildTask, string, error) {
+	limit, stated := statedStepLimit(asked)
+	request := "Plan the build of: " + asked
+	if stated {
+		request += fmt.Sprintf("\n\nThe person asked for at most %d steps. Plan no more than %d: "+
+			"combine subsystems into one step where you must.", limit, limit)
+	}
 	resp, err := c.client.Complete(ctx, llm.Request{
 		Role: llm.RoleConverse,
 		Messages: []llm.Message{
 			{Role: llm.System, Content: planSystem},
-			{Role: llm.User, Content: "Plan the build of: " + asked},
+			{Role: llm.User, Content: request},
 		},
 		JSONMode:  true,
 		MaxTokens: 1500,
 	})
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	var out struct {
 		Steps []buildTask `json:"steps"`
 	}
 	if err := json.Unmarshal([]byte(repairJSON(resp.Content)), &out); err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	var steps []buildTask
 	for _, s := range out.Steps {
@@ -110,12 +138,106 @@ func (c *Conversation) planBuild(ctx context.Context, asked string) ([]buildTask
 			break
 		}
 	}
+	note := ""
+	if stated && len(steps) > limit {
+		planned := len(steps)
+		steps = combineSteps(steps, limit)
+		note = fmt.Sprintf("You asked for at most %d steps and the plan came back with %d, so its "+
+			"steps %d to %d were combined into step %d.", limit, planned, limit, planned, limit)
+	}
 	if len(steps) < 2 {
 		// One step is not a build, it is a turn. Saying so lets the caller fall
 		// back to the ordinary path rather than paying for a plan it cannot use.
-		return nil, errNotWorthPlanning
+		// A stated limit of one lands here too, and that is the same answer.
+		return nil, "", errNotWorthPlanning
 	}
-	return steps, nil
+	return steps, note, nil
+}
+
+// stepLimitNumber is a count as a person writes one, in digits or in words.
+const stepLimitNumber = `(\d{1,3}|one|two|three|four|five|six|seven|eight|nine|ten|eleven|twelve)`
+
+var (
+	// "at most three steps", "no more than 3 passes", "a maximum of 4 stages".
+	stepLimitBefore = regexp.MustCompile(`\b(at most|no more than|not more than|up to|a maximum of|maximum of|maximum|max\.?)\s+` +
+		stepLimitNumber + `\s+(?:build\s+)?(?:steps?|passes|stages)\b`)
+	// "three steps at most", "3 steps max", "four steps or fewer".
+	stepLimitAfter = regexp.MustCompile(`\b` + stepLimitNumber + `\s+(?:build\s+)?(?:steps?|passes|stages)\s*,?\s*` +
+		`(at most|at the most|max\b|maximum\b|or fewer|or less|tops\b)`)
+	// "fewer than five steps", "less than 4 steps", "under 6 steps": one fewer.
+	stepLimitBelow = regexp.MustCompile(`\b(fewer than|less than|under)\s+` + stepLimitNumber +
+		`\s+(?:build\s+)?(?:steps?|passes|stages)\b`)
+)
+
+var stepLimitWords = map[string]int{"one": 1, "two": 2, "three": 3, "four": 4, "five": 5, "six": 6,
+	"seven": 7, "eight": 8, "nine": 9, "ten": 10, "eleven": 11, "twelve": 12}
+
+// statedStepLimit reads a maximum number of steps the request states, if any.
+//
+// Deliberately narrow: it reads a MAXIMUM said about steps (or passes, or
+// stages), and nothing else. "In three steps" is a description, not a limit, and
+// "three parts" is not about steps at all. When more than one limit is stated,
+// the smallest wins — a person who said both meant the stricter.
+func statedStepLimit(asked string) (int, bool) {
+	s := strings.ToLower(asked)
+	best, found := 0, false
+	take := func(word string, less int) {
+		n, ok := stepLimitWords[word]
+		if !ok {
+			if _, err := fmt.Sscanf(word, "%d", &n); err != nil {
+				return
+			}
+		}
+		n -= less
+		if n < 1 {
+			n = 1
+		}
+		if !found || n < best {
+			best, found = n, true
+		}
+	}
+	for _, m := range stepLimitBefore.FindAllStringSubmatch(s, -1) {
+		take(m[2], 0)
+	}
+	for _, m := range stepLimitAfter.FindAllStringSubmatch(s, -1) {
+		take(m[1], 0)
+	}
+	for _, m := range stepLimitBelow.FindAllStringSubmatch(s, -1) {
+		take(m[2], 1)
+	}
+	return best, found
+}
+
+// combineSteps folds every step from the limit-th on into the limit-th, in order.
+//
+// The combined step keeps each name and each sentence, so whoever builds it is
+// asked for all of it. Its assembly is kept only when every folded step named the
+// same one: a step shown one sub-assembly while asked to build three would be
+// building blind, and with no assembly it is shown the model so far.
+func combineSteps(steps []buildTask, limit int) []buildTask {
+	if limit < 1 || len(steps) <= limit {
+		return steps
+	}
+	out := append([]buildTask(nil), steps[:limit-1]...)
+	tail := steps[limit-1:]
+	merged := buildTask{Assembly: tail[0].Assembly}
+	var names, whats []string
+	for _, s := range tail {
+		if name := strings.TrimSpace(s.Name); name != "" {
+			names = append(names, name)
+		}
+		what := strings.TrimSpace(s.What)
+		if !strings.HasSuffix(what, ".") {
+			what += "."
+		}
+		whats = append(whats, what)
+		if s.Assembly != merged.Assembly {
+			merged.Assembly = ""
+		}
+	}
+	merged.Name = strings.Join(names, " + ")
+	merged.What = strings.Join(whats, " ")
+	return append(out, merged)
 }
 
 type buildTask struct {
@@ -231,7 +353,7 @@ Return JSON: {"speech": "one sentence on what you built", "prototype": {"name": 
 func (c *Conversation) assemble(ctx context.Context, asked string, base *Prototype,
 	emit func(BuildStep) error) (*Prototype, []string, error) {
 
-	steps, err := c.planBuild(ctx, asked)
+	steps, limited, err := c.planBuildNoted(ctx, asked)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -241,6 +363,11 @@ func (c *Conversation) assemble(ctx context.Context, asked string, base *Prototy
 		doc = &geometry.Document{Name: asked, Units: "mm"}
 	}
 	var notes []string
+	if limited != "" {
+		// Said, because the plan the person watches is not the one the model
+		// returned. See planBuildNoted.
+		notes = append(notes, limited)
+	}
 
 	for i, step := range steps {
 		next, note := c.buildOneStep(ctx, doc, asked, step, i+1, len(steps))

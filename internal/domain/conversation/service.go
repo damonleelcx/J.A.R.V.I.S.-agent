@@ -38,6 +38,10 @@ type Said struct {
 	// Timing is what this turn cost, for a FORGE turn that was measured. Nil
 	// otherwise, and nil is written as null rather than zero — see model.Timing.
 	Timing *Timing
+	// Failure and UnusableReply record a FORGE turn whose reply could not be
+	// used — see Turn and migration 0023.
+	Failure       string
+	UnusableReply string
 }
 
 // Resolve returns the conversation this turn belongs to, minting one when the
@@ -84,6 +88,7 @@ func (s *Service) Record(ctx context.Context, said Said) (*Turn, error) {
 		OwnerID: said.OwnerID, ProjectID: said.ProjectID,
 		Role: said.Role, Text: said.Text, Detail: said.Detail,
 		Images: said.Images, SaidAt: s.clock.Now(), Timing: said.Timing,
+		Failure: said.Failure, UnusableReply: said.UnusableReply,
 	}
 	if err := s.repo.Append(ctx, s.pool, t); err != nil {
 		return nil, err

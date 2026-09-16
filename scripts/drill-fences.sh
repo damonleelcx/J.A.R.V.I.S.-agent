@@ -142,6 +142,7 @@ FILES=(
   internal/domain/geometry/repeat.go
   internal/domain/geometry/export.go
   internal/domain/geometry/service.go
+  internal/domain/workspace/service.go
   internal/platform/config/config.go
   internal/httpapi/assets/workbench.js
   internal/httpapi/assets/workbench.css
@@ -165,8 +166,8 @@ FILES=(
   internal/httpapi/geometry.go
   internal/httpapi/goals_start.go
   internal/httpapi/assets/workbench.js
-  internal/agent/stepexport.go
-  internal/httpapi/geometry_exports.go
+  internal/agent/apply.go
+  internal/agent/intake.go
   internal/domain/engine/queue.go
   internal/agent/executor.go
   internal/agent/settle.go
@@ -1132,12 +1133,24 @@ drill "a box is filed without the last cell it reaches" internal/domain/cad/side
   "s = s.replace('            for cx in range(q[0] >> sx, (r[0] >> sx) + 1):\n', '            for cx in range(q[0] >> sx, r[0] >> sx):\n', 1)" \
   ./internal/domain/cad 'TestKernel_LongBoxesAreFoundAsEveryPairFindsThem'
 
+# Re-anchored 2026-09-16 (drills that could break the wrong copy). The four drills
+# below were written against _inside, _carried and _pair_key when those were the only
+# keying path. The direct path copied their text, so each anchor occurred twice and
+# replace(..., 1) went on mutating the REFERENCE copy, which the shipped check no
+# longer runs: all four stayed green. They now break the copy this fence's build takes.
+# Containment is _inside_planned's test (the same comparison, bounds precomputed):
+# every pair on the rail is memoizable, so breaking _inside_split's copy instead stays
+# green here. That copy is held by the pair-key fence.
+# The keying drill anchors in _key_tail (#128), on the same lines as "a direct key is
+# taken in the frame that marks fewer" and to the same effect. Kept deliberately: that
+# drill proves the pair-key EQUIVALENCE fence sees it, this one that the rail's own
+# boolean count does, and either fence could be weakened without the other.
 drill "a clash is slid along a box it is not inside" internal/domain/cad/sidecar.py \
-  "s = s.replace('        if mid - reach >= _SLIDE_MARGIN - half[r] and mid + reach <= half[r] - _SLIDE_MARGIN:\n', '        if True:\n', 1)" \
+  "s = s.replace('        if mid - reach >= low and mid + reach <= high:\n', '        if True:\n', 1)" \
   ./internal/domain/cad 'TestKernel_PinsAlongARailPayForOneBooleanAndTheEndsAreMeasured'
 
 drill "containment is checked at one end of the box only" internal/domain/cad/sidecar.py \
-  "s = s.replace('        if mid - reach >= _SLIDE_MARGIN - half[r] and mid + reach <= half[r] - _SLIDE_MARGIN:\n', '        if mid - reach >= _SLIDE_MARGIN - half[r]:\n', 1)" \
+  "s = s.replace('        if mid - reach >= low and mid + reach <= high:\n', '        if mid - reach >= low:\n', 1)" \
   ./internal/domain/cad 'TestKernel_PinsAlongARailPayForOneBooleanAndTheEndsAreMeasured'
 
 drill "a pin along a rail is measured at every pose again" internal/domain/cad/sidecar.py \
@@ -1145,7 +1158,7 @@ drill "a pin along a rail is measured at every pose again" internal/domain/cad/s
   ./internal/domain/cad 'TestKernel_PinsAlongARailPayForOneBooleanAndTheEndsAreMeasured'
 
 drill "a slide seen only from the other box is not carried" internal/domain/cad/sidecar.py \
-  "s = s.replace('    out = []\n    for v in axes:\n', '    out = []\n    for v in []:\n', 1)" \
+  "s = s.replace('    out = []\n    for v in axes:\n        for w in range(3):\n            if abs(pose[4 * w + v]) >= 1 - 1e-9:\n', '    out = []\n    for v in []:\n        for w in range(3):\n            if abs(pose[4 * w + v]) >= 1 - 1e-9:\n', 1)" \
   ./internal/domain/cad 'TestKernel_PinsAlongARailPayForOneBooleanAndTheEndsAreMeasured'
 
 drill "a carried slide ignores a rotation that does not line the axes up" internal/domain/cad/sidecar.py \
@@ -1153,7 +1166,7 @@ drill "a carried slide ignores a rotation that does not line the axes up" intern
   ./internal/domain/cad 'TestKernel_AReusedClashIsTheClashMeasuredAgain'
 
 drill "a clash is keyed in the frame that slides less" internal/domain/cad/sidecar.py \
-  "s = s.replace('        return forward if marked_f > marked_b else backward\n', '        return backward if marked_f > marked_b else forward\n', 1)" \
+  "s = s.replace('    marked_b = math.isinf(pb[3]) + math.isinf(pb[7]) + math.isinf(pb[11])\n    if marked_f != marked_b:\n        return forward if marked_f > marked_b else backward\n', '    marked_b = math.isinf(pb[3]) + math.isinf(pb[7]) + math.isinf(pb[11])\n    if marked_f != marked_b:\n        return backward if marked_f > marked_b else forward\n', 1)" \
   ./internal/domain/cad 'TestKernel_PinsAlongARailPayForOneBooleanAndTheEndsAreMeasured'
 
 echo
@@ -1478,8 +1491,11 @@ drill "an inert radius is fatal again" internal/domain/geometry/curve.go \
   's = s.replace("\t\t\t\tinert(i, \"where the edges either side of it are in line\")\n\t\t\t\tcontinue", "\t\t\t\treturn nil, ignored, fmt.Errorf(\"in line\")", 1)' \
   ./internal/domain/geometry 'TestRoundedCorners_IgnoresARadiusThatNamesNoCorner'
 
+# Re-anchored 2026-09-16: the old anchor also matched resolveArcs' via warning, and
+# `_ = fmt.Sprintf(` left append's closing paren behind, a build error that was red for
+# the wrong reason. The warning is still built and dropped, now in a form that compiles.
 drill "an ignored radius is ignored SILENTLY" internal/domain/geometry/curve.go \
-  's = s.replace("\t\tignored = append(ignored, fmt.Sprintf(", "\t\t_ = fmt.Sprintf(", 1)' \
+  's = s.replace("\t\tignored = append(ignored, fmt.Sprintf(\"has a corner radius on", "\t\t_ = append(ignored, fmt.Sprintf(\"has a corner radius on", 1)' \
   ./internal/domain/geometry 'TestRoundedCorners_IgnoresARadiusThatNamesNoCorner|TestSwept_ARadiusOnAnEndIsIgnoredRatherThanFatal'
 
 drill "the renderer keeps a loop's repeated closing point" internal/httpapi/assets/forge3d.js \
@@ -1787,8 +1803,10 @@ drill "the method hint names the inherited leaves" internal/domain/cad/script.py
   's = s.replace("defined = qual.split(\".\")[0] if \".\" in qual else owner", "defined = owner", 1)' \
   ./internal/domain/cad 'TestScript_AMethodIsNotASpellingMistake'
 
+# Re-anchored 2026-09-16: this anchor and the parser's-word one below first matched the
+# function's own `def` line, so each mutation was a SyntaxError in script.py.
 drill "a failure does not say how the builder is called" internal/domain/cad/script.py \
-  's = s.replace("signature_help(ns, source, exc)", "\"\"", 1)' \
+  's = s.replace("signature_help(ns, source, exc)),", "\"\"),", 1)' \
   ./internal/domain/cad 'TestScript_AFailureSaysHowTheBuilderIsCalled'
 
 drill "the failing LINE is not consulted" internal/domain/cad/script.py \
@@ -1824,7 +1842,7 @@ drill "the dunder rule does not reach through an @ expression" internal/domain/c
   ./internal/domain/cad 'TestScript_RefusesTheWayOut'
 
 drill "a refusal names the parser's word, not the author's" internal/domain/cad/script.py \
-  's = s.replace("_syntax_name(node)", "type(node).__name__", 1)' \
+  's = s.replace("_syntax_name(node)))", "type(node).__name__))", 1)' \
   ./internal/domain/cad 'TestScript_ARefusalNamesWhatWasWritten'
 
 drill "the suggestion cutoff is difflib's loose default" internal/domain/cad/script.py \
@@ -1945,8 +1963,10 @@ echo "A stopping worker's bookkeeping"
 # cancelled one and is logged as the database being unavailable. See
 # docs/bugfix/2026-09-15-a-stopping-worker-reported-its-own-stop-as-a-database-outage.md.
 # Needs FORGE_TEST_DATABASE_URL.
+# Anchored on afterTask's own line: the same WithTimeout(WithoutCancel(ctx)) also opens
+# outliving and handBack, and the bare expression hit outliving first and tested nothing.
 drill "a stopping worker's bookkeeping runs on the cancelled context" internal/agent/worker.go \
-  's = s.replace("context.WithTimeout(context.WithoutCancel(ctx), afterTaskTimeout)", "context.WithTimeout(ctx, afterTaskTimeout)", 1)' \
+  's = s.replace("book, cancel := context.WithTimeout(context.WithoutCancel(ctx), afterTaskTimeout)\n\tdefer cancel()\n\t// ", "book, cancel := context.WithTimeout(ctx, afterTaskTimeout)\n\tdefer cancel()\n\t// ", 1)' \
   ./internal/agent 'TestWorker_AWorkerStoppedMidTaskDoesNotReportItsBookkeepingAsADatabaseFailure|TestWorker_ATaskFinishedAsTheStopArrivesStillReleasesItsDependentsAndSettlesItsGoal'
 
 echo
@@ -1960,6 +1980,13 @@ echo "A stopped worker hands its task back"
 drill "a stopped worker leaves its task to its lease" internal/agent/worker.go \
   's = s.replace("\t\tif ctx.Err() != nil {\n\t\t\tw.handBack(ctx, task)\n\t\t}\n", "", 1)' \
   ./internal/agent 'TestWorker_AWorkerStoppedInsideAModelCallHandsItsTaskBackAtOnce|TestWorker_AWorkerStoppedBeforeItsTaskStartsHandsItBackUnstarted|TestWorker_AWorkerStoppedAtTheApprovalGateHandsItsTaskBackAndTheGateIsOpenedOnce'
+
+# A hand-back written on the context the stop cancelled fails as DATABASE_UNAVAILABLE and
+# leaves the task leased. Read through a worker stopped inside a build step (#104), where
+# the stop was first exercised live.
+drill "a stopped build step is handed back on the cancelled context" internal/agent/worker.go \
+  's = s.replace("book, cancel := context.WithTimeout(context.WithoutCancel(ctx), afterTaskTimeout)\n\tdefer cancel()\n\tswitch err := w.queue.Release(book", "book, cancel := context.WithTimeout(ctx, afterTaskTimeout)\n\tdefer cancel()\n\tswitch err := w.queue.Release(book", 1)' \
+  ./internal/agent 'TestBuildGoal_AStoppedWorkerDoesNotReportTheDatabaseUnavailable'
 
 drill "a stop still counts as an attempt" internal/domain/engine/queue.go \
   's = s.replace("not_before = $3,\n\t\t       attempt_count = greatest(attempt_count - 1, 0)\n", "not_before = $3\n", 1)' \
@@ -2211,7 +2238,7 @@ drill "a ring is never looked for" internal/domain/geometry/repetition.go \
   ./internal/domain/geometry 'TestRepetition_FindsAPolarRing'
 
 drill "groups are read in map order" internal/domain/geometry/repetition.go \
-  's = s.replace("\tfor _, g := range groups {", "\tfor _, g := range byKey {", 1)' \
+  's = s.replace("\tfor _, g := range groups {\n\t\tfor _, run := range groupRuns(g) {\n\t\t\tout = append(out, Repetition{Assembly: a.ID,", "\tfor _, g := range byKey {\n\t\tfor _, run := range groupRuns(g) {\n\t\t\tout = append(out, Repetition{Assembly: a.ID,", 1)' \
   ./internal/domain/geometry 'TestRepetition_IsDeterministic'
 
 drill "the turn does not say what could be one pattern" internal/agent/converse.go \
@@ -2323,16 +2350,16 @@ echo "Workers in one process"
 # Added 2026-09-15 (worker lease identity). NewWorker sliced a fresh id's
 # timestamp rather than its random tail, so every worker forge-worker started
 # together had one identity and no lease guard could tell siblings apart. Found
-# building the off-node STEP export (#99), whose export fence (the third) was
-# the first to catch it. The second and third fences need FORGE_TEST_DATABASE_URL. See
+# building the off-node STEP export (#99). The second fence needs
+# FORGE_TEST_DATABASE_URL. See
 # docs/bugfix/2026-09-15-workers-started-together-shared-one-lease-identity.md.
 drill "workers started together share one identity" internal/agent/worker.go \
   's = s.replace("run[len(run)-8:]", "run[4:12]", 1)' \
-  ./internal/agent 'TestNewWorker_WorkersStartedTogetherHaveDistinctIdentities|TestWorker_ASiblingCannotExtendOrReleaseALeaseItDoesNotHold|TestStepExport_AWorkerKilledMidExportLeavesItRetryableAndNeverReportedSucceeded'
+  ./internal/agent 'TestNewWorker_WorkersStartedTogetherHaveDistinctIdentities|TestWorker_ASiblingCannotExtendOrReleaseALeaseItDoesNotHold'
 
 drill "a worker is named by its host and pid alone" internal/agent/worker.go \
   's = s.replace("run[len(run)-8:]", "run[len(run)-8:len(run)-8]", 1)' \
-  ./internal/agent 'TestNewWorker_WorkersStartedTogetherHaveDistinctIdentities|TestWorker_ASiblingCannotExtendOrReleaseALeaseItDoesNotHold|TestStepExport_AWorkerKilledMidExportLeavesItRetryableAndNeverReportedSucceeded'
+  ./internal/agent 'TestNewWorker_WorkersStartedTogetherHaveDistinctIdentities|TestWorker_ASiblingCannotExtendOrReleaseALeaseItDoesNotHold'
 # ---------------------------------------------------------------------------
 # Added 2026-09-15 (workbench voice input).
 #
@@ -3264,8 +3291,13 @@ drill "a cached placement is not inverted" internal/domain/cad/sidecar.py \
   's = s.replace("    trsf.Invert()\n    return _location_of(TopLoc_Location(trsf))\n", "    return _location_of(TopLoc_Location(trsf))\n", 1)' \
   ./internal/domain/cad 'TestKernel_APlacedCopyIsTheCopyBuild123dMade'
 
+# Re-anchored 2026-09-16 (drills that could break the wrong copy). The old anchor hit
+# the deepcopy loop kept as the reference (_PLACE_WITHOUT_DEEPCOPY = False), which the
+# fixture never reaches, and stayed green. The plan's fallback deepcopy, the other copy
+# of that line, ALSO stays green: no attribute in the fixture falls back. The attribute
+# the shipped plan does copy, and no other drill shares, is a Location.
 drill "a located copy shares its definition's attributes" internal/domain/cad/sidecar.py \
-  's = s.replace("            setattr(out, key, copy.deepcopy(value, memo))\n", "            setattr(out, key, value)\n", 1)' \
+  's = s.replace("            setattr(out, key, _location_of(TopLoc_Location(value.wrapped.Transformation())))\n", "            setattr(out, key, value)\n", 1)' \
   ./internal/domain/cad 'TestKernel_APlacedCopyIsTheCopyBuild123dMade'
 
 drill "the assembly integrates every copy again" internal/domain/cad/sidecar.py \
@@ -3362,20 +3394,24 @@ drill "a placement's inverse is cached under the other solid" internal/domain/ca
   's = s.replace("            inv_j = inverses[j] = lj.Inverted()\n", "            inv_j = inverses[i] = lj.Inverted()\n", 1)' \
   ./internal/domain/cad 'TestKernel_APairKeyWithoutLocationsIsTheKeyBuild123dGave'
 
+# Re-anchored 2026-09-16 merging main into #128, which factored the direct key's
+# tail out as _key_tail so the array path runs the same scalar code: the same
+# statements, one indentation level shallower. Same properties, same fence. In
+# the third, the marked_b line keeps the anchor off _pair_key's identical return.
 drill "a direct key forgets what the other frame carries" internal/domain/cad/sidecar.py \
-  's = s.replace("        carried_f = _carried_fast(pose_f, inside_j) if inside_j else []\n", "        carried_f = []\n", 1)' \
+  's = s.replace("    carried_f = _carried_fast(pose_f, inside_j) if inside_j else []\n", "    carried_f = []\n", 1)' \
   ./internal/domain/cad 'TestKernel_APairKeyWithoutLocationsIsTheKeyBuild123dGave'
 
 drill "a direct key is taken in the frame that marks fewer" internal/domain/cad/sidecar.py \
-  's = s.replace("            return forward if marked_f > marked_b else backward\n", "            return forward if marked_f < marked_b else backward\n", 1)' \
+  's = s.replace("    marked_b = math.isinf(pb[3]) + math.isinf(pb[7]) + math.isinf(pb[11])\n    if marked_f != marked_b:\n        return forward if marked_f > marked_b else backward\n", "    marked_b = math.isinf(pb[3]) + math.isinf(pb[7]) + math.isinf(pb[11])\n    if marked_f != marked_b:\n        return forward if marked_f < marked_b else backward\n", 1)' \
   ./internal/domain/cad 'TestKernel_APairKeyWithoutLocationsIsTheKeyBuild123dGave'
 
 drill "direct containment takes a box's whole length for its reach" internal/domain/cad/sidecar.py \
-  's = s.replace("            reach += abs(v) * (hi[c] - lo[c]) / 2\n", "            reach += abs(v) * (hi[c] - lo[c])\n", 1)' \
+  's = s.replace("            mid += v * (lo[c] + hi[c]) / 2\n            reach += abs(v) * (hi[c] - lo[c]) / 2\n", "            mid += v * (lo[c] + hi[c]) / 2\n            reach += abs(v) * (hi[c] - lo[c])\n", 1)' \
   ./internal/domain/cad 'TestKernel_APairKeyWithoutLocationsIsTheKeyBuild123dGave'
 
 drill "a pair inside only the other frame is keyed as unmarked" internal/domain/cad/sidecar.py \
-  's = s.replace("        if not inside_i and not inside_j:\n", "        if not inside_i:\n", 1)' \
+  's = s.replace("    if not inside_i and not inside_j:\n", "    if not inside_i:\n", 1)' \
   ./internal/domain/cad 'TestKernel_APairKeyWithoutLocationsIsTheKeyBuild123dGave'
 
 drill "a moved box forgets its far corner" internal/domain/cad/sidecar.py \
@@ -3637,8 +3673,288 @@ drill "the workbench never asks for a build" internal/httpapi/assets/workbench.j
   's = s.replace("      build: !!state.planAsBuild\n", "      build: false\n", 1)' \
   ./internal/httpapi 'TestWorkbench_StartThisSendsWhetherToPlanABuild'
 
+echo "View ceiling on Linux (#110)"
+# Added 2026-09-15 (ceiling on Linux). forged in a container limited like its pod
+# (1 CPU, 1 GiB) built 8,192- and 8,315-part designs through the mesh endpoint in
+# 5.7-13.0 s, three runs each, with the 30 s kernel timeout; 16,556 took up to 21.5 s.
+# So a VIEW is built to 8192 and a STEP export, mass report, Go mesh and mesh file stay
+# at 4096. The cad fence runs against cadtest's fake process; the httpapi ones need node.
+# docs/spikes/2026-09-15-ceiling-on-linux
+drill "the kernel's view ceiling is back at 4096" internal/domain/geometry/limits.go \
+  's = s.replace("const maxBuiltParts = 8192", "const maxBuiltParts = 4096", 1)' \
+  ./internal/domain/geometry 'TestLimits_TheKernelBuildsAViewOf8192PartsAndNothingElsePast4096'
+
+drill "the view ceiling is raised past what was measured" internal/domain/geometry/limits.go \
+  's = s.replace("const maxBuiltParts = 8192", "const maxBuiltParts = 16384", 1)' \
+  ./internal/domain/geometry 'TestLimits_TheKernelBuildsAViewOf8192PartsAndNothingElsePast4096'
+
+drill "every kernel build is allowed the view's ceiling" internal/domain/cad/cad.go \
+  's = s.replace("\tif format == \"mesh\" && !properties {", "\tif true {", 1)' \
+  ./internal/domain/cad 'TestKernel_BuildsAViewOf8192PartsAndRefusesEveryOtherBuildPast4096'
+
+drill "a build that is not a STEP export is allowed the view's ceiling" internal/domain/cad/cad.go \
+  's = s.replace("\tif format == \"mesh\" && !properties {", "\tif format != \"step\" {", 1)' \
+  ./internal/domain/cad 'TestKernel_BuildsAViewOf8192PartsAndRefusesEveryOtherBuildPast4096'
+
+drill "a view is refused at the tighter ceiling" internal/domain/cad/cad.go \
+  's = s.replace("\t\trefusal = doc.BuildRefusal()", "\t\trefusal = doc.DrawRefusal()", 1)' \
+  ./internal/domain/cad 'TestKernel_BuildsAViewOf8192PartsAndRefusesEveryOtherBuildPast4096'
+
+drill "the kernel request is cut at the tighter ceiling" internal/domain/geometry/solid.go \
+  's = s.replace("\tif refusal := d.BuildRefusal(); refusal != \"\" {", "\tif refusal := d.DrawRefusal(); refusal != \"\" {", 1)' \
+  ./internal/domain/geometry 'TestLimits_TheKernelBuildsAViewOf8192PartsAndNothingElsePast4096'
+
+drill "the Go mesh is built to the view's ceiling" internal/domain/geometry/mesh.go \
+  's = s.replace("\tif refusal := doc.DrawRefusal(); refusal != \"\" {", "\tif refusal := doc.BuildRefusal(); refusal != \"\" {", 1)' \
+  ./internal/domain/geometry 'TestLimits_TheKernelBuildsAViewOf8192PartsAndNothingElsePast4096'
+
+drill "a mesh file is exported to the view's ceiling" internal/domain/geometry/export.go \
+  's = s.replace("\tif refusal := v.Document.DrawRefusal(); refusal != \"\" {", "\tif refusal := v.Document.BuildRefusal(); refusal != \"\" {", 1)' \
+  ./internal/domain/geometry 'TestLimits_TheKernelBuildsAViewOf8192PartsAndNothingElsePast4096'
+
+drill "the browser loads a design in pieces that the kernel builds whole" internal/httpapi/assets/forge3d.js \
+  's = s.replace("var LAZY_OCCURRENCES = 8192;", "var LAZY_OCCURRENCES = 4096;", 1)' \
+  ./internal/httpapi 'TestRendererLoadsLazilyExactlyPastTheKernelsViewCeiling'
+
+drill "the browser asks for a whole mesh the kernel refuses" internal/httpapi/assets/forge3d.js \
+  's = s.replace("var LAZY_OCCURRENCES = 8192;", "var LAZY_OCCURRENCES = 16384;", 1)' \
+  ./internal/httpapi 'TestRendererLoadsLazilyExactlyPastTheKernelsViewCeiling'
+
+drill "a subtree past the view ceiling is sent to the kernel" internal/httpapi/geometry_subtree.go \
+  's = s.replace("\tcase parts > geometry.MaxBuiltParts():", "\tcase parts > 2*geometry.MaxBuiltParts():", 1)' \
+  ./internal/httpapi 'TestMeshSubtree_LimitsAreTheSubtreesOwn'
+
+drill "the exported ceiling is still the old one" internal/domain/geometry/subtree.go \
+  's = s.replace("func MaxBuiltParts() int { return maxBuiltParts }", "func MaxBuiltParts() int { return maxDrawnParts }", 1)' \
+  ./internal/httpapi 'TestRendererLoadsLazilyExactlyPastTheKernelsViewCeiling|TestMeshSubtree_LimitsAreTheSubtreesOwn'
+
 echo
-echo "Off-node STEP export"
+
+echo
+echo "Build goal UX"
+# Added 2026-09-15 (build goal UX), from a live exercise of a build goal started at the
+# workbench. A refused reply is kept with its cost and never replayed as history
+# (docs/bugfix/2026-09-15-a-failed-workbench-turn-left-no-trace.md); a stated maximum of
+# steps is told to the planner and enforced (…-a-build-planned-more-steps-than-it-was-allowed.md);
+# the proposal card follows the goal it started until it settles; a goal's tasks list in
+# plan order (…-a-goals-tasks-were-listed-out-of-step-order.md); POST /v1/goals takes a
+# bounded max_tokens. Needs FORGE_TEST_DATABASE_URL, and node for the card.
+drill "a refused reply is returned without the reply or its cost" internal/agent/converse_stream.go \
+  's = s.replace("\t\t\treturn unusable(err, accumulated.String(), chunk.Model, chunk.Usage)\n", "\t\t\treturn err\n", 1)' \
+  ./internal/agent 'TestRespondStream_AReplyThatCouldNotBeUsedComesBackWithTheReplyAndItsCost'
+
+drill "a failed turn is not recorded" internal/httpapi/converse.go \
+  's = s.replace("\t\tif errors.As(emitErr, &refused) {\n", "\t\tif false && errors.As(emitErr, &refused) {\n", 1)' \
+  ./internal/httpapi 'TestConverse_AReplyThatCouldNotBeUsedIsKeptWithWhatItCost'
+
+drill "a failed turn is replayed as history" internal/httpapi/converse.go \
+  's = s.replace("\t\tif turns[i].Failed() {\n\t\t\tcontinue\n\t\t}\n", "", 1)' \
+  ./internal/httpapi 'TestConverse_AFailedTurnIsNotGivenToTheModelAsHistory'
+
+drill "a plan over the stated limit is kept whole" internal/agent/assemble.go \
+  's = s.replace("\tif stated && len(steps) > limit {\n", "\tif false && stated && len(steps) > limit {\n", 1)' \
+  ./internal/agent 'TestPlanBuild_AStatedMaximumOfStepsIsHonouredAndSaid|TestPlanBuildGoal_AStatedMaximumOfStepsIsTheGoalsPlanAndItsRationaleSaysSo'
+
+drill "the planner is not told the limit" internal/agent/assemble.go \
+  's = s.replace("\tif stated {\n\t\trequest +=", "\tif false {\n\t\trequest +=", 1)' \
+  ./internal/agent 'TestPlanBuild_AStatedMaximumOfStepsIsHonouredAndSaid'
+
+drill "the card never stops polling" internal/httpapi/assets/workbench.js \
+  's = s.replace("        if (!p.settled && !stopped) timer = later(tick, interval);\n", "        if (!stopped) timer = later(tick, interval);\n", 1)' \
+  ./internal/httpapi 'TestWorkbench_TheCardShowsABuildsProgressAndStopsWhenItSettles|TestWorkbench_TheCardSaysABuildWasStoppedByItsBudget'
+
+drill "a goal that is gone is asked for forever" internal/httpapi/assets/workbench.js \
+  's = s.replace("        if (err && (err.status === 401 || err.status === 403 || err.status === 404)) return;\n", "", 1)' \
+  ./internal/httpapi 'TestWorkbench_TheCardRetriesADroppedReadAndStopsForAGoalThatIsGone'
+
+drill "Start it never follows the goal" internal/httpapi/assets/workbench.js \
+  's = s.replace("        followStartedGoal();\n      })", "      })", 1)' \
+  ./internal/httpapi 'TestWorkbench_TheProposalCardFollowsTheGoalItStarted'
+
+drill "tasks written at one instant have no order" internal/domain/engine/repository.go \
+  's = s.replace("order by created_at asc, idempotency_key asc, id asc", "order by created_at asc", 1)' \
+  ./internal/domain/engine 'TestListTasks_ABuildsStepsWrittenAtOneInstantAreListedInStepOrder'
+
+drill "a plan's order is not written" internal/agent/apply.go \
+  's = s.replace("stamped := now.Add(time.Duration(position) * time.Microsecond)", "stamped := now.Add(time.Duration(position*0) * time.Microsecond)", 1)' \
+  ./internal/agent 'TestApply_APlansTasksAreListedInThePlansOrder'
+
+drill "a goal's token ceiling is not stored" internal/agent/intake.go \
+  's = s.replace("string(goal.Autonomy), string(goal.RiskTier), req.MaxTokens, now); err != nil {", "string(goal.Autonomy), string(goal.RiskTier), (*int64)(nil), now); err != nil {", 1)' \
+  ./internal/httpapi 'TestCreateGoal_ATokenCeilingIsStoredOnTheGoal'
+
+drill "a token ceiling above the engine's is accepted" internal/agent/intake.go \
+  's = s.replace("if in.maxTokensPerGoal > 0 && *req.MaxTokens > in.maxTokensPerGoal {", "if false && *req.MaxTokens > in.maxTokensPerGoal {", 1)' \
+  ./internal/httpapi 'TestCreateGoal_ATokenCeilingOutOfRangeIsRefusedBeforeAnythingIsWritten'
+
+drill "POST /v1/goals drops the ceiling" internal/httpapi/goals_start.go \
+  's = s.replace("\t\tMaxTokens: req.MaxTokens,\n", "", 1)' \
+  ./internal/httpapi 'TestCreateGoal_ATokenCeilingIsStoredOnTheGoal'
+
+# Added 2026-09-15 (card checked), from watching the card drive a build in a real browser
+# against a stand-in model: docs/spikes/2026-09-15-card-checked. Two defects the fences above
+# could not see — the card sent no project, and it showed a budget stop as a permissions error.
+
+# rsplit, not replace: "project_id: state.projectID" is sent by the conversation turn too, and
+# that one comes FIRST in the file. The last occurrence is the card's.
+drill "the card starts a goal with no project" internal/httpapi/assets/workbench.js \
+  's = "project_idX: state.projectID".join(s.rsplit("project_id: state.projectID", 1))' \
+  ./internal/httpapi 'TestWorkbench_TheCardStartsAGoalInTheConversationsProject'
+
+drill "a budget stop is shown as a raw error" internal/httpapi/assets/workbench.js \
+  's = s.replace("if (withCode) return withCode[1].trim();", "if (false) return withCode[1].trim();", 1)' \
+  ./internal/httpapi 'TestWorkbench_TheCardSaysWhatABudgetStopMeantWithoutTheErrorsPlumbing'
+
+# Added 2026-09-15 (one artifact per build), from the decision that a build goal pins the
+# artifact its first kept step created. A step that renamed the model used to open a SECOND
+# artifact and split one build's history in two, each half in its own file (#119).
+#
+# ‼️ These six need FORGE_TEST_DATABASE_URL. Every property is a property of rows — which
+# artifact a version hangs off — so without a database they SKIP, and the drill reports them
+# as UNPROVEN rather than as fences that held.
+
+drill "a build step drops its build's artifact" internal/agent/buildgoal.go \
+  's = s.replace("\t\t\tArtifactID: prev.ArtifactID,\n", "", 1)' \
+  ./internal/agent 'TestBuildGoal_ABuildThatRenamesTheModelKeepsOneArtifactWithAVersionPerStep'
+
+drill "a save ignores the artifact it was pinned to" internal/domain/geometry/service.go \
+  's = s.replace("ArtifactID: strings.TrimSpace(n.ArtifactID),", "ArtifactID: \"\",", 1)' \
+  ./internal/domain/geometry 'TestSave_APinnedSaveAppendsToThatArtifactAndStillStoresTheNewName'
+
+drill "a change ignores the artifact it pins" internal/domain/workspace/service.go \
+  's = s.replace("pinned := strings.TrimSpace(c.ArtifactID)", "pinned := \"\"", 1)' \
+  ./internal/domain/geometry 'TestSave_APinnedSaveAppendsToThatArtifactAndStillStoresTheNewName'
+
+# The pin applied UNCONDITIONALLY — the plausible wrong version of this change. The first step
+# that keeps anything has no artifact to pin, and pinning nothing finds nothing.
+drill "the artifact is pinned even when nothing pinned one" internal/domain/workspace/service.go \
+  's = s.replace("\tif pinned == \"\" {", "\tif false {", 1)' \
+  ./internal/agent 'TestBuildGoal_AStepWhosePredecessorKeptNothingStillCreatesTheArtifact'
+
+drill "a pinned artifact is not checked against the project" internal/domain/workspace/service.go \
+  's = s.replace("if artifact.ProjectID != c.ProjectID {", "if false {", 1)' \
+  ./internal/domain/geometry 'TestSave_APinnedArtifactFromAnotherProjectIsRefused'
+
+# "ArtifactID: source.ArtifactID," appears twice — Adopt first, then Respec — so Adopt's drill
+# also anchors on the comment line only Adopt has above it, and the rsplit below takes Respec's. One drill each: they are two call sites and
+# either could lose the pin on its own.
+#
+# ‼️ The adopt fence had to be STRENGTHENED before this drill could redden it. It adopted v1,
+# whose own name still resolves to the artifact v1 is on — the name rule and the artifact rule
+# agree there, so removing the pin changed nothing and the drill stayed green. It now adopts the
+# RENAMED version, which is where the two rules disagree.
+drill "adopting forgets which artifact it came from" internal/domain/geometry/service.go \
+  's = s.replace("\t\t// just ruled on, and \"we went back to v1\" would appear in neither list.\n\t\tArtifactID: source.ArtifactID,\n", "\t\t// just ruled on, and \"we went back to v1\" would appear in neither list.\n", 1)' \
+  ./internal/domain/geometry 'TestAdopt_AppendsToTheArtifactTheSourceIsOnAfterARename'
+
+drill "re-specifying forgets which artifact it came from" internal/domain/geometry/service.go \
+  's = "".join(s.rsplit("\t\tArtifactID: source.ArtifactID,\n", 1))' \
+  ./internal/domain/geometry 'TestRespec_AppendsToTheArtifactTheSourceIsOnAfterARename'
+
+echo "Interference narrow phase in arrays (#128)"
+# Added 2026-09-16 (interference approach). #121 took the last micro-optimisation out
+# of the per-pair keying loop and moved the check 0.94-0.98x. This branch keys a whole
+# GROUP of pairs at once instead: a pair's relative translation and its containment
+# test are array arithmetic, and the key itself is built by the shipped scalar tail
+# once per DISTINCT row rather than once per pair.
+#
+# Every drill here is against the THREE-fixture fence, not the eight-fixture one.
+# ‼️ The thorough fence takes about eleven minutes and seventeen mutations against it
+# is over three hours, which is long enough that the drills would not be run at all —
+# and a drill that is not run is a claim, which is what this script exists to
+# distrust. The three fixtures reach every branch the array path has; the
+# eight-fixture fence asserts exactly the same properties over the prisms, the 150
+# blocks and the rest.
+#
+# ‼️ SEVENTEEN WERE WRITTEN AND FOUR STAYED GREEN. They are recorded here rather than
+# reworded, because each says something true about the code:
+#
+#   - "a row forgets the pose in the other frame"
+#     (_distinct_rows([variant, tam, tbm]) -> _distinct_rows([variant, tam]))
+#     The four tbm columns are REDUNDANT, and no fixture can show otherwise. Within
+#     one group both translations come from the same difference t_j - t_i through two
+#     fixed rotations, so the forward one determines the backward one; and the marks
+#     tbm carries are decided by `variant`, which is column 0. They are kept because
+#     the redundancy is an argument about exact arithmetic and the columns cost
+#     nothing, and this note is what says so.
+#
+#   - "only the forward pose is marked before the rows are deduped"
+#     (the `for r, val in mb.items(): tbm[sub, r] = val` loop deleted)
+#     Marking before the dedupe is a PERFORMANCE device and not a correctness one:
+#     _key_tail's _slid writes exactly those slots with exactly those values again,
+#     so dropping a mark only makes the rows finer — 197,356 pairs become more than
+#     1,232 rows and the answer does not change. Nothing the fence looks at can see
+#     the difference, which is the honest description of what the marks are for.
+#
+#   - "a clash under the minimum volume is listed"
+#     (keep &= (share >= _INTERFERENCE_MIN_VOLUME) & ... -> the second term alone)
+#     A FIXTURE GAP, not a fence gap. No fixture in the set has a clash whose volume
+#     is under 1 mm3 and whose fraction is over 0.001, so no fixture can tell the two
+#     forms apart — on either path. Worth a fixture; see the spike's recommendations.
+#
+#   - "two solids at one location are keyed by the array path"
+#     (the same-placement guard disabled)
+#     The same drill #114 wrote against the same guard, with the same result. Two
+#     different datums with the same rotation compose to the identity off by ~1e-16,
+#     which rounds to the same pose and reaches the key only through containment, at
+#     exactly its boundary; no fixture can put a solid there, because bounds carry
+#     OCCT's tolerance. The guard is kept so the key stays the loop's in that case,
+#     and nothing measured shows it is needed.
+drill "the rows are told apart by their first column alone" internal/domain/cad/sidecar.py \
+  's = s.replace("        for c in cols[1:]:", "        for c in cols[1:0]:", 1)' \
+  ./internal/domain/cad 'TestKernel_TheArrayNarrowPhaseGivesTheLoopsAnswerOnThreeFixtures'
+
+drill "a group is keyed by its definitions and not its rotations" internal/domain/cad/sidecar.py \
+  's = s.replace("            ck = (r, shape_ids[p[0]])", "            ck = (0, shape_ids[p[0]])", 1)' \
+  ./internal/domain/cad 'TestKernel_TheArrayNarrowPhaseGivesTheLoopsAnswerOnThreeFixtures'
+
+drill "a group is keyed by its rotations and not its definitions" internal/domain/cad/sidecar.py \
+  's = s.replace("            ck = (r, shape_ids[p[0]])", "            ck = (r, 0)", 1)' \
+  ./internal/domain/cad 'TestKernel_TheArrayNarrowPhaseGivesTheLoopsAnswerOnThreeFixtures'
+
+drill "the relative translation is read in the other solid's frame" internal/domain/cad/sidecar.py \
+  's = s.replace("ta = product(rot_tab[int(rid[i0])], gi, gj)", "ta = product(rot_tab[int(rid[i0])], gj, gi)", 1)' \
+  ./internal/domain/cad 'TestKernel_TheArrayNarrowPhaseGivesTheLoopsAnswerOnThreeFixtures'
+
+drill "the placement's inverse is added rather than subtracted" internal/domain/cad/sidecar.py \
+  's = s.replace("            out[:, r] = -acc + back", "            out[:, r] = acc + back", 1)' \
+  ./internal/domain/cad 'TestKernel_TheArrayNarrowPhaseGivesTheLoopsAnswerOnThreeFixtures'
+
+drill "the group's rotation is read by rows rather than transposed" internal/domain/cad/sidecar.py \
+  's = s.replace("            a, b, c = rot[r], rot[3 + r], rot[6 + r]", "            a, b, c = rot[3 * r], rot[3 * r + 1], rot[3 * r + 2]", 1)' \
+  ./internal/domain/cad 'TestKernel_TheArrayNarrowPhaseGivesTheLoopsAnswerOnThreeFixtures'
+
+drill "a group's containment is tested against one axis for all three" internal/domain/cad/sidecar.py \
+  's = s.replace("            mid = ((t[:, r] + p0) + p1) + p2", "            mid = ((t[:, 0] + p0) + p1) + p2", 1)' \
+  ./internal/domain/cad 'TestKernel_TheArrayNarrowPhaseGivesTheLoopsAnswerOnThreeFixtures'
+
+drill "a solid with no placement is left out of the translations" internal/domain/cad/sidecar.py \
+  's = s.replace("                frames.append(0.0)\n                frames.append(0.0)\n                frames.append(0.0)\n", "", 1)' \
+  ./internal/domain/cad 'TestKernel_TheArrayNarrowPhaseGivesTheLoopsAnswerOnThreeFixtures'
+
+drill "the search stops at the key's number, not the pair it was met at" internal/domain/cad/sidecar.py \
+  's = s.replace("            reached = first_of[s]", "            reached = s", 1)' \
+  ./internal/domain/cad 'TestKernel_TheArrayNarrowPhaseGivesTheLoopsAnswerOnThreeFixtures'
+
+drill "a reuse is counted for every pair, not those the search reached" internal/domain/cad/sidecar.py \
+  's = s.replace("    reused = reached - booleans", "    reused = len(pairs) - booleans", 1)' \
+  ./internal/domain/cad 'TestKernel_TheArrayNarrowPhaseGivesTheLoopsAnswerOnThreeFixtures'
+
+drill "the list's ties are broken by an unstable sort" internal/domain/cad/sidecar.py \
+  's = s.replace("worst = at[_np.argsort(-fr, kind=\"stable\")", "worst = at[_np.argsort(-fr, kind=\"quicksort\")", 1)' \
+  ./internal/domain/cad 'TestKernel_TheArrayNarrowPhaseGivesTheLoopsAnswerOnThreeFixtures'
+
+drill "the larger solid is reported first" internal/domain/cad/sidecar.py \
+  's = s.replace("    swap = vol[ii[worst]] > vol[jj[worst]]", "    swap = vol[ii[worst]] < vol[jj[worst]]", 1)' \
+  ./internal/domain/cad 'TestKernel_TheArrayNarrowPhaseGivesTheLoopsAnswerOnThreeFixtures'
+
+drill "every clash found is counted buried" internal/domain/cad/sidecar.py \
+  's = s.replace("    buried = int((fr >= _BURIED_FRACTION).sum())", "    buried = int((fr >= _INTERFERENCE_MIN_FRACTION).sum())", 1)' \
+  ./internal/domain/cad 'TestKernel_TheArrayNarrowPhaseGivesTheLoopsAnswerOnThreeFixtures'
+
+echo
+
+echo "Off-node STEP export (#99)"
 # Added 2026-09-15 (off-node STEP export). POST /v1/geometry/{id}/exports queues an engine
 # task that forge-worker runs with its own kernel (internal/agent/stepexport.go); the file
 # goes to the blob store and GET /v1/geometry/exports/{id}/file streams it back through
@@ -3726,61 +4042,6 @@ drill "a corrupt file is served whole" internal/httpapi/geometry_exports.go \
 drill "the export status route is registered under its own name" internal/httpapi/router.go \
   's = s.replace("mux.Handle(\"GET /v1/geometry/{id}/{rest}\", authed(geo.ExportRoute))", "mux.Handle(\"GET /v1/geometry/exports/{rest}\", authed(geo.ExportRoute))", 1)' \
   ./internal/httpapi 'TestAPI_EveryGeometryRouteIsMountedAndRequiresASession'
-
-echo "View ceiling on Linux (#110)"
-# Added 2026-09-15 (ceiling on Linux). forged in a container limited like its pod
-# (1 CPU, 1 GiB) built 8,192- and 8,315-part designs through the mesh endpoint in
-# 5.7-13.0 s, three runs each, with the 30 s kernel timeout; 16,556 took up to 21.5 s.
-# So a VIEW is built to 8192 and a STEP export, mass report, Go mesh and mesh file stay
-# at 4096. The cad fence runs against cadtest's fake process; the httpapi ones need node.
-# docs/spikes/2026-09-15-ceiling-on-linux
-drill "the kernel's view ceiling is back at 4096" internal/domain/geometry/limits.go \
-  's = s.replace("const maxBuiltParts = 8192", "const maxBuiltParts = 4096", 1)' \
-  ./internal/domain/geometry 'TestLimits_TheKernelBuildsAViewOf8192PartsAndNothingElsePast4096'
-
-drill "the view ceiling is raised past what was measured" internal/domain/geometry/limits.go \
-  's = s.replace("const maxBuiltParts = 8192", "const maxBuiltParts = 16384", 1)' \
-  ./internal/domain/geometry 'TestLimits_TheKernelBuildsAViewOf8192PartsAndNothingElsePast4096'
-
-drill "every kernel build is allowed the view's ceiling" internal/domain/cad/cad.go \
-  's = s.replace("\tif format == \"mesh\" && !properties {", "\tif true {", 1)' \
-  ./internal/domain/cad 'TestKernel_BuildsAViewOf8192PartsAndRefusesEveryOtherBuildPast4096'
-
-drill "a build that is not a STEP export is allowed the view's ceiling" internal/domain/cad/cad.go \
-  's = s.replace("\tif format == \"mesh\" && !properties {", "\tif format != \"step\" {", 1)' \
-  ./internal/domain/cad 'TestKernel_BuildsAViewOf8192PartsAndRefusesEveryOtherBuildPast4096'
-
-drill "a view is refused at the tighter ceiling" internal/domain/cad/cad.go \
-  's = s.replace("\t\trefusal = doc.BuildRefusal()", "\t\trefusal = doc.DrawRefusal()", 1)' \
-  ./internal/domain/cad 'TestKernel_BuildsAViewOf8192PartsAndRefusesEveryOtherBuildPast4096'
-
-drill "the kernel request is cut at the tighter ceiling" internal/domain/geometry/solid.go \
-  's = s.replace("\tif refusal := d.BuildRefusal(); refusal != \"\" {", "\tif refusal := d.DrawRefusal(); refusal != \"\" {", 1)' \
-  ./internal/domain/geometry 'TestLimits_TheKernelBuildsAViewOf8192PartsAndNothingElsePast4096'
-
-drill "the Go mesh is built to the view's ceiling" internal/domain/geometry/mesh.go \
-  's = s.replace("\tif refusal := doc.DrawRefusal(); refusal != \"\" {", "\tif refusal := doc.BuildRefusal(); refusal != \"\" {", 1)' \
-  ./internal/domain/geometry 'TestLimits_TheKernelBuildsAViewOf8192PartsAndNothingElsePast4096'
-
-drill "a mesh file is exported to the view's ceiling" internal/domain/geometry/export.go \
-  's = s.replace("\tif refusal := v.Document.DrawRefusal(); refusal != \"\" {", "\tif refusal := v.Document.BuildRefusal(); refusal != \"\" {", 1)' \
-  ./internal/domain/geometry 'TestLimits_TheKernelBuildsAViewOf8192PartsAndNothingElsePast4096'
-
-drill "the browser loads a design in pieces that the kernel builds whole" internal/httpapi/assets/forge3d.js \
-  's = s.replace("var LAZY_OCCURRENCES = 8192;", "var LAZY_OCCURRENCES = 4096;", 1)' \
-  ./internal/httpapi 'TestRendererLoadsLazilyExactlyPastTheKernelsViewCeiling'
-
-drill "the browser asks for a whole mesh the kernel refuses" internal/httpapi/assets/forge3d.js \
-  's = s.replace("var LAZY_OCCURRENCES = 8192;", "var LAZY_OCCURRENCES = 16384;", 1)' \
-  ./internal/httpapi 'TestRendererLoadsLazilyExactlyPastTheKernelsViewCeiling'
-
-drill "a subtree past the view ceiling is sent to the kernel" internal/httpapi/geometry_subtree.go \
-  's = s.replace("\tcase parts > geometry.MaxBuiltParts():", "\tcase parts > 2*geometry.MaxBuiltParts():", 1)' \
-  ./internal/httpapi 'TestMeshSubtree_LimitsAreTheSubtreesOwn'
-
-drill "the exported ceiling is still the old one" internal/domain/geometry/subtree.go \
-  's = s.replace("func MaxBuiltParts() int { return maxBuiltParts }", "func MaxBuiltParts() int { return maxDrawnParts }", 1)' \
-  ./internal/httpapi 'TestRendererLoadsLazilyExactlyPastTheKernelsViewCeiling|TestMeshSubtree_LimitsAreTheSubtreesOwn'
 
 echo
 

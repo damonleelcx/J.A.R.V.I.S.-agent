@@ -50,6 +50,27 @@ import (
 // Two steps at once would each build on a model without the other, and the
 // second to be kept would silently drop the first.
 
+// # Why a build's versions stay on ONE artifact
+//
+// A geometry version is stored against the artifact its document's NAME resolves
+// to (geometry.artifactPath), which is right for a conversational turn and wrong
+// here. A build step may rename the model as it learns what it is making, and
+// #119 watched one do it: desk-lamp-base.forge.json v1, then
+// desk-lamp.forge.json v1 — one build's work as two files, each with half a
+// history, and "the versions this build kept" no longer one list.
+//
+// So a build PINS its artifact: the one its FIRST KEPT STEP created, carried
+// forward by every step after it (see modelSoFar) and passed as
+// NewVariant.ArtifactID. The rename still happens and is still visible — the
+// document's new name is stored on the version that renamed it — but the
+// history it lands in does not move.
+//
+// ‼️ The pin is read from the PREVIOUS STEP'S OWN VERSION, which this step
+// already loads to get the model so far. Nothing new is stored and nothing is
+// asserted by a caller: a step cannot name an artifact that its own predecessor
+// did not write to, so it can reach neither another goal's history nor another
+// project's.
+
 // TaskKindBuildStep marks a task that is one step of a build.
 const TaskKindBuildStep = "geometry.build_step"
 
@@ -116,7 +137,7 @@ func planBuildGoal(ctx context.Context, pool *db.Pool, c *Conversation, applier 
 	const op = "agent.planBuildGoal"
 
 	charged := chargeTo(c.client, applier.budget, pool, goal, applier.clock, log)
-	steps, err := c.withClient(charged).planBuild(ctx, goal.Statement)
+	steps, limited, err := c.withClient(charged).planBuildNoted(ctx, goal.Statement)
 	if errors.Is(err, errNotWorthPlanning) {
 		return nil, errs.New(op, errs.CodeValidationFailed).
 			WithDetail("the model planned this as a single step, and one step is a turn rather than a build. " +
@@ -126,6 +147,12 @@ func planBuildGoal(ctx context.Context, pool *db.Pool, c *Conversation, applier 
 		return nil, err
 	}
 	plan := buildPlan(goal.Statement, steps)
+	if limited != "" {
+		// In the rationale, which the proposal card, the API reply and the plan's
+		// timeline entry all show: the plan the person authorises is not the one
+		// the model returned, and they are told so where they read it.
+		plan.Rationale += " " + limited
+	}
 	plan.Model = charged.ModelFor(llm.RoleConverse)
 	created, tasks, err := applier.Apply(ctx, pool, goal, plan, "planner")
 	if err != nil {
@@ -181,10 +208,11 @@ func (b *BuildSteps) run(ctx context.Context, goal *engine.Goal, task *engine.Ta
 		}
 	}
 
-	doc, from, err := b.modelSoFar(ctx, task, in)
+	prev, err := b.modelSoFar(ctx, task, in)
 	if err != nil {
 		return nil, err
 	}
+	doc := prev.Doc
 
 	started := b.clock.Now()
 	charged := chargeTo(b.conv.client, b.budget, b.pool, goal, b.clock, b.log)
@@ -208,7 +236,7 @@ func (b *BuildSteps) run(ctx context.Context, goal *engine.Goal, task *engine.Ta
 		}
 	}
 
-	kept := buildStepResult{VersionID: from, Parts: len(doc.Parts), Note: note}
+	kept := buildStepResult{VersionID: prev.VersionID, Parts: len(doc.Parts), Note: note}
 	if next != nil && next.HasGeometry() {
 		call, err := b.recordStep(ctx, task, in, started)
 		if err != nil {
@@ -221,8 +249,13 @@ func (b *BuildSteps) run(ctx context.Context, goal *engine.Goal, task *engine.Ta
 			Inputs: map[string]any{
 				"source": "build goal", "asked": text.Clip(in.Asked, stepLedgerLimit),
 				"step": in.Step.Name, "what": text.Clip(in.Step.What, stepLedgerLimit), "n": in.N, "of": in.Of,
-				"from_version": from,
+				"from_version": prev.VersionID,
 			},
+			// This build's artifact, when a step before this one opened it, so a
+			// step that renames the model appends here rather than starting a
+			// second history of the same build. Empty for the first step that
+			// keeps anything: there is no history yet, and the name opens one.
+			ArtifactID: prev.ArtifactID,
 			// Phase 7, stage E3: a save inside a goal writes the chained
 			// artifact.changed event, naming the step that made it.
 			GoalID: goal.ID, TaskID: task.ID, ToolCallID: call,
@@ -270,17 +303,33 @@ func (b *BuildSteps) recordStep(ctx context.Context, task *engine.Task, in build
 	return callID, nil
 }
 
-// modelSoFar is the model the step before this one kept, or an empty one for
-// the first step.
-func (b *BuildSteps) modelSoFar(ctx context.Context, task *engine.Task, in buildStepInputs) (*geometry.Document, string, error) {
+// soFar is where a step starts: the model the step before it kept, and the
+// history that step kept it in.
+type soFar struct {
+	// Doc is the model to build on — an empty one for the first step.
+	Doc *geometry.Document
+	// VersionID is the version the step before kept, or empty.
+	VersionID string
+	// ArtifactID is the artifact this build's versions belong to, or empty when
+	// no step has kept anything yet.
+	//
+	// Derived from the version, never stored a second time: geometry.Find
+	// already resolves a version to its artifact, so the pin cannot drift from
+	// the row it describes and no migration is needed to hold it.
+	ArtifactID string
+}
+
+// modelSoFar is the model the step before this one kept, and the artifact it
+// was kept on, or an empty model for the first step.
+func (b *BuildSteps) modelSoFar(ctx context.Context, task *engine.Task, in buildStepInputs) (soFar, error) {
 	deps, err := b.repo.ListDependencies(ctx, b.pool, task.ID)
 	if err != nil {
-		return nil, "", err
+		return soFar{}, err
 	}
 	for _, depID := range deps {
 		dep, err := b.repo.GetTask(ctx, b.pool, depID)
 		if err != nil {
-			return nil, "", err
+			return soFar{}, err
 		}
 		var done struct {
 			Result buildStepResult `json:"result"`
@@ -290,12 +339,15 @@ func (b *BuildSteps) modelSoFar(ctx context.Context, task *engine.Task, in build
 		}
 		v, err := b.geo.Find(ctx, done.Result.VersionID)
 		if err != nil {
-			return nil, "", err
+			return soFar{}, err
 		}
 		doc := v.Document
-		return &doc, v.VersionID, nil
+		return soFar{Doc: &doc, VersionID: v.VersionID, ArtifactID: v.ArtifactID}, nil
 	}
-	return &geometry.Document{Name: in.Asked, Units: "mm"}, "", nil
+	// Nothing kept before this step — the first step of the build, or one whose
+	// predecessor built nothing. It starts from an empty model AND with no
+	// artifact, so its own save opens the history under the model's name.
+	return soFar{Doc: &geometry.Document{Name: in.Asked, Units: "mm"}}, nil
 }
 
 func stepOutcome(in buildStepInputs, kept buildStepResult, resumed bool) *Outcome {

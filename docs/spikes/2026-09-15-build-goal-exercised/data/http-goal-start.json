@@ -1,0 +1,3 @@
+{"goal":{"id":"gol_01M2K3ZDBK3V0077NQ5QWHNFRP","title":"HTTP build goal: bench vise (live exercise)","statement":"a small bench vise with a fixed jaw, a sliding jaw and a lead screw with a handle, two steps","status":"active","autonomy":"sandbox_execute","risk_tier":"r1","avatar_state":"idle","state_label":"Idle","tokens_spent":437,"tasks_total":2,"tasks_done":0,"tasks_failed":0,"outstanding":2,"pending_approvals":0,"created_at":"2026-09-15T18:06:28Z","started_at":"2026-09-15T18:10:17Z"},"message":"Started. Its tasks are now claimable — they execute when a FORGE worker is running (`make work`, or the forge-worker binary)."}
+
+HTTP 200

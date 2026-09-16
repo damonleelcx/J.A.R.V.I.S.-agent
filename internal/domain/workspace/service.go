@@ -695,7 +695,18 @@ func (s *Service) EnsureProject(ctx context.Context, q db.Querier, projectID, ow
 type Change struct {
 	ProjectID string
 	Path      string
-	Kind      ArtifactKind
+	// ArtifactID PINS this change to an artifact that already exists, whatever
+	// Path says. Empty — the normal case — resolves the artifact from Path.
+	//
+	// It exists for a build, whose steps are one piece of work: see artifactFor
+	// for why a build pins and a conversational turn does not.
+	//
+	// ‼️ Path is still recorded as the path this change would have landed on,
+	// and is IGNORED for resolution when this is set. The artifact's own path
+	// does not change, so a pinned change to a renamed document does not rewrite
+	// the history it appends to.
+	ArtifactID string
+	Kind       ArtifactKind
 
 	InitiatorID string
 	Agent       Agent
@@ -938,10 +949,7 @@ func (s *Service) RecordChangeIn(ctx context.Context, tx db.Querier, c Change) (
 	}
 	now := s.clock.Now()
 
-	artifact, err := s.repo.FindOrCreateArtifact(ctx, tx, &Artifact{
-		ID: id.New(id.PrefixArtifact), ProjectID: c.ProjectID, Path: c.Path,
-		Kind: kind, CreatedAt: now, UpdatedAt: now,
-	})
+	artifact, err := s.artifactFor(ctx, tx, c, kind, now)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -1010,6 +1018,72 @@ func (s *Service) RecordChangeIn(ctx context.Context, tx db.Querier, c Change) (
 		return nil, nil, err
 	}
 	return artifact, version, nil
+}
+
+// artifactFor is the artifact a change lands on: the one it PINS when it names
+// one, and otherwise the one at its path.
+//
+// # Why a change may pin an artifact at all
+//
+// An artifact is identified by its path, and a geometry version's path comes
+// from the document's name (geometry.artifactPath). For a CONVERSATIONAL TURN
+// that is exactly right: successive proposals of "the bracket" accumulate as
+// versions of one artifact with no state for a client to keep or to assert, and
+// a turn has no history of its own to belong to — the name is the only thing
+// that says which history it is a revision of.
+//
+// For a BUILD it is wrong. A build's steps are ONE piece of work, and a step is
+// free to rename the model as it learns what it is making — "desk lamp base"
+// becoming "desk lamp" once the shade exists. Under the name rule that rename
+// opened a SECOND artifact (#119 watched it happen: desk-lamp-base.forge.json
+// v1, then desk-lamp.forge.json v1), so the Files panel showed one build's work
+// as two files with half a history each, and "the versions this build kept"
+// stopped being one list.
+//
+// So a build PINS the artifact its first kept step created, and every later step
+// appends there however the model has renamed the document since.
+//
+//	the artifact wins for a build, because a build IS one artifact's history
+//	the name wins for a turn, because a turn belongs to whatever it is named after
+//
+// The rename is not hidden by this: the document's new name is stored on the
+// version that renamed it, and that is where a reader finds it. What does not
+// change is the artifact's PATH — the history a build appends to keeps the name
+// it was opened under, which is the only way that history can be one list.
+//
+// ‼️ A pinned id is checked against the change's project. It arrives from a
+// caller; appending to another project's artifact would file a version where
+// nobody in this project can see it, and disclose this project's work to readers
+// of the other one — authorisation here is per project, so there would be no
+// second door to stop at.
+func (s *Service) artifactFor(ctx context.Context, tx db.Querier, c Change, kind ArtifactKind, now time.Time) (*Artifact, error) {
+	const op = "workspace.Service.artifactFor"
+
+	pinned := strings.TrimSpace(c.ArtifactID)
+	if pinned == "" {
+		return s.repo.FindOrCreateArtifact(ctx, tx, &Artifact{
+			ID: id.New(id.PrefixArtifact), ProjectID: c.ProjectID, Path: c.Path,
+			Kind: kind, CreatedAt: now, UpdatedAt: now,
+		})
+	}
+	artifact, err := s.repo.FindArtifact(ctx, tx, pinned)
+	if err != nil {
+		return nil, err
+	}
+	if artifact.ProjectID != c.ProjectID {
+		return nil, errs.New(op, errs.CodeValidationFailed).
+			WithDetail("artifact %s belongs to another project, so this change cannot be appended to it; "+
+				"a change is recorded in the project it was made in", pinned)
+	}
+	// A pinned artifact of another kind would file geometry under a drawing, or a
+	// report under a model, and every reader that filters by kind would then be
+	// quietly wrong about what this project holds.
+	if artifact.Kind != kind {
+		return nil, errs.New(op, errs.CodeValidationFailed).
+			WithDetail("artifact %s is a %s and this change is a %s; appending it would file this change "+
+				"as something it is not", pinned, artifact.Kind, kind)
+	}
+	return artifact, nil
 }
 
 // deriveFromIn records what this change was produced from, in the caller's

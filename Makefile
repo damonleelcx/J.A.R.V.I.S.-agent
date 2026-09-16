@@ -157,6 +157,20 @@ test-cad: ## Run the CAD kernel tests against the real kernel (needs `make cad-v
 	@test -x $(CAD_VENV)/bin/python || { echo "no CAD venv: run \`make cad-venv\` first"; exit 1; }
 	FORGE_CAD_PYTHON="$(abspath $(CAD_VENV))/bin/python" go test -count=1 -v -timeout 30m ./internal/domain/cad/
 
+.PHONY: test-cad-exhaustive
+test-cad-exhaustive: ## Run the kernel fences too slow for every PR (~18 min on CI; nightly)
+	@# Only the tests gated behind FORGE_EXHAUSTIVE_KERNEL_TESTS. Today that is
+	@# TestKernel_TheArrayNarrowPhaseGivesTheLoopsAnswer: eight fixtures, four
+	@# placement variants, 1,059 s on ubuntu-24.04-arm (CI run 35097920395), against
+	@# 686 s for the whole rest of this package. test-cad skips it and runs the
+	@# three-fixture fence instead; the nightly kernel-exhaustive job runs this.
+	@#
+	@# 40m: 2.3x the 18 minutes measured, because runner speed drifts, and still a
+	@# ceiling a genuinely hung kernel hits — the reason test-cad has one too.
+	@test -x $(CAD_VENV)/bin/python || { echo "no CAD venv: run \`make cad-venv\` first"; exit 1; }
+	FORGE_EXHAUSTIVE_KERNEL_TESTS=1 FORGE_CAD_PYTHON="$(abspath $(CAD_VENV))/bin/python" \
+		go test -count=1 -v -timeout 40m -run '^TestKernel_TheArrayNarrowPhaseGivesTheLoopsAnswer$$' ./internal/domain/cad/
+
 .PHONY: measure-car
 measure-car: ## Measure how far a live car build actually gets (SPENDS REAL TOKENS — read the budget note)
 	@# The question this answers is "where does it stop", not "does it pass".

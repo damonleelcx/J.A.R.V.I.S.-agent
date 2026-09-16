@@ -1,0 +1,8 @@
+time=2026-09-15T14:03:59.983-04:00 level=INFO msg=forge.worker.starting service=forge-worker version=dev commit=unknown built=unknown
+time=2026-09-15T14:03:59.984-04:00 level=WARN msg=forge.config.default_applied service=forge-worker warning="FORGE_SHELL_ALLOWED_COMMANDS is empty, so shell_run may execute anything the host can run. FORGE does not confine network egress (see docs/security-promises.md), so this list is the control, not a refinement of one. Set it to the commands this deployment's work actually needs, e.g. FORGE_SHELL_ALLOWED_COMMANDS=go,git,ls,cat"
+time=2026-09-15T14:03:59.991-04:00 level=INFO msg=forge.db.connecting service=forge-worker max_conns=16
+time=2026-09-15T14:04:00.026-04:00 level=INFO msg=forge.db.connected service=forge-worker server_version=17.11
+time=2026-09-15T14:04:00.027-04:00 level=INFO msg=forge.worker.ready service=forge-worker concurrency=1 workspace_root=C:/Users/damon/AppData/Local/Temp/claude/C--Users-damon-Downloads-agents/9c73bcba-7500-4641-9433-f7c8efd05843/scratchpad/livegoal/ws planner_model=qwen3.8-max executor_model=qwen3.8-max verifier_model=deepseek-v4-pro tools=11
+time=2026-09-15T14:04:00.028-04:00 level=INFO msg=forge.worker.ready service=forge-worker worker_id=MSI/12560/01M2K3TW poll=2s
+time=2026-09-15T14:05:17.760-04:00 level=INFO msg=forge.worker.stopping service=forge-worker detail="finishing in-flight tasks; they are released back to the queue rather than abandoned to their lease timeout"
+time=2026-09-15T14:05:17.760-04:00 level=INFO msg=forge.worker.stopped service=forge-worker
