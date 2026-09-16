@@ -51,6 +51,17 @@ func (c *Conversation) repairIfPartsOverlap(ctx context.Context, reply *Reply, s
 	if reply == nil || reply.Prototype == nil || sheet == nil || !sheet.FromKernel {
 		return
 	}
+	// ‼️ How much was checked is said whatever was found — including nothing.
+	//
+	// This used to return without a word when the list was empty, and a check the
+	// pair budget stopped part-way returns an empty list too: a truncated check
+	// read exactly like a clean one. Deferred, so it describes the sheet this
+	// function ends with, which after a repair is the re-check's (Phase 5, V2).
+	defer func() {
+		if note := coverageNote(sheet); note != "" {
+			reply.noteRepair(note)
+		}
+	}()
 	found := sheet.Interferences
 	if len(found) == 0 {
 		return
@@ -90,6 +101,41 @@ func (c *Conversation) repairIfPartsOverlap(ctx context.Context, reply *Reply, s
 	// builds, reports no faults and passes the visual check has no other way to
 	// learn that two of its parts are in the same place.
 	reply.noteRepair("Parts are inside each other and FORGE could not correct it: " + list(found))
+}
+
+// coverageNote says how much of the model the kernel's interference check looked
+// at, or "" when it looked at all of it.
+//
+// Two ways a check covers less than the model, and both have to be said, because
+// "no parts share material" is only true of the parts that were checked:
+//   - the pair budget stopped it (Truncated): "checked X of Y";
+//   - a part could not be built (Skipped): it was never in the check at all.
+//
+// Phase 5, stage V2 of docs/plan-2026-09-13-millions-of-parts.md: every check
+// reports "checked X of Y", and a truncated check can never read as clean.
+func coverageNote(sheet *builtSheet) string {
+	var notes []string
+	if sheet.Truncated {
+		if sheet.Pairs > 0 {
+			notes = append(notes, fmt.Sprintf("FORGE checked %d of %d pairs of parts that could touch "+
+				"for shared material and stopped there, so the model is not known to be clear.",
+				sheet.Checked, sheet.Pairs))
+		} else {
+			notes = append(notes, "FORGE stopped checking parts for shared material before it finished, "+
+				"so the model is not known to be clear.")
+		}
+	}
+	if n := len(sheet.Skipped); n > 0 {
+		const most = 3
+		named := sheet.Skipped
+		more := ""
+		if n > most {
+			named, more = named[:most], fmt.Sprintf("; and %d more", n-most)
+		}
+		notes = append(notes, fmt.Sprintf("%d part(s) could not be built, so they were not checked for "+
+			"shared material: %s%s.", n, strings.Join(named, "; "), more))
+	}
+	return strings.Join(notes, " ")
 }
 
 // list is the reader's sentence for a set of findings.
