@@ -241,6 +241,12 @@ const (
 	// from an earlier document rather than proposed, and distinct from Adopted
 	// because the shape changed.
 	EventGeometryRespecified Event = "forge.geometry.respecified"
+	// EventGeometryExportQueued is an off-node STEP export asked for, or the
+	// export already queued, running or done returned for the same request.
+	EventGeometryExportQueued Event = "forge.geometry.export_queued"
+	// EventGeometryExportStored is an export job's file written to blob storage,
+	// with its size, key and the kernel's time per phase.
+	EventGeometryExportStored Event = "forge.geometry.export_stored"
 
 	// The CAD kernel (wave 14). A separate area from geometry because it is a
 	// separate SUBSYSTEM: a process that can be absent, can die, and whose
@@ -258,6 +264,7 @@ func init() {
 		EventGeometrySaved, EventGeometryExported, EventGeometryMeshed, EventGeometryRefused, EventGeometryCompared,
 		EventGeometryUnreadable,
 		EventGeometryAdopted, EventGeometryRespecified, EventGeometryTooLarge,
+		EventGeometryExportQueued, EventGeometryExportStored,
 		EventCADStarted, EventCADRestarted, EventCADRefused, EventCADTimedOut,
 	)
 }

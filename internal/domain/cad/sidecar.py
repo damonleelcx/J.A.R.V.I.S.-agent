@@ -2652,8 +2652,19 @@ def _build(request):
     # see the note above _interferences. Always, not on request: a check that a
     # caller has to remember to ask for is a check that is off in the one
     # deployment that needed it, and the broad phase makes the usual case free.
-    clashes, clash_truncated, box_tests, clash_pairs = _interferences(built, ids, names, kept_placed)
-    mark = _lap(phases, "interferences", mark)
+    #
+    # ‼️ One caller opts out: the off-node STEP export job (cad.Kernel.ExportSTEPJob)
+    # sends skip_interferences, because its file does not carry the answer and
+    # its memory ceiling rests on STEP export measured without this check. Absent
+    # means the check runs, so every other caller still cannot forget it.
+    if request.get("skip_interferences"):
+        # No lap either: a phase that did not run reports no time, so a reply
+        # cannot be read as a check that ran and found nothing.
+        clashes, clash_truncated, box_tests = [], False, 0
+        clash_pairs = {"pairs": 0, "booleans": 0, "reused": 0}
+    else:
+        clashes, clash_truncated, box_tests, clash_pairs = _interferences(built, ids, names, kept_placed)
+        mark = _lap(phases, "interferences", mark)
     properties = None
     if request.get("properties"):
         properties = _properties(built, ids, kept_placed)

@@ -380,6 +380,10 @@ type request struct {
 	Deflection float64 `json:"deflection,omitempty"`
 	// Properties asks for each part's volume, centre and box (see BuildProperties).
 	Properties bool `json:"properties,omitempty"`
+	// SkipInterferences leaves the interference check out of this build. Absent
+	// means the check runs, so a caller that forgets it gets the check. Only
+	// ExportSTEPJob sets it; see there for why.
+	SkipInterferences bool `json:"skip_interferences,omitempty"`
 }
 
 type partProperties struct {
@@ -523,6 +527,39 @@ func (k *Kernel) BuildProperties(ctx context.Context, doc geometry.Document, uni
 
 // build is BuildDocument, optionally asking the kernel for each part's properties.
 func (k *Kernel) build(ctx context.Context, doc geometry.Document, unit geometry.Unit, format string, properties bool) (*Build, error) {
+	return k.buildWith(ctx, doc, unit, format, properties, false)
+}
+
+// exportJobTimeout bounds one kernel round trip of an export job.
+//
+// #89 measured the build and export of 90,880 occurrences (the job's ceiling,
+// geometry.MaxExportJobParts) at 58.7 and 58.8 s, under 20–23% load from other
+// work on the machine. Five minutes is five times that: long enough for a slower
+// node or a heavier design of the same size, short enough that a kernel which has
+// stopped answering frees the worker within one lease cycle of heartbeats rather
+// than holding it. buildTimeout's 30 s stays the request's deadline.
+const exportJobTimeout = 5 * time.Minute
+
+// ExportSTEPJob writes a document as STEP for the off-node export job
+// (internal/agent/stepexport.go). Three things differ from BuildDocument, and
+// nothing else does — the same expansion, scripts, features and kernel:
+//
+//   - the ceiling is geometry.MaxExportJobParts, not the 4,096 building ceiling;
+//   - the kernel gets exportJobTimeout, not buildTimeout;
+//   - ‼️ the interference check is skipped. The file does not carry its answer —
+//     neither did the in-request export's — and it is the one phase whose cost at
+//     the job's ceiling was not measured together with STEP export: #89's STEP
+//     runs replaced it with the grid alone, and the shipped check took 74–115 s
+//     and 0.84 GB at 90,880 on its own. Skipping it is what makes #89's STEP
+//     numbers an upper bound for this call, and so what the ceiling rests on. The
+//     download's label says no interference check ran.
+func (k *Kernel) ExportSTEPJob(ctx context.Context, doc geometry.Document, unit geometry.Unit) (*Build, error) {
+	return k.buildWith(ctx, doc, unit, "step", false, true)
+}
+
+// buildWith is every build. job is the export job's build (ExportSTEPJob).
+func (k *Kernel) buildWith(ctx context.Context, doc geometry.Document, unit geometry.Unit, format string,
+	properties, job bool) (*Build, error) {
 	const op = "cad.Kernel.BuildDocument"
 	if !k.Available() {
 		return nil, Unavailable(op)
@@ -549,10 +586,22 @@ func (k *Kernel) build(ctx context.Context, doc geometry.Document, unit geometry
 	if format == "mesh" && !properties {
 		refusal = doc.BuildRefusal()
 	}
+	// ‼️ The off-node export job answers to its own ceiling (MaxExportJobParts), and to
+	// nothing else: it is a STEP build, so without this it would fall to DrawRefusal
+	// above and every job would be capped at 4,096. The in-request STEP export is not
+	// a job and still stops at 4,096. Fence:
+	// TestKernel_AnExportJobIsBoundedByItsOwnCeilingAndNotTheBuildingOnes.
+	if job {
+		refusal = doc.ExportJobRefusal()
+	}
 	if refusal != "" {
 		return nil, errs.New(op, errs.CodeValidationFailed).WithDetail("%s", refusal)
 	}
-	solids, operations, featureProblems, inferred := geometry.SolidsAndOperations(doc, unit)
+	expand := geometry.SolidsAndOperations
+	if job {
+		expand = geometry.ExportJobSolidsAndOperations
+	}
+	solids, operations, featureProblems, inferred := expand(doc, unit)
 
 	// Scripted parts are RUN here, and only here.
 	//
@@ -630,8 +679,16 @@ func (k *Kernel) build(ctx context.Context, doc geometry.Document, unit geometry
 	}
 	defer k.release(s)
 
-	req := request{Solids: solids, Operations: operations, Format: format, Properties: properties}
-	res, err := s.roundTrip(ctx, req)
+	req := request{Solids: solids, Operations: operations, Format: format, Properties: properties,
+		SkipInterferences: job}
+	// The limit is still the slot's (see sidecar.timeout), except for the export
+	// job, whose round trip gets exportJobTimeout. Either way this slot enforces it
+	// on its own process, and running out of it is a lateError like any other.
+	limit := s.timeout
+	if job {
+		limit = exportJobTimeout
+	}
+	res, err := s.roundTrip(ctx, req, limit)
 	var late *lateError
 	if err != nil && !errors.As(err, &late) {
 		// One retry, and exactly one. The overwhelmingly likely cause of an I/O
@@ -646,7 +703,7 @@ func (k *Kernel) build(ctx context.Context, doc geometry.Document, unit geometry
 		// TestKernel_AProcessThatDiesMidBuildIsStillRetriedOnce for the retry.
 		s.stop()
 		k.log.Warn(ctx, logx.EventCADRestarted, "slot", s.slot, "detail", err.Error())
-		res, err = s.roundTrip(ctx, req)
+		res, err = s.roundTrip(ctx, req, limit)
 	}
 	if err != nil {
 		if errors.As(err, &late) {

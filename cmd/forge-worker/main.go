@@ -196,6 +196,12 @@ func run() error {
 		WithCharacters(characters).
 		WithDomains(agent.NewDomainStore(pool, log))
 	builds := agent.NewBuildSteps(builder, geometry.NewService(pool, clk, log), repo, budget, pool, clk, log)
+	// Off-node STEP export (internal/agent/stepexport.go): a design written as STEP
+	// with this worker's kernel and kept in the store above, one at a time, up to
+	// geometry.MaxExportJobParts. ‼️ The note at blob.New says nothing in the worker
+	// stores a blob yet; it is #83's, kept word for word so the two branches merge,
+	// and this is the consumer it was waiting for.
+	exports := agent.NewStepExporter(cadKernel, blobs, geometry.NewService(pool, clk, log), repo, pool, clk, log)
 
 	log.Info(ctx, logx.EventWorkerReady,
 		"concurrency", cfg.Engine.WorkerConcurrency,
@@ -209,7 +215,7 @@ func run() error {
 	for i := 0; i < cfg.Engine.WorkerConcurrency; i++ {
 		w := agent.NewWorker(agent.WorkerDeps{
 			Pool: pool, Repo: repo, Queue: queue, Budget: budget,
-			Assembler: assembler, Executor: executor, Verifier: verifier, Builds: builds,
+			Assembler: assembler, Executor: executor, Verifier: verifier, Builds: builds, Exports: exports,
 			Config: cfg.Engine, WorkspaceRoot: workspaceRoot, Clock: clk, Log: log,
 			// PRD SAF-01: the same action is a different event here than on a
 			// laptop, and the classifier is told which one this is.

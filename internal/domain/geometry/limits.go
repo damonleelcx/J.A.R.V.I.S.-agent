@@ -88,6 +88,46 @@ const maxBuiltParts = 8192
 // MAX_VIEWPORT_PARTS, and TestRendererFlattensATreeLikeTheExporter the words.
 const maxViewportParts = DefaultMaxOccurrences
 
+// MaxExportJobParts is the most occurrences an off-node STEP export job builds
+// (forge-worker, POST /v1/geometry/{id}/exports; internal/agent/stepexport.go).
+//
+// ‼️ It is NOT a raised building ceiling. The request path still refuses above
+// maxDrawnParts; only the job, in the worker's pod, builds between the two.
+//
+// # The arithmetic, on measured numbers only
+//
+// The job runs in forge-worker, whose pod limit is 2Gi = 2,048 MiB
+// (deploy/k8s/31-worker.yaml), with FORGE_CAD_POOL=1.
+//
+//   - Kernel. #89 (docs/spikes/2026-09-15-one-million-occurrences, branch
+//     scale/one-million) measured XDE STEP export with the interference check
+//     replaced by the grid alone: 90,880 occurrences peaked at 1.29 GB, both runs,
+//     and 302,560 at 3.38–3.39 GB. Read as GiB, the larger reading: 1,321 MiB and
+//     3,471 MiB. That peak includes the kernel's own import — #90
+//     (docs/spikes/2026-09-15-worker-kernel-memory) measured one kernel at
+//     385–415 MiB whatever it builds, and #89's 10,240 run peaked at 0.50 GB.
+//     The job skips the interference check (cad.Kernel.ExportSTEPJob), so the job
+//     does no more than the measured runs did.
+//   - Go, in the worker, at 90,880, every term taken as live at once though they
+//     are not: expanding the tree 238 MiB allocated (#89), the kernel request
+//     26 MB, the reply line read and decoded (83 MB base64 twice, 62 MB of file)
+//     228 MB, and the file handed to the store 62 MB: 554 MiB.
+//   - 1,321 + 554 = 1,875 MiB of 2,048: 173 MiB to spare. 302,560 is 3,471 MiB for
+//     the kernel alone, 1,423 MiB over before Go holds anything.
+//
+// Nothing between 90,880 and 302,560 was measured, so the ceiling is the largest
+// measured size that fits, rounded down, and not a number interpolated from two
+// points on a curve that grew k ≈ 2.2. 1,000,000 is refused, by name.
+//
+// ‼️ What the sum assumes, each enforced or stated where it lives: one export at a
+// time per worker process (StepExporter.slot); FORGE_CAD_POOL=1 (31-worker.yaml);
+// the interference check skipped. And what it does not know: the numbers are the
+// Windows working set of a laptop under load, not a Linux cgroup's accounting in
+// the production image, and on Windows one kernel's PRIVATE bytes were ~1.25 GiB
+// before it built anything. Flagged for damon; raise it only on a measurement in
+// the pod.
+const MaxExportJobParts = 90_000
+
 // current is process-wide and set once at start (ConfigureLimits).
 //
 // ‼️ Why not a parameter: the expansions that need the occurrence bound run inside
@@ -166,6 +206,18 @@ func (d Document) ViewportRefusal() string {
 	}
 	return fmt.Sprintf("This design places more than %d parts, which is the most the FORGE viewport draws "+
 		"at once. It is stored as it is; nothing was drawn.", maxViewportParts)
+}
+
+// ExportJobRefusal is why an off-node STEP export job does not build this design,
+// or "" when it can. Counted, not expanded, like DrawRefusal: a 1M design is
+// refused in microseconds, before a goal exists and before the kernel.
+func (d Document) ExportJobRefusal() string {
+	if occurrences(d, MaxExportJobParts) <= MaxExportJobParts {
+		return ""
+	}
+	return fmt.Sprintf("This design places more than %d parts, the most FORGE writes as STEP in an export job: "+
+		"XDE export measured 1.3 GB at 90,880 parts and 3.4 GB at 302,560, and the worker that runs the job "+
+		"has 2 GiB. It is stored as it is; no job was queued and nothing was built.", MaxExportJobParts)
 }
 
 // occurrenceProblem refuses a design that describes more occurrences than FORGE

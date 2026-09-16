@@ -55,6 +55,11 @@ spec:
             # contending for it; pool 2 at 1,016Mi working set but 2.7Gi private
             # (commit). FORGE_CAD_POOL stays 1 until the same run on Linux, in this
             # image, shows pool 2 under ~1.2Gi.
+            # The off-node STEP export job is sized to this limit and that pool:
+            # geometry.MaxExportJobParts (90,000 occurrences) is #89's 1.29 GB kernel
+            # peak at 90,880 plus the worker's Go side, one export at a time, in
+            # 2Gi with FORGE_CAD_POOL=1. Changing either re-opens that arithmetic
+            # (internal/domain/geometry/limits.go) before it changes here.
             limits:   { cpu: "1", memory: "2Gi" }
       volumes:
         - name: workspaces

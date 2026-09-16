@@ -119,9 +119,13 @@ func (k *Kernel) Close() {
 // roundTrip sends one request and reads one reply. Caller holds the slot.
 //
 // It returns a *lateError when this slot's process was killed because time ran
-// out — the kernel's limit or the caller's context — which is the one failure
+// out — the limit or the caller's context — which is the one failure
 // BuildDocument does not retry.
-func (s *sidecar) roundTrip(ctx context.Context, req request) (*reply, error) {
+//
+// limit is the slot's own timeout for every build but the off-node export job's,
+// which passes exportJobTimeout (cad.go, ExportSTEPJob). The holder chooses it
+// from this slot, so it is still this slot's limit enforced on this process.
+func (s *sidecar) roundTrip(ctx context.Context, req request, limit time.Duration) (*reply, error) {
 	if err := s.start(ctx); err != nil {
 		return nil, err
 	}
@@ -136,7 +140,8 @@ func (s *sidecar) roundTrip(ctx context.Context, req request) (*reply, error) {
 	// The deadline is enforced by a goroutine that kills the process, because a
 	// blocking Read on a pipe does not observe a context. Killing is the only
 	// thing that ends it, and it is also the right outcome: a kernel that has
-	// not answered in thirty seconds is not going to.
+	// not answered by its limit is not going to. Thirty seconds for a build in a
+	// request (buildTimeout); an export job's is longer (exportJobTimeout).
 	//
 	// ‼️ The goroutine records WHY it killed the process before it does. To the
 	// read below, a process killed for its time and one that crashed are the same
@@ -152,7 +157,7 @@ func (s *sidecar) roundTrip(ctx context.Context, req request) (*reply, error) {
 	defer close(done)
 	var stopped atomic.Pointer[lateError]
 	go func() {
-		timer := time.NewTimer(s.timeout)
+		timer := time.NewTimer(limit)
 		defer timer.Stop()
 		select {
 		case <-done:
@@ -160,7 +165,7 @@ func (s *sidecar) roundTrip(ctx context.Context, req request) (*reply, error) {
 			stopped.Store(&lateError{caller: ctx.Err()})
 			s.kill()
 		case <-timer.C:
-			stopped.Store(&lateError{limit: s.timeout})
+			stopped.Store(&lateError{limit: limit})
 			s.kill()
 		}
 	}()

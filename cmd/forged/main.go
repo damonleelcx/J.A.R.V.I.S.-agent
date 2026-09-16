@@ -163,6 +163,10 @@ func run() error {
 		Identity: identitySvc,
 		LLM:      modelClient,
 		CAD:      cadKernel,
+		// ‼️ The note at blob.New above says no handler uses the store. It is #83's,
+		// kept word for word so the two branches merge; the off-node STEP export
+		// (httpapi/geometry_exports.go) is the first handler that does.
+		Blobs: blobs,
 		// FORGE's own voice, built once and shared by the workbench endpoint
 		// and the media plane. Nil when no vendor is configured, which is the
 		// default: the browser then reads answers aloud in its own voice.

@@ -18,7 +18,8 @@ The fix takes the **last** eight characters, which are random.
 
 ## Symptom
 
-- Found by #99's off-node STEP export fence: worker A's lease lapsed and was reaped, worker B claimed the task and was
+- Found by #99's off-node STEP export fence
+  (`TestStepExport_AWorkerKilledMidExportLeavesItRetryableAndNeverReportedSucceeded`): worker A's lease lapsed and was reaped, worker B claimed the task and was
   running it, and then A finished and recorded its file under B's running task — although the record checks
   `lease_owner = <this worker>` in the same transaction. Both workers were `MSI/36792/01M2K0X1`.
 - On main, `TestNewWorker_WorkersStartedTogetherHaveDistinctIdentities` shows it directly: workers 0 and 1, made one
@@ -34,6 +35,8 @@ Within one forge-worker process, the lease was not a lease between workers:
   matched), so the lease never lapsed again while two workers ran it.
 - `Release` by one worker could hand back a task a sibling was running, and a worker's graceful stop could return a
   sibling's task to `ready` mid-run.
+- Once #99's export job exists, a worker whose export lease lapsed could record its file under the export its
+  sibling had reclaimed, because the record's `lease_owner = <this worker>` check matched the sibling.
 - Logs and `lease_owner` said "which worker holds this" with a name four workers shared, which is the question the
   identity's own comment says it exists to answer.
 
@@ -74,15 +77,18 @@ probability about 2⁻⁴⁰ per pair, and the host and pid still say where each
   one claim a task, and requires the other's heartbeat and release to be refused with CONFLICT; then lapses and reaps
   the lease, has the sibling reclaim it, and requires the first worker's heartbeat and release to be refused, with the
   lease's owner and expiry unmoved. Red on main before the fix, green after.
+- `TestStepExport_AWorkerKilledMidExportLeavesItRetryableAndNeverReportedSucceeded` (#99, Postgres) requires the
+  lapsed worker to record nothing while its sibling runs the export. Red on #99's branch before the fix, green after.
 
 ## Regression prevention
 
 Two drills in `scripts/drill-fences.sh` ("Workers in one process", added 2026-09-15): one puts the old slice back, one
-names every worker by host and pid alone. Both fences go red under each.
+names every worker by host and pid alone. Both fences go red under each, and since #99 merged, so does its export
+fence, which both drills also run.
 
 ## Not in this fix
 
-- #99 (`export/off-node`) carries the same one-line change and its own fence; whichever merges second resolves that
-  hunk by keeping either side.
+- #99 (`export/off-node`) carried the same one-line change and its own copy of this document; it merged main after this
+  fix, kept this document and main's test file, and applied the change once (the two lines were identical).
 - Tasks already holding a shared identity need nothing: a lease names its owner only until it ends, and a restart mints
   new identities.
