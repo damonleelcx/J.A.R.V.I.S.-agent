@@ -87,6 +87,7 @@ FILES=(
   internal/httpapi/assets/forge3d.js
   internal/domain/cad/sidecar.py
   internal/domain/cad/cad.go
+  internal/domain/cad/sidecar_process.go
   internal/llm/deliberation.go
   internal/llm/stream.go
   internal/llm/openai_compatible.go
@@ -1026,6 +1027,22 @@ drill "the build does not say how many boxes it compared" internal/domain/cad/ca
   ./internal/domain/cad 'TestKernel_InterferenceBoxTestsGrowLinearly'
 
 echo
+echo "A pool of kernel processes builds side by side"
+# Added 2026-09-15 (Phase 4, stage K3). A Kernel is FORGE_CAD_POOL processes behind a
+# FIFO channel; a build takes a free one, retries once on that slot, and gives it back.
+drill "the pool is always one process" internal/domain/cad/sidecar_process.go \
+  's = s.replace("\t\tk.slots = make(chan *sidecar, k.size)\n\t\tfor i := 0; i < k.size; i++ {", "\t\tk.slots = make(chan *sidecar, 1)\n\t\tfor i := 0; i < 1; i++ {", 1)' \
+  ./internal/domain/cad 'TestKernel_ConcurrentBuildsDoNotSerialise'
+
+drill "the retry writes to the dead process again" internal/domain/cad/cad.go \
+  's = s.replace("\t\ts.stop()\n\t\tk.log.Warn(ctx, logx.EventCADRestarted", "\t\tk.log.Warn(ctx, logx.EventCADRestarted", 1)' \
+  ./internal/domain/cad 'TestRetryAfterTheProcessDies|TestRetryAfterEveryProcessInThePoolDies'
+
+drill "configuration accepts a pool of no processes" internal/platform/config/config.go \
+  's = s.replace("\tif cfg.CAD.Pool <= 0 {\n", "\tif false {\n", 1)' \
+  ./internal/platform/config 'TestCADPoolMustBePositive'
+
+echo
 echo "Islands"
 drill "an island is cut away with its hole" internal/domain/geometry/triangulate.go \
   's = s.replace("\t\tif depth[i]%2 != 0 {\n\t\t\tcontinue // a void, and it belongs to whatever contains it\n\t\t}", "\t\tif i != 0 {\n\t\t\tcontinue\n\t\t}", 1)' \
@@ -1822,12 +1839,15 @@ drill "a timed-out build is retried like a crashed one" internal/domain/cad/cad.
   's = s.replace("\tif err != nil && !errors.As(err, &late) {", "\tif err != nil {", 1)' \
   ./internal/domain/cad 'TestKernel_ABuildThatRunsOutOfTimeIsNotRetriedAndSaysSo'
 
-drill "the kill does not record that the kernel's limit ran out" internal/domain/cad/cad.go \
-  's = s.replace("\t\t\tstopped.Store(&lateError{limit: k.timeout})\n", "", 1)' \
+# Re-anchored 2026-09-16 (K3): the round trip, and the kill that bounds it, moved
+# onto the SLOT — sidecar_process.go — and the reset after a late error is that
+# slot's rather than the kernel's. The three drills below follow the code.
+drill "the kill does not record that the kernel's limit ran out" internal/domain/cad/sidecar_process.go \
+  's = s.replace("\t\t\tstopped.Store(&lateError{limit: s.timeout})\n", "", 1)' \
   ./internal/domain/cad 'TestKernel_ABuildThatRunsOutOfTimeIsNotRetriedAndSaysSo'
 
-drill "a timeout leaves the killed process in the kernel" internal/domain/cad/cad.go \
-  's = s.replace("\t\t\tk.stopLocked()\n\t\t\tk.log.Warn(ctx, logx.EventCADTimedOut", "\t\t\tk.log.Warn(ctx, logx.EventCADTimedOut", 1)' \
+drill "a timeout leaves the killed process in the slot" internal/domain/cad/cad.go \
+  's = s.replace("\t\t\ts.stop()\n\t\t\tk.log.Warn(ctx, logx.EventCADTimedOut", "\t\t\tk.log.Warn(ctx, logx.EventCADTimedOut", 1)' \
   ./internal/domain/cad 'TestKernel_AfterATimeoutTheKernelStartsAFreshProcessForTheNextBuild'
 
 drill "the kernel's limit is reported as no working backend" internal/domain/cad/cad.go \
@@ -1847,8 +1867,21 @@ drill "a kernel timeout is a 501" internal/platform/errs/code.go \
   ./internal/httpapi 'TestAPI_AKernelBuildThatTakesTooLongIsA504ThatSaysSo'
 
 drill "a process that dies mid-build is not retried" internal/domain/cad/cad.go \
-  's = s.replace("\t\tres, err = k.roundTrip(ctx, req)\n\t}\n\tif err != nil {", "\t}\n\tif err != nil {", 1)' \
+  's = s.replace("\t\tres, err = s.roundTrip(ctx, req)\n\t}\n\tif err != nil {", "\t}\n\tif err != nil {", 1)' \
   ./internal/domain/cad 'TestKernel_AProcessThatDiesMidBuildIsStillRetriedOnce'
+
+# Added 2026-09-16 (K3 × the timeout work). With a pool, "the kernel is reset after
+# a late error" and "the other processes are untouched" stop being the same
+# sentence: a slow assembly must cost ITS slot's process and leave the rest of the
+# pool building. Neither PR could hold this alone — #73 had no timeout to cross,
+# #103 had no second process to spare.
+drill "a timeout resets every slot in the pool" internal/domain/cad/cad.go \
+  's = s.replace("\t\t\ts.stop()\n\t\t\tk.log.Warn(ctx, logx.EventCADTimedOut", "\t\t\tfor _, o := range k.all {\n\t\t\t\to.stop()\n\t\t\t}\n\t\t\tk.log.Warn(ctx, logx.EventCADTimedOut", 1)' \
+  ./internal/domain/cad 'TestKernel_ATimeoutInOneSlotLeavesTheOtherSlotsServing'
+
+drill "a slot enforces a limit that is not the kernel's" internal/domain/cad/sidecar_process.go \
+  's = s.replace("slot: i, timeout: k.timeout}", "slot: i, timeout: buildTimeout}", 1)' \
+  ./internal/domain/cad 'TestKernel_ABuildThatRunsOutOfTimeIsNotRetriedAndSaysSo'
 echo "Workers in one process"
 # Added 2026-09-15 (worker lease identity). NewWorker sliced a fresh id's
 # timestamp rather than its random tail, so every worker forge-worker started

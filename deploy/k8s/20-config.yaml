@@ -25,6 +25,11 @@ data:
   # CAD kernel. Present in this image; an empty value would disable it and make
   # STEP export refuse with its documented message.
   FORGE_CAD_PYTHON: "/opt/cad/venv/bin/python"
+  # How many kernel processes serve builds at once (Phase 4, stage K3). One: each
+  # holds its own build123d in memory, forged's 1Gi is shared with the API and the
+  # audio server, and nothing caps a process below the pod's limit, so a second one
+  # waits for a memory figure measured on this node.
+  FORGE_CAD_POOL: "1"
 
   # Blob storage for large geometry (docs/plan-2026-09-13-millions-of-parts.md,
   # Phase 3). The bucket, and the ForgeGeometryBlobs policy on the node's role

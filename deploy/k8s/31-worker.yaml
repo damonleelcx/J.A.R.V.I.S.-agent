@@ -45,8 +45,9 @@ spec:
             - { name: workspaces, mountPath: /var/lib/forge/workspaces }
           resources:
             requests: { cpu: "100m", memory: "256Mi" }
-            # The CAD kernel holds a warm Python with OpenCASCADE loaded, which
-            # is why this ceiling is higher than forged's.
+            # No CAD kernel runs here yet: this comment used to say one did. The
+            # worker gets its own kernel pool when builds become engine goals
+            # (Phase 2, stage A1); the 2Gi ceiling is the room it will need.
             limits:   { cpu: "1", memory: "2Gi" }
       volumes:
         - name: workspaces

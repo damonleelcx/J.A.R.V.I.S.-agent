@@ -45,14 +45,20 @@ func warm(t *testing.T, k *Kernel) {
 	}
 }
 
-// pid is the kernel's current process, or 0 when it holds none.
-func pid(k *Kernel) int {
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	if k.cmd == nil || k.cmd.Process == nil {
+// pid is the process slot n of the pool holds, or 0 when it holds none.
+//
+// It used to read k.cmd, because a Kernel WAS one process. K3 made it N slots
+// that each own one, so the same question is now asked of a slot: these fences
+// run a pool of one, where slot 0 is the process the kernel used to be.
+func pid(k *Kernel, n int) int {
+	if n >= len(k.all) {
 		return 0
 	}
-	return k.cmd.Process.Pid
+	p := k.all[n].process()
+	if p == nil {
+		return 0
+	}
+	return p.Pid
 }
 
 // ‼️ Until this fix, a build past its limit was killed, RETRIED on a fresh process,
@@ -132,7 +138,7 @@ func TestKernel_AfterATimeoutTheKernelStartsAFreshProcessForTheNextBuild(t *test
 	k.timeout = 500 * time.Millisecond
 	defer k.Close()
 	warm(t, k)
-	killed := pid(k)
+	killed := pid(k, 0)
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
 	defer cancel()
@@ -147,7 +153,7 @@ func TestKernel_AfterATimeoutTheKernelStartsAFreshProcessForTheNextBuild(t *test
 	if got.Parts != 1 {
 		t.Errorf("built %d parts, want 1", got.Parts)
 	}
-	if p := pid(k); p == 0 || p == killed {
+	if p := pid(k, 0); p == 0 || p == killed {
 		t.Error("the kernel still holds the process the timeout killed")
 	}
 	if n := cadtest.Starts(t, dir); n != 3 {
@@ -182,5 +188,99 @@ func TestKernel_AProcessThatDiesMidBuildIsStillRetriedOnce(t *testing.T) {
 	}
 	if n := cadtest.Starts(t, dir); n != 3 {
 		t.Errorf("%d processes started, want 3: a crash is retried once, and only once", n)
+	}
+}
+
+// A build that runs out of time costs ITS slot's process, and nobody else's.
+//
+// # Why neither #73 nor #103 could hold this
+//
+// The timeout work (#100/#103/#110) was written against a Kernel that WAS one
+// process: "the kernel is reset after a late error" and "the other processes are
+// untouched" were the same sentence there, because there were no others. The pool
+// (#73) had no timeout to cross. Reconciling them makes the second claim
+// separable, and separable claims need their own fence: a kill that reached
+// k.cmd-as-it-was, or a reset that emptied the pool rather than one slot, would
+// pass every fence on both sides and take a working process away from whoever was
+// mid-build in it.
+//
+// The pool is FIFO, so starting both processes by hand and giving them back in
+// slot order makes the slow build take slot 0 and the build beside it slot 1.
+func TestKernel_ATimeoutInOneSlotLeavesTheOtherSlotsServing(t *testing.T) {
+	python, dir := cadtest.FakeKernel(t)
+	k := New(python, logx.Discard()).WithPool(2)
+	k.timeout = 500 * time.Millisecond
+	defer k.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+
+	var held []*sidecar
+	for i := 0; i < 2; i++ {
+		s, err := k.acquire(ctx)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := s.start(ctx); err != nil {
+			t.Fatal(err)
+		}
+		held = append(held, s)
+	}
+	for _, s := range held {
+		k.release(s)
+	}
+	if n := cadtest.Starts(t, dir); n != 2 {
+		t.Fatalf("%d processes started warming a pool of two, want 2", n)
+	}
+	survivor := pid(k, 1)
+	if survivor == 0 {
+		t.Fatal("slot 1 holds no process to survive the timeout")
+	}
+
+	late := make(chan error, 1)
+	go func() {
+		_, err := k.BuildDocument(ctx, cue(cadtest.Slow), geometry.Millimetre, "")
+		late <- err
+	}()
+	// Wait for the slow build to actually hold a slot, so the build below cannot
+	// race it for slot 0. One slot left in the channel says it has taken one.
+	for deadline := time.Now().Add(30 * time.Second); len(k.slots) > 1; {
+		if time.Now().After(deadline) {
+			t.Fatal("the slow build never took a slot")
+		}
+		time.Sleep(time.Millisecond)
+	}
+
+	// Slot 1 serves a build while slot 0 is running past its limit and being
+	// killed for it.
+	got, err := k.BuildDocument(ctx, cue("fine"), geometry.Millimetre, "")
+	if err != nil {
+		t.Fatalf("a build in another slot failed while one slot ran out of time: %v", err)
+	}
+	if got.Parts != 1 {
+		t.Errorf("the build beside the timeout made %d parts, want 1", got.Parts)
+	}
+
+	if err := <-late; !errs.Is(err, errs.CodeKernelTimeout) {
+		t.Fatalf("the slow build did not time out: %v", err)
+	}
+	if p := pid(k, 0); p != 0 {
+		t.Errorf("slot 0 still holds process %d after its build ran out of time", p)
+	}
+	if p := pid(k, 1); p != survivor {
+		t.Errorf("slot 1 holds process %d, was %d: the timeout in slot 0 killed another slot's process", p, survivor)
+	}
+	if n := cadtest.Starts(t, dir); n != 2 {
+		t.Fatalf("%d processes started, want 2: the timeout in slot 0 replaced a process somewhere else", n)
+	}
+
+	// And slot 1 is still SERVING, not merely alive: the slow build gave slot 0
+	// back after the fast one gave slot 1 back, so the FIFO hands this build slot
+	// 1 — which answers without a restart only if its process was left alone.
+	if _, err := k.BuildDocument(ctx, cue("fine"), geometry.Millimetre, ""); err != nil {
+		t.Fatalf("the slot that did not time out stopped serving: %v", err)
+	}
+	if n := cadtest.Starts(t, dir); n != 2 {
+		t.Errorf("%d processes started, want 2: the build after the timeout had to restart the other slot's process", n)
 	}
 }
