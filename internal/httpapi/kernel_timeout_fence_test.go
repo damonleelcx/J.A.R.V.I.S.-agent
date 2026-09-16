@@ -19,7 +19,8 @@ import (
 
 // A kernel build that takes too long says so on the wire, on every endpoint that
 // builds with the kernel: 504 CAD_KERNEL_TIMEOUT, not 501 "no working backend in
-// this deployment". On main those are the built mesh and the STEP export.
+// this deployment". Those are the built mesh, the STEP export and the mass
+// properties: every one of them answers by asking the kernel to build.
 //
 // ‼️ The 501 is what the 2026-09-15 ceiling spike (PR #95) got for a 30,023-part
 // car after 66 s, and it sends whoever reads it to FORGE_CAD_PYTHON on a deployment
@@ -59,6 +60,10 @@ func TestAPI_AKernelBuildThatTakesTooLongIsA504ThatSaysSo(t *testing.T) {
 	}{
 		{"mesh", "/v1/geometry/" + v.VersionID + "/mesh", g.h.Mesh},
 		{"step export", "/v1/geometry/" + v.VersionID + "/export?format=step", g.h.Export},
+		// ‼️ The mass endpoint is here because #100 fenced it and the port to main
+		// did not: it builds through the same kernel, so it turned the same 501 for
+		// a design that was only large, and nothing else would have caught that.
+		{"mass", "/v1/geometry/" + v.VersionID + "/mass", g.h.Mass},
 	} {
 		t.Run(c.name, func(t *testing.T) {
 			// A process already running, so the deadline below is spent in the

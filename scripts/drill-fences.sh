@@ -114,7 +114,6 @@ FILES=(
   deploy/verify.sh
   cmd/forgectl/blob.go
   internal/domain/geometry/mesh.go
-  internal/platform/errs/code.go
   internal/httpapi/assets/voice.js
   internal/httpapi/assets/workbench.js
   internal/httpapi/transcribe.go
@@ -148,6 +147,7 @@ FILES=(
   internal/httpapi/assets/workbench.css
   internal/domain/geometry/subtree.go
   internal/httpapi/geometry_subtree.go
+  internal/platform/errs/code.go
   internal/agent/buildgoal.go
   internal/agent/spend.go
   internal/domain/engine/repository.go
