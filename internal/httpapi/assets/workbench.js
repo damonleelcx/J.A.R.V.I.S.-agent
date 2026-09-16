@@ -1619,6 +1619,13 @@
    * run searched a car and read fifty rows of "Rivet 1", "Rivet 10", … with one per seam
    * and nothing to tell the seams apart; a tree row does not need it, because its place
    * in the tree says where it is, but a search row has no place.
+   *
+   * ‼️ h.label is the occurrence's OWN name ("Rivet 1"), not its display path: #70 made
+   * geometry.Part.Name the whole path ("Seam 1 / Rivet 1 / rivet"), which is right where
+   * a name travels alone but would make these rows say where twice — once in prose and
+   * once as ids — and what never. findOccurrences answers with spec.occurrenceName; the
+   * name column matches the tree's label for the same row, and the path column stays the
+   * ids that Isolate and selection use.
    * Fence: TestWorkbenchSearchRowsSayWhereEachOccurrenceIs. */
   function searchRows(hits) {
     return (hits.total ? '' : '<div class="empty">Nothing drawn has that in its name or path.</div>') +
