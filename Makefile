@@ -30,6 +30,19 @@ DB_USER      ?= forge
 DB_PASS      ?= forge_dev_pw
 DB_NAME      ?= forge
 DB_URL       := postgres://$(DB_USER):$(DB_PASS)@localhost:$(DB_PORT)/$(DB_NAME)?sslmode=disable
+# Local S3-compatible blob store (MinIO) for the blob store's tests. Pinned to a
+# release: an unpinned server is how a test that passed yesterday fails today
+# for a reason nobody changed. Development credentials only.
+BLOB_CONTAINER := forge-minio
+# quay.io, not Docker Hub: MinIO no longer publishes minio/minio there (the repository
+# answers 404), so CI could not pull it. Same tag, same image: its manifest digest is
+# sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e on both.
+# docs/bugfix/2026-09-14-minio-could-not-be-pulled-in-ci.md
+BLOB_IMAGE     ?= quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+BLOB_PORT      ?= 55841
+BLOB_USER      ?= forge
+BLOB_PASS      ?= forge_dev_minio
+BLOB_ENDPOINT  := http://localhost:$(BLOB_PORT)
 
 .DEFAULT_GOAL := help
 
@@ -278,6 +291,34 @@ dist-verify: ## Check that the built binaries report the version they were stamp
 # ---------------------------------------------------------------------------
 # Local database
 # ---------------------------------------------------------------------------
+
+.PHONY: blob-up
+blob-up: ## Start the local MinIO container the blob store tests run against
+	@if docker ps -a --format '{{.Names}}' | grep -qx '$(BLOB_CONTAINER)'; then \
+	  docker start $(BLOB_CONTAINER) >/dev/null && echo "started existing $(BLOB_CONTAINER)"; \
+	else \
+	  docker run -d --name $(BLOB_CONTAINER) -p $(BLOB_PORT):9000 \
+	    -e MINIO_ROOT_USER=$(BLOB_USER) -e MINIO_ROOT_PASSWORD=$(BLOB_PASS) \
+	    $(BLOB_IMAGE) server /data >/dev/null && echo "created $(BLOB_CONTAINER) on port $(BLOB_PORT)"; \
+	fi
+
+.PHONY: blob-wait
+blob-wait: ## Block until MinIO answers its readiness probe
+	@# Asks the SERVER, like db-wait asks the database: a running container is
+	@# not a ready one, and CI starts it moments before the tests.
+	@for i in $$(seq 1 60); do \
+	  curl -fsS $(BLOB_ENDPOINT)/minio/health/ready >/dev/null 2>&1 && { echo "MinIO ready at $(BLOB_ENDPOINT)"; exit 0; }; \
+	  sleep 1; \
+	done; \
+	echo "MinIO did not become ready at $(BLOB_ENDPOINT) within 60s. Run \`make blob-up\`, or check \`docker logs $(BLOB_CONTAINER)\`."; exit 1
+
+.PHONY: test-blob
+test-blob: blob-wait ## Run the blob store tests against a real MinIO (needs `make blob-up`)
+	@# Against a real S3-compatible server, never a fake: conditional writes,
+	@# checksums and error shapes are properties of the server.
+	FORGE_TEST_BLOB_ENDPOINT="$(BLOB_ENDPOINT)" AWS_ACCESS_KEY_ID="$(BLOB_USER)" \
+	  AWS_SECRET_ACCESS_KEY="$(BLOB_PASS)" AWS_REGION=us-east-1 \
+	  go test -count=1 -v ./internal/platform/blob/
 
 .PHONY: db-up
 db-up: ## Start the local Postgres container
