@@ -242,14 +242,17 @@
   /* size, d1, d2, h */
   var ISO7089 = [['M3', 3.2, 7, 0.5], ['M4', 4.3, 9, 0.8], ['M5', 5.3, 10, 1], ['M6', 6.4, 12, 1.6],
                  ['M8', 8.4, 16, 1.6], ['M10', 10.5, 20, 2], ['M12', 13, 24, 2.5]];
-  /* series, bore, outside diameter, width */
+  /* series, bore, outside diameter, width: ISO/R 15/1-1968 Table 3, dimension series 10
+   * (standard.go names the source, and that ISO 15:2017's own table went unread) */
   var ISO15 = [['608', 8, 22, 7], ['6000', 10, 26, 8], ['6001', 12, 28, 8], ['6002', 15, 32, 9],
                ['6003', 17, 35, 10], ['6004', 20, 42, 12], ['6005', 25, 47, 12]];
   /* kind, B, H, t */
   var EN10219 = [['SHS', 20, 20, 2], ['SHS', 30, 30, 3], ['SHS', 40, 40, 3], ['SHS', 40, 40, 4],
                  ['SHS', 50, 50, 5], ['RHS', 40, 20, 2], ['RHS', 60, 40, 3]];
-  /* leg a, t, root radius r1, toe radius r2 */
-  var EN10056 = [[20, 3, 3.5, 2], [30, 3, 5, 2.5], [40, 4, 6, 3], [50, 5, 7, 3.5]];
+  /* leg a, t, root radius r1, toe radius r2 — half the root radius, as EN 10056-1:1998
+   * Note 1 states; the 2017 edition prints the same r1 (standard.go names the sources;
+   * the L20's was 2 until 2026-09-15) */
+  var EN10056 = [[20, 3, 3.5, 1.75], [30, 3, 5, 2.5], [40, 4, 6, 3], [50, 5, 7, 3.5]];
   /* geometry/units.go unitTable: the factor to millimetres and every alias. */
   var UNIT_TABLE = [[1, ['mm', 'millimetre', 'millimeter', 'millimetres', 'millimeters']],
                     [10, ['cm', 'centimetre', 'centimeter', 'centimetres', 'centimeters']],
@@ -1582,6 +1585,9 @@
    * (Document.DrawRefusal in Go) until building at that size has been measured. */
   var MAX_VIEWPORT_PARTS = 100000;
   var PATH_SEPARATOR = '/';
+  // A tree part's display name: every child above it, then its own name (tree.go,
+  // NameSeparator; docs/bugfix/2026-09-14-tree-copies-shared-display-names.md).
+  var NAME_SEPARATOR = ' / ';
 
   function degreesToRadians3(r) {
     var p = pad3(r);
@@ -1794,11 +1800,33 @@
    * on a sibling's placement ("front-left/hub", "bolt-3/seat"). reference answers
    * null where Go refuses the attachment, so the child is left out here too.
    * TestRendererFlattensATreeLikeTheExporter holds this to Go's answer. */
-  function makeAttachments(asms) {
+  function makeAttachments(asms, rootId) {
     var resolving = {};
+    /* Whether a places a child, or one copy of a patterned child, under this id
+     * (interface.go, places). */
+    function places(a, id) {
+      var children = a.children || [];
+      for (var i = 0; i < children.length; i++) {
+        var c = children[i] || {}, cid = String(c.id || '');
+        if (cid === id) return true;
+        var slots = patternCopies(c.pattern) || [];
+        for (var s = 0; s < slots.length; s++) if (cid + slots[s].suffix === id) return true;
+      }
+      return false;
+    }
     function interfaceIn(a, at) {
       var segs = String(at).split(PATH_SEPARATOR);
       for (var i = 0; i < segs.length; i++) if (!segs[i].trim()) return null;
+      /* ‼️ A path resolved FROM THE ROOT may begin with the root's own id and means
+       * the same without it (interface.go, interfaceIn). Go places that child, so the
+       * browser must place it too — a copy that refuses what Go accepts draws a model
+       * the exporter does not.
+       * Fence: TestRendererFlattensATreeLikeTheExporter, "a placement from the root
+       * whose path names the root". */
+      if (segs.length > 1 && a.id === rootId && segs[0] === rootId && !places(a, segs[0])) {
+        segs = segs.slice(1);
+        at = segs.join(PATH_SEPARATOR);
+      }
       if (segs.length === 1) {
         var faces = a.interfaces || [];
         for (var k = 0; k < faces.length; k++) {
@@ -1869,7 +1897,7 @@
     var root = asms[spec.root];
     if (!root) return { parts: parts, definitionOf: definitionOf, features: features };
 
-    var attach = makeAttachments(asms);
+    var attach = makeAttachments(asms, spec.root);
     /* geometry occurrenceFeatures (tree_features.go): an assembly's features in one
      * occurrence, naming the parts its placements wrote out. `of` takes a group's
      * first part, `with` all of them; a path that places nothing is left out. */
@@ -1899,7 +1927,7 @@
         features.push(q);
       });
     }
-    function walk(a, path, onPath, frame, index) {
+    function walk(a, path, names, onPath, frame, index) {
       if (path.length >= MAX_TREE_DEPTH) return true;
       var ids = {}, children = a.children || [];
       for (var i = 0; i < children.length; i++) {
@@ -1926,12 +1954,13 @@
           var slot = slots[s], slotStart = parts.length;
           var childPath = path.concat([cid + slot.suffix]);
           var slotName = childPath.join(PATH_SEPARATOR);
-          var childName = c.name && slot.number ? c.name + ' ' + slot.number : c.name;
+          // The occurrence's display path, a label per level (tree.go, NameSeparator).
+          var childNames = names.concat([(c.name || cid) + (slot.number ? ' ' + slot.number : '')]);
           var childFrame = thenPlacement(frame, thenPlacement(reference, thenPlacement(slot.at, local)));
           if (sub) {
             onPath[sub.id] = true;
             var subIndex = {};
-            var stop = walk(sub, childPath, onPath, childFrame, subIndex);
+            var stop = walk(sub, childPath, childNames, onPath, childFrame, subIndex);
             delete onPath[sub.id];
             for (var rel in subIndex) index[cid + slot.suffix + PATH_SEPARATOR + rel] = subIndex[rel];
             index[cid + slot.suffix] = [slotStart, parts.length];
@@ -1942,7 +1971,7 @@
             var lp = defCopies[j], q = shallowCopy(lp), partStart = parts.length;
             var suffix = lp.id.indexOf(def.id) === 0 ? lp.id.slice(def.id.length) : lp.id;
             q.id = slotName + suffix;
-            if (childName) q.name = suffix ? childName + ' ' + suffix.replace(/^-/, '') : childName;
+            q.name = childNames.concat([lp.name || lp.id]).join(NAME_SEPARATOR);
             var st = storedPlacement(thenPlacement(childFrame, placementOf(lp.position, lp.rotation, !!lp.mirrored)));
             q.position = st.position;
             q.rotation = st.rotation;
@@ -1960,7 +1989,7 @@
     }
     var onPath = {};
     onPath[root.id] = true;
-    walk(root, [], onPath, placementOf(null, null, false), {});
+    walk(root, [], [], onPath, placementOf(null, null, false), {});
     return { parts: parts, definitionOf: definitionOf, features: features };
   }
 

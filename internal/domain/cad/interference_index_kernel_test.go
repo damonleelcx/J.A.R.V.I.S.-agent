@@ -86,8 +86,14 @@ func cellsWithPins(rows, perRow int) geometry.Document {
 
 // The plan's acceptance, at the build ceiling: a repetitive assembly is checked in
 // FULL. 1,200 copies are 2,400 clashes, more than the 2,000 booleans the budget
-// allows — before V1 this came back truncated. Two poses (a pin left of centre,
-// a pin right of it) are two booleans; every other clash is the same answer again.
+// allows — before V1 this came back truncated. Every other clash is the same
+// answer again.
+//
+// Two poses (a pin left of centre, a pin right of it) were two booleans until
+// 2026-09-15. Both pins lie wholly inside the plate's width and depth, so their
+// volume with it cannot depend on where along either they stand, and since the
+// large-box index they are one (sidecar.py, _INTERFERENCE_SLIDE; a pin over an
+// edge is fenced by TestKernel_PinsAlongARailPayForOneBooleanAndTheEndsAreMeasured).
 func TestKernel_RepeatedClashesPayForOneBooleanEachPose(t *testing.T) {
 	k := kernel(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
@@ -107,8 +113,8 @@ func TestKernel_RepeatedClashesPayForOneBooleanEachPose(t *testing.T) {
 	if len(got.Interferences) != 2400 || got.InterferencePairs != 2400 {
 		t.Fatalf("%d interference(s) from %d pair(s); want every pin in every plate, 2,400", len(got.Interferences), got.InterferencePairs)
 	}
-	if got.InterferenceBooleans != 2 || got.InterferenceReused != 2398 {
-		t.Errorf("%d boolean(s) paid for and %d reused; two poses are two booleans, and 2,398 answers again",
+	if got.InterferenceBooleans != 1 || got.InterferenceReused != 2399 {
+		t.Errorf("%d boolean(s) paid for and %d reused; a pin inside a plate is one boolean wherever it stands, and 2,399 answers again",
 			got.InterferenceBooleans, got.InterferenceReused)
 	}
 	c := got.Interferences[0]

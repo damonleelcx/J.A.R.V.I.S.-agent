@@ -165,6 +165,14 @@ type NewVariant struct {
 	// chain, when the proposal happened inside a goal. Empty is legal and
 	// common: the workbench conversation runs outside one.
 	GoalID string
+	// TaskID narrows that event to the task that made the change: a step of a
+	// build run as a goal (Phase 7, stage E3). Ignored without a GoalID, because
+	// the event belongs to a goal's timeline and a task outside one has none.
+	TaskID string
+	// ToolCallID is the ledger row of the action that made this version, required
+	// of every agent but a person and the workbench conversation (PRD WRK-04). A
+	// build step inside a goal records one (Phase 2, stage A1).
+	ToolCallID string
 	// DerivedFrom names the recorded requirements and constraints this geometry
 	// was generated FROM (PRD VIS-01). The same ids that appear in Inputs, and
 	// for the same reason they do — except that these also become edges in the

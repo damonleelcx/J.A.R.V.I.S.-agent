@@ -223,3 +223,136 @@ func TestStandard_ExpandingTwiceIsExpandingOnce(t *testing.T) {
 		t.Errorf("a repeated washer is not four revolves: %+v", once.Parts)
 	}
 }
+
+// Several figures per family, each as its source prints it; the sources are named
+// on the tables in standard.go (read 2026-09-15). Typed here from those tables and
+// not from the Go rows, so a row that drifts from its standard fails whatever the
+// drawing does with it — and every row of every family is here, so a row added
+// without a figure read for it fails too.
+func TestStandard_EveryFamilyCarriesTheFiguresItsSourcePublishes(t *testing.T) {
+	has := map[string]bool{}
+	count := map[string]int{}
+	for _, d := range StandardDesignations() {
+		has[d] = true
+		count[strings.Join(strings.Fields(d)[:2], " ")]++
+	}
+	rows := func(family string, want int) {
+		t.Helper()
+		if count[family] != want {
+			t.Errorf("the catalogue has %d %s designations and %d were read against the standard", count[family], family, want)
+		}
+	}
+
+	// ISO 4762:2004 Table 1: d, dk max, k max, and the commercial lengths between its
+	// stepped lines — with the series length on either side of that range absent.
+	for _, s := range []struct {
+		size                                      string
+		d, dk, k, below, shortest, longest, above float64
+	}{
+		{"M3", 3, 5.5, 3, 4, 5, 30, 35},
+		{"M4", 4, 7, 4, 5, 6, 40, 45},
+		{"M5", 5, 8.5, 5, 6, 8, 50, 55},
+		{"M6", 6, 10, 6, 8, 10, 60, 65},
+		{"M8", 8, 13, 8, 10, 12, 80, 90},
+		{"M10", 10, 16, 10, 12, 16, 100, 110},
+		{"M12", 12, 18, 12, 16, 20, 120, 130},
+	} {
+		name := func(l float64) string { return "ISO 4762 " + s.size + "x" + mm(l) }
+		screw := expandedStandard(t, name(s.shortest), "mm", nil)
+		_, maxX, minY, maxY := loopBounds(screw.Profile)
+		if !closeTo(maxX*2, s.dk) || !closeTo(maxY, s.k) || !closeTo(screw.Profile[1].X*2, s.d) || !closeTo(minY, -s.shortest) {
+			t.Errorf("%s is a head ⌀%v × %v on a ⌀%v shank %v long; ISO 4762 has ⌀%v × %v on ⌀%v",
+				name(s.shortest), maxX*2, maxY, screw.Profile[1].X*2, -minY, s.dk, s.k, s.d)
+		}
+		if !has[name(s.longest)] || has[name(s.below)] || has[name(s.above)] {
+			t.Errorf("ISO 4762 tabulates %s from %v to %v; the catalogue has %v: %v, %v: %v, %v: %v", s.size,
+				s.shortest, s.longest, s.below, has[name(s.below)], s.longest, has[name(s.longest)], s.above, has[name(s.above)])
+		}
+	}
+
+	// ISO 4032:2012 Table 1: s (nom. = max.) and m max.
+	for _, n := range []struct {
+		size    string
+		d, s, m float64
+	}{{"M3", 3, 5.5, 2.4}, {"M4", 4, 7, 3.2}, {"M5", 5, 8, 4.7}, {"M6", 6, 10, 5.2}, {"M8", 8, 13, 6.8}, {"M10", 10, 16, 8.4}, {"M12", 12, 18, 10.8}} {
+		nut := expandedStandard(t, "ISO 4032 "+n.size, "mm", nil)
+		_, _, _, maxY := loopBounds(nut.Profile)
+		if !closeTo(maxY*2, n.s) || !closeTo(nut.Size["depth"], n.m) || len(nut.Holes) != 1 || !closeTo(nut.Holes[0][0].X*2, n.d) {
+			t.Errorf("ISO 4032 %s is %v across flats and %v high on %+v; the standard has %v and %v on ⌀%v",
+				n.size, maxY*2, nut.Size["depth"], nut.Holes, n.s, n.m, n.d)
+		}
+	}
+	rows("ISO 4032", 7)
+
+	// ISO 7089:2000 Table 1: d1 nom. (min.), d2 nom. (max.), h nom.
+	for _, w := range []struct {
+		size      string
+		d1, d2, h float64
+	}{{"M3", 3.2, 7, 0.5}, {"M4", 4.3, 9, 0.8}, {"M5", 5.3, 10, 1}, {"M6", 6.4, 12, 1.6}, {"M8", 8.4, 16, 1.6}, {"M10", 10.5, 20, 2}, {"M12", 13, 24, 2.5}} {
+		minX, maxX, minY, maxY := loopBounds(expandedStandard(t, "ISO 7089 "+w.size, "mm", nil).Profile)
+		if !closeTo(minX*2, w.d1) || !closeTo(maxX*2, w.d2) || !closeTo(maxY-minY, w.h) {
+			t.Errorf("ISO 7089 %s is %v / %v × %v; the standard has %v / %v × %v", w.size, minX*2, maxX*2, maxY-minY, w.d1, w.d2, w.h)
+		}
+	}
+	rows("ISO 7089", 7)
+
+	// ISO/R 15/1-1968 Table 3, diameter series 0, dimension series 10: d, D and B.
+	// ISO 15:2017's own table was not reachable; standard.go says what carries these
+	// figures forward to it.
+	for _, b := range []struct {
+		series  string
+		d, D, B float64
+	}{{"608", 8, 22, 7}, {"6000", 10, 26, 8}, {"6001", 12, 28, 8}, {"6002", 15, 32, 9}, {"6003", 17, 35, 10}, {"6004", 20, 42, 12}, {"6005", 25, 47, 12}} {
+		minX, maxX, minY, maxY := loopBounds(expandedStandard(t, "ISO 15 "+b.series, "mm", nil).Profile)
+		if !closeTo(minX*2, b.d) || !closeTo(maxX*2, b.D) || !closeTo(maxY-minY, b.B) {
+			t.Errorf("%s is %v × %v × %v; ISO/R 15/1 Table 3 has %v × %v × %v", b.series, minX*2, maxX*2, maxY-minY, b.d, b.D, b.B)
+		}
+	}
+	rows("ISO 15", 7)
+
+	// EN 10219-2:2006: every section is in Table C.2 or C.3, with the corners B.3 gives
+	// for calculation (2T outside, T inside for T ≤ 6), enclosing the area the table
+	// prints (cm², three figures).
+	for _, h := range []struct {
+		designation   string
+		b, h, t, area float64
+	}{
+		{"EN 10219 SHS 20x20x2", 20, 20, 2, 1.34}, {"EN 10219 SHS 30x30x3", 30, 30, 3, 3.01},
+		{"EN 10219 SHS 40x40x3", 40, 40, 3, 4.21}, {"EN 10219 SHS 40x40x4", 40, 40, 4, 5.35},
+		{"EN 10219 SHS 50x50x5", 50, 50, 5, 8.36}, {"EN 10219 RHS 40x20x2", 40, 20, 2, 2.14},
+		{"EN 10219 RHS 60x40x3", 60, 40, 3, 5.41},
+	} {
+		tube := expandedStandard(t, h.designation, "mm", map[string]float64{"length": 100})
+		minX, maxX, minY, maxY := loopBounds(tube.Profile)
+		inMinX, inMaxX, inMinY, inMaxY := loopBounds(tube.Holes[0])
+		ro, ri := tube.Profile[0].Radius, tube.Holes[0][0].Radius
+		b, hh, ib, ih := maxX-minX, maxY-minY, inMaxX-inMinX, inMaxY-inMinY
+		area := (b*hh - (4-math.Pi)*ro*ro) - (ib*ih - (4-math.Pi)*ri*ri)
+		if !closeTo(b, h.b) || !closeTo(hh, h.h) || !closeTo((b-ib)/2, h.t) || !closeTo((hh-ih)/2, h.t) ||
+			!closeTo(ro, 2*h.t) || !closeTo(ri, h.t) || math.Abs(area/100-h.area) > 0.005 {
+			t.Errorf("%s is %v × %v with walls %v/%v, corners %v and %v, enclosing %.4f cm²; EN 10219-2 has %v × %v × %v, "+
+				"corners %v and %v, %v cm²", h.designation, b, hh, (b-ib)/2, (hh-ih)/2, ro, ri, area/100, h.b, h.h, h.t, 2*h.t, h.t, h.area)
+		}
+	}
+	rows("EN 10219", 7)
+
+	// EN 10056-1:1998 Table 1 and EN 10056-1:2017 Table 1, which print the same a, t, root
+	// radius and area for these rows; the 1998 Note 1's toe radius of half the root radius
+	// (what the 2017 edition says of it was not reachable); and the sectional area by that
+	// note's formula is the printed one.
+	for _, a := range []struct {
+		size             string
+		a, t, root, area float64
+	}{{"L20x20x3", 20, 3, 3.5, 1.12}, {"L30x30x3", 30, 3, 5, 1.74}, {"L40x40x4", 40, 4, 6, 3.08}, {"L50x50x5", 50, 5, 7, 4.80}} {
+		p := expandedStandard(t, "EN 10056 "+a.size, "mm", map[string]float64{"length": 100}).Profile
+		toe, root := p[2].Radius, p[3].Radius
+		area := a.t*(2*a.a-a.t) + (1-math.Pi/4)*(root*root-2*toe*toe)
+		if !closeTo(p[1].X, a.a) || !closeTo(p[2].Y, a.t) || !closeTo(root, a.root) || !closeTo(toe, a.root/2) ||
+			p[4].Radius != toe || math.Abs(area/100-a.area) > 0.005 {
+			t.Errorf("EN 10056 %s has legs %v, thickness %v, root radius %v and toe radii %v/%v (%.4f cm²); the standard has "+
+				"%v, %v, %v and a toe radius of half the root radius, %v (%v cm²)",
+				a.size, p[1].X, p[2].Y, root, toe, p[4].Radius, area/100, a.a, a.t, a.root, a.root/2, a.area)
+		}
+	}
+	rows("EN 10056", 4)
+}
