@@ -143,6 +143,7 @@ FILES=(
   internal/domain/geometry/export.go
   internal/domain/geometry/service.go
   internal/platform/config/config.go
+  internal/agent/car_tree_measure_test.go
   internal/domain/geometry/compare_structure.go
   internal/httpapi/geometry.go
   internal/httpapi/goals_start.go
@@ -1131,6 +1132,28 @@ drill "a tree's parts go unnamed in the prompt" internal/agent/look.go \
 drill "the turn does not say how closely it looked" internal/agent/look.go \
   's = s.replace("\tif covered.Of > covered.Looked {", "\tif false {", 1)' \
   ./internal/agent 'TestLook_CapsSubAssemblyLooksAndSaysHowMany'
+
+echo
+echo "The live car is measured as a tree"
+# Added 2026-09-15 (Phase 2, stage A4). The live measurement counted len(doc.Parts),
+# so a car written as a tree measured as zero parts. It now counts definitions,
+# placed parts, occurrences and standard parts, tokens per design, and how much of
+# the car the interference check covered. These drills need no model and no key.
+drill "the car is counted by its top-level parts" internal/agent/car_tree_measure_test.go \
+  's = s.replace("\tc.Occurrences = len(d.Expanded().Parts)\n", "\tc.Occurrences = len(d.Parts)\n", 1)' \
+  ./internal/agent 'TestCarMeasure_CountsATreeByDefinitionAndByOccurrence'
+
+drill "a standard part is not counted" internal/agent/car_tree_measure_test.go \
+  's = s.replace("\t\tif p.Standard != \"\" {", "\t\tif false {", 1)' \
+  ./internal/agent 'TestCarMeasure_CountsATreeByDefinitionAndByOccurrence'
+
+drill "a tree's designs are its placed parts" internal/agent/car_tree_measure_test.go \
+  's = s.replace("\tif c.Definitions > 0 {\n\t\treturn c.Definitions", "\tif false {\n\t\treturn c.Definitions", 1)' \
+  ./internal/agent 'TestCarMeasure_CountsATreeByDefinitionAndByOccurrence'
+
+drill "a pair answered from a measured pose is not counted as checked" internal/agent/car_tree_measure_test.go \
+  's = s.replace("b.InterferenceBooleans+b.InterferenceReused, ", "b.InterferenceBooleans, ", 1)' \
+  ./internal/agent 'TestCarMeasure_CoverageCountsReusedPairsAsChecked'
 
 echo
 echo "A build step on a tree is shown the assembly it builds"
