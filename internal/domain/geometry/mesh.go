@@ -155,6 +155,7 @@ func Tessellate(doc Document, unit Unit) *Mesh {
 	// reason: the viewport and the exported file must agree about how many
 	// spokes there are, and what shape a tooth is.
 	doc, treeProblems := expandAssemblies(doc)
+	doc, standardProblems := expandStandards(doc)
 	doc, gearProblems := expandGears(doc)
 	doc, repeatProblems := expandRepeats(doc)
 
@@ -173,7 +174,7 @@ func Tessellate(doc Document, unit Unit) *Mesh {
 	for _, p := range treeProblems {
 		infer("%s %s, so it is not in this file.", p.Name, p.Detail)
 	}
-	for _, p := range gearProblems {
+	for _, p := range append(standardProblems, gearProblems...) {
 		if p.Severity == Error {
 			infer("%s %s, so it is not in this file.", p.Name, p.Detail)
 			continue

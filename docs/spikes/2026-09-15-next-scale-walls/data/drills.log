@@ -1,0 +1,81 @@
+Tue Sep 15 16:42:18 EDT 2026
+A check that covered part of the model says how much
+  ✅ went red      — a truncated check reads as a clean one
+           interference_coverage_test.go:35: a check stopped after 2000 of 5000 pairs said: ""
+           interference_coverage_test.go:35: a check stopped after 2000 of 5000 pairs said: "Some parts share material: Master Cylinder is 2% inside Engine Block: they occupy the same material (20 mm³). Move one of them, or make the part that contains the other hollow. That can be deliberate at this stage, so nothing was moved."
+  ✅ went red      — truncation is not what the note is about
+           interference_coverage_test.go:35: a check stopped after 2000 of 5000 pairs said: ""
+           interference_coverage_test.go:35: a check stopped after 2000 of 5000 pairs said: "Some parts share material: Master Cylinder is 2% inside Engine Block: they occupy the same material (20 mm³). Move one of them, or make the part that contains the other hollow. That can be deliberate at this stage, so nothing was moved."
+  ✅ went red      — a part that was never built is never mentioned
+           interference_coverage_test.go:58: the note does not say "4 part(s) could not be built": ""
+           interference_coverage_test.go:58: the note does not say "Bracket": ""
+  ✅ went red      — the render drops how much was checked
+           render_coverage_test.go:33: the sheet says truncated=true, checked 0 of 0; the kernel said true, 2000 of 5000
+           render_coverage_test.go:39: the sheet says 0 clashes were found; the kernel said 11,175
+
+Next scale walls: the interference list's bound, clashes slid along prisms, placed copies
+  ✅ went red      — a list is cut without saying how many there were
+           interference_list_kernel_test.go:46: 51 clash(es) from 51 pair(s); shipped bound 10000; reply 7367 bytes whole, 1487 at 7
+           interference_list_kernel_test.go:71: one below the count: found 50 of 51 pairs, truncated=false; the whole check found 51 of 51
+  ✅ went red      — a cut list says it is whole
+           interference_list_kernel_test.go:46: 51 clash(es) from 51 pair(s); shipped bound 10000; reply 7368 bytes whole, 1491 at 7
+           interference_list_kernel_test.go:75: one below the count: listed 50, summarized=false; want 50, true
+  ✅ went red      — a cut list keeps the first found, not the worst
+           interference_list_kernel_test.go:46: 51 clash(es) from 51 pair(s); shipped bound 10000; reply 7368 bytes whole, 1468 at 7
+           interference_list_kernel_test.go:97: the whole list is not worst first at 12
+  ✅ went red      — Go believes a count smaller than the list
+           reply_internal_test.go:35: found 1, summarized=false; want 3, false
+       --- FAIL: TestBuildOf_AListShorterThanItsCountIsASummary (0.00s)
+  ✅ went red      — Go reads a list shorter than its count as whole when the flag is missing
+           reply_internal_test.go:35: found 10, summarized=false; want 10, true
+       --- FAIL: TestBuildOf_AListShorterThanItsCountIsASummary (0.00s)
+  ✅ went red      — a summarized list reads as a whole one in the turn
+           interference_coverage_test.go:108: a list of 1 of 11,175 clashes did not say "found 11175 pairs": "Some parts share material: Master Cylinder is 2% inside Engine Block: they occupy the same material (20 mm³). Move one of them, or make the part that contains the other hollow. and 11174 more That can be deliberate at this stage, so nothing was moved."
+           interference_coverage_test.go:108: a list of 1 of 11,175 clashes did not say "lists the 1 that share the most": "Some parts share material: Master Cylinder is 2% inside Engine Block: they occupy the same material (20 mm³). Move one of them, or make the part that contains the other hollow. and 11174 more That can be deliberate at this stage, so nothing was moved."
+  ✅ went red      — "and N more" counts only the list
+           interference_coverage_test.go:108: a list of 1 of 11,175 clashes did not say "and 11174 more": "Some parts share material: Master Cylinder is 2% inside Engine Block: they occupy the same material (20 mm³). Move one of them, or make the part that contains the other hollow. That can be deliberate at this stage, so nothing was moved. FORGE found 11175 pairs of parts sharing material and lists the 1 that share the most; the rest were counted, not listed."
+       --- FAIL: TestInterference_ASummarizedListSaysHowManyWereFound (0.00s)
+  ✅ went red      — the render drops how many were found
+           render_coverage_test.go:39: the sheet says 0 clashes were found; the kernel said 11,175
+       --- FAIL: TestRender_CarriesHowMuchTheCheckCovered (0.02s)
+  ✅ went red      — a cylinder slides across its round section
+           interference_prism_kernel_test.go:46: seed 1, 275 parts: 649 pairs, 585 clashes; every pair 649 booleans, reused 251 booleans + 398 reused
+           interference_prism_kernel_test.go:81: seed 1, chord-pin-122 in shaft-84: reused 15.7024741 mm³, measured 14.9782435
+  ✅ went red      — a cone is taken for a cylinder
+           interference_prism_kernel_test.go:46: seed 1, 275 parts: 649 pairs, 585 clashes; every pair 649 booleans, reused 250 booleans + 399 reused
+           interference_prism_kernel_test.go:81: seed 1, cone-ring-269 in cone-264: reused 910.381146 mm³, measured 5614.77935
+  ✅ went red      — a cylinder's slab is not claimed
+           interference_prism_kernel_test.go:139: 388 parts: 386 pair(s), 197 boolean(s) paid for, 189 reused, 386 interference(s), truncated=false
+           interference_prism_kernel_test.go:150: 197 boolean(s) paid for and 189 reused; sliding along the shaft and the girder is at most 7
+  ✅ went red      — an extrusion's slab is not claimed
+           interference_prism_kernel_test.go:139: 388 parts: 386 pair(s), 196 boolean(s) paid for, 190 reused, 386 interference(s), truncated=false
+           interference_prism_kernel_test.go:150: 196 boolean(s) paid for and 190 reused; sliding along the shaft and the girder is at most 7
+  ✅ went red      — a located copy copies its B-rep again
+           placed_copies_kernel_test.go:99: build123d's path: {BRepCopies:63 Planes:67 VolumeIntegrals:58 Occurrences:59 Parts:58 ShapeBuilds:9} at one copy, {BRepCopies:455 Planes:459 VolumeIntegrals:450 Occurrences:451 Parts:450 ShapeBuilds:9} at eight
+           placed_copies_kernel_test.go:100: the sidecar's:    {BRepCopies:63 Planes:16 VolumeIntegrals:9 Occurrences:59 Parts:58 ShapeBuilds:9} at one copy, {BRepCopies:455 Planes:16 VolumeIntegrals:9 Occurrences:451 Parts:450 ShapeBuilds:9} at eight
+  ✅ went red      — a placement builds a Plane per occurrence again
+           placed_copies_kernel_test.go:99: build123d's path: {BRepCopies:63 Planes:67 VolumeIntegrals:58 Occurrences:59 Parts:58 ShapeBuilds:9} at one copy, {BRepCopies:455 Planes:459 VolumeIntegrals:450 Occurrences:451 Parts:450 ShapeBuilds:9} at eight
+           placed_copies_kernel_test.go:100: the sidecar's:    {BRepCopies:4 Planes:67 VolumeIntegrals:9 Occurrences:59 Parts:58 ShapeBuilds:9} at one copy, {BRepCopies:4 Planes:459 VolumeIntegrals:9 Occurrences:451 Parts:450 ShapeBuilds:9} at eight
+  ✅ went red      — the frame cache is keyed by part of the matrix
+           placed_copies_kernel_test.go:78: 174 solid(s) compared across the three formats, 45 difference(s)
+           placed_copies_kernel_test.go:84: format '', box-3-0: placed at [1.0, -0.0, 0.0, 90.69695244472791, 0.0, 1.0, 0.0, -0.0, -0.0, 0.0, 1.0, -525.0677695626316], build123d at [1.0, -0.0, 0.0, 90.69695244472791, 0.0, 0.0, -1.0, -0.0, 0.0, 1.0, 0.0, -525.0677695626316]
+  ✅ went red      — a cached placement is not inverted
+           placed_copies_kernel_test.go:78: 174 solid(s) compared across the three formats, 355 difference(s)
+           placed_copies_kernel_test.go:84: format '': bounds [-1920.350279284634, -1920.350279284634, -1921.353672775127, 922.4104010075622, 2130.0, 1915.850279284634], build123d's [-859.1510363544983, -30.0, -765.8616300993494, 2104.0, 1931.350279284634, 965.3756721008439]
+  ✅ went red      — a located copy shares its definition's attributes
+           placed_copies_kernel_test.go:78: 174 solid(s) compared across the three formats, 492 difference(s)
+           placed_copies_kernel_test.go:84: format '', box-0-0: attribute rotation is ['Rotation', [1.0, -0.0, 0.0, 0.0, 0.0, 1.0, -0.0, 0.0, 0.0, 0.0, 1.0, 0.0]], build123d's ['Location', [1.0, -0.0, 0.0, 0.0, 0.0, 1.0, -0.0, 0.0, 0.0, 0.0, 1.0, 0.0]]
+  ✅ went red      — the assembly integrates every copy again
+           placed_copies_kernel_test.go:99: build123d's path: {BRepCopies:63 Planes:67 VolumeIntegrals:58 Occurrences:59 Parts:58 ShapeBuilds:9} at one copy, {BRepCopies:455 Planes:459 VolumeIntegrals:450 Occurrences:451 Parts:450 ShapeBuilds:9} at eight
+           placed_copies_kernel_test.go:100: the sidecar's:    {BRepCopies:4 Planes:16 VolumeIntegrals:58 Occurrences:59 Parts:58 ShapeBuilds:9} at one copy, {BRepCopies:4 Planes:16 VolumeIntegrals:450 Occurrences:451 Parts:450 ShapeBuilds:9} at eight
+  ✅ went red      — the assembly volume forgets all but the last copy
+           placed_copies_kernel_test.go:78: 174 solid(s) compared across the three formats, 3 difference(s)
+           placed_copies_kernel_test.go:84: format '': volume 28800, Compound.volume 93533.686506093829
+
+The tree is byte-identical to how the drill found it.
+23 went red, 0 stayed green, 0 unproven, 0 anchor(s) moved.
+Covered: the sweep fences. NOT covered: the extrusion and revolve fences,
+which have no drills — see the note in this script.
+Tue Sep 15 16:47:42 EDT 2026
+
+[exited with code 0]

@@ -246,6 +246,12 @@ func Dimensions(p Part, unit Unit) string {
 			return "⌀" + q(r*2)
 		}
 		return ""
+	case standardShape:
+		// The designation IS the dimensions, and a section adds the length it is cut to.
+		if l, ok := get("length"); ok {
+			return p.Standard + " · " + q(l) + " long"
+		}
+		return p.Standard
 	case gearShape:
 		// The numbers a gear is specified by, and the outside diameter it works
 		// out to — read through gear.go, so a face width written as "thickness"

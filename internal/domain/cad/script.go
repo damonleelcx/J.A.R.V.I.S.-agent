@@ -59,6 +59,10 @@ type ScriptResult struct {
 	// Volume is the solid's, and is positive. A script that produced a surface,
 	// an empty compound or a self-intersecting body is refused before this.
 	Volume float64
+	// KernelThreads is how many threads OpenCASCADE's own pool had while the
+	// script ran: 1, whatever the machine. Reported so the fence can hold it —
+	// docs/bugfix/2026-09-15-scripts-still-failed-on-machines-with-many-cores.md.
+	KernelThreads int
 }
 
 // ErrScriptsDisabled is returned when this deployment does not run scripts.
@@ -167,7 +171,7 @@ func (k *Kernel) RunScript(ctx context.Context, source string, parameters map[st
 	// process holds FORGE_DATABASE_URL and FORGE_LLM_API_KEY, and a script that
 	// could read os.environ would be reading those — the AST check refuses the
 	// import that reaches them, and this is what stands if it is ever wrong.
-	cmd.Env = []string{"PATH=/usr/bin:/bin", "HOME=" + dir, "LC_ALL=C"}
+	cmd.Env = scriptEnv(dir)
 	cmd.Dir = dir
 
 	var out, errOut bytes.Buffer
@@ -198,6 +202,8 @@ func (k *Kernel) RunScript(ctx context.Context, source string, parameters map[st
 		Trace   string  `json:"trace"`
 		STEP    string  `json:"step"`
 		Volume  float64 `json:"volume"`
+		// Threads in OpenCASCADE's own pool; see ScriptResult.KernelThreads.
+		KernelThreads int `json:"kernel_threads"`
 	}
 	if err := json.Unmarshal(out.Bytes(), &reply); err != nil {
 		return nil, errs.Wrap(op, errs.CodeExternalProtocol, err).
@@ -210,7 +216,7 @@ func (k *Kernel) RunScript(ctx context.Context, source string, parameters map[st
 		}
 		return nil, errs.New(op, code).WithDetail("%s", reply.Error)
 	}
-	return &ScriptResult{STEP: reply.STEP, Volume: reply.Volume}, nil
+	return &ScriptResult{STEP: reply.STEP, Volume: reply.Volume, KernelThreads: reply.KernelThreads}, nil
 }
 
 func tail(s string, n int) string {
@@ -218,4 +224,28 @@ func tail(s string, n int) string {
 		return s
 	}
 	return "…" + s[len(s)-n:]
+}
+
+// scriptEnv is the whole environment a script process starts with.
+//
+// EMPTY apart from what Python cannot start without, for the reason RunScript
+// gives: this process holds FORGE_DATABASE_URL and FORGE_LLM_API_KEY.
+//
+// ‼️ And ONE THREAD for every native thread pool the kernel links: OpenMP,
+// OpenBLAS, TBB and MKL. A script runs under a 1 GiB address-space cap
+// (scriptMemoryBytes), and a multi-threaded build reserves address space per
+// thread. On a 4-CPU machine a boolean-heavy script started 7 threads, reached
+// 1,032,152 kB — the cap — could not give another thread memory, and the rest
+// waited for it forever: asleep, so the CPU limit never fired, and the part failed
+// at the 30 s wall clock. Measured on GitHub's 4-CPU arm64 runner with
+// scripts/cad_script_timing.py: the same script hung under FORGE's limits and
+// under the address-space cap alone, and built in 3.5 s under FORGE's limits with
+// these four set to 1. A 2-CPU machine starts fewer threads and stays under the
+// cap, which is why it never failed on one. Keeping the cap and dropping the
+// threads keeps the memory bound a model-written script runs under, and makes the
+// result independent of how many cores the node has.
+// docs/bugfix/2026-09-14-scripts-hung-on-machines-with-four-or-more-cores.md
+func scriptEnv(dir string) []string {
+	return []string{"PATH=/usr/bin:/bin", "HOME=" + dir, "LC_ALL=C",
+		"OMP_NUM_THREADS=1", "OPENBLAS_NUM_THREADS=1", "TBB_NUM_THREADS=1", "MKL_NUM_THREADS=1"}
 }

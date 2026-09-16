@@ -70,10 +70,18 @@ func (c *Conversation) repairIfPartsOverlap(ctx context.Context, reply *Reply, s
 	if len(problems) == 0 {
 		// Real overlaps, none of them buried. Said once, plainly, and nothing is
 		// rewritten: these are the cases a concept model is allowed to have.
-		reply.noteRepair("Some parts share material: " + list(found) +
+		reply.noteRepair("Some parts share material: " + list(found, sheet.Found) +
 			" That can be deliberate at this stage, so nothing was moved.")
 		return
 	}
+
+	// ‼️ A buried part in a tree is named by where it IS ("wheel/lug-nut-3"), and that
+	// path is not something a repair can edit: the copy comes from a child, its
+	// pattern and a definition. The 2026-09-15 live car buried every lug nut in its
+	// hub, rim and tyre and the repair was shown only the paths. So each finding says
+	// which child places it and, for a pattern copy, which pattern about which axis.
+	// Fence: TestInterference_ARepairIsToldWhichChildPlacesABuriedCopy.
+	problems = placedByNotes(reply.Prototype, found, problems)
 
 	if fixed := c.repairGeometry(ctx, reply.Prototype, problems); fixed != nil {
 		// Re-built, not re-read: the question "is it still inside" can only be
@@ -100,7 +108,7 @@ func (c *Conversation) repairIfPartsOverlap(ctx context.Context, reply *Reply, s
 	// Still wrong: say it, with the parts named. A reader looking at a model that
 	// builds, reports no faults and passes the visual check has no other way to
 	// learn that two of its parts are in the same place.
-	reply.noteRepair("Parts are inside each other and FORGE could not correct it: " + list(found))
+	reply.noteRepair("Parts are inside each other and FORGE could not correct it: " + list(found, sheet.Found))
 }
 
 // coverageNote says how much of the model the kernel's interference check looked
@@ -125,6 +133,13 @@ func coverageNote(sheet *builtSheet) string {
 				"so the model is not known to be clear.")
 		}
 	}
+	// ‼️ A list the kernel summarized says so. It is the worst of what was found,
+	// not all of it, and "and N more" alone would count only the list (next scale
+	// walls; cad.Build.InterferencesFound).
+	if listed := len(sheet.Interferences); sheet.Found > listed {
+		notes = append(notes, fmt.Sprintf("FORGE found %d pairs of parts sharing material and lists the %d "+
+			"that share the most; the rest were counted, not listed.", sheet.Found, listed))
+	}
 	if n := len(sheet.Skipped); n > 0 {
 		const most = 3
 		named := sheet.Skipped
@@ -138,20 +153,76 @@ func coverageNote(sheet *builtSheet) string {
 	return strings.Join(notes, " ")
 }
 
+// placedByNotes adds to each buried finding in a tree which child places the part,
+// so the repair edits the design that put it there. A finding about top-level parts
+// is returned unchanged.
+func placedByNotes(doc *Prototype, found []geometry.Interference, problems []geometry.Problem) []geometry.Problem {
+	if doc == nil || doc.Root == "" {
+		return problems
+	}
+	other := map[string]string{}
+	for _, f := range found {
+		other[f.A+"\x00"+f.Describe()] = f.B
+	}
+	out := make([]geometry.Problem, len(problems))
+	for i, p := range problems {
+		out[i] = p
+		var where []string
+		for _, id := range []string{p.Name, other[p.Name+"\x00"+p.Detail]} {
+			if s := placedBySentence(*doc, id); s != "" {
+				where = append(where, s)
+			}
+		}
+		if len(where) > 0 {
+			out[i].Detail = p.Detail + " (" + strings.Join(where, "; ") + ")"
+		}
+	}
+	return out
+}
+
+// placedBySentence says what places one flattened part, or "".
+func placedBySentence(doc geometry.Document, id string) string {
+	at, ok := doc.PlacedBy(id)
+	if !ok {
+		return ""
+	}
+	if at.Copy > 0 && at.Pattern != nil {
+		kind := strings.ToLower(strings.TrimSpace(at.Pattern.Kind))
+		how := fmt.Sprintf("a %s pattern", kind)
+		if kind == "polar" {
+			how = fmt.Sprintf("a polar pattern about %q, which turns every copy about that axis through the "+
+				"origin of the frame the child is measured in", at.Pattern.About)
+		}
+		return fmt.Sprintf("%s is copy %d of child %q of assembly %q, placed by %s: move that child or change "+
+			"its pattern or the definition %q, not the copy", id, at.Copy, at.Child, at.Assembly, how, at.Ref)
+	}
+	return fmt.Sprintf("%s is placed by child %q of assembly %q: move that child or change %q, not the placed path",
+		id, at.Child, at.Assembly, at.Ref)
+}
+
 // list is the reader's sentence for a set of findings.
 //
 // Capped, because a broken assembly can produce dozens and a note nobody
 // finishes reading is a note nobody reads. The worst are first — the kernel
 // sorts by fraction — so a cap never hides the biggest one.
-func list(found []geometry.Interference) string {
+//
+// total is how many were found, which is more than the list when the kernel
+// summarized it; "and N more" counts from it, so a summarized list is never read
+// as a short one.
+func list(found []geometry.Interference, total int) string {
 	const most = 3
-	parts := make([]string, 0, most)
+	if total < len(found) {
+		total = len(found)
+	}
+	parts := make([]string, 0, most+1)
 	for i, f := range found {
 		if i == most {
-			parts = append(parts, fmt.Sprintf("and %d more", len(found)-most))
 			break
 		}
 		parts = append(parts, f.Describe())
+	}
+	if more := total - len(parts); more > 0 {
+		parts = append(parts, fmt.Sprintf("and %d more", more))
 	}
 	return strings.Join(parts, " ")
 }

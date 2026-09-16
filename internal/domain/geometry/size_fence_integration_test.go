@@ -82,8 +82,12 @@ func TestSizeFence_AThirtyThousandOccurrenceCarIsStoredAndItsSizeRecorded(t *tes
 	if n := len(back.Document.PlacedParts()); n != 60*501 {
 		t.Fatalf("the stored design places %d parts, want %d", n, 60*501)
 	}
+	// Built nowhere yet, and drawn in the viewport since Phase 6, stage W1.
 	if back.Document.DrawRefusal() == "" {
-		t.Error("a 30k design came back without a drawing refusal; the viewport would try to draw it")
+		t.Error("a 30k design came back without a building refusal; the kernel would try to build it")
+	}
+	if r := back.Document.ViewportRefusal(); r != "" {
+		t.Errorf("a 30k design came back refused by the viewport, which draws it instanced: %q", r)
 	}
 
 	rec := logLine(t, logs, string(logx.EventGeometrySaved))

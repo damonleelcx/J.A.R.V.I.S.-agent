@@ -98,16 +98,29 @@ FILES=(
   internal/agent/subtree.go
   internal/agent/georepair.go
   internal/agent/settledoc.go
+  internal/agent/worker.go
   internal/httpapi/converse.go
   internal/agent/look.go
   internal/domain/cad/script.py
+  internal/domain/cad/script_test.go
   internal/domain/cad/script.go
   internal/domain/geometry/expression.go
   internal/domain/geometry/parameters.go
   internal/agent/sketch.go
   internal/llm/illustrate.go
   internal/agent/render.go
+  deploy/k8s/20-config.yaml
+  deploy/k8s/32-worker-egress.yaml
+  deploy/verify.sh
+  cmd/forgectl/blob.go
   internal/domain/geometry/mesh.go
+  internal/platform/errs/code.go
+  internal/httpapi/assets/voice.js
+  internal/httpapi/assets/workbench.js
+  internal/httpapi/transcribe.go
+  internal/httpapi/router.go
+  internal/llm/transcribe.go
+  internal/platform/config/config.go
   internal/domain/geometry/interference.go
   internal/agent/interference.go
   internal/domain/geometry/render.go
@@ -118,6 +131,8 @@ FILES=(
   internal/domain/geometry/binding.go
   internal/domain/geometry/variant.go
   internal/domain/geometry/frame.go
+  internal/domain/geometry/standard.go
+  internal/domain/geometry/repetition.go
   internal/domain/geometry/pattern.go
   internal/domain/geometry/interface.go
   internal/domain/geometry/tree_features.go
@@ -130,8 +145,23 @@ FILES=(
   internal/platform/config/config.go
   internal/agent/buildgoal.go
   internal/agent/spend.go
-  internal/agent/worker.go
   internal/domain/engine/repository.go
+  internal/agent/car_tree_measure_test.go
+  internal/agent/repetition.go
+  internal/agent/stepgates.go
+  internal/agent/vanished.go
+  internal/domain/geometry/placedby.go
+  internal/agent/car_ceiling_live_test.go
+  internal/agent/stepplace.go
+  internal/agent/dimensionrepair.go
+  internal/agent/stepdeclared.go
+  internal/agent/literals.go
+  internal/domain/geometry/compare_structure.go
+  internal/httpapi/geometry.go
+  internal/httpapi/goals_start.go
+  internal/domain/engine/queue.go
+  internal/agent/executor.go
+  internal/agent/settle.go
 )
 
 BACKUP=""
@@ -535,8 +565,9 @@ echo "A kernel mesh is already placed"
 # Added 2026-09-13. The sidecar tessellates each solid after placing it; the browser
 # placed and turned the mesh a second time, so every kernel-built part away from the
 # origin was drawn somewhere else. docs/bugfix/2026-09-13-kernel-built-parts-were-placed-twice.md
+# Re-anchored 2026-09-15 (Phase 6, stage W1): the draw places through drawBatches.
 drill "the browser places a kernel mesh a second time" internal/httpapi/assets/forge3d.js \
-  "s = s.replace('    if (part.fromKernel) return translation(d);\n', '', 1)" \
+  "s = s.replace('        matrix = inst ? Array.prototype.slice.call(inst.matrix) : IDENTITY.slice();\n', '        matrix = inst ? Array.prototype.slice.call(inst.matrix) : placementMatrix(part);\n', 1)" \
   ./internal/httpapi 'TestRendererDoesNotPlaceAKernelMeshTwice'
 
 echo
@@ -928,10 +959,24 @@ drill "the browser's count forgets a pattern's copies" internal/httpapi/assets/f
   ./internal/httpapi 'TestRendererFlattensATreeLikeTheExporter'
 
 drill "the browser refuses in other words than the exporter" internal/httpapi/assets/forge3d.js \
-  "s = s.replace(\"'nothing was drawn or built.'\", \"'nothing was drawn.'\", 1)" \
+  "s = s.replace(\"'nothing was drawn.'\", \"'nothing was shown.'\", 1)" \
   ./internal/httpapi 'TestRendererFlattensATreeLikeTheExporter'
 
 echo
+echo "A tree part is named by its occurrence path"
+# Added 2026-09-14. A part a tree places is named by every child above it, then its
+# own name (docs/bugfix/2026-09-14-tree-copies-shared-display-names.md).
+drill "a tree part is named by its own label only" internal/domain/geometry/tree.go \
+  "s = s.replace('q.Name = strings.Join(append(append([]string(nil), childNames...), lp.Label()), NameSeparator)', 'q.Name = lp.Label()', 1)" \
+  ./internal/domain/geometry 'TestTree_EveryPartItPlacesIsNamedByItsOccurrence'
+
+drill "an unnamed child adds nothing to the name" internal/domain/geometry/tree.go \
+  "s = s.replace('\t\t\t\t\tchildLabel = c.ID\n', '', 1)" \
+  ./internal/domain/geometry 'TestTree_EveryPartItPlacesIsNamedByItsOccurrence'
+
+drill "the browser names a tree part by its own label only" internal/httpapi/assets/forge3d.js \
+  "s = s.replace('q.name = childNames.concat([lp.name || lp.id]).join(NAME_SEPARATOR);', 'q.name = lp.name || lp.id;', 1)" \
+  ./internal/httpapi 'TestRendererFlattensATreeLikeTheExporter'
 echo "Each distinct shape is built once"
 # Added 2026-09-14 (Phase 4, stage K1). The sidecar builds each distinct shape once per
 # request and places located copies; Go runs each distinct script once.
@@ -973,6 +1018,27 @@ drill "the build does not say where its time went" internal/domain/cad/sidecar.p
   ./internal/domain/cad 'TestKernel_ExportingManyOccurrencesGrowsLinearly'
 
 echo
+echo "A STEP export stays linear past the build ceiling"
+# Added 2026-09-15 (STEP export scaling). The writer's validation-property walk visits
+# an assembly's children by index, each lookup walking the child list; it is off
+# (_STEP_WRITE_PROPS), and the file past 4,096 occurrences is the one it wrote.
+drill "the writer walks every label for validation properties again" internal/domain/cad/sidecar.py \
+  "s = s.replace('_STEP_WRITE_PROPS = False\n', '_STEP_WRITE_PROPS = True\n', 1)" \
+  ./internal/domain/cad 'TestKernel_ExportTimeGrowsLinearlyPastTheBuildCeiling'
+
+drill "the props-mode setting never reaches the writer" internal/domain/cad/sidecar.py \
+  "s = s.replace('    writer.SetPropsMode(_STEP_WRITE_PROPS)\n', '', 1)" \
+  ./internal/domain/cad 'TestKernel_ExportTimeGrowsLinearlyPastTheBuildCeiling'
+
+drill "the fixed writer stops writing names the walking writer wrote" internal/domain/cad/sidecar.py \
+  "s = s.replace('    writer.SetNameMode(True)\n', '    writer.SetNameMode(_STEP_WRITE_PROPS)\n', 1)" \
+  ./internal/domain/cad 'TestKernel_ALargeExportIsTheFileThePropertyWalkWrote'
+
+drill "a large export writes its occurrences without their placement" internal/domain/cad/sidecar.py \
+  "s = s.replace('tool.AddComponent(root, label, solid.wrapped.Location())', 'tool.AddComponent(root, label, TopLoc_Location())', 1)" \
+  ./internal/domain/cad 'TestKernel_ALargeExportIsTheFileThePropertyWalkWrote'
+
+echo
 echo "The interference broad phase tests only boxes that could overlap"
 # Added 2026-09-15 (Phase 4, stage K2b) as a one-axis sweep. Since Phase 5, stage V1
 # the broad phase is a grid over all three axes, so the sweep's own drills (a box
@@ -996,12 +1062,15 @@ drill "every box lands in one cell" internal/domain/cad/sidecar.py \
   "s = s.replace('    cell = max(longest[len(longest) // 2], 1e-6)\n', '    cell = 1e12\n', 1)" \
   ./internal/domain/cad 'TestKernel_APlaneOfPartsCostsAFewBoxTestsEach'
 
+# ‼️ The next two anchors moved on 2026-09-15 (large-box index): cell indices became
+# integers computed once, and the every-box loop for long boxes became passes between
+# groups of boxes with the same grid level on each axis.
 drill "a pair is tested where the earlier box starts, which the other may not reach" internal/domain/cad/sidecar.py \
-  "s = s.replace('if (_cell(max(boxes[a][0][0], boxes[b][0][0]), cell) != home[0]', 'if (_cell(min(boxes[a][0][0], boxes[b][0][0]), cell) != home[0]', 1)" \
+  "s = s.replace('if (max(qa[0], qb[0]) >> sx != home[0]', 'if (min(qa[0], qb[0]) >> sx != home[0]', 1)" \
   ./internal/domain/cad 'TestKernel_TheBroadPhaseFindsWhatEveryPairFinds'
 
 drill "a box too long for the grid is never tested" internal/domain/cad/sidecar.py \
-  "s = s.replace('    for a in large:\n', '    for a in []:\n', 1)" \
+  "s = s.replace('            filed, looking = groups[level_a], groups[level_b]\n', '            continue\n', 1)" \
   ./internal/domain/cad 'TestKernel_TheBroadPhaseFindsWhatEveryPairFinds'
 
 drill "every clash is measured again" internal/domain/cad/sidecar.py \
@@ -1021,6 +1090,54 @@ drill "the build does not say how many booleans it paid for" internal/domain/cad
   ./internal/domain/cad 'TestKernel_RepeatedClashesPayForOneBooleanEachPose'
 
 echo
+echo "The interference check's large boxes: a level per axis, and a clash slid along a box"
+# Added 2026-09-15 (large-box index). A box longer than four cells was tested against
+# every box, which is quadratic when the long parts grow with the model: an airframe
+# barrel's panels, frames and stringers made 16.2 billion tests at 1M occurrences. Each
+# box now has a grid level per axis, and two groups of boxes are tested in the grid of
+# their larger levels. A clash is reused along a box the other solid lies wholly inside,
+# and only then: a finite stringer is not the same at its ends.
+drill "a long box is tested against every box of another size again" internal/domain/cad/sidecar.py \
+  "s = s.replace('            sz = _GRID_LEVEL_SHIFT * max(level_a[2], level_b[2])\n', '            sz = _GRID_LEVEL_SHIFT * max(level_a[2], level_b[2])\n            if level_a != level_b:\n                sx = sy = sz = 64\n', 1)" \
+  ./internal/domain/cad 'TestKernel_BoxTestsGrowLinearlyWhenTheLongPartsGrowWithTheModel'
+
+drill "one level for all three axes, a cubic cell as long as the longest side" internal/domain/cad/sidecar.py \
+  "s = s.replace('        groups.setdefault(level, []).append(k)\n', '        groups.setdefault((max(level),) * 3, []).append(k)\n', 1)" \
+  ./internal/domain/cad 'TestKernel_BoxTestsGrowLinearlyWhenTheLongPartsGrowWithTheModel'
+
+drill "a pair from two groups is tested where it does not begin" internal/domain/cad/sidecar.py \
+  "s = s.replace('if (max(qa[0], qb[0]) >> sx != cx', 'if (min(qa[0], qb[0]) >> sx != cx', 1)" \
+  ./internal/domain/cad 'TestKernel_LongBoxesAreFoundAsEveryPairFindsThem'
+
+drill "a box is filed without the last cell it reaches" internal/domain/cad/sidecar.py \
+  "s = s.replace('            for cx in range(q[0] >> sx, (r[0] >> sx) + 1):\n', '            for cx in range(q[0] >> sx, r[0] >> sx):\n', 1)" \
+  ./internal/domain/cad 'TestKernel_LongBoxesAreFoundAsEveryPairFindsThem'
+
+drill "a clash is slid along a box it is not inside" internal/domain/cad/sidecar.py \
+  "s = s.replace('        if mid - reach >= _SLIDE_MARGIN - half[r] and mid + reach <= half[r] - _SLIDE_MARGIN:\n', '        if True:\n', 1)" \
+  ./internal/domain/cad 'TestKernel_PinsAlongARailPayForOneBooleanAndTheEndsAreMeasured'
+
+drill "containment is checked at one end of the box only" internal/domain/cad/sidecar.py \
+  "s = s.replace('        if mid - reach >= _SLIDE_MARGIN - half[r] and mid + reach <= half[r] - _SLIDE_MARGIN:\n', '        if mid - reach >= _SLIDE_MARGIN - half[r]:\n', 1)" \
+  ./internal/domain/cad 'TestKernel_PinsAlongARailPayForOneBooleanAndTheEndsAreMeasured'
+
+drill "a pin along a rail is measured at every pose again" internal/domain/cad/sidecar.py \
+  "s = s.replace('_INTERFERENCE_SLIDE = True\n', '_INTERFERENCE_SLIDE = False\n', 1)" \
+  ./internal/domain/cad 'TestKernel_PinsAlongARailPayForOneBooleanAndTheEndsAreMeasured'
+
+drill "a slide seen only from the other box is not carried" internal/domain/cad/sidecar.py \
+  "s = s.replace('    out = []\n    for v in axes:\n', '    out = []\n    for v in []:\n', 1)" \
+  ./internal/domain/cad 'TestKernel_PinsAlongARailPayForOneBooleanAndTheEndsAreMeasured'
+
+drill "a carried slide ignores a rotation that does not line the axes up" internal/domain/cad/sidecar.py \
+  "s = s.replace('            if (abs(pose[4 * w + v]) >= 1 - 1e-9\n                    and all(abs(pose[4 * o + v]) <= 1e-9 for o in range(3) if o != w)):\n', '            if w == v:\n', 1)" \
+  ./internal/domain/cad 'TestKernel_AReusedClashIsTheClashMeasuredAgain'
+
+drill "a clash is keyed in the frame that slides less" internal/domain/cad/sidecar.py \
+  "s = s.replace('        return forward if marked_f > marked_b else backward\n', '        return backward if marked_f > marked_b else forward\n', 1)" \
+  ./internal/domain/cad 'TestKernel_PinsAlongARailPayForOneBooleanAndTheEndsAreMeasured'
+
+echo
 echo "A check that covered part of the model says how much"
 # Added 2026-09-15 (Phase 5, stage V2). repairIfPartsOverlap returned without a word
 # when it found nothing, and a check the pair budget stopped found nothing too; parts
@@ -1038,7 +1155,8 @@ drill "a part that was never built is never mentioned" internal/agent/interferen
   ./internal/agent 'TestInterference_APartThatWasNotBuiltIsNamedAsUnchecked'
 
 drill "the render drops how much was checked" internal/agent/render.go \
-  's = s.replace("\n\t\t\t\t\tChecked: built.Checked, Pairs: built.Pairs, Skipped: built.Skipped}", "}", 1)' \
+  's = s.replace("\n\t\t\t\t\tChecked: built.Checked, Pairs: built.Pairs, Found: built.Found, Skipped: built.Skipped,", "\n\t\t\t\t\tSkipped: built.Skipped,", 1)' \
+  's = s.replace("\n\t\t\t\t\tChecked: built.Checked, Pairs: built.Pairs, Skipped: built.Skipped,\n\t\t\t\t\tParts: built.Parts}", "\n\t\t\t\t\tParts: built.Parts}", 1)' \
   ./internal/agent 'TestRender_CarriesHowMuchTheCheckCovered'
 
 echo
@@ -1100,6 +1218,28 @@ drill "the turn does not say how closely it looked" internal/agent/look.go \
   ./internal/agent 'TestLook_CapsSubAssemblyLooksAndSaysHowMany'
 
 echo
+echo "The live car is measured as a tree"
+# Added 2026-09-15 (Phase 2, stage A4). The live measurement counted len(doc.Parts),
+# so a car written as a tree measured as zero parts. It now counts definitions,
+# placed parts, occurrences and standard parts, tokens per design, and how much of
+# the car the interference check covered. These drills need no model and no key.
+drill "the car is counted by its top-level parts" internal/agent/car_tree_measure_test.go \
+  's = s.replace("\tc.Occurrences = len(d.Expanded().Parts)\n", "\tc.Occurrences = len(d.Parts)\n", 1)' \
+  ./internal/agent 'TestCarMeasure_CountsATreeByDefinitionAndByOccurrence'
+
+drill "a standard part is not counted" internal/agent/car_tree_measure_test.go \
+  's = s.replace("\t\tif p.Standard != \"\" {", "\t\tif false {", 1)' \
+  ./internal/agent 'TestCarMeasure_CountsATreeByDefinitionAndByOccurrence'
+
+drill "a tree's designs are its placed parts" internal/agent/car_tree_measure_test.go \
+  's = s.replace("\tif c.Definitions > 0 {\n\t\treturn c.Definitions", "\tif false {\n\t\treturn c.Definitions", 1)' \
+  ./internal/agent 'TestCarMeasure_CountsATreeByDefinitionAndByOccurrence'
+
+drill "a pair answered from a measured pose is not counted as checked" internal/agent/car_tree_measure_test.go \
+  's = s.replace("b.InterferenceBooleans+b.InterferenceReused, ", "b.InterferenceBooleans, ", 1)' \
+  ./internal/agent 'TestCarMeasure_CoverageCountsReusedPairsAsChecked'
+
+echo
 echo "A build step on a tree is shown the assembly it builds"
 # Added 2026-09-15 (Phase 2, stage A2). A step names the sub-assembly it builds and is
 # shown that subtree, how the root places it and the interfaces it attaches at; its
@@ -1153,29 +1293,16 @@ drill "a step starts from an empty model" internal/agent/buildgoal.go \
   's = s.replace("\tdeps, err := b.repo.ListDependencies(ctx, b.pool, task.ID)", "\tdeps, err := []string(nil), error(nil)", 1)' \
   ./internal/agent 'TestBuildGoal_AWorkerThatHangsIsResumedFromTheLastStepKept'
 
-drill "a stopped worker sits on its step" internal/agent/buildgoal.go \
-  's = s.replace("\t\tif ctx.Err() != nil {\n\t\t\t// Stopping, not failing.", "\t\tif false {\n\t\t\t// Stopping, not failing.", 1)' \
-  ./internal/agent 'TestBuildGoal_AStoppedWorkerHandsItsStepBack'
+# There is no drill here for a stopped worker handing its step back. There was,
+# against runBuildStep's own release, and it went green the moment main's hand-back
+# landed: Run releases EVERY stopped task through handBack, so nothing runBuildStep
+# does or omits can leave a step leased, and a drill against it tests nothing. The
+# property is fenced where it now lives — "a stopped worker leaves its task to its
+# lease" and the rest of the hand-back drills below.
 
 drill "a goal's save names no task" internal/domain/geometry/service.go \
   's = s.replace("\t\tTaskID:  taskOf(n),\n", "", 1)' \
   ./internal/agent 'TestBuildGoal_AStepKeptInsideAGoalWritesAChainedArtifactEvent'
-
-drill "a finished task releases nothing" internal/agent/worker.go \
-  's = s.replace("\t\tw.releaseWaiting(ctx, goalID)\n", "", 1)' \
-  ./internal/agent 'TestBuildGoal_EveryModelCallIsChargedToTheGoal'
-
-drill "the idle poll releases nothing" internal/agent/worker.go \
-  's = s.replace("\t\t\tw.releaseWaitingGoals(ctx)\n", "", 1)' \
-  ./internal/agent 'TestWorker_ATaskLeftWaitingByACrashIsReleasedOnTheIdlePoll'
-
-drill "a budget refusal fails a task that is only claimed" internal/agent/worker.go \
-  's = s.replace("\t\tif err := w.transition(ctx, task, engine.StatusRunning, engine.TaskMutation{}); err != nil {\n\t\t\treturn\n\t\t}\n", "", 1)' \
-  ./internal/agent 'TestBuildGoal_ABudgetRefusalStopsTheGoalCleanly'
-
-drill "an event is hashed at a precision it is not stored at" internal/domain/engine/repository.go \
-  's = s.replace("\tnow = now.Truncate(time.Microsecond)\n", "", 1)' \
-  ./internal/domain/engine 'TestAuditChain_AnEventStampedAtNanosecondsVerifies'
 
 echo
 echo "A pool of kernel processes builds side by side"
@@ -1761,8 +1888,185 @@ drill "the host match is a bare suffix, not a domain one" internal/llm/deliberat
   ./internal/llm 'TestWhichEndpointsUnderstandTheField'
 
 drill "a retired model is reported without naming the survivors" internal/llm/openai_compatible.go \
-  's = s.replace("\tserved, err := c.servedModels(ctx)", "\tserved, err := []string(nil), error(nil)\n\t_ = c.servedModels", 1)' \
+  's = s.replace("\tserved, err := c.servedModels(ctx, base, key)", "\tserved, err := []string(nil), error(nil)\n\t_, _ = base, key\n\t_ = c.servedModels", 1)' \
   ./internal/llm 'TestAMissingModelNamesWhatTheEndpointDoesServe'
+
+echo
+echo "A worker carries a plan to its end"
+# Added 2026-09-15. Three engine defects found building stage A1 (#85): a finished
+# task released nothing, so a plan stopped after its first layer; a budget refusal
+# could not fail a task that was only claimed, so a spent goal never stopped; and
+# events were hashed at nanoseconds but stored at microseconds, so every event the
+# real clock wrote failed the audit chain. Needs FORGE_TEST_DATABASE_URL.
+drill "a finished task releases nothing" internal/agent/worker.go \
+  's = s.replace("\tw.releaseWaiting(book, goalID)\n", "", 1)' \
+  ./internal/agent 'TestWorker_AFinishedTaskReleasesTheTasksWaitingOnIt'
+
+drill "the idle poll releases nothing" internal/agent/worker.go \
+  's = s.replace("\t\t\tw.releaseWaitingGoals(ctx)\n", "", 1)' \
+  ./internal/agent 'TestWorker_ATaskLeftWaitingByACrashIsReleasedOnTheIdlePoll'
+
+drill "a budget refusal fails a task that is only claimed" internal/agent/worker.go \
+  's = s.replace("\t\tif err := w.transition(ctx, task, engine.StatusRunning, engine.TaskMutation{}); err != nil {\n\t\t\treturn\n\t\t}\n", "", 1)' \
+  ./internal/agent 'TestWorker_ABudgetRefusalStopsTheGoal'
+
+drill "an event is hashed at a precision it is not stored at" internal/domain/engine/repository.go \
+  's = s.replace("\tnow = now.Truncate(time.Microsecond)\n", "", 1)' \
+  ./internal/domain/engine 'TestAuditChain_AnEventStampedAtNanosecondsVerifies'
+
+echo
+echo "A stopping worker's bookkeeping"
+# Added 2026-09-15, found exercising a live build goal (#104). A graceful stop cancels
+# the worker's context mid-task, and what the task's end sets moving (releasing waiting
+# tasks, settling the goal) must run on a context of its own, or each fails on the
+# cancelled one and is logged as the database being unavailable. See
+# docs/bugfix/2026-09-15-a-stopping-worker-reported-its-own-stop-as-a-database-outage.md.
+# Needs FORGE_TEST_DATABASE_URL.
+drill "a stopping worker's bookkeeping runs on the cancelled context" internal/agent/worker.go \
+  's = s.replace("context.WithTimeout(context.WithoutCancel(ctx), afterTaskTimeout)", "context.WithTimeout(ctx, afterTaskTimeout)", 1)' \
+  ./internal/agent 'TestWorker_AWorkerStoppedMidTaskDoesNotReportItsBookkeepingAsADatabaseFailure|TestWorker_ATaskFinishedAsTheStopArrivesStillReleasesItsDependentsAndSettlesItsGoal'
+
+echo
+echo "A stopped worker hands its task back"
+# Added 2026-09-15 (a stopped worker hands its task back). A graceful stop cancels the
+# worker's context mid-task; the task must go back to the queue at once, its stopped
+# attempt not counted, instead of staying leased until the reaper finds it, and a real
+# failure must still be retried and failed. See
+# docs/bugfix/2026-09-15-a-stopped-worker-left-its-task-to-run-out-its-lease.md.
+# Needs FORGE_TEST_DATABASE_URL.
+drill "a stopped worker leaves its task to its lease" internal/agent/worker.go \
+  's = s.replace("\t\tif ctx.Err() != nil {\n\t\t\tw.handBack(ctx, task)\n\t\t}\n", "", 1)' \
+  ./internal/agent 'TestWorker_AWorkerStoppedInsideAModelCallHandsItsTaskBackAtOnce|TestWorker_AWorkerStoppedBeforeItsTaskStartsHandsItBackUnstarted|TestWorker_AWorkerStoppedAtTheApprovalGateHandsItsTaskBackAndTheGateIsOpenedOnce'
+
+drill "a stop still counts as an attempt" internal/domain/engine/queue.go \
+  's = s.replace("not_before = $3,\n\t\t       attempt_count = greatest(attempt_count - 1, 0)\n", "not_before = $3\n", 1)' \
+  ./internal/domain/engine 'TestQueue_AReleasedTaskIsClaimableAtOnceAndItsAttemptIsNotCounted'
+
+drill "a stop still counts as an attempt, through the worker" internal/domain/engine/queue.go \
+  's = s.replace("not_before = $3,\n\t\t       attempt_count = greatest(attempt_count - 1, 0)\n", "not_before = $3\n", 1)' \
+  ./internal/agent 'TestWorker_AWorkerStoppedInsideAModelCallHandsItsTaskBackAtOnce'
+
+drill "a task stopped in verification cannot be released" internal/domain/engine/queue.go \
+  's = s.replace("where id = $1 and lease_owner = $2 and status in (\x27claimed\x27,\x27running\x27,\x27verifying\x27)", "where id = $1 and lease_owner = $2 and status in (\x27claimed\x27,\x27running\x27)", 1)' \
+  ./internal/domain/engine 'TestQueue_ATaskStoppedDuringVerificationCanBeReleased'
+
+drill "a stop is recorded as a failed attempt" internal/agent/worker.go \
+  's = s.replace("\tif ctx.Err() != nil {\n\t\treturn\n\t}\n\tif breach := w.budget.CheckAttempts(task)", "\tif breach := w.budget.CheckAttempts(task)", 1)' \
+  ./internal/agent 'TestWorker_AWorkerStoppedInsideAModelCallHandsItsTaskBackAtOnce'
+
+drill "a genuine failure is dropped as if it were a stop" internal/agent/worker.go \
+  's = s.replace("\tif ctx.Err() != nil {\n\t\treturn\n\t}\n\tif breach := w.budget.CheckAttempts(task)", "\tif ctx.Err() != nil || true {\n\t\treturn\n\t}\n\tif breach := w.budget.CheckAttempts(task)", 1)' \
+  ./internal/agent 'TestWorker_ATaskThatFailsWhileItsWorkerRunsIsStillRetriedAndThenFailed'
+
+echo
+echo "A stopped worker keeps what it did"
+# Added 2026-09-15 (stop leftovers). A stop must leave an approval request and its
+# approval.requested event both or neither; must still record what had happened before
+# it (an event, spent tokens, a tool call that ran); must skip, not fail, what it cut
+# short (a decision, a tool call, a checkpoint); and must log no DATABASE_UNAVAILABLE.
+# Mutations keep the code compiling, so a red here is the fence and not the build. See
+# docs/bugfix/2026-09-15-a-stopped-worker-lost-what-it-had-done-and-blamed-the-database.md.
+# Needs FORGE_TEST_DATABASE_URL.
+drill "the approval request and its event are written apart" internal/agent/worker.go \
+  's = s.replace("if _, err := tx.Exec(ctx, `\n\t\t\tinsert into forge_approvals", "if _, err := w.pool.Exec(ctx, `\n\t\t\tinsert into forge_approvals", 1)' \
+  ./internal/agent 'TestWorker_AStopBetweenOpeningAnApprovalRequestAndRecordingItLeavesTheTimelineAndTheApprovalsAgreeing'
+
+drill "a failure reached while stopping is still written" internal/agent/worker.go \
+  's = s.replace("\t// database being unavailable. Run hands the task back instead.\n\tif ctx.Err() != nil {\n\t\treturn\n\t}\n", "\t// database being unavailable. Run hands the task back instead.\n", 1)' \
+  ./internal/agent 'TestWorker_AStopBetweenOpeningAnApprovalRequestAndRecordingItLeavesTheTimelineAndTheApprovalsAgreeing'
+
+drill "a decision the stop refused is logged as a database failure" internal/agent/worker.go \
+  's = s.replace("if err != nil && ctx.Err() == nil {\n\t\tw.log.WarnWith(ctx, logx.EventTaskCycleEnded, err,", "if err != nil {\n\t\tw.log.WarnWith(ctx, logx.EventTaskCycleEnded, err,", 1)' \
+  ./internal/agent 'TestWorker_AWorkerStoppedAnywhereInATaskKeepsWhatItDidAndLogsNoDatabaseFailure/^at_the_approval_gate$'
+
+drill "a heartbeat the stop cancelled reports a lost lease" internal/agent/worker.go \
+  's = s.replace("\t\t\t\tif ctx.Err() != nil {\n\t\t\t\t\treturn\n\t\t\t\t}\n\t\t\t\t// Losing the lease", "\t\t\t\t// Losing the lease", 1)' \
+  ./internal/agent 'TestWorker_AWorkerStoppedAnywhereInATaskKeepsWhatItDidAndLogsNoDatabaseFailure'
+
+drill "a blocked answer that arrives with the stop is recorded as a failure" internal/agent/worker.go \
+  's = s.replace("\t\tif ctx.Err() != nil {\n\t\t\treturn\n\t\t}\n\t\tw.appendEvent(ctx, goal.ID, &task.ID, engine.EventTaskFailed", "\t\tw.appendEvent(ctx, goal.ID, &task.ID, engine.EventTaskFailed", 1)' \
+  ./internal/agent 'TestWorker_AWorkerStoppedAnywhereInATaskKeepsWhatItDidAndLogsNoDatabaseFailure/^as_a_model_call_answers_that_the_task_is_blocked$'
+
+drill "a success the stop refused is recorded" internal/agent/worker.go \
+  's = s.replace("if err := w.transition(ctx, task, engine.StatusSucceeded, engine.TaskMutation{Result: resultJSON}); err != nil {\n\t\t\treturn\n\t\t}\n", "w.transition(ctx, task, engine.StatusSucceeded, engine.TaskMutation{Result: resultJSON})\n", 1)' \
+  ./internal/agent 'TestWorker_AWorkerStoppedAnywhereInATaskKeepsWhatItDidAndLogsNoDatabaseFailure/^as_a_model_call_answers_that_the_task_is_done$'
+
+drill "an event is written on the context the stop cancelled" internal/agent/worker.go \
+  's = s.replace("\trec, cancel := outliving(ctx)\n\tdefer cancel()\n\tif err := w.repo.AppendEvent(rec", "\trec, cancel := context.WithCancel(ctx)\n\tdefer cancel()\n\tif err := w.repo.AppendEvent(rec", 1)' \
+  ./internal/agent 'TestWorker_AWorkerStoppedAsItRecoversACrashedWorkersTaskRecordsTheRecoveryAndLogsNoDatabaseFailure'
+
+drill "a claim the stop refused is logged as a database failure" internal/agent/worker.go \
+  's = s.replace("\t\t\tif ctx.Err() != nil {\n\t\t\t\tcontinue // stopped while claiming", "\t\t\tif false {\n\t\t\t\tcontinue // stopped while claiming", 1)' \
+  ./internal/agent 'TestWorker_AWorkerStoppedAsItRecoversACrashedWorkersTaskRecordsTheRecoveryAndLogsNoDatabaseFailure'
+
+drill "the tokens a stopped call spent go uncounted" internal/agent/executor.go \
+  's = s.replace("rec, cancelRec := outliving(ctx)", "rec, cancelRec := context.WithCancel(ctx)", 1)' \
+  ./internal/agent 'TestWorker_AWorkerStoppedAnywhereInATaskKeepsWhatItDidAndLogsNoDatabaseFailure/^as_a_model_call_answers_that_the_task_is_done$'
+
+drill "a stopped worker runs its next tool call" internal/agent/executor.go \
+  's = s.replace("\t\t\tif ctx.Err() != nil {\n\t\t\t\treturn nil, ctx.Err()\n\t\t\t}\n\t\t\ttotalCalls++", "\t\t\ttotalCalls++", 1)' \
+  ./internal/agent 'TestWorker_AWorkerStoppedAnywhereInATaskKeepsWhatItDidAndLogsNoDatabaseFailure/^as_a_tool_call_finishes$'
+
+drill "a tool call that ran is lost from the ledger" internal/agent/executor.go \
+  's = s.replace("rec, cancel := outliving(ctx)\n\tdefer cancel()\n\terr := db.InTx(rec", "rec, cancel := context.WithCancel(ctx)\n\tdefer cancel()\n\terr := db.InTx(rec", 1)' \
+  ./internal/agent 'TestWorker_AWorkerStoppedAnywhereInATaskKeepsWhatItDidAndLogsNoDatabaseFailure/^as_a_tool_call_finishes$'
+
+drill "a tool call the stop cut short is recorded as failed" internal/agent/executor.go \
+  's = s.replace("\t\tif ctx.Err() != nil {\n\t\t\treturn toolError(", "\t\tif false {\n\t\t\treturn toolError(", 1)' \
+  ./internal/agent 'TestWorker_AWorkerStoppedAnywhereInATaskKeepsWhatItDidAndLogsNoDatabaseFailure/^inside_a_tool_call$'
+
+drill "a checkpoint is saved from an iteration the stop cut short" internal/agent/executor.go \
+  's = s.replace("\t\tif ctx.Err() != nil {\n\t\t\treturn nil, ctx.Err()\n\t\t}\n\t\tstate, _ := json.Marshal(", "\t\tstate, _ := json.Marshal(", 1)' \
+  ./internal/agent 'TestWorker_AWorkerStoppedAnywhereInATaskKeepsWhatItDidAndLogsNoDatabaseFailure/^inside_a_tool_call$'
+
+echo
+echo "The last four things a stop got wrong"
+# Added 2026-09-15 (last stop items). The four things #109's doc left open. A statement
+# the stop cancelled AFTER Postgres committed it must be read back, not guessed at, and
+# not guessed at in the other direction either. A stop during verification must not warn
+# that the verifier failed. A suspected injection found as the worker stops must survive
+# on the timeline. And the polling path's three reconciliations must be skipped quietly
+# when a stop cancels them, without becoming sweeps that never run. Mutations keep the
+# code compiling, so a red here is the fence and not the build. See
+# docs/bugfix/2026-09-15-a-stop-still-guessed-at-a-committed-write-and-lost-a-security-record.md.
+# Needs FORGE_TEST_DATABASE_URL.
+drill "a transition the stop cancelled in flight is assumed refused" internal/agent/worker.go \
+  's = s.replace("if err != nil && ctx.Err() != nil && w.stopLanded(ctx, task, to) {\n\t\treturn nil\n\t}\n", "", 1)' \
+  ./internal/agent 'TestWorker_ASuccessTheStopCancelledAfterPostgresHadCommittedItIsStillOnTheTimeline'
+
+drill "a transition the stop cancelled in flight is assumed to have landed" internal/agent/worker.go \
+  's = s.replace("if current.Status != to {", "if false \x26\x26 current.Status != to {", 1)' \
+  ./internal/agent 'TestWorker_AWorkerStoppedAnywhereInATaskKeepsWhatItDidAndLogsNoDatabaseFailure/^as_a_model_call_answers_that_the_task_is_done$'
+
+drill "a stop during verification is logged as a verifier failure" internal/agent/worker.go \
+  's = s.replace("\t\tif ctx.Err() == nil {\n\t\t\tw.log.WarnWith(ctx, logx.EventVerificationRan, err, \x22task_id\x22, task.ID)", "\t\tif true {\n\t\t\tw.log.WarnWith(ctx, logx.EventVerificationRan, err, \x22task_id\x22, task.ID)", 1)' \
+  ./internal/agent 'TestWorker_AStopDuringVerificationDoesNotWarnThatTheVerifierFailed'
+
+drill "a suspected injection is recorded on the context the stop cancelled" internal/agent/executor.go \
+  's = s.replace("\trec, cancel := outliving(ctx)\n\tdefer cancel()\n\tif err := e.repo.AppendEvent(rec", "\trec, cancel := context.WithCancel(ctx)\n\tdefer cancel()\n\tif err := e.repo.AppendEvent(rec", 1)' \
+  ./internal/agent 'TestWorker_ASuspectedInjectionFoundAsTheWorkerStopsIsStillRecordedOnTheTimeline'
+
+drill "the lease reaper runs on the context the stop cancelled" internal/agent/worker.go \
+  's = s.replace("\tif ctx.Err() != nil {\n\t\treturn\n\t}\n\treaped, err := w.queue.ReapExpiredLeases", "\tif false {\n\t\treturn\n\t}\n\treaped, err := w.queue.ReapExpiredLeases", 1); s = s.replace("\t\tif ctx.Err() == nil {\n\t\t\tw.log.WarnWith(ctx, logx.EventWorkerReaped", "\t\tif true {\n\t\t\tw.log.WarnWith(ctx, logx.EventWorkerReaped", 1)' \
+  ./internal/agent 'TestWorker_ThePollSweepsAStopCancelledAreSkippedQuietlyAndStillRunWhenNothingStoppedThem'
+
+drill "the release sweep runs on the context the stop cancelled" internal/agent/settle.go \
+  's = s.replace("\tif ctx.Err() != nil {\n\t\treturn\n\t}\n\trows, err := w.pool.Query(ctx, `\n\t\tselect distinct t.goal_id", "\tif false {\n\t\treturn\n\t}\n\trows, err := w.pool.Query(ctx, `\n\t\tselect distinct t.goal_id", 1); s = s.replace("\t\tif ctx.Err() == nil {\n\t\t\tw.log.WarnWith(ctx, logx.EventTaskReleaseFailed", "\t\tif true {\n\t\t\tw.log.WarnWith(ctx, logx.EventTaskReleaseFailed", 1)' \
+  ./internal/agent 'TestWorker_ThePollSweepsAStopCancelledAreSkippedQuietlyAndStillRunWhenNothingStoppedThem'
+
+drill "the settle sweep runs on the context the stop cancelled" internal/agent/settle.go \
+  's = s.replace("\tif ctx.Err() != nil {\n\t\treturn\n\t}\n\trows, err := w.pool.Query(ctx, `\n\t\tselect g.id", "\tif false {\n\t\treturn\n\t}\n\trows, err := w.pool.Query(ctx, `\n\t\tselect g.id", 1); s = s.replace("if ctx.Err() == nil {\n\t\t\tw.log.WarnWith(ctx, logx.EventGoalSettleFailed, err,\n", "if true {\n\t\t\tw.log.WarnWith(ctx, logx.EventGoalSettleFailed, err,\n", 1)' \
+  ./internal/agent 'TestWorker_ThePollSweepsAStopCancelledAreSkippedQuietlyAndStillRunWhenNothingStoppedThem'
+
+# The other direction: a guard that skips the sweep whether or not anything stopped it is
+# a reconciliation that never reconciles, which is what these two sweeps exist to be.
+drill "the release sweep is skipped even when nothing stopped it" internal/agent/settle.go \
+  's = s.replace("\tif ctx.Err() != nil {\n\t\treturn\n\t}\n\trows, err := w.pool.Query(ctx, `\n\t\tselect distinct t.goal_id", "\tif true {\n\t\treturn\n\t}\n\trows, err := w.pool.Query(ctx, `\n\t\tselect distinct t.goal_id", 1)' \
+  ./internal/agent 'TestWorker_ThePollSweepsAStopCancelledAreSkippedQuietlyAndStillRunWhenNothingStoppedThem'
+
+drill "the settle sweep is skipped even when nothing stopped it" internal/agent/settle.go \
+  's = s.replace("\tif ctx.Err() != nil {\n\t\treturn\n\t}\n\trows, err := w.pool.Query(ctx, `\n\t\tselect g.id", "\tif true {\n\t\treturn\n\t}\n\trows, err := w.pool.Query(ctx, `\n\t\tselect g.id", 1)' \
+  ./internal/agent 'TestReconciliationSweepSettlesWhatTheEventMissed'
 
 echo
 echo "The kernel"
@@ -1786,6 +2090,1037 @@ drill "a scripted part is unreachable in the shape dispatch" internal/domain/cad
 drill "a refused assembly hides which part it refused" internal/domain/cad/cad.go \
   's = s.replace("\t\tif len(res.Skipped) > 0 {\n\t\t\tdetail +=", "\t\tif false {\n\t\t\tdetail +=", 1)' \
   ./internal/domain/cad 'TestKernel_ARefusedAssemblyNamesWhatItRefused'
+
+echo
+echo "Standard parts and patterns in the contract"
+# Added 2026-09-15 (Phase 2, stage A3). A part names a catalogued designation and is
+# written out as the revolve or extrusion it is, at the published figures, the same in
+# Go and in the browser; an unknown designation is refused with the nearest named. The
+# contract offers the catalogue rendered from the table, and children written out one
+# at a time where one pattern would place them are named to the turn and to the next
+# build step — a warning, never a refusal.
+drill "an M8 cap screw's head is 14 across" internal/domain/geometry/standard.go \
+  's = s.replace("{\"M8\", 8, 13, 8, 12, 80},", "{\"M8\", 8, 14, 8, 12, 80},", 1)' \
+  ./internal/domain/geometry 'TestStandard_TheCatalogueCarriesThePublishedFigures'
+
+drill "the browser's M8 cap screw head is 14 across" internal/httpapi/assets/forge3d.js \
+  's = s.replace("[\x27M8\x27, 8, 13, 8, 12, 80]", "[\x27M8\x27, 8, 14, 8, 12, 80]", 1)' \
+  ./internal/httpapi 'TestRendererDrawsTheSameStandardPartAsTheExporter'
+
+drill "a hex nut is not stood up along Y" internal/domain/geometry/standard.go \
+  's = s.replace("shape: \"extrusion\", turned: true,", "shape: \"extrusion\", turned: false,", 1)' \
+  ./internal/domain/geometry 'TestStandard_TheKernelAndTheMeasurementSeeTheDrawnPart'
+
+drill "a refused designation names no near match" internal/domain/geometry/standard.go \
+  's = s.replace("quotedList(nearestStandards(p.Standard, 3))", "quotedList(nil)", 1)' \
+  ./internal/domain/geometry 'TestStandard_AnUnknownDesignationIsRefusedWithTheNearestNamed'
+
+drill "an unknown designation is not a fault" internal/domain/geometry/faults.go \
+  's = s.replace("profileProblems = append(profileProblems, standardProblems...)", "_ = standardProblems", 1)' \
+  ./internal/domain/geometry 'TestStandard_AnUnknownDesignationIsRefusedWithTheNearestNamed'
+
+drill "the kernel is sent the word standard" internal/domain/geometry/solid.go \
+  's = s.replace("d, standardProblems := expandStandards(d)", "standardProblems := []Problem(nil)", 1)' \
+  ./internal/domain/geometry 'TestStandard_TheKernelAndTheMeasurementSeeTheDrawnPart|TestStandard_EveryDesignationBuilds'
+
+drill "measurement reads a standard part as a unit box" internal/domain/geometry/overlay.go \
+  's = s.replace("\ttree, _ = expandStandards(tree)\n", "", 1)' \
+  ./internal/domain/geometry 'TestStandard_TheKernelAndTheMeasurementSeeTheDrawnPart'
+
+drill "the contract's catalogue is typed rather than rendered" internal/agent/converse.go \
+  's = s.replace("geometry.StandardGuide(), strings.Join(", "\"    \\\"ISO 4762 M8x30\\\"\", strings.Join(", 1)' \
+  ./internal/agent 'TestTheContractTeachesEveryStandardPartFORGEHas'
+
+drill "irregular spacing counts as a row" internal/domain/geometry/repetition.go \
+  's = s.replace("const repetitionTolerance = 1e-3", "const repetitionTolerance = 0.2", 1)' \
+  ./internal/domain/geometry 'TestRepetition_IrregularSpacingIsNotFlagged'
+
+drill "a grid is never looked for" internal/domain/geometry/repetition.go \
+  's = s.replace("if p, ok := gridOf(g.siblings); ok {", "if p, ok := gridOf(g.siblings); ok && false {", 1)' \
+  ./internal/domain/geometry 'TestRepetition_FindsAGrid'
+
+drill "a ring is never looked for" internal/domain/geometry/repetition.go \
+  's = s.replace("if p, unturned, ok := ringOf(g.siblings); ok {", "if p, unturned, ok := ringOf(g.siblings); ok && false {", 1)' \
+  ./internal/domain/geometry 'TestRepetition_FindsAPolarRing'
+
+drill "groups are read in map order" internal/domain/geometry/repetition.go \
+  's = s.replace("\tfor _, g := range groups {", "\tfor _, g := range byKey {", 1)' \
+  ./internal/domain/geometry 'TestRepetition_IsDeterministic'
+
+drill "the turn does not say what could be one pattern" internal/agent/converse.go \
+  's = s.replace("\tnoteRepetition(&reply)\n\treturn &reply, nil", "\treturn &reply, nil", 1)' \
+  ./internal/agent 'TestRepetition_TheTurnSaysWhatCouldBeOnePattern'
+
+drill "the streaming turn does not say what could be one pattern" internal/agent/converse_stream.go \
+  's = s.replace("\t\tnoteRepetition(&reply)\n", "", 1)' \
+  ./internal/agent 'TestRepetition_TheTurnSaysWhatCouldBeOnePattern'
+
+drill "a build step is not told what could be one pattern" internal/agent/assemble.go \
+  's = s.replace("\tsofar += repetitionForStep(doc)\n", "", 1)' \
+  ./internal/agent 'TestAssemble_AStepIsToldWhatCouldBeOnePattern'
+# Added 2026-09-15 (Phase 7, stage E2). Comparing designs placed in assemblies
+# reports a changed definition ONCE, with how many times each variant places it,
+# and leaves a comparison of flat documents exactly as it was. Two of these break
+# the same line and read it from two packages: the domain fence says a flat
+# comparison has no structure, and the HTTP fence says its response is byte for
+# byte the one pinned before trees could be compared.
+echo
+echo "Comparing trees"
+drill "a flat comparison grows a structure section" internal/domain/geometry/compare_structure.go \
+  's = s.replace("\tif !trees {", "\tif false {", 1)' \
+  ./internal/domain/geometry 'TestCompare_AFlatComparisonHasNoStructure'
+
+drill "a flat comparison's response gains a key" internal/domain/geometry/compare_structure.go \
+  's = s.replace("\tif !trees {", "\tif false {", 1)' \
+  ./internal/httpapi 'TestCompare_AFlatComparisonComesBackExactlyAsItDidBeforeTreesCouldBeCompared'
+
+drill "a definition's size is not compared" internal/domain/geometry/compare_structure.go \
+  's = s.replace("{\"size\", func(a, b Part, l *lengths) bool {", "{\"size\", func(a, b Part, l *lengths) bool {\n\t\treturn true", 1)' \
+  ./internal/domain/geometry 'TestCompare_ChangingADefinitionPlacedFourTimesIsOneChangedDefinition'
+
+drill "a pattern's copies are not counted" internal/domain/geometry/compare_structure.go \
+  's = s.replace("k := len(slots)", "k := 1 + 0*len(slots)", 1)' \
+  ./internal/domain/geometry 'TestCompare_APatternCopyChangesTheCountsAndTheChildsPattern'
+
+drill "a pattern on a sub-assembly does not multiply it" internal/domain/geometry/compare_structure.go \
+  's = s.replace("m[def] = sat(m[def] + mul(k, n))", "m[def] = sat(m[def] + n)", 1)' \
+  ./internal/domain/geometry 'TestCompare_APatternedAssemblyMultipliesWhatItPlaces'
+
+drill "a moved interface is not compared" internal/domain/geometry/compare_structure.go \
+  's = s.replace("func(a, b Interface, l *lengths) bool { return l.vector(a.Position, b.Position) }", "func(a, b Interface, l *lengths) bool { return true }", 1)' \
+  ./internal/domain/geometry 'TestCompare_AMovedInterfaceIsReportedOnItsAssembly'
+
+drill "a definition or child in one variant only is not reported" internal/domain/geometry/compare_structure.go \
+  's = s.replace("missing = append(missing, col+1)", "missing = missing[:len(missing):len(missing)]", 1)' \
+  ./internal/domain/geometry 'TestCompare_AddedAndRemovedDefinitionsAndChildrenAreReported'
+
+drill "the response leaves the structure out" internal/httpapi/geometry.go \
+  's = s.replace("body[\"structure\"] = structureBody(cmp.Structure)", "_ = structureBody(cmp.Structure)", 1)' \
+  ./internal/httpapi 'TestCompare_TheResponseCarriesTheStructure'
+echo
+echo "A kernel build that runs out of time"
+# Added 2026-09-15 (kernel timeout is not a crash). A build past its limit was
+# killed, retried on a fresh process, killed again and reported as
+# CONNECTOR_UNAVAILABLE — 501 "no working backend" after two limits for a design
+# that was only large. The kernel fences run against cadtest's fake process, so
+# they need no build123d; the HTTP one needs FORGE_TEST_DATABASE_URL.
+# docs/bugfix/2026-09-15-a-kernel-build-that-ran-out-of-time-was-reported-as-no-kernel.md
+drill "a timed-out build is retried like a crashed one" internal/domain/cad/cad.go \
+  's = s.replace("\tif err != nil && !errors.As(err, &late) {", "\tif err != nil {", 1)' \
+  ./internal/domain/cad 'TestKernel_ABuildThatRunsOutOfTimeIsNotRetriedAndSaysSo'
+
+# Re-anchored 2026-09-16 (K3): the round trip, and the kill that bounds it, moved
+# onto the SLOT — sidecar_process.go — and the reset after a late error is that
+# slot's rather than the kernel's. The three drills below follow the code.
+drill "the kill does not record that the kernel's limit ran out" internal/domain/cad/sidecar_process.go \
+  's = s.replace("\t\t\tstopped.Store(&lateError{limit: s.timeout})\n", "", 1)' \
+  ./internal/domain/cad 'TestKernel_ABuildThatRunsOutOfTimeIsNotRetriedAndSaysSo'
+
+drill "a timeout leaves the killed process in the slot" internal/domain/cad/cad.go \
+  's = s.replace("\t\t\ts.stop()\n\t\t\tk.log.Warn(ctx, logx.EventCADTimedOut", "\t\t\tk.log.Warn(ctx, logx.EventCADTimedOut", 1)' \
+  ./internal/domain/cad 'TestKernel_AfterATimeoutTheKernelStartsAFreshProcessForTheNextBuild'
+
+drill "the kernel's limit is reported as no working backend" internal/domain/cad/cad.go \
+  's = s.replace("\tcase late.caller == nil:\n\t\treturn errs.Wrap(op, errs.CodeKernelTimeout, late).", "\tcase late.caller == nil:\n\t\treturn errs.Wrap(op, errs.CodeConnectorUnavailable, late).", 1)' \
+  ./internal/domain/cad 'TestKernel_ABuildThatRunsOutOfTimeIsNotRetriedAndSaysSo'
+
+drill "the caller's deadline is reported as no working backend" internal/domain/cad/cad.go \
+  's = s.replace("\tcase errors.Is(late.caller, context.DeadlineExceeded):\n\t\treturn errs.Wrap(op, errs.CodeKernelTimeout, late).", "\tcase errors.Is(late.caller, context.DeadlineExceeded):\n\t\treturn errs.Wrap(op, errs.CodeConnectorUnavailable, late).", 1)' \
+  ./internal/httpapi 'TestAPI_AKernelBuildThatTakesTooLongIsA504ThatSaysSo'
+
+drill "a kernel timeout is offered as retryable" internal/platform/errs/code.go \
+  's = s.replace("A kernel build is allowed 30 seconds.\", false},", "A kernel build is allowed 30 seconds.\", true},", 1)' \
+  ./internal/httpapi 'TestAPI_AKernelBuildThatTakesTooLongIsA504ThatSaysSo'
+
+drill "a kernel timeout is a 501" internal/platform/errs/code.go \
+  's = s.replace("CodeKernelTimeout: {CodeKernelTimeout, CategoryExternal, 504,", "CodeKernelTimeout: {CodeKernelTimeout, CategoryExternal, 501,", 1)' \
+  ./internal/httpapi 'TestAPI_AKernelBuildThatTakesTooLongIsA504ThatSaysSo'
+
+drill "a process that dies mid-build is not retried" internal/domain/cad/cad.go \
+  's = s.replace("\t\tres, err = s.roundTrip(ctx, req)\n\t}\n\tif err != nil {", "\t}\n\tif err != nil {", 1)' \
+  ./internal/domain/cad 'TestKernel_AProcessThatDiesMidBuildIsStillRetriedOnce'
+
+# Added 2026-09-16 (K3 × the timeout work). With a pool, "the kernel is reset after
+# a late error" and "the other processes are untouched" stop being the same
+# sentence: a slow assembly must cost ITS slot's process and leave the rest of the
+# pool building. Neither PR could hold this alone — #73 had no timeout to cross,
+# #103 had no second process to spare.
+drill "a timeout resets every slot in the pool" internal/domain/cad/cad.go \
+  's = s.replace("\t\t\ts.stop()\n\t\t\tk.log.Warn(ctx, logx.EventCADTimedOut", "\t\t\tfor _, o := range k.all {\n\t\t\t\to.stop()\n\t\t\t}\n\t\t\tk.log.Warn(ctx, logx.EventCADTimedOut", 1)' \
+  ./internal/domain/cad 'TestKernel_ATimeoutInOneSlotLeavesTheOtherSlotsServing'
+
+drill "a slot enforces a limit that is not the kernel's" internal/domain/cad/sidecar_process.go \
+  's = s.replace("slot: i, timeout: k.timeout}", "slot: i, timeout: buildTimeout}", 1)' \
+  ./internal/domain/cad 'TestKernel_ABuildThatRunsOutOfTimeIsNotRetriedAndSaysSo'
+echo "Workers in one process"
+# Added 2026-09-15 (worker lease identity). NewWorker sliced a fresh id's
+# timestamp rather than its random tail, so every worker forge-worker started
+# together had one identity and no lease guard could tell siblings apart. Found
+# building the off-node STEP export (#99). The second fence needs
+# FORGE_TEST_DATABASE_URL. See
+# docs/bugfix/2026-09-15-workers-started-together-shared-one-lease-identity.md.
+drill "workers started together share one identity" internal/agent/worker.go \
+  's = s.replace("run[len(run)-8:]", "run[4:12]", 1)' \
+  ./internal/agent 'TestNewWorker_WorkersStartedTogetherHaveDistinctIdentities|TestWorker_ASiblingCannotExtendOrReleaseALeaseItDoesNotHold'
+
+drill "a worker is named by its host and pid alone" internal/agent/worker.go \
+  's = s.replace("run[len(run)-8:]", "run[len(run)-8:len(run)-8]", 1)' \
+  ./internal/agent 'TestNewWorker_WorkersStartedTogetherHaveDistinctIdentities|TestWorker_ASiblingCannotExtendOrReleaseALeaseItDoesNotHold'
+# ---------------------------------------------------------------------------
+# Added 2026-09-15 (workbench voice input).
+#
+# The owner held the workbench microphone from mainland China and nothing
+# reached FORGE. Push-to-talk used only the browser's recogniser, which Chrome
+# runs on Google's servers; a transcript that arrived during a turn was dropped
+# by send(); the hold ended on mouseleave; a quick second press was swallowed;
+# and several failures said nothing. The voice fences run the real voice.js in
+# node against a stubbed browser, so each of these is a behaviour, not a
+# string. See docs/bugfix/2026-09-15-the-microphone-sent-nothing.md.
+# ---------------------------------------------------------------------------
+
+echo
+echo "The workbench microphone"
+drill "push-to-talk goes back to the browser recogniser" internal/httpapi/assets/voice.js \
+  's = s.replace("if (this.serverASR !== null && this._canRecord()) return \x27server\x27;", "if (false) return \x27server\x27;", 1)' \
+  ./internal/httpapi 'TestVoiceInput_PushToTalkRecordsAndUploadsToTheServer'
+
+drill "the upload drops the recording content type" internal/httpapi/assets/voice.js \
+  's = s.replace("headers: { \x27Content-Type\x27: blob.type || \x27audio/webm\x27 },", "headers: {},", 1)' \
+  ./internal/httpapi 'TestVoiceInput_PushToTalkRecordsAndUploadsToTheServer'
+
+drill "a transcript during a turn is sent, and dropped" internal/httpapi/assets/voice.js \
+  's = s.replace("    if (!ctx.busy) {", "    if (true) {", 1)' \
+  ./internal/httpapi 'TestVoiceInput_WhatWasSaidDuringATurnIsKeptInTheTextBox'
+
+drill "what was said overwrites what was typed" internal/httpapi/assets/voice.js \
+  's = s.replace("ctx.input.value = typed ? typed + \x27 \x27 + text : text;", "ctx.input.value = text;", 1)' \
+  ./internal/httpapi 'TestVoiceInput_WhatWasSaidDuringATurnIsKeptInTheTextBox'
+
+drill "the hold captures no pointer" internal/httpapi/assets/voice.js \
+  's = s.replace("      if (button.setPointerCapture && pointer != null) {", "      if (false) {", 1)' \
+  ./internal/httpapi 'TestVoiceInput_TheHoldSurvivesTheCursorLeavingTheButton'
+
+drill "a click is treated as a hold" internal/httpapi/assets/voice.js \
+  's = s.replace("        if (took < min) {", "        if (false) {", 1)' \
+  ./internal/httpapi 'TestVoiceInput_AQuickPressSaysHoldToTalk'
+
+drill "a press before the session ended is swallowed again" internal/httpapi/assets/voice.js \
+  's = s.replace("(self._restartWhenEnded || self.mode === \x27hands-free\x27)", "(self.mode === \x27hands-free\x27)", 1)' \
+  ./internal/httpapi 'TestVoiceInput_PressingAgainBeforeTheLastSessionEndedStillListens'
+
+drill "no-speech during a hold is silent again" internal/httpapi/assets/voice.js \
+  's = s.replace("        if (self.mode === \x27push\x27) {", "        if (false) {", 1)' \
+  ./internal/httpapi 'TestVoiceInput_EveryFailureReachesTheNote/no_speech_while_holding'
+
+drill "a recogniser that cannot reach Google is still offered" internal/httpapi/assets/voice.js \
+  's = s.replace("        self.browserBroken = \"The browser", "        self.browserBrokenX = \"The browser", 1)' \
+  ./internal/httpapi 'TestVoiceInput_EveryFailureReachesTheNote/browser_recognition_blocked'
+
+drill "a deployment with no transcriber is asked again on every hold" internal/httpapi/assets/voice.js \
+  's = s.replace("        this.serverASR = null;\n        this._serverWhy =", "        this._serverWhy =", 1)' \
+  ./internal/httpapi 'TestVoiceInput_EveryFailureReachesTheNote/not_served_here'
+
+drill "an empty transcript is swallowed silently" internal/httpapi/assets/voice.js \
+  's = s.replace("    if (!text) {\n      this.onError(\x27No words", "    if (false) {\n      this.onError(\x27No words", 1)' \
+  ./internal/httpapi 'TestVoiceInput_EveryFailureReachesTheNote/nothing_recognised'
+
+drill "a provider failure is not said" internal/httpapi/assets/voice.js \
+  's = s.replace("      this.onError(\x27Transcription failed (\x27 +", "      void (\x27Transcription failed (\x27 +", 1)' \
+  ./internal/httpapi 'TestVoiceInput_EveryFailureReachesTheNote/provider_error'
+
+drill "an empty recording is uploaded" internal/httpapi/assets/voice.js \
+  's = s.replace("    if (!blob.size) {", "    if (false) {", 1)' \
+  ./internal/httpapi 'TestVoiceInput_EveryFailureReachesTheNote/nothing_captured'
+
+drill "the mic ends the hold on mouseleave again" internal/httpapi/assets/workbench.js \
+  's = s.replace("    var hold = ForgeVoice.bindHold($(\x27mic\x27), voice, { note: voiceNote });", "    var hold = ForgeVoice.makeHold(voice, { note: voiceNote }); $(\x27mic\x27).addEventListener(\x27mouseleave\x27, function () { hold.release(); });", 1)' \
+  ./internal/httpapi 'TestWorkbench_TheMicIsWiredToTheHoldAndKeepsWhatWasSaid'
+
+drill "a transcript goes straight to send() again" internal/httpapi/assets/workbench.js \
+  's = s.replace("        if (ForgeVoice.deliverSpoken(text, { busy: state.busy, input: $(\x27say\x27), send: send, note: voiceNote }) === \x27sent\x27) {", "        send(text); if (false) {", 1)' \
+  ./internal/httpapi 'TestWorkbench_TheMicIsWiredToTheHoldAndKeepsWhatWasSaid'
+
+drill "a typed message is cleared while a turn is in flight" internal/httpapi/assets/workbench.js \
+  's = s.replace("      if (state.busy) {\n        voiceNote(\x27FORGE is still answering. Your message", "      if (false) {\n        voiceNote(\x27FORGE is still answering. Your message", 1)' \
+  ./internal/httpapi 'TestWorkbench_TheMicIsWiredToTheHoldAndKeepsWhatWasSaid'
+
+drill "the workbench never learns the server transcribes" internal/httpapi/assets/workbench.js \
+  's = s.replace("      if (voice) voice.setServerTranscription(", "      if (voice) void (", 1)' \
+  ./internal/httpapi 'TestWorkbench_TheMicIsWiredToTheHoldAndKeepsWhatWasSaid'
+
+drill "the transcription route is not mounted" internal/httpapi/router.go \
+  's = s.replace("\tmux.Handle(\"POST /v1/transcribe\", authed(converse.Transcribe))", "\t_ = converse.Transcribe", 1)' \
+  ./internal/httpapi 'TestTranscribe_TheRouteIsMountedAndRequiresASession'
+
+drill "codec parameters reach the transcriber" internal/httpapi/transcribe.go \
+  's = s.replace("\t\tif mt == c {\n\t\t\treturn c, true", "\t\tif mt == c {\n\t\t\treturn contentType, true", 1)' \
+  ./internal/httpapi 'TestTranscribe_RecordedAudioComesBackAsText|TestTranscribe_EveryBrowserRecordingContainerIsAccepted'
+
+drill "an oversized recording is sent to the provider" internal/httpapi/transcribe.go \
+  's = s.replace("\tif len(audio) > maxRecordingBytes {", "\tif false {", 1)' \
+  ./internal/httpapi 'TestTranscribe_AnOversizedRecordingIsRefusedByName'
+
+drill "a deployment without a transcriber is not refused by name" internal/httpapi/transcribe.go \
+  's = s.replace("\tif stt == nil {", "\tif false {", 1)' \
+  ./internal/httpapi 'TestTranscribe_ADeploymentWithoutATranscriberSaysWhatTurnsItOn'
+
+drill "a model that never answered is reported as silence" internal/httpapi/transcribe.go \
+  's = s.replace("\tif out.Unanswered {", "\tif false {", 1)' \
+  ./internal/httpapi 'TestTranscribe_AModelThatAnsweredWithoutATranscriptIsNotSilence'
+
+drill "the page is never told the server transcribes" internal/httpapi/converse.go \
+  's = s.replace("\"server\": transcriber != \"\"", "\"server\": false", 1)' \
+  ./internal/httpapi 'TestTranscribe_TheWorkbenchIsToldWhetherTheServerTranscribes'
+
+drill "an unserved transcription model is reported as an outage" internal/llm/transcribe.go \
+  's = s.replace("\t\t\tcode = errs.CodeConnectorUnavailable", "\t\t\tcode = errs.CodeExternalUnavailable", 1)' \
+  ./internal/llm 'TestTranscribe_AModelTheEndpointDoesNotServeIsUnavailableHereNotAnOutage'
+
+drill "a 200 with no choices is indistinguishable from silence" internal/llm/transcribe.go \
+  's = s.replace("return &Transcript{Model: model, Unanswered: true}, nil", "return &Transcript{Model: model}, nil", 1)' \
+  ./internal/llm 'TestTranscribe_AnAnswerWithNoTranscriptIsMarkedUnanswered'
+
+# ---------------------------------------------------------------------------
+# Added 2026-09-15 (transcriber endpoint). FORGE_LLM_TRANSCRIBER_BASE_URL and
+# FORGE_LLM_TRANSCRIBER_API_KEY: speech to text on an endpoint of its own. The
+# property every drill here breaks is the same one from a different side — which
+# host hears a recording, and whose key it is sent with.
+# ---------------------------------------------------------------------------
+
+echo "Transcriber endpoint"
+drill "a transcriber key without an endpoint loads" internal/platform/config/config.go \
+  's = s.replace("tURL == \"\" && tKey != \"\"", "false && tKey != \"\"", 1)' \
+  ./internal/platform/config 'TestTranscriberEndpoint_AKeyWithoutAnEndpointIsRefusedByName'
+
+drill "another host with no key of its own loads" internal/platform/config/config.go \
+  's = s.replace("case tKey == \"\" && !SameOrigin(tURL, cfg.LLM.BaseURL):", "case false:", 1)' \
+  ./internal/platform/config 'TestTranscriberEndpoint_AnotherHostWithoutAKeyIsRefusedByName'
+
+drill "a second host hearing speech is not named at startup" internal/platform/config/config.go \
+  's = s.replace("\t\tcase !SameOrigin(tURL, cfg.LLM.BaseURL):", "\t\tcase false:", 1)' \
+  ./internal/platform/config 'TestTranscriberEndpoint_ASeparateEndpointWithItsOwnKeyIsUsed'
+
+drill "the resolver lends the chat key to another host" internal/platform/config/config.go \
+  's = s.replace("return own, \"\"", "return own, c.APIKey", 1)' \
+  ./internal/platform/config 'TestTranscriberEndpoint_NeverHandsTheChatKeyToAnotherHost'
+
+drill "config print shows the transcriber key" internal/platform/config/config.go \
+  's = s.replace("c.LLM.TranscriberAPIKey != \"\",", "c.LLM.TranscriberAPIKey,", 1)' \
+  ./internal/platform/config 'TestTranscriberEndpoint_TheKeyNeverReachesConfigPrint'
+
+drill "the client keeps the chat key for speech" internal/llm/openai_compatible.go \
+  's = s.replace("transcriberKey: sttKey,", "transcriberKey: cfg.APIKey,", 1)' \
+  ./internal/llm 'TestTranscribe_AnotherHostWithNoKeyOfItsOwnIsNeverSentTheChatKey'
+
+drill "transcription is sent to the chat host" internal/llm/transcribe.go \
+  's = s.replace("c.transcriberURL+\"/chat/completions\"", "c.baseURL+\"/chat/completions\"", 1)' \
+  ./internal/llm 'TestTranscribe_ASeparateEndpointGetsTheAudioWithItsOwnKeyAndTheChatHostGetsNothing'
+
+drill "transcription carries the chat key" internal/llm/transcribe.go \
+  's = s.replace("\"Bearer \"+c.transcriberKey", "\"Bearer \"+c.apiKey", 1)' \
+  ./internal/llm 'TestTranscribe_ASeparateEndpointGetsTheAudioWithItsOwnKeyAndTheChatHostGetsNothing'
+
+drill "a transcriber 404 lists the chat host's models" internal/llm/openai_compatible.go \
+  's = s.replace("base, key := c.endpointFor(role)", "base, key := c.baseURL, c.apiKey", 1)' \
+  ./internal/llm 'TestTranscribe_AnUnservedModelOnItsOwnEndpointListsThatEndpointAndNamesItsSettings'
+
+drill "a transcriber 404 names only the model" internal/llm/openai_compatible.go \
+  's = s.replace("\tif role != RoleTranscriber {\n\t\treturn \"\"", "\tif true {\n\t\treturn \"\"", 1)' \
+  ./internal/llm 'TestTranscribe_AnUnservedModelOnTheChatEndpointNamesTheSettingsThatMoveSpeech'
+
+drill "room speech is sent to the chat host" internal/llm/openai_compatible.go \
+  's = s.replace("transcriberURL: sttURL,", "transcriberURL: base,", 1)' \
+  ./internal/media 'TestRoomSpeech_GoesToTheTranscriberEndpointWithItsKeyAndNeverToTheChatHost'
+
+drill "the 501 never names the transcriber endpoint" internal/httpapi/transcribe.go \
+  's = s.replace("FORGE_LLM_TRANSCRIBER_BASE_URL with \"+", "the transcriber endpoint with \"+", 1)' \
+  ./internal/httpapi 'TestTranscribe_ADeploymentWithoutATranscriberSaysWhatTurnsItOn'
+
+echo
+echo "Scripts run their kernel on one thread"
+# Added 2026-09-14. Under the 1 GiB address-space cap a multi-threaded build hung
+# on 4+ CPU machines. docs/bugfix/2026-09-14-scripts-hung-on-machines-with-four-or-more-cores.md
+drill "a script's kernel starts a thread per core again" internal/domain/cad/script.go \
+  's = s.replace("\"OMP_NUM_THREADS=1\", ", "", 1)' \
+  ./internal/domain/cad 'TestScriptEnv_RunsTheKernelOnOneThread'
+echo "Goal project permission"
+# Added 2026-09-15 (goal project permission). POST /v1/goals never checked the
+# project_id it was given: a stranger could draft a goal, and spend a planning call,
+# in someone else's project, and a viewer could plan in one it only reads. Create now
+# requires goal.create on a named project before Draft; replan already required it
+# through the goal's row, and is fenced so it stays that way. Both drills need
+# FORGE_TEST_DATABASE_URL. See
+# docs/bugfix/2026-09-15-a-goal-could-be-drafted-into-a-project-its-caller-was-not-in.md.
+drill "a goal is drafted into a project its caller is not in" internal/httpapi/goals_start.go \
+  's = s.replace("\tif req.ProjectID != \"\" {\n\t\tif err := h.deps.requirePermission(", "\tif false {\n\t\tif err := h.deps.requirePermission(", 1)' \
+  ./internal/httpapi 'TestCreateGoal_RefusesAProjectTheCallerIsNotAMemberOf|TestCreateGoal_RefusesAViewerOfTheProject'
+
+drill "a viewer replans a goal it can only read" internal/httpapi/goals_start.go \
+  's = s.replace("h.loadGoalFor(r, goalID, user.ID, access.PermGoalCreate)", "h.loadGoalFor(r, goalID, user.ID, access.PermProjectRead)", 1)' \
+  ./internal/httpapi 'TestReplan_RefusesAStrangerAndAViewerOfTheGoalsProject'
+echo "Script refusals without a kernel"
+# Added 2026-09-14. CI's check job has Python and no build123d on purpose; a refusal
+# must still say why there, and a test that needs the kernel must skip there.
+# docs/bugfix/2026-09-14-script-refusals-needed-a-kernel-to-say-why.md
+drill "the refusal hint imports the kernel again" internal/domain/cad/script.py \
+  's = s.replace("ns, _ = namespace(importlib.util.find_spec(\"build123d\") is not None)", "ns, _ = namespace(True)", 1)' \
+  ./internal/domain/cad 'TestScript_RefusalsSayWhyWithoutAKernel'
+
+drill "a test that needs the kernel runs without it" internal/domain/cad/script_test.go \
+  's = s.replace("\tif !hasBuild123d(py) {\n\t\tt.Skip(", "\tif false {\n\t\tt.Skip(", 1)' \
+  ./internal/domain/cad 'TestScript_ATestThatNeedsTheKernelSkipsWithoutIt'
+
+# Added 2026-09-15. The variables above do not reach OpenCASCADE's own thread pool,
+# which build123d's booleans run on and which is sized to the processors online: a
+# 16-CPU machine still started 16 threads.
+# docs/bugfix/2026-09-15-scripts-still-failed-on-machines-with-many-cores.md
+drill "OpenCASCADE's own pool starts a thread per core again" internal/domain/cad/script.py \
+  "s = s.replace('    pool = OSD_ThreadPool.DefaultPool_s(1)\n    if pool.NbThreads() != 1:\n        pool.Init(1)\n', '    pool = OSD_ThreadPool.DefaultPool_s()\n', 1)" \
+  ./internal/domain/cad 'TestScript_RunsOpenCascadeOnOneThread'
+
+echo
+echo "Blob storage, wired into the deployment"
+# Added 2026-09-15 (Phase 3, stage S4). The manifests are committed and NOT
+# applied, so nothing on the cluster notices them drifting: these fences are all
+# that holds them until the next deploy runs verify.sh. The last drill is the
+# command that check runs, reporting a round trip it did not observe.
+drill "the ConfigMap loses the bucket" deploy/k8s/20-config.yaml \
+  's = s.replace("  FORGE_BLOB_BUCKET: \"forge-geometry-373468206837\"\n", "", 1)' \
+  ./deploy 'TestConfigMap_'
+
+drill "the worker's egress policy drops the IMDS rule" deploy/k8s/32-worker-egress.yaml \
+  'i = s.index("    # 3. IMDS"); j = s.index("    # 4. HTTPS"); s = s[:i] + s[j:]' \
+  ./deploy 'TestWorkerEgress_'
+
+drill "the worker's egress policy lets 443 into the cluster" deploy/k8s/32-worker-egress.yaml \
+  's = s.replace("            except:\n              - 10.0.0.0/8\n", "            except:\n", 1)' \
+  ./deploy 'TestWorkerEgress_'
+
+drill "verify.sh checks the blob round trip in forged only" deploy/verify.sh \
+  's = s.replace("for d in forged forge-worker; do\n  POD=", "for d in forged; do\n  POD=", 1)' \
+  ./deploy 'TestVerify_ChecksTheBlobRoundTripInsideBothPods'
+
+drill "forgectl blob check does not compare the bytes it read back" cmd/forgectl/blob.go \
+  's = s.replace("if !bytes.Equal(got, blobCheckPayload) {", "if !bytes.Equal(got, got) {", 1)' \
+  ./cmd/forgectl 'TestBlobCheck_AStoreThatLiesIsNeverReportedOK'
+
+# Added 2026-09-15 (Phase 6, stages W1–W3). Every copy of a shape is one instance of one
+# uploaded mesh, its matrix, colour and highlight read by the GPU at a stride and offset
+# from a buffer written per frame; what is out of view is not sent and what is tiny is
+# drawn as its box; a click is resolved back to the occurrence path through the matrix
+# the copy was drawn with, and a tree row reaches exactly what Go places under it. The
+# fences read what was SENT through scripts/webgl-stub.js, over WebGL2, WebGL1 with
+# ANGLE_instanced_arrays and WebGL1 without it.
+drill "an instance's colour is read one float out" internal/httpapi/assets/forge3d.js \
+  's = s.replace("false, stride, off + 64);", "false, stride, off + 68);", 1)' \
+  ./internal/httpapi 'TestRendererUploadsTheInstancesTheExporterPlaces'
+
+drill "a mirrored primitive is drawn unmirrored" internal/httpapi/assets/forge3d.js \
+  's = s.replace("(spec.mirrored ? -1 : 1)", "1", 1)' \
+  ./internal/httpapi 'TestRendererUploadsTheInstancesTheExporterPlaces'
+
+drill "instance attributes are left on for the grid" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    this._resetInstanceAttributes();\n", "", 1)' \
+  ./internal/httpapi 'TestRendererUploadsTheInstancesTheExporterPlaces'
+
+drill "the mesh reply's copies are drawn as their primitives" internal/httpapi/assets/forge3d.js \
+  's = s.replace("var inst = instanceOf[part.id];", "var inst = null;", 1)' \
+  ./internal/httpapi 'TestRendererDrawsTheMeshReplysInstancesByTheirMatrices'
+
+drill "the workbench stops handing the mesh reply to the studio" internal/httpapi/assets/workbench.js \
+  's = s.replace("studio.load(proto, b);", "studio.load(proto);", 1)' \
+  ./internal/httpapi 'TestWorkbenchDrawsTheMeshReplyInstanced'
+
+drill "nothing out of view is culled" internal/httpapi/assets/forge3d.js \
+  's = s.replace("if (!sphereInFrustum(f.planes, cx, cy, cz, r)) {", "if (false) {", 1)' \
+  ./internal/httpapi 'TestRendererPicksAnInstanceBackToItsOccurrencePath'
+
+drill "a far copy is never drawn as its box" internal/httpapi/assets/forge3d.js \
+  's = s.replace("var proxy = lod > 0 &&", "var proxy = false &&", 1)' \
+  ./internal/httpapi 'TestRendererPicksAnInstanceBackToItsOccurrencePath'
+
+drill "a click names the first copy of whatever it hit" internal/httpapi/assets/forge3d.js \
+  's = s.replace("best = { id: b.ids[i],", "best = { id: b.ids[0],", 1)' \
+  ./internal/httpapi 'TestRendererPicksAnInstanceBackToItsOccurrencePath'
+
+# chr(92): the anchor is a regular expression's escaped backslash, and a backslash
+# written here passes through bash and Python before it reaches the file.
+drill "a tree row misses the copies a patterned ancestor made" internal/httpapi/assets/forge3d.js \
+  's = s.replace("\x27(-" + chr(92) * 2 + "d+)*\x27", "\x27\x27", 1)' \
+  ./internal/httpapi 'TestRendererSelectsAndIsolatesTheOccurrencesUnderATreeNode'
+
+drill "the browser still stops drawing at the kernel's 4096" internal/httpapi/assets/forge3d.js \
+  's = s.replace("var MAX_VIEWPORT_PARTS = 100000;", "var MAX_VIEWPORT_PARTS = 4096;", 1)' \
+  ./internal/httpapi 'TestRendererFlattensATreeLikeTheExporter'
+
+drill "the viewport's ceiling is the kernel's" internal/domain/geometry/limits.go \
+  's = s.replace("const maxViewportParts = DefaultMaxOccurrences", "const maxViewportParts = maxDrawnParts", 1)' \
+  ./internal/domain/geometry 'TestLimits_TheViewportDrawsWhatStorageAcceptsAndNoMore'
+
+echo "A3's gaps: the catalogue read, a real build, the turn told, flat parts, density taught"
+# Added 2026-09-15 (A3 gaps and density). Every catalogue family was read against a
+# published table (standard.go names each), which found the L20x20x3 toe radius
+# wrong; one standard part per family is built by OCCT and measured against the
+# published figures; an ordinary turn's model is told what could be one pattern;
+# a flat document's top-level parts are checked like siblings; and the contract
+# teaches "density" with the ceiling and the mass rule the code applies.
+drill "an L20 angle's toe radius is 2 again" internal/domain/geometry/standard.go \
+  's = s.replace("{20, 3, 3.5, 1.75},", "{20, 3, 3.5, 2},", 1)' \
+  ./internal/domain/geometry 'TestStandard_EveryFamilyCarriesTheFiguresItsSourcePublishes'
+
+drill "OCCT builds an L20 angle with a toe radius of 2" internal/domain/geometry/standard.go \
+  's = s.replace("{20, 3, 3.5, 1.75},", "{20, 3, 3.5, 2},", 1)' \
+  ./internal/domain/cad 'TestKernel_EveryStandardFamilyBuildsTheSolidItsFiguresDescribe'
+
+drill "the browser's L20 angle's toe radius is 2 again" internal/httpapi/assets/forge3d.js \
+  's = s.replace("[20, 3, 3.5, 1.75]", "[20, 3, 3.5, 2]", 1)' \
+  ./internal/httpapi 'TestRendererDrawsTheSameStandardPartAsTheExporter'
+
+drill "an M10 nut is DIN 934's 17 across flats" internal/domain/geometry/standard.go \
+  's = s.replace("{\"M10\", 10, 16, 8.4},", "{\"M10\", 10, 17, 8.4},", 1)' \
+  ./internal/domain/geometry 'TestStandard_EveryFamilyCarriesTheFiguresItsSourcePublishes'
+
+drill "an M6 washer's hole is the thread's 6" internal/domain/geometry/standard.go \
+  's = s.replace("{\"M6\", 6.4, 12, 1.6},", "{\"M6\", 6, 12, 1.6},", 1)' \
+  ./internal/domain/geometry 'TestStandard_EveryFamilyCarriesTheFiguresItsSourcePublishes'
+
+drill "a 6003 bearing is 11 wide" internal/domain/geometry/standard.go \
+  's = s.replace("{\"6003\", 17, 35, 10},", "{\"6003\", 17, 35, 11},", 1)' \
+  ./internal/domain/geometry 'TestStandard_EveryFamilyCarriesTheFiguresItsSourcePublishes'
+
+drill "M8 cap screws run to 90, as one supplier stocks them" internal/domain/geometry/standard.go \
+  's = s.replace("{\"M8\", 8, 13, 8, 12, 80},", "{\"M8\", 8, 13, 8, 12, 90},", 1)' \
+  ./internal/domain/geometry 'TestStandard_EveryFamilyCarriesTheFiguresItsSourcePublishes'
+
+drill "a hollow section's inside corner is 1.5T" internal/domain/geometry/standard.go \
+  's = s.replace("outside, inside := 2*h.T*k, h.T*k", "outside, inside := 2*h.T*k, 1.5*h.T*k", 1)' \
+  ./internal/domain/geometry 'TestStandard_EveryFamilyCarriesTheFiguresItsSourcePublishes'
+
+drill "OCCT turns a revolve half way round" internal/domain/cad/sidecar.py \
+  's = s.replace("revolve(f, axis, 360)", "revolve(f, axis, 180)", 1)' \
+  ./internal/domain/cad 'TestKernel_EveryStandardFamilyBuildsTheSolidItsFiguresDescribe'
+
+drill "OCCT extrudes a section twice its depth" internal/domain/cad/sidecar.py \
+  's = s.replace("amount=d[\"depth\"] / 2.0, both=True", "amount=d[\"depth\"], both=True", 1)' \
+  ./internal/domain/cad 'TestKernel_EveryStandardFamilyBuildsTheSolidItsFiguresDescribe'
+
+drill "an outline is sent to the kernel in the document's unit" internal/domain/geometry/solid.go \
+  's = s.replace("c, err := section.Outer.scaled(toMM).exact(\"outline\")", "c, err := section.Outer.exact(\"outline\")", 1)' \
+  ./internal/domain/cad 'TestKernel_EveryStandardFamilyBuildsTheSolidItsFiguresDescribe'
+
+drill "an ordinary turn is not told what could be one pattern" internal/agent/converse_stream.go \
+  's = s.replace("\"]\" + repetitionForTurn(current) + \"\\n\\n\" + message", "\"]\" + \"\\n\\n\" + message", 1)' \
+  ./internal/agent 'TestBuildMessages_ATurnIsToldWhatCouldBeOnePattern'
+
+drill "a turn is told every run, however many" internal/agent/repetition.go \
+  's = s.replace("if i == maxRepetitionNotes {", "if i == 1000 {", 1)' \
+  ./internal/agent 'TestBuildMessages_ATurnIsToldWhatCouldBeOnePattern'
+
+drill "top-level parts are never looked at" internal/domain/geometry/repetition.go \
+  's = s.replace("\tout := topLevelRepetition(d)\n", "\tvar out []Repetition\n", 1)' \
+  ./internal/domain/geometry 'TestRepetition_FindsARowOfTopLevelPartsAndTheRepeatThatWritesThemOut'
+
+drill "top-level parts are reported after the assemblies" internal/domain/geometry/repetition.go \
+  's = s.replace("\tout := topLevelRepetition(d)\n\tfor _, a := range d.Assemblies {\n\t\tout = append(out, assemblyRepetition(a)...)\n\t}\n", "\tvar out []Repetition\n\tfor _, a := range d.Assemblies {\n\t\tout = append(out, assemblyRepetition(a)...)\n\t}\n\tout = append(out, topLevelRepetition(d)...)\n", 1)' \
+  ./internal/domain/geometry 'TestRepetition_TopLevelPartsComeFirstInWrittenOrder'
+
+drill "top-level groups are read in map order" internal/domain/geometry/repetition.go \
+  'a = "\tfor _, g := range groups {"; i = s.index(a); j = s.index(a, i + 1); s = s[:j] + "\tfor _, g := range byKey {" + s[j + len(a):]' \
+  ./internal/domain/geometry 'TestRepetition_TopLevelPartsComeFirstInWrittenOrder'
+
+drill "a part of another size counts as the same part" internal/domain/geometry/repetition.go \
+  's = s.replace("\tq.Position, q.Rotation = nil, nil\n", "\tq.Position, q.Rotation, q.Size = nil, nil, nil\n", 1)' \
+  ./internal/domain/geometry 'TestRepetition_TopLevelPartsThatAreNotOneRunAreNotFlagged'
+
+drill "a feature's tool is folded into a repeat" internal/domain/geometry/repetition.go \
+  's = s.replace("\t\t\tnamed[w] = true\n", "\t\t\t_ = w\n", 1)' \
+  ./internal/domain/geometry 'TestRepetition_TopLevelPartsThatAreNotOneRunAreNotFlagged'
+
+drill "the offered repeat's turn is not checked" internal/domain/geometry/repetition.go \
+  's = s.replace("if !run.unturned && !sameMatrix(s.m, m) {", "if false && !sameMatrix(s.m, m) {", 1)' \
+  ./internal/domain/geometry 'TestRepetition_FindsARingOfTopLevelParts'
+
+drill "the contract never teaches density" internal/agent/converse.go \
+  's = s.replace("geometry.FinishGuide() + \".\\n\" + densityContract + ", "geometry.FinishGuide() + \".\\n\" + ", 1)' \
+  ./internal/agent 'TestTheContractTeachesDensityAsTheValidatorReadsIt'
+
+drill "the contract's material shows no density" internal/agent/converse.go \
+  's = s.replace("\"finish\": \"metal\", \"density\": 2700,", "\"finish\": \"metal\",", 1)' \
+  ./internal/agent 'TestTheContractTeachesDensityAsTheValidatorReadsIt'
+
+drill "the contract states a ceiling the validator does not enforce" internal/agent/converse.go \
+  's = s.replace("`, geometry.MaxDensity)", "`, 50000)", 1)' \
+  ./internal/agent 'TestTheContractTeachesDensityAsTheValidatorReadsIt'
+
+drill "the validator enforces a ceiling the contract does not state" internal/domain/geometry/assembly.go \
+  's = s.replace("const maxDensity = MaxDensity", "const maxDensity = 50000", 1)' \
+  ./internal/agent 'TestTheContractTeachesDensityAsTheValidatorReadsIt'
+
+echo "The bearings and the angles read again: ISO/R 15/1 and EN 10056-1:2017"
+# Added 2026-09-15 (ISO 15 and EN 10056-1:2017). Every bearing was read against
+# ISO/R 15/1-1968 Table 3 (ISO 15:2017's own table was not reachable) and every angle
+# against EN 10056-1:2017 Table 1. Nothing was wrong, so these hold a verified figure
+# of each: a bearing's outside diameter and an angle's root radius in Go, and a
+# bearing's width in the browser's copy.
+drill "a 6004 bearing's outside diameter is 44, which no ISO 15 table prints" internal/domain/geometry/standard.go \
+  's = s.replace("{\"6004\", 20, 42, 12},", "{\"6004\", 20, 44, 12},", 1)' \
+  ./internal/domain/geometry 'TestStandard_EveryFamilyCarriesTheFiguresItsSourcePublishes'
+
+drill "the browser's 6001 bearing is 9 wide" internal/httpapi/assets/forge3d.js \
+  's = s.replace("[\x276001\x27, 12, 28, 8]", "[\x276001\x27, 12, 28, 9]", 1)' \
+  ./internal/httpapi 'TestRendererDrawsTheSameStandardPartAsTheExporter'
+
+drill "an L40 angle's root radius is 5, as neither edition prints" internal/domain/geometry/standard.go \
+  's = s.replace("{40, 4, 6, 3},", "{40, 4, 5, 2.5},", 1)' \
+  ./internal/domain/geometry 'TestStandard_EveryFamilyCarriesTheFiguresItsSourcePublishes'
+echo
+echo "Live car findings: a build step names its gate, keeps its placements, and is told how to attach"
+# Added 2026-09-15 (live car findings). docs/spikes/2026-09-15-car-quality/README.md,
+# docs/bugfix/2026-09-15-a-failed-build-step-said-no-geometry-whatever-refused-it.md
+drill "an unparseable reply reads as no geometry again" internal/agent/assemble.go \
+  's = s.replace("if why := unreadableDetail(resp); why != \"\" {", "if why := \"\"; why != \"\" {", 1)' \
+  ./internal/agent 'TestAssemble_AFailedStepSaysWhichGateRefusedIt'
+
+drill "a refused step no longer names the faults it added" internal/agent/stepgates.go \
+  's = s.replace("out := head + \", and these are new: \" + strings.Join(named, \"; \")", "out := head", 1)' \
+  ./internal/agent 'TestAssemble_AFailedStepSaysWhichGateRefusedIt'
+
+drill "a refused step names every added fault, however many" internal/agent/stepgates.go \
+  's = s.replace("if i == maxAddedFaultsNamed {", "if false {", 1)' \
+  ./internal/agent 'TestAssemble_ARefusedStepsNoteIsBounded'
+
+drill "a note no longer says which gate it came from" internal/agent/stepgates.go \
+  's = s.replace("if strings.Contains(note, \") \"+g.phrase) {", "if strings.Contains(note, \")  \"+g.phrase) {", 1)' \
+  ./internal/agent 'TestCarMeasure_ARefusedStepIsNamedByItsGate'
+
+drill "a tree step that drops a placement says nothing" internal/agent/vanished.go \
+  's = s.replace("\tif before.Root != \"\" {", "\tif false {", 1)' \
+  ./internal/agent 'TestAssemble_AStepThatDropsAPlacementSaysSo'
+
+drill "a step creating an assembly is not shown the root's children" internal/agent/subtree.go \
+  's = s.replace("view.RootChildren = root.Children", "view.RootChildren = nil", 1)' \
+  ./internal/agent 'TestSubtreeModel_ANewAssemblyIsShownWhatTheRootAlreadyPlaces'
+
+drill "a step is not told the assembly it builds" internal/agent/assemble.go \
+  's = s.replace("This step builds the assembly %q.", "This step builds %q.", 1)' \
+  ./internal/agent 'TestAssemble_AStepIsToldTheAssemblyItBuilds'
+
+drill "the first step is not asked for a root" internal/agent/assemble.go \
+  's = s.replace("\"root\" assembly for the whole object that places it.", "root for the whole object that places it.", 1)' \
+  ./internal/agent 'TestAssemble_TheFirstStepIsAskedForATreeWithInterfaces'
+
+drill "a later step is not told to restate the root's children" internal/agent/assemble.go \
+  's = s.replace("(\"root_children\" in what you are", "(in what you are", 1)' \
+  ./internal/agent 'TestAssemble_TheFirstStepIsAskedForATreeWithInterfaces'
+
+drill "the contract no longer says a cylinder stands on its Y" internal/agent/converse.go \
+  's = s.replace("A \"cylinder\" or \"cone\" STANDS UPRIGHT", "A \"cylinder\" or \"cone\" stands", 1)' \
+  ./internal/agent 'TestTheContractSaysACylinderStandsOnItsOwnY'
+
+drill "the contract no longer says where a polar pattern turns" internal/agent/converse.go \
+  's = s.replace("about an axis THROUGH THE ORIGIN of the", "about an axis of the", 1)' \
+  ./internal/agent 'TestTheContractSaysWhereAPolarPatternTurns'
+
+drill "a buried copy's repair is not told which child places it" internal/agent/interference.go \
+  's = s.replace("problems = placedByNotes(reply.Prototype, found, problems)", "_ = placedByNotes", 1)' \
+  ./internal/agent 'TestInterference_ARepairIsToldWhichChildPlacesABuriedCopy'
+
+drill "a pattern copy is not traced to its child" internal/domain/geometry/placedby.go \
+  's = s.replace("case c.Pattern != nil && !hasMore:", "case false:", 1)' \
+  ./internal/domain/geometry 'TestPlacedBy_'
+
+drill "the measurement stops seeing sub-assembly looks" internal/agent/car_ceiling_live_test.go \
+  's = s.replace("strings.CutPrefix(r.Prompt, subAssemblyLook)", "strings.CutPrefix(r.Prompt, subAssemblyLook+\"x\")", 1)' \
+  ./internal/agent 'TestCarMeasure_LooksAreCountedPerStepAndPerSubAssembly'
+
+drill "a sub-assembly look is reworded under the measurement" internal/agent/look.go \
+  's = s.replace("\"This is one sub-assembly of the model, \"+s.path", "\"This is a sub-assembly of the model, \"+s.path", 1)' \
+  ./internal/agent 'TestLook_ASubAssemblyLookOpensTheWayTheMeasurementReadsIt'
+
+drill "the measurement stops counting children attached at an interface" internal/agent/car_ceiling_live_test.go \
+  's = s.replace("if strings.TrimSpace(c.At) != \"\" {", "if false {", 1)' \
+  ./internal/agent 'TestCarMeasure_CountsChildrenAttachedAtAnInterface'
+
+
+echo
+echo "Live car findings, run 1: a definition's expression is read, and a step's assembly is placed"
+# Added 2026-09-15 (live car findings, car-quality run 1).
+drill "an expression in a definition's size loses the reply again" internal/agent/dimensionrepair.go \
+  's = s.replace("lists = append(lists, proto[\"parts\"], proto[\"definitions\"])", "lists = append(lists, proto[\"parts\"])", 1)' \
+  ./internal/agent 'TestParseReply_ReadsAnExpressionInADefinitionsSize'
+
+drill "an edit's patch is not read for expressions" internal/agent/dimensionrepair.go \
+  's = s.replace("lists = append(lists, patch[\"parts\"], patch[\"definitions\"])", "_ = patch", 1)' \
+  ./internal/agent 'TestParseReply_ReadsAnExpressionInAnEditsDefinitionAndPart'
+
+drill "a step's unplaced assembly stays unplaced" internal/agent/assemble.go \
+  's = s.replace("if placed := placeStepAssembly(reply.Prototype, step.Assembly); placed != \"\" {", "if placed := \"\"; placed != \"\" {", 1)' \
+  ./internal/agent 'TestAssemble_ANewAssemblyTheStepDidNotPlaceIsPlacedFromTheRoot'
+
+drill "an assembly the step placed itself is placed again" internal/agent/stepplace.go \
+  's = s.replace("return \"\" // placed already, wherever the step chose", "continue", 1)' \
+  ./internal/agent 'TestAssemble_AnAssemblyTheStepPlacedItselfIsLeftAlone'
+
+drill "the measurement stops counting unplaced assemblies" internal/agent/car_tree_measure_test.go \
+  's = s.replace("if a.ID != d.Root && !ref[a.ID] {", "if false {", 1)' \
+  ./internal/agent 'TestCarMeasure_CountsAssembliesNothingPlaces'
+
+echo
+echo "Live car findings, run 2: a step keeps the root, a placement's expression is read, steps learn density"
+# Added 2026-09-15 (live car findings, car-quality run 2).
+drill "a step's edit replaces the model's root again" internal/agent/assemble.go \
+  's = s.replace("if r := strings.TrimSpace(e.Patch.Root); r != \"\" && r != doc.Root {", "if r := strings.TrimSpace(e.Patch.Root); false {", 1)' \
+  ./internal/agent 'TestAssemble_AStepsEditDoesNotReplaceTheModelsRoot'
+
+drill "the root a step named is not placed" internal/agent/assemble.go \
+  's = s.replace("if placed := placeStepAssembly(reply.Prototype, sentRoot); placed != \"\" {", "if placed := \"\"; placed != \"\" {", 1)' \
+  ./internal/agent 'TestAssemble_AStepsEditDoesNotReplaceTheModelsRoot'
+
+drill "the contract lets a patch set any root" internal/agent/converse.go \
+  's = s.replace("\"root\": \"ONLY when the model has no root yet: the assembly that will hold everything\",", "\"root\": \"the assembly that will hold everything\",", 1)' \
+  ./internal/agent 'TestAssemble_AStepsEditDoesNotReplaceTheModelsRoot'
+
+drill "a child's position expression loses the reply again" internal/agent/dimensionrepair.go \
+  's = s.replace("if f, ok := evaluateOver(container, s, units); ok {", "if f, ok := evaluateOver(container, s, units); false {", 1)' \
+  ./internal/agent 'TestParseReply_ReadsAnExpressionInAChildsPositionAtItsValue'
+
+drill "an expression that does not evaluate is guessed as zero" internal/agent/dimensionrepair.go \
+  's = s.replace("\t\tif p.Severity == geometry.Error {\n\t\t\treturn 0, false\n\t\t}", "\t\t_ = p", 1)' \
+  ./internal/agent 'TestParseReply_AChildPositionItCannotEvaluateIsNotGuessed'
+
+drill "a placement read at its value is not noted" internal/agent/converse.go \
+  's = s.replace("second.noteRepair(childPositionNote)", "_ = childPositionNote", 1)' \
+  ./internal/agent 'TestParseReply_ReadsAnExpressionInAChildsPositionAtItsValue'
+
+drill "build steps lose the density rule" internal/agent/converse.go \
+  's = s.replace("var buildContract = geometryContract + geometry.FinishGuide() + \".\\n\" + densityContract", "var buildContract = geometryContract + geometry.FinishGuide() + \".\\n\"", 1)' \
+  ./internal/agent 'TestAssemble_EveryStepIsTaughtFinishesAndDensity'
+
+drill "build steps are sent the contract without its finishes" internal/agent/assemble.go \
+  's = s.replace("system, sofar := stepSystem+\"\\n\\n\"+buildContract,", "system, sofar := stepSystem+\"\\n\\n\"+geometryContract,", 1)' \
+  ./internal/agent 'TestAssemble_EveryStepIsTaughtFinishesAndDensity'
+
+echo "Cross-assembly attach and bound positions: a subsystem mounts from the root, steps bind positions"
+# Added 2026-09-15 (cross-assembly attach and bound positions).
+drill "an at that leaves its assembly is refused without the fix" internal/domain/geometry/tree.go \
+  's = s.replace("if leaves(a, root, c.At) {", "if false {", 1)' \
+  ./internal/domain/geometry 'TestInterface_AnAttachmentThatLeavesItsAssemblyIsRefusedWithTheFix'
+
+drill "run 2's wheel step is refused as it was live" internal/domain/geometry/tree.go \
+  's = s.replace("if leaves(a, root, c.At) {", "if false {", 1)' \
+  ./internal/agent 'TestReplay_RunTwosWheelStepIsRefusedWithTheFixAndItsRepairIsToldIt|TestReplay_RunTwosFirstRepairOfTheWheelsIsToldToAttachFromTheRoot'
+
+drill "a child of the root is told to attach from the root" internal/domain/geometry/interface.go \
+  's = s.replace("\tif a.ID == root.ID {\n\t\treturn false\n\t}\n\tfirst, _, nested", "\tfirst, _, nested", 1)' \
+  ./internal/domain/geometry 'TestInterface_OnlyAPathThatLeavesItsAssemblyIsToldToAttachFromTheRoot'
+
+drill "a lone root interface is not seen as leaving" internal/domain/geometry/interface.go \
+  's = s.replace("return !declares(a, first) && declares(root, first)", "return false", 1)' \
+  ./internal/domain/geometry 'TestInterface_AnAttachmentThatLeavesItsAssemblyIsRefusedWithTheFix'
+
+drill "the fix keeps the root's own id in the path" internal/domain/geometry/interface.go \
+  's = s.replace("ok && first == root.ID && rest != \"\" {", "ok && false {", 1)' \
+  ./internal/domain/geometry 'TestInterface_AnAttachmentThatLeavesItsAssemblyIsRefusedWithTheFix'
+
+drill "the fix hides why the path fails from the root too" internal/domain/geometry/interface.go \
+  's = s.replace("out += \"; from the root that path fails too: \" + problem", "_ = problem", 1)' \
+  ./internal/domain/geometry 'TestInterface_AnAttachmentThatLeavesItsAssemblyIsRefusedWithTheFix'
+
+drill "root interfaces stop one placement down" internal/domain/geometry/interface.go \
+  's = s.replace("if depth >= rootInterfaceDepth {", "if depth >= 1 {", 1)' \
+  ./internal/domain/geometry 'TestInterfacesFromRoot_ListsWhereAChildOfTheRootCanAttach'
+
+drill "root interfaces offer a step its own assembly" internal/domain/geometry/interface.go \
+  's = s.replace("if !isAsm || c.Ref == except || sub.ID == root.ID {", "if !isAsm || sub.ID == root.ID {", 1)' \
+  ./internal/domain/geometry 'TestInterfacesFromRoot_ListsWhereAChildOfTheRootCanAttach'
+
+drill "root interfaces are unbounded" internal/domain/geometry/interface.go \
+  's = s.replace("if len(list) >= limit {", "if false {", 1)' \
+  ./internal/domain/geometry 'TestInterfacesFromRoot_ListsWhereAChildOfTheRootCanAttach'
+
+drill "a new assembly's view drops the root interfaces" internal/agent/subtree.go \
+  's = s.replace("view.RootInterfaces, view.RootInterfacesMore = d.InterfacesFromRoot(focus, maxRootInterfacesShown)\n\t\treturn marshalView(view)", "return marshalView(view)", 1)' \
+  ./internal/agent 'TestAssemble_AStepIsShownTheInterfacesItCanAttachAtFromTheRoot'
+
+drill "declared placements are ignored and the origin wins" internal/agent/assemble.go \
+  's = s.replace("if placed := placeDeclared(reply.Prototype, step.Assembly, declared); placed != \"\" {", "if placed := \"\"; placed != \"\" {", 1)' \
+  ./internal/agent 'TestAssemble_AStepsDeclaredPlacementAttachesItsAssemblyFromTheRoot|TestReplay_RunTwosWheelsWrittenAsTheContractTeachesAreAttachedFromTheRoot'
+
+drill "declared placements are read only beside the patch" internal/agent/stepdeclared.go \
+  's = s.replace("[]any{edit[\"placements\"], raw[\"placements\"], patch[\"placements\"]}", "[]any{edit[\"placements\"]}", 1)' \
+  ./internal/agent 'TestAssemble_DeclaredPlacementsAreReadWhereverTheStepPutThem'
+
+drill "a declared position over the model's parameters is not read" internal/agent/stepdeclared.go \
+  's = s.replace("withBaseParameters(scope, base, func() bool { return repairPlacements(scope) })", "_ = base", 1)' \
+  ./internal/agent 'TestAssemble_DeclaredPlacementsAreReadWhereverTheStepPutThem'
+
+drill "a declaration places an assembly the step already placed" internal/agent/stepdeclared.go \
+  's = s.replace("case placed[ref]:", "case false:", 1)' \
+  ./internal/agent 'TestAssemble_ADeclaredPlacementThatCannotBeUsedIsNotUsedAndSaysSo'
+
+drill "the placement note does not say which attachment" internal/agent/stepdeclared.go \
+  's = s.replace("out += fmt.Sprintf(\" at %q\", c.At)", "out += \"\"", 1)' \
+  ./internal/agent 'TestAssemble_AStepsDeclaredPlacementAttachesItsAssemblyFromTheRoot'
+
+drill "a step's placement over the model's parameters loses the step" internal/agent/assemble.go \
+  's = s.replace("resp, overModel := placementsOverModel(resp, doc)", "overModel := false", 1)' \
+  ./internal/agent 'TestAssemble_AStepsPlacementExpressionReadsTheModelsParameters'
+
+drill "the model's parameters are left in what the step sent" internal/agent/dimensionrepair.go \
+  's = s.replace("\t\t\tif had[k] {\n\t\t\t\tcontainer[k] = saved[k]\n\t\t\t} else {\n\t\t\t\tdelete(container, k)\n\t\t\t}", "\t\t\t_ = had[k]", 1)' \
+  ./internal/agent 'TestPlacementsOverModel_ReadsOverTheModelWithoutAddingToTheReply'
+
+drill "the contract lets an at leave its assembly" internal/agent/converse.go \
+  's = s.replace("An \"at\" never leaves its own assembly.", "An \"at\" may name any interface.", 1)' \
+  ./internal/agent 'TestTheContractSaysAnAtNeverLeavesItsAssemblyAndItsExampleAttaches'
+
+drill "the contract's mounted wheel lies flat" internal/agent/converse.go \
+  's = s.replace("\"at\": \"suspension-left/hub\", \"rotation\": [0, 0, 90]}\n", "\"at\": \"suspension-left/hub\", \"rotation\": [0, 90, 0]}\n", 1)' \
+  ./internal/agent 'TestTheContractSaysAnAtNeverLeavesItsAssemblyAndItsExampleAttaches'
+
+drill "the contract's child is placed by a number again" internal/agent/converse.go \
+  's = s.replace("\"position\": [\"half_wheelbase\", 0, 0]}", "\"position\": [1350, 0, 0]}", 1)' \
+  ./internal/agent 'TestTheContractShowsASizeAndAPositionWrittenWithAParameter'
+
+drill "steps are not taught placements" internal/agent/assemble.go \
+  's = s.replace("under \"placements\" beside \"patch\"", "under \"extras\" beside \"patch\"", 1)' \
+  ./internal/agent 'TestAssemble_AStepIsTaughtToAttachFromTheRootAndToBindPositions'
+
+drill "steps may retype a parameter's value" internal/agent/assemble.go \
+  's = s.replace("Never\n  retype a parameter'"'"'s value as a number. ", "", 1)' \
+  ./internal/agent 'TestAssemble_AStepIsTaughtToAttachFromTheRootAndToBindPositions'
+
+drill "a step is not shown its parameters' values" internal/agent/assemble.go \
+  's = s.replace("sofar += parametersForStep(doc)", "_ = parametersForStep", 1)' \
+  ./internal/agent 'TestAssemble_AStepIsShownTheParametersItCanBindTo'
+
+drill "a step that retyped parameters is not told" internal/agent/assemble.go \
+  's = s.replace("if literals := literalPositionNote(doc, reply.Prototype); literals != \"\" {", "if literals := \"\"; literals != \"\" {", 1)' \
+  ./internal/agent 'TestAssemble_AStepThatRetypesAParametersValueIsToldWhichParameter'
+
+drill "one or two coincidences are a habit" internal/agent/literals.go \
+  's = s.replace("const duplicatedLiteralsToNote = 3", "const duplicatedLiteralsToNote = 1", 1)' \
+  ./internal/agent 'TestAssemble_AStepThatRetypesAParametersValueIsToldWhichParameter'
+
+drill "positions the model already had are counted again" internal/agent/literals.go \
+  's = s.replace("if key := a.ID + \"/\" + c.ID; !samePosition(oldPlacements, key, c.Position) {", "if key := a.ID + \"/\" + c.ID; true {", 1)' \
+  ./internal/agent 'TestAssemble_AStepThatRetypesAParametersValueIsToldWhichParameter'
+
+drill "a bound position is counted as a literal" internal/agent/literals.go \
+  's = s.replace("if i > 2 || lit == 0 || from[positionAxes[i]] != \"\" {", "if i > 2 || lit == 0 {", 1)' \
+  ./internal/agent 'TestAssemble_AStepThatRetypesAParametersValueIsToldWhichParameter'
+
+drill "the note names parameters out of document order" internal/agent/literals.go \
+  's = s.replace("keys = append(keys, key)", "keys = append([]string{key}, keys...)", 1)' \
+  ./internal/agent 'TestAssemble_AStepThatRetypesAParametersValueIsToldWhichParameter'
+
+drill "the note suggests the parameter with the wrong sign" internal/agent/literals.go \
+  's = s.replace("if first.negative {", "if false {", 1)' \
+  ./internal/agent 'TestAssemble_AStepThatRetypesAParametersValueIsToldWhichParameter'
+
+drill "a conversational edit over the model's parameters is lost" internal/agent/converse.go \
+  's = s.replace("resp, overModel := placementsOverModel(resp, current)", "overModel := false", 1)' \
+  ./internal/agent 'TestRespond_AnEditPlacingAChildByTheModelsParameterIsRead'
+
+echo
+echo "Bound child positions: a placement written with a parameter follows it, and binding a copy leaves its source alone"
+# Added 2026-09-15 (bound child positions).
+drill "a child's position_from is never bound" internal/domain/geometry/binding.go \
+  's = s.replace("\tif placementsBound(d.Assemblies) {\n", "\tif false {\n", 1)' \
+  ./internal/domain/geometry 'TestBind_AChildsAndAnInterfacesPositionFollowTheirParameters|TestBind_APlacementThatCannotBeBoundKeepsItsNumberAndSaysWhich'
+
+drill "an interface's position_from is never bound" internal/domain/geometry/binding.go \
+  's = s.replace("onPlacement(bindPosition(&f.Position, f.PositionFrom,", "onPlacement(bindPosition(&f.Position, nil,", 1)' \
+  ./internal/domain/geometry 'TestBind_AChildsAndAnInterfacesPositionFollowTheirParameters'
+
+drill "a respec's copy drops a child's binding" internal/domain/geometry/binding.go \
+  's = s.replace("c.PositionFrom = copyStringMap(c.PositionFrom)", "c.PositionFrom = nil", 1)' \
+  ./internal/domain/geometry 'TestBind_AChildsAndAnInterfacesPositionFollowTheirParameters'
+
+drill "a stored child's binding is dropped by a respec" internal/domain/geometry/binding.go \
+  's = s.replace("c.PositionFrom = copyStringMap(c.PositionFrom)", "c.PositionFrom = nil", 1)' \
+  ./internal/domain/geometry 'TestRespec_ABoundChildMovesAndItsBindingSurvivesStorage'
+
+drill "binding writes into the size map the base shares" internal/domain/geometry/binding.go \
+  's = s.replace("\t\tp.Size = copyFloatMap(p.Size)\n", "\t\tp.Size = p.Size\n", 1)' \
+  ./internal/domain/geometry 'TestBind_BindingAnEditedModelLeavesTheModelItWasMadeFromAlone'
+
+drill "a refused step leaves its parameter's numbers in the kept model" internal/domain/geometry/binding.go \
+  's = s.replace("\t\tp.Size = copyFloatMap(p.Size)\n", "\t\tp.Size = p.Size\n", 1)' \
+  ./internal/agent 'TestAssemble_ARefusedStepThatChangedAParameterLeavesTheModelAsItWas'
+
+drill "binding writes into the position the base shares" internal/domain/geometry/binding.go \
+  's = s.replace("pos = append(make([]float64, 0, len(*position)), *position...)", "pos = *position", 1)' \
+  ./internal/domain/geometry 'TestBind_BindingAnEditedModelLeavesTheModelItWasMadeFromAlone'
+
+drill "binding writes into the children the base shares" internal/domain/geometry/binding.go \
+  's = s.replace("a.Children = append([]Child(nil), a.Children...)", "a.Children = a.Children", 1)' \
+  ./internal/domain/geometry 'TestBind_BindingAnEditedModelLeavesTheModelItWasMadeFromAlone'
+
+drill "binding writes an outline back into the base's points" internal/domain/geometry/binding.go \
+  's = s.replace("\t\tp.Profile = clonePoints(p.Profile)\n", "", 1)' \
+  ./internal/domain/geometry 'TestBind_BindingAnEditedModelLeavesTheModelItWasMadeFromAlone'
+
+drill "a respec shares its outline with its source" internal/domain/geometry/binding.go \
+  's = s.replace("\t\tp.Profile = clonePoints(p.Profile)\n", "", 1); s = s.replace("\t\tq.Profile = clonePoints(p.Profile)\n", "\t\tq.Profile = p.Profile\n", 1)' \
+  ./internal/domain/geometry 'TestWithParameters_LeavesTheSourcesOutlineAlone'
+
+drill "a bound child is offered as a pattern" internal/domain/geometry/repetition.go \
+  's = s.replace("if c.Pattern != nil || len(c.PositionFrom) > 0 || ", "if c.Pattern != nil || ", 1)' \
+  ./internal/domain/geometry 'TestRepetition_ABoundChildIsNotOfferedAsAPattern'
+
+drill "a placement's expression is stored as its number only" internal/agent/dimensionrepair.go \
+  's = s.replace("\t\t\t\t\t\tbindPlacementAxis(obj, i, s)\n", "", 1)' \
+  ./internal/agent 'TestAssemble_AStepsChildPlacedByAParameterFollowsItAfterStorageAndRespec|TestAssemble_ADeclaredPlacementByAParameterKeepsItsBinding|TestParseReply_TheContractsChildPlacedByAParameterFollowsARespec|TestParseReply_ReadsAnExpressionInAChildsPositionAtItsValue|TestPlacementsOverModel_ReadsOverTheModelWithoutAddingToTheReply'
+
+drill "a bound child is counted as a literal" internal/agent/literals.go \
+  's = s.replace("scan(key, c.Position, c.PositionFrom)", "scan(key, c.Position, nil)", 1)' \
+  ./internal/agent 'TestAssemble_AStepThatRetypesAMultipleOfAParameterIsToldTheForm|TestAssemble_AStepsChildPlacedByAParameterFollowsItAfterStorageAndRespec'
+
+drill "a bound interface is counted as a literal" internal/agent/literals.go \
+  's = s.replace("scan(key, f.Position, f.PositionFrom)", "scan(key, f.Position, nil)", 1)' \
+  ./internal/agent 'TestAssemble_AStepsChildPlacedByAParameterFollowsItAfterStorageAndRespec'
+
+drill "a multiple of a parameter is never read" internal/agent/literals.go \
+  's = s.replace("const maxLiteralMultiple = 4", "const maxLiteralMultiple = 1", 1)' \
+  ./internal/agent 'TestAssemble_AStepThatRetypesAMultipleOfAParameterIsToldTheForm'
+
+drill "four times a parameter is not read" internal/agent/literals.go \
+  's = s.replace("const maxLiteralMultiple = 4", "const maxLiteralMultiple = 3", 1)' \
+  ./internal/agent 'TestAssemble_AStepThatRetypesAMultipleOfAParameterIsToldTheForm'
+
+drill "multiples of a small parameter are read" internal/agent/literals.go \
+  's = s.replace("const minMultipliedMM = 50", "const minMultipliedMM = 20", 1)' \
+  ./internal/agent 'TestAssemble_AStepThatRetypesAMultipleOfAParameterIsToldTheForm'
+
+drill "a multiple is named before a value a parameter holds" internal/agent/literals.go \
+  's = s.replace("for k := 1; k <= maxLiteralMultiple; k++ {", "for k := maxLiteralMultiple; k >= 1; k-- {", 1)' \
+  ./internal/agent 'TestAssemble_AStepThatRetypesAMultipleOfAParameterIsToldTheForm'
+
+drill "the car harness does not count bound placements" internal/agent/car_ceiling_live_test.go \
+  's = s.replace("\t\t\tif len(c.PositionFrom) > 0 {\n\t\t\t\tbound++", "\t\t\tif false {\n\t\t\t\tbound++", 1)' \
+  ./internal/agent 'TestCarMeasure_CountsChildrenAttachedAtAnInterface'
+
+echo "Root-id placement: a path from the root may name the root, and every refusal carries a remedy"
+# Added 2026-09-15 (root-id placement).
+drill "a path from the root may not name the root" internal/domain/geometry/interface.go \
+  's = s.replace("if len(segs) > 1 && a.ID == r.root && segs[0] == r.root && !places(a, segs[0]) {", "if false {", 1)' \
+  ./internal/domain/geometry 'TestInterface_APathFromTheRootMayBeginWithTheRootsOwnID'
+
+drill "the live step 2 placement is refused as it was live" internal/domain/geometry/interface.go \
+  's = s.replace("if len(segs) > 1 && a.ID == r.root && segs[0] == r.root && !places(a, segs[0]) {", "if false {", 1)' \
+  ./internal/agent 'TestReplay_CarVerifiedsDeclaredPlacementFromTheRootNamesTheRoot'
+
+drill "the leading root id is dropped over a real child of that name" internal/domain/geometry/interface.go \
+  's = s.replace(" && !places(a, segs[0])", "", 1)' \
+  ./internal/domain/geometry 'TestInterface_APathFromTheRootMayBeginWithTheRootsOwnID'
+
+drill "an attachment refusal does not name the child" internal/domain/geometry/tree.go \
+  's = s.replace("fail(name, \"%s\", namedChild(c)+attachProblem)", "fail(name, \"%s\", attachProblem)", 1)' \
+  ./internal/domain/geometry 'TestInterface_EveryAttachmentFaultNamesTheChildAndWhatToWriteInstead'
+
+drill "an attachment refusal carries no remedy" internal/domain/geometry/tree.go \
+  's = s.replace("attachProblem += \"; \" + attach.attachRemedy(a, c)", "_ = c", 1)' \
+  ./internal/domain/geometry 'TestInterface_EveryAttachmentFaultNamesTheChildAndWhatToWriteInstead'
+
+drill "the remedy offers only the assembly's own interfaces" internal/domain/geometry/interface.go \
+  's = s.replace("nested, more := r.interfacesUnder(a, c.Ref, maxRemedyPaths)", "var nested []RootInterface\n\tmore := 0", 1)' \
+  ./internal/domain/geometry 'TestInterface_EveryAttachmentFaultNamesTheChildAndWhatToWriteInstead'
+
+drill "the remedy is unbounded" internal/domain/geometry/interface.go \
+  's = s.replace("if len(paths) > maxRemedyPaths {", "if false {", 1)' \
+  ./internal/domain/geometry 'TestInterface_EveryAttachmentFaultNamesTheChildAndWhatToWriteInstead'
+
+drill "the repair is shown faults that name nothing" internal/agent/georepair.go \
+  's = s.replace("\"- \"+strings.TrimSpace(f.Name+\" \"+f.Detail)", "\"- \"+f.Detail", 1)' \
+  ./internal/agent 'TestRepair_EveryFaultTheRepairIsShownNamesThePartItIsAbout|TestReplay_CarVerifiedsRepairsAreToldWhichChildAndWhatToWrite'
+
+drill "the browser refuses a path that names the root" internal/httpapi/assets/forge3d.js \
+  's = s.replace("if (segs.length > 1 && a.id === rootId && segs[0] === rootId && !places(a, segs[0])) {", "if (false) {", 1)' \
+  ./internal/httpapi 'TestRendererFlattensATreeLikeTheExporter'
+echo
+echo "Next scale walls: the interference list's bound, clashes slid along prisms, placed copies"
+# Added 2026-09-15 (next scale walls). The 1M airframe barrel's reply listed 1,760,000
+# clashes; a reply now lists the worst 10,000 and counts all of them, and a list cut
+# to its bound says so in the reply, in Go and in the turn. A clash now slides along a
+# cylinder's length and an extrusion's depth, as it did along a box. And an occurrence
+# is placed without the B-rep copy and the Plane build123d made and discarded for each,
+# with the assembly's volume counted once per definition.
+drill "a list is cut without saying how many there were" internal/domain/cad/sidecar.py \
+  's = s.replace("        \"interferences_found\": clash_pairs.get(\"found\", len(clashes)),\n", "        \"interferences_found\": len(clashes),\n", 1)' \
+  ./internal/domain/cad 'TestKernel_(AListCutToItsBoundIsTheWorstAndSaysHowManyThereWere|AReplyWithMoreClashesThanItListsCountsThemAll)'
+
+drill "a cut list says it is whole" internal/domain/cad/sidecar.py \
+  's = s.replace("\"summarized\": len(found) > len(listed)}", "\"summarized\": False}", 1)' \
+  ./internal/domain/cad 'TestKernel_AListCutToItsBoundIsTheWorstAndSaysHowManyThereWere'
+
+drill "a cut list keeps the first found, not the worst" internal/domain/cad/sidecar.py \
+  's = s.replace("key=lambda f: (-f[0], f[1]))", "key=lambda f: f[1])", 1)' \
+  ./internal/domain/cad 'TestKernel_(AListCutToItsBoundIsTheWorstAndSaysHowManyThereWere|AReplyWithMoreClashesThanItListsCountsThemAll)'
+
+drill "Go believes a count smaller than the list" internal/domain/cad/cad.go \
+  's = s.replace("\tif res.InterferencesFound != nil && *res.InterferencesFound > out.InterferencesFound {", "\tif res.InterferencesFound != nil {", 1)' \
+  ./internal/domain/cad 'TestBuildOf_AListShorterThanItsCountIsASummary'
+
+drill "Go reads a list shorter than its count as whole when the flag is missing" internal/domain/cad/cad.go \
+  's = s.replace("out.InterferencesSummarized = res.InterferencesSummarized || out.InterferencesFound > len(res.Interferences)", "out.InterferencesSummarized = res.InterferencesSummarized", 1)' \
+  ./internal/domain/cad 'TestBuildOf_AListShorterThanItsCountIsASummary'
+
+drill "a summarized list reads as a whole one in the turn" internal/agent/interference.go \
+  's = s.replace("\tif listed := len(sheet.Interferences); sheet.Found > listed {", "\tif listed := len(sheet.Interferences); false && sheet.Found > listed {", 1)' \
+  ./internal/agent 'TestInterference_ASummarizedListSaysHowManyWereFound'
+
+drill "\"and N more\" counts only the list" internal/agent/interference.go \
+  's = s.replace("\tif total < len(found) {\n\t\ttotal = len(found)\n\t}\n", "\ttotal = len(found)\n", 1)' \
+  ./internal/agent 'TestInterference_ASummarizedListSaysHowManyWereFound'
+
+drill "the render drops how many were found" internal/agent/render.go \
+  's = s.replace("Pairs: built.Pairs, Found: built.Found, Skipped:", "Pairs: built.Pairs, Skipped:", 1)' \
+  ./internal/agent 'TestRender_CarriesHowMuchTheCheckCovered'
+
+drill "a cylinder slides across its round section" internal/domain/cad/sidecar.py \
+  's = s.replace("            half = (None, float(d[\"height\"]) / 2, None)\n", "            half = (float(d[\"radius\"]), float(d[\"height\"]) / 2, float(d[\"radius\"]))\n", 1)' \
+  ./internal/domain/cad 'TestKernel_AClashSlidAlongAPrismIsTheClashMeasuredAgain'
+
+drill "a cone is taken for a cylinder" internal/domain/cad/sidecar.py \
+  's = s.replace("        elif kind in (\"cylinder\", \"cone\") and d.get(\"radius_top\", d[\"radius\"]) == d[\"radius\"]:\n", "        elif kind in (\"cylinder\", \"cone\"):\n", 1)' \
+  ./internal/domain/cad 'TestKernel_AClashSlidAlongAPrismIsTheClashMeasuredAgain'
+
+drill "a cylinder's slab is not claimed" internal/domain/cad/sidecar.py \
+  's = s.replace("            half = (None, float(d[\"height\"]) / 2, None)\n", "            half = None\n", 1)' \
+  ./internal/domain/cad 'TestKernel_CollarsAlongAShaftAndCleatsAlongAGirderPayForOneBooleanEach'
+
+drill "an extrusion's slab is not claimed" internal/domain/cad/sidecar.py \
+  's = s.replace("            half = (None, None, float(d[\"depth\"]) / 2)\n", "            half = None\n", 1)' \
+  ./internal/domain/cad 'TestKernel_CollarsAlongAShaftAndCleatsAlongAGirderPayForOneBooleanEach'
+
+drill "a located copy copies its B-rep again" internal/domain/cad/sidecar.py \
+  's = s.replace("    if not _PLACE_WITHOUT_COPYING:\n        return location * shape\n    cls = shape.__class__\n", "    return location * shape\n    cls = shape.__class__\n", 1)' \
+  ./internal/domain/cad 'TestKernel_PlacingMoreCopiesCopiesNoBRepsAndBuildsNoMorePlanes'
+
+drill "a placement builds a Plane per occurrence again" internal/domain/cad/sidecar.py \
+  's = s.replace("    if frames is None or not _PLACE_WITHOUT_COPYING:\n", "    if True:\n", 1)' \
+  ./internal/domain/cad 'TestKernel_PlacingMoreCopiesCopiesNoBRepsAndBuildsNoMorePlanes'
+
+drill "the frame cache is keyed by part of the matrix" internal/domain/cad/sidecar.py \
+  's = s.replace("    key = repr(m)\n", "    key = repr(m[:3])\n", 1)' \
+  ./internal/domain/cad 'TestKernel_APlacedCopyIsTheCopyBuild123dMade'
+
+drill "a cached placement is not inverted" internal/domain/cad/sidecar.py \
+  's = s.replace("    trsf.Invert()\n    return Location(TopLoc_Location(trsf))\n", "    return Location(TopLoc_Location(trsf))\n", 1)' \
+  ./internal/domain/cad 'TestKernel_APlacedCopyIsTheCopyBuild123dMade'
+
+drill "a located copy shares its definition's attributes" internal/domain/cad/sidecar.py \
+  's = s.replace("            setattr(out, key, copy.deepcopy(value, memo))\n", "            setattr(out, key, value)\n", 1)' \
+  ./internal/domain/cad 'TestKernel_APlacedCopyIsTheCopyBuild123dMade'
+
+drill "the assembly integrates every copy again" internal/domain/cad/sidecar.py \
+  's = s.replace("        if p is None:\n            total += _counted_volume(solid)\n", "        if True:\n            total += _counted_volume(solid)\n", 1)' \
+  ./internal/domain/cad 'TestKernel_PlacingMoreCopiesCopiesNoBRepsAndBuildsNoMorePlanes'
+
+drill "the assembly volume forgets all but the last copy" internal/domain/cad/sidecar.py \
+  's = s.replace("        total += counted[p[0]]\n", "        total = counted[p[0]]\n", 1)' \
+  ./internal/domain/cad 'TestKernel_APlacedCopyIsTheCopyBuild123dMade'
 
 if [ "$MODE" = "list" ]; then
   exit 0

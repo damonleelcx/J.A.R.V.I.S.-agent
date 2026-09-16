@@ -1,0 +1,12 @@
+bays=9 full run 1: ok=True build 75.3s [shapes 35.0 assembly 23.7 interf 16.0 props 0.0 mesh 0.0 export 0.0] peak 0.8 GB cpu 61% 
+  interference: 197356 of 197356 pairs checked, 158400 found, 15 booleans, 197341 reused, 425480 box tests
+bays=9 full run 2: ok=True build 68.5s [shapes 34.3 assembly 20.0 interf 13.6 props 0.0 mesh 0.0 export 0.0] peak 0.8 GB cpu 56% 
+  interference: 197356 of 197356 pairs checked, 158400 found, 15 booleans, 197341 reused, 425480 box tests
+bays=30 full run 1: ok=True build 242.4s [shapes 108.8 assembly 75.6 interf 56.1 props 0.0 mesh 0.0 export 0.0] peak 1.9 GB cpu 59% 
+  interference: 657508 of 657508 pairs checked, 528000 found, 15 booleans, 657493 reused, 1432752 box tests
+bays=30 full run 2: ok=True build 229.5s [shapes 103.7 assembly 69.9 interf 54.0 props 0.0 mesh 0.0 export 0.0] peak 1.9 GB cpu 56% 
+  interference: 657508 of 657508 pairs checked, 528000 found, 15 booleans, 657493 reused, 1432752 box tests
+bays=100 full run 1: ok=True build 687.8s [shapes 363.4 assembly 197.3 interf 121.5 props 0.0 mesh 0.0 export 0.0] peak 5.4 GB cpu 46% 
+  interference: 2191348 of 2191348 pairs checked, 1760000 found, 15 booleans, 2191333 reused, 4812088 box tests
+bays=100 full run 2: ok=True build 515.4s [shapes 234.2 assembly 161.3 interf 115.1 props 0.0 mesh 0.0 export 0.0] peak 5.4 GB cpu 17% 
+  interference: 2191348 of 2191348 pairs checked, 1760000 found, 15 booleans, 2191333 reused, 4812088 box tests

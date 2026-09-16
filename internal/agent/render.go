@@ -60,6 +60,7 @@ type builtSheet struct {
 	// Built. Meaningful only when FromKernel is true, like Interferences.
 	Checked int
 	Pairs   int
+	Found   int
 	Skipped []string
 	// Parts is what was drawn, part by part, so a sub-assembly can be drawn on
 	// its own from the same build instead of a second one (Phase 5, stage V4).
@@ -114,6 +115,12 @@ type Built struct {
 	// same pose (Phase 5, stages V1 and V2). Checked below Pairs is a truncated check.
 	Checked int
 	Pairs   int
+	// Found is how many pairs the kernel found sharing material. Interferences
+	// lists at most a bounded number of them, the worst first, so Found above
+	// len(Interferences) is a summarized list, not a short one (cad.Build,
+	// InterferencesFound). Zero from a builder that does not count reads as the
+	// length of the list.
+	Found int
 	// Skipped names the parts the kernel could not build. A part that was never
 	// built was never checked for shared material either, and saying nothing about
 	// it would let "no overlaps" cover a part nobody looked at.
@@ -136,7 +143,7 @@ func (c *Conversation) render(ctx context.Context, doc *Prototype) builtSheet {
 			if img := geometry.ContactSheetOf(*doc, built.Parts, sheetSize); img != "" {
 				return builtSheet{Image: img, FromKernel: true,
 					Interferences: built.Interferences, Truncated: built.Truncated,
-					Checked: built.Checked, Pairs: built.Pairs, Skipped: built.Skipped,
+					Checked: built.Checked, Pairs: built.Pairs, Found: built.Found, Skipped: built.Skipped,
 					Parts: built.Parts}
 			}
 		}
