@@ -63,6 +63,41 @@ s.quit()' 2>&1 | tr -d '\r' | tail -1)
   [ "$R" = "STARTTLS-OK" ] && ok "SMTP STARTTLS verified for mail.heros-agent.space" || bad "SMTP: $R"
 else bad "no forged pod"; fi
 
+echo "=== 9. Blob store round-trips from inside both pods ==="
+# Proves, per pod, what nothing else here does: the ConfigMap names the bucket,
+# the pod gets the instance role's credentials through IMDS, the role's
+# ForgeGeometryBlobs policy allows the put, head and get under blobs/, and the
+# pod may reach S3 on 443. Each of these fails silently at boot — the store
+# makes no request until it is used — so a pod can be Running without any of it.
+#
+# BOTH pods, because they take different paths: forged is on the host network,
+# where no NetworkPolicy applies; forge-worker is behind 32-worker-egress.yaml
+# and the IMDS hop limit. A pass from forged says nothing about the worker.
+#
+# The bytes are fixed, so running this again stores nothing; the role has no
+# delete, and a check that left an object behind per run would do so forever.
+# ‼️ When ONLY forge-worker fails this check, suspect its egress policy before
+# the bucket or the role: 32-worker-egress.yaml rule 4 excludes the private ranges,
+# so S3 reached through a VPC interface endpoint (whose private DNS resolves into
+# 172.31/16) is blocked there; and rule 3 cannot beat an instance metadata hop limit
+# of 1, which deploy/bootstrap-s3.sh reports. forged runs on the host network, where
+# neither applies, which is why a worker-only failure points at the policy rather
+# than at S3.
+for d in forged forge-worker; do
+  POD=$($K -n forge get pod -l app.kubernetes.io/name=$d -o jsonpath='{.items[0].metadata.name}' 2>/dev/null)
+  if [ -z "$POD" ]; then bad "no $d pod"; continue; fi
+  OUT=$($K -n forge exec "$POD" -c "$d" -- /usr/local/bin/forgectl blob check 2>&1 | tr -d '\r')
+  R=$(echo "$OUT" | grep -o 'BLOB-ROUNDTRIP-OK [0-9a-f]\{64\}' | tail -1)
+  WHY=$(echo "$OUT" | grep -m1 'error :' || echo "$OUT" | tail -1)
+  if [ -n "$R" ]; then ok "$d: $R"; else
+    if [ "$d" = "forge-worker" ]; then
+      bad "$d: no blob round trip: $WHY (worker only: check 32-worker-egress.yaml rule 4 and the IMDS hop limit)"
+    else
+      bad "$d: no blob round trip: $WHY"
+    fi
+  fi
+done
+
 echo
 [ $FAIL -eq 0 ] && echo "ALL CHECKS PASSED" || echo "SOME CHECKS FAILED"
 exit $FAIL
