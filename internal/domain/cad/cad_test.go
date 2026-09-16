@@ -1900,13 +1900,20 @@ func TestKernel_ReturnsTheSurfaceOfTheSolidItBuilt(t *testing.T) {
 	if got.MeshError != "" {
 		t.Fatalf("the solid built and could not be tessellated: %s", got.MeshError)
 	}
-	if len(got.Mesh) != 2 {
-		t.Fatalf("two parts were built and %d meshes came back", len(got.Mesh))
+	// ‼️ WorldMeshes, not Mesh. Since stage K4 the kernel sends an untouched copy
+	// of a shape built once as a definition plus a matrix, and Mesh holds only the
+	// parts a feature changed — so a document of plain parts has an EMPTY Mesh and
+	// its whole surface in MeshDefinitions/MeshInstances. This test asks what it
+	// always asked: every built part's surface, in assembly coordinates.
+	// docs/bugfix/2026-09-16-the-surface-of-a-plain-part-was-read-from-an-empty-field.md
+	surface := got.WorldMeshes()
+	if len(surface) != 2 {
+		t.Fatalf("two parts were built and %d meshes came back", len(surface))
 	}
 	if got.Triangles == 0 {
 		t.Fatal("a mesh came back with no triangles, so there is nothing to draw")
 	}
-	for _, m := range got.Mesh {
+	for _, m := range surface {
 		if len(m.Vertices) == 0 || len(m.Vertices)%3 != 0 {
 			t.Errorf("%s has %d vertex floats, which is not a whole number of points",
 				m.ID, len(m.Vertices))
