@@ -207,8 +207,17 @@ type Build struct {
 	// check compared to choose which pairs pay for a boolean. Reported so the broad
 	// phase's cost is a count a test can read (Phase 4, stage K2b): sorting and
 	// sweeping keeps it near linear on an assembly that spreads out, where comparing
-	// every pair is n(n-1)/2, 8.4 million at 4,096 parts.
+	// every pair is n(n-1)/2, 8.4 million at 4,096 parts. Since Phase 5, stage V1
+	// the broad phase is a grid over all three axes.
 	InterferenceBoxTests int
+	// InterferencePairs is how many pairs' boxes overlap, InterferenceBooleans how
+	// many exact booleans were paid for, and InterferenceReused how many pairs were
+	// answered by a boolean already measured at the same pose (Phase 5, stage V1).
+	// The pair budget counts booleans, so Booleans + Reused below Pairs is exactly
+	// a truncated check — the count "checked X of Y" is built from.
+	InterferencePairs    int
+	InterferenceBooleans int
+	InterferenceReused   int
 	// ShapeBuilds is how many distinct shapes the kernel built, and ScriptRuns how
 	// many scripts it ran: each distinct shape and each distinct script ONCE per build,
 	// however many occurrences place it (Phase 4, stage K1). Reported so "built once"
@@ -345,6 +354,9 @@ type reply struct {
 	Interferences          []geometry.Interference `json:"interferences,omitempty"`
 	InterferencesTruncated bool                    `json:"interferences_truncated,omitempty"`
 	InterferenceBoxTests   int                     `json:"interference_box_tests"`
+	InterferencePairs      int                     `json:"interference_pairs"`
+	InterferenceBooleans   int                     `json:"interference_booleans"`
+	InterferenceReused     int                     `json:"interference_reused"`
 
 	STEP            string           `json:"step,omitempty"`
 	Mesh            []meshPart       `json:"mesh,omitempty"`
@@ -601,6 +613,7 @@ func (k *Kernel) BuildDocument(ctx context.Context, doc geometry.Document, unit 
 	out := &Build{Parts: res.Parts, Volume: res.Volume, Bounds: res.Bounds,
 		Skipped: res.Skipped, FeatureFailures: res.FeaturesFailed, Inferred: inferred,
 		Interferences: res.Interferences, InterferencesTruncated: res.InterferencesTruncated, InterferenceBoxTests: res.InterferenceBoxTests,
+		InterferencePairs: res.InterferencePairs, InterferenceBooleans: res.InterferenceBooleans, InterferenceReused: res.InterferenceReused,
 		ShapeBuilds: res.ShapeBuilds, ScriptRuns: scriptRuns, Phases: res.Phases.durations()}
 	if res.STEP != "" {
 		decoded, err := base64.StdEncoding.DecodeString(res.STEP)

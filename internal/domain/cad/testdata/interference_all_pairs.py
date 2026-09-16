@@ -117,7 +117,7 @@ def main():
     labels = ["Part %d" % n for n in range(len(solids))]
 
     _, box_tests = sidecar._candidate_pairs(sidecar._boxes(solids))
-    found, truncated, _ = sidecar._interferences(solids, ids, labels)
+    found, truncated = sidecar._interferences(solids, ids, labels)[:2]
     ref_found, ref_truncated = every_pair(sidecar, solids, ids, labels)
     json.dump({"parts": len(solids), "budget": sidecar._INTERFERENCE_PAIR_BUDGET,
                "box_tests": box_tests, "every_pair": len(solids) * (len(solids) - 1) // 2,

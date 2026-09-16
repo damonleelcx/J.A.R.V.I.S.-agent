@@ -453,7 +453,7 @@ drill "nothing is ever reported as interfering" internal/domain/cad/sidecar.py \
 # the solids as they are BEFORE the feature loop, which is what this does.
 drill "interference is measured BEFORE the tools are consumed" internal/domain/cad/sidecar.py \
   's = s.replace("    shapes = dict(zip(ids, built))", "    shapes = dict(zip(ids, built))\n    _pre = (list(built), list(ids), list(names))", 1)
-s = s.replace("clashes, clash_truncated, box_tests = _interferences(built, ids, names)", "clashes, clash_truncated, box_tests = _interferences(*_pre)", 1)' \
+s = s.replace("clashes, clash_truncated, box_tests, clash_pairs = _interferences(built, ids, names, kept_placed)", "clashes, clash_truncated, box_tests, clash_pairs = _interferences(*_pre)", 1)' \
   ./internal/domain/cad 'TestKernel_ACutToolIsNotAnInterference'
 
 # ‼️ Both anchors here moved when stage K2b unfolded the pair loop in _interferences
@@ -1002,29 +1002,52 @@ drill "the build does not say where its time went" internal/domain/cad/sidecar.p
   ./internal/domain/cad 'TestKernel_ExportingManyOccurrencesGrowsLinearly'
 
 echo
-echo "The interference broad phase sweeps instead of comparing every pair"
-# Added 2026-09-15 (Phase 4, stage K2b). Boxes are sorted along the axis the parts
-# spread furthest and each is tested only against the boxes still open; the pairs
-# found are handed to the narrow phase in the order comparing every pair would.
-drill "a box is never closed, so the sweep compares every pair" internal/domain/cad/sidecar.py \
-  "s = s.replace('        still_open = [a for a in still_open if boxes[a][1][axis] > start]\n', '', 1)" \
-  ./internal/domain/cad 'TestKernel_InterferenceBoxTestsGrowLinearly'
-
-drill "the sweep always runs along x" internal/domain/cad/sidecar.py \
-  "s = s.replace('    axis = _sweep_axis(boxes, present)\n', '    axis = 0\n', 1)" \
-  ./internal/domain/cad 'TestKernel_InterferenceBoxTestsGrowLinearly'
-
-drill "boxes are swept in the order they end, closing boxes still open" internal/domain/cad/sidecar.py \
-  "s = s.replace('    present.sort(key=lambda k: boxes[k][0][axis])', '    present.sort(key=lambda k: boxes[k][1][axis])', 1)" \
-  ./internal/domain/cad 'TestKernel_TheBroadPhaseFindsWhatEveryPairFinds'
-
-drill "the budget is spent in sweep order" internal/domain/cad/sidecar.py \
+echo "The interference broad phase tests only boxes that could overlap"
+# Added 2026-09-15 (Phase 4, stage K2b) as a one-axis sweep. Since Phase 5, stage V1
+# the broad phase is a grid over all three axes, so the sweep's own drills (a box
+# never closed, always sweeping along x, sorting by where a box ends) went with the
+# sweep; these hold what both share.
+drill "the budget is spent in broad-phase order" internal/domain/cad/sidecar.py \
   "s = s.replace('    pairs.sort()\n', '', 1)" \
   ./internal/domain/cad 'TestKernel_ATruncatedBroadPhaseStopsWhereEveryPairStops'
 
 drill "the build does not say how many boxes it compared" internal/domain/cad/cad.go \
   's = s.replace(" InterferenceBoxTests: res.InterferenceBoxTests,\n", "\n", 1)' \
   ./internal/domain/cad 'TestKernel_InterferenceBoxTestsGrowLinearly'
+
+echo
+echo "Interference at scale: a grid, and a clash measured once per pose"
+# Added 2026-09-15 (Phase 5, stage V1). Boxes are filed in a grid over all three axes
+# and each pair is tested in one cell; boxes and volumes are read once per shape; the
+# common volume of two copies is measured once per (shape, shape, relative pose), and
+# the budget counts booleans paid for.
+drill "every box lands in one cell" internal/domain/cad/sidecar.py \
+  "s = s.replace('    cell = max(longest[len(longest) // 2], 1e-6)\n', '    cell = 1e12\n', 1)" \
+  ./internal/domain/cad 'TestKernel_APlaneOfPartsCostsAFewBoxTestsEach'
+
+drill "a pair is tested where the earlier box starts, which the other may not reach" internal/domain/cad/sidecar.py \
+  "s = s.replace('if (_cell(max(boxes[a][0][0], boxes[b][0][0]), cell) != home[0]', 'if (_cell(min(boxes[a][0][0], boxes[b][0][0]), cell) != home[0]', 1)" \
+  ./internal/domain/cad 'TestKernel_TheBroadPhaseFindsWhatEveryPairFinds'
+
+drill "a box too long for the grid is never tested" internal/domain/cad/sidecar.py \
+  "s = s.replace('    for a in large:\n', '    for a in []:\n', 1)" \
+  ./internal/domain/cad 'TestKernel_TheBroadPhaseFindsWhatEveryPairFinds'
+
+drill "every clash is measured again" internal/domain/cad/sidecar.py \
+  "s = s.replace('_INTERFERENCE_CACHE = True\n', '_INTERFERENCE_CACHE = False\n', 1)" \
+  ./internal/domain/cad 'TestKernel_RepeatedClashesPayForOneBooleanEachPose'
+
+drill "a pose is compared without its rotation" internal/domain/cad/sidecar.py \
+  "s = s.replace('for r in (1, 2, 3) for c in (1, 2, 3, 4))', 'for r in (1, 2, 3) for c in (4,))', 1)" \
+  ./internal/domain/cad 'TestKernel_AReusedClashIsTheClashMeasuredAgain'
+
+drill "the budget counts answers it did not pay for" internal/domain/cad/sidecar.py \
+  "s = s.replace('            shared = cache[key]\n            reused += 1\n', '            shared = cache[key]\n            reused += 1\n            booleans += 1\n', 1)" \
+  ./internal/domain/cad 'TestKernel_RepeatedClashesPayForOneBooleanEachPose'
+
+drill "the build does not say how many booleans it paid for" internal/domain/cad/cad.go \
+  's = s.replace(" InterferenceBooleans: res.InterferenceBooleans,", "", 1)' \
+  ./internal/domain/cad 'TestKernel_RepeatedClashesPayForOneBooleanEachPose'
 
 echo
 echo "A pool of kernel processes builds side by side"
