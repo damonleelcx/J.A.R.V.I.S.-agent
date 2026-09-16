@@ -107,6 +107,8 @@ FILES=(
   internal/llm/illustrate.go
   internal/agent/render.go
   internal/domain/geometry/mesh.go
+  internal/domain/geometry/interference.go
+  internal/agent/interference.go
   internal/httpapi/goals_start.go
   internal/agent/worker.go
   internal/domain/engine/repository.go
@@ -396,6 +398,47 @@ drill "the renderer has no gear" internal/httpapi/assets/forge3d.js \
 drill "the contract still sends a spur gear to a script" internal/agent/converse.go \
   's = s.replace("above — a spiral, a lattice, a helical gear, a \"", "above — an involute gear tooth, a spiral, a \"", 1)' \
   ./internal/agent 'TestTheContractNoLongerSendsASpurGearToAScript'
+
+echo
+echo "Interference"
+# Added 2026-09-12 with the check. Found by measuring a live car build that came
+# back with document faults ZERO, a clean kernel build and a passing visual
+# check, with the master cylinder entirely inside the engine block:
+# docs/spikes/2026-09-12-car-ceiling/README.md
+#
+# The first two are the DESIGN, not the arithmetic. The whole reason the numbers
+# come from the kernel on the solids that survive the features is that anything
+# computed earlier reports every bolt hole as an interference.
+drill "nothing is ever reported as interfering" internal/domain/cad/sidecar.py \
+  "s = s.replace('    found.sort(key=lambda f: f[\"fraction\"], reverse=True)', '    found = []', 1)" \
+  ./internal/domain/cad 'TestKernel_TwoSolidsInTheSameSpaceAreReported'
+
+# ‼️ The first version of this drill substituted `shapes` at the call site and
+# STAYED GREEN, which looked like a vacuous fence and was a wrong mutation: by
+# then `shapes` holds the solids AFTER the booleans, so the plate already has its
+# hole and the drill sits in the void — no overlap, nothing to report, fence
+# correctly silent. Reproducing "before the tools are consumed" means stashing
+# the solids as they are BEFORE the feature loop, which is what this does.
+drill "interference is measured BEFORE the tools are consumed" internal/domain/cad/sidecar.py \
+  's = s.replace("    shapes = dict(zip(ids, built))", "    shapes = dict(zip(ids, built))\n    _pre = (list(built), list(ids), list(names))", 1)
+s = s.replace("clashes, clash_truncated = _interferences(built, ids, names)", "clashes, clash_truncated = _interferences(*_pre)", 1)' \
+  ./internal/domain/cad 'TestKernel_ACutToolIsNotAnInterference'
+
+drill "the pair is reported in build order, not smaller first" internal/domain/cad/sidecar.py \
+  "s = s.replace('            lo, hi = (i, j) if volumes[i] <= volumes[j] else (j, i)', '            lo, hi = i, j', 1)" \
+  ./internal/domain/cad 'TestKernel_ASwallowedPartIsReportedAsBuried'
+
+drill "every graze counts as buried, so a weld drives a rewrite" internal/domain/geometry/interference.go \
+  's = s.replace("func (i Interference) Buried() bool { return i.Fraction >= BuriedFraction }", "func (i Interference) Buried() bool { return i.Fraction > 0 }", 1)' \
+  ./internal/agent 'TestInterference_AGrazeIsReportedAndNotRepaired'
+
+drill "a described render reports interference it cannot know about" internal/agent/interference.go \
+  's = s.replace("sheet == nil || !sheet.FromKernel {", "sheet == nil {", 1)' \
+  ./internal/agent 'TestInterference_ADescribedRenderClaimsNothing'
+
+drill "a repair is accepted without rebuilding" internal/agent/interference.go \
+  's = s.replace("\t\tif after.FromKernel &&\n\t\t\tlen(fixed.Faults()) <= len(reply.Prototype.Faults()) &&\n\t\t\tlen(geometry.InterferenceProblems(after.Interferences)) < len(problems) {", "\t\tif true {", 1)' \
+  ./internal/agent 'TestInterference_ARepairThatDoesNotHelpIsRefused'
 
 echo
 echo "Islands"

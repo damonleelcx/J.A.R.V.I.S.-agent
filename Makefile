@@ -133,6 +133,23 @@ test-cad: ## Run the CAD kernel tests against the real kernel (needs `make cad-v
 	@test -x $(CAD_VENV)/bin/python || { echo "no CAD venv: run \`make cad-venv\` first"; exit 1; }
 	FORGE_CAD_PYTHON="$(abspath $(CAD_VENV))/bin/python" go test -count=1 -v ./internal/domain/cad/
 
+.PHONY: measure-car
+measure-car: ## Measure how far a live car build actually gets (SPENDS REAL TOKENS — read the budget note)
+	@# The question this answers is "where does it stop", not "does it pass".
+	@# See internal/agent/car_ceiling_live_test.go and
+	@# docs/research-2026-09-12-vehicles-aircraft-and-structures.md.
+	@#
+	@# ‼️ This endpoint is a shared weekly token plan and one earlier live spike
+	@# spent the week in eighteen calls. FORGE_MEASURE_TOKEN_BUDGET is a HARD
+	@# ceiling enforced in the harness: once it is gone no further model call is
+	@# placed, the passes already built are kept, and the run reports that what it
+	@# measured is a partial car. Raise it deliberately, never by habit.
+	@test -n "$$FORGE_LLM_API_KEY" || { echo "FORGE_LLM_API_KEY is not set — source .env first"; exit 1; }
+	FORGE_LIVE_LLM_TESTS=1 \
+	FORGE_MEASURE_TOKEN_BUDGET="$${FORGE_MEASURE_TOKEN_BUDGET:-400000}" \
+	FORGE_CAD_PYTHON="$${FORGE_CAD_PYTHON:-$(abspath $(CAD_VENV))/bin/python}" \
+	go test -count=1 -v -timeout 60m -run TestLiveCarCeiling ./internal/agent/
+
 .PHONY: drill
 test-asr: ## Speech fences against the REAL provider, both directions (costs a fraction of a cent)
 	@# These cannot be faked. The defect they guard — a model dropping decimal

@@ -171,6 +171,17 @@ type Build struct {
 	// mesh exporter uses. It travels with the file for the same reason: a
 	// defaulted 1 and a stated 1 are indistinguishable once written.
 	Inferred []string
+	// Interferences is every pair of surviving parts that share material, worst
+	// first, and Truncated says the pair budget stopped the search before the
+	// end — so a caller never reads a partial answer as a clean one.
+	//
+	// Computed on the solids that SURVIVE the features, which is what makes it
+	// trustworthy: a cut tool is consumed before this runs, so a bolt hole
+	// cannot report as interference, and a part inside a hollow enclosure shares
+	// nothing because the enclosure really is hollow by then. See
+	// geometry/interference.go and cad/sidecar.py.
+	Interferences          []geometry.Interference
+	InterferencesTruncated bool
 	// Mesh is the built solid's surface, one entry per surviving part, empty
 	// unless it was asked for.
 	//
@@ -234,6 +245,10 @@ type reply struct {
 	Bounds         [6]float64 `json:"bounds"`
 	Skipped        []string   `json:"skipped,omitempty"`
 	FeaturesFailed []string   `json:"features_failed,omitempty"`
+
+	Interferences          []geometry.Interference `json:"interferences,omitempty"`
+	InterferencesTruncated bool                    `json:"interferences_truncated,omitempty"`
+
 	STEP           string     `json:"step,omitempty"`
 	Mesh           []meshPart `json:"mesh,omitempty"`
 	MeshTriangles  int        `json:"mesh_triangles,omitempty"`
@@ -381,7 +396,8 @@ func (k *Kernel) BuildDocument(ctx context.Context, doc geometry.Document, unit 
 	}
 
 	out := &Build{Parts: res.Parts, Volume: res.Volume, Bounds: res.Bounds,
-		Skipped: res.Skipped, FeatureFailures: res.FeaturesFailed, Inferred: inferred}
+		Skipped: res.Skipped, FeatureFailures: res.FeaturesFailed, Inferred: inferred,
+		Interferences: res.Interferences, InterferencesTruncated: res.InterferencesTruncated}
 	if res.STEP != "" {
 		decoded, err := base64.StdEncoding.DecodeString(res.STEP)
 		if err != nil {
