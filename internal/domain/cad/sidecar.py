@@ -32,6 +32,7 @@ import math
 import os
 import sys
 import tempfile
+import time
 import traceback
 
 PROTOCOL = 1
@@ -39,10 +40,25 @@ PROTOCOL = 1
 try:
     from build123d import (
         Box, Cylinder, Cone, Sphere, Rectangle, Plane, Location, Vector,
-        Compound, Axis, Polyline, export_step, extrude, fillet, chamfer, loft,
+        Compound, Axis, Polyline, PrecisionMode, extrude, fillet, chamfer, loft,
         make_face, revolve, sweep, Transition, Line, ThreePointArc, Wire, Face,
         import_step,
     )
+    # The STEP writer's own pieces, used directly rather than through build123d's
+    # export_step, which only accepts a Compound(children=...) — see _step_document.
+    from OCP.APIHeaderSection import APIHeaderSection_MakeHeader
+    from OCP.IFSelect import IFSelect_ReturnStatus
+    from OCP.Interface import Interface_Static
+    from OCP.Message import Message, Message_Gravity
+    from OCP.STEPCAFControl import STEPCAFControl_Controller, STEPCAFControl_Writer
+    from OCP.STEPControl import STEPControl_Controller, STEPControl_StepModelType
+    from OCP.TCollection import TCollection_ExtendedString, TCollection_HAsciiString
+    from OCP.TDataStd import TDataStd_Name
+    from OCP.TDocStd import TDocStd_Document
+    from OCP.TopLoc import TopLoc_Location
+    from OCP.XCAFApp import XCAFApp_Application
+    from OCP.XCAFDoc import XCAFDoc_DocumentTool
+    from OCP.XSControl import XSControl_WorkSession
 except Exception as exc:  # pragma: no cover - reported to the caller, not raised
     sys.stdout.write(json.dumps({
         "ready": False,
@@ -578,7 +594,8 @@ def _tessellate(solids, ids, names, request):
     # A deflection in millimetres, from the model's own size rather than a
     # constant: 0.1 mm is invisible on a bracket and catastrophic on a car body,
     # and the same number cannot serve both.
-    box = Compound(children=list(solids)).bounding_box()
+    # One pass, never Compound(children=...): see the note on the assembly in _build.
+    box = Compound(list(solids)).bounding_box()
     span = max(float(box.max.X - box.min.X),
                float(box.max.Y - box.min.Y),
                float(box.max.Z - box.min.Z), 1.0)
@@ -746,13 +763,130 @@ def _interferences(solids, ids, labels):
     return found, truncated
 
 
+# The fields that decide what a solid IS, before it is placed. Everything else a
+# solid carries is its identity (id, label) or its place (matrix, position).
+#
+# Phase 4, stage K1 of docs/plan-2026-09-13-millions-of-parts.md: each distinct
+# shape is built ONCE per request and every occurrence of it is a located copy.
+# A located copy shares the underlying B-rep (TShape) - measured in
+# docs/spikes/2026-09-13-exact-instancing - so it is exact, and a feature applied
+# to one occurrence makes a new shape rather than changing the shared one.
+# "mirrored" is part of the key: a reflected solid is a different solid.
+_SHAPE_KEYS = ("shape", "dims", "outline", "holes", "hole_parents", "path",
+               "section_frame", "axis", "step", "mirrored")
+
+
+def _shape_key(solid):
+    return json.dumps({k: solid.get(k) for k in _SHAPE_KEYS}, sort_keys=True, separators=(",", ":"))
+
+
+def _lap(phases, name, since):
+    """Record the seconds since `since` as phase `name`, and return now."""
+    now = time.perf_counter()
+    phases[name] = now - since
+    return now
+
+
+def _step_document(built, names):
+    """An XDE assembly of the kept solids: one shape label per distinct solid, one
+    located, named component per occurrence.
+
+    Phase 4, stage K2 of docs/plan-2026-09-13-millions-of-parts.md. This replaces
+    Compound(children=...) + export_step. build123d rebuilds the whole
+    TopoDS_Compound every time a child is attached, so N children cost ~N²/2
+    copies: 13.8 s to assemble 10,000 occurrences, against 0.26 s this way, and
+    the file is the same — 1 B-rep per definition, N instances, every name kept,
+    exact volume (measured: docs/spikes/2026-09-14-xde-assembly-export).
+    Fence: TestKernel_ExportingManyOccurrencesGrowsLinearly.
+
+    Sharing needs no bookkeeping here. K1's located copies share one TShape, and
+    XCAF's AddShape returns the label it already holds for a shape it has seen, so
+    N copies write ONE B-rep (measured 2026-09-14: keying labels by K1's shape key,
+    or giving every occurrence its own key, wrote the same file). A part a feature
+    changed is a new TShape and becomes a definition of its own. Each label holds
+    the solid with its location stripped, and each component carries the
+    occurrence's full location, so the placement is exact whatever location the
+    shared shape itself was built with.
+
+    Names match what export_step wrote, so a file does not change with the
+    path: the top product is COMPOUND, each instance carries its part's name,
+    and a definition's product carries the name of the last occurrence placed.
+    """
+    doc = TDocStd_Document(TCollection_ExtendedString("XmlOcaf"))
+    application = XCAFApp_Application.GetApplication_s()
+    application.NewDocument(TCollection_ExtendedString("MDTV-XCAF"), doc)
+    application.InitDocument(doc)
+    # Millimetres: the kernel's numbers always are (see the unit note in the request).
+    XCAFDoc_DocumentTool.SetLengthUnit_s(doc, 0.001)
+    tool = XCAFDoc_DocumentTool.ShapeTool_s(doc.Main())
+    root = tool.NewShape()
+    _label_name(root, "COMPOUND")
+    for solid, name in zip(built, names):
+        label = tool.AddShape(solid.wrapped.Located(TopLoc_Location()), False, False)
+        _label_name(label, name)
+        _label_name(tool.AddComponent(root, label, solid.wrapped.Location()), name)
+    tool.UpdateAssemblies()
+    return doc
+
+
+def _label_name(label, name):
+    TDataStd_Name.Set_s(label, TCollection_ExtendedString(name or ""))
+
+
+def _write_step(doc, path):
+    """Write an XDE document as STEP with the settings export_step used, so the
+    file's header, curves and precision do not change with K2."""
+    # OCCT prints to the console by default, and this process's stdout is the
+    # protocol: a stray line there is an unreadable reply.
+    for printer in Message.DefaultMessenger_s().Printers():
+        printer.SetTraceLevel(Message_Gravity.Message_Fail)
+    writer = STEPCAFControl_Writer(XSControl_WorkSession(), False)
+    writer.SetColorMode(True)
+    writer.SetLayerMode(True)
+    writer.SetNameMode(True)
+    header = APIHeaderSection_MakeHeader(writer.Writer().Model())
+    if not header.IsDone():
+        header = APIHeaderSection_MakeHeader(0)
+        header.Apply(writer.Writer().Model())
+    header.SetOriginatingSystem(TCollection_HAsciiString("build123d"))
+    STEPCAFControl_Controller.Init_s()
+    STEPControl_Controller.Init_s()
+    Interface_Static.SetIVal_s("write.surfacecurve.mode", 1)
+    Interface_Static.SetIVal_s("write.precision.mode", PrecisionMode.AVERAGE.value)
+    writer.Transfer(doc, STEPControl_StepModelType.STEPControl_AsIs)
+    if writer.Write(path) != IFSelect_ReturnStatus.IFSelect_RetDone:
+        raise RuntimeError("the STEP writer could not write the file")
+
+
 def _build(request):
     solids = request.get("solids") or []
     if not solids:
         return {"ok": False, "error": "no parts to build"}
 
+    # Seconds per phase, reported so a slow build says where its time went and a
+    # test can fence one phase without timing the whole build (Phase 4, stage K2).
+    phases = {}
+    mark = time.perf_counter()
     built, names, ids, skipped = [], [], [], []
+    # shape key -> (the built, mirrored shape, or None; why it could not be built)
+    built_once = {}
+    # Counted where _shape is CALLED, not read back as len(built_once): the cache's
+    # own size cannot show the cache being bypassed, because a rebuilt copy lands
+    # on the same key and the dict still holds one entry. A mutation drill that
+    # rebuilt every occurrence stayed green against len(built_once).
+    shape_builds = 0
     for s in solids:
+        key = _shape_key(s)
+        if key in built_once:
+            shape, reason = built_once[key]
+            if shape is None:
+                skipped.append("%s: %s" % (s.get("label") or s.get("id"), reason))
+                continue
+            built.append(_placement(s) * shape)
+            names.append(s.get("label") or s.get("id"))
+            ids.append(s.get("id"))
+            continue
+        shape_builds += 1
         try:
             shape = _shape(s)
         except Exception as exc:
@@ -765,6 +899,7 @@ def _build(request):
             # no text at all, and "Plate: " tells a reader nothing. Measured
             # 2026-09-05 against build123d 0.11.1.
             reason = str(exc).strip() or type(exc).__name__
+            built_once[key] = (None, reason)
             skipped.append("%s: %s" % (s.get("label") or s.get("id"), reason))
             continue
         if s.get("mirrored"):
@@ -784,12 +919,14 @@ def _build(request):
             # Fence: TestKernel_MirrorsAPartBeforePlacingIt.
             # Phase 1, stage D1c of docs/plan-2026-09-13-millions-of-parts.md.
             shape = shape.mirror(Plane.YZ)
+        built_once[key] = (shape, None)
         built.append(_placement(s) * shape)
         names.append(s.get("label") or s.get("id"))
         ids.append(s.get("id"))
 
     if not built:
         return {"ok": False, "error": "no part could be built", "skipped": skipped}
+    mark = _lap(phases, "shapes", mark)
 
     # --- features -----------------------------------------------------------
     #
@@ -829,14 +966,18 @@ def _build(request):
         return {"ok": False, "error": "every part was consumed as a tool, leaving nothing to export",
                 "skipped": skipped, "features_failed": failed}
     built, names, ids = kept, kept_names, kept_ids
+    mark = _lap(phases, "features", mark)
 
     # A compound, not a fused union. Fusing would MERGE parts that touch, and a
     # bracket and the plate it sits on would come back as one body with the seam
     # gone — a claim about assembly that nothing in the document made. The parts
     # stay separate and named, which is what an assembly is.
-    assembly = Compound(children=built)
-    for child, name in zip(assembly.children, names):
-        child.label = name
+    #
+    # Built in ONE pass, never Compound(children=...): attaching children rebuilds
+    # the compound per child, which is quadratic (Phase 4, stage K2; see
+    # _step_document). The names travel in the STEP document, the one place a
+    # child's label was ever read.
+    assembly = Compound(built)
 
     # The extent, which is the only thing in this reply that can show a part is
     # ORIENTED wrongly. Volume cannot: it is the same however the solid is
@@ -844,17 +985,22 @@ def _build(request):
     # number and an identical-looking file. Reported so the caller can assert on
     # it — see TestKernel_ACylinderPointsTheWayThisSystemDrawsIt.
     box = assembly.bounding_box()
+    volume = float(getattr(assembly, "volume", 0.0))
+    mark = _lap(phases, "assembly", mark)
     # Computed on the KEPT solids, which is the whole reason it is trustworthy —
     # see the note above _interferences. Always, not on request: a check that a
     # caller has to remember to ask for is a check that is off in the one
     # deployment that needed it, and the broad phase makes the usual case free.
     clashes, clash_truncated = _interferences(built, ids, names)
+    mark = _lap(phases, "interferences", mark)
     out = {
+        "shape_builds": shape_builds,
         "ok": True,
         "parts": len(built),
         "interferences": clashes,
         "interferences_truncated": clash_truncated,
-        "volume": float(getattr(assembly, "volume", 0.0)),
+        "volume": volume,
+        "phases": phases,
         "bounds": [float(box.min.X), float(box.min.Y), float(box.min.Z),
                    float(box.max.X), float(box.max.Y), float(box.max.Z)],
         "skipped": skipped,
@@ -864,14 +1010,15 @@ def _build(request):
     fmt = request.get("format")
     if fmt == "mesh":
         out.update(_tessellate(built, ids, names, request))
+        mark = _lap(phases, "mesh", mark)
     if fmt == "step":
-        # export_step writes a file; there is no in-memory form in build123d.
+        # The writer writes a file; its stream form is not used here.
         # Deleted immediately after reading, and created with mkstemp so a
         # concurrent build cannot collide with it.
         fd, path = tempfile.mkstemp(suffix=".step")
         os.close(fd)
         try:
-            export_step(assembly, path)
+            _write_step(_step_document(built, names), path)
             with open(path, "rb") as fh:
                 out["step"] = base64.b64encode(fh.read()).decode("ascii")
         finally:
@@ -879,6 +1026,8 @@ def _build(request):
                 os.unlink(path)
             except OSError:
                 pass
+        # "phases" in out is this same dict, so a lap recorded now is in the reply.
+        mark = _lap(phases, "export", mark)
     return out
 
 

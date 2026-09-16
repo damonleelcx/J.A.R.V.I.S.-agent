@@ -26,6 +26,25 @@ data:
   # STEP export refuse with its documented message.
   FORGE_CAD_PYTHON: "/opt/cad/venv/bin/python"
 
+  # Blob storage for large geometry (docs/plan-2026-09-13-millions-of-parts.md,
+  # Phase 3). The bucket, and the ForgeGeometryBlobs policy on the node's role
+  # heros-vm (Get/Put under blobs/, List on that prefix, no Delete), were made by
+  # deploy/bootstrap-s3.sh.
+  #
+  # Deliberately NO FORGE_BLOB_ENDPOINT and NO keys. No endpoint means AWS
+  # itself, which config.Load accepts once a region is given. Credentials come
+  # from the instance role through IMDS, so there is no key to leak, rotate or
+  # add to forge/prod — and a key set anywhere in this pod's environment would
+  # silently win over the role in the SDK's chain.
+  #
+  # ‼️ Both pods read these, and they reach IMDS differently. forged is on the
+  # host network and reaches it as the node does. forge-worker is not: it needs
+  # 32-worker-egress.yaml's IMDS rule AND an instance IMDS hop limit of at least
+  # 2, which bootstrap-s3.sh reports. verify.sh check 9 runs the round trip in
+  # both pods; neither passing says anything about the other.
+  FORGE_BLOB_BUCKET: "forge-geometry-373468206837"
+  FORGE_BLOB_REGION: "us-east-1"
+
   # PRD SEC-01. Deliberately has no default: FORGE will not assert what a
   # provider does with submitted content on the strength of a guess. Set to
   # no_training on 2026-09-07, matching the local .env, as a statement about the
@@ -62,6 +81,30 @@ data:
 
   FORGE_LLM_BASE_URL: "https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode/v1"
   FORGE_LLM_PLANNER_MODEL: "qwen3.8-max"
+
+  # Speech to text: the workbench microphone (POST /v1/transcribe) and room
+  # transcripts. ‼️ NOT TRANSCRIBING TODAY. The token-plan endpoint above serves
+  # no speech-to-text model — measured 2026-09-15, qwen3-asr-flash-2026-02-10
+  # answers 404 "Model not exist" and its chat models reject audio — so with
+  # this unset every hold of the mic is refused, by name.
+  #
+  # To turn it on, point transcription at an endpoint that serves qwen3-asr-flash,
+  # e.g. DashScope's standard Beijing compatible-mode endpoint (Alibaba's
+  # Qwen-ASR reference, checked 2026-09-15: chat/completions with input_audio, or
+  # the workspace domain https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1):
+  #
+  #   FORGE_LLM_TRANSCRIBER_BASE_URL: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+  #
+  # ‼️ AND add FORGE_LLM_TRANSCRIBER_API_KEY — the key THAT endpoint issued — to
+  # the `forge` Secret (11-externalsecret.yaml, from forge/prod), never here: a
+  # ConfigMap is not a secret store. forged refuses to start with the base URL
+  # and no key, because it never sends the token plan's key to another host
+  # (and a Beijing key does not work in Singapore, nor a token-plan key there).
+  #
+  # FORGE_LLM_TRANSCRIBER_MODEL keeps its default (qwen3-asr-flash-2026-02-10),
+  # which is not set in this file. FORGE_DATA_BOUNDARY describes the model
+  # endpoint's terms; a second endpoint hears recorded speech, and forged warns
+  # at startup so that is never implied.
 
   # Vision reads images a person uploads AND the picture FORGE draws of its own
   # geometry to check it before a turn is emitted (agent/look.go). Unset, both of

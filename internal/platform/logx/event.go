@@ -177,6 +177,19 @@ const (
 
 func init() { allEvents = append(allEvents, EventGoalSettled, EventGoalSettleFailed) }
 
+// Releasing the tasks a finished task left waiting.
+const EventTaskReleaseFailed Event = "forge.task.release_failed"
+
+func init() { allEvents = append(allEvents, EventTaskReleaseFailed) }
+
+// A stopping worker handing back the task it was holding.
+const (
+	EventTaskHandedBack     Event = "forge.task.handed_back"
+	EventTaskHandBackFailed Event = "forge.task.hand_back_failed"
+)
+
+func init() { allEvents = append(allEvents, EventTaskHandedBack, EventTaskHandBackFailed) }
+
 // Workbench events.
 const (
 	EventConverseTurn Event = "forge.converse.turn"
@@ -205,7 +218,10 @@ func init() { allEvents = append(allEvents, EventGoalDrafted, EventGoalPlanFaile
 const (
 	EventGeometrySaved    Event = "forge.geometry.saved"
 	EventGeometryExported Event = "forge.geometry.exported"
-	EventGeometryRefused  Event = "forge.geometry.export_refused"
+	// EventGeometryMeshed is a surface built for the viewport, with where the kernel
+	// spent the build (Phase 4, stage K2).
+	EventGeometryMeshed  Event = "forge.geometry.meshed"
+	EventGeometryRefused Event = "forge.geometry.export_refused"
 	// EventGeometryTooLarge is a design refused at the storage door for its size
 	// (Phase 3, stage S0): more bytes or definitions than one design may hold.
 	EventGeometryTooLarge Event = "forge.geometry.too_large"
@@ -232,14 +248,17 @@ const (
 	EventCADStarted   Event = "forge.cad.started"
 	EventCADRestarted Event = "forge.cad.restarted"
 	EventCADRefused   Event = "forge.cad.refused"
+	// EventCADTimedOut is a build stopped because it ran out of time. Separate from
+	// Restarted because a timeout is NOT retried: the process was working, not dead.
+	EventCADTimedOut Event = "forge.cad.timed_out"
 )
 
 func init() {
 	allEvents = append(allEvents,
-		EventGeometrySaved, EventGeometryExported, EventGeometryRefused, EventGeometryCompared,
+		EventGeometrySaved, EventGeometryExported, EventGeometryMeshed, EventGeometryRefused, EventGeometryCompared,
 		EventGeometryUnreadable,
 		EventGeometryAdopted, EventGeometryRespecified, EventGeometryTooLarge,
-		EventCADStarted, EventCADRestarted, EventCADRefused,
+		EventCADStarted, EventCADRestarted, EventCADRefused, EventCADTimedOut,
 	)
 }
 
@@ -475,4 +494,24 @@ func init() {
 		EventChoiceUnreadable, EventWorkspaceUnreadable,
 		EventAssumptionUnfiled,
 	)
+}
+
+// Blob storage (millions-of-parts plan, Phase 3): content-addressed bulk that can
+// be rebuilt from the document. Stored is info; a failed store is a warning
+// because the caller still has the bytes and can retry or rebuild; a corrupt
+// read is an ERROR because bytes that do not hash to their key mean the bucket
+// is not holding what was put in it.
+const (
+	EventBlobStored      Event = "forge.blob.stored"
+	EventBlobStoreFailed Event = "forge.blob.store_failed"
+	EventBlobCorrupt     Event = "forge.blob.corrupt"
+	// EventBlobReady is logged once at boot by forged and forge-worker: whether
+	// this process has blob storage, and which bucket. Construction makes no
+	// request, so it says what was configured, not that the bucket answers —
+	// `forgectl blob check` is what says that.
+	EventBlobReady Event = "forge.blob.ready"
+)
+
+func init() {
+	allEvents = append(allEvents, EventBlobStored, EventBlobStoreFailed, EventBlobCorrupt, EventBlobReady)
 }

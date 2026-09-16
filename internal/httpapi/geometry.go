@@ -226,6 +226,12 @@ func (h *GeometryHandlers) Mesh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// With the kernel's time per phase, so a slow viewport says which step of the
+	// build was slow (Phase 4, stage K2).
+	h.deps.Log.Info(r.Context(), logx.EventGeometryMeshed, append([]any{
+		"version_id", v.VersionID, "project_id", v.ProjectID, "parts", len(built.Mesh),
+		"triangles", built.Triangles, "skipped", len(built.Skipped)}, built.Phases.LogFields()...)...)
+
 	parts := make([]meshPartDTO, 0, len(built.Mesh))
 	for _, m := range built.Mesh {
 		parts = append(parts, meshPartDTO{
@@ -514,10 +520,11 @@ func (h *GeometryHandlers) exportParametric(w http.ResponseWriter, r *http.Reque
 	}
 	f, _ := geometry.FormatOf("step")
 
-	h.deps.Log.Info(r.Context(), logx.EventGeometryExported,
+	// With the kernel's time per phase, so a slow export says which step was slow.
+	h.deps.Log.Info(r.Context(), logx.EventGeometryExported, append([]any{
 		"user_id", userID, "version_id", v.VersionID, "project_id", v.ProjectID,
 		"format", "step", "parts", built.Parts, "bytes", len(built.STEP),
-		"volume", built.Volume, "skipped", len(built.Skipped))
+		"volume", built.Volume, "skipped", len(built.Skipped)}, built.Phases.LogFields()...)...)
 
 	w.Header().Set("Content-Type", f.MediaType)
 	w.Header().Set("Content-Disposition",

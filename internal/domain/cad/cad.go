@@ -47,6 +47,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	_ "embed"
@@ -87,6 +88,9 @@ type Kernel struct {
 	// that executes text a model produced — see script.go for what the sandbox
 	// does and does not promise.
 	scripts bool
+	// timeout is how long one build may take: buildTimeout, except in the fences
+	// that need a limit short enough to cross on purpose. Not a setting.
+	timeout time.Duration
 
 	mu      sync.Mutex
 	cmd     *exec.Cmd
@@ -102,7 +106,7 @@ type Kernel struct {
 // not an error. Nothing starts here; the process is started on the first build,
 // so a deployment that never exports a parametric file never pays for one.
 func New(python string, log *logx.Logger) *Kernel {
-	return &Kernel{python: strings.TrimSpace(python), log: log}
+	return &Kernel{python: strings.TrimSpace(python), log: log, timeout: buildTimeout}
 }
 
 // WithScripts turns on running model-written build123d.
@@ -136,8 +140,9 @@ func (k *Kernel) Available() bool { return k != nil && k.python != "" }
 func Unavailable(op string) error {
 	return errs.New(op, errs.CodeConnectorUnavailable).
 		WithDetail("this deployment has no CAD kernel, so it cannot produce a parametric file. " +
-			"Set FORGE_CAD_PYTHON to a Python interpreter with build123d installed " +
-			"(python3 -m venv venv && ./venv/bin/pip install build123d). It is unset by default: " +
+			"Set FORGE_CAD_PYTHON to a Python interpreter with the pinned kernel packages installed: " +
+			"in the FORGE image that is /opt/cad/venv/bin/python; from a checkout, `make cad-venv` builds " +
+			"one from internal/domain/cad/requirements.txt. It is unset by default: " +
 			"writing a STEP file full of tessellated facets and calling it parametric is a lie " +
 			"with a file extension on it.")
 }
@@ -182,6 +187,18 @@ type Build struct {
 	// geometry/interference.go and cad/sidecar.py.
 	Interferences          []geometry.Interference
 	InterferencesTruncated bool
+	// ShapeBuilds is how many distinct shapes the kernel built, and ScriptRuns how
+	// many scripts it ran: each distinct shape and each distinct script ONCE per build,
+	// however many occurrences place it (Phase 4, stage K1). Reported so "built once"
+	// is a count a test and a budget can read, not a claim.
+	ShapeBuilds int
+	ScriptRuns  int
+	// Phases is where the kernel spent this build. Reported so a slow build says
+	// which step was slow, in the log and to a test, without timing the whole
+	// build: the assembly and export steps are fenced to grow linearly
+	// (TestKernel_ExportingManyOccurrencesGrowsLinearly, Phase 4 stage K2) while
+	// the interference check is still quadratic until stage K2b.
+	Phases Phases
 	// Mesh is the built solid's surface, one entry per surviving part, empty
 	// unless it was asked for.
 	//
@@ -236,15 +253,17 @@ type request struct {
 }
 
 type reply struct {
-	OK             bool       `json:"ok"`
-	Ready          bool       `json:"ready"`
-	Error          string     `json:"error,omitempty"`
-	Trace          string     `json:"trace,omitempty"`
-	Parts          int        `json:"parts"`
-	Volume         float64    `json:"volume"`
-	Bounds         [6]float64 `json:"bounds"`
-	Skipped        []string   `json:"skipped,omitempty"`
-	FeaturesFailed []string   `json:"features_failed,omitempty"`
+	OK             bool         `json:"ok"`
+	Ready          bool         `json:"ready"`
+	Error          string       `json:"error,omitempty"`
+	Trace          string       `json:"trace,omitempty"`
+	Parts          int          `json:"parts"`
+	Volume         float64      `json:"volume"`
+	Bounds         [6]float64   `json:"bounds"`
+	Skipped        []string     `json:"skipped,omitempty"`
+	FeaturesFailed []string     `json:"features_failed,omitempty"`
+	ShapeBuilds    int          `json:"shape_builds"`
+	Phases         phaseSeconds `json:"phases"`
 
 	Interferences          []geometry.Interference `json:"interferences,omitempty"`
 	InterferencesTruncated bool                    `json:"interferences_truncated,omitempty"`
@@ -257,11 +276,53 @@ type reply struct {
 	MeshError      string     `json:"mesh_error,omitempty"`
 }
 
+// phaseSeconds is the reply's "phases": seconds per phase of a build, written by
+// _lap in sidecar.py. A phase the build never reached is absent and reads as zero.
+type phaseSeconds struct {
+	Shapes        float64 `json:"shapes"`
+	Features      float64 `json:"features"`
+	Assembly      float64 `json:"assembly"`
+	Interferences float64 `json:"interferences"`
+	Export        float64 `json:"export"`
+	Mesh          float64 `json:"mesh"`
+}
+
+func (p phaseSeconds) durations() Phases {
+	d := func(seconds float64) time.Duration { return time.Duration(seconds * float64(time.Second)) }
+	return Phases{Shapes: d(p.Shapes), Features: d(p.Features), Assembly: d(p.Assembly),
+		Interferences: d(p.Interferences), Export: d(p.Export), Mesh: d(p.Mesh)}
+}
+
 type meshPart struct {
 	ID        string    `json:"id"`
 	Label     string    `json:"label"`
 	Vertices  []float64 `json:"vertices"`
 	Triangles []int32   `json:"triangles"`
+}
+
+// Phases is the kernel's time per phase of one build. Scripts run before the
+// kernel is asked and are not in it.
+type Phases struct {
+	// Shapes is building each distinct shape and placing every occurrence.
+	Shapes time.Duration
+	// Features is applying the document's operations.
+	Features time.Duration
+	// Assembly is gathering the kept solids and measuring their volume and extent.
+	Assembly time.Duration
+	// Interferences is the check for parts that share material.
+	Interferences time.Duration
+	// Export is writing the STEP file, zero unless one was asked for.
+	Export time.Duration
+	// Mesh is tessellating, zero unless a mesh was asked for.
+	Mesh time.Duration
+}
+
+// LogFields is the phases as structured log fields, in milliseconds.
+func (p Phases) LogFields() []any {
+	ms := func(d time.Duration) int64 { return d.Milliseconds() }
+	return []any{"kernel_shapes_ms", ms(p.Shapes), "kernel_features_ms", ms(p.Features),
+		"kernel_assembly_ms", ms(p.Assembly), "kernel_interferences_ms", ms(p.Interferences),
+		"kernel_export_ms", ms(p.Export), "kernel_mesh_ms", ms(p.Mesh)}
 }
 
 // BuildDocument builds a document and, when format is "step", exports it.
@@ -320,6 +381,16 @@ func (k *Kernel) BuildDocument(ctx context.Context, doc geometry.Document, unit 
 	// A script that will not run leaves its part out, with the reason, exactly
 	// like an outline that cannot be read: a part missing for a stated reason is
 	// something a reader can act on, and one that silently became a box is not.
+	// Phase 4, stage K1 (docs/plan-2026-09-13-millions-of-parts.md): a script is run
+	// ONCE per distinct source, however many copies of its part are placed. Each run
+	// is a Python process of seconds, and a repeated scripted part used to run once
+	// per copy. A failure is remembered too, so N copies do not fail N times.
+	type scriptOutcome struct {
+		step, detail string
+		failed       bool
+	}
+	scripts := map[string]scriptOutcome{}
+	scriptRuns := 0
 	for i := range solids {
 		if solids[i].Shape != "step" {
 			continue
@@ -333,14 +404,24 @@ func (k *Kernel) BuildDocument(ctx context.Context, doc geometry.Document, unit 
 			solids[i].Shape = ""
 			continue
 		}
-		res, err := k.RunScript(ctx, source, ScriptParameters(doc))
-		if err != nil {
+		outcome, ran := scripts[source]
+		if !ran {
+			res, err := k.RunScript(ctx, source, ScriptParameters(doc))
+			scriptRuns++
+			if err != nil {
+				outcome = scriptOutcome{failed: true, detail: errs.DetailOf(err)}
+			} else {
+				outcome = scriptOutcome{step: res.STEP}
+			}
+			scripts[source] = outcome
+		}
+		if outcome.failed {
 			inferred = append(inferred, fmt.Sprintf(
-				"%s: %s, so it is not in this file.", solids[i].Label, errs.DetailOf(err)))
+				"%s: %s, so it is not in this file.", solids[i].Label, outcome.detail))
 			solids[i].Shape = ""
 			continue
 		}
-		solids[i].STEP = res.STEP
+		solids[i].STEP = outcome.step
 	}
 	solids = keepBuildable(solids)
 
@@ -362,18 +443,33 @@ func (k *Kernel) BuildDocument(ctx context.Context, doc geometry.Document, unit 
 
 	req := request{Solids: solids, Operations: operations, Format: format}
 	res, err := k.roundTrip(ctx, req)
-	if err != nil {
+	var late *lateError
+	if err != nil && !errors.As(err, &late) {
 		// One retry, and exactly one. The overwhelmingly likely cause of an I/O
 		// failure is a process that died between requests — a machine asleep, an
 		// OOM, somebody's pkill — and restarting answers that. Retrying twice
 		// would turn a kernel that crashes on a particular document into a loop.
+		//
+		// ‼️ A build that ran out of time is NOT retried: its process was working,
+		// and a fresh one takes as long again. Fences:
+		// TestKernel_ABuildThatRunsOutOfTimeIsNotRetriedAndSaysSo, and
+		// TestKernel_AProcessThatDiesMidBuildIsStillRetriedOnce for the retry.
 		k.stopLocked()
 		k.log.Warn(ctx, logx.EventCADRestarted, "detail", err.Error())
 		res, err = k.roundTrip(ctx, req)
-		if err != nil {
-			return nil, errs.Wrap(op, errs.CodeConnectorUnavailable, err).
-				WithDetail("the CAD kernel did not answer, and restarting it did not help")
+	}
+	if err != nil {
+		if errors.As(err, &late) {
+			// The killed process is reaped and the kernel reset NOW, so the next
+			// build starts a fresh process instead of spending its one retry
+			// discovering this one is dead.
+			// Fence: TestKernel_AfterATimeoutTheKernelStartsAFreshProcessForTheNextBuild.
+			k.stopLocked()
+			k.log.Warn(ctx, logx.EventCADTimedOut, "detail", late.Error())
+			return nil, lateRefusal(op, late)
 		}
+		return nil, errs.Wrap(op, errs.CodeConnectorUnavailable, err).
+			WithDetail("the CAD kernel did not answer, and restarting it did not help")
 	}
 	if !res.OK {
 		detail := res.Error
@@ -398,7 +494,8 @@ func (k *Kernel) BuildDocument(ctx context.Context, doc geometry.Document, unit 
 
 	out := &Build{Parts: res.Parts, Volume: res.Volume, Bounds: res.Bounds,
 		Skipped: res.Skipped, FeatureFailures: res.FeaturesFailed, Inferred: inferred,
-		Interferences: res.Interferences, InterferencesTruncated: res.InterferencesTruncated}
+		Interferences: res.Interferences, InterferencesTruncated: res.InterferencesTruncated,
+		ShapeBuilds: res.ShapeBuilds, ScriptRuns: scriptRuns, Phases: res.Phases.durations()}
 	if res.STEP != "" {
 		decoded, err := base64.StdEncoding.DecodeString(res.STEP)
 		if err != nil {
@@ -432,6 +529,57 @@ func (k *Kernel) BuildMesh(ctx context.Context, doc geometry.Document, unit geom
 	return k.BuildDocument(ctx, doc, unit, "mesh")
 }
 
+// lateError is a build whose process was killed because time ran out while it was
+// still working: the kernel's own limit, or the caller's context.
+//
+// # Why it is its own type
+//
+// The retry in BuildDocument is for a process that DIED — an OOM, a pkill, a
+// machine asleep — and a fresh process answers that. A process killed for its time
+// was alive and building, and a fresh one given the same build takes as long
+// again: retrying turned a 31 s build into a 60 s wait, and the second kill into
+// "the CAD kernel did not answer, and restarting it did not help" under
+// CONNECTOR_UNAVAILABLE. BuildDocument asks errors.As for this, and does not
+// retry it.
+type lateError struct {
+	// limit is the kernel's own limit, when that is what ran out.
+	limit time.Duration
+	// caller is the caller's context error, when that ended first.
+	caller error
+}
+
+func (e *lateError) Error() string {
+	if e.caller != nil {
+		return "the request ended before the kernel answered: " + e.caller.Error()
+	}
+	return fmt.Sprintf("the kernel did not answer within %s", e.limit)
+}
+
+func (e *lateError) Unwrap() error { return e.caller }
+
+// lateRefusal is the error for a build stopped because time ran out.
+//
+// CAD_KERNEL_TIMEOUT (504, not retryable — errs/code.go says why), with a detail
+// naming which time ran out. A caller that CANCELLED rather than ran out of time
+// has gone, and keeps CONNECTOR_UNAVAILABLE with a sentence that says what
+// happened: nobody is reading that reply.
+func lateRefusal(op string, late *lateError) error {
+	switch {
+	case late.caller == nil:
+		return errs.Wrap(op, errs.CodeKernelTimeout, late).
+			WithDetail("this build took longer than the CAD kernel's %s limit, so it was stopped and "+
+				"not retried: the same build would take as long again. Build a smaller part of the "+
+				"design, or split it into smaller subassemblies", late.limit)
+	case errors.Is(late.caller, context.DeadlineExceeded):
+		return errs.Wrap(op, errs.CodeKernelTimeout, late).
+			WithDetail("the request's own deadline ended before the CAD kernel finished this build, " +
+				"so it was stopped and not retried: the same build would take at least as long again")
+	default:
+		return errs.Wrap(op, errs.CodeConnectorUnavailable, late).
+			WithDetail("the request ended before the CAD kernel finished, so the build was stopped")
+	}
+}
+
 // roundTrip sends one request and reads one reply. Caller holds the mutex.
 func (k *Kernel) roundTrip(ctx context.Context, req request) (*reply, error) {
 	if err := k.startLocked(ctx); err != nil {
@@ -449,22 +597,33 @@ func (k *Kernel) roundTrip(ctx context.Context, req request) (*reply, error) {
 	// blocking Read on a pipe does not observe a context. Killing is the only
 	// thing that ends it, and it is also the right outcome: a kernel that has
 	// not answered in thirty seconds is not going to.
+	//
+	// ‼️ The goroutine records WHY it killed the process before it does. To the
+	// read below, a process killed for its time and one that crashed are the same
+	// EOF, and until 2026-09-15 they were treated the same: retried on a fresh
+	// process, killed again, reported as "no working backend". See lateError.
 	done := make(chan struct{})
 	defer close(done)
+	var stopped atomic.Pointer[lateError]
 	go func() {
-		timer := time.NewTimer(buildTimeout)
+		timer := time.NewTimer(k.timeout)
 		defer timer.Stop()
 		select {
 		case <-done:
 		case <-ctx.Done():
+			stopped.Store(&lateError{caller: ctx.Err()})
 			k.killLocked()
 		case <-timer.C:
+			stopped.Store(&lateError{limit: k.timeout})
 			k.killLocked()
 		}
 	}()
 
 	line, err := k.stdout.ReadBytes('\n')
 	if err != nil {
+		if late := stopped.Load(); late != nil {
+			return nil, late
+		}
 		return nil, fmt.Errorf("reading from the kernel: %w", err)
 	}
 	var res reply
