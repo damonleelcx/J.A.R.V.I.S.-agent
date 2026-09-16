@@ -24,6 +24,9 @@ func (d Document) Expanded() Document {
 	// A tree first (tree.go), so the gears and patterns inside its definitions are
 	// written out like any other part's.
 	e, _ := expandAssemblies(d)
+	// Standard parts next (standard.go): a designation becomes the revolve or
+	// extrusion it is, so a repeated screw is a repeated revolve.
+	e, _ = expandStandards(e)
 	e, _ = expandGears(e)
 	e, _ = expandRepeats(e)
 	return e

@@ -1,0 +1,58 @@
+[
+  {
+    "n": 1,
+    "of": 8,
+    "name": "Chassis Frame",
+    "note": "One or more dimensions arrived as expressions written in the place of a number. They were read as the expressions they are — the contract has a field for each — rather than the reply being discarded. A position on a placed child or an interface arrived as an expression. It was placed at what the expression works out to from the parameters now, and the expression was kept as its \"position_from\", so it follows those parameters when they change. Looking at the model it had just built, FORGE saw something it could not correct: Cross Member Tube: The top view shows the cross members as disconnected dashes floating in empty space, indicating they are not attached to the main structural tubes.",
+    "parts": 0
+  },
+  {
+    "n": 2,
+    "of": 8,
+    "name": "Suspension Uprights and Hubs",
+    "note": "Step 2 (Suspension Uprights and Hubs) was left out: it would have broken the model: it had 1 fault(s) where the model before it had 0, and these are new: suspension-mounts is attached at \"chassis/cockpit-floor\", but assembly \"chassis\" has no child \"chassis\".",
+    "parts": 0
+  },
+  {
+    "n": 3,
+    "of": 8,
+    "name": "Powertrain Block",
+    "note": "FORGE placed the assembly \"powertrain-core\" from the root \"chassis\" where this step declared it: \"powertrain\" at \"engine-mount-front\". Looking at the model it had just built, FORGE found problems and corrected it: Mounting Bolt: The mounting bolts are depicted as oversized, floating linear structures surrounding the assembly rather than being attached to or inserted into the engine and transmission. Parts were sitting inside each other. FORGE moved them apart and re-checked with the kernel.",
+    "parts": 0
+  },
+  {
+    "n": 4,
+    "of": 8,
+    "name": "Drivetrain Connections",
+    "note": "Step 4 (Drivetrain Connections) was left out: it would have broken the model: it had 1 fault(s) where the model before it had 0, and these are new: drivetrain is attached at \"chassis/drivetrain/transmission-output\", but assembly \"chassis\" has no child \"chassis\".",
+    "parts": 0
+  },
+  {
+    "n": 5,
+    "of": 8,
+    "name": "Suspension Arms and Dampers",
+    "note": "FORGE placed the assembly \"suspension-linkage\" from the root \"chassis\" where this step declared it: \"suspension-linkage\" at \"chassis/front-suspension-left\". The geometry as first written had 1 part(s) that could not be built. FORGE corrected it and re-checked. Looking at the model it had just built, FORGE found problems and corrected it: Control Arm: The control arms are floating in space, detached from the chassis and uprights. Parts are inside each other and FORGE could not correct it: Shock Absorber is 100% inside Transmission Housing: they occupy the same material (589049 mm³). Move one of them, or make the part that contains the other hollow. Pushrod is 85% inside Transmission Housing: they occupy the same material (68647 mm³). Move one of them, or make the part that contains the other hollow. Control Arm is 71% inside Transmission Housing: they occupy the same material (339411 mm³). Move one of them, or make the part that contains the other hollow. and 14 more",
+    "parts": 0
+  },
+  {
+    "n": 6,
+    "of": 8,
+    "name": "Braking System",
+    "note": "FORGE placed the assembly \"brakes\" from the root \"chassis\" where this step declared it: \"brakes\" at \"cockpit-floor\". Looking at the model it had just built, FORGE found problems and corrected it: Brake Rotor: The brake rotors are floating in space, completely detached from the central assembly and hubs. Parts are inside each other and FORGE could not correct it: Shock Absorber is 100% inside Transmission Housing: they occupy the same material (589049 mm³). Move one of them, or make the part that contains the other hollow. Pushrod is 85% inside Transmission Housing: they occupy the same material (68647 mm³). Move one of them, or make the part that contains the other hollow. Control Arm is 71% inside Transmission Housing: they occupy the same material (339411 mm³). Move one of them, or make the part that contains the other hollow. and 26 more",
+    "parts": 0
+  },
+  {
+    "n": 7,
+    "of": 8,
+    "name": "Wheels and Tires",
+    "note": "Step 7 (Wheels and Tires) was left out: it would have broken the model: it had 4 fault(s) where the model before it had 0, and these are new: Performance Tire the corner radii at outline points 1 and 2 need 30.36 of the 28.28 between them, so the two arcs would overlap; use smaller radii, or move the points further apart; Performance Tire the corner radii at outline points 1 and 2 need 30.36 of the 28.28 between them, so the two arcs would overlap; use smaller radii, or move the points further apart; Performance Tire the corner radii at outline points 1 and 2 need 30.36 of the 28.28 between them, so the two arcs would overlap; use smaller radii, or move the points further apart; and 1 more.",
+    "parts": 0
+  },
+  {
+    "n": 8,
+    "of": 8,
+    "name": "Body Panels and Aerodynamics",
+    "note": "FORGE placed the assembly \"bodywork\" from the root \"chassis\" where this step declared it: \"bodywork-assembly\" at \"cockpit-floor\". FORGE could not look at the model it built to check it: the measurement's token budget is spent: 301142 of 300000 tokens used, so no further model call was placed (FORGE_MEASURE_TOKEN_BUDGET) Parts are inside each other and FORGE could not correct it: Shock Absorber is 100% inside Transmission Housing: they occupy the same material (589049 mm³). Move one of them, or make the part that contains the other hollow. Pushrod is 85% inside Transmission Housing: they occupy the same material (68647 mm³). Move one of them, or make the part that contains the other hollow. Control Arm is 71% inside Transmission Housing: they occupy the same material (339411 mm³). Move one of them, or make the part that contains the other hollow. and 27 more",
+    "parts": 0
+  }
+]

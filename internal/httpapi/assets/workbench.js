@@ -968,6 +968,51 @@
     });
     html += '</table>';
 
+    /* How the TREES differ (Phase 7, stage E2), absent for flat documents. A
+     * definition is one row with how many times each variant places it, never a
+     * row per placed part: a wheel placed four times that changed is one change,
+     * and a design of a million parts is still a table a person can read. */
+    var st = cmp.structure;
+    if (st) {
+      var absentCell = '<td class="absent">not in this variant</td>';
+      html += '<table class="cmp-table"><tr><th>Structure</th>' +
+        variants.map(function (v, i) { return '<th>' + (i + 1) + '</th>'; }).join('') + '</tr>';
+      html += '<tr class="' + (st.root.differs ? 'differs' : '') + '"><td>root</td>' +
+        st.root.values.map(function (v) { return '<td>' + esc(v) + '</td>'; }).join('') + '</tr>';
+      (st.definitions || []).forEach(function (d) {
+        html += '<tr class="' + (d.differs ? 'differs' : '') + '"><td>' + esc(d.label) +
+          '<span class="why">definition</span>' +
+          (d.changed.length ? '<ul class="diffs"><li>changed: ' + esc(d.changed.join(', ')) + '</li></ul>' : '') +
+          '</td>' +
+          d.occurrences.map(function (n, i) {
+            return d.missing_from.indexOf(i + 1) >= 0 ? absentCell : '<td>placed ' + n + '×</td>';
+          }).join('') + '</tr>';
+      });
+      (st.assemblies || []).forEach(function (a) {
+        /* Only the members that differ: an assembly of two hundred unchanged
+         * children is otherwise two hundred lines saying so. */
+        var lines = a.changed.length ? ['changed: ' + a.changed.join(', ')] : [];
+        [['child', a.children], ['interface', a.interfaces], ['feature', a.features]].forEach(function (kind) {
+          (kind[1] || []).forEach(function (m) {
+            if (!m.differs) return;
+            var bits = [];
+            if (m.missing_from.length) bits.push('not in column ' + m.missing_from.join(', '));
+            if (m.changed.length) bits.push('changed: ' + m.changed.join(', '));
+            lines.push(kind[0] + ' ' + m.id + ' — ' + bits.join('; '));
+          });
+        });
+        html += '<tr class="' + (a.differs ? 'differs' : '') + '"><td>' + esc(a.label) +
+          '<span class="why">assembly</span>' +
+          (lines.length ? '<ul class="diffs">' + lines.map(function (l) {
+            return '<li>' + esc(l) + '</li>';
+          }).join('') + '</ul>' : '') + '</td>' +
+          variants.map(function (v, i) {
+            return a.missing_from.indexOf(i + 1) >= 0 ? absentCell : '<td>present</td>';
+          }).join('') + '</tr>';
+      });
+      html += '</table>';
+    }
+
     if (cmp.match_notes && cmp.match_notes.length) {
       html += '<div class="cmp-uncompared matched"><b>Matched by name, not by identity</b><ul>' +
         cmp.match_notes.map(function (n) { return '<li>' + esc(n) + '</li>'; }).join('') +
@@ -1044,17 +1089,20 @@
   }
 
   var STATES = {
-    idle:      'Ready',
-    listening: 'Listening…',
-    thinking:  'Thinking…',
-    speaking:  'Speaking…'
+    idle:         'Ready',
+    listening:    'Listening…',
+    transcribing: 'Transcribing…',
+    thinking:     'Thinking…',
+    speaking:     'Speaking…'
   };
 
   function setStatus(s) {
     var el = $('statusword');
     el.textContent = STATES[s] || STATES.idle;
     el.className = 'voice-state ' + s;
-    if (orb) orb.setState(s === 'idle' ? 'idle' : s);
+    /* The orb draws the states it was designed for. Transcribing is FORGE
+     * working on what was said, which is what its thinking state shows. */
+    if (orb) orb.setState(s === 'idle' ? 'idle' : s === 'transcribing' ? 'thinking' : s);
     setPresence();
   }
 
@@ -1184,30 +1232,25 @@
     fetch('/v1/geometry/' + encodeURIComponent(versionID) + '/mesh')
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (b) {
-        /* Placed copies arrive as a definition and a matrix (Phase 4, stage K4);
-         * expanded here to the placed surfaces the renderer draws. */
-        var meshes = b ? window.Forge3D.expandMeshInstances(b) : [];
-        if (!meshes.length) return;
         /* Still the same prototype on screen? A slow tessellation must not
          * repaint a model the person has already moved on from. */
-        if (state.prototype !== proto) return;
+        if (!b || state.prototype !== proto) return;
 
-        var byID = {};
-        meshes.forEach(function (m) { byID[m.id] = m; });
-        /* Joined by the DRAWN id, onto the part it was drawn from. The kernel
-         * answers "spoke-3", which no authored part is called; joining against the
-         * authored list left every copy of a repeat as its primitive.
+        /* Placed copies arrive as a definition and a matrix (Phase 4, stage K4), and
+         * since Phase 6, stage W1 they are DRAWN that way: the reply goes to the studio
+         * whole, each definition is uploaded once and every copy drawn by its matrix
+         * in one instanced call. Until W1 they were expanded here into placed
+         * triangles and written onto the document's parts, which put 30,000 copies of
+         * a rivet's vertices in memory to draw one rivet 30,000 times.
+         *
+         * Joined by the DRAWN id: the kernel answers "spoke-3", which no authored part
+         * is called. Nothing on screen answered for → the primitives stay, and nothing
+         * is reloaded.
          * docs/bugfix/2026-09-13-repeat-copies-were-invisible-to-most-readers.md */
-        var drawn = 0;
-        window.Forge3D.partsToDraw(proto).forEach(function (d) {
-          var m = byID[d.spec.id];
-          // d.source is the part, copy's part, or definition this was drawn from
-          // (partsToDraw decides, once), so a tree placement finds its mesh too.
-          if (!m || !d.source || d.source === d.spec) return;
-          d.source.meshes = d.source.meshes || {};
-          d.source.meshes[d.spec.id] = { vertices: m.vertices, triangles: m.triangles };
-          drawn++;
-        });
+        var answered = {};
+        (b.parts || []).forEach(function (m) { answered[m.id] = true; });
+        (b.instances || []).forEach(function (m) { answered[m.id] = true; });
+        var drawn = studio.occurrenceIds().filter(function (id) { return answered[id]; }).length;
         if (!drawn) return;
 
         state.builtSolid = {
@@ -1219,7 +1262,7 @@
            * looks like a rendering choice until something names the eighth. */
           notes: (b.inferred || []).concat(b.skipped || [], b.feature_failures || [])
         };
-        studio.load(proto);
+        studio.load(proto, b);
         studio.setOverlays(proto.overlays || [], state.measured);
         renderProvenance();
       })
@@ -1231,6 +1274,8 @@
     state.measured = measured || [];
     state.selectedPart = null;
     state.builtSolid = null;
+    tree.open = {}; tree.query = ''; tree.isolated = '';
+    if ($('tree-search')) $('tree-search').value = '';
     studio.load(proto);
     /* The primitives are drawn FIRST and the built solid replaces them.
      *
@@ -1249,6 +1294,7 @@
     renderStates(proto.states || []);
     setPlace(true);
     renderParts();
+    renderTree();
     renderProvenance();
   }
 
@@ -1476,6 +1522,107 @@
     });
   }
 
+  /* ---- The assembly tree (Phase 6, stage W2) ------------------------------------
+   *
+   * # The problem this solves
+   *
+   * The Parts panel lists a document's top-level parts, and a design written as a
+   * tree has none: a car of 30,000 occurrences showed an empty panel beside a viewport
+   * full of parts nobody could name, select or look at on their own.
+   *
+   * # Lazy, by construction
+   *
+   * A row's children are listed when somebody opens it (Forge3D.treeChildren), never
+   * before. A car's tree is a few hundred rows written once; its occurrences are tens
+   * of thousands, and a list of those is not something a person reads. The search,
+   * which IS over occurrences, shows the first fifty and says how many more there are.
+   *
+   * Selecting a row lights everything under it and Isolate draws only that. Both are a
+   * redraw — the batches on the GPU stay — and both reach exactly the occurrences Go
+   * places under the path (TestRendererSelectsAndIsolatesTheOccurrencesUnderATreeNode).
+   *
+   * ‼️ Lazy LISTING, not lazy loading: every occurrence's geometry is on the GPU from
+   * the first draw. Fetching a subtree's meshes only when it is opened needs a mesh
+   * endpoint that answers for a subtree, and there is none. */
+  var tree = { open: {}, query: '', isolated: '' };
+
+  function renderTree() {
+    var head = $('tree-head'), tools = $('tree-tools'), el = $('tree'), all = $('tree-showall');
+    if (!head || !tools || !el || !all) return;
+    var proto = state.prototype;
+    var has = !!(proto && proto.root && window.Forge3D && window.Forge3D.treeChildren);
+    head.classList.toggle('hidden', !has);
+    tools.classList.toggle('hidden', !has);
+    all.classList.toggle('hidden', !tree.isolated);
+    if (!has) { el.innerHTML = ''; return; }
+    if (tree.query) {
+      var hits = studio.findOccurrences(tree.query, 50);
+      el.innerHTML = (hits.total ? '' : '<div class="empty">Nothing drawn has that in its name or path.</div>') +
+        hits.found.map(function (h) { return treeRow(h.id, h.label, 0, false, false, null); }).join('') +
+        (hits.total > hits.found.length
+          ? '<div class="dim tree-more">' + (hits.total - hits.found.length) + ' more — narrow the search</div>'
+          : '');
+      return;
+    }
+    el.innerHTML = treeRows(proto, proto.root, '', 0);
+  }
+
+  /* The rows under one assembly, and under every row somebody has opened. A patterned
+   * child is one row whose copies are listed when it is opened, named as the exporter
+   * names them ("Bolt 3"). */
+  function treeRows(proto, ref, path, depth) {
+    return window.Forge3D.treeChildren(proto, ref, path).map(function (row) {
+      var open = !!tree.open[row.path];
+      var html = treeRow(row.path, row.label, depth, !!(row.slots || row.assembly), open,
+                         row.slots ? '×' + row.slots.length : null);
+      if (!open) return html;
+      if (!row.slots) return html + treeRows(proto, row.ref, row.path, depth + 1);
+      return html + row.slots.map(function (slot, i) {
+        var slotOpen = !!tree.open[slot];
+        return treeRow(slot, row.label + ' ' + (i + 1), depth + 1, row.assembly, slotOpen, null) +
+          (row.assembly && slotOpen ? treeRows(proto, row.ref, slot, depth + 2) : '');
+      }).join('');
+    }).join('');
+  }
+
+  function treeRow(path, label, depth, expandable, open, count) {
+    return '<div class="tnode" role="treeitem" data-path="' + esc(path) + '"' +
+      (expandable ? ' aria-expanded="' + open + '"' : '') +
+      ' aria-selected="' + (state.selectedPart === path) + '" style="padding-left:' + (depth * 12 + 2) + 'px">' +
+      (expandable
+        ? '<button type="button" class="tw" data-toggle="' + esc(path) + '" aria-label="' +
+          (open ? 'Close ' : 'Open ') + esc(label) + '">' + (open ? '▾' : '▸') + '</button>'
+        : '<span class="tw"></span>') +
+      '<span class="nm" data-select="' + esc(path) + '" title="' + esc(path) + '">' + esc(label) + '</span>' +
+      (count ? '<span class="dim">' + esc(count) + '</span>' : '') +
+      '<button type="button" class="ghost iso" data-isolate="' + esc(path) + '" aria-pressed="' +
+      (tree.isolated === path) + '">Isolate</button></div>';
+  }
+
+  function initTree() {
+    var el = $('tree'), search = $('tree-search'), all = $('tree-showall');
+    if (!el || !search || !all) return;
+    el.addEventListener('click', function (e) {
+      var t = e.target && e.target.closest ? e.target.closest('[data-toggle],[data-select],[data-isolate]') : null;
+      if (!t) return;
+      var path;
+      if ((path = t.getAttribute('data-toggle'))) {
+        tree.open[path] = !tree.open[path];
+      } else if ((path = t.getAttribute('data-select'))) {
+        state.selectedPart = state.selectedPart === path ? null : path;
+        studio.select(state.selectedPart ? window.Forge3D.occurrenceMatcher(state.selectedPart) : null);
+        renderParts();
+      } else if ((path = t.getAttribute('data-isolate'))) {
+        tree.isolated = tree.isolated === path ? '' : path;
+        studio.isolate(tree.isolated ? window.Forge3D.occurrenceMatcher(tree.isolated) : null);
+      }
+      renderTree();
+    });
+    search.addEventListener('input', function () { tree.query = search.value; renderTree(); });
+    all.addEventListener('click', function () { tree.isolated = ''; studio.isolate(null); renderTree(); });
+  }
+
+
   /* Dimensions, with every number carrying its unit (PRD WRK-05).
    *
    * The previous version joined bare numbers and appended the assembly's unit
@@ -1509,6 +1656,10 @@
       if (length != null) dims.push('h ' + qty(length));
     } else if (p.shape === 'sphere') {
       if (s.radius != null) dims.push('⌀' + qty(s.radius * 2));
+    } else if (p.shape === 'standard') {
+      /* The designation is the dimensions. Same line as Dimensions in geometry/units.go. */
+      if (p.standard) dims.push(p.standard);
+      if (s.length != null) dims.push(qty(s.length) + ' long');
     } else if (p.shape === 'gear') {
       /* The numbers a gear is specified by, and what they work out to — through
        * Forge3D, so a face width written as "thickness" shows as the width the
@@ -2580,6 +2731,46 @@
     $('meta').textContent = bits.join(' · ');
   }
 
+  /* #voice-note is where every voice failure is said, and the only place.
+   *
+   * ‼️ Before 2026-09-15 several failures said nothing at all — `no-speech`,
+   * the recogniser's swallowed start error, a transcript dropped during a turn
+   * — and the one that did speak ('network') gave the bare code. A person
+   * holding the button cannot read a console; if it is not here, it did not
+   * happen as far as they can tell. An empty message hides the note. */
+  function voiceNote(msg) {
+    var el = $('voice-note');
+    if (!el) return;
+    el.textContent = msg || '';
+    el.classList.toggle('hidden', !msg);
+  }
+
+  /* Which way the microphone hears, said on the page — and the mic disabled,
+   * with the reason, when no way can work. Re-run on every voice state change,
+   * because a path can be lost mid-session: the recogniser reporting it cannot
+   * reach Google, or the server answering that it has no transcriber. */
+  var lastVoicePath = null;
+  function renderVoicePath() {
+    if (!voice) return;
+    var path = voice.inputPath();
+    var mic = $('mic');
+    $('voice-path').textContent = voice.describePath();
+    mic.disabled = !!state.signedOut || path === 'none';
+    mic.title = path === 'none' ? voice.whyUnavailable() : 'Hold to talk (or hold the space bar)';
+
+    var handsfree = $('handsfree');
+    var handsFreeOK = voice.handsFreeAvailable();
+    handsfree.disabled = !handsFreeOK;
+    handsfree.parentNode.title = handsFreeOK ? '' : voice.whyNoHandsFree();
+    if (!handsFreeOK && handsfree.checked) {
+      handsfree.checked = false;
+      voice.setMode('push');
+    }
+
+    if (path === 'none' && lastVoicePath !== 'none' && !state.signedOut) voiceNote(voice.whyUnavailable());
+    lastVoicePath = path;
+  }
+
   function initVoice() {
     /* The text path is wired FIRST, before anything that can fail.
      *
@@ -2599,12 +2790,29 @@
       e.preventDefault();
       var input = $('say');
       var text = input.value.trim();
-      if (text) { input.value = ''; send(text); }
+      if (!text) return;
+      /* ‼️ Checked BEFORE the box is cleared. send() returns early while a turn
+       * is in flight, so clearing first erased a typed message and sent nothing
+       * — the typed twin of the dropped transcript in
+       * docs/bugfix/2026-09-15-the-microphone-sent-nothing.md. */
+      if (state.busy) {
+        voiceNote('FORGE is still answering. Your message is still in the box; press send again when she has finished.');
+        return;
+      }
+      input.value = '';
+      send(text);
     });
 
     voice = new ForgeVoice.Voice({
       onPartial: function (text) { showPartial(text); },
-      onTranscript: function (text) { clearPartial(); send(text); },
+      /* Never straight to send(): see deliverSpoken in voice.js for where a
+       * transcript goes while a turn is in flight, and why. */
+      onTranscript: function (text) {
+        clearPartial();
+        if (ForgeVoice.deliverSpoken(text, { busy: state.busy, input: $('say'), send: send, note: voiceNote }) === 'sent') {
+          voiceNote('');
+        }
+      },
       // A real measurement, and only while listening. See orb.js for why the
       // orb refuses to draw this shape at any other time.
       onLevel: function (v) { if (orb) orb.setLevel(v); },
@@ -2624,55 +2832,51 @@
         if (s.speaking && state.turnAudio) state.turnAudio(performance.now());
         $('mic').setAttribute('aria-pressed', String(s.listening));
         $('mic').classList.toggle('listening', s.listening);
+        $('mic').classList.toggle('transcribing', !!s.transcribing);
         if (s.speaking) setStatus('speaking');
         else if (s.listening) setStatus('listening');
+        else if (s.transcribing) setStatus('transcribing');
         else if (state.busy) setStatus('thinking');
         else setStatus('idle');
+        renderVoicePath();
       },
-      onError: function (msg) {
-        $('voice-note').textContent = msg;
-        $('voice-note').classList.remove('hidden');
-      }
+      onError: function (msg) { voiceNote(msg); }
     });
 
-    var mic = $('mic');
-    if (!voice.available) {
-      mic.disabled = true;
-      $('voice-note').textContent = voice.whyUnavailable();
-      $('voice-note').classList.remove('hidden');
-    }
+    renderVoicePath();
 
     /* Push-to-talk is HELD, not toggled. A hold cannot be left on by accident,
      * which is the difference between a microphone the user controls and one
-     * that quietly stays open. */
-    ['mousedown', 'touchstart'].forEach(function (ev) {
-      mic.addEventListener(ev, function (e) { e.preventDefault(); voice.startListening(); });
-    });
-    ['mouseup', 'mouseleave', 'touchend'].forEach(function (ev) {
-      mic.addEventListener(ev, function () {
-        if (voice.mode === 'push') voice.stopListening();
-      });
-    });
+     * that quietly stays open.
+     *
+     * ‼️ Through ForgeVoice.bindHold, not mousedown/mouseleave. The hold used to
+     * end on mouseleave, so the cursor drifting off a 36px circle ended it
+     * mid-sentence, and a click did nothing visible. bindHold captures the
+     * pointer and answers a click with "hold to talk". See voice.js and
+     * docs/bugfix/2026-09-15-the-microphone-sent-nothing.md. */
+    var hold = ForgeVoice.bindHold($('mic'), voice, { note: voiceNote });
 
     // Space bar as push-to-talk, so the interface is usable without a mouse
-    // (PRD AUD-06).
-    var spaceHeld = false;
+    // (PRD AUD-06). The same hold as the button, so the two cannot overlap.
     document.addEventListener('keydown', function (e) {
-      if (e.code === 'Space' && !spaceHeld && document.activeElement !== $('say')) {
-        e.preventDefault(); spaceHeld = true; voice.startListening();
+      if (e.code === 'Space' && document.activeElement !== $('say') && !$('mic').disabled) {
+        e.preventDefault();
+        if (!e.repeat) hold.press('space');
       }
       // Escape always stops FORGE talking — the deterministic silence PRD
       // AUD-07 asks for, reachable without hunting for a button.
       if (e.key === 'Escape') voice.stopSpeaking();
     });
     document.addEventListener('keyup', function (e) {
-      if (e.code === 'Space' && spaceHeld) {
-        spaceHeld = false;
-        if (voice.mode === 'push') voice.stopListening();
-      }
+      if (e.code === 'Space') hold.release('space');
     });
 
     $('handsfree').addEventListener('change', function (e) {
+      if (e.target.checked && !voice.handsFreeAvailable()) {
+        e.target.checked = false;
+        voiceNote(voice.whyNoHandsFree());
+        return;
+      }
       voice.setMode(e.target.checked ? 'hands-free' : 'push');
       if (e.target.checked) voice.startListening(); else voice.stopListening();
     });
@@ -2857,6 +3061,14 @@
     safely('orb', function () { orb = new ForgeOrb.Orb($('orb')); });
     studio = new Forge3D.Studio($('canvas'), {
       labels: $('dimlayer'),
+      /* A click on the model names the occurrence under it (Phase 6, stage W2), and
+       * selects it exactly as a row of the Parts panel or the tree would. */
+      onSelect: function (id) {
+        state.selectedPart = id;
+        studio.select(id);
+        renderParts();
+        renderTree();
+      },
       onError: function (msg) {
         // A renderer that cannot start is stated as a failure, in its own words,
         // rather than left to read as "nothing modelled yet".
@@ -2877,6 +3089,7 @@
     safely('attach', initAttach);
     safely('soul', initSoul);
     safely('compare', initCompare);
+    safely('tree', initTree);
     safely('stage', function () {
       window.ForgeStage.mount({ onPanel: function () { setPlace(); } });
     });
@@ -2893,6 +3106,10 @@
     renderParts();
 
     fetch('/v1/meta/models').then(function (r) { return r.json(); }).then(function (m) {
+      /* First, so a deployment with no model at all still tells the microphone
+       * it has no transcriber. Until this arrives the voice layer assumes the
+       * server transcribes: the upload names its own failure. */
+      if (voice) voice.setServerTranscription(m.transcription && m.transcription.server ? m.transcription : null);
       if (!m.configured) {
         $('models').textContent = 'no model configured';
         return;
@@ -2928,6 +3145,8 @@
       addTurn('forge', 'You are not signed in. Sign in from the console — it will bring you back — ' +
         'I cannot hold a conversation without knowing whose workspace this is.');
       $('say').disabled = true;
+      // Held on state so a later voice state change cannot re-enable the mic.
+      state.signedOut = true;
       $('mic').disabled = true;
     });
   }

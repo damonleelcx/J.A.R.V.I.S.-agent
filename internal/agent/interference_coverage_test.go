@@ -87,3 +87,38 @@ func TestInterference_ADescribedRenderSaysNothingAboutCoverage(t *testing.T) {
 		t.Errorf("a described render produced a coverage note: %q", reply.Repaired)
 	}
 }
+
+// ‼️ A list the kernel cut to its bound says how many were found (next scale walls).
+//
+// The kernel lists at most the worst 10,000 clashes and counts all of them. Read by
+// its length, a 1M airframe's 1,760,000 clashes would read as 10,000 — and a sheet
+// listing one would say "and 0 more". Every pair was checked, so it must not say the
+// model is not known to be clear either.
+func TestInterference_ASummarizedListSaysHowManyWereFound(t *testing.T) {
+	stub := &repairStub{}
+	c := &Conversation{client: stub}
+	reply := &Reply{Prototype: twoBoxes()}
+	sheet := builtSheet{Image: "data:,", FromKernel: true, Checked: 11175, Pairs: 11175, Found: 11175,
+		Interferences: clash(0.02)}
+
+	c.repairIfPartsOverlap(context.Background(), reply, &sheet)
+
+	for _, want := range []string{"found 11175 pairs", "lists the 1 that share the most", "and 11174 more"} {
+		if !strings.Contains(reply.Repaired, want) {
+			t.Errorf("a list of 1 of 11,175 clashes did not say %q: %q", want, reply.Repaired)
+		}
+	}
+	if strings.Contains(reply.Repaired, "not known to be clear") {
+		t.Errorf("a whole check whose list was summarized read as a truncated one: %q", reply.Repaired)
+	}
+	if stub.calls != 0 {
+		t.Errorf("a graze drove %d repair call(s)", stub.calls)
+	}
+
+	whole := &Reply{Prototype: twoBoxes()}
+	all := builtSheet{Image: "data:,", FromKernel: true, Checked: 1, Pairs: 1, Found: 1, Interferences: clash(0.02)}
+	c.repairIfPartsOverlap(context.Background(), whole, &all)
+	if strings.Contains(whole.Repaired, "lists the") || strings.Contains(whole.Repaired, "more") {
+		t.Errorf("a whole list was described as a summary: %q", whole.Repaired)
+	}
+}

@@ -1,0 +1,58 @@
+[
+  {
+    "n": 1,
+    "of": 8,
+    "name": "Chassis Frame",
+    "note": "Step 1 (Chassis Frame) came back unreadable: its JSON does not parse: \"prototype.definitions.size\" is a JSON string where a float64 was expected, at character 1481: …extrusion\", \"size\": { \"depth\": \"wheelbase\" },….",
+    "parts": 0
+  },
+  {
+    "n": 2,
+    "of": 8,
+    "name": "Front Suspension",
+    "note": "Looking at the model it had just built, FORGE found problems and corrected it: Upper Wishbone: The part is floating clear of the steering knuckle and other components, touching nothing. Parts were sitting inside each other. FORGE moved them apart and re-checked with the kernel.",
+    "parts": 0
+  },
+  {
+    "n": 3,
+    "of": 8,
+    "name": "Rear Suspension",
+    "note": "Step 3 (Rear Suspension) removed Lower Wishbone, Shock Absorber, Steering Knuckle, Tie Rod End, Upper Wishbone.",
+    "parts": 0
+  },
+  {
+    "n": 4,
+    "of": 8,
+    "name": "Drivetrain",
+    "note": "This step built the assembly \"powertrain\" and did not place it, so FORGE placed it from the root \"rear-suspension\" at the root's origin. Looking at the model it had just built, FORGE saw something it could not correct: Driveshaft: The green driveshaft is floating clear below the engine and transmission blocks, touching nothing, instead of connecting them to the differential. Parts are inside each other and FORGE could not correct it: Rear Wheel Hub is 100% inside Rear Wheel Hub: they occupy the same material (452389 mm³). Move one of them, or make the part that contains the other hollow. Rear Brake Disc is 100% inside Rear Brake Disc: they occupy the same material (1608495 mm³). Move one of them, or make the part that contains the other hollow. Rear Wheel Hub is 50% inside Rear Brake Disc: they occupy the same material (226195 mm³). Move one of them, or make the part that contains the other hollow. and 14 more",
+    "parts": 0
+  },
+  {
+    "n": 5,
+    "of": 8,
+    "name": "Braking System",
+    "note": "Step 5 (Braking System) was left out: it would have broken the model: it had 2 fault(s) where the model before it had 0, and these are new: Ventilated Brake Rotor hole 1 is not inside the outline — its point 1 is at (32.32233047033631, 17.67766952966368), which is outside. A hole is a loop WITHIN the outline; a shape cut from the edge is … [truncated; 226 characters in the original]; Ventilated Brake Rotor hole 1 is not inside the outline — its point 1 is at (32.32233047033631, 17.67766952966368), which is outside. A hole is a loop WITHIN the outline; a shape cut from the edge is … [truncated; 226 characters in the original].",
+    "parts": 0
+  },
+  {
+    "n": 6,
+    "of": 8,
+    "name": "Wheels and Tires",
+    "note": "Step 6 (Wheels and Tires) was left out: it would have broken the model: it had 2 fault(s) where the model before it had 0, and these are new: wheels/left-wheel-assembly is attached at \"rear-suspension/left-hub/hub-face\", but assembly \"wheels\" has no child \"rear-suspension\"; wheels/right-wheel-assembly is attached at \"rear-suspension/right-hub/hub-face\", but assembly \"wheels\" has no child \"rear-suspension\".",
+    "parts": 0
+  },
+  {
+    "n": 7,
+    "of": 8,
+    "name": "Body Panels",
+    "note": "This step built the assembly \"bodywork\" and did not place it, so FORGE placed it from the root \"rear-suspension\" at the root's origin. Looking at the model it had just built, FORGE found problems and corrected it: Nose Cone: The nose cone is floating in the air, completely detached from the rest of the chassis and body assembly. Parts are inside each other and FORGE could not correct it: Rear Wheel Hub is 100% inside Rear Wheel Hub: they occupy the same material (452389 mm³). Move one of them, or make the part that contains the other hollow. Rear Brake Disc is 100% inside Rear Brake Disc: they occupy the same material (1608495 mm³). Move one of them, or make the part that contains the other hollow. Rear Wheel Hub is 50% inside Rear Brake Disc: they occupy the same material (226195 mm³). Move one of them, or make the part that contains the other hollow. and 14 more",
+    "parts": 0
+  },
+  {
+    "n": 8,
+    "of": 8,
+    "name": "Interior and Controls",
+    "note": "Step 8 (Interior and Controls) removed Differential Housing, Rear Brake Disc, Rear Brake Disc, Rear Damper Assembly, Rear Damper Assembly, Rear Lower Control Arm, Rear Lower Control Arm, Rear Trailing Arm, Rear Trailing Arm, Rear Upper Control Arm, Rear Upper Control Arm, Rear Wheel Hub, Rear Wheel Hub, bodywork (4 parts), powertrain (3 parts).",
+    "parts": 0
+  }
+]
