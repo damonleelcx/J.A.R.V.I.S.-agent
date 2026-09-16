@@ -641,6 +641,33 @@ func clip(s string) string {
 	return s[:cut] + more
 }
 
+// list is the reader's sentence for a set of findings.
+//
+// Capped, because a broken assembly can produce dozens and a note nobody
+// finishes reading is a note nobody reads. The worst are first — the kernel
+// sorts by fraction — so a cap never hides the biggest one.
+//
+// total is how many were found, which is more than the list when the kernel
+// summarized it; "and N more" counts from it, so a summarized list is never read
+// as a short one.
+func list(found []geometry.Interference, total int) string {
+	const most = 3
+	if total < len(found) {
+		total = len(found)
+	}
+	parts := make([]string, 0, most+1)
+	for i, f := range found {
+		if i == most {
+			break
+		}
+		parts = append(parts, f.Describe())
+	}
+	if more := total - len(parts); more > 0 {
+		parts = append(parts, fmt.Sprintf("and %d more", more))
+	}
+	return strings.Join(parts, " ")
+}
+
 // placedByNotes adds to each buried finding in a tree which child places the part,
 // so the repair edits the design that put it there. A finding about top-level parts
 // is returned unchanged.
@@ -686,31 +713,4 @@ func placedBySentence(doc geometry.Document, id string) string {
 	}
 	return fmt.Sprintf("%s is placed by child %q of assembly %q: move that child or change %q, not the placed path",
 		id, at.Child, at.Assembly, at.Ref)
-}
-
-// list is the reader's sentence for a set of findings.
-//
-// Capped, because a broken assembly can produce dozens and a note nobody
-// finishes reading is a note nobody reads. The worst are first — the kernel
-// sorts by fraction — so a cap never hides the biggest one.
-//
-// total is how many were found, which is more than the list when the kernel
-// summarized it; "and N more" counts from it, so a summarized list is never read
-// as a short one.
-func list(found []geometry.Interference, total int) string {
-	const most = 3
-	if total < len(found) {
-		total = len(found)
-	}
-	parts := make([]string, 0, most+1)
-	for i, f := range found {
-		if i == most {
-			break
-		}
-		parts = append(parts, f.Describe())
-	}
-	if more := total - len(parts); more > 0 {
-		parts = append(parts, fmt.Sprintf("and %d more", more))
-	}
-	return strings.Join(parts, " ")
 }

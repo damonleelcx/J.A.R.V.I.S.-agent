@@ -3390,12 +3390,16 @@ drill "a placement's inverse is cached under the other solid" internal/domain/ca
   's = s.replace("            inv_j = inverses[j] = lj.Inverted()\n", "            inv_j = inverses[i] = lj.Inverted()\n", 1)' \
   ./internal/domain/cad 'TestKernel_APairKeyWithoutLocationsIsTheKeyBuild123dGave'
 
+# Re-anchored 2026-09-16 merging main into #128, which factored the direct key's
+# tail out as _key_tail so the array path runs the same scalar code: the same
+# statements, one indentation level shallower. Same properties, same fence. In
+# the third, the marked_b line keeps the anchor off _pair_key's identical return.
 drill "a direct key forgets what the other frame carries" internal/domain/cad/sidecar.py \
-  's = s.replace("        carried_f = _carried_fast(pose_f, inside_j) if inside_j else []\n", "        carried_f = []\n", 1)' \
+  's = s.replace("    carried_f = _carried_fast(pose_f, inside_j) if inside_j else []\n", "    carried_f = []\n", 1)' \
   ./internal/domain/cad 'TestKernel_APairKeyWithoutLocationsIsTheKeyBuild123dGave'
 
 drill "a direct key is taken in the frame that marks fewer" internal/domain/cad/sidecar.py \
-  's = s.replace("            return forward if marked_f > marked_b else backward\n", "            return forward if marked_f < marked_b else backward\n", 1)' \
+  's = s.replace("    marked_b = math.isinf(pb[3]) + math.isinf(pb[7]) + math.isinf(pb[11])\n    if marked_f != marked_b:\n        return forward if marked_f > marked_b else backward\n", "    marked_b = math.isinf(pb[3]) + math.isinf(pb[7]) + math.isinf(pb[11])\n    if marked_f != marked_b:\n        return forward if marked_f < marked_b else backward\n", 1)' \
   ./internal/domain/cad 'TestKernel_APairKeyWithoutLocationsIsTheKeyBuild123dGave'
 
 drill "direct containment takes a box's whole length for its reach" internal/domain/cad/sidecar.py \
@@ -3403,7 +3407,7 @@ drill "direct containment takes a box's whole length for its reach" internal/dom
   ./internal/domain/cad 'TestKernel_APairKeyWithoutLocationsIsTheKeyBuild123dGave'
 
 drill "a pair inside only the other frame is keyed as unmarked" internal/domain/cad/sidecar.py \
-  's = s.replace("        if not inside_i and not inside_j:\n", "        if not inside_i:\n", 1)' \
+  's = s.replace("    if not inside_i and not inside_j:\n", "    if not inside_i:\n", 1)' \
   ./internal/domain/cad 'TestKernel_APairKeyWithoutLocationsIsTheKeyBuild123dGave'
 
 drill "a moved box forgets its far corner" internal/domain/cad/sidecar.py \
@@ -3842,6 +3846,109 @@ drill "adopting forgets which artifact it came from" internal/domain/geometry/se
 drill "re-specifying forgets which artifact it came from" internal/domain/geometry/service.go \
   's = "".join(s.rsplit("\t\tArtifactID: source.ArtifactID,\n", 1))' \
   ./internal/domain/geometry 'TestRespec_AppendsToTheArtifactTheSourceIsOnAfterARename'
+
+echo "Interference narrow phase in arrays (#128)"
+# Added 2026-09-16 (interference approach). #121 took the last micro-optimisation out
+# of the per-pair keying loop and moved the check 0.94-0.98x. This branch keys a whole
+# GROUP of pairs at once instead: a pair's relative translation and its containment
+# test are array arithmetic, and the key itself is built by the shipped scalar tail
+# once per DISTINCT row rather than once per pair.
+#
+# Every drill here is against the THREE-fixture fence, not the eight-fixture one.
+# ‼️ The thorough fence takes about eleven minutes and seventeen mutations against it
+# is over three hours, which is long enough that the drills would not be run at all —
+# and a drill that is not run is a claim, which is what this script exists to
+# distrust. The three fixtures reach every branch the array path has; the
+# eight-fixture fence asserts exactly the same properties over the prisms, the 150
+# blocks and the rest.
+#
+# ‼️ SEVENTEEN WERE WRITTEN AND FOUR STAYED GREEN. They are recorded here rather than
+# reworded, because each says something true about the code:
+#
+#   - "a row forgets the pose in the other frame"
+#     (_distinct_rows([variant, tam, tbm]) -> _distinct_rows([variant, tam]))
+#     The four tbm columns are REDUNDANT, and no fixture can show otherwise. Within
+#     one group both translations come from the same difference t_j - t_i through two
+#     fixed rotations, so the forward one determines the backward one; and the marks
+#     tbm carries are decided by `variant`, which is column 0. They are kept because
+#     the redundancy is an argument about exact arithmetic and the columns cost
+#     nothing, and this note is what says so.
+#
+#   - "only the forward pose is marked before the rows are deduped"
+#     (the `for r, val in mb.items(): tbm[sub, r] = val` loop deleted)
+#     Marking before the dedupe is a PERFORMANCE device and not a correctness one:
+#     _key_tail's _slid writes exactly those slots with exactly those values again,
+#     so dropping a mark only makes the rows finer — 197,356 pairs become more than
+#     1,232 rows and the answer does not change. Nothing the fence looks at can see
+#     the difference, which is the honest description of what the marks are for.
+#
+#   - "a clash under the minimum volume is listed"
+#     (keep &= (share >= _INTERFERENCE_MIN_VOLUME) & ... -> the second term alone)
+#     A FIXTURE GAP, not a fence gap. No fixture in the set has a clash whose volume
+#     is under 1 mm3 and whose fraction is over 0.001, so no fixture can tell the two
+#     forms apart — on either path. Worth a fixture; see the spike's recommendations.
+#
+#   - "two solids at one location are keyed by the array path"
+#     (the same-placement guard disabled)
+#     The same drill #114 wrote against the same guard, with the same result. Two
+#     different datums with the same rotation compose to the identity off by ~1e-16,
+#     which rounds to the same pose and reaches the key only through containment, at
+#     exactly its boundary; no fixture can put a solid there, because bounds carry
+#     OCCT's tolerance. The guard is kept so the key stays the loop's in that case,
+#     and nothing measured shows it is needed.
+drill "the rows are told apart by their first column alone" internal/domain/cad/sidecar.py \
+  's = s.replace("        for c in cols[1:]:", "        for c in cols[1:0]:", 1)' \
+  ./internal/domain/cad 'TestKernel_TheArrayNarrowPhaseGivesTheLoopsAnswerOnThreeFixtures'
+
+drill "a group is keyed by its definitions and not its rotations" internal/domain/cad/sidecar.py \
+  's = s.replace("            ck = (r, shape_ids[p[0]])", "            ck = (0, shape_ids[p[0]])", 1)' \
+  ./internal/domain/cad 'TestKernel_TheArrayNarrowPhaseGivesTheLoopsAnswerOnThreeFixtures'
+
+drill "a group is keyed by its rotations and not its definitions" internal/domain/cad/sidecar.py \
+  's = s.replace("            ck = (r, shape_ids[p[0]])", "            ck = (r, 0)", 1)' \
+  ./internal/domain/cad 'TestKernel_TheArrayNarrowPhaseGivesTheLoopsAnswerOnThreeFixtures'
+
+drill "the relative translation is read in the other solid's frame" internal/domain/cad/sidecar.py \
+  's = s.replace("ta = product(rot_tab[int(rid[i0])], gi, gj)", "ta = product(rot_tab[int(rid[i0])], gj, gi)", 1)' \
+  ./internal/domain/cad 'TestKernel_TheArrayNarrowPhaseGivesTheLoopsAnswerOnThreeFixtures'
+
+drill "the placement's inverse is added rather than subtracted" internal/domain/cad/sidecar.py \
+  's = s.replace("            out[:, r] = -acc + back", "            out[:, r] = acc + back", 1)' \
+  ./internal/domain/cad 'TestKernel_TheArrayNarrowPhaseGivesTheLoopsAnswerOnThreeFixtures'
+
+drill "the group's rotation is read by rows rather than transposed" internal/domain/cad/sidecar.py \
+  's = s.replace("            a, b, c = rot[r], rot[3 + r], rot[6 + r]", "            a, b, c = rot[3 * r], rot[3 * r + 1], rot[3 * r + 2]", 1)' \
+  ./internal/domain/cad 'TestKernel_TheArrayNarrowPhaseGivesTheLoopsAnswerOnThreeFixtures'
+
+drill "a group's containment is tested against one axis for all three" internal/domain/cad/sidecar.py \
+  's = s.replace("            mid = ((t[:, r] + p0) + p1) + p2", "            mid = ((t[:, 0] + p0) + p1) + p2", 1)' \
+  ./internal/domain/cad 'TestKernel_TheArrayNarrowPhaseGivesTheLoopsAnswerOnThreeFixtures'
+
+drill "a solid with no placement is left out of the translations" internal/domain/cad/sidecar.py \
+  's = s.replace("                frames.append(0.0)\n                frames.append(0.0)\n                frames.append(0.0)\n", "", 1)' \
+  ./internal/domain/cad 'TestKernel_TheArrayNarrowPhaseGivesTheLoopsAnswerOnThreeFixtures'
+
+drill "the search stops at the key's number, not the pair it was met at" internal/domain/cad/sidecar.py \
+  's = s.replace("            reached = first_of[s]", "            reached = s", 1)' \
+  ./internal/domain/cad 'TestKernel_TheArrayNarrowPhaseGivesTheLoopsAnswerOnThreeFixtures'
+
+drill "a reuse is counted for every pair, not those the search reached" internal/domain/cad/sidecar.py \
+  's = s.replace("    reused = reached - booleans", "    reused = len(pairs) - booleans", 1)' \
+  ./internal/domain/cad 'TestKernel_TheArrayNarrowPhaseGivesTheLoopsAnswerOnThreeFixtures'
+
+drill "the list's ties are broken by an unstable sort" internal/domain/cad/sidecar.py \
+  's = s.replace("worst = at[_np.argsort(-fr, kind=\"stable\")", "worst = at[_np.argsort(-fr, kind=\"quicksort\")", 1)' \
+  ./internal/domain/cad 'TestKernel_TheArrayNarrowPhaseGivesTheLoopsAnswerOnThreeFixtures'
+
+drill "the larger solid is reported first" internal/domain/cad/sidecar.py \
+  's = s.replace("    swap = vol[ii[worst]] > vol[jj[worst]]", "    swap = vol[ii[worst]] < vol[jj[worst]]", 1)' \
+  ./internal/domain/cad 'TestKernel_TheArrayNarrowPhaseGivesTheLoopsAnswerOnThreeFixtures'
+
+drill "every clash found is counted buried" internal/domain/cad/sidecar.py \
+  's = s.replace("    buried = int((fr >= _BURIED_FRACTION).sum())", "    buried = int((fr >= _INTERFERENCE_MIN_FRACTION).sum())", 1)' \
+  ./internal/domain/cad 'TestKernel_TheArrayNarrowPhaseGivesTheLoopsAnswerOnThreeFixtures'
+
+echo
 
 if [ "$MODE" = "list" ]; then
   exit 0
