@@ -2390,6 +2390,42 @@
   var GOAL_SETTLED = { succeeded: true, failed: true, cancelled: true };
   var TASK_ENDED = { succeeded: true, failed: true, cancelled: true, skipped: true };
 
+  /* # Why a stop is retold in plain words (2026-09-15)
+   *
+   * A task's error_detail is a Go error rendered by errs.Error(), which is
+   * "<op>: <CODE>: <what that code means in general> (<the detail written for
+   * this failure>)". Only the last part was written about THIS stop. The card
+   * showed the whole string, so a build stopped by its own token ceiling read:
+   *
+   *   Stopped by its budget: engine.Budget: FORBIDDEN: The authenticated
+   *   principal is not permitted to perform this action on this resource.
+   *   (goal budget exhausted on tokens: used 1500 tokens of 800. Raise
+   *   FORGE_MAX_TOKENS_PER_GOAL or the goal's own ceiling, …)
+   *
+   * — which tells somebody watching their own build that they are not permitted
+   * to do this, when what actually happened is that the ceiling they set ran
+   * out. The sentence that says so, and the remedy, were inside the brackets at
+   * the end. Seen on screen in docs/spikes/2026-09-15-card-checked.
+   * docs/bugfix/2026-09-15-a-budget-stop-was-shown-as-a-permissions-error.md
+   *
+   * ‼️ Presentation only. The code and the whole string stay on the task, in the
+   * timeline and in the operations console, which is where an operator wants
+   * them; nothing here decides anything. A budget stop is still recognised from
+   * the detail by goalProgress, on the unclipped text, before this runs.
+   */
+  function plainStopText(text) {
+    var s = String(text == null ? '' : text);
+    /* "<op>: <CODE>: <cause> (<detail>)" — keep the detail. Lazy before the
+     * bracket and greedy inside it, so a detail that itself contains brackets
+     * survives whole rather than being cut at its first one. */
+    var withCode = /^[A-Za-z][\w.]*\.[A-Za-z]\w*:\s+[A-Z][A-Z0-9_]+:\s+[\s\S]*?\(([\s\S]+)\)\s*$/.exec(s);
+    if (withCode) return withCode[1].trim();
+    /* No error code in it: drop a bare "<pkg>.<Thing>: " prefix and keep the
+     * rest. A plain sentence — "the model could not be reached" — has no prefix
+     * and is left exactly as it arrived. */
+    return s.replace(/^[A-Za-z][\w.]*\.[A-Za-z]\w*:\s+/, '').trim();
+  }
+
   /* goalProgress reads what a person watching needs out of the two replies. */
   function goalProgress(goal, tasks, events) {
     goal = goal || {};
@@ -2430,10 +2466,10 @@
     events.forEach(function (e) { if (!budget && e.kind === 'budget.exceeded') budget = e; });
     tasks.forEach(function (t) { if (!failed && t.status === 'failed') failed = t; });
     if (budget || (failed && /budget exhausted/i.test(failed.error_detail || ''))) {
-      p.stop = { kind: 'budget', text: budget ? budget.summary : failed.error_detail };
+      p.stop = { kind: 'budget', text: budget ? budget.summary : plainStopText(failed.error_detail) };
     } else if (failed) {
       p.stop = { kind: 'failed', text: failed.title + ' failed' +
-        (failed.error_detail ? ': ' + failed.error_detail : '.') };
+        (failed.error_detail ? ': ' + plainStopText(failed.error_detail) : '.') };
     } else if (goal.status === 'failed' || goal.status === 'cancelled') {
       p.stop = { kind: goal.status, text: p.outcome || ('The goal ' + goal.status + '.') };
     }
@@ -2605,6 +2641,27 @@
       title: state.proposal.title,
       statement: state.proposal.statement,
       risk_tier: state.proposal.risk_tier || 'r1',
+      /* # Why the project is sent (2026-09-15)
+       *
+       * The conversation's project, when it has one. This was missing, and the
+       * industry line below already assumed it was here: it blanks the industry
+       * WHENEVER a project exists, because the server refuses the two together.
+       * So a conversation with a project sent neither — and `Draft` then made a
+       * BRAND NEW project named after the goal's title, with the `general` pack.
+       *
+       * What that looked like in the browser (docs/spikes/2026-09-15-card-checked):
+       * a lamp built from the card wrote its two versions into a second project,
+       * while the workbench's own Files panel — which reads the conversation's
+       * project — said "This project has no files yet." The console listed both
+       * projects, the conversation filed under one and its artifacts under the
+       * other. The industry the person picked was dropped on the way.
+       *
+       * ‼️ Sending it is also what the server's permission check is FOR: a named
+       * project is checked for `goal.create` before anything is written
+       * (docs/bugfix/2026-09-15-a-goal-could-be-drafted-into-a-project-its-caller-was-not-in.md,
+       * whose note that "the workbench always sends the project of the
+       * conversation" was not true of this path). */
+      project_id: state.projectID || '',
       /* Only when this conversation has no project yet. The server REFUSES an
        * industry sent with a project id — the industry belongs to the project,
        * and changing it would change the rules its earlier work was done under —

@@ -261,3 +261,88 @@ func TestWorkbench_TheProposalCardFollowsTheGoalItStarted(t *testing.T) {
 		t.Error("renderProposal does not render the progress it read")
 	}
 }
+
+// A real budget breach: the card says what the stop MEANT, not how it was reported.
+//
+// A failed task's detail is errs.Error()'s rendering — "<op>: <CODE>: <what that
+// code means in general> (<the detail written for this failure>)" — and the card
+// showed all of it, so somebody watching their own build hit a ceiling they had
+// set and was told they were not permitted to do this.
+//
+// ‼️ The error_detail below is the EXACT string a breach put on screen
+// (docs/spikes/2026-09-15-card-checked). The older budget fence above supplies a
+// tidier one by hand, which is precisely why it never caught this.
+// docs/bugfix/2026-09-15-a-budget-stop-was-shown-as-a-permissions-error.md
+func TestWorkbench_TheCardSaysWhatABudgetStopMeantWithoutTheErrorsPlumbing(t *testing.T) {
+	const real = "engine.Budget: FORBIDDEN: The authenticated principal is not permitted to perform " +
+		"this action on this resource. (goal budget exhausted on tokens: used 1500 tokens of 800. " +
+		"Raise FORGE_MAX_TOKENS_PER_GOAL or the goal's own ceiling, or narrow the goal so it needs " +
+		"less context.)"
+
+	run := runProgress(t, []progressPoll{{
+		Goal: map[string]any{"id": "gol_1", "status": "failed", "tasks_total": 3, "tasks_done": 0,
+			"tasks_failed": 1, "tokens_spent": 1500, "max_tokens": 800},
+		Tasks: []map[string]any{
+			{"id": "t1", "title": "Step 1 of 3 — Base", "status": "failed", "error_code": "FORBIDDEN",
+				"error_detail": real},
+			step("t2", "Step 2 of 3 — Arm", "skipped"), step("t3", "Step 3 of 3 — Shade", "skipped")},
+		// ‼️ No budget.exceeded event. A breach INSIDE a step does not write one —
+		// only the guard that refuses a task before it starts does — so the task's
+		// own detail is all the card has for the commonest budget stop there is.
+		Events: []map[string]any{event("goal.ended", "1 of 3 task(s) failed or were cancelled"),
+			event("task.failed", real)},
+	}})
+
+	if len(run.Seen) != 1 || run.Seen[0].Stop == nil || run.Seen[0].Stop.Kind != "budget" {
+		t.Fatalf("a real budget breach reads %+v", run.Seen)
+	}
+	html := run.Seen[0].HTML
+	for _, want := range []string{"Stopped by its budget", "used 1500 tokens of 800",
+		"Raise FORGE_MAX_TOKENS_PER_GOAL", "1,500 of 800 tokens"} {
+		if !strings.Contains(html, want) {
+			t.Errorf("the card does not say %q:\n%s", want, html)
+		}
+	}
+	// The error's plumbing, and the sentence that belongs to the CODE rather than
+	// to this stop. "not permitted" is the one thing a person must never be told
+	// about a spending limit they set themselves.
+	for _, unwanted := range []string{"FORBIDDEN", "engine.Budget", "authenticated principal", "not permitted"} {
+		if strings.Contains(html, unwanted) {
+			t.Errorf("the card still shows %q, which is how the stop was reported and not what it meant:\n%s",
+				unwanted, html)
+		}
+	}
+}
+
+// "Start this" names the conversation's project, and the industry stays paired
+// with it.
+//
+// With no project id the server has nothing to put the goal in, so Intake.Draft
+// makes a NEW project for every goal started from the card — and the chosen
+// industry goes with it, because the request blanks the industry whenever a
+// project exists. The build then lands in a project the workbench's own panels
+// do not read: its Files panel said "This project has no files yet." while the
+// versions it had just watched being kept sat in a project of their own.
+// docs/bugfix/2026-09-15-a-card-started-goal-landed-in-a-new-project.md
+func TestWorkbench_TheCardStartsAGoalInTheConversationsProject(t *testing.T) {
+	b, err := assetFS.ReadFile("assets/workbench.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := codeOnly(string(b))
+	start, end := strings.Index(js, "function startThis()"), strings.Index(js, "function startIt()")
+	if start < 0 || end < start {
+		t.Fatal("startThis or startIt is gone; this fence reads between them")
+	}
+	body := js[start:end]
+	if !strings.Contains(body, "project_id: state.projectID") {
+		t.Error("\"Start this\" does not send the conversation's project, so a goal started from the card " +
+			"creates a project of its own and its versions land outside the conversation that asked for them")
+	}
+	// Fenced as a PAIR: the server refuses an industry sent together with a
+	// project id, so the industry must stay conditional on the very field above.
+	// The defect was this guard outliving the field it was guarding.
+	if !strings.Contains(body, "industry: state.projectID ? '' :") {
+		t.Error("the industry is no longer conditional on the project id; sent together, the server refuses both")
+	}
+}
