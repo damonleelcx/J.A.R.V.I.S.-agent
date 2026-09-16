@@ -45,9 +45,11 @@ spec:
             - { name: workspaces, mountPath: /var/lib/forge/workspaces }
           resources:
             requests: { cpu: "100m", memory: "256Mi" }
-            # No CAD kernel runs here yet: this comment used to say one did. The
-            # worker gets its own kernel pool when builds become engine goals
-            # (Phase 2, stage A1); the 2Gi ceiling is the room it will need.
+            # The worker runs a build's steps (Phase 2, stage A1) and holds its
+            # own CAD kernel for them: FORGE_CAD_POOL processes, started on the
+            # first step that builds a surface, each holding build123d in memory.
+            # The 2Gi ceiling is that room; a pool above one needs a measured
+            # number for this pod before it is raised.
             limits:   { cpu: "1", memory: "2Gi" }
       volumes:
         - name: workspaces

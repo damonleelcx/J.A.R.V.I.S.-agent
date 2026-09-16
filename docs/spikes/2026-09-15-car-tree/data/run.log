@@ -1,0 +1,45 @@
+=== RUN   TestLiveCarCeiling
+    car_ceiling_live_test.go:112: step 1/7 Chassis Frame            parts=0   Step 1 (Chassis Frame) produced no geometry.
+    car_ceiling_live_test.go:112: step 2/7 Front Suspension         parts=0   Looking at the model it had just built, FORGE saw something it could not correct: all parts: The components are floating clear of everything else in an exploded arrangement rather than being installed onto the chassis mounts as requested.
+    car_ceiling_live_test.go:112: step 3/7 Rear Suspension          parts=4   Looking at the model it had just built, FORGE saw something it could not correct: all parts: All components are floating in space, disconnected from each other and not mounted to any chassis hardpoints as requested.
+    car_ceiling_live_test.go:112: step 4/7 Drivetrain Assembly      parts=4   Step 4 (Drivetrain Assembly) was left out: it would have broken the model.
+    car_ceiling_live_test.go:112: step 5/7 Braking System           parts=4   Step 5 (Braking System) was left out: it would have broken the model.
+    car_ceiling_live_test.go:112: step 6/7 Wheels and Tires         parts=4   Looking at the model it had just built, FORGE found problems and corrected it: all parts: All suspension components are floating in space, disconnected from each other rather than assembled into a functional unit.
+    car_ceiling_live_test.go:112: step 7/7 Body Panels              parts=9   Looking at the model it had just built, FORGE found problems and corrected it: Carbon Fiber Hood: The hood is floating in space, completely detached from the chassis and other body panels.
+    car_ceiling_live_test.go:118: CAR-SPEND tokens=164548 of 300000 calls=34 refused=0 seconds=459
+    car_ceiling_live_test.go:131: note: Step 1 (Chassis Frame) produced no geometry.
+    car_ceiling_live_test.go:131: note: Looking at the model it had just built, FORGE saw something it could not correct: all parts: The components are floating clear of everything else in an exploded arrangement rather than being installed onto the chassis mounts as requested.
+    car_ceiling_live_test.go:131: note: Looking at the model it had just built, FORGE saw something it could not correct: all parts: All components are floating in space, disconnected from each other and not mounted to any chassis hardpoints as requested.
+    car_ceiling_live_test.go:131: note: Step 4 (Drivetrain Assembly) was left out: it would have broken the model.
+    car_ceiling_live_test.go:131: note: Step 5 (Braking System) was left out: it would have broken the model.
+    car_ceiling_live_test.go:131: note: Looking at the model it had just built, FORGE found problems and corrected it: all parts: All suspension components are floating in space, disconnected from each other rather than assembled into a functional unit.
+    car_ceiling_live_test.go:131: note: Looking at the model it had just built, FORGE found problems and corrected it: Carbon Fiber Hood: The hood is floating in space, completely detached from the chassis and other body panels.
+    car_ceiling_live_test.go:152: CAR-CEILING steps_run=7 steps_planned=7 parts=39 features=0 minutes=7.6
+    car_ceiling_live_test.go:157: CAR-TREE definitions=9 assemblies=6 placed=36 occurrences=39 standard_parts=10 could_be_patterns=0
+    car_ceiling_live_test.go:158: CAR-TOKENS per_design=18283 per_occurrence=4219 designs=9
+    car_ceiling_live_test.go:170: CAR-SHAPES cylinder=12 standard=10 extrusion=9 box=5
+    car_ceiling_live_test.go:171: CAR-FEATURES (none)
+    car_ceiling_live_test.go:177: CAR-FAULTS document_faults=0
+    car_ceiling_live_test.go:199: CAR-KERNEL builds=yes volume=283876617 skipped=0 feature_failures=0 parts_not_in_file=0
+    car_ceiling_live_test.go:225: CAR-INTERFERENCE pairs=77 buried=53 truncated=false of parts=39
+    car_ceiling_live_test.go:227: CAR-COVERAGE checked=80 of pairs=80 skipped_parts=0 truncated=false
+    car_ceiling_live_test.go:233:   left-suspension-asm/left-wheel/lug-nut-pattern-3 is 100% inside left-suspension-asm/hub (1809 mm³)
+    car_ceiling_live_test.go:233:   left-suspension-asm/left-wheel/lug-nut-pattern-3 is 100% inside left-suspension-asm/left-wheel/rim (1809 mm³)
+    car_ceiling_live_test.go:233:   left-suspension-asm/left-wheel/lug-nut-pattern-3 is 100% inside left-suspension-asm/left-wheel/tire (1809 mm³)
+    car_ceiling_live_test.go:233:   right-suspension-asm/left-suspension-mirror/left-wheel/lug-nut-pattern-3 is 100% inside right-suspension-asm/left-suspension-mirror/hub (1809 mm³)
+    car_ceiling_live_test.go:233:   right-suspension-asm/left-suspension-mirror/left-wheel/lug-nut-pattern-3 is 100% inside right-suspension-asm/left-suspension-mirror/left-wheel/rim (1809 mm³)
+    car_ceiling_live_test.go:233:   right-suspension-asm/left-suspension-mirror/left-wheel/lug-nut-pattern-3 is 100% inside right-suspension-asm/left-suspension-mirror/left-wheel/tire (1809 mm³)
+    car_ceiling_live_test.go:233:   left-suspension-asm/left-wheel/lug-nut-pattern-4 is 100% inside left-suspension-asm/hub (1809 mm³)
+    car_ceiling_live_test.go:233:   left-suspension-asm/left-wheel/lug-nut-pattern-4 is 100% inside left-suspension-asm/left-wheel/rim (1809 mm³)
+    car_ceiling_live_test.go:233:   left-suspension-asm/left-wheel/lug-nut-pattern-4 is 100% inside left-suspension-asm/left-wheel/tire (1809 mm³)
+    car_ceiling_live_test.go:233:   right-suspension-asm/left-suspension-mirror/left-wheel/lug-nut-pattern-4 is 100% inside right-suspension-asm/left-suspension-mirror/hub (1809 mm³)
+    car_ceiling_live_test.go:230:   … and 67 more
+    car_ceiling_live_test.go:242: CAR-SYMMETRY mirror_pairs=14 parts_in_a_pair=28 of 39
+    car_ceiling_live_test.go:248: CAR-PLACEMENT literal_positions=36 bound_positions=0 id_prefixes=7
+    car_ceiling_live_test.go:254: CAR-HOLLOW parts_with_holes=10 cut_features=0 of parts=39
+    car_ceiling_live_test.go:265: CAR-PASSES with_a_problem=3 of 7
+    car_ceiling_live_test.go:275: CAR-DOCUMENT saved=C:\Users\damon\AppData\Local\Temp\TestLiveCarCeiling1148166131\001\car.json bytes=20599
+    car_ceiling_live_test.go:280: CAR-MESH triangles=4792
+--- PASS: TestLiveCarCeiling (465.60s)
+PASS
+ok  	github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/agent	465.969s

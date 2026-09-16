@@ -22,6 +22,17 @@ import (
 // the next pass, which is extending that model anyway and can fold the run into a
 // pattern while it is there.
 //
+// # Who hears it (widened 2026-09-15)
+//
+// Three readers, three places:
+//
+//   - the PERSON, as the turn's notice (noteRepetition);
+//   - a BUILD STEP's model, in its prompt about the model so far (repetitionForStep);
+//   - the model of the NEXT ordinary turn, next to the document it is revising
+//     (repetitionForTurn, called from buildMessages). A3 left this one out, so a
+//     conversational model was never told: it revised the forty children it had
+//     written and wrote them again, while the person was told it could be one line.
+//
 // # Why it is bounded
 //
 // A model that writes one row out writes all of them. Five sentences say what is
@@ -68,6 +79,19 @@ func repetitionForStep(d *Prototype) string {
 		return ""
 	}
 	return "\n\nWritten out one child at a time in the model so far, where one child with a \"pattern\" " +
-		"places the same copies. When this step touches that assembly, write them as the pattern:\n- " +
-		strings.Join(notes, "\n- ")
+		"(or, for top-level parts, one part with a \"repeat\") places the same copies. When this step touches " +
+		"them, write them that way:\n- " + strings.Join(notes, "\n- ")
+}
+
+// repetitionForTurn is what an ordinary turn's model is told about the model it is
+// revising, or "". It follows the document in the same bracketed note, so it reads
+// as a fact about that document rather than as something the person asked for.
+func repetitionForTurn(d *Prototype) string {
+	notes := repetitionNotes(d)
+	if len(notes) == 0 {
+		return ""
+	}
+	return "\n\n[FORGE's check found copies written out one at a time in that model, where one pattern " +
+		"or repeat places the same copies. It builds as it is. If this turn touches them, write them that way:\n- " +
+		strings.Join(notes, "\n- ") + "]"
 }
