@@ -55,6 +55,10 @@ type Worker struct {
 	// approvalRowWrittenForTest runs between checkApproval writing a request row and
 	// recording it on the timeline. Nil outside the fence that stops a worker there.
 	approvalRowWrittenForTest func()
+	// afterTransitionForTest runs after a transition has been written, and an error it
+	// returns replaces the result transition actually got. Nil outside the fence for a
+	// statement the stop cancelled after Postgres had committed it.
+	afterTransitionForTest func(to engine.TaskStatus) error
 }
 
 // WorkerDeps is what a worker needs.
@@ -228,6 +232,32 @@ func (w *Worker) AfterTaskForTest(ctx context.Context, goalID string) { w.afterT
 // stop exactly there instead of racing one against two statements.
 func (w *Worker) OnApprovalRowWrittenForTest(hook func()) { w.approvalRowWrittenForTest = hook }
 
+// OnTransitionWrittenForTest makes hook run after every transition has been written, and
+// lets it replace what the transition returned.
+//
+// # Why a seam and not a race
+//
+// ‼️ The case this reproduces is a statement the stop cancelled while it was on the wire,
+// after Postgres had already committed it: the row moved and the caller was told only
+// that its context was done. Which of the cancel request and the commit reaches the
+// server first is not something a test can decide, so there is no way to land that
+// instant by racing a real stop against a real statement. The seam produces exactly its
+// shape — a committed transition whose caller sees a cancellation — and nothing else. It
+// is nil outside the fence.
+func (w *Worker) OnTransitionWrittenForTest(hook func(to engine.TaskStatus) error) {
+	w.afterTransitionForTest = hook
+}
+
+// PollSweepsForTest runs the three reconciliations Run makes on its polling path — the
+// lease reaper, and the two sweeps it runs when the queue is idle — so a test can hand
+// them the cancelled context a stop leaves Run holding, instead of racing a stop against
+// a sweep that takes one indexed query. AfterTaskForTest exists for the same reason.
+func (w *Worker) PollSweepsForTest(ctx context.Context) {
+	w.reapExpired(ctx)
+	w.releaseWaitingGoals(ctx)
+	w.settleFinishedGoals(ctx)
+}
+
 // handBack returns the task a stopping worker still holds to the queue, at once and
 // without counting the stopped attempt.
 //
@@ -281,9 +311,17 @@ func (w *Worker) sleep(ctx context.Context, d time.Duration) bool {
 
 // reapExpired returns crashed workers' tasks to the queue.
 func (w *Worker) reapExpired(ctx context.Context) {
+	// A stopping worker recovers nobody else's task on its way out. See the note on
+	// settleFinishedGoals: a reconciliation the stop cancelled is the next worker's
+	// poll, not something that failed.
+	if ctx.Err() != nil {
+		return
+	}
 	reaped, err := w.queue.ReapExpiredLeases(ctx, w.pool, w.clock.Now(), 20)
 	if err != nil {
-		w.log.WarnWith(ctx, logx.EventWorkerReaped, err, "worker_id", w.ID)
+		if ctx.Err() == nil {
+			w.log.WarnWith(ctx, logx.EventWorkerReaped, err, "worker_id", w.ID)
+		}
 		return
 	}
 	for _, t := range reaped {
@@ -476,7 +514,16 @@ func (w *Worker) completeTask(ctx context.Context, goal *engine.Goal, task *engi
 		// A verifier that could not produce a verdict has verified nothing.
 		// Treating that as a pass is exactly the failure the verifier exists to
 		// prevent, so it becomes a retry.
-		w.log.WarnWith(ctx, logx.EventVerificationRan, err, "task_id", task.ID)
+		//
+		// ‼️ Unless the stop cancelled the call. Nothing was verified either way, but the
+		// line this wrote — forge.verification.ran with error="context canceled" — is the
+		// same line a verifier that really could produce no verdict writes, so every
+		// graceful stop during verification read as a verifier failure. Not a database
+		// error, so #109's fences never saw it. retryOrFail already returns on a stop;
+		// this is the line beside it.
+		if ctx.Err() == nil {
+			w.log.WarnWith(ctx, logx.EventVerificationRan, err, "task_id", task.ID)
+		}
 		w.retryOrFail(ctx, goal, task, err)
 		return
 	}
@@ -688,6 +735,16 @@ func (w *Worker) heartbeat(ctx context.Context, taskID string) {
 
 func (w *Worker) transition(ctx context.Context, task *engine.Task, to engine.TaskStatus, mut engine.TaskMutation) error {
 	err := w.repo.TransitionTask(ctx, w.pool, task, to, w.clock.Now(), mut)
+	if w.afterTransitionForTest != nil {
+		if forced := w.afterTransitionForTest(to); forced != nil {
+			err = forced
+		}
+	}
+	// A failure a stop is involved in may not be a failure at all: the statement can have
+	// been on the wire when the stop cancelled it. Ask the row before deciding.
+	if err != nil && ctx.Err() != nil && w.stopLanded(ctx, task, to) {
+		return nil
+	}
 	// A transition is a decision, and a stopping worker's decisions are skipped, not
 	// failed: the stop refused it, and handBack gives the task to a worker that decides
 	// again. Logging it said the database was down. See outliving.
@@ -696,6 +753,47 @@ func (w *Worker) transition(ctx context.Context, task *engine.Task, to engine.Ta
 			"task_id", task.ID, "target", string(to))
 	}
 	return err
+}
+
+// stopLanded reports whether a write the stop appeared to cancel had in fact been
+// committed, by reading the row back.
+//
+// # Why the row is asked rather than the error read
+//
+// ‼️ pgx refuses a statement on a context that is ALREADY cancelled, and cancels one
+// that is already ON THE WIRE — and in the second case Postgres may have committed it
+// before the cancel request arrived. The caller is told the same thing either way:
+// context canceled. #109 made a stopping worker skip its failed transitions on the
+// grounds that handBack passes the decision on, which is right for the first case and
+// wrong for the second: a task that really did reach succeeded had no task.succeeded
+// event, and nothing ever came back to notice, because nobody claims a succeeded task.
+// docs/bugfix/2026-09-15-a-stop-still-guessed-at-a-committed-write-and-lost-a-security-record.md
+//
+// The row is the only thing that knows, so this asks it, on a context that outlives the
+// stop for appendEvent's reason. A "no" — including a row some other worker has since
+// moved on from, which this worker's lease makes remote — records nothing, which is the
+// side to be wrong on: a decision that was not made is made again by the next worker.
+// A read that cannot be made at all says the outcome is unknown, in those words, rather
+// than claiming a success or a failure that nobody established.
+func (w *Worker) stopLanded(ctx context.Context, task *engine.Task, to engine.TaskStatus) bool {
+	rec, cancel := outliving(ctx)
+	defer cancel()
+
+	current, err := w.repo.GetTask(rec, w.pool, task.ID)
+	if err != nil {
+		w.log.WarnWith(rec, logx.EventTaskCycleEnded, err,
+			"task_id", task.ID, "target", string(to),
+			"detail", "the stop cancelled this transition while it was on the wire and the row could not be "+
+				"read back, so whether Postgres applied it is UNKNOWN; nothing has been recorded either way")
+		return false
+	}
+	if current.Status != to {
+		return false
+	}
+	// It landed, so the decision was made and its record is owed. TransitionTask sets
+	// this on the way out of its own success, and every caller reads it afterwards.
+	task.Status = to
+	return true
 }
 
 func (w *Worker) failTask(ctx context.Context, task *engine.Task, code errs.Code, detail string) {
@@ -806,8 +904,13 @@ func (w *Worker) rawToolOutput(ctx context.Context, taskID string) []string {
 		select tool_name, coalesce(raw_output, ''), status
 		  from forge_tool_calls where task_id = $1 order by created_at asc limit 20`, taskID)
 	if err != nil {
-		w.log.WarnWith(ctx, logx.EventVerificationRan, err, "task_id", taskID,
-			"detail", "raw tool output could not be read; the verifier is judging the executor's account of it instead")
+		// Not when the stop cancelled the read, for the reason above: no verdict is
+		// being reached on thinner evidence, because the verifier call after this one
+		// is cancelled too.
+		if ctx.Err() == nil {
+			w.log.WarnWith(ctx, logx.EventVerificationRan, err, "task_id", taskID,
+				"detail", "raw tool output could not be read; the verifier is judging the executor's account of it instead")
+		}
 		return nil
 	}
 	defer rows.Close()
