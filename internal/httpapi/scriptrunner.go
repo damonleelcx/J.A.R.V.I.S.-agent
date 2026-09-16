@@ -116,7 +116,7 @@ func (r kernelSolids) BuildSurface(ctx context.Context, doc *geometry.Document) 
 	return agent.Built{Parts: out, Interferences: built.Interferences,
 		Truncated: built.InterferencesTruncated,
 		Checked:   built.InterferenceBooleans + built.InterferenceReused,
-		Pairs:     built.InterferencePairs, Skipped: built.Skipped}, nil
+		Pairs:     built.InterferencePairs, Found: built.InterferencesFound, Skipped: built.Skipped}, nil
 }
 
 // solidBuilder returns the thing that builds a surface, or nil when this

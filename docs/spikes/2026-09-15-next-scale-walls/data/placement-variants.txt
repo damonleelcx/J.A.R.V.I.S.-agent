@@ -1,0 +1,8 @@
+placement: 0 of 5075 differ bit-for-bit
+box located_exact same as moved: True shares TShape with definition: True True
+cylinder located_exact same as moved: True shares TShape with definition: True True
+extrusion located_exact same as moved: True shares TShape with definition: True True
+loc*shape 211.6 us
+located_exact 16.9 us
+_placement 92.2 us
+placement_fast 12.0 us

@@ -1155,6 +1155,7 @@ drill "a part that was never built is never mentioned" internal/agent/interferen
   ./internal/agent 'TestInterference_APartThatWasNotBuiltIsNamedAsUnchecked'
 
 drill "the render drops how much was checked" internal/agent/render.go \
+  's = s.replace("\n\t\t\t\t\tChecked: built.Checked, Pairs: built.Pairs, Found: built.Found, Skipped: built.Skipped,", "\n\t\t\t\t\tSkipped: built.Skipped,", 1)' \
   's = s.replace("\n\t\t\t\t\tChecked: built.Checked, Pairs: built.Pairs, Skipped: built.Skipped,\n\t\t\t\t\tParts: built.Parts}", "\n\t\t\t\t\tParts: built.Parts}", 1)' \
   ./internal/agent 'TestRender_CarriesHowMuchTheCheckCovered'
 
@@ -2960,6 +2961,90 @@ drill "a multiple is named before a value a parameter holds" internal/agent/lite
 drill "the car harness does not count bound placements" internal/agent/car_ceiling_live_test.go \
   's = s.replace("\t\t\tif len(c.PositionFrom) > 0 {\n\t\t\t\tbound++", "\t\t\tif false {\n\t\t\t\tbound++", 1)' \
   ./internal/agent 'TestCarMeasure_CountsChildrenAttachedAtAnInterface'
+
+echo
+echo "Next scale walls: the interference list's bound, clashes slid along prisms, placed copies"
+# Added 2026-09-15 (next scale walls). The 1M airframe barrel's reply listed 1,760,000
+# clashes; a reply now lists the worst 10,000 and counts all of them, and a list cut
+# to its bound says so in the reply, in Go and in the turn. A clash now slides along a
+# cylinder's length and an extrusion's depth, as it did along a box. And an occurrence
+# is placed without the B-rep copy and the Plane build123d made and discarded for each,
+# with the assembly's volume counted once per definition.
+drill "a list is cut without saying how many there were" internal/domain/cad/sidecar.py \
+  's = s.replace("        \"interferences_found\": clash_pairs.get(\"found\", len(clashes)),\n", "        \"interferences_found\": len(clashes),\n", 1)' \
+  ./internal/domain/cad 'TestKernel_(AListCutToItsBoundIsTheWorstAndSaysHowManyThereWere|AReplyWithMoreClashesThanItListsCountsThemAll)'
+
+drill "a cut list says it is whole" internal/domain/cad/sidecar.py \
+  's = s.replace("\"summarized\": len(found) > len(listed)}", "\"summarized\": False}", 1)' \
+  ./internal/domain/cad 'TestKernel_AListCutToItsBoundIsTheWorstAndSaysHowManyThereWere'
+
+drill "a cut list keeps the first found, not the worst" internal/domain/cad/sidecar.py \
+  's = s.replace("key=lambda f: (-f[0], f[1]))", "key=lambda f: f[1])", 1)' \
+  ./internal/domain/cad 'TestKernel_(AListCutToItsBoundIsTheWorstAndSaysHowManyThereWere|AReplyWithMoreClashesThanItListsCountsThemAll)'
+
+drill "Go believes a count smaller than the list" internal/domain/cad/cad.go \
+  's = s.replace("\tif res.InterferencesFound != nil && *res.InterferencesFound > out.InterferencesFound {", "\tif res.InterferencesFound != nil {", 1)' \
+  ./internal/domain/cad 'TestBuildOf_AListShorterThanItsCountIsASummary'
+
+drill "Go reads a list shorter than its count as whole when the flag is missing" internal/domain/cad/cad.go \
+  's = s.replace("out.InterferencesSummarized = res.InterferencesSummarized || out.InterferencesFound > len(res.Interferences)", "out.InterferencesSummarized = res.InterferencesSummarized", 1)' \
+  ./internal/domain/cad 'TestBuildOf_AListShorterThanItsCountIsASummary'
+
+drill "a summarized list reads as a whole one in the turn" internal/agent/interference.go \
+  's = s.replace("\tif listed := len(sheet.Interferences); sheet.Found > listed {", "\tif listed := len(sheet.Interferences); false && sheet.Found > listed {", 1)' \
+  ./internal/agent 'TestInterference_ASummarizedListSaysHowManyWereFound'
+
+drill "\"and N more\" counts only the list" internal/agent/interference.go \
+  's = s.replace("\tif total < len(found) {\n\t\ttotal = len(found)\n\t}\n", "\ttotal = len(found)\n", 1)' \
+  ./internal/agent 'TestInterference_ASummarizedListSaysHowManyWereFound'
+
+drill "the render drops how many were found" internal/agent/render.go \
+  's = s.replace("Pairs: built.Pairs, Found: built.Found, Skipped:", "Pairs: built.Pairs, Skipped:", 1)' \
+  ./internal/agent 'TestRender_CarriesHowMuchTheCheckCovered'
+
+drill "a cylinder slides across its round section" internal/domain/cad/sidecar.py \
+  's = s.replace("            half = (None, float(d[\"height\"]) / 2, None)\n", "            half = (float(d[\"radius\"]), float(d[\"height\"]) / 2, float(d[\"radius\"]))\n", 1)' \
+  ./internal/domain/cad 'TestKernel_AClashSlidAlongAPrismIsTheClashMeasuredAgain'
+
+drill "a cone is taken for a cylinder" internal/domain/cad/sidecar.py \
+  's = s.replace("        elif kind in (\"cylinder\", \"cone\") and d.get(\"radius_top\", d[\"radius\"]) == d[\"radius\"]:\n", "        elif kind in (\"cylinder\", \"cone\"):\n", 1)' \
+  ./internal/domain/cad 'TestKernel_AClashSlidAlongAPrismIsTheClashMeasuredAgain'
+
+drill "a cylinder's slab is not claimed" internal/domain/cad/sidecar.py \
+  's = s.replace("            half = (None, float(d[\"height\"]) / 2, None)\n", "            half = None\n", 1)' \
+  ./internal/domain/cad 'TestKernel_CollarsAlongAShaftAndCleatsAlongAGirderPayForOneBooleanEach'
+
+drill "an extrusion's slab is not claimed" internal/domain/cad/sidecar.py \
+  's = s.replace("            half = (None, None, float(d[\"depth\"]) / 2)\n", "            half = None\n", 1)' \
+  ./internal/domain/cad 'TestKernel_CollarsAlongAShaftAndCleatsAlongAGirderPayForOneBooleanEach'
+
+drill "a located copy copies its B-rep again" internal/domain/cad/sidecar.py \
+  's = s.replace("    if not _PLACE_WITHOUT_COPYING:\n        return location * shape\n    cls = shape.__class__\n", "    return location * shape\n    cls = shape.__class__\n", 1)' \
+  ./internal/domain/cad 'TestKernel_PlacingMoreCopiesCopiesNoBRepsAndBuildsNoMorePlanes'
+
+drill "a placement builds a Plane per occurrence again" internal/domain/cad/sidecar.py \
+  's = s.replace("    if frames is None or not _PLACE_WITHOUT_COPYING:\n", "    if True:\n", 1)' \
+  ./internal/domain/cad 'TestKernel_PlacingMoreCopiesCopiesNoBRepsAndBuildsNoMorePlanes'
+
+drill "the frame cache is keyed by part of the matrix" internal/domain/cad/sidecar.py \
+  's = s.replace("    key = repr(m)\n", "    key = repr(m[:3])\n", 1)' \
+  ./internal/domain/cad 'TestKernel_APlacedCopyIsTheCopyBuild123dMade'
+
+drill "a cached placement is not inverted" internal/domain/cad/sidecar.py \
+  's = s.replace("    trsf.Invert()\n    return Location(TopLoc_Location(trsf))\n", "    return Location(TopLoc_Location(trsf))\n", 1)' \
+  ./internal/domain/cad 'TestKernel_APlacedCopyIsTheCopyBuild123dMade'
+
+drill "a located copy shares its definition's attributes" internal/domain/cad/sidecar.py \
+  's = s.replace("            setattr(out, key, copy.deepcopy(value, memo))\n", "            setattr(out, key, value)\n", 1)' \
+  ./internal/domain/cad 'TestKernel_APlacedCopyIsTheCopyBuild123dMade'
+
+drill "the assembly integrates every copy again" internal/domain/cad/sidecar.py \
+  's = s.replace("        if p is None:\n            total += _counted_volume(solid)\n", "        if True:\n            total += _counted_volume(solid)\n", 1)' \
+  ./internal/domain/cad 'TestKernel_PlacingMoreCopiesCopiesNoBRepsAndBuildsNoMorePlanes'
+
+drill "the assembly volume forgets all but the last copy" internal/domain/cad/sidecar.py \
+  's = s.replace("        total += counted[p[0]]\n", "        total = counted[p[0]]\n", 1)' \
+  ./internal/domain/cad 'TestKernel_APlacedCopyIsTheCopyBuild123dMade'
 
 if [ "$MODE" = "list" ]; then
   exit 0
