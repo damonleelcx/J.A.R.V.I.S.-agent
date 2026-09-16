@@ -438,9 +438,13 @@ func (c *Conversation) buildMessages(char persona.Character, domain domainpack.D
 	 * as the fallback for a deployment with no database, where there is no record
 	 * to read and the summary is all there is. */
 	if model := CurrentModel(current); model != "" {
+		// What the check found written out one at a time in that model rides next to
+		// it (agent/repetition.go). Before, only the PERSON was told, as a notice; the
+		// model revising the document never heard it, so the next turn wrote the same
+		// forty children again. Fence: TestBuildMessages_ATurnIsToldWhatCouldBeOnePattern.
 		user = "[The model on screen right now, which you are revising. Reuse these part " +
 			"ids; change only what was asked for and copy every other dimension EXACTLY " +
-			"as it appears here:\n" + model + "]\n\n" + message
+			"as it appears here:\n" + model + "]" + repetitionForTurn(current) + "\n\n" + message
 	} else if workspaceNote != "" {
 		user = "[What is on screen right now: " + workspaceNote + "]\n\n" + message
 	}

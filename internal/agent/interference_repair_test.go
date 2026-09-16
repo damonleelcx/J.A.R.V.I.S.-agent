@@ -153,7 +153,12 @@ func checkSummaryCounts(t *testing.T, section string, buried int) {
 	if of != buried {
 		t.Errorf("the summary says %d buried, the list has %d", of, buried)
 	}
-	lines := regexp.MustCompile(`(?m)^- Group (\d+) of (\d+), (\d+) buried clash`).FindAllStringSubmatch(section, -1)
+	// ‼️ The optional name is georepair.go's, not this summary's: since #120 every
+	// fault line the repair is shown is prefixed with the part it is about, so a
+	// group line reads "- <part> Group 1 of 2, …". Anchored on "^- Group" this found
+	// no lines at all and read as a summary that had lost every count. What the
+	// fence holds is unchanged: the numbering and the clash counts.
+	lines := regexp.MustCompile(`(?m)^- (?:\S+ )?Group (\d+) of (\d+), (\d+) buried clash`).FindAllStringSubmatch(section, -1)
 	sum := 0
 	for n, l := range lines {
 		if atoi(l[1]) != n+1 || atoi(l[2]) != groups {
@@ -277,8 +282,14 @@ func TestInterference_AFewBuriedClashesAreAskedAboutAsBefore(t *testing.T) {
 		{A: "right-upright", B: "right-front-rotor", Volume: 300, Fraction: 0.7},
 		{A: "tyre", B: "rim", Volume: 20, Fraction: 0.02},
 	}
+	// ‼️ Sized on the lines AS SENT, which since #122 carry a placement note each
+	// (placedByNotes, inside repairAsks and inside the bound). Sized on un-noted
+	// bytes this fixture asks for a list that no longer fits and gets a summary.
+	asLines := func(found []geometry.Interference) []geometry.Problem {
+		return placedByNotes(barrelLike(), found, geometry.InterferenceProblems(found))
+	}
 	fits := barrelClashes(1)
-	for problemBytes(geometry.InterferenceProblems(barrelClashes(len(fits)+1))) <= maxRepairProblemBytes {
+	for problemBytes(asLines(barrelClashes(len(fits)+1))) <= maxRepairProblemBytes {
 		fits = barrelClashes(len(fits) + 1)
 	}
 	for name, found := range map[string][]geometry.Interference{"the live car": car, "the longest list that fits": fits} {
@@ -292,8 +303,13 @@ func TestInterference_AFewBuriedClashesAreAskedAboutAsBefore(t *testing.T) {
 
 			section, _ := asked(t, stub.asked)
 			var want []string
-			for _, p := range geometry.InterferenceProblems(found) {
-				want = append(want, "- "+p.Detail)
+			// ‼️ NAMED, and noted. georepair.go prefixes each line with the part it is
+			// about (#120's live-car finding), and placedByNotes adds where a copy in a
+			// tree came from (#122). Both are deliberate changes to what a repair is
+			// shown; what this fence holds is unchanged — a list that fits is asked as
+			// one line per finding, in order, and never as a summary.
+			for _, p := range asLines(found) {
+				want = append(want, "- "+strings.TrimSpace(p.Name+" "+p.Detail))
 			}
 			if section != strings.Join(want, "\n") {
 				t.Errorf("a list that fits was not asked as it was:\n%.600s", section)

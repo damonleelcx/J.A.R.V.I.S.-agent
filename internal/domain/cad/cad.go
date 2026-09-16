@@ -84,6 +84,10 @@ type Kernel struct {
 	scripts bool
 	// timeout is how long one build may take: buildTimeout, except in the fences
 	// that need a limit short enough to cross on purpose. Not a setting.
+	//
+	// Each slot COPIES it when the pool is made and enforces it on its own
+	// process, so a build that runs out of time kills that slot's process and
+	// nobody else's. Like size, it is read when the pool is made and not after.
 	timeout time.Duration
 
 	// size is how many processes serve builds at once. The pool is made on
@@ -628,13 +632,12 @@ func (k *Kernel) build(ctx context.Context, doc geometry.Document, unit geometry
 		// failure is a process that died between requests — a machine asleep, an
 		// OOM, somebody's pkill — and restarting answers that. Retrying twice
 		// would turn a kernel that crashes on a particular document into a loop.
+		// The retry replaces THIS slot's process; the others are untouched.
 		//
 		// ‼️ A build that ran out of time is NOT retried: its process was working,
 		// and a fresh one takes as long again. Fences:
 		// TestKernel_ABuildThatRunsOutOfTimeIsNotRetriedAndSaysSo, and
 		// TestKernel_AProcessThatDiesMidBuildIsStillRetriedOnce for the retry.
-		//
-		// The retry replaces THIS slot's process; the others are untouched.
 		s.stop()
 		k.log.Warn(ctx, logx.EventCADRestarted, "slot", s.slot, "detail", err.Error())
 		res, err = s.roundTrip(ctx, req)
@@ -642,9 +645,16 @@ func (k *Kernel) build(ctx context.Context, doc geometry.Document, unit geometry
 	if err != nil {
 		if errors.As(err, &late) {
 			// The killed process is reaped and THIS SLOT reset NOW, so the next
-			// build on it starts a fresh process instead of spending its one retry
-			// discovering this one is dead. The other slots are untouched.
-			// Fence: TestKernel_AfterATimeoutTheKernelStartsAFreshProcessForTheNextBuild.
+			// build that takes this slot starts a fresh process instead of
+			// spending its one retry discovering this one is dead.
+			//
+			// ‼️ Only this slot. The kill in roundTrip and this reset both go
+			// through the sidecar that ran the build, so a slow assembly costs
+			// the deployment one process and not the pool: the other slots keep
+			// the processes they have, and a build already running in one is not
+			// interrupted. Fences:
+			// TestKernel_AfterATimeoutTheKernelStartsAFreshProcessForTheNextBuild
+			// and TestKernel_ATimeoutInOneSlotLeavesTheOtherSlotsServing.
 			s.stop()
 			k.log.Warn(ctx, logx.EventCADTimedOut, "slot", s.slot, "detail", late.Error())
 			return nil, lateRefusal(op, late)
@@ -769,6 +779,15 @@ func (k *Kernel) BuildMesh(ctx context.Context, doc geometry.Document, unit geom
 // "the CAD kernel did not answer, and restarting it did not help" under
 // CONNECTOR_UNAVAILABLE. BuildDocument asks errors.As for this, and does not
 // retry it.
+//
+// # What the pool changed
+//
+// One of these is about ONE SLOT. The sidecar that ran the build recorded it and
+// killed its own process (sidecar.roundTrip), and BuildDocument resets that slot
+// and nothing else. A pool makes the distinction matter more, not less: before,
+// a wrongly retried timeout cost the deployment its only process twice over;
+// now it would also take a slot out of service that the other builds are still
+// being served by.
 type lateError struct {
 	// limit is the kernel's own limit, when that is what ran out.
 	limit time.Duration

@@ -82,6 +82,13 @@ func (c *Conversation) repairIfPartsOverlap(ctx context.Context, reply *Reply, s
 	// Only the prompt is summarized (repairAsks; repair bound and check profile). The
 	// repair is judged by every buried clash the kernel FOUND, which past the list's
 	// bound is its count, not the list (repairVerdict).
+	// ‼️ A buried part in a tree is named by where it IS ("wheel/lug-nut-3"), and that
+	// path is not something a repair can edit: the copy comes from a child, its
+	// pattern and a definition. The 2026-09-15 live car buried every lug nut in its
+	// hub, rim and tyre and the repair was shown only the paths. So each finding says
+	// which child places it and, for a pattern copy, which pattern about which axis.
+	// #122 added that; repairAsks now does it, inside the bound — see there for why.
+	// Fence: TestInterference_ARepairIsToldWhichChildPlacesABuriedCopy.
 	refused := ""
 	if fixed := c.repairGeometry(ctx, reply.Prototype, repairAsks(reply.Prototype, found, sheet.Found)); fixed != nil {
 		// Re-built, not re-read: the question "is it still inside" can only be
@@ -307,7 +314,18 @@ func repairAsks(doc *Prototype, found []geometry.Interference, total int) []geom
 // path is repairAsks and only it chooses the budget; nothing else passes one but
 // TestScaleUp_MeasureTheRepairPrompt, which sweeps candidates to choose the constant.
 func repairAsksWithin(doc *Prototype, found []geometry.Interference, total, limit int) []geometry.Problem {
-	buried := geometry.InterferenceProblems(found)
+	// ‼️ #122's placement notes go on the LINES, and BEFORE the bound is measured.
+	//
+	// A line-per-finding says "Rivet is 83% inside Stringer" and nothing about where
+	// the rivet came from, so a repair shown it cannot edit anything: the copy comes
+	// from a child, its pattern and a definition (placedByNotes). The SUMMARY below
+	// needs no note — a group is keyed by where its parts came from and already
+	// prints `placed by bay/sector/stringer-rivets` (describeGroup).
+	//
+	// Measured before the bound, so the bound still holds on what is actually sent:
+	// a list of lines that only fits WITHOUT its notes is summarized instead, which
+	// is the same trade the bound already makes everywhere else.
+	buried := placedByNotes(doc, found, geometry.InterferenceProblems(found))
 	if problemBytes(buried) <= limit {
 		return buried
 	}
@@ -578,4 +596,51 @@ func list(found []geometry.Interference, total int) string {
 		parts = append(parts, fmt.Sprintf("and %d more", more))
 	}
 	return strings.Join(parts, " ")
+}
+
+// placedByNotes adds to each buried finding in a tree which child places the part,
+// so the repair edits the design that put it there. A finding about top-level parts
+// is returned unchanged.
+func placedByNotes(doc *Prototype, found []geometry.Interference, problems []geometry.Problem) []geometry.Problem {
+	if doc == nil || doc.Root == "" {
+		return problems
+	}
+	other := map[string]string{}
+	for _, f := range found {
+		other[f.A+"\x00"+f.Describe()] = f.B
+	}
+	out := make([]geometry.Problem, len(problems))
+	for i, p := range problems {
+		out[i] = p
+		var where []string
+		for _, id := range []string{p.Name, other[p.Name+"\x00"+p.Detail]} {
+			if s := placedBySentence(*doc, id); s != "" {
+				where = append(where, s)
+			}
+		}
+		if len(where) > 0 {
+			out[i].Detail = p.Detail + " (" + strings.Join(where, "; ") + ")"
+		}
+	}
+	return out
+}
+
+// placedBySentence says what places one flattened part, or "".
+func placedBySentence(doc geometry.Document, id string) string {
+	at, ok := doc.PlacedBy(id)
+	if !ok {
+		return ""
+	}
+	if at.Copy > 0 && at.Pattern != nil {
+		kind := strings.ToLower(strings.TrimSpace(at.Pattern.Kind))
+		how := fmt.Sprintf("a %s pattern", kind)
+		if kind == "polar" {
+			how = fmt.Sprintf("a polar pattern about %q, which turns every copy about that axis through the "+
+				"origin of the frame the child is measured in", at.Pattern.About)
+		}
+		return fmt.Sprintf("%s is copy %d of child %q of assembly %q, placed by %s: move that child or change "+
+			"its pattern or the definition %q, not the copy", id, at.Copy, at.Child, at.Assembly, how, at.Ref)
+	}
+	return fmt.Sprintf("%s is placed by child %q of assembly %q: move that child or change %q, not the placed path",
+		id, at.Child, at.Assembly, at.Ref)
 }

@@ -2159,3 +2159,19 @@
 @media (max-width: 1199px) {
   .wbmobile { display: grid; }
 }
+
+/* The assembly tree (Phase 6, stage W2). Rows share the Parts panel's hover and
+ * selection colours, so a selected occurrence reads the same wherever it was
+ * chosen — a row here, a part there, or a click on the model. */
+.tree-tools { display: flex; gap: 6px; margin: 4px 0 6px; }
+.tree-tools input { flex: 1; min-width: 0; }
+.tree { max-height: 42vh; overflow: auto; }
+.tnode { display: flex; align-items: center; gap: 4px; padding-block: 2px; border-radius: 6px; font-size: 12.5px; }
+.tnode:hover { background: var(--surface-hover); }
+.tnode[aria-selected="true"] { background: var(--surface-hover); box-shadow: inset 0 0 0 1px var(--core-dim); }
+.tnode .tw { width: 16px; flex: none; background: none; border: 0; color: var(--ink-dim); cursor: pointer; padding: 0; }
+.tnode .nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: pointer; }
+.tnode .dim { color: var(--ink-dim); font-size: 11px; }
+.tnode .iso { font-size: 11px; padding: 1px 6px; }
+.tnode .iso[aria-pressed="true"] { color: var(--core); }
+.tree-more { padding: 4px 2px; }
