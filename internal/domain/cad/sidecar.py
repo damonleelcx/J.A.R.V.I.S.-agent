@@ -1425,8 +1425,11 @@ def _slabs(key, shape):
     box = _box_of(shape)
     half = None
     try:
-        spec = json.loads(key)
-        kind, d = spec.get("shape"), spec.get("dims") or {}
+        # The key is a tuple, not JSON (see _shape_key): "shape" is its first field
+        # raw, and "dims" its second as the sorted (name, value) pairs. Read by
+        # position because _SHAPE_KEYS defines the order, and turned back into a
+        # dict once per DEFINITION, not once per pair.
+        kind, d = key[0], dict(key[1] or ())
         if box is None:
             half = None
         elif kind == "box":
@@ -1893,8 +1896,60 @@ _SHAPE_KEYS = ("shape", "dims", "outline", "holes", "hole_parents", "path",
                "section_frame", "axis", "step", "mirrored")
 
 
+# # A tuple, not a JSON string (fences that can fail)
+#
+# Measured 2026-09-15 (docs/spikes/2026-09-15-last-hot-spots): json.dumps of these
+# ten fields was 4.03 us of the 44.2 us an occurrence paid in the shapes phase, and
+# json.encoder.iterencode was 0.446 s of own time at 90,880 occurrences. #121
+# measured the tuple form at 1.28 us and left it unapplied, because the key was
+# PARSED BACK as JSON by _slabs, which made it a contract between two functions
+# rather than a local choice.
+#
+# Re-measured 2026-09-16 with that same micro-benchmark on a quiet machine (6-22%
+# CPU), two passes, before and after interleaved: 4.20 and 4.02 us become 0.514 and
+# 0.523 us. That is below #121's own repr-of-every-field tuple, which the same
+# benchmark puts at 1.42-1.50 us, because a scalar field here is not stringified at
+# all. ‼️ The end-to-end effect is much smaller than the micro number: the shapes
+# phase of a 90,880-occurrence synthetic model goes 2.68/2.76 s to 2.59/2.55 s, about
+# 1.65 us an occurrence rather than 3.6, and the whole build moves 4.20 s to 4.13 s,
+# which is inside run-to-run noise. The change is worth having and it is cheap, but
+# what is MEASURED is the micro-benchmark, not a build that got faster.
+#
+# The tuple below is that contract made explicit instead of textual, and it is
+# cheaper again than a tuple of ten reprs, because:
+#
+#   - a scalar field goes in RAW. "shape", "axis" and "mirrored" are already
+#     hashable, and "step" is a whole imported STEP file - repr() or json.dumps()
+#     of that copies the text once per occurrence, where the tuple just holds it;
+#   - ‼️ "dims" is CANONICALIZED, not repr'd. It is map[string]float64 on the Go
+#     side (geometry/solid.go), so its key order is not part of the contract and
+#     two solids equal in every dimension must land on ONE key however the map
+#     was written - which is exactly what json.dumps(sort_keys=True) gave and a
+#     plain repr() of a dict would silently lose, splitting one definition in two;
+#   - the remaining fields are structs and slices on the Go side ("outline" and
+#     "path" are *Curve, "holes" []Curve, "section_frame" *[9]float64), so their
+#     order IS the contract and repr() of them is canonical already.
+#
+# It never crosses the JSON boundary, which is why no text form is kept: a key is
+# a dict key in built_once, in _tessellate's `index`, in _measures' and _entries'
+# `local`, in _assembly_volume's `counted` and in _interferences' `shape_ids` and
+# `slabs`, and the reply refers to a definition by its INTEGER index
+# (mesh_instances' "definition"), never by its key. It is never logged or
+# formatted into a message either - every sentence a build returns names a part
+# by its label or id (see `skipped`).
+#
+# Fences: TestKernel_APlacedCopyIsTheCopyBuild123dMade (every copy, mesh, STEP and
+# part property is still build123d's) and
+# TestKernel_APairKeyWithoutLocationsIsTheKeyBuild123dGave (every slab is still
+# read from the key), with drills for a dropped field and for dims losing its
+# canonical order.
 def _shape_key(solid):
-    return json.dumps({k: solid.get(k) for k in _SHAPE_KEYS}, sort_keys=True, separators=(",", ":"))
+    dims = solid.get("dims")
+    return (solid.get("shape"), None if dims is None else tuple(sorted(dims.items())),
+            repr(solid.get("outline")), repr(solid.get("holes")),
+            repr(solid.get("hole_parents")), repr(solid.get("path")),
+            repr(solid.get("section_frame")), solid.get("axis"),
+            solid.get("step"), solid.get("mirrored"))
 
 
 # The assembly's volume from each definition's, once per definition (next scale walls).

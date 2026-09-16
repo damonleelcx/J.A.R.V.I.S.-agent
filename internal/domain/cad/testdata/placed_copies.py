@@ -117,10 +117,41 @@ def run(sidecar, fast, fmt, request):
     return reply, captured
 
 
+def is_location(value):
+    """A build123d Location (or a Rotation, which is one)."""
+    return hasattr(value, "wrapped") and hasattr(value.wrapped, "Transformation")
+
+
+def location_object(value):
+    """A Location as the OBJECT it is, not only as the numbers it holds.
+
+    # Why the numbers are not enough (fences that can fail)
+
+    ‼️ Added 2026-09-15. Until now this file compared every placement through
+    `transformation()` alone, and compared a `__dict__` only for the placed SOLID.
+    So `_location_of` — which builds build123d's `Location(top_loc)` by hand,
+    setting exactly the two attributes the constructor sets — was fenced only on
+    the transformation it carries, and nothing inspected the object itself. #121
+    drilled that gap and its drill stayed green: deleting `out.location_index = 0`
+    changed no number anywhere, and the fence reported 0 differences on 174 solids
+    (docs/spikes/2026-09-15-last-hot-spots, "Drills").
+
+    A Location with `location_index` missing is not the object build123d's
+    constructor returns, and anything that later reads that attribute — or
+    deepcopies, pickles or repr's the Location — sees a different object while
+    every transformation still matches to the bit. So the ATTRIBUTES are compared,
+    by name and by value, against what the real constructor set in the reference
+    run.
+    """
+    return [type(value).__name__, sorted(value.__dict__),
+            value.__dict__.get("location_index"), transformation(value)]
+
+
 def attribute(value):
-    """An attribute as something comparable: a location or rotation by its numbers."""
-    if hasattr(value, "wrapped") and hasattr(value.wrapped, "Transformation"):
-        return [type(value).__name__, transformation(value)]
+    """An attribute as something comparable: a location or rotation as the object
+    it is (see location_object), which includes its numbers."""
+    if is_location(value):
+        return location_object(value)
     if isinstance(value, (int, float, str, bool, type(None))):
         return value
     if isinstance(value, (list, tuple)):
@@ -142,9 +173,78 @@ def step_body(reply):
     return NAUO_ID.sub("NEXT_ASSEMBLY_USAGE_OCCURRENCE('#'", WRAP.sub("", text))
 
 
+def shape_keys(sidecar, problems):
+    """What the shape key separates and what it must NOT separate.
+
+    # Why this cannot be left to the comparison below (fences that can fail)
+
+    ‼️ Added 2026-09-15. Every comparison in compare() runs the SAME _shape_key on
+    both sides, so a key that drops a field, or that stops treating two spellings
+    of one shape as one shape, is invisible to it: both runs share a definition
+    they should not, and agree perfectly about it. The key therefore has to be
+    asserted directly.
+
+    Two properties, both of which the key had before it became a tuple
+    (docs/spikes/2026-09-15-last-hot-spots, recommendation 2):
+
+      - every distinct kind in the fixture is a distinct definition — "mirrored"
+        included, which is what makes `ell` and `ell-m` two shapes and not one;
+      - "dims" is a MAP on the Go side (geometry/solid.go), so the same dimensions
+        written in a different key order are the same shape. json.dumps(sort_keys=True)
+        gave that for free; a tuple has to sort the pairs to keep it.
+    """
+    solids = fixture(1)["solids"]
+
+    def kind_of(part_id):
+        """Which shape a fixture part is an occurrence of.
+
+        The seven kinds are placed as "<kind>-<matrix>-<copy>"; the three parts the
+        feature uses are named outright. ‼️ plate-cut and plate-whole are ONE kind
+        deliberately — the same box, one of which an operation later cuts — so the
+        key MUST cover both, and a check that expected them to differ would be
+        asserting the opposite of what building once per definition means.
+        """
+        if part_id in ("plate-cut", "plate-whole"):
+            return "plate"
+        if part_id == "drill":
+            return "drill"
+        return part_id.rsplit("-", 2)[0]
+
+    keys = {}
+    for solid in solids:
+        keys.setdefault(sidecar._shape_key(solid), set()).add(kind_of(solid["id"]))
+    kinds = {kind_of(solid["id"]) for solid in solids}
+    if len(keys) != len(kinds):
+        problems.append("the fixture has %d kind(s) but %d shape key(s)" % (len(kinds), len(keys)))
+    for names in keys.values():
+        if len(names) > 1:
+            problems.append("one shape key covers %s, which are different shapes"
+                            % " and ".join(sorted(names)))
+    box = next(s for s in solids if s["shape"] == "box")
+    # ‼️ Reversed, not sorted: sorting this fixture's dims happens to reproduce the
+    # order they are written in, so a "reordered" copy built by sorting is the SAME
+    # dict and the check tests nothing. Found by drilling it — the mutation that
+    # drops the sort stayed green against the sorted version of this check.
+    swapped = dict(reversed(list(box["dims"].items())))
+    if list(swapped) == list(box["dims"]):
+        problems.append("the dims order check tests nothing: %s's dims read the same either way"
+                        % box["id"])
+    reordered = dict(box, dims=swapped)
+    if sidecar._shape_key(box) != sidecar._shape_key(reordered):
+        problems.append("the same dims written in another key order is a different shape key: "
+                        "%s against %s" % (sidecar._shape_key(reordered), sidecar._shape_key(box)))
+    try:
+        hash(sidecar._shape_key(box))
+    except TypeError as exc:
+        problems.append("a shape key cannot be used as a dict key: %s" % exc)
+    return len(keys)
+
+
 def compare(sidecar, problems):
     request = fixture(1)
     checked = 0
+    # id(Location) -> (what holds it, the object), for the freshness check below.
+    shared_locations = {}
     for fmt in ("", "mesh", "step"):
         ref, ref_solids = run(sidecar, False, fmt, request)
         new, new_solids = run(sidecar, True, fmt, request)
@@ -178,8 +278,28 @@ def compare(sidecar, problems):
             if (p is None) != (q is None):
                 problems.append("%s: a copy in one run and not the other" % what)
             elif p is not None:
-                if p[0] != q[0] or transformation(p[1]) != transformation(q[1]):
-                    problems.append("%s: the placement recorded differs" % what)
+                if p[0] != q[0]:
+                    problems.append("%s: the shape key recorded differs" % what)
+                # The placement as the OBJECT build123d's constructor returns, not
+                # only as its twelve numbers: see location_object. This is what
+                # catches a _location_of that sets the wrong attributes.
+                if location_object(p[1]) != location_object(q[1]):
+                    problems.append("%s: the placement is %s, build123d's %s" % (
+                        what, location_object(q[1]), location_object(p[1])))
+                # ‼️ A placement and a copy's own Location are FRESH per occurrence,
+                # never the definition's and never another copy's — _located's plan
+                # carries the definition's attribute VALUES, so a shared Location
+                # would let one occurrence's placement be changed through another's.
+                # Recorded with the object itself, never by id() alone: CPython
+                # reuses the id of a collected object, which is the same trap the
+                # per-definition plan had to avoid (see sidecar.py, _located).
+                for kind, loc in [("placement", q[1])] + [
+                        (k, v) for k, v in b.__dict__.items() if is_location(v)]:
+                    owner = shared_locations.get(id(loc))
+                    if owner is not None and owner[1] is loc:
+                        problems.append("%s: its %s is the same Location object as %s's" % (
+                            what, kind, owner[0]))
+                    shared_locations[id(loc)] = ("%s %s" % (what, kind), loc)
                 # ‼️ B-reps are compared WITHIN a run. Each run builds its own
                 # definitions, so no B-rep of one run is a partner of the other's; the
                 # first version of this fence compared across runs and reported every
@@ -290,8 +410,10 @@ def counts(sidecar, fast, copies):
 def main():
     sidecar = load(sys.argv[1])
     problems = []
+    distinct_keys = shape_keys(sidecar, problems)
     checked = compare(sidecar, problems)
-    out = {"checked": checked, "problems": problems[:40], "problem_count": len(problems),
+    out = {"checked": checked, "distinct_keys": distinct_keys,
+           "problems": problems[:40], "problem_count": len(problems),
            "counts": {"reference": {"1": counts(sidecar, False, 1), "8": counts(sidecar, False, 8)},
                       "shipped": {"1": counts(sidecar, True, 1), "8": counts(sidecar, True, 8)}}}
     json.dump(out, sys.stdout)
