@@ -295,6 +295,14 @@ About "prototype":
   assembly, and "at": "front-left/hub" names the interface "hub" on the sibling
   placed as "front-left" (a pattern copy by its copy id, "bolt-3/seat"). Move
   the interface and everything attached to it follows.
+  An "at" never leaves its own assembly. An assembly is written once and may be
+  placed many times, so a child in it attaches only at that assembly's own
+  interfaces or its own children's ("hub", "knuckle/hub"), never at another
+  subsystem's, and FORGE refuses a path that leaves it. One subsystem mounts on
+  another where BOTH are placed, from the root, by the longer path from there.
+  This child of the root puts the wheel on the "hub" of the suspension the root
+  placed as "suspension-left"; a deeper frame is "suspension-left/knuckle/hub":
+      {"id": "left-wheel", "ref": "wheel", "at": "suspension-left/hub", "rotation": [0, 0, 90]}
   "features" on an assembly are cuts, fuses and fillets between the parts that
   assembly places, written once and applied in EVERY placement of it. Their "of"
   and "with" are paths from that assembly: "hub", "spoke" (every copy of a
@@ -421,6 +429,13 @@ About "prototype":
   repeat the number. Bind every dimension that follows from a parameter; a
   thickness you simply chose and that follows nothing needs no entry.
   "position_from" keys are "x", "y" and "z", and Y is up.
+  In a tree a definition is bound the same way, and a child or an interface is
+  placed by a parameter's name written in its "position", which FORGE works out
+  from the parameters:
+      {"id": "rail", "shape": "box", "size": {"width": 50, "height": 80, "depth": 2700}, "size_from": {"depth": "wheelbase"}}
+      {"id": "front-axle", "ref": "axle", "position": ["half_wheelbase", 0, 0]}
+  Never type the number a parameter holds: 1350 where half_wheelbase is 1350 is
+  a position that stays put when the wheelbase changes.
   Fill in "size" and "position" as well, with the values as they stand now. They
   are what gets drawn if an expression cannot be read, and FORGE tells the reader
   when your number and your own expression disagree — so a rib bound to
@@ -1240,10 +1255,16 @@ func (c *Conversation) Respond(ctx context.Context, projectID string, history []
 		return nil, err
 	}
 
+	// A child an edit places by the name of a parameter the model on screen has, as
+	// the contract teaches, is read over that model's parameters (dimensionrepair.go).
+	resp, overModel := placementsOverModel(resp, current)
 	reply, err := parseReply(resp)
 	if err != nil {
 		return nil, errs.Wrap(op, errs.CodeExternalProtocol, err).
 			WithDetail("the model returned neither usable JSON nor any text")
+	}
+	if overModel {
+		reply.noteRepair(childPositionNote)
 	}
 	reply.Model = resp.Model
 	reply.Usage = resp.Usage

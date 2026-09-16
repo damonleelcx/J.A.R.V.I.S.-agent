@@ -3,8 +3,10 @@ package agent
 import (
 	"encoding/json"
 	"strconv"
+	"strings"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/geometry"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/llm"
 )
 
 // An expression written where a number was expected.
@@ -380,3 +382,102 @@ func repairPoints(v any) bool {
 // repairPath is the same shape as a profile and is spelled separately only
 // because a reader looking for "what happens to a path" should find it.
 func repairPath(v any) bool { return repairPoints(v) }
+
+// withBaseParameters runs run with container's "parameters", "derived" and "units"
+// widened by the model a build step or an edit adds to, then puts them back.
+//
+// ‼️ A step's patch names the model's parameters without restating them (2026-09-15,
+// attach and bind). A child written at ["-half_wheelbase", 0, 0] in a patch that does
+// not itself declare half_wheelbase was worked out over the patch's parameters alone,
+// failed, and lost the whole step as unreadable — so teaching steps to write a
+// parameter's name where they place a child would have taught them to lose the step.
+// The container's own entries win a name clash, as a patch's win when it is merged.
+// Put back afterwards, so what is parsed is exactly what the model sent, read.
+// Fence: TestAssemble_AStepsPlacementExpressionReadsTheModelsParameters.
+func withBaseParameters(container map[string]any, base *Prototype, run func() bool) bool {
+	if base == nil || (len(base.Parameters) == 0 && len(base.Derived) == 0) {
+		return run()
+	}
+	keys := []string{"parameters", "derived", "units"}
+	saved, had := map[string]any{}, map[string]bool{}
+	for _, k := range keys {
+		saved[k], had[k] = container[k]
+	}
+	own := map[string]bool{}
+	for _, k := range []string{"parameters", "derived"} {
+		list, _ := container[k].([]any)
+		for _, item := range list {
+			if m, ok := item.(map[string]any); ok {
+				if name, ok := m["name"].(string); ok {
+					own[strings.ToLower(strings.TrimSpace(name))] = true
+				}
+			}
+		}
+	}
+	widen := func(key string, fromBase any) {
+		var inherited []any
+		if raw, err := json.Marshal(fromBase); err == nil {
+			var list []any
+			if json.Unmarshal(raw, &list) == nil {
+				for _, item := range list {
+					if m, ok := item.(map[string]any); ok {
+						if name, ok := m["name"].(string); ok && own[strings.ToLower(strings.TrimSpace(name))] {
+							continue
+						}
+					}
+					inherited = append(inherited, item)
+				}
+			}
+		}
+		if list, ok := saved[key].([]any); ok {
+			inherited = append(inherited, list...)
+		}
+		container[key] = inherited
+	}
+	widen("parameters", base.Parameters)
+	widen("derived", base.Derived)
+	if u, _ := container["units"].(string); u == "" && base.Units != "" {
+		container["units"] = base.Units
+	}
+	defer func() {
+		for _, k := range keys {
+			if had[k] {
+				container[k] = saved[k]
+			} else {
+				delete(container, k)
+			}
+		}
+	}()
+	return run()
+}
+
+// placementsOverModel rewrites a reply whose edit places a child or an interface by
+// an expression over the model's parameters into the reply with those positions
+// read, and says whether it did. A reply that parses as sent, a reply that is not an
+// edit, and a model with no parameters are returned untouched.
+func placementsOverModel(resp *llm.Response, base *Prototype) (*llm.Response, bool) {
+	if resp == nil || base == nil || (len(base.Parameters) == 0 && len(base.Derived) == 0) {
+		return resp, false
+	}
+	body := []byte(extractJSON(resp.Content))
+	var strict Reply
+	if json.Unmarshal(body, &strict) == nil {
+		return resp, false
+	}
+	var doc map[string]any
+	if json.Unmarshal(body, &doc) != nil {
+		return resp, false
+	}
+	edit, _ := doc["prototype_edit"].(map[string]any)
+	patch, _ := edit["patch"].(map[string]any)
+	if patch == nil || !withBaseParameters(patch, base, func() bool { return repairPlacements(patch) }) {
+		return resp, false
+	}
+	out, err := json.Marshal(doc)
+	if err != nil {
+		return resp, false
+	}
+	read := *resp
+	read.Content = string(out)
+	return &read, true
+}
