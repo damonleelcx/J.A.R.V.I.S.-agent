@@ -1584,8 +1584,8 @@
   var MAX_TREE_DEPTH = 16;     // geometry/tree.go maxTreeDepth
   /* The most the VIEWPORT draws (geometry/limits.go maxViewportParts). Until Phase 6,
    * stage W1 this was 4096 and was the kernel's ceiling too; instanced drawing moved
-   * the browser's own to what storage accepts by default, and the kernel keeps 4096
-   * (Document.DrawRefusal in Go) until building at that size has been measured. */
+   * the browser's own to what storage accepts by default, and the kernel builds 8192
+   * for a view (Document.BuildRefusal in Go; docs/spikes/2026-09-15-ceiling-on-linux). */
   var MAX_VIEWPORT_PARTS = 100000;
   var PATH_SEPARATOR = '/';
   // A tree part's display name: every child above it, then its own name (tree.go,
@@ -3216,7 +3216,7 @@
    * ‼️ A design is loaded this way only when it places more than LAZY_OCCURRENCES
    * (loadsLazily) — past the kernel's ceiling, where the whole design has no built
    * surface to fetch anyway. Everything smaller is loaded whole, as before. */
-  var LAZY_OCCURRENCES = 4096;           // geometry/limits.go maxDrawnParts
+  var LAZY_OCCURRENCES = 8192;           // geometry/limits.go maxBuiltParts
   var FIRST_VIEW_OCCURRENCES = 8192;
   var PLACEHOLDER_COLOUR = '#8a94a6', PLACEHOLDER_OPACITY = 0.18;
 

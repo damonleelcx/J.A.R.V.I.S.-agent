@@ -416,6 +416,10 @@ func lazyCar() geometry.Document {
 			{ID: "seam", Children: []geometry.Child{
 				{ID: "skin", Ref: "skin"},
 				{ID: "rivet", Ref: "rivet", Position: []float64{-490, 3, 0}, Pattern: &geometry.Pattern{Kind: "linear", Count: 480, Offset: []float64{2, 0, 0}}},
+				// A second row, so the design is past the kernel's view ceiling (8192) as well as
+				// the old one: 10 seams of 881 parts. At the same height as the first, which is how
+				// the fence below finds panel-3's copies.
+				{ID: "rivet-b", Ref: "rivet", Position: []float64{-490, 3, 20}, Pattern: &geometry.Pattern{Kind: "linear", Count: 400, Offset: []float64{2, 0, 0}}},
 			}},
 		}}
 }
@@ -529,7 +533,7 @@ func sameCopies(a, b []placedCopy) bool {
 func TestRendererLoadsASubtreeWhenItIsAskedForAndDrawsWhatGoPlacesThere(t *testing.T) {
 	doc := lazyCar()
 	expanded := doc.Expanded().Parts
-	if doc.DrawRefusal() == "" {
+	if doc.BuildRefusal() == "" {
 		t.Fatal("the fixture is no longer past the kernel's ceiling, so it would not load lazily")
 	}
 	// The first view, worked out by Go: the top-level part, then each child the root
@@ -615,8 +619,8 @@ func TestRendererLoadsASubtreeWhenItIsAskedForAndDrawsWhatGoPlacesThere(t *testi
 			panel3 = append(panel3, c)
 		}
 	}
-	if len(panel3) != 481 || !sameCopies(got.Isolated.placed(), panel3) {
-		t.Errorf("isolating panel-3 draws %d copies; its subtree places %d of 481", len(got.Isolated.placed()), len(panel3))
+	if len(panel3) != 881 || !sameCopies(got.Isolated.placed(), panel3) {
+		t.Errorf("isolating panel-3 draws %d copies; its subtree places %d of 881", len(got.Isolated.placed()), len(panel3))
 	}
 }
 
