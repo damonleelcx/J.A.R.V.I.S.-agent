@@ -4,13 +4,22 @@ on:
   push:
     branches: [main]
   pull_request:
+  # Only for kernel-exhaustive below: check and kernel skip both of these.
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
 
+# ‼️ The event is part of the group. Without it the nightly run on main and a push to
+# main share "CI-refs/heads/main", and cancel-in-progress lets the push cancel an
+# exhaustive run eighteen minutes in — a nightly fence that never finishes, which
+# reads exactly like one that is never run.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: true
 
 jobs:
   check:
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-latest
 
     services:
@@ -103,6 +112,7 @@ jobs:
   # here on ubuntu-24.04-arm, while it takes 2-3 s on a laptop and in the production
   # image locally. The cause is OPEN; see the plan's execution record.
   kernel:
+    if: github.event_name == 'push' || github.event_name == 'pull_request'
     runs-on: ubuntu-24.04-arm
 
     steps:
@@ -138,3 +148,56 @@ jobs:
 
       - name: Kernel tests (real build123d)
         run: make test-cad
+
+  # The kernel fences too slow to charge every pull request, run every night.
+  #
+  # TestKernel_TheArrayNarrowPhaseGivesTheLoopsAnswer — eight fixtures and four
+  # placement variants, each pair's key equal by == to build123d's own — took
+  # 1,059 s in the kernel job (CI run 35097920395), when the whole rest of
+  # internal/domain/cad takes 686 s there. On every PR it pushed the job past
+  # test-cad's 30-minute timeout with every test passing: honest work, not a hang.
+  # So test-cad skips it (FORGE_EXHAUSTIVE_KERNEL_TESTS unset) and holds every PR to
+  # the three-fixture fence, 28 s, which every array-path drill also reddens.
+  #
+  # ‼️ Gated is not unrun. A fence nobody runs is green without having checked
+  # anything, which is the failure scripts/drill-fences.sh exists to catch. This job
+  # is what keeps the gate honest: if it goes red, the array narrow phase has
+  # diverged from the loop on a fixture the three do not reach.
+  #
+  # Nightly on main, and by hand (workflow_dispatch) before merging anything that
+  # touches sidecar.py's narrow phase. arm64, for the kernel job's reason.
+  #
+  # 60 minutes for the job: ~5 for the runner, apt and the pinned venv, and
+  # test-cad-exhaustive's own 40m go test timeout (2.3x the 18 minutes measured,
+  # because runner speed drifts). The go timeout fires first, so a hang still fails
+  # with a stack trace rather than a cancelled job.
+  kernel-exhaustive:
+    if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+          cache: pip
+          cache-dependency-path: internal/domain/cad/requirements.txt
+
+      # The same libraries as the kernel job, for the same reason.
+      - name: System libraries for OpenCASCADE
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends             libgl1 libglx-mesa0 libglu1-mesa libx11-6 libxext6 libxrender1 libxi6             libsm6 libice6 libfontconfig1 libfreetype6
+
+      - name: Kernel venv (pinned)
+        run: make cad-venv
+
+      - name: Exhaustive kernel fences (real build123d)
+        run: make test-cad-exhaustive

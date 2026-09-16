@@ -73,6 +73,17 @@ except Exception as exc:  # pragma: no cover - reported to the caller, not raise
     sys.stdout.flush()
     sys.exit(1)
 
+# numpy is a hard dependency of build123d 0.11.1 (its Requires line names it, and
+# scipy, scikit-learn, ezdxf and svgpathtools all pull it in), so a kernel that
+# imported build123d above has it. It is still asked for separately and guarded,
+# because nothing else in this file needs it: the interference check's narrow phase
+# is faster one array at a time than one pair at a time (see _bulk_keys), and
+# without numpy that path is simply not taken and the per-pair loop answers instead.
+try:
+    import numpy as _np
+except Exception:  # pragma: no cover - the per-pair path answers exactly the same
+    _np = None
+
 
 def _wire(curve):
     """One outline or path, exactly as FORGE resolved it.
@@ -1067,7 +1078,7 @@ def _moved_box_direct(box, e):
     return (tuple(lo), tuple(hi))
 
 
-def _measures(solids, placed=None, rotations=None):
+def _measures(solids, placed=None, rotations=None, frames=None):
     """Every kept solid's box and volume.
 
     # Once per definition (Phase 5, stage V1)
@@ -1083,6 +1094,12 @@ def _measures(solids, placed=None, rotations=None):
     entries as bytes, interned so that equal rotations are one object: read here for
     the box anyway, and what _pair_keys memoizes relative rotations by (repair bound
     and check profile). Filled only on the direct path (_MOVED_BOX_DIRECT).
+
+    frames, when a list, receives every solid's three TRANSLATION entries, appended
+    flat and in solid order (zeros for a solid with no placement). The twelve entries
+    are read here for the box anyway, and the array narrow phase needs nothing else
+    per solid to compute a pair's relative translation (see _bulk_keys), so reading
+    them a second time there would be twelve OCCT calls an occurrence for nothing.
     """
     boxes, volumes, local, interned = [], [], {}, {}
     for i, solid in enumerate(solids):
@@ -1090,6 +1107,10 @@ def _measures(solids, placed=None, rotations=None):
         if p is None:
             boxes.append(_box_of(solid))
             volumes.append(_volume_of(solid))
+            if frames is not None:
+                frames.append(0.0)
+                frames.append(0.0)
+                frames.append(0.0)
             continue
         key, location, shape = p
         if key not in local:
@@ -1100,9 +1121,18 @@ def _measures(solids, placed=None, rotations=None):
             if rotations is not None:
                 bits = _PACK_ROTATION(e[0], e[1], e[2], e[4], e[5], e[6], e[8], e[9], e[10])
                 rotations[i] = interned.setdefault(bits, bits)
+            if frames is not None:
+                frames.append(e[3])
+                frames.append(e[7])
+                frames.append(e[11])
             boxes.append(None if box is None else _moved_box_direct(box, e))
         else:
             boxes.append(_moved_box(box, location))
+            if frames is not None:
+                e = _entries(location.wrapped)
+                frames.append(e[3])
+                frames.append(e[7])
+                frames.append(e[11])
         volumes.append(volume)
     return boxes, volumes
 
@@ -1706,6 +1736,46 @@ def _inside_planned(plan, t):
     return axes
 
 
+def _key_tail(a, b, qa, qb, ta, tb, inside_i, inside_j):
+    """A pair's key from the two relative poses and what each frame contains.
+
+    The last half of _pair_key, taken out so that the array narrow phase builds its
+    keys with THIS code and not with a second copy of it: _bulk_keys works out ta,
+    tb and the containment one array at a time, and then calls this once per
+    distinct row rather than once per pair.
+
+    ‼️ A translation that is already marked (±inf) may be passed in: _slid writes
+    exactly those slots with exactly those values, and round(inf, 6) is inf, so the
+    pose is the same either way. That is what lets _bulk_keys mark before it dedupes,
+    which is the whole reason a rivet row along a stringer is one row and not one a
+    rivet.
+    """
+    if not inside_i and not inside_j:
+        # Nothing marked on either side: both poses are _slid's input unchanged,
+        # and a real pose's translations are finite, so both mark nothing.
+        #
+        # min() settles on the first element of the tuple whenever the two
+        # definitions differ, so the pose of the direction that cannot win is
+        # never built: 3 round() calls and a tuple saved on the 82% of the
+        # barrel's pairs that are two different definitions (last hot spots).
+        if a < b:
+            return (a, b, _pose_of(qa, ta))
+        if a > b:
+            return (b, a, _pose_of(qb, tb))
+        return min((a, b, _pose_of(qa, ta)), (b, a, _pose_of(qb, tb)))
+    pose_f, pose_b = _pose_of(qa, ta), _pose_of(qb, tb)
+    carried_f = _carried_fast(pose_f, inside_j) if inside_j else []
+    carried_b = _carried_fast(pose_b, inside_i) if inside_i else []
+    forward = (a, b, _slid(pose_f, inside_i, carried_f))
+    backward = (b, a, _slid(pose_b, inside_j, carried_b))
+    pf, pb = forward[2], backward[2]
+    marked_f = math.isinf(pf[3]) + math.isinf(pf[7]) + math.isinf(pf[11])
+    marked_b = math.isinf(pb[3]) + math.isinf(pb[7]) + math.isinf(pb[11])
+    if marked_f != marked_b:
+        return forward if marked_f > marked_b else backward
+    return min(forward, backward)
+
+
 def _pair_keys(placed, shape_ids, slabs, rotations=None):
     """A function (i, j) -> _pair_key(placed, shape_ids, i, j, slabs), the same key.
 
@@ -1773,36 +1843,279 @@ def _pair_keys(placed, shape_ids, slabs, rotations=None):
             else:
                 inside_i = _inside_split(ra, ta, frame_i[0], frame_j[1])
                 inside_j = _inside_split(rb, tb, frame_j[0], frame_i[1])
-        if not inside_i and not inside_j:
-            # Nothing marked on either side: both poses are _slid's input unchanged,
-            # and a real pose's translations are finite, so both mark nothing.
-            #
-            # min() settles on the first element of the tuple whenever the two
-            # definitions differ, so the pose of the direction that cannot win is
-            # never built: 3 round() calls and a tuple saved on the 82% of the
-            # barrel's pairs that are two different definitions (last hot spots).
-            if a < b:
-                return (a, b, _pose_of(qa, ta))
-            if a > b:
-                return (b, a, _pose_of(qb, tb))
-            return min((a, b, _pose_of(qa, ta)), (b, a, _pose_of(qb, tb)))
-        pose_f, pose_b = _pose_of(qa, ta), _pose_of(qb, tb)
-        carried_f = _carried_fast(pose_f, inside_j) if inside_j else []
-        carried_b = _carried_fast(pose_b, inside_i) if inside_i else []
-        forward = (a, b, _slid(pose_f, inside_i, carried_f))
-        backward = (b, a, _slid(pose_b, inside_j, carried_b))
-        pf, pb = forward[2], backward[2]
-        marked_f = math.isinf(pf[3]) + math.isinf(pf[7]) + math.isinf(pf[11])
-        marked_b = math.isinf(pb[3]) + math.isinf(pb[7]) + math.isinf(pb[11])
-        if marked_f != marked_b:
-            return forward if marked_f > marked_b else backward
-        return min(forward, backward)
+        return _key_tail(a, b, qa, qb, ta, tb, inside_i, inside_j)
 
     key.memo = memo
     # The groups of pairs containment was taken once for, so a fence can show the
     # grouped path is the path taken (last hot spots).
     key.plans = plans
     return key
+
+
+# # The narrow phase one ARRAY at a time (interference approach)
+#
+# #121 took the last micro-optimisation out of the per-pair loop and moved the check
+# 0.94-0.98x, and said the rest needed a different approach. This is it.
+#
+# Profiled 2026-09-16 on the 90,880-occurrence barrel (docs/spikes/2026-09-16-
+# interference-approach): of the keying loop, 47% was two OCCT products and six
+# Value() calls a pair. A product's translation is, from gp_Trsf::Multiply,
+#     loc(A * B) = loc_A + (matrix_A . loc_B) * scale_A
+# and for A = inv(L_i) at scale 1 that is  -(R_i^T . t_i) + R_i^T . t_j, with each
+# row's sum taken left to right as gp_XYZ::Multiply writes it. Measured, not
+# assumed: on the barrel's 197,356 candidate pairs, all 1,184,136 translation
+# entries come out of numpy BIT for BIT as OCCT's own product gives them, and all
+# 272,640 inverse entries as OCCT's own Inverted() gives them.
+#
+# So the two things a pair costs that need no rounding — its relative translation
+# and its containment test — are computed one array at a time, per GROUP of pairs
+# that share two definitions and two rotations (the barrel's 2,191,348 pairs at 1M
+# are 536 such groups). Everything that rounds, compares or builds a tuple stays in
+# _key_tail, the shipped scalar tail, and is run once per DISTINCT row rather than
+# once per pair: 1,232 rows for 197,356 pairs at 90,880 occurrences.
+#
+# ‼️ The rows are deduped AFTER the slide marks are written into the translations,
+# which is what collapses a rivet row along a stringer to one row -- a PERFORMANCE
+# device and not a correctness one, and its drill says so: deleting the backward
+# half of it left every key and the whole answer unchanged and only made the rows
+# finer (scripts/drill-fences.sh records it with the three others that stayed
+# green).
+#
+# ‼️ The rows are deduped on the RAW translations, never on a rounded one, because
+# numpy's round is a scale-rint-unscale and Python's is correctly-rounded decimal:
+# they are not the same function, and only Python's may decide a key.
+#
+# ‼️ The keys this builds are EQUAL to the per-pair path's, and are not always the
+# same repr: two pairs whose translation rounds to -0.0 and to 0.0 are one dict key
+# (they compare equal and hash equal, so the shipped check already measures them as
+# one clash) but two reprs. The barrel's 197,356 pairs are 19 distinct key reprs and
+# 15 distinct keys; the array path hands out one tuple per key, so 10,243 pairs get
+# an equal key with the other zero's sign. Equality is the property the cache uses
+# and the property the fence checks.
+#
+# _BULK_NARROW_PHASE = False restores the per-pair loop, kept as the reference the
+# fence compares the whole check's answer against.
+_BULK_NARROW_PHASE = True
+# A group smaller than this is keyed a pair at a time. The array path pays a fixed
+# few dozen numpy calls per group whatever its size, and below about this many pairs
+# those cost more than the loop they replace. Not a limit on any answer — both paths
+# give the same key, and which one runs changes nothing the caller sees.
+_BULK_MIN_GROUP = 16
+# How many times the dedupe takes the first row still unmatched and matches every
+# row equal to it before handing what is left to numpy's sort. A repetitive assembly
+# needs a handful of passes; a model with many distinct poses would need one per
+# distinct row, which is what the sort is there to avoid.
+_BULK_DEDUPE_ROUNDS = 32
+
+
+def _distinct_rows(cols):
+    """(ids, representatives) for rows made of equal-length 1-D arrays.
+
+    ids[k] says which distinct row k is, and representatives[r] is the index of one
+    row of kind r. Float equality is what decides, so -0.0 and 0.0 are one row —
+    which is what _key_tail's tuples do too (see the ‼️ above).
+    """
+    ids = _np.empty(len(cols[0]), dtype=_np.int64)
+    left = _np.arange(len(cols[0]))
+    reps, nxt = [], 0
+    for _ in range(_BULK_DEDUPE_ROUNDS):
+        if left.size == 0:
+            break
+        first = left[0]
+        same = cols[0][left] == cols[0][first]
+        for c in cols[1:]:
+            same &= c[left] == c[first]
+        ids[left[same]] = nxt
+        reps.append(int(first))
+        nxt += 1
+        left = left[~same]
+    if left.size:
+        rows = _np.stack([c[left].astype(float) for c in cols], axis=1)
+        uniq, first_at, inv = _np.unique(rows, axis=0, return_index=True,
+                                         return_inverse=True)
+        ids[left] = nxt + inv.reshape(-1)
+        reps.extend(int(left[t]) for t in first_at)
+    return ids, reps
+
+
+def _bulk_keys(placed, shape_ids, slabs, rotations, pairs, frames, stats=None):
+    """Every candidate pair's key, as an index into a list of distinct keys.
+
+    Returns (ids, keys, ii, jj): keys[ids[k]] is the key _pair_keys would give
+    pairs[k], and is that key by ==, which is how the check's cache reads it; ii and
+    jj are the pairs as arrays, which the caller needs anyway.
+
+    A key of None (a solid a feature changed) is given an index of its own for each
+    pair that has one, because the check pays a boolean for every one of them.
+    """
+    ids = _np.full(len(pairs), -1, dtype=_np.int64)
+    keys, index = [], {}
+
+    def slot(key):
+        s = index.get(key, -1)
+        if s < 0:
+            s = index[key] = len(keys)
+            keys.append(key)
+        return s
+
+    ij = _np.array(pairs, dtype=_np.int64)
+    ii, jj = ij[:, 0].copy(), ij[:, 1].copy()
+    tr = _np.asarray(frames, dtype=float).reshape(len(placed), 3)
+
+    # --- per solid, once: its rotation, and a code for (rotation, definition) -----
+    rid = _np.full(len(placed), -1, dtype=_np.int64)
+    code = _np.full(len(placed), -1, dtype=_np.int64)
+    rot_bits, codes, rot_tab = {}, {}, []
+    for k in _np.unique(ij).tolist():
+        p = placed[k]
+        if p is None:
+            continue
+        loc = p[1].wrapped
+        r = -1
+        bits = rotations[k] if rotations is not None else None
+        # The same guard _pair_keys' rotation_id uses: one datum, power 1, scale 1.
+        if bits is not None and loc.FirstPower() == 1 and loc.NextLocation().IsIdentity():
+            t = loc.Transformation()
+            if t.ScaleFactor() == 1.0:
+                fk = (int(t.Form()), bits)
+                r = rot_bits.get(fk, -1)
+                if r < 0:
+                    r = rot_bits[fk] = len(rot_tab)
+                    rot_tab.append(struct.unpack("<9d", bits))
+        rid[k] = r
+        if r >= 0:
+            ck = (r, shape_ids[p[0]])
+            c = codes.get(ck, -1)
+            if c < 0:
+                c = codes[ck] = len(codes)
+            code[k] = c
+
+    bulkable = (code[ii] >= 0) & (code[jj] >= 0)
+    # ‼️ A pair of EQUAL placements goes to the per-pair path, which is where the
+    # same-datum guard lives: TopLoc_Location cancels two copies of one datum to the
+    # exact identity, which a product of two different datums is not. Equal entries
+    # are a superset of one shared datum, so nothing that needs the guard escapes it.
+    bulkable &= ~((rid[ii] == rid[jj]) & (tr[ii, 0] == tr[jj, 0])
+                  & (tr[ii, 1] == tr[jj, 1]) & (tr[ii, 2] == tr[jj, 2]))
+
+    nc = max(len(codes), 1)
+    gid = _np.where(bulkable, code[ii] * nc + code[jj], -1)
+    order = _np.argsort(gid, kind="stable")
+    gsorted = gid[order]
+    bounds = _np.r_[_np.flatnonzero(_np.r_[True, gsorted[1:] != gsorted[:-1]]),
+                    len(gsorted)]
+
+    rel = {}
+
+    def relative(i, j):
+        """The two relative rotations for a pair of rotations, from OCCT's own
+        product on one representative pair — the memo _pair_keys already keeps."""
+        k = (int(rid[i]), int(rid[j]))
+        v = rel.get(k)
+        if v is None:
+            li, lj = placed[i][1].wrapped, placed[j][1].wrapped
+            va = (li.Inverted() * lj).Transformation().Value
+            vb = (lj.Inverted() * li).Transformation().Value
+            ra, rb = _rotation(va), _rotation(vb)
+            v = rel[k] = (ra, _rounded_rotation(ra), rb, _rounded_rotation(rb))
+        return v
+
+    def product(rot, src, dst):
+        """-(R^T . t_src) + (R^T . t_dst): the entries gp_Trsf's own product gives,
+        in the order gp_XYZ::Multiply and gp_Trsf::Invert write them."""
+        out = _np.empty((len(src), 3))
+        ts, td = tr[src], tr[dst]
+        for r in range(3):
+            a, b, c = rot[r], rot[3 + r], rot[6 + r]
+            acc = a * ts[:, 0]
+            acc = acc + b * ts[:, 1]
+            acc = acc + c * ts[:, 2]
+            back = a * td[:, 0]
+            back = back + b * td[:, 1]
+            back = back + c * td[:, 2]
+            out[:, r] = -acc + back
+        return out
+
+    def inside_code(plan, t):
+        """_inside_planned for a whole group: one bit per axis the frame contains."""
+        out = _np.zeros(len(t), dtype=_np.int64)
+        if not plan:
+            return out
+        for r, p0, p1, p2, reach, low, high in plan:
+            mid = ((t[:, r] + p0) + p1) + p2
+            out |= ((mid - reach >= low) & (mid + reach <= high)).astype(_np.int64) << r
+        return out
+
+    leftover, bulked, rows_total = [], 0, 0
+    for s, e in zip(bounds[:-1], bounds[1:]):
+        sel = order[s:e]
+        if gsorted[s] < 0 or (e - s) < _BULK_MIN_GROUP:
+            leftover.append(sel)
+            continue
+        bulked += 1
+        gi, gj = ii[sel], jj[sel]
+        i0, j0 = int(gi[0]), int(gj[0])
+        ra, qa, rb, qb = relative(i0, j0)
+        a, b = shape_ids[placed[i0][0]], shape_ids[placed[j0][0]]
+        ta = product(rot_tab[int(rid[i0])], gi, gj)
+        tb = product(rot_tab[int(rid[j0])], gj, gi)
+
+        plan_a = plan_b = None
+        if slabs:
+            fi, fj = slabs[placed[i0][0]], slabs[placed[j0][0]]
+            plan_a = _containment_plan(ra, fi[0], fj[1])
+            plan_b = _containment_plan(rb, fj[0], fi[1])
+        variant = inside_code(plan_a, ta) * 8 + inside_code(plan_b, tb)
+
+        tam, tbm = ta.copy(), tb.copy()
+        tmpl_a, tmpl_b = _pose_of(qa, (0.0, 0.0, 0.0)), _pose_of(qb, (0.0, 0.0, 0.0))
+        marks = {}
+        for v in _np.unique(variant).tolist():
+            axes_i = [r for r in range(3) if (v // 8) & (1 << r)]
+            axes_j = [r for r in range(3) if (v % 8) & (1 << r)]
+            marks[v] = (axes_i, axes_j)
+            if not axes_i and not axes_j:
+                continue
+            sub = variant == v
+            # _carried_fast reads only the pose's ROTATION, which is the group's, so
+            # the marks a pair gets depend on nothing but which axes it contains.
+            mf = {r: -math.inf for r in _carried_fast(tmpl_a, axes_j)}
+            mf.update({r: math.inf for r in axes_i})
+            mb = {r: -math.inf for r in _carried_fast(tmpl_b, axes_i)}
+            mb.update({r: math.inf for r in axes_j})
+            for r, val in mf.items():
+                tam[sub, r] = val
+            for r, val in mb.items():
+                tbm[sub, r] = val
+
+        rows, reps = _distinct_rows([variant, tam[:, 0], tam[:, 1], tam[:, 2],
+                                     tbm[:, 0], tbm[:, 1], tbm[:, 2]])
+        rows_total += len(reps)
+        local = _np.empty(len(reps), dtype=_np.int64)
+        for t, rp in enumerate(reps):
+            axes_i, axes_j = marks[int(variant[rp])]
+            local[t] = slot(_key_tail(
+                a, b, qa, qb,
+                (float(tam[rp, 0]), float(tam[rp, 1]), float(tam[rp, 2])),
+                (float(tbm[rp, 0]), float(tbm[rp, 1]), float(tbm[rp, 2])),
+                list(axes_i), list(axes_j)))
+        ids[sel] = local[rows]
+
+    # The per-pair path, built only if some pair needs it: it allocates two lists as
+    # long as the solids, which is 16 MB at a million occurrences.
+    scalar = _pair_keys(placed, shape_ids, slabs, rotations) if leftover else None
+    for k in (_np.concatenate(leftover).tolist() if leftover else ()):
+        key = scalar(int(ii[k]), int(jj[k]))
+        if key is None:
+            ids[k] = len(keys)
+            keys.append(None)
+        else:
+            ids[k] = slot(key)
+    if stats is not None:
+        stats.update({"groups": bulked, "rows": rows_total, "keys": len(keys),
+                      "scalar_pairs": int(sum(len(x) for x in leftover)),
+                      "rotation_pairs": len(rel)})
+    return ids, keys, ii, jj
 
 
 def _interferences(solids, ids, labels, placed=None):
@@ -1819,7 +2132,9 @@ def _interferences(solids, ids, labels, placed=None):
     """
     cached = _INTERFERENCE_CACHE and placed is not None
     rotations = [None] * len(solids) if cached else None
-    boxes, volumes = _measures(solids, placed, rotations)
+    bulk = cached and _BULK_NARROW_PHASE and _np is not None
+    frames = [] if bulk else None
+    boxes, volumes = _measures(solids, placed, rotations, frames)
     pairs, box_tests = _candidate_pairs(boxes)
 
     shape_ids, cache, slabs = {}, {}, {}
@@ -1829,6 +2144,10 @@ def _interferences(solids, ids, labels, placed=None):
                 shape_ids[p[0]] = len(shape_ids)
                 if _INTERFERENCE_SLIDE:
                     slabs[p[0]] = _slabs(p[0], p[2])
+
+    if bulk and pairs:
+        return _bulk_interferences(solids, ids, labels, placed, shape_ids, slabs,
+                                   rotations, frames, volumes, pairs, box_tests)
 
     found, truncated, booleans, reused = [], False, 0, 0
     pair_key = _pair_keys(placed, shape_ids, slabs, rotations) if cached else None
@@ -1880,6 +2199,79 @@ def _interferences(solids, ids, labels, placed=None):
     buried = sum(1 for f in found if f[0] >= _BURIED_FRACTION)
     return listed, truncated, box_tests, {"pairs": len(pairs), "booleans": booleans, "reused": reused,
                                           "found": len(found), "summarized": len(found) > len(listed),
+                                          "buried": buried}
+
+
+def _bulk_interferences(solids, ids, labels, placed, shape_ids, slabs, rotations,
+                        frames, volumes, pairs, box_tests):
+    """_interferences' narrow phase, measured one array at a time.
+
+    The same answer as the loop above, reached without a Python iteration per pair:
+    the same booleans on the same pairs in the same order, the same list in the same
+    order, the same counts. The loop is kept beside this rather than replaced by it,
+    as the reference the fence compares the whole answer against
+    (testdata/interference_bulk_keys.py, _BULK_NARROW_PHASE off and on).
+    """
+    of_pair, keys, ii, jj = _bulk_keys(placed, shape_ids, slabs, rotations, pairs, frames)
+
+    # Which pair each distinct key is FIRST met at — numpy's unique returns exactly
+    # that — and so the order the loop would pay its booleans in.
+    slots, first_at = _np.unique(of_pair, return_index=True)
+    first_of = dict(zip(slots.tolist(), first_at.tolist()))
+    cache, shared_of = {}, _np.full(len(keys), _np.nan)
+    booleans, truncated, reached = 0, False, len(pairs)
+    for s in slots[_np.argsort(first_at, kind="stable")].tolist():
+        key = keys[s]
+        if key is not None and key in cache:
+            v = cache[key]
+            if v is not None:
+                shared_of[s] = v
+            continue
+        if booleans >= _INTERFERENCE_PAIR_BUDGET:
+            truncated = True
+            reached = first_of[s]
+            break
+        booleans += 1
+        i, j = pairs[first_of[s]]
+        try:
+            shared = float(getattr(solids[i] & solids[j], "volume", 0.0))
+        except Exception:
+            # OCCT refusing a boolean is not evidence of interference; see the loop.
+            shared = None
+        if key is not None:
+            cache[key] = shared
+        if shared is not None:
+            shared_of[s] = shared
+    # Every pair the loop reached was either a boolean or a reuse, and nothing else.
+    reused = reached - booleans
+
+    ii, jj = ii[:reached], jj[:reached]
+    share = shared_of[of_pair[:reached]]
+    vol = _np.asarray(volumes, dtype=float)
+    vi, vj = vol[ii], vol[jj]
+    # A refused boolean is a nan here and a None there: both are passed over. A face
+    # has no volume and no answer to "how much of it is buried"; see the loop.
+    keep = ~_np.isnan(share) & (vi > 0) & (vj > 0) & (share > 0)
+    fraction = _np.zeros(reached)
+    _np.divide(share, _np.minimum(vi, vj), out=fraction, where=keep)
+    keep &= (share >= _INTERFERENCE_MIN_VOLUME) & (fraction >= _INTERFERENCE_MIN_FRACTION)
+
+    at = _np.flatnonzero(keep)
+    fr = fraction[at]
+    buried = int((fr >= _BURIED_FRACTION).sum())
+    # Worst first, ties in the order they were found: `at` is ascending in pair
+    # index, which is the order the loop appends in, and a stable sort keeps it.
+    worst = at[_np.argsort(-fr, kind="stable")[:_INTERFERENCE_LIST_LIMIT]]
+    # The SMALLER solid first, because the fraction is its share; see the loop.
+    swap = vol[ii[worst]] > vol[jj[worst]]
+    lows = _np.where(swap, jj[worst], ii[worst]).tolist()
+    highs = _np.where(swap, ii[worst], jj[worst]).tolist()
+    listed = [{"a": ids[lo], "b": ids[hi], "a_label": labels[lo], "b_label": labels[hi],
+               "volume": float(share[k]), "fraction": float(fraction[k])}
+              for lo, hi, k in zip(lows, highs, worst.tolist())]
+    return listed, truncated, box_tests, {"pairs": len(pairs), "booleans": booleans,
+                                          "reused": reused, "found": len(at),
+                                          "summarized": len(at) > len(listed),
                                           "buried": buried}
 
 
