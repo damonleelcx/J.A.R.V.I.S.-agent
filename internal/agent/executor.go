@@ -455,7 +455,15 @@ func (e *Executor) appendInjectionEvent(ctx context.Context, tc *TaskContext, to
 		Summary: fmt.Sprintf("%s returned content matching %d prompt-injection pattern(s)", tool, len(findings)),
 		Payload: payload,
 	}
-	if err := e.repo.AppendEvent(ctx, e.pool, ev, e.clock.Now()); err != nil {
+	// ‼️ On a context that outlives the stop, like every other record of something that
+	// already happened (see outliving). On the run context this was the one record a stop
+	// could drop that nobody can reconstruct: the log line goes to a process that is
+	// exiting, and the timeline — where somebody asking months later whether anything
+	// tried to steer this goal through its own tool output has to look — said nothing at
+	// all. A stop abandons the attempt, and a security finding is not the attempt.
+	rec, cancel := outliving(ctx)
+	defer cancel()
+	if err := e.repo.AppendEvent(rec, e.pool, ev, e.clock.Now()); err != nil {
 		e.log.WarnWith(ctx, logx.EventInjectionSuspected, err,
 			"task_id", tc.Task.ID, "detail", "the suspected injection was logged but not recorded on the timeline")
 	}

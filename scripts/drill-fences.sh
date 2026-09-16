@@ -111,6 +111,7 @@ FILES=(
   internal/domain/engine/repository.go
   internal/domain/engine/queue.go
   internal/agent/executor.go
+  internal/agent/settle.go
 )
 
 BACKUP=""
@@ -1068,6 +1069,55 @@ drill "a tool call the stop cut short is recorded as failed" internal/agent/exec
 drill "a checkpoint is saved from an iteration the stop cut short" internal/agent/executor.go \
   's = s.replace("\t\tif ctx.Err() != nil {\n\t\t\treturn nil, ctx.Err()\n\t\t}\n\t\tstate, _ := json.Marshal(", "\t\tstate, _ := json.Marshal(", 1)' \
   ./internal/agent 'TestWorker_AWorkerStoppedAnywhereInATaskKeepsWhatItDidAndLogsNoDatabaseFailure/^inside_a_tool_call$'
+
+echo
+echo "The last four things a stop got wrong"
+# Added 2026-09-15 (last stop items). The four things #109's doc left open. A statement
+# the stop cancelled AFTER Postgres committed it must be read back, not guessed at, and
+# not guessed at in the other direction either. A stop during verification must not warn
+# that the verifier failed. A suspected injection found as the worker stops must survive
+# on the timeline. And the polling path's three reconciliations must be skipped quietly
+# when a stop cancels them, without becoming sweeps that never run. Mutations keep the
+# code compiling, so a red here is the fence and not the build. See
+# docs/bugfix/2026-09-15-a-stop-still-guessed-at-a-committed-write-and-lost-a-security-record.md.
+# Needs FORGE_TEST_DATABASE_URL.
+drill "a transition the stop cancelled in flight is assumed refused" internal/agent/worker.go \
+  's = s.replace("if err != nil && ctx.Err() != nil && w.stopLanded(ctx, task, to) {\n\t\treturn nil\n\t}\n", "", 1)' \
+  ./internal/agent 'TestWorker_ASuccessTheStopCancelledAfterPostgresHadCommittedItIsStillOnTheTimeline'
+
+drill "a transition the stop cancelled in flight is assumed to have landed" internal/agent/worker.go \
+  's = s.replace("if current.Status != to {", "if false \x26\x26 current.Status != to {", 1)' \
+  ./internal/agent 'TestWorker_AWorkerStoppedAnywhereInATaskKeepsWhatItDidAndLogsNoDatabaseFailure/^as_a_model_call_answers_that_the_task_is_done$'
+
+drill "a stop during verification is logged as a verifier failure" internal/agent/worker.go \
+  's = s.replace("\t\tif ctx.Err() == nil {\n\t\t\tw.log.WarnWith(ctx, logx.EventVerificationRan, err, \x22task_id\x22, task.ID)", "\t\tif true {\n\t\t\tw.log.WarnWith(ctx, logx.EventVerificationRan, err, \x22task_id\x22, task.ID)", 1)' \
+  ./internal/agent 'TestWorker_AStopDuringVerificationDoesNotWarnThatTheVerifierFailed'
+
+drill "a suspected injection is recorded on the context the stop cancelled" internal/agent/executor.go \
+  's = s.replace("\trec, cancel := outliving(ctx)\n\tdefer cancel()\n\tif err := e.repo.AppendEvent(rec", "\trec, cancel := context.WithCancel(ctx)\n\tdefer cancel()\n\tif err := e.repo.AppendEvent(rec", 1)' \
+  ./internal/agent 'TestWorker_ASuspectedInjectionFoundAsTheWorkerStopsIsStillRecordedOnTheTimeline'
+
+drill "the lease reaper runs on the context the stop cancelled" internal/agent/worker.go \
+  's = s.replace("\tif ctx.Err() != nil {\n\t\treturn\n\t}\n\treaped, err := w.queue.ReapExpiredLeases", "\tif false {\n\t\treturn\n\t}\n\treaped, err := w.queue.ReapExpiredLeases", 1); s = s.replace("\t\tif ctx.Err() == nil {\n\t\t\tw.log.WarnWith(ctx, logx.EventWorkerReaped", "\t\tif true {\n\t\t\tw.log.WarnWith(ctx, logx.EventWorkerReaped", 1)' \
+  ./internal/agent 'TestWorker_ThePollSweepsAStopCancelledAreSkippedQuietlyAndStillRunWhenNothingStoppedThem'
+
+drill "the release sweep runs on the context the stop cancelled" internal/agent/settle.go \
+  's = s.replace("\tif ctx.Err() != nil {\n\t\treturn\n\t}\n\trows, err := w.pool.Query(ctx, `\n\t\tselect distinct t.goal_id", "\tif false {\n\t\treturn\n\t}\n\trows, err := w.pool.Query(ctx, `\n\t\tselect distinct t.goal_id", 1); s = s.replace("\t\tif ctx.Err() == nil {\n\t\t\tw.log.WarnWith(ctx, logx.EventTaskReleaseFailed", "\t\tif true {\n\t\t\tw.log.WarnWith(ctx, logx.EventTaskReleaseFailed", 1)' \
+  ./internal/agent 'TestWorker_ThePollSweepsAStopCancelledAreSkippedQuietlyAndStillRunWhenNothingStoppedThem'
+
+drill "the settle sweep runs on the context the stop cancelled" internal/agent/settle.go \
+  's = s.replace("\tif ctx.Err() != nil {\n\t\treturn\n\t}\n\trows, err := w.pool.Query(ctx, `\n\t\tselect g.id", "\tif false {\n\t\treturn\n\t}\n\trows, err := w.pool.Query(ctx, `\n\t\tselect g.id", 1); s = s.replace("if ctx.Err() == nil {\n\t\t\tw.log.WarnWith(ctx, logx.EventGoalSettleFailed, err,\n", "if true {\n\t\t\tw.log.WarnWith(ctx, logx.EventGoalSettleFailed, err,\n", 1)' \
+  ./internal/agent 'TestWorker_ThePollSweepsAStopCancelledAreSkippedQuietlyAndStillRunWhenNothingStoppedThem'
+
+# The other direction: a guard that skips the sweep whether or not anything stopped it is
+# a reconciliation that never reconciles, which is what these two sweeps exist to be.
+drill "the release sweep is skipped even when nothing stopped it" internal/agent/settle.go \
+  's = s.replace("\tif ctx.Err() != nil {\n\t\treturn\n\t}\n\trows, err := w.pool.Query(ctx, `\n\t\tselect distinct t.goal_id", "\tif true {\n\t\treturn\n\t}\n\trows, err := w.pool.Query(ctx, `\n\t\tselect distinct t.goal_id", 1)' \
+  ./internal/agent 'TestWorker_ThePollSweepsAStopCancelledAreSkippedQuietlyAndStillRunWhenNothingStoppedThem'
+
+drill "the settle sweep is skipped even when nothing stopped it" internal/agent/settle.go \
+  's = s.replace("\tif ctx.Err() != nil {\n\t\treturn\n\t}\n\trows, err := w.pool.Query(ctx, `\n\t\tselect g.id", "\tif true {\n\t\treturn\n\t}\n\trows, err := w.pool.Query(ctx, `\n\t\tselect g.id", 1)' \
+  ./internal/agent 'TestReconciliationSweepSettlesWhatTheEventMissed'
 
 echo
 echo "The kernel"
