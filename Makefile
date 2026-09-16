@@ -157,9 +157,11 @@ measure-car: ## Measure how far a live car build actually gets (SPENDS REAL TOKE
 	@# ceiling enforced in the harness: once it is gone no further model call is
 	@# placed, the passes already built are kept, and the run reports that what it
 	@# measured is a partial car. Raise it deliberately, never by habit.
+	@# 300k is the ceiling damon approved for the Phase 2 live milestone (A4,
+	@# decided 2026-09-15); it was 400k.
 	@test -n "$$FORGE_LLM_API_KEY" || { echo "FORGE_LLM_API_KEY is not set — source .env first"; exit 1; }
 	FORGE_LIVE_LLM_TESTS=1 \
-	FORGE_MEASURE_TOKEN_BUDGET="$${FORGE_MEASURE_TOKEN_BUDGET:-400000}" \
+	FORGE_MEASURE_TOKEN_BUDGET="$${FORGE_MEASURE_TOKEN_BUDGET:-300000}" \
 	FORGE_CAD_PYTHON="$${FORGE_CAD_PYTHON:-$(abspath $(CAD_VENV))/bin/python}" \
 	go test -count=1 -v -timeout 60m -run TestLiveCarCeiling ./internal/agent/
 
@@ -216,6 +218,14 @@ cad-builders: ## Regenerate the list of build123d names a script may use
 .PHONY: test-extrusion-size
 test-extrusion-size: ## Check the parts panel reports how big an extrusion really is
 	@node scripts/extrusion-size-check.js
+
+.PHONY: test-viewport
+test-viewport: ## Check a 30k-occurrence car draws as one call per definition (stub GL; NOT a frame time)
+	@# Phase 6, stage W1. Drives the shipped forge3d.js through scripts/webgl-stub.js
+	@# over WebGL2, WebGL1 with ANGLE_instanced_arrays and WebGL1 without it. The
+	@# milliseconds it prints are CPU in node against a context that draws nothing;
+	@# the frame time in a real browser is docs/spikes/2026-09-15-instanced-viewport.
+	@node scripts/viewport-instancing-check.js
 
 check: fmt-check vet test-integration test-echo test-voice-fallback test-extrusion-size drill ## Everything CI runs on every commit
 	@# The fence drills run LAST and from the recipe rather than as a
@@ -425,6 +435,21 @@ health: ## Check database connectivity
 
 .PHONY: run
 run: db-wait ## Run the API server against the local database
+	go run ./cmd/forged
+
+.PHONY: restart
+restart: db-wait ## Stop a running API server and start it again with the source as it is now
+	@# Phase 6's acceptance is a browser run "on make restart": the assets are
+	@# embedded in the binary (assetFS), so a change to forge3d.js reaches the
+	@# workbench only through a rebuild, and a server left running keeps serving the
+	@# old viewport while the page looks reloaded.
+	@#
+	@# ‼️ By process NAME. `go run` builds into a temporary directory and runs the
+	@# binary as `forged`, so `pkill -f ./cmd/forged` would miss it and kill only the
+	@# `go` wrapper — leaving the old server on the port and the new one failing to
+	@# bind. The wait is for the port, not a fixed sleep.
+	-@pkill -x forged 2>/dev/null && echo "stopped the running forged" || echo "no forged was running"
+	@for i in $$(seq 1 20); do pgrep -x forged >/dev/null || break; sleep 0.5; done
 	go run ./cmd/forged
 
 .PHONY: work

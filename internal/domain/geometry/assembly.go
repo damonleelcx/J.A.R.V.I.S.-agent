@@ -127,7 +127,22 @@ type Material struct {
 	// FORGE chose because a bracket is usually aluminium is `assumed`.
 	How    claim.Epistemic `json:"how"`
 	Source string          `json:"source,omitempty"`
+	// Density is kilograms per cubic metre, and zero when nobody stated one.
+	// Mass is claimed only when every part has one (geometry/mass.go); a density
+	// is a claim like the name, carried by the same How (Phase 5, stage V3).
+	Density float64 `json:"density,omitempty"`
 }
+
+// MaxDensity is past the densest material there is (osmium, about 22,590 kg/m³),
+// with room to spare. A number above it is a unit mistake, not a material.
+//
+// Exported so the contract states the ceiling this refuses above rather than a
+// copy of it: a contract teaching one limit while the validator enforces another
+// is a model faithfully writing a density and having its material refused.
+// TestTheContractTeachesDensityAsTheValidatorReadsIt holds the two together.
+const MaxDensity = 100000
+
+const maxDensity = MaxDensity
 
 // Validate checks a material before it is stored or drawn.
 func (m *Material) Validate() error {
@@ -136,6 +151,14 @@ func (m *Material) Validate() error {
 	if strings.TrimSpace(m.Name) == "" {
 		return errs.New(op, errs.CodeValidationFailed).
 			WithDetail("a material must be named; a finish with no material is a look with nothing behind it")
+	}
+	// Refused rather than weighed: a mass computed from a density no material has
+	// looks exactly like one computed from a real one. NaN is the value that is
+	// not equal to itself.
+	if m.Density < 0 || m.Density != m.Density || m.Density > maxDensity {
+		return errs.New(op, errs.CodeValidationFailed).
+			WithDetail("%s has a density of %g; a density is kilograms per cubic metre, between 0 and %d "+
+				"(steel is about 7,850, osmium, the densest material, about 22,590)", m.Name, m.Density, maxDensity)
 	}
 	if !m.Finish.Valid() {
 		// Unknown finishes fall back rather than refusing the part: the name is

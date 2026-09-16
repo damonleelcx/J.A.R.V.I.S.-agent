@@ -60,6 +60,21 @@ type Child struct {
 	// a part uses, so nothing about a child's placement reads differently.
 	Position []float64 `json:"position,omitempty"`
 	Rotation []float64 `json:"rotation,omitempty"`
+	// PositionFrom binds the child's position to expressions over the document's
+	// parameters, keyed "x", "y" and "z", exactly as a part's position_from is
+	// (binding.go). Bind writes what they work out to into Position, so the expansion,
+	// the kernel and the browser read numbers and nothing else changes for them.
+	//
+	// # Why a child needs one
+	//
+	// #97 and #111 read a child written at ["-half_wheelbase", 0, 0] and stored the
+	// NUMBER: a respec of half_wheelbase then moved every definition bound to it and
+	// left the wheels where they were. A placement is where most of a tree's
+	// dimensions live (a car's track and wheelbase are where its corners are placed,
+	// not how big a corner is), so a binding only definitions can carry follows the
+	// wrong half of the design. Optional: a child with none stores byte-identically.
+	// Fence: TestBind_AChildsAndAnInterfacesPositionFollowTheirParameters.
+	PositionFrom map[string]string `json:"position_from,omitempty"`
 	// Mirror reflects the child across the plane normal to "x", "y" or "z" in its
 	// own frame, before it is rotated and placed — a whole sub-assembly included.
 	// Two mirrors on the way down cancel. Empty means no reflection.
@@ -237,7 +252,7 @@ func expandAssembliesTraced(d Document, spans *[]treeSpan) (Document, []Problem)
 		return out, problems
 	}
 
-	attach := newAttachments(asms)
+	attach := newAttachments(asms, d.Root)
 	// The frame is a placement (frame.go), not a position and three angles, so a
 	// reflection anywhere above a part reaches the part.
 	//
@@ -299,7 +314,20 @@ func expandAssembliesTraced(d Document, spans *[]treeSpan) (Document, []Problem)
 			// -- its position, rotation, mirror and pattern alike (interface.go).
 			reference, attachProblem := attach.reference(a, c, "")
 			if attachProblem != "" {
-				fail(name, "%s", attachProblem)
+				// ‼️ A path that leaves the assembly it is written in is refused with the
+				// fix, not with "has no child": run 2's wheels were repaired four times
+				// against that sentence and lost (interface.go, leaves).
+				if leaves(a, root, c.At) {
+					attachProblem = attach.outsideProblem(a, root, c.At)
+				} else {
+					// ‼️ And every other attachment refusal carries what to write instead:
+					// the paths that attach here. Without one, run 4's repair was told what
+					// had failed and nothing it could do (interface.go, attachRemedy).
+					attachProblem += "; " + attach.attachRemedy(a, c)
+				}
+				// The child's own name before it, so the sentence says WHICH child even
+				// where it travels without the fault's Name (the repair's prompt did).
+				fail(name, "%s", namedChild(c)+attachProblem)
 				continue
 			}
 			// The definition's own repeat, once, in the DEFINITION's frame, so a pattern

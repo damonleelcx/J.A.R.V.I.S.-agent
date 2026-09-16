@@ -14,13 +14,15 @@ import (
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/geometry"
 )
 
-// The interference check's broad phase sorts the kept solids' boxes along one
-// axis and sweeps, instead of comparing every pair. Phase 4, stage K2b of
-// docs/plan-2026-09-13-millions-of-parts.md.
+// The interference check's broad phase tests only boxes that could overlap,
+// instead of comparing every pair. Phase 4, stage K2b of
+// docs/plan-2026-09-13-millions-of-parts.md, as a sweep; since Phase 5, stage V1,
+// a grid over all three axes (sidecar.py, _candidate_pairs), which these fences
+// hold to the same bounds.
 //
 // Its cost is fenced by the box tests the kernel COUNTS, not by a timer: the
-// count is the same on a laptop and a loaded CI runner, and it separates the
-// sweep (a handful per part) from every pair (n(n-1)/2) by orders of magnitude
+// count is the same on a laptop and a loaded CI runner, and it separates a broad
+// phase (a handful per part) from every pair (n(n-1)/2) by orders of magnitude
 // where a time only separates them by a noisy ratio.
 
 // studGrid is rows copies of one 4×6×8 mm stud stepping 10 mm along x (or z),
@@ -98,6 +100,32 @@ type allPairs struct {
 	EveryPair int              `json:"every_pair"`
 	Sweep     interferenceList `json:"sweep"`
 	Reference interferenceList `json:"all_pairs"`
+	// Candidates is _candidate_pairs against every pair of the same boxes, and
+	// Synthetic the same on box-only sets (the "long" fixture only).
+	Candidates candidateCheck   `json:"candidates"`
+	Synthetic  []candidateCheck `json:"synthetic"`
+}
+
+type candidateCheck struct {
+	Pairs          int  `json:"pairs"`
+	EveryPairPairs int  `json:"every_pair_pairs"`
+	Match          bool `json:"match"`
+	Duplicates     int  `json:"duplicates"`
+	BoxTests       int  `json:"box_tests"`
+	EveryPair      int  `json:"every_pair"`
+}
+
+// samePairs fails unless the broad phase returned exactly the pairs comparing
+// every box would — the same pairs, in index order, each once.
+func samePairs(t *testing.T, what string, c candidateCheck) {
+	t.Helper()
+	if !c.Match || c.Duplicates != 0 || c.Pairs != c.EveryPairPairs {
+		t.Errorf("%s: the broad phase returned %d pair(s) (%d duplicated) and every pair %d; match=%v",
+			what, c.Pairs, c.Duplicates, c.EveryPairPairs, c.Match)
+	}
+	if c.EveryPairPairs == 0 {
+		t.Errorf("%s: no box overlaps any other, so the comparison proves nothing", what)
+	}
 }
 
 type interferenceList struct {
@@ -126,6 +154,7 @@ func compareWithEveryPair(t *testing.T, fixture string) allPairs {
 	t.Logf("%s: %d parts, %d box tests (every pair: %d), %d interference(s), truncated=%v at a budget of %d",
 		fixture, got.Parts, got.BoxTests, got.EveryPair, len(got.Reference.Found), got.Reference.Truncated, got.Budget)
 
+	samePairs(t, fixture, got.Candidates)
 	if got.Sweep.Truncated != got.Reference.Truncated {
 		t.Errorf("truncated: sweep %v, every pair %v", got.Sweep.Truncated, got.Reference.Truncated)
 	}

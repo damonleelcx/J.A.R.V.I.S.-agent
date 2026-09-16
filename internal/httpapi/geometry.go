@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/access"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/cad"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/geometry"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/errs"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/logx"
@@ -179,6 +180,61 @@ func (h *GeometryHandlers) Get(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, map[string]any{"variant": toVariantDTO(*v)})
 }
 
+// Mass handles GET /v1/geometry/{id}/mass — mass, centre of gravity and envelope,
+// rolled up through the tree (Phase 5, stage V3).
+//
+// # Why it can answer without a mass
+//
+// Mass needs a density on every part. When a part has none, the answer is weighed
+// by volume and says so, naming the parts: a centre of gravity computed from a
+// guessed density looks exactly like a measured one. See geometry/mass.go.
+func (h *GeometryHandlers) Mass(w http.ResponseWriter, r *http.Request) {
+	v, err := h.authorisedVariant(r)
+	if err != nil {
+		WriteError(w, r, h.deps.Log, err)
+		return
+	}
+	if h.deps.CAD == nil || !h.deps.CAD.Available() {
+		WriteError(w, r, h.deps.Log, errs.New("httpapi.Mass", errs.CodeConnectorUnavailable).
+			WithDetail("this deployment has no CAD kernel, so where each part's volume is cannot be "+
+				"measured. Set FORGE_CAD_PYTHON to a Python with build123d"))
+		return
+	}
+	if !v.Units.Known() {
+		WriteError(w, r, h.deps.Log, errs.New("httpapi.Mass", errs.CodeValidationFailed).
+			WithDetail("this variant has no unit FORGE can convert (%s), and the kernel works in "+
+				"millimetres", strings.ToLower(strings.TrimSuffix(v.UnitsNote(), "."))))
+		return
+	}
+	built, err := h.deps.CAD.BuildProperties(r.Context(), v.Document, v.Units)
+	if err != nil {
+		h.logRefusal(r, v, "mass", err)
+		WriteError(w, r, h.deps.Log, err)
+		return
+	}
+	WriteJSON(w, http.StatusOK, massBody(v.VersionID, geometry.MassProperties(v.Document, built.Properties), built.Skipped))
+}
+
+// massBody is the mass reply, shared with its fence.
+func massBody(versionID string, report geometry.MassReport, skipped []string) map[string]any {
+	note := ""
+	if report.Basis == geometry.MassByVolume {
+		note = fmt.Sprintf("no mass is claimed: %d part(s) have no density, so each centre is the centre "+
+			"of volume, which is the centre of gravity only if the model is one material",
+			len(report.WithoutDensity))
+	}
+	return map[string]any{
+		"version_id":      versionID,
+		"basis":           report.Basis,
+		"groups":          report.Groups,
+		"without_density": report.WithoutDensity,
+		"unmeasured":      report.Unmeasured,
+		// A part the kernel could not build is in no group, and is named here.
+		"skipped": skipped,
+		"note":    note,
+	}
+}
+
 // Mesh handles GET /v1/geometry/{id}/mesh — the surface of the BUILT solid.
 //
 // # Why this exists
@@ -229,19 +285,21 @@ func (h *GeometryHandlers) Mesh(w http.ResponseWriter, r *http.Request) {
 	// With the kernel's time per phase, so a slow viewport says which step of the
 	// build was slow (Phase 4, stage K2).
 	h.deps.Log.Info(r.Context(), logx.EventGeometryMeshed, append([]any{
-		"version_id", v.VersionID, "project_id", v.ProjectID, "parts", len(built.Mesh),
+		"version_id", v.VersionID, "project_id", v.ProjectID,
+		"parts", len(built.Mesh) + len(built.MeshInstances), "definitions", len(built.MeshDefinitions),
 		"triangles", built.Triangles, "skipped", len(built.Skipped)}, built.Phases.LogFields()...)...)
 
-	parts := make([]meshPartDTO, 0, len(built.Mesh))
-	for _, m := range built.Mesh {
-		parts = append(parts, meshPartDTO{
-			ID: m.ID, Label: m.Label, Vertices: m.Vertices, Triangles: m.Triangles,
-		})
-	}
+	parts, definitions, instances := meshPayload(built)
 	WriteJSON(w, http.StatusOK, map[string]any{
 		"version_id": v.VersionID,
-		"parts":      parts,
-		"triangles":  built.Triangles,
+		// The parts a feature changed, each in assembly coordinates; and every other
+		// part as a placed copy of one definition, tessellated once (Phase 4, stage
+		// K4). Since Phase 6, stage W1 the browser draws them as they arrive: each
+		// definition uploaded once, every copy one instance of it (Forge3D.drawBatches).
+		"parts":       parts,
+		"definitions": definitions,
+		"instances":   instances,
+		"triangles":   built.Triangles,
 		// The tolerance the shape is described to, and whether it was coarsened
 		// to fit the budget. Reported rather than hidden: a coarse model shown
 		// as an exact one is the same class of claim this endpoint exists to
@@ -277,6 +335,43 @@ type meshPartDTO struct {
 	Label     string    `json:"label"`
 	Vertices  []float64 `json:"vertices"`
 	Triangles []int32   `json:"triangles"`
+}
+
+// meshDefinitionDTO is one shape's surface in its own frame, in millimetres.
+type meshDefinitionDTO struct {
+	Vertices  []float64 `json:"vertices"`
+	Triangles []int32   `json:"triangles"`
+}
+
+// meshInstanceDTO is one placed copy of a definition. Matrix is 4×4 and
+// COLUMN-major, as WebGL reads it: see cad.MeshInstance.
+type meshInstanceDTO struct {
+	ID         string      `json:"id"`
+	Label      string      `json:"label"`
+	Definition int         `json:"definition"`
+	Matrix     [16]float64 `json:"matrix"`
+}
+
+// meshPayload is the mesh reply's surfaces, shared with the fence that holds the
+// browser's expansion to cad.Build.WorldMeshes.
+func meshPayload(built *cad.Build) ([]meshPartDTO, []meshDefinitionDTO, []meshInstanceDTO) {
+	parts := make([]meshPartDTO, 0, len(built.Mesh))
+	for _, m := range built.Mesh {
+		parts = append(parts, meshPartDTO{
+			ID: m.ID, Label: m.Label, Vertices: m.Vertices, Triangles: m.Triangles,
+		})
+	}
+	definitions := make([]meshDefinitionDTO, 0, len(built.MeshDefinitions))
+	for _, d := range built.MeshDefinitions {
+		definitions = append(definitions, meshDefinitionDTO{Vertices: d.Vertices, Triangles: d.Triangles})
+	}
+	instances := make([]meshInstanceDTO, 0, len(built.MeshInstances))
+	for _, in := range built.MeshInstances {
+		instances = append(instances, meshInstanceDTO{
+			ID: in.ID, Label: in.Label, Definition: in.Definition, Matrix: in.Matrix,
+		})
+	}
+	return parts, definitions, instances
 }
 
 // Compare handles GET /v1/geometry/compare?ids=a,b,c.

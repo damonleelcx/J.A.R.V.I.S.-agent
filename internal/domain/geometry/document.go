@@ -86,9 +86,15 @@ type Document struct {
 
 // Part is one solid.
 type Part struct {
-	ID       string             `json:"id"`
-	Name     string             `json:"name"`
-	Shape    string             `json:"shape"`
+	ID    string `json:"id"`
+	Name  string `json:"name"`
+	Shape string `json:"shape"`
+	// Standard names a catalogued part by its designation — "ISO 4762 M8x30",
+	// "ISO 15 608" — when Shape is "standard", and is read for no other shape. It
+	// is written out as the revolve or extrusion it is before anything reads the
+	// part, and kept on it so a reader can still say what it is (standard.go).
+	// Phase 2, stage A3 of docs/plan-2026-09-13-millions-of-parts.md.
+	Standard string             `json:"standard,omitempty"`
 	Size     map[string]float64 `json:"size"`
 	Position []float64          `json:"position"`
 	// SizeFrom and PositionFrom bind a dimension to an EXPRESSION over the

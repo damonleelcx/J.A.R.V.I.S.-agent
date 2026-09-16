@@ -1,0 +1,127 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Instanced viewport: 30k-occurrence car</title>
+<!--
+  Phase 6, stage W1's acceptance measurement, in a real browser.
+
+  Serve the REPOSITORY ROOT (so the shipped forge3d.js and the shared car generator
+  load from where they live), then open this page:
+
+    python -m http.server 8765 --bind 127.0.0.1
+    http://127.0.0.1:8765/docs/spikes/2026-09-15-instanced-viewport/measure.html
+
+  It loads scripts/viewport-car.js into the shipped Forge3D.Studio and records:
+    - load: expanding, batching, building each shape once and uploading, in ms;
+    - a synced frame: studio.draw() followed by a one-pixel readPixels, which does not
+      return until the GPU has finished the frame — CPU and GPU together, per frame;
+    - presented frames: requestAnimationFrame intervals while the camera orbits, which
+      is what a person sees (and is capped by the display's refresh rate);
+  for the instanced path with its level of detail, the instanced path drawing every
+  copy whole, and the one-call-per-copy path (WebGL1 with the extension withheld),
+  which is how every part was drawn before W1.
+
+  Results go into the page and into window.__result as JSON.
+-->
+<style>
+  body { font: 13px/1.45 system-ui, sans-serif; margin: 16px; background: #111; color: #ddd; }
+  canvas { width: 960px; height: 540px; display: block; margin: 8px 0; max-width: 100%; }
+  pre { white-space: pre-wrap; }
+</style>
+<p>Measuring… keep this tab in the foreground: a hidden tab gets no animation frames.</p>
+<canvas id="c"></canvas>
+<pre id="out"></pre>
+<script src="/scripts/viewport-car.js"></script>
+<script src="/internal/httpapi/assets/forge3d.js"></script>
+<script>
+(async function () {
+  const out = document.getElementById('out');
+  const log = (s) => { out.textContent += s + '\n'; };
+  const car = ForgeViewportCar.carDocument(30000);
+  const nextFrame = () => new Promise((r) => requestAnimationFrame(r));
+  const pct = (xs, q) => { const s = xs.slice().sort((a, b) => a - b); return s[Math.min(s.length - 1, Math.floor(q * s.length))]; };
+
+  function makeStudio(canvas, withholdInstancing) {
+    if (withholdInstancing) {
+      const get = canvas.getContext.bind(canvas);
+      canvas.getContext = function (type, attrs) {
+        if (type === 'webgl2') return null;
+        const gl = get(type, attrs);
+        if (gl) {
+          const ext = gl.getExtension.bind(gl);
+          gl.getExtension = (name) => (name === 'ANGLE_instanced_arrays' ? null : ext(name));
+        }
+        return gl;
+      };
+    }
+    let error = '';
+    const studio = new Forge3D.Studio(canvas, { onError: (m) => { error = m; } });
+    return { studio, error: () => error };
+  }
+
+  async function run(label, withholdInstancing, lod) {
+    const canvas = document.createElement('canvas');
+    canvas.style.cssText = 'width:960px;height:540px';
+    document.getElementById('c').replaceWith(canvas);
+    canvas.id = 'c';
+    await nextFrame();
+    const { studio, error } = makeStudio(canvas, withholdInstancing);
+    const gl = studio.gl;
+    const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+    const renderer = dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER);
+    studio._resize();
+    let t = performance.now();
+    const parts = studio.load(car);
+    const loadMs = performance.now() - t;
+    if (lod !== undefined) studio.lod = lod;
+    const px = new Uint8Array(4);
+
+    // Warm up: the first frames compile shaders and allocate buffers.
+    for (let i = 0; i < 5; i++) { studio.draw(); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px); }
+
+    const synced = [];
+    for (let i = 0; i < 60; i++) {
+      studio.camera.yaw += 0.05;
+      t = performance.now();
+      studio.draw();
+      gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+      synced.push(performance.now() - t);
+    }
+
+    const presented = [], drawOnly = [];
+    let last = await nextFrame();
+    for (let i = 0; i < 120; i++) {
+      studio.camera.yaw += 0.03;
+      t = performance.now();
+      studio.draw();
+      drawOnly.push(performance.now() - t);
+      const now = await nextFrame();
+      presented.push(now - last);
+      last = now;
+    }
+    const s = studio.stats;
+    const glError = gl.getError();
+    const row = {
+      label, renderer, path: studio.renderPath, parts, error: error(), glError,
+      canvas: canvas.width + 'x' + canvas.height, lod: studio.lod,
+      loadMs: +loadMs.toFixed(1),
+      syncedFrameMs: { median: +pct(synced, 0.5).toFixed(2), p95: +pct(synced, 0.95).toFixed(2) },
+      drawCallMs: { median: +pct(drawOnly, 0.5).toFixed(2), p95: +pct(drawOnly, 0.95).toFixed(2) },
+      presentedIntervalMs: { median: +pct(presented, 0.5).toFixed(2), p95: +pct(presented, 0.95).toFixed(2) },
+      stats: s
+    };
+    log(JSON.stringify(row, null, 2));
+    return row;
+  }
+
+  const result = { userAgent: navigator.userAgent, when: new Date().toISOString(), runs: [] };
+  window.__result = result;
+  result.runs.push(await run('instanced, level of detail on', false));
+  result.runs.push(await run('instanced, every copy whole', false, 0));
+  result.runs.push(await run('one call per copy (before W1)', true, 0));
+  result.done = true;
+  log('done');
+})().catch((e) => {
+  document.getElementById('out').textContent += 'FAILED: ' + (e && e.stack || e);
+  window.__result = { failed: String(e && e.stack || e) };
+});
+</script>

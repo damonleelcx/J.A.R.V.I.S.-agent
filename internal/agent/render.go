@@ -56,6 +56,15 @@ type builtSheet struct {
 	// product refuses (PRD promise 5).
 	Interferences []geometry.Interference
 	Truncated     bool
+	// Checked, Pairs and Skipped are how much of the model the check covered: see
+	// Built. Meaningful only when FromKernel is true, like Interferences.
+	Checked int
+	Pairs   int
+	Found   int
+	Skipped []string
+	// Parts is what was drawn, part by part, so a sub-assembly can be drawn on
+	// its own from the same build instead of a second one (Phase 5, stage V4).
+	Parts []geometry.RenderPart
 }
 
 // SolidBuilder builds the real surface of a document.
@@ -101,6 +110,21 @@ type Built struct {
 	// Truncated says the kernel's pair budget stopped the search early, so a
 	// clean list is not evidence of a clean model.
 	Truncated bool
+	// Pairs is how many pairs of parts could touch (their boxes overlap), and
+	// Checked how many of them the kernel answered — measured, or reused from the
+	// same pose (Phase 5, stages V1 and V2). Checked below Pairs is a truncated check.
+	Checked int
+	Pairs   int
+	// Found is how many pairs the kernel found sharing material. Interferences
+	// lists at most a bounded number of them, the worst first, so Found above
+	// len(Interferences) is a summarized list, not a short one (cad.Build,
+	// InterferencesFound). Zero from a builder that does not count reads as the
+	// length of the list.
+	Found int
+	// Skipped names the parts the kernel could not build. A part that was never
+	// built was never checked for shared material either, and saying nothing about
+	// it would let "no overlaps" cover a part nobody looked at.
+	Skipped []string
 }
 
 // render draws the built solid, falling back to the described one.
@@ -118,14 +142,23 @@ func (c *Conversation) render(ctx context.Context, doc *Prototype) builtSheet {
 		if built, err := c.solids.BuildSurface(ctx, doc); err == nil && len(built.Parts) > 0 {
 			if img := geometry.ContactSheetOf(*doc, built.Parts, sheetSize); img != "" {
 				return builtSheet{Image: img, FromKernel: true,
-					Interferences: built.Interferences, Truncated: built.Truncated}
+					Interferences: built.Interferences, Truncated: built.Truncated,
+					Checked: built.Checked, Pairs: built.Pairs, Found: built.Found, Skipped: built.Skipped,
+					Parts: built.Parts}
 			}
 		}
 	}
 	// The unit is Millimetre here for the reason it always has been: the views
 	// fit whatever they are given, so a uniform scale changes nothing anyone can
-	// see, and a document with no unit still has to produce a picture.
-	return builtSheet{Image: geometry.ContactSheet(*doc, geometry.Millimetre, sheetSize)}
+	// see, and a document with no unit still has to produce a picture. The parts
+	// are tessellated here rather than inside geometry.ContactSheet — the same
+	// two steps it takes — so the sheet can keep them.
+	m := geometry.Tessellate(*doc, geometry.Millimetre)
+	parts := make([]geometry.RenderPart, 0, len(m.Groups))
+	for _, g := range m.Groups {
+		parts = append(parts, geometry.RenderPart{ID: g.PartID, Triangles: g.Triangles})
+	}
+	return builtSheet{Image: geometry.ContactSheetOf(*doc, parts, sheetSize), Parts: parts}
 }
 
 // describedRenderNote is what a caller must tell the vision model when the

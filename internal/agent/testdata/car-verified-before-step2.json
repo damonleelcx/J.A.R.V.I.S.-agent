@@ -1,0 +1,567 @@
+{
+ "name": "Sports Car Chassis Frame",
+ "units": "mm",
+ "parts": null,
+ "parameters": [
+  {
+   "name": "wheelbase",
+   "value": 2650,
+   "unit": "mm",
+   "how": "chosen"
+  },
+  {
+   "name": "front_track",
+   "value": 1600,
+   "unit": "mm",
+   "how": "chosen"
+  },
+  {
+   "name": "rear_track",
+   "value": 1620,
+   "unit": "mm",
+   "how": "chosen"
+  },
+  {
+   "name": "ride_height",
+   "value": 120,
+   "unit": "mm",
+   "how": "chosen"
+  },
+  {
+   "name": "chassis_width",
+   "value": 500,
+   "unit": "mm",
+   "how": "chosen"
+  },
+  {
+   "name": "tube_diameter",
+   "value": 40,
+   "unit": "mm",
+   "how": "chosen"
+  },
+  {
+   "name": "tube_wall",
+   "value": 2.5,
+   "unit": "mm",
+   "how": "chosen"
+  }
+ ],
+ "derived": [
+  {
+   "name": "half_wheelbase",
+   "expression": "wheelbase / 2",
+   "why": "Distance from center of gravity to axles"
+  },
+  {
+   "name": "half_front_track",
+   "expression": "front_track / 2",
+   "why": "Half width for symmetric placement"
+  },
+  {
+   "name": "half_rear_track",
+   "expression": "rear_track / 2",
+   "why": "Half width for symmetric placement"
+  }
+ ],
+ "assumptions": [
+  "Tubular spaceframe construction chosen over monocoque for modularity in this prototype phase.",
+  "Tube diameter and wall thickness selected for typical sports car stiffness-to-weight ratio."
+ ],
+ "not_verified": [
+  "Structural integrity under load.",
+  "Crashworthiness compliance.",
+  "Exact mounting point hardpoints for specific engine or suspension geometries."
+ ],
+ "definitions": [
+  {
+   "id": "main-tube",
+   "name": "Main Structural Tube",
+   "shape": "cylinder",
+   "size": {
+    "height": 1000,
+    "radius": 20
+   },
+   "position": [
+    0,
+    0,
+    0
+   ],
+   "size_from": {
+    "radius": "tube_diameter / 2"
+   },
+   "rotation": [
+    0,
+    0,
+    90
+   ],
+   "color": "#333333",
+   "opacity": 0,
+   "note": "Primary longitudinal member"
+  },
+  {
+   "id": "cross-member",
+   "name": "Cross Member Tube",
+   "shape": "cylinder",
+   "size": {
+    "height": 1000,
+    "radius": 20
+   },
+   "position": [
+    0,
+    0,
+    0
+   ],
+   "size_from": {
+    "radius": "tube_diameter / 2"
+   },
+   "rotation": [
+    0,
+    0,
+    0
+   ],
+   "color": "#333333",
+   "opacity": 0,
+   "note": "Lateral structural member"
+  },
+  {
+   "id": "diagonal-brace",
+   "name": "Diagonal Brace",
+   "shape": "cylinder",
+   "size": {
+    "height": 1000,
+    "radius": 20
+   },
+   "position": [
+    0,
+    0,
+    0
+   ],
+   "size_from": {
+    "radius": "tube_diameter / 2"
+   },
+   "rotation": [
+    0,
+    0,
+    45
+   ],
+   "color": "#333333",
+   "opacity": 0,
+   "note": "Triangulation brace"
+  }
+ ],
+ "assemblies": [
+  {
+   "id": "chassis",
+   "name": "Spaceframe Chassis",
+   "interfaces": [
+    {
+     "id": "front-suspension-left",
+     "position": [
+      -1325,
+      0,
+      -800
+     ],
+     "rotation": [
+      0,
+      0,
+      0
+     ],
+     "position_from": {
+      "x": "-half_wheelbase",
+      "z": "-half_front_track"
+     }
+    },
+    {
+     "id": "front-suspension-right",
+     "position": [
+      -1325,
+      0,
+      800
+     ],
+     "rotation": [
+      0,
+      0,
+      0
+     ],
+     "position_from": {
+      "x": "-half_wheelbase",
+      "z": "half_front_track"
+     }
+    },
+    {
+     "id": "rear-suspension-left",
+     "position": [
+      1325,
+      0,
+      -810
+     ],
+     "rotation": [
+      0,
+      0,
+      0
+     ],
+     "position_from": {
+      "x": "half_wheelbase",
+      "z": "-half_rear_track"
+     }
+    },
+    {
+     "id": "rear-suspension-right",
+     "position": [
+      1325,
+      0,
+      810
+     ],
+     "rotation": [
+      0,
+      0,
+      0
+     ],
+     "position_from": {
+      "x": "half_wheelbase",
+      "z": "half_rear_track"
+     }
+    },
+    {
+     "id": "engine-mount-front",
+     "position": [
+      -400,
+      150,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "id": "engine-mount-rear",
+     "position": [
+      400,
+      150,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0
+     ]
+    },
+    {
+     "id": "cockpit-floor",
+     "position": [
+      0,
+      100,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0
+     ]
+    }
+   ],
+   "features": [
+    {
+     "id": "weld-all",
+     "op": "fuse",
+     "of": "lower-longitudinal-left",
+     "with": [
+      "lower-longitudinal-right",
+      "upper-longitudinal-left",
+      "upper-longitudinal-right",
+      "front-cross-lower",
+      "rear-cross-lower",
+      "mid-cross-upper",
+      "a-pillar-left",
+      "a-pillar-right",
+      "roll-hoop-left",
+      "roll-hoop-right",
+      "diag-front-left",
+      "diag-front-right",
+      "diag-rear-left",
+      "diag-rear-right"
+     ],
+     "note": "Weld all tubes into a single rigid spaceframe"
+    }
+   ],
+   "children": [
+    {
+     "id": "lower-longitudinal-left",
+     "ref": "main-tube",
+     "position": [
+      0,
+      120,
+      -250
+     ],
+     "rotation": [
+      0,
+      0,
+      90
+     ],
+     "position_from": {
+      "y": "ride_height",
+      "z": "-chassis_width / 2"
+     }
+    },
+    {
+     "id": "lower-longitudinal-right",
+     "ref": "main-tube",
+     "position": [
+      0,
+      120,
+      250
+     ],
+     "rotation": [
+      0,
+      0,
+      90
+     ],
+     "position_from": {
+      "y": "ride_height",
+      "z": "chassis_width / 2"
+     }
+    },
+    {
+     "id": "upper-longitudinal-left",
+     "ref": "main-tube",
+     "position": [
+      0,
+      520,
+      -200
+     ],
+     "rotation": [
+      0,
+      0,
+      90
+     ],
+     "position_from": {
+      "y": "ride_height + 400",
+      "z": "-chassis_width / 2 + 50"
+     }
+    },
+    {
+     "id": "upper-longitudinal-right",
+     "ref": "main-tube",
+     "position": [
+      0,
+      520,
+      200
+     ],
+     "rotation": [
+      0,
+      0,
+      90
+     ],
+     "position_from": {
+      "y": "ride_height + 400",
+      "z": "chassis_width / 2 - 50"
+     }
+    },
+    {
+     "id": "front-cross-lower",
+     "ref": "cross-member",
+     "position": [
+      -1225,
+      120,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0
+     ],
+     "position_from": {
+      "x": "-half_wheelbase + 100",
+      "y": "ride_height"
+     }
+    },
+    {
+     "id": "rear-cross-lower",
+     "ref": "cross-member",
+     "position": [
+      1225,
+      120,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0
+     ],
+     "position_from": {
+      "x": "half_wheelbase - 100",
+      "y": "ride_height"
+     }
+    },
+    {
+     "id": "mid-cross-upper",
+     "ref": "cross-member",
+     "position": [
+      0,
+      520,
+      0
+     ],
+     "rotation": [
+      0,
+      0,
+      0
+     ],
+     "position_from": {
+      "y": "ride_height + 400"
+     }
+    },
+    {
+     "id": "a-pillar-left",
+     "ref": "main-tube",
+     "position": [
+      -600,
+      320,
+      -225
+     ],
+     "rotation": [
+      0,
+      0,
+      80
+     ],
+     "position_from": {
+      "y": "ride_height + 200",
+      "z": "-chassis_width / 2 + 25"
+     }
+    },
+    {
+     "id": "a-pillar-right",
+     "ref": "main-tube",
+     "position": [
+      -600,
+      320,
+      225
+     ],
+     "rotation": [
+      0,
+      0,
+      100
+     ],
+     "position_from": {
+      "y": "ride_height + 200",
+      "z": "chassis_width / 2 - 25"
+     }
+    },
+    {
+     "id": "roll-hoop-left",
+     "ref": "main-tube",
+     "position": [
+      200,
+      320,
+      -225
+     ],
+     "rotation": [
+      0,
+      0,
+      80
+     ],
+     "position_from": {
+      "y": "ride_height + 200",
+      "z": "-chassis_width / 2 + 25"
+     }
+    },
+    {
+     "id": "roll-hoop-right",
+     "ref": "main-tube",
+     "position": [
+      200,
+      320,
+      225
+     ],
+     "rotation": [
+      0,
+      0,
+      100
+     ],
+     "position_from": {
+      "y": "ride_height + 200",
+      "z": "chassis_width / 2 - 25"
+     }
+    },
+    {
+     "id": "diag-front-left",
+     "ref": "diagonal-brace",
+     "position": [
+      -1225,
+      120,
+      -250
+     ],
+     "rotation": [
+      0,
+      45,
+      90
+     ],
+     "position_from": {
+      "x": "-half_wheelbase + 100",
+      "y": "ride_height",
+      "z": "-chassis_width / 2"
+     }
+    },
+    {
+     "id": "diag-front-right",
+     "ref": "diagonal-brace",
+     "position": [
+      -1225,
+      120,
+      250
+     ],
+     "rotation": [
+      0,
+      -45,
+      90
+     ],
+     "position_from": {
+      "x": "-half_wheelbase + 100",
+      "y": "ride_height",
+      "z": "chassis_width / 2"
+     }
+    },
+    {
+     "id": "diag-rear-left",
+     "ref": "diagonal-brace",
+     "position": [
+      1225,
+      120,
+      -250
+     ],
+     "rotation": [
+      0,
+      -45,
+      90
+     ],
+     "position_from": {
+      "x": "half_wheelbase - 100",
+      "y": "ride_height",
+      "z": "-chassis_width / 2"
+     }
+    },
+    {
+     "id": "diag-rear-right",
+     "ref": "diagonal-brace",
+     "position": [
+      1225,
+      120,
+      250
+     ],
+     "rotation": [
+      0,
+      45,
+      90
+     ],
+     "position_from": {
+      "x": "half_wheelbase - 100",
+      "y": "ride_height",
+      "z": "chassis_width / 2"
+     }
+    }
+   ]
+  }
+ ],
+ "root": "chassis"
+}

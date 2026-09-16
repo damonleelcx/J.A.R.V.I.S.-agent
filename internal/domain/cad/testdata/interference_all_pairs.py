@@ -101,26 +101,99 @@ def dense(b):
             for _ in range(40)]
 
 
+def long_parts(b):
+    """Long parts among many small ones (added 2026-09-15, large-box index).
+
+    Studs are most of the parts, so the grid's cell is a stud, and everything else
+    spans many cells: rails the envelope long along each axis, rails turned in a
+    plane (their boxes large on two axes), panels long on two axes and thin on the
+    third, a stringer with rivets along it and one over its end, a floor and a
+    slab face to face, and one box around everything.
+    """
+    rng = random.Random(915)
+    solids = []
+    for _ in range(120):
+        solids.append(b.Pos(rng.uniform(0, 600), rng.uniform(0, 120), rng.uniform(0, 120))
+                      * b.Box(rng.uniform(4, 10), rng.uniform(4, 10), rng.uniform(4, 10)))
+    for _ in range(4):
+        solids.append(b.Pos(300, rng.uniform(0, 120), rng.uniform(0, 120)) * b.Box(640, 6, 6))
+        solids.append(b.Pos(rng.uniform(0, 600), 60, rng.uniform(0, 120)) * b.Box(6, 160, 6))
+        solids.append(b.Pos(rng.uniform(0, 600), rng.uniform(0, 120), 60) * b.Box(6, 6, 160))
+    for _ in range(3):
+        solids.append(b.Pos(rng.uniform(100, 500), rng.uniform(0, 120), 60)
+                      * b.Rot(0, 0, rng.uniform(10, 80)) * b.Box(300, 5, 5))
+    for _ in range(4):
+        solids.append(b.Pos(rng.uniform(0, 600), rng.uniform(0, 120), rng.uniform(0, 120))
+                      * b.Box(rng.uniform(40, 400), 2, rng.uniform(40, 120)))
+    solids.append(b.Pos(300, 250, 0) * b.Box(500, 20, 20))
+    for x in range(60, 550, 25):
+        solids.append(b.Pos(x, 250, 0) * b.Cylinder(2.4, 30))
+    solids.append(b.Pos(550, 250, 0) * b.Cylinder(2.4, 30))
+    # Face to face: large boxes that touch and share nothing.
+    solids.append(b.Pos(300, -20, 60) * b.Box(700, 4, 200))
+    solids.append(b.Pos(300, -32, 60) * b.Box(700, 20, 200))
+    solids.append(b.Pos(300, 100, 60) * b.Box(900, 400, 300))
+    solids.append(Unmeasurable())
+    rng.shuffle(solids)
+    return solids
+
+
+def anisotropic_boxes(seed, n):
+    """Boxes only, no solids: sizes spread over four decades on each axis
+    independently, flat boxes on cell boundaries, absent boxes and one box around
+    everything — so a pair can meet in every combination of levels."""
+    rng = random.Random(seed)
+    out = []
+    for _ in range(n):
+        lo = [rng.uniform(-300, 300) for _ in range(3)]
+        out.append((tuple(lo), tuple(lo[a] + 10 ** rng.uniform(-1, 3) for a in range(3))))
+    for k in range(40):
+        x = float(k * 7)
+        out.append(((x, 0.0, 0.0), (x + 7.0, 7.0, 7.0)))
+        out.append(((x, 3.0, 3.0), (x, 4.0, 4.0)))
+        out.append(None)
+    out.append(((-1e4, -1e4, -1e4), (1e4, 1e4, 1e4)))
+    rng.shuffle(out)
+    return out
+
+
+def candidates(sidecar, boxes):
+    """_candidate_pairs against every pair of boxes: the same pairs, in the same
+    order, each once."""
+    got, tests = sidecar._candidate_pairs(boxes)
+    ref = [(i, j) for i in range(len(boxes)) for j in range(i + 1, len(boxes))
+           if not sidecar._boxes_miss(boxes[i], boxes[j])]
+    n = sum(1 for box in boxes if box is not None)
+    return {"pairs": len(got), "every_pair_pairs": len(ref), "match": got == ref,
+            "duplicates": len(got) - len(set(got)), "box_tests": tests, "every_pair": n * (n - 1) // 2}
+
+
 def main():
     sidecar = load(sys.argv[1])
     import build123d
 
     fixture = sys.argv[2]
+    synthetic = None
     if fixture == "scatter":
         solids = scatter(build123d)
     elif fixture == "dense":
         solids = dense(build123d)
         sidecar._INTERFERENCE_PAIR_BUDGET = 7
+    elif fixture == "long":
+        solids = long_parts(build123d)
+        synthetic = [candidates(sidecar, anisotropic_boxes(seed, 1500)) for seed in (1, 2, 3)]
     else:
         raise SystemExit("unknown fixture: %s" % fixture)
     ids = ["p%d" % n for n in range(len(solids))]
     labels = ["Part %d" % n for n in range(len(solids))]
 
-    _, box_tests = sidecar._candidate_pairs(sidecar._boxes(solids))
-    found, truncated, _ = sidecar._interferences(solids, ids, labels)
+    boxes = sidecar._boxes(solids)
+    _, box_tests = sidecar._candidate_pairs(boxes)
+    found, truncated = sidecar._interferences(solids, ids, labels)[:2]
     ref_found, ref_truncated = every_pair(sidecar, solids, ids, labels)
     json.dump({"parts": len(solids), "budget": sidecar._INTERFERENCE_PAIR_BUDGET,
                "box_tests": box_tests, "every_pair": len(solids) * (len(solids) - 1) // 2,
+               "candidates": candidates(sidecar, boxes), "synthetic": synthetic,
                "sweep": {"found": found, "truncated": truncated},
                "all_pairs": {"found": ref_found, "truncated": ref_truncated}}, sys.stdout)
 

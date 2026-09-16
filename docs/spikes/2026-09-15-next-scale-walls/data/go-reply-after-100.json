@@ -1,0 +1,18 @@
+{
+  "build_alloc_mib": 0.00287628173828125,
+  "build_ms": "0.0",
+  "bytes": 1686205,
+  "cpus": 16,
+  "decode_alloc_mib": 4.218505859375,
+  "decode_ms": "15.4",
+  "decoded_heap_mib": 2.1057586669921875,
+  "file": "reply-full-100.json",
+  "found": 1760000,
+  "listed": 10000,
+  "parts": 1008160,
+  "problem_lines_bytes": 1410000,
+  "problems": 10000,
+  "problems_ms": "3.8",
+  "read_ms": "9.1",
+  "truncated": false
+}

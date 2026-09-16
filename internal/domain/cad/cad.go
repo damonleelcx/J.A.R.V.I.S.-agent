@@ -35,19 +35,12 @@
 package cad
 
 import (
-	"bufio"
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	_ "embed"
@@ -74,12 +67,13 @@ const buildTimeout = 30 * time.Second
 // start", which is the distinction the caller actually needs.
 const startTimeout = 60 * time.Second
 
-// Kernel is a build123d process, started on demand and kept warm.
+// Kernel is a pool of build123d processes, each started on demand and kept warm.
 //
-// Requests are serialised: it is one process with one stdin, and a second writer
-// would interleave two JSON documents into one line. Serialising is honest about
-// what the resource is — a pool is a later problem and would be a wrong answer to
-// a question nobody has asked yet.
+// Each process still serves one request at a time: it has one stdin, and a second
+// writer would interleave two JSON documents into one line. What the pool changes
+// is that a build waits for A process rather than for THE process, so one slow
+// assembly no longer holds up every other build in the deployment. One process is
+// the default; see WithPool and sidecar_process.go.
 type Kernel struct {
 	python string
 	log    *logx.Logger
@@ -90,14 +84,18 @@ type Kernel struct {
 	scripts bool
 	// timeout is how long one build may take: buildTimeout, except in the fences
 	// that need a limit short enough to cross on purpose. Not a setting.
+	//
+	// Each slot COPIES it when the pool is made and enforces it on its own
+	// process, so a build that runs out of time kills that slot's process and
+	// nobody else's. Like size, it is read when the pool is made and not after.
 	timeout time.Duration
 
-	mu      sync.Mutex
-	cmd     *exec.Cmd
-	stdin   io.WriteCloser
-	stdout  *bufio.Reader
-	script  string
-	started bool
+	// size is how many processes serve builds at once. The pool is made on
+	// first use, so a kernel nobody builds with owns nothing.
+	size  int
+	once  sync.Once
+	slots chan *sidecar
+	all   []*sidecar
 }
 
 // New returns a kernel that runs through the given Python interpreter.
@@ -106,7 +104,25 @@ type Kernel struct {
 // not an error. Nothing starts here; the process is started on the first build,
 // so a deployment that never exports a parametric file never pays for one.
 func New(python string, log *logx.Logger) *Kernel {
-	return &Kernel{python: strings.TrimSpace(python), log: log, timeout: buildTimeout}
+	return &Kernel{python: strings.TrimSpace(python), log: log, size: 1, timeout: buildTimeout}
+}
+
+// WithPool sets how many kernel processes serve builds at once. Fewer than one is
+// one. Set it before the first build: the pool is made once and never resized.
+//
+// # Why one is the default (Phase 4, stage K3)
+//
+// Every process holds its own build123d and OpenCASCADE in memory, and nothing
+// caps a process below its pod's limit, so a process too many is an OOM that
+// takes the whole container with it. forged shares a 1 GiB limit with the API and
+// the audio server. A second process there is a number to measure first, not a
+// default to guess.
+func (k *Kernel) WithPool(n int) *Kernel {
+	if n < 1 {
+		n = 1
+	}
+	k.size = n
+	return k
 }
 
 // WithScripts turns on running model-written build123d.
@@ -187,12 +203,43 @@ type Build struct {
 	// geometry/interference.go and cad/sidecar.py.
 	Interferences          []geometry.Interference
 	InterferencesTruncated bool
+	// InterferencesFound is how many pairs the check found sharing material, and
+	// Interferences lists at most the worst _INTERFERENCE_LIST_LIMIT of them
+	// (sidecar.py, 10,000). A reply
+	// that found more is SUMMARIZED, never cut silently: InterferencesFound says how
+	// many there were, and InterferencesSummarized says the list is the worst of
+	// them rather than all of them.
+	//
+	// # Why a list has a bound at all
+	//
+	// A million-occurrence airframe barrel shares material in 1,760,000 pairs — every
+	// rivet in its skin and its stringer — and those are 15 distinct answers reused.
+	// Listed in full the reply is hundreds of megabytes that no reader uses: the turn
+	// names three, and a repair that sent them all would send a model a prompt of
+	// that size (docs/spikes/2026-09-15-next-scale-walls).
+	//
+	// This is not a truncated CHECK. Every pair was checked; what is bounded is how
+	// many of the answers are written down. InterferencesTruncated keeps meaning
+	// "not every pair was checked", and the two are said separately.
+	InterferencesFound      int
+	InterferencesSummarized bool
 	// InterferenceBoxTests is how many pairs of bounding boxes the interference
 	// check compared to choose which pairs pay for a boolean. Reported so the broad
 	// phase's cost is a count a test can read (Phase 4, stage K2b): sorting and
 	// sweeping keeps it near linear on an assembly that spreads out, where comparing
-	// every pair is n(n-1)/2, 8.4 million at 4,096 parts.
+	// every pair is n(n-1)/2, 8.4 million at 4,096 parts. Since Phase 5, stage V1
+	// the broad phase is a grid over all three axes.
 	InterferenceBoxTests int
+	// InterferencePairs is how many pairs' boxes overlap, InterferenceBooleans how
+	// many exact booleans were paid for, and InterferenceReused how many pairs were
+	// answered by a boolean already measured at the same pose (Phase 5, stage V1) —
+	// or at a pose slid along a box it lies wholly inside, which shares the same
+	// volume (sidecar.py, _INTERFERENCE_SLIDE; docs/spikes/2026-09-15-large-box-index).
+	// The pair budget counts booleans, so Booleans + Reused below Pairs is exactly
+	// a truncated check — the count "checked X of Y" is built from.
+	InterferencePairs    int
+	InterferenceBooleans int
+	InterferenceReused   int
 	// ShapeBuilds is how many distinct shapes the kernel built, and ScriptRuns how
 	// many scripts it ran: each distinct shape and each distinct script ONCE per build,
 	// however many occurrences place it (Phase 4, stage K1). Reported so "built once"
@@ -218,8 +265,18 @@ type Build struct {
 	//
 	// This is the same solid the exporter writes, tessellated. It is not a
 	// second model that could disagree with the first.
+	//
+	// Since Phase 4, stage K4 it holds only the parts a feature CHANGED. Every
+	// other part is a placed copy of a shape built once, and arrives as one of
+	// MeshInstances: its definition's triangles, tessellated once, and the matrix
+	// that places them. WorldMeshes gives every part in assembly coordinates.
 	Mesh []MeshPart
-	// Triangles is the whole mesh's count, and Deflection the tolerance in
+	// MeshDefinitions is each distinct shape's surface in its own frame, and
+	// MeshInstances each placed copy of one. Empty unless a mesh was asked for.
+	MeshDefinitions []MeshDefinition
+	MeshInstances   []MeshInstance
+	// Triangles is the whole mesh's count — each definition's triangles counted
+	// once, however many copies place it — and Deflection the tolerance in
 	// millimetres it was reached with. Simplified says the tolerance was
 	// COARSENED to fit the budget: the shape is the same shape, described less
 	// finely, and a caller that shows the mesh should be able to say so rather
@@ -231,6 +288,9 @@ type Build struct {
 	// built. Reported rather than returned as an error: the build succeeded and
 	// its volume, bounds and STEP are all still true.
 	MeshError string
+	// Properties is each surviving part's volume, centre of volume and box, in
+	// millimetres. Empty unless asked for with BuildProperties (Phase 5, stage V3).
+	Properties []geometry.SolidMeasure
 }
 
 // MeshPart is one built solid's surface, attributed to the part it came from.
@@ -248,6 +308,51 @@ type MeshPart struct {
 	Triangles []int32
 }
 
+// MeshDefinition is one shape's surface in its own frame, in millimetres, drawn
+// once however many copies place it.
+type MeshDefinition struct {
+	Vertices  []float64
+	Triangles []int32
+}
+
+// MeshInstance is one placed copy of a MeshDefinition.
+//
+// Matrix is the 4×4 placement in COLUMN-major order — the order WebGL reads a
+// uniform or an instance attribute in — so a point p lands at
+// (m[0]p.x + m[4]p.y + m[8]p.z + m[12], m[1]… + m[13], m[2]… + m[14]). A mirrored
+// copy's reflection is in its definition, not its matrix: K1 builds the mirrored
+// shape as a shape of its own.
+type MeshInstance struct {
+	ID         string
+	Label      string
+	Definition int
+	Matrix     [16]float64
+}
+
+// WorldMeshes is every surviving part's surface in assembly coordinates: the
+// parts a feature changed as the kernel sent them, then each placed copy of a
+// definition moved by its matrix. It is what Mesh held before stage K4, for a
+// reader that draws parts rather than instances.
+func (b *Build) WorldMeshes() []MeshPart {
+	out := make([]MeshPart, 0, len(b.Mesh)+len(b.MeshInstances))
+	out = append(out, b.Mesh...)
+	for _, in := range b.MeshInstances {
+		if in.Definition < 0 || in.Definition >= len(b.MeshDefinitions) {
+			continue
+		}
+		d, m := b.MeshDefinitions[in.Definition], in.Matrix
+		v := make([]float64, len(d.Vertices))
+		for i := 0; i+2 < len(d.Vertices); i += 3 {
+			x, y, z := d.Vertices[i], d.Vertices[i+1], d.Vertices[i+2]
+			v[i] = m[0]*x + m[4]*y + m[8]*z + m[12]
+			v[i+1] = m[1]*x + m[5]*y + m[9]*z + m[13]
+			v[i+2] = m[2]*x + m[6]*y + m[10]*z + m[14]
+		}
+		out = append(out, MeshPart{ID: in.ID, Label: in.Label, Vertices: v, Triangles: d.Triangles})
+	}
+	return out
+}
+
 type request struct {
 	Solids     []geometry.Solid     `json:"solids"`
 	Operations []geometry.Operation `json:"operations,omitempty"`
@@ -256,6 +361,15 @@ type request struct {
 	// kernel choose from the model's own size — 0.1 mm is invisible on a
 	// bracket and catastrophic on a car body, so a constant cannot serve both.
 	Deflection float64 `json:"deflection,omitempty"`
+	// Properties asks for each part's volume, centre and box (see BuildProperties).
+	Properties bool `json:"properties,omitempty"`
+}
+
+type partProperties struct {
+	ID       string      `json:"id"`
+	Volume   float64     `json:"volume"`
+	Centroid *[3]float64 `json:"centroid"`
+	Bounds   *[6]float64 `json:"bounds"`
 }
 
 type reply struct {
@@ -273,14 +387,25 @@ type reply struct {
 
 	Interferences          []geometry.Interference `json:"interferences,omitempty"`
 	InterferencesTruncated bool                    `json:"interferences_truncated,omitempty"`
-	InterferenceBoxTests   int                     `json:"interference_box_tests"`
+	// A pointer, so a reply that does not carry the count is told apart from one
+	// that found nothing (see buildOf).
+	InterferencesFound      *int `json:"interferences_found"`
+	InterferencesSummarized bool `json:"interferences_summarized,omitempty"`
+	InterferenceBoxTests    int  `json:"interference_box_tests"`
+	InterferencePairs       int  `json:"interference_pairs"`
+	InterferenceBooleans    int  `json:"interference_booleans"`
+	InterferenceReused      int  `json:"interference_reused"`
 
-	STEP           string     `json:"step,omitempty"`
-	Mesh           []meshPart `json:"mesh,omitempty"`
-	MeshTriangles  int        `json:"mesh_triangles,omitempty"`
-	MeshDeflection float64    `json:"mesh_deflection,omitempty"`
-	MeshSimplified bool       `json:"mesh_simplified,omitempty"`
-	MeshError      string     `json:"mesh_error,omitempty"`
+	STEP            string           `json:"step,omitempty"`
+	Mesh            []meshPart       `json:"mesh,omitempty"`
+	MeshDefinitions []meshDefinition `json:"mesh_definitions,omitempty"`
+	MeshInstances   []meshInstance   `json:"mesh_instances,omitempty"`
+	MeshTriangles   int              `json:"mesh_triangles,omitempty"`
+	MeshDeflection  float64          `json:"mesh_deflection,omitempty"`
+	MeshSimplified  bool             `json:"mesh_simplified,omitempty"`
+	MeshError       string           `json:"mesh_error,omitempty"`
+
+	PartProperties []partProperties `json:"part_properties,omitempty"`
 }
 
 // phaseSeconds is the reply's "phases": seconds per phase of a build, written by
@@ -305,6 +430,18 @@ type meshPart struct {
 	Label     string    `json:"label"`
 	Vertices  []float64 `json:"vertices"`
 	Triangles []int32   `json:"triangles"`
+}
+
+type meshDefinition struct {
+	Vertices  []float64 `json:"vertices"`
+	Triangles []int32   `json:"triangles"`
+}
+
+type meshInstance struct {
+	ID         string      `json:"id"`
+	Label      string      `json:"label"`
+	Definition int         `json:"definition"`
+	Matrix     [16]float64 `json:"matrix"`
 }
 
 // Phases is the kernel's time per phase of one build. Scripts run before the
@@ -353,6 +490,20 @@ func keepBuildable(in []geometry.Solid) []geometry.Solid {
 }
 
 func (k *Kernel) BuildDocument(ctx context.Context, doc geometry.Document, unit geometry.Unit, format string) (*Build, error) {
+	return k.build(ctx, doc, unit, format, false)
+}
+
+// BuildProperties builds a document and returns each part's volume, centre of
+// volume and box, for geometry.MassProperties (Phase 5, stage V3).
+//
+// The same build as every other reader's, asking for one more thing: a mass
+// report from a different build than the export could disagree with it.
+func (k *Kernel) BuildProperties(ctx context.Context, doc geometry.Document, unit geometry.Unit) (*Build, error) {
+	return k.build(ctx, doc, unit, "", true)
+}
+
+// build is BuildDocument, optionally asking the kernel for each part's properties.
+func (k *Kernel) build(ctx context.Context, doc geometry.Document, unit geometry.Unit, format string, properties bool) (*Build, error) {
 	const op = "cad.Kernel.BuildDocument"
 	if !k.Available() {
 		return nil, Unavailable(op)
@@ -445,34 +596,48 @@ func (k *Kernel) BuildDocument(ctx context.Context, doc geometry.Document, unit 
 		inferred = append(inferred, fmt.Sprintf("%s %s.", p.Name, p.Detail))
 	}
 
-	k.mu.Lock()
-	defer k.mu.Unlock()
+	// A build waits HERE for a free process, not inside one, so a caller that gives
+	// up stops waiting instead of queueing behind a lock that ignores it.
+	s, err := k.acquire(ctx)
+	if err != nil {
+		return nil, errs.Wrap(op, errs.CodeConnectorUnavailable, err).
+			WithDetail("no CAD kernel process became free before the request ended")
+	}
+	defer k.release(s)
 
-	req := request{Solids: solids, Operations: operations, Format: format}
-	res, err := k.roundTrip(ctx, req)
+	req := request{Solids: solids, Operations: operations, Format: format, Properties: properties}
+	res, err := s.roundTrip(ctx, req)
 	var late *lateError
 	if err != nil && !errors.As(err, &late) {
 		// One retry, and exactly one. The overwhelmingly likely cause of an I/O
 		// failure is a process that died between requests — a machine asleep, an
 		// OOM, somebody's pkill — and restarting answers that. Retrying twice
 		// would turn a kernel that crashes on a particular document into a loop.
+		// The retry replaces THIS slot's process; the others are untouched.
 		//
 		// ‼️ A build that ran out of time is NOT retried: its process was working,
 		// and a fresh one takes as long again. Fences:
 		// TestKernel_ABuildThatRunsOutOfTimeIsNotRetriedAndSaysSo, and
 		// TestKernel_AProcessThatDiesMidBuildIsStillRetriedOnce for the retry.
-		k.stopLocked()
-		k.log.Warn(ctx, logx.EventCADRestarted, "detail", err.Error())
-		res, err = k.roundTrip(ctx, req)
+		s.stop()
+		k.log.Warn(ctx, logx.EventCADRestarted, "slot", s.slot, "detail", err.Error())
+		res, err = s.roundTrip(ctx, req)
 	}
 	if err != nil {
 		if errors.As(err, &late) {
-			// The killed process is reaped and the kernel reset NOW, so the next
-			// build starts a fresh process instead of spending its one retry
-			// discovering this one is dead.
-			// Fence: TestKernel_AfterATimeoutTheKernelStartsAFreshProcessForTheNextBuild.
-			k.stopLocked()
-			k.log.Warn(ctx, logx.EventCADTimedOut, "detail", late.Error())
+			// The killed process is reaped and THIS SLOT reset NOW, so the next
+			// build that takes this slot starts a fresh process instead of
+			// spending its one retry discovering this one is dead.
+			//
+			// ‼️ Only this slot. The kill in roundTrip and this reset both go
+			// through the sidecar that ran the build, so a slow assembly costs
+			// the deployment one process and not the pool: the other slots keep
+			// the processes they have, and a build already running in one is not
+			// interrupted. Fences:
+			// TestKernel_AfterATimeoutTheKernelStartsAFreshProcessForTheNextBuild
+			// and TestKernel_ATimeoutInOneSlotLeavesTheOtherSlotsServing.
+			s.stop()
+			k.log.Warn(ctx, logx.EventCADTimedOut, "slot", s.slot, "detail", late.Error())
 			return nil, lateRefusal(op, late)
 		}
 		return nil, errs.Wrap(op, errs.CodeConnectorUnavailable, err).
@@ -499,10 +664,27 @@ func (k *Kernel) BuildDocument(ctx context.Context, doc geometry.Document, unit 
 			WithDetail("the CAD kernel could not build this assembly: %s", detail)
 	}
 
+	return buildOf(res, inferred, scriptRuns)
+}
+
+// buildOf is what a successful reply says, as a Build. Separate from build so the
+// reply's cost at scale can be measured on exactly this path
+// (TestScaleUp_MeasureTheInterferenceReply).
+func buildOf(res *reply, inferred []string, scriptRuns int) (*Build, error) {
+	const op = "cad.Kernel.BuildDocument"
 	out := &Build{Parts: res.Parts, Volume: res.Volume, Bounds: res.Bounds,
 		Skipped: res.Skipped, FeatureFailures: res.FeaturesFailed, Inferred: inferred,
 		Interferences: res.Interferences, InterferencesTruncated: res.InterferencesTruncated, InterferenceBoxTests: res.InterferenceBoxTests,
+		InterferencePairs: res.InterferencePairs, InterferenceBooleans: res.InterferenceBooleans, InterferenceReused: res.InterferenceReused,
 		ShapeBuilds: res.ShapeBuilds, ScriptRuns: scriptRuns, Phases: res.Phases.durations()}
+	// ‼️ Never fewer found than listed, and a list shorter than the count is a
+	// summary whatever the flag says: a reader that sees N findings and a count of
+	// N must be able to trust that nothing was left out.
+	out.InterferencesFound = len(res.Interferences)
+	if res.InterferencesFound != nil && *res.InterferencesFound > out.InterferencesFound {
+		out.InterferencesFound = *res.InterferencesFound
+	}
+	out.InterferencesSummarized = res.InterferencesSummarized || out.InterferencesFound > len(res.Interferences)
 	if res.STEP != "" {
 		decoded, err := base64.StdEncoding.DecodeString(res.STEP)
 		if err != nil {
@@ -519,10 +701,27 @@ func (k *Kernel) BuildDocument(ctx context.Context, doc geometry.Document, unit 
 			})
 		}
 	}
+	for _, d := range res.MeshDefinitions {
+		out.MeshDefinitions = append(out.MeshDefinitions, MeshDefinition{Vertices: d.Vertices, Triangles: d.Triangles})
+	}
+	for _, in := range res.MeshInstances {
+		out.MeshInstances = append(out.MeshInstances, MeshInstance{
+			ID: in.ID, Label: in.Label, Definition: in.Definition, Matrix: in.Matrix,
+		})
+	}
 	out.Triangles = res.MeshTriangles
 	out.Deflection = res.MeshDeflection
 	out.Simplified = res.MeshSimplified
 	out.MeshError = res.MeshError
+	for _, p := range res.PartProperties {
+		m := geometry.SolidMeasure{ID: p.ID, Volume: p.Volume}
+		// A part whose centre or box the kernel could not read is kept, marked
+		// unmeasured, so the roll-up can name it rather than weigh a guess.
+		if p.Centroid != nil && p.Bounds != nil {
+			m.Centroid, m.Bounds, m.Measured = *p.Centroid, *p.Bounds, true
+		}
+		out.Properties = append(out.Properties, m)
+	}
 	return out, nil
 }
 
@@ -548,6 +747,15 @@ func (k *Kernel) BuildMesh(ctx context.Context, doc geometry.Document, unit geom
 // "the CAD kernel did not answer, and restarting it did not help" under
 // CONNECTOR_UNAVAILABLE. BuildDocument asks errors.As for this, and does not
 // retry it.
+//
+// # What the pool changed
+//
+// One of these is about ONE SLOT. The sidecar that ran the build recorded it and
+// killed its own process (sidecar.roundTrip), and BuildDocument resets that slot
+// and nothing else. A pool makes the distinction matter more, not less: before,
+// a wrongly retried timeout cost the deployment its only process twice over;
+// now it would also take a slot out of service that the other builds are still
+// being served by.
 type lateError struct {
 	// limit is the kernel's own limit, when that is what ran out.
 	limit time.Duration
@@ -585,171 +793,4 @@ func lateRefusal(op string, late *lateError) error {
 		return errs.Wrap(op, errs.CodeConnectorUnavailable, late).
 			WithDetail("the request ended before the CAD kernel finished, so the build was stopped")
 	}
-}
-
-// roundTrip sends one request and reads one reply. Caller holds the mutex.
-func (k *Kernel) roundTrip(ctx context.Context, req request) (*reply, error) {
-	if err := k.startLocked(ctx); err != nil {
-		return nil, err
-	}
-	body, err := json.Marshal(req)
-	if err != nil {
-		return nil, err
-	}
-	if _, err := k.stdin.Write(append(body, '\n')); err != nil {
-		return nil, fmt.Errorf("writing to the kernel: %w", err)
-	}
-
-	// The deadline is enforced by a goroutine that kills the process, because a
-	// blocking Read on a pipe does not observe a context. Killing is the only
-	// thing that ends it, and it is also the right outcome: a kernel that has
-	// not answered in thirty seconds is not going to.
-	//
-	// ‼️ The goroutine records WHY it killed the process before it does. To the
-	// read below, a process killed for its time and one that crashed are the same
-	// EOF, and until 2026-09-15 they were treated the same: retried on a fresh
-	// process, killed again, reported as "no working backend". See lateError.
-	done := make(chan struct{})
-	defer close(done)
-	var stopped atomic.Pointer[lateError]
-	go func() {
-		timer := time.NewTimer(k.timeout)
-		defer timer.Stop()
-		select {
-		case <-done:
-		case <-ctx.Done():
-			stopped.Store(&lateError{caller: ctx.Err()})
-			k.killLocked()
-		case <-timer.C:
-			stopped.Store(&lateError{limit: k.timeout})
-			k.killLocked()
-		}
-	}()
-
-	line, err := k.stdout.ReadBytes('\n')
-	if err != nil {
-		if late := stopped.Load(); late != nil {
-			return nil, late
-		}
-		return nil, fmt.Errorf("reading from the kernel: %w", err)
-	}
-	var res reply
-	if err := json.Unmarshal(line, &res); err != nil {
-		return nil, fmt.Errorf("the kernel wrote something that is not a reply: %w", err)
-	}
-	return &res, nil
-}
-
-func (k *Kernel) startLocked(ctx context.Context) error {
-	if k.started {
-		return nil
-	}
-	// The sidecar is embedded and written out, so a deployment is one binary and
-	// the script cannot drift from the Go that speaks to it.
-	dir, err := os.MkdirTemp("", "forge-cad-")
-	if err != nil {
-		return err
-	}
-	script := filepath.Join(dir, "sidecar.py")
-	if err := os.WriteFile(script, sidecarSource, 0o600); err != nil {
-		return err
-	}
-
-	cmd := exec.Command(k.python, script)
-	stdin, err := cmd.StdinPipe()
-	if err != nil {
-		return err
-	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return err
-	}
-	// stderr is drained rather than inherited: a Python warning on a shared
-	// stderr interleaves with this process's own logs, and a full pipe nobody
-	// reads blocks the child forever.
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return err
-	}
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("starting the CAD kernel with %q: %w", k.python, err)
-	}
-	go func() { _, _ = io.Copy(io.Discard, stderr) }()
-
-	k.cmd, k.stdin, k.stdout, k.script = cmd, stdin, bufio.NewReaderSize(stdout, 1<<20), dir
-
-	// The ready banner is written AFTER the import, so waiting for it is what
-	// distinguishes "still starting" from "will never start".
-	type banner struct {
-		res *reply
-		err error
-	}
-	ch := make(chan banner, 1)
-	go func() {
-		line, err := k.stdout.ReadBytes('\n')
-		if err != nil {
-			ch <- banner{err: err}
-			return
-		}
-		var r reply
-		if err := json.Unmarshal(line, &r); err != nil {
-			ch <- banner{err: fmt.Errorf("the kernel's first line was not a banner: %w", err)}
-			return
-		}
-		ch <- banner{res: &r}
-	}()
-
-	select {
-	case b := <-ch:
-		if b.err != nil || b.res == nil || !b.res.Ready {
-			k.stopLocked()
-			detail := "the kernel exited while starting"
-			if b.err != nil {
-				detail = b.err.Error()
-			} else if b.res != nil && b.res.Error != "" {
-				detail = b.res.Error
-			}
-			return errors.New(detail)
-		}
-	case <-time.After(startTimeout):
-		k.stopLocked()
-		return fmt.Errorf("the CAD kernel did not start within %s", startTimeout)
-	case <-ctx.Done():
-		k.stopLocked()
-		return ctx.Err()
-	}
-
-	k.started = true
-	k.log.Info(ctx, logx.EventCADStarted, "python", k.python)
-	return nil
-}
-
-func (k *Kernel) killLocked() {
-	if k.cmd != nil && k.cmd.Process != nil {
-		_ = k.cmd.Process.Kill()
-	}
-}
-
-func (k *Kernel) stopLocked() {
-	k.killLocked()
-	if k.cmd != nil {
-		_ = k.cmd.Wait()
-	}
-	if k.stdin != nil {
-		_ = k.stdin.Close()
-	}
-	if k.script != "" {
-		_ = os.RemoveAll(k.script)
-	}
-	k.cmd, k.stdin, k.stdout, k.script, k.started = nil, nil, nil, "", false
-}
-
-// Close stops the kernel. Safe on a kernel that was never started.
-func (k *Kernel) Close() {
-	if k == nil {
-		return
-	}
-	k.mu.Lock()
-	defer k.mu.Unlock()
-	k.stopLocked()
 }

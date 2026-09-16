@@ -27,6 +27,8 @@ the renderer does it (internal/domain/geometry/solid.go). Any convention decided
 here would be a second opinion about what the document means.
 """
 import base64
+import copy
+import heapq
 import json
 import math
 import os
@@ -44,6 +46,9 @@ try:
         make_face, revolve, sweep, Transition, Line, ThreePointArc, Wire, Face,
         import_step,
     )
+    # A located copy without the B-rep copy Shape.moved makes and discards; see _located.
+    from build123d.topology.shape_core import downcast
+    from OCP.gp import gp_Ax3, gp_Trsf
     # The STEP writer's own pieces, used directly rather than through build123d's
     # export_step, which only accepts a Compound(children=...) — see _step_document.
     from OCP.APIHeaderSection import APIHeaderSection_MakeHeader
@@ -182,19 +187,78 @@ def _fused(solids):
     return out
 
 
-def _placement(solid):
+# Place each occurrence without the work build123d does and throws away: a B-rep
+# copy per located copy (_located), and a Plane per placement (_placement).
+#
+# # Why (next scale walls)
+#
+# Measured 2026-09-15 on the airframe barrel at 90,880 occurrences
+# (docs/spikes/2026-09-15-next-scale-walls): the shapes phase was 10.0 s of
+# _placement (110 us each) and 10.0 s of `location * shape`, 5.9 s of it
+# BRepBuilderAPI_Copy. Shape.moved deep-copies the shape, which copies its whole
+# B-rep, then replaces the copy's TopoDS_Shape with the original's, moved — so the
+# copy is made and dropped once per occurrence. K1's sharing never used it.
+#
+# Both replacements produce the SAME objects, not close ones: the same class and
+# attributes, the same TShape, and a location equal bit for bit (fence:
+# TestKernel_APlacedCopyIsTheCopyBuild123dMade). Off, the build123d calls run as
+# before; the switch exists so that reference stays available.
+_PLACE_WITHOUT_COPYING = True
+
+
+def _placement(solid, frames=None):
     """The part's frame, from the matrix the caller computed.
 
     x_dir and z_dir are the matrix's first and third COLUMNS — where the frame's
     own x and z axes end up. Reading rows instead would apply the inverse
     rotation, which is wrong in a way that looks plausible for symmetric parts
     and only shows on the asymmetric ones.
+
+    With `frames` (a dict for one build), each distinct matrix builds its Plane
+    ONCE, and every occurrence with that matrix repeats only the last step
+    Location(plane) takes: an axis system at the occurrence's origin with the
+    Plane's own directions, set as a transformation and inverted. The directions a
+    Plane holds do not depend on its origin, so the transformation is the one the
+    Plane would give, to the bit. Keyed by repr, which tells -0.0 from 0.
     """
     m = solid["matrix"]
-    x_dir = Vector(m[0], m[3], m[6])
-    z_dir = Vector(m[2], m[5], m[8])
     origin = Vector(*solid["position"])
-    return Location(Plane(origin=origin, x_dir=x_dir, z_dir=z_dir))
+    if frames is None or not _PLACE_WITHOUT_COPYING:
+        return Location(Plane(origin=origin, x_dir=Vector(m[0], m[3], m[6]), z_dir=Vector(m[2], m[5], m[8])))
+    key = repr(m)
+    axes = frames.get(key)
+    if axes is None:
+        plane = Plane(origin=origin, x_dir=Vector(m[0], m[3], m[6]), z_dir=Vector(m[2], m[5], m[8]))
+        axes = frames[key] = (plane.z_dir.to_dir(), plane.x_dir.to_dir())
+    trsf = gp_Trsf()
+    trsf.SetTransformation(gp_Ax3(origin.to_pnt(), axes[0], axes[1]))
+    trsf.Invert()
+    return Location(TopLoc_Location(trsf))
+
+
+def _located(shape, location):
+    """`location * shape` — Shape.moved — without the B-rep copy it discards.
+
+    Shape.__deepcopy__ copies every attribute and, for the TopoDS_Shape, makes a
+    BRepBuilderAPI_Copy; moved then overwrites that copy with the original moved.
+    This is the same loop with the moved shape put where the copy would have gone.
+    """
+    if not _PLACE_WITHOUT_COPYING:
+        return location * shape
+    cls = shape.__class__
+    out = cls.__new__(cls)
+    moved = downcast(shape.wrapped.Moved(location.wrapped))
+    memo = {id(shape): out, id(shape.wrapped): moved}
+    for key, value in shape.__dict__.items():
+        if key == "topo_parent":
+            out.topo_parent = value
+        else:
+            setattr(out, key, copy.deepcopy(value, memo))
+        if key == "joints":
+            for joint in out.joints.values():
+                joint.parent = out
+    out.wrapped = moved
+    return out
 
 
 def _shape(solid):
@@ -590,10 +654,44 @@ def _tessellate_once(solids, deflection):
     return meshes, total
 
 
-def _tessellate(solids, ids, names, request):
+# # Once per definition (Phase 4, stage K4)
+#
+# A thousand copies of one bolt were tessellated a thousand times and sent as a
+# thousand identical triangle lists, each already moved to its place. A copy is
+# the shape K1 built once, placed; so the shape is tessellated once, in its own
+# frame, and each copy is sent as the matrix that places it. The triangle budget
+# counts a definition's triangles once, which is what they cost to draw.
+#
+# A solid a feature changed is not a copy of anything any more, and keeps the
+# mesh it always had: its own, in assembly coordinates, under "mesh".
+#
+# _MESH_PER_DEFINITION turns this off. It exists so the per-solid tessellation it
+# replaced stays available as the reference an instanced mesh must reproduce
+# (testdata/mesh_per_definition.py); nothing in production turns it off.
+_MESH_PER_DEFINITION = True
+
+
+def _column_major(location):
+    """A placement as the 4x4 matrix WebGL reads: columns first, translation last."""
+    t = location.wrapped.Transformation()
+    return [t.Value(1, 1), t.Value(2, 1), t.Value(3, 1), 0.0,
+            t.Value(1, 2), t.Value(2, 2), t.Value(3, 2), 0.0,
+            t.Value(1, 3), t.Value(2, 3), t.Value(3, 3), 0.0,
+            t.Value(1, 4), t.Value(2, 4), t.Value(3, 4), 1.0]
+
+
+def _tessellate(solids, ids, names, request, placed=None):
+    """The surface of every kept solid.
+
+    placed holds, for each solid, (shape key, location, the unplaced shape) when
+    it is an untouched copy of a shape built once, or None when a feature changed
+    it. Copies share one tessellation of their shape; the rest are meshed as placed.
+    """
     # A deflection in millimetres, from the model's own size rather than a
     # constant: 0.1 mm is invisible on a bracket and catastrophic on a car body,
-    # and the same number cannot serve both.
+    # and the same number cannot serve both. The ASSEMBLY's size, for copies too:
+    # a bolt tessellated to its own size would come out finer than the body it
+    # sits in.
     # One pass, never Compound(children=...): see the note on the assembly in _build.
     box = Compound(list(solids)).bounding_box()
     span = max(float(box.max.X - box.min.X),
@@ -601,13 +699,27 @@ def _tessellate(solids, ids, names, request):
                float(box.max.Z - box.min.Z), 1.0)
     deflection = float(request.get("deflection") or (span / 2000.0))
 
+    index, shapes, instances, own = {}, [], [], []
+    for i, solid in enumerate(solids):
+        p = placed[i] if (_MESH_PER_DEFINITION and placed) else None
+        if p is None:
+            own.append(i)
+            continue
+        key, location, shape = p
+        if key not in index:
+            index[key] = len(shapes)
+            shapes.append(shape)
+        instances.append((i, index[key], location))
+
     simplified = False
     for _ in range(_MESH_TRIES):
         try:
-            meshes, total = _tessellate_once(solids, deflection)
+            definitions, shared = _tessellate_once(shapes, deflection)
+            meshes, separate = _tessellate_once([solids[i] for i in own], deflection)
         except Exception as exc:
             reason = str(exc).strip() or type(exc).__name__
             return {"mesh_error": "the solid could not be tessellated: %s" % reason}
+        total = shared + separate
         if total <= _MESH_BUDGET:
             break
         # Over budget. Coarsened rather than truncated: half a model is a lie
@@ -618,13 +730,19 @@ def _tessellate(solids, ids, names, request):
         return {"mesh_error": "this assembly could not be tessellated within %d triangles"
                              % _MESH_BUDGET}
 
-    for mesh, part_id, name in zip(meshes, ids, names):
-        mesh["id"] = part_id
-        mesh["label"] = name
-    return {"mesh": meshes,
-            "mesh_triangles": total,
-            "mesh_deflection": deflection,
-            "mesh_simplified": simplified}
+    for mesh, i in zip(meshes, own):
+        mesh["id"] = ids[i]
+        mesh["label"] = names[i]
+    out = {"mesh": meshes,
+           "mesh_triangles": total,
+           "mesh_deflection": deflection,
+           "mesh_simplified": simplified}
+    if instances:
+        out["mesh_definitions"] = definitions
+        out["mesh_instances"] = [{"id": ids[i], "label": names[i], "definition": d,
+                                  "matrix": _column_major(location)}
+                                 for i, d, location in instances]
+    return out
 
 
 # --- interference ----------------------------------------------------------
@@ -683,21 +801,156 @@ _INTERFERENCE_PAIR_BUDGET = 2000
 # different to a bracket and to a bridge.
 _INTERFERENCE_MIN_VOLUME = 1.0
 _INTERFERENCE_MIN_FRACTION = 0.001
+# How many clashes a reply LISTS. Every clash is still found and counted
+# ("interferences_found"); past this many, the reply lists the worst and says it is
+# a summary ("interferences_summarized"), and is never cut silently.
+#
+# # Why (next scale walls)
+#
+# The 1,008,160-occurrence airframe barrel finds 1,760,000 clashes. Listed in full
+# (measured 2026-09-15, docs/spikes/2026-09-15-next-scale-walls) the reply was 312 MB,
+# all but 541 bytes of it the list; Go decoded it in 2.5 s, allocating 921 MiB and
+# holding 299 MiB; and 768,000 of the clashes were buried, which the turn's repair
+# would have sent a model as 108 MB of problem lines. No reader uses more than the
+# head: the turn names three, and the list is sorted worst first, so a bound never
+# hides the biggest.
+#
+# 10,000 is a chosen count, not a measured optimum: above every fence's clash count
+# (2,400 at most), and about 1.8 MB of reply at the barrel's 177 bytes a clash.
+_INTERFERENCE_LIST_LIMIT = 10000
+
+
+def _box_of(solid):
+    """A solid's axis-aligned bounds as (lo, hi) triples, or None."""
+    try:
+        b = solid.bounding_box()
+        return ((float(b.min.X), float(b.min.Y), float(b.min.Z)),
+                (float(b.max.X), float(b.max.Y), float(b.max.Z)))
+    except Exception:
+        # A solid whose bounds cannot be read is left out of the broad phase
+        # rather than paired with everything: it is already in trouble, and
+        # the parts around it should not be reported because of it.
+        return None
 
 
 def _boxes(solids):
     """Each solid's axis-aligned bounds, as (lo, hi) triples."""
-    out = []
-    for s in solids:
-        try:
-            b = s.bounding_box()
-            out.append(((float(b.min.X), float(b.min.Y), float(b.min.Z)),
-                        (float(b.max.X), float(b.max.Y), float(b.max.Z))))
-        except Exception:
-            # A solid whose bounds cannot be read is left out of the broad phase
-            # rather than paired with everything: it is already in trouble, and
-            # the parts around it should not be reported because of it.
-            out.append(None)
+    return [_box_of(s) for s in solids]
+
+
+def _volume_of(solid):
+    try:
+        return float(getattr(solid, "volume", 0.0))
+    except Exception:
+        return 0.0
+
+
+def _moved_box(box, location):
+    """A local box moved by a placement: the box around its eight moved corners.
+
+    Never tighter than the placed solid's own box — a turned box's box is larger
+    than the box — so it can only let an extra pair through to the exact boolean,
+    never keep a real one out.
+    """
+    if box is None:
+        return None
+    t = location.wrapped.Transformation()
+    m = [[t.Value(r, c) for c in (1, 2, 3, 4)] for r in (1, 2, 3)]
+    lo, hi = [math.inf] * 3, [-math.inf] * 3
+    for x in (box[0][0], box[1][0]):
+        for y in (box[0][1], box[1][1]):
+            for z in (box[0][2], box[1][2]):
+                for r in range(3):
+                    v = m[r][0] * x + m[r][1] * y + m[r][2] * z + m[r][3]
+                    lo[r] = min(lo[r], v)
+                    hi[r] = max(hi[r], v)
+    return (tuple(lo), tuple(hi))
+
+
+def _measures(solids, placed=None):
+    """Every kept solid's box and volume.
+
+    # Once per definition (Phase 5, stage V1)
+
+    Reading an OCCT solid's bounds and volume costs about 0.2 ms, and after K2b
+    that per-solid read was most of what the interference phase spent: 2 s of a
+    10,000-part build. A copy is its shape placed, so the shape is measured once
+    and each copy's box is that box moved by its placement; volume does not change
+    under a rigid motion. A part a feature changed (placed entry None) is measured
+    as the solid it is.
+    """
+    boxes, volumes, local = [], [], {}
+    for i, solid in enumerate(solids):
+        p = placed[i] if placed else None
+        if p is None:
+            boxes.append(_box_of(solid))
+            volumes.append(_volume_of(solid))
+            continue
+        key, location, shape = p
+        if key not in local:
+            local[key] = (_box_of(shape), _volume_of(shape))
+        box, volume = local[key]
+        boxes.append(_moved_box(box, location))
+        volumes.append(volume)
+    return boxes, volumes
+
+
+# # Each part's volume, centre and box, on request (Phase 5, stage V3)
+#
+# Mass, centre of gravity and envelope roll up through the tree in Go
+# (geometry/mass.go), which knows each part's material. What only the kernel can
+# say is where a solid's volume IS. Sent when asked for, not always: 30,000 parts
+# are about 3 MB of numbers that every other reader would carry for nothing.
+#
+# A copy's volume and centre are its shape's, the centre moved by the copy's
+# placement — measured once per shape, like the interference check's (see
+# _measures). Its box is read from the placed solid itself: a turned box's moved
+# box is larger than the box, which a broad phase can afford and an envelope
+# cannot.
+#
+# _PROPERTIES_PER_DEFINITION turns the per-shape path off; it exists so the direct
+# measurement stays available as the reference the fence compares against
+# (testdata/part_properties.py).
+_PROPERTIES_PER_DEFINITION = True
+
+
+def _centre_of(solid):
+    """A solid's centre of volume as (x, y, z), or None."""
+    try:
+        from build123d import CenterOf
+
+        c = solid.center(CenterOf.MASS)
+        return (float(c.X), float(c.Y), float(c.Z))
+    except Exception:
+        return None
+
+
+def _moved_point(point, location):
+    """A point moved by a placement."""
+    if point is None:
+        return None
+    t = location.wrapped.Transformation()
+    x, y, z = point
+    return tuple(t.Value(r, 1) * x + t.Value(r, 2) * y + t.Value(r, 3) * z + t.Value(r, 4) for r in (1, 2, 3))
+
+
+def _properties(solids, ids, placed=None):
+    """Each kept solid's id, volume (mm3), centre of volume (mm) and box (mm)."""
+    out, local = [], {}
+    for i, solid in enumerate(solids):
+        p = placed[i] if (_PROPERTIES_PER_DEFINITION and placed) else None
+        if p is None:
+            volume, centre = _volume_of(solid), _centre_of(solid)
+        else:
+            key, location, shape = p
+            if key not in local:
+                local[key] = (_volume_of(shape), _centre_of(shape))
+            volume, centre = local[key]
+            centre = _moved_point(centre, location)
+        box = _box_of(solid)
+        out.append({"id": ids[i], "volume": volume,
+                    "centroid": list(centre) if centre is not None else None,
+                    "bounds": list(box[0]) + list(box[1]) if box is not None else None})
     return out
 
 
@@ -710,96 +963,406 @@ def _boxes_miss(a, b):
     return False
 
 
-def _sweep_axis(boxes, present):
-    """The axis the boxes' centres spread furthest along.
+# A box longer than this many cells of a level on an axis is filed one level up
+# on that axis. See _candidate_pairs.
+_GRID_LARGE = 4.0
+# Each level's cells are 2**_GRID_LEVEL_SHIFT (4) times the level below's, on each
+# axis separately. A power of two, so a level's cell index is the finest level's
+# index shifted right, which is exact integer arithmetic.
+_GRID_LEVEL_SHIFT = 2
 
-    A sweep along an axis the parts barely spread along meets them all at once: a
-    panel standing in the YZ plane swept along x is one column of every part, and
-    the sweep is every pair again.
-    """
-    best, widest = 0, -1.0
-    for axis in range(3):
-        centres = [boxes[k][0][axis] + boxes[k][1][axis] for k in present]
-        mean = sum(centres) / len(centres)
-        spread = sum((c - mean) ** 2 for c in centres)
-        if spread > widest:
-            best, widest = axis, spread
-    return best
+
+def _cell(value, size):
+    return int(math.floor(value / size))
+
+
+def _grid_level(extent, cell):
+    """The coarsest-needed level on one axis: the first whose cells are at least
+    extent / _GRID_LARGE long, so a box crosses at most five of them."""
+    level = 0
+    while extent > _GRID_LARGE * math.ldexp(cell, _GRID_LEVEL_SHIFT * level) and level < 512:
+        level += 1
+    return level
 
 
 def _candidate_pairs(boxes):
     """Every pair whose boxes overlap, and how many box tests it took to find them.
 
-    # Sort and sweep (Phase 4, stage K2b)
+    # A grid over all three axes (Phase 5, stage V1)
 
-    Comparing every box with every other is n(n-1)/2 tests: 8.4 million at the
-    4,096 parts the kernel builds today, and 27% of a 10,000-part build
-    (docs/spikes/2026-09-14-definition-cache). Sorted by where each box starts on
-    one axis, a box can only overlap the boxes still OPEN when it starts, so it is
-    tested against those and nothing else. On an assembly that spreads out along
-    one axis, as a car does, that is a handful per part. Spread evenly over a
-    plane it is about sqrt(n) per part: 495,000 tests for a 100 x 100 grid,
-    against 50 million for every pair. An index over all three axes is Phase 5's
-    V1 (docs/spikes/2026-09-15-interference-broad-phase).
+    Comparing every box with every other is n(n-1)/2 tests: 50 million at 10,000
+    parts. K2b swept along one axis, which is a handful of tests per part on an
+    assembly long in one direction and about sqrt(n) per part on one spread over a
+    plane — 495,000 tests for a 100 x 100 grid
+    (docs/spikes/2026-09-15-interference-broad-phase). A uniform grid does not
+    care which way the parts spread: each box is filed in the cells it crosses,
+    and only boxes sharing a cell are tested. The cell is the median box's longest
+    side, so a typical part crosses one or two cells a side.
 
-    It is only a narrower pre-filter. Each open pair is still tested on all three
-    axes with _boxes_miss, so the pairs that come out are exactly the pairs
-    comparing everything would find, and the exact boolean after it is unchanged.
+    It is only a narrower pre-filter. A pair that shares a cell is still tested on
+    all three axes with _boxes_miss, so the pairs that come out are exactly the
+    pairs comparing everything would find, and the exact boolean after it is
+    unchanged.
+
+    # Each pair is tested in one cell only
+
+    Two boxes can share many cells. A pair is tested in the cell holding the corner
+    where their overlap would begin — the larger of their two low corners, which is
+    inside both boxes whenever they overlap, and so in a cell both were filed in.
+    That is exactly one cell, so a pair is never tested, or counted, twice.
+
+    # Boxes much larger than a cell: a level for each axis (large-box index)
+
+    A chassis rail filed in every cell it crosses would cost more cells than it has
+    neighbours. Until 2026-09-15 a box longer than _GRID_LARGE cells was kept out of
+    the grid and tested against EVERY box, on the grounds that an assembly has few
+    of them. An airframe barrel does not: every skin panel, frame segment and
+    stringer is one, 16,160 of them at 1,008,160 occurrences, and 16.2 billion box
+    tests priced the check at ~2,650 s — the build hit its 40-minute cap
+    (docs/spikes/2026-09-15-one-million-occurrences).
+
+    ‼️ One coarser cubic grid does not fix that. A 50 m stringer needs a 50 m cell,
+    and every rivet in the barrel shares that cell with every stringer: 80 million
+    tests at 1M. Long parts are long on ONE axis and thin on the others, so the
+    level is chosen per axis. Level l's cells are 4**l finest cells long on that
+    axis, and a box's level on an axis is the first whose cells it crosses at most
+    five of: a rivet is (0, 0, 0), a stringer (5, 0, 0) — cells 14 m along the
+    barrel and 14 mm across it — and a skin panel (2, 0, 1). Boxes with the same
+    levels form a group; (0, 0, 0) is the grid as it was, box for box.
+
+    A pair from groups A and B is tested in the grid whose level on each axis is
+    the larger of the two: both boxes cross at most five of its cells a side, and
+    only boxes sharing a cell are tested. Every pair of groups is one such pass —
+    the fewer boxes filed, the other group looking up the cells it crosses — and a
+    pair belongs to exactly one pass. Cost is a few cells per box per group, not
+    one test per box per large box (docs/spikes/2026-09-15-large-box-index).
+
+    # Each pair is tested in one cell only, at every level
+
+    The home cell above holds at any level. Cell indices are computed once, at the
+    finest level, as integers, and a coarser index is that integer shifted right —
+    floor(floor(x / c) / 4**l) is floor(x / (c * 4**l)) — so the home cell of a pair
+    at any level is the larger of their two low-corner indices, shifted. It is in
+    both boxes' ranges whenever they overlap (floor is monotone), and it is one
+    cell, so a pair is tested, and counted, once.
 
     # Why the pairs are sorted back into index order
 
     The pair budget stops the narrow phase part-way through a dense model. Which
     pairs were measured before it stopped depends on the order they arrive in, so
     they arrive in the order comparing every pair would meet them: a truncated
-    answer is the same truncated answer it was before this sweep existed.
+    answer is the same truncated answer it was before any broad phase existed.
     """
     present = [k for k, b in enumerate(boxes) if b is not None]
     if len(present) < 2:
         return [], 0
-    axis = _sweep_axis(boxes, present)
-    present.sort(key=lambda k: boxes[k][0][axis])
-    pairs, tests, still_open = [], 0, []
+    longest = sorted(max(boxes[k][1][a] - boxes[k][0][a] for a in range(3)) for k in present)
+    cell = max(longest[len(longest) // 2], 1e-6)
+    # Each box's low and high cell at the finest level, and its group.
+    lows, highs, groups = {}, {}, {}
     for k in present:
-        start = boxes[k][0][axis]
-        # Closed when it ends at or before this start: touching is a miss, the
-        # same rule _boxes_miss applies.
-        still_open = [a for a in still_open if boxes[a][1][axis] > start]
-        for a in still_open:
-            tests += 1
-            if not _boxes_miss(boxes[a], boxes[k]):
-                pairs.append((a, k) if a < k else (k, a))
-        still_open.append(k)
+        lo, hi = boxes[k]
+        lows[k] = (_cell(lo[0], cell), _cell(lo[1], cell), _cell(lo[2], cell))
+        highs[k] = (_cell(hi[0], cell), _cell(hi[1], cell), _cell(hi[2], cell))
+        level = (_grid_level(hi[0] - lo[0], cell), _grid_level(hi[1] - lo[1], cell),
+                 _grid_level(hi[2] - lo[2], cell))
+        groups.setdefault(level, []).append(k)
+
+    def file(members, sx, sy, sz):
+        cells = {}
+        for k in members:
+            q, r = lows[k], highs[k]
+            for cx in range(q[0] >> sx, (r[0] >> sx) + 1):
+                for cy in range(q[1] >> sy, (r[1] >> sy) + 1):
+                    for cz in range(q[2] >> sz, (r[2] >> sz) + 1):
+                        cells.setdefault((cx, cy, cz), []).append(k)
+        return cells
+
+    pairs, tests = [], 0
+    order = sorted(groups)
+    for n, level_a in enumerate(order):
+        for level_b in order[n:]:
+            sx = _GRID_LEVEL_SHIFT * max(level_a[0], level_b[0])
+            sy = _GRID_LEVEL_SHIFT * max(level_a[1], level_b[1])
+            sz = _GRID_LEVEL_SHIFT * max(level_a[2], level_b[2])
+            if level_a == level_b:
+                for home, members in file(groups[level_a], sx, sy, sz).items():
+                    for m, a in enumerate(members):
+                        qa = lows[a]
+                        for b in members[m + 1:]:
+                            qb = lows[b]
+                            if (max(qa[0], qb[0]) >> sx != home[0]
+                                    or max(qa[1], qb[1]) >> sy != home[1]
+                                    or max(qa[2], qb[2]) >> sz != home[2]):
+                                continue
+                            tests += 1
+                            if not _boxes_miss(boxes[a], boxes[b]):
+                                pairs.append((a, b) if a < b else (b, a))
+                continue
+            filed, looking = groups[level_a], groups[level_b]
+            if len(filed) > len(looking):
+                filed, looking = looking, filed
+            cells = file(filed, sx, sy, sz)
+            for a in looking:
+                qa, ra = lows[a], highs[a]
+                for cx in range(qa[0] >> sx, (ra[0] >> sx) + 1):
+                    for cy in range(qa[1] >> sy, (ra[1] >> sy) + 1):
+                        for cz in range(qa[2] >> sz, (ra[2] >> sz) + 1):
+                            members = cells.get((cx, cy, cz))
+                            if members is None:
+                                continue
+                            for b in members:
+                                qb = lows[b]
+                                if (max(qa[0], qb[0]) >> sx != cx
+                                        or max(qa[1], qb[1]) >> sy != cy
+                                        or max(qa[2], qb[2]) >> sz != cz):
+                                    continue
+                                tests += 1
+                                if not _boxes_miss(boxes[a], boxes[b]):
+                                    pairs.append((a, b) if a < b else (b, a))
     pairs.sort()
     return pairs, tests
 
 
-def _interferences(solids, ids, labels):
+# # A clash is measured once per pose (Phase 5, stage V1)
+#
+# A thousand plates each with the same bolt through the same hole are a thousand
+# identical booleans. The common volume of two copies depends only on which two
+# shapes they are and where one sits relative to the other, so it is measured
+# once per (shape, shape, relative pose) and reused. The budget counts booleans
+# PAID FOR, not pairs answered, so a repetitive assembly is checked in full
+# where the 2,000-pair budget used to stop it part-way.
+#
+# A part a feature changed is not a copy of anything and is always measured.
+# _INTERFERENCE_CACHE turns reuse off; it exists so the uncached answer stays
+# available as the reference the cached one must reproduce
+# (testdata/interference_cache.py).
+_INTERFERENCE_CACHE = True
+
+# # A clash inside a box is the same clash wherever it slides (large-box index)
+#
+# A rivet row along a stringer is a hundred different poses against ONE stringer,
+# so the pose cache above reused nothing there: an airframe barrel's booleans grew
+# ~96 a bay and the 2,000 budget truncated it from ~20 bays (316,976 of 528,000
+# clashes at 300k; docs/spikes/2026-09-15-one-million-occurrences).
+#
+# ‼️ "Key the pose modulo the stringer's translational invariance" is WRONG: a
+# stringer is finite, and a rivet hanging over its end shares less of it. What is
+# true is narrower. A box is the intersection of three slabs, one per local axis.
+# If the other solid lies wholly inside the slab of axis u, then its common volume
+# with the box is its common volume with the other two slabs alone, and those do
+# not change when it moves along u. So two placements that differ only along u,
+# and are BOTH inside that slab, share the same volume. The key marks the axis
+# (its translation becomes inf, which no real pose has) only when containment is
+# shown — with the other solid's own box, which is never smaller than the solid,
+# and a margin — so a pose near an end keeps its full key and is measured.
+#
+# The same holds from the other side. When THIS frame's box lies inside the other
+# box's slab on the other's axis v, and v lies along this frame's axis w, moving
+# the other along w is moving it along its own v: marked -inf ("carried"). Without
+# it a skin panel keyed a barrel-long stringer by where along the stringer the
+# panel sits — a boolean a bay again.
+#
+# Why marks can be combined: each containment is an interval on ONE translation
+# component in this frame (a rotation that lines v up with w leaves the other
+# components out of it). Two placements with equal keys differ only in marked
+# components, each inside its interval in both; intervals are convex, so moving
+# one component at a time from one to the other stays inside every interval, and
+# no move changes the volume. The sign says which containment marked a component,
+# so both placements slide for the same reason.
+#
+# Boxes, and since 2026-09-15 (next scale walls) the one slab of a cylinder and of
+# an extrusion. The proof never used that the frame's solid is a box, only that it
+# is a slab S intersected with something invariant along S's axis: P inside S gives
+# P ∩ (S ∩ R) = P ∩ R, and R does not change when P moves along the axis. A box is
+# S ∩ (two slabs); a cylinder is |y| <= h/2 ∩ (a round prism along y); an extrusion
+# is |z| <= d/2 ∩ (its outline's prism along z). So a pin slides along a shaft it
+# lies within the length of, a cleat along an extruded girder, and a collar is
+# carried along the shaft through it. The prism's cross-section axes are NOT slabs
+# and are never marked (see _slabs). Slabs are known exactly from dims, checked
+# against measured bounds before they are trusted. _INTERFERENCE_SLIDE turns this
+# off; it exists so a measurement can say what sliding saves.
+_INTERFERENCE_SLIDE = True
+# Containment must hold by this much (mm): far above bounds noise and the 1e-6 mm
+# the pose is rounded to, far below any clash worth reporting.
+_SLIDE_MARGIN = 1e-4
+
+
+def _pose(location):
+    """A placement as twelve numbers, rounded so float noise does not split one
+    pose into two: rotation to 1e-9, translation to 1e-6 mm."""
+    t = location.wrapped.Transformation()
+    return tuple(round(t.Value(r, c), 6 if c == 4 else 9) for r in (1, 2, 3) for c in (1, 2, 3, 4))
+
+
+def _slabs(key, shape):
+    """A shape's half-lengths along the own axes it is a SLAB on — None on an axis
+    it is not, or None altogether — and its own box, for _slid.
+
+    - A box centred on its origin is three slabs.
+    - A cylinder (a "cylinder" or "cone" whose top radius is its radius, which is
+      when _shape builds a Cylinder) is a round prism along its own y, cut by ONE
+      slab, |y| <= height / 2. Added 2026-09-15 (next scale walls).
+    - An extrusion is its outline's prism along its own z, cut by |z| <= depth / 2:
+      _shape extrudes half the depth both ways. Holes and islands are prisms too.
+      Added 2026-09-15 (next scale walls).
+
+    Nothing else is claimed: a cone, a sphere, a revolve, a sweep and an imported
+    STEP are not a prism cut by a slab, and are keyed by their full pose.
+    """
+    box = _box_of(shape)
+    half = None
+    try:
+        spec = json.loads(key)
+        kind, d = spec.get("shape"), spec.get("dims") or {}
+        if box is None:
+            half = None
+        elif kind == "box":
+            half = (float(d["width"]) / 2, float(d["height"]) / 2, float(d["depth"]) / 2)
+        elif kind in ("cylinder", "cone") and d.get("radius_top", d["radius"]) == d["radius"]:
+            half = (None, float(d["height"]) / 2, None)
+        elif kind == "extrusion":
+            half = (None, None, float(d["depth"]) / 2)
+        # Trusted only if the solid really is that shape. Bounds are never tighter
+        # than the solid, so bounds within a micron of a slab on both sides are the
+        # slab. Checked on the slab axes only: a prism's other bounds are its outline's.
+        if half is not None and any(half[r] is not None and (abs(box[0][r] + half[r]) > 1e-3
+                                                             or abs(box[1][r] - half[r]) > 1e-3)
+                                    for r in range(3)):
+            half = None
+    except (ValueError, KeyError, TypeError):
+        half = None
+    return half, box
+
+
+def _inside(relative, frame, other):
+    """The axes of the frame's box whose slab the other solid lies wholly inside,
+    by _SLIDE_MARGIN. relative places the other in the frame."""
+    half, box = frame[0], other[1]
+    axes = []
+    if half is None or box is None:
+        return axes
+    t = relative.wrapped.Transformation()
+    for r in range(3):
+        if half[r] is None:
+            # Not a slab on this axis (a prism's cross-section): nothing slides.
+            continue
+        mid, reach = t.Value(r + 1, 4), 0.0
+        for c in range(3):
+            v = t.Value(r + 1, c + 1)
+            mid += v * (box[0][c] + box[1][c]) / 2
+            reach += abs(v) * (box[1][c] - box[0][c]) / 2
+        if mid - reach >= _SLIDE_MARGIN - half[r] and mid + reach <= half[r] - _SLIDE_MARGIN:
+            axes.append(r)
+    return axes
+
+
+def _carried(pose, axes):
+    """The frame's axes that the other solid's own axes `axes` lie along.
+
+    A column of pose's rotation is one of the other's axes in this frame; it lies
+    along the frame's axis w when that entry is ±1 and the rest round to zero — the
+    same 1e-9 the pose is compared to."""
+    out = []
+    for v in axes:
+        for w in range(3):
+            if (abs(pose[4 * w + v]) >= 1 - 1e-9
+                    and all(abs(pose[4 * o + v]) <= 1e-9 for o in range(3) if o != w)):
+                out.append(w)
+    return out
+
+
+def _slid(pose, inside, carried):
+    """pose with the translation along each axis the volume cannot depend on marked:
+    inf where the other solid is inside this frame's box on that axis, -inf where
+    this frame's solid is inside the other's box along it. Marked by WHICH reason,
+    so two equal keys slide for the same reason and the proof never mixes them."""
+    if not inside and not carried:
+        return pose
+    out = list(pose)
+    for r in carried:
+        out[4 * r + 3] = -math.inf
+    for r in inside:
+        out[4 * r + 3] = math.inf
+    return tuple(out)
+
+
+def _marks(pose):
+    return sum(1 for r in range(3) if math.isinf(pose[4 * r + 3]))
+
+
+def _pair_key(placed, shape_ids, i, j, slabs=None):
+    """Which two shapes, and where the second sits in the first's frame — the same
+    for the pair in either order — or None when either was changed by a feature.
+
+    With slabs (shape key -> _slabs), each translation the volume cannot depend on
+    is marked (see _INTERFERENCE_SLIDE), and the frame that marks more of them is
+    the key: a rivet is keyed in its stringer's frame, not the stringer in the
+    rivet's."""
+    pi, pj = placed[i], placed[j]
+    if pi is None or pj is None:
+        return None
+    a, b = shape_ids[pi[0]], shape_ids[pj[0]]
+    ahead, back = pi[1].inverse() * pj[1], pj[1].inverse() * pi[1]
+    forward = (a, b, _pose(ahead))
+    backward = (b, a, _pose(back))
+    if not slabs:
+        return min(forward, backward)
+    inside_i = _inside(ahead, slabs[pi[0]], slabs[pj[0]])
+    inside_j = _inside(back, slabs[pj[0]], slabs[pi[0]])
+    forward = (a, b, _slid(forward[2], inside_i, _carried(forward[2], inside_j)))
+    backward = (b, a, _slid(backward[2], inside_j, _carried(backward[2], inside_i)))
+    marked_f, marked_b = _marks(forward[2]), _marks(backward[2])
+    if marked_f != marked_b:
+        return forward if marked_f > marked_b else backward
+    return min(forward, backward)
+
+
+def _interferences(solids, ids, labels, placed=None):
     """Pairs of kept solids that share material, worst first.
 
-    Returns the list, whether the pair budget stopped the search (so a caller
-    never reads a truncated answer as a clean one), and how many box tests the
-    broad phase made.
-    """
-    boxes = _boxes(solids)
-    volumes = []
-    for s in solids:
-        try:
-            volumes.append(float(getattr(s, "volume", 0.0)))
-        except Exception:
-            volumes.append(0.0)
+    placed holds, for each solid, (shape key, location, unplaced shape) when it is
+    an untouched copy of a shape built once, or None — see _tessellate.
 
+    Returns the list, whether the budget stopped the search (so a caller never
+    reads a truncated answer as a clean one), how many box tests the broad phase
+    made, and {"pairs", "booleans", "reused"}: the pairs whose boxes overlap, the
+    booleans paid for, and the answers reused from an identical pose (or one slid
+    along a box it lies inside; see _INTERFERENCE_SLIDE).
+    """
+    boxes, volumes = _measures(solids, placed)
     pairs, box_tests = _candidate_pairs(boxes)
-    found, truncated = [], False
-    for tested, (i, j) in enumerate(pairs):
-        if tested >= _INTERFERENCE_PAIR_BUDGET:
-            truncated = True
-            break
-        try:
-            shared = float(getattr(solids[i] & solids[j], "volume", 0.0))
-        except Exception:
-            # OCCT refusing a boolean is not evidence of interference, and
-            # guessing either way would be worse than saying nothing about
-            # this pair. The parts are still reported by every other check.
+
+    cached = _INTERFERENCE_CACHE and placed is not None
+    shape_ids, cache, slabs = {}, {}, {}
+    if cached:
+        for p in placed:
+            if p is not None and p[0] not in shape_ids:
+                shape_ids[p[0]] = len(shape_ids)
+                if _INTERFERENCE_SLIDE:
+                    slabs[p[0]] = _slabs(p[0], p[2])
+
+    found, truncated, booleans, reused = [], False, 0, 0
+    for i, j in pairs:
+        key = _pair_key(placed, shape_ids, i, j, slabs) if cached else None
+        if key is not None and key in cache:
+            shared = cache[key]
+            reused += 1
+        else:
+            if booleans >= _INTERFERENCE_PAIR_BUDGET:
+                truncated = True
+                break
+            booleans += 1
+            try:
+                shared = float(getattr(solids[i] & solids[j], "volume", 0.0))
+            except Exception:
+                # OCCT refusing a boolean is not evidence of interference, and
+                # guessing either way would be worse than saying nothing about
+                # this pair. The parts are still reported by every other check.
+                shared = None
+            if key is not None:
+                cache[key] = shared
+        if shared is None:
             continue
         if volumes[i] <= 0 or volumes[j] <= 0 or shared <= 0:
             # A face has no volume, and "what fraction of it is buried" has
@@ -814,12 +1377,18 @@ def _interferences(solids, ids, labels):
         # Reporting them in build order would produce "the chassis is 100%
         # inside the master cylinder", which is true of no number here.
         lo, hi = (i, j) if volumes[i] <= volumes[j] else (j, i)
-        found.append({"a": ids[lo], "b": ids[hi],
-                      "a_label": labels[lo], "b_label": labels[hi],
-                      "volume": shared, "fraction": shared / smaller})
+        # A tuple, not the reply's dict: at 1M there are 1.76 M of these and only
+        # _INTERFERENCE_LIST_LIMIT of them are written down.
+        found.append((shared / smaller, len(found), lo, hi, shared))
 
-    found.sort(key=lambda f: f["fraction"], reverse=True)
-    return found, truncated, box_tests
+    # Worst first, ties in the order they were found — what a stable sort by fraction,
+    # descending, gives — and only the first _INTERFERENCE_LIST_LIMIT of that order.
+    worst = heapq.nsmallest(_INTERFERENCE_LIST_LIMIT, found, key=lambda f: (-f[0], f[1]))
+    listed = [{"a": ids[lo], "b": ids[hi], "a_label": labels[lo], "b_label": labels[hi],
+               "volume": shared, "fraction": fraction}
+              for fraction, _, lo, hi, shared in worst]
+    return listed, truncated, box_tests, {"pairs": len(pairs), "booleans": booleans, "reused": reused,
+                                          "found": len(found), "summarized": len(found) > len(listed)}
 
 
 # The fields that decide what a solid IS, before it is placed. Everything else a
@@ -839,6 +1408,41 @@ def _shape_key(solid):
     return json.dumps({k: solid.get(k) for k in _SHAPE_KEYS}, sort_keys=True, separators=(",", ":"))
 
 
+# The assembly's volume from each definition's, once per definition (next scale walls).
+#
+# Compound.volume wraps every child in a Python Solid and integrates each one:
+# 16.4 s of a 90,880-occurrence barrel's 20 s assembly phase, 7.4 s of it the
+# wrappers (docs/spikes/2026-09-15-next-scale-walls). A copy is its shape moved,
+# and a rigid motion does not change a volume, so a copy counts what its shape
+# counts. A part a feature changed is measured as the solid it is.
+#
+# ‼️ Equal to about 1e-12, not to the bit: OCCT integrates a located solid in its
+# placed coordinates, so the same solid moved reports a volume differing in the last
+# digits. Fence: TestKernel_APlacedCopyIsTheCopyBuild123dMade, to 1e-9 of the whole.
+# The switch keeps Compound.volume available as that reference.
+_ASSEMBLY_VOLUME_PER_DEFINITION = True
+
+
+def _counted_volume(shape):
+    """What Compound.volume counts for one child: its own solids and shells, by the
+    same rule, because it is the same call on a compound of that child alone."""
+    return float(getattr(Compound([shape]), "volume", 0.0))
+
+
+def _assembly_volume(assembly, built, placed):
+    if not _ASSEMBLY_VOLUME_PER_DEFINITION:
+        return float(getattr(assembly, "volume", 0.0))
+    total, counted = 0.0, {}
+    for solid, p in zip(built, placed):
+        if p is None:
+            total += _counted_volume(solid)
+            continue
+        if p[0] not in counted:
+            counted[p[0]] = _counted_volume(p[2])
+        total += counted[p[0]]
+    return total
+
+
 def _lap(phases, name, since):
     """Record the seconds since `since` as phase `name`, and return now."""
     now = time.perf_counter()
@@ -856,7 +1460,9 @@ def _step_document(built, names):
     copies: 13.8 s to assemble 10,000 occurrences, against 0.26 s this way, and
     the file is the same — 1 B-rep per definition, N instances, every name kept,
     exact volume (measured: docs/spikes/2026-09-14-xde-assembly-export).
-    Fence: TestKernel_ExportingManyOccurrencesGrowsLinearly.
+    Fence: TestKernel_ExportingManyOccurrencesGrowsLinearly, to 4,096; past it, the
+    writer's own cost is fenced by TestKernel_ExportTimeGrowsLinearlyPastTheBuildCeiling
+    (see _STEP_WRITE_PROPS).
 
     Sharing needs no bookkeeping here. K1's located copies share one TShape, and
     XCAF's AddShape returns the label it already holds for a shape it has seen, so
@@ -892,9 +1498,39 @@ def _label_name(label, name):
     TDataStd_Name.Set_s(label, TCollection_ExtendedString(name or ""))
 
 
-def _write_step(doc, path):
+# Whether the STEP writer looks for validation properties (area, volume, centroid
+# attributes) on every label. Off: the sidecar sets none, so there is nothing to
+# find, and looking is quadratic in the occurrences under one assembly.
+#
+# # Why
+#
+# Measured 2026-09-15 (docs/spikes/2026-09-15-step-export-scaling) on the airframe
+# barrel: STEPCAFControl_Writer.Transfer took 0.6 s at 10k occurrences, 3.2 s at 30k
+# and 20 s at 90k, while the XCAF document it transfers was built in time linear in
+# the occurrences. OCCT 7.9's WritePropsForLabel visits an assembly's children as
+# `for i = 1 .. label.NbChildren(): label.FindChild(i)`, and both calls walk the
+# child list from its head, so N components under one assembly cost ~N² steps
+# before a single property is written. With props mode off, Transfer is 1.0 s at
+# 30k where it was 2.3–3.2 s, and the file is byte-identical below its header.
+#
+# ‼️ If the sidecar ever writes XCAFDoc_Area, XCAFDoc_Volume or XCAFDoc_Centroid
+# attributes, turning this back on is not enough: they would be written at N² cost
+# again. Fences: TestKernel_ExportTimeGrowsLinearlyPastTheBuildCeiling and
+# TestKernel_ALargeExportIsTheFileThePropertyWalkWrote. Module-level so
+# testdata/step_export_scaling.py can write the old file to compare against.
+_STEP_WRITE_PROPS = False
+
+
+def _write_step(doc, path, phases=None):
     """Write an XDE document as STEP with the settings export_step used, so the
-    file's header, curves and precision do not change with K2."""
+    file's header, curves and precision do not change with K2.
+
+    When given `phases`, records the writer's Transfer alone as "export_transfer".
+    The whole export phase is too blunt to fence it: writing the file and encoding
+    it are linear and, past the ceiling, hide a quadratic Transfer (measured at
+    32,768 occurrences: 4.7 s with the property walk, 3.0 s without, and the two
+    swapped places under load). Go reads only the phases it names, so this one
+    reaches the scaling fence and nothing else."""
     # OCCT prints to the console by default, and this process's stdout is the
     # protocol: a stray line there is an unreadable reply.
     for printer in Message.DefaultMessenger_s().Printers():
@@ -903,6 +1539,7 @@ def _write_step(doc, path):
     writer.SetColorMode(True)
     writer.SetLayerMode(True)
     writer.SetNameMode(True)
+    writer.SetPropsMode(_STEP_WRITE_PROPS)
     header = APIHeaderSection_MakeHeader(writer.Writer().Model())
     if not header.IsDone():
         header = APIHeaderSection_MakeHeader(0)
@@ -912,7 +1549,10 @@ def _write_step(doc, path):
     STEPControl_Controller.Init_s()
     Interface_Static.SetIVal_s("write.surfacecurve.mode", 1)
     Interface_Static.SetIVal_s("write.precision.mode", PrecisionMode.AVERAGE.value)
+    transfer = time.perf_counter()
     writer.Transfer(doc, STEPControl_StepModelType.STEPControl_AsIs)
+    if phases is not None:
+        phases["export_transfer"] = time.perf_counter() - transfer
     if writer.Write(path) != IFSelect_ReturnStatus.IFSelect_RetDone:
         raise RuntimeError("the STEP writer could not write the file")
 
@@ -927,6 +1567,9 @@ def _build(request):
     phases = {}
     mark = time.perf_counter()
     built, names, ids, skipped = [], [], [], []
+    # For each built solid, the key of the shape it is a copy of and where it was
+    # placed, so a mesh can be tessellated once per shape (Phase 4, stage K4).
+    keys, locations = [], []
     # shape key -> (the built, mirrored shape, or None; why it could not be built)
     built_once = {}
     # Counted where _shape is CALLED, not read back as len(built_once): the cache's
@@ -934,6 +1577,8 @@ def _build(request):
     # on the same key and the dict still holds one entry. A mutation drill that
     # rebuilt every occurrence stayed green against len(built_once).
     shape_builds = 0
+    # matrix -> the directions its Plane holds, for this build (see _placement).
+    frames = {}
     for s in solids:
         key = _shape_key(s)
         if key in built_once:
@@ -941,9 +1586,12 @@ def _build(request):
             if shape is None:
                 skipped.append("%s: %s" % (s.get("label") or s.get("id"), reason))
                 continue
-            built.append(_placement(s) * shape)
+            location = _placement(s, frames)
+            built.append(_located(shape, location))
             names.append(s.get("label") or s.get("id"))
             ids.append(s.get("id"))
+            keys.append(key)
+            locations.append(location)
             continue
         shape_builds += 1
         try:
@@ -979,9 +1627,12 @@ def _build(request):
             # Phase 1, stage D1c of docs/plan-2026-09-13-millions-of-parts.md.
             shape = shape.mirror(Plane.YZ)
         built_once[key] = (shape, None)
-        built.append(_placement(s) * shape)
+        location = _placement(s, frames)
+        built.append(_located(shape, location))
         names.append(s.get("label") or s.get("id"))
         ids.append(s.get("id"))
+        keys.append(key)
+        locations.append(location)
 
     if not built:
         return {"ok": False, "error": "no part could be built", "skipped": skipped}
@@ -993,7 +1644,12 @@ def _build(request):
     # it does not also appear as a solid of its own, or the hole would be filled
     # by the thing that made it.
     shapes = dict(zip(ids, built))
-    consumed, failed = set(), []
+    placed = dict(zip(ids, zip(keys, locations)))
+    # Every part an operation was applied TO, whether or not it succeeded. Such a
+    # solid is no longer a copy of its shape, so its mesh is its own. Marked on the
+    # attempt, not the success: a failure part-way through cannot then leave a
+    # changed solid drawn as the shape it started from.
+    consumed, failed, touched = set(), [], set()
     for op in request.get("operations") or []:
         missing = [n for n in [op["of"]] + list(op.get("with") or []) if n not in shapes]
         if missing:
@@ -1003,6 +1659,7 @@ def _build(request):
             failed.append("%s: %s could not be built, so this was not applied"
                           % (op["id"], ", ".join(missing)))
             continue
+        touched.add(op["of"])
         try:
             _apply(op, shapes)
         except Exception as exc:
@@ -1011,7 +1668,7 @@ def _build(request):
             continue
         consumed.update(op.get("with") or [])
 
-    kept, kept_names, kept_ids = [], [], []
+    kept, kept_names, kept_ids, kept_placed = [], [], [], []
     for part_id, name in zip(ids, names):
         if part_id in consumed:
             continue
@@ -1021,6 +1678,11 @@ def _build(request):
         # to the part the viewport lists. Without it a mesh is one anonymous
         # blob and selecting "Cabin" in the Parts panel can highlight nothing.
         kept_ids.append(part_id)
+        if part_id in touched:
+            kept_placed.append(None)
+        else:
+            key, location = placed[part_id]
+            kept_placed.append((key, location, built_once[key][0]))
     if not kept:
         return {"ok": False, "error": "every part was consumed as a tool, leaving nothing to export",
                 "skipped": skipped, "features_failed": failed}
@@ -1044,21 +1706,33 @@ def _build(request):
     # number and an identical-looking file. Reported so the caller can assert on
     # it — see TestKernel_ACylinderPointsTheWayThisSystemDrawsIt.
     box = assembly.bounding_box()
-    volume = float(getattr(assembly, "volume", 0.0))
+    volume = _assembly_volume(assembly, built, kept_placed)
     mark = _lap(phases, "assembly", mark)
     # Computed on the KEPT solids, which is the whole reason it is trustworthy —
     # see the note above _interferences. Always, not on request: a check that a
     # caller has to remember to ask for is a check that is off in the one
     # deployment that needed it, and the broad phase makes the usual case free.
-    clashes, clash_truncated, box_tests = _interferences(built, ids, names)
+    clashes, clash_truncated, box_tests, clash_pairs = _interferences(built, ids, names, kept_placed)
     mark = _lap(phases, "interferences", mark)
+    properties = None
+    if request.get("properties"):
+        properties = _properties(built, ids, kept_placed)
+        mark = _lap(phases, "properties", mark)
     out = {
         "shape_builds": shape_builds,
         "ok": True,
         "parts": len(built),
         "interferences": clashes,
         "interferences_truncated": clash_truncated,
+        # How many clashes were found, and whether "interferences" lists only the
+        # worst of them (_INTERFERENCE_LIST_LIMIT). A replaced check that does not
+        # count them lists every one it has.
+        "interferences_found": clash_pairs.get("found", len(clashes)),
+        "interferences_summarized": clash_pairs.get("summarized", False),
         "interference_box_tests": box_tests,
+        "interference_pairs": clash_pairs["pairs"],
+        "interference_booleans": clash_pairs["booleans"],
+        "interference_reused": clash_pairs["reused"],
         "volume": volume,
         "phases": phases,
         "bounds": [float(box.min.X), float(box.min.Y), float(box.min.Z),
@@ -1066,10 +1740,12 @@ def _build(request):
         "skipped": skipped,
         "features_failed": failed,
     }
+    if properties is not None:
+        out["part_properties"] = properties
 
     fmt = request.get("format")
     if fmt == "mesh":
-        out.update(_tessellate(built, ids, names, request))
+        out.update(_tessellate(built, ids, names, request, kept_placed))
         mark = _lap(phases, "mesh", mark)
     if fmt == "step":
         # The writer writes a file; its stream form is not used here.
@@ -1078,7 +1754,7 @@ def _build(request):
         fd, path = tempfile.mkstemp(suffix=".step")
         os.close(fd)
         try:
-            _write_step(_step_document(built, names), path)
+            _write_step(_step_document(built, names), path, phases)
             with open(path, "rb") as fh:
                 out["step"] = base64.b64encode(fh.read()).decode("ascii")
         finally:
