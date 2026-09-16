@@ -147,6 +147,47 @@ func (d Document) TreeProblems() []Problem {
 // it again changes nothing — which is what lets every reader call it without
 // coordinating.
 func expandAssemblies(d Document) (Document, []Problem) {
+	return expandAssembliesTraced(d, nil)
+}
+
+// treeSpan is one placement the walk made: what it placed, and where the parts
+// it wrote landed in the expansion. Recorded only when an edit asks
+// (edit_paths.go), which reads the spans to resolve a placed path to the design
+// it places and to name every occurrence of a design an edit changed.
+//
+// # Why the walk records it rather than a reader working it out afterwards
+//
+// A placed id could be parsed back into child ids and pattern suffixes, but a
+// child id may itself end in "-3", and a definition's repeat copy ends in "-3"
+// too. The walk is the only party that knows which placement wrote which part,
+// so it says so, the way a definition's copy suffix is read off the expansion
+// below rather than restated.
+type treeSpan struct {
+	// path is the placement's path from the root ("front-left/hub", "bolt-3"),
+	// which is also the id of the part it wrote when it placed a definition; ""
+	// for the root itself.
+	path string
+	// ref is the definition or assembly placed there; assembly says which.
+	ref      string
+	assembly bool
+	// child is "assembly-id/child-id", the child that made this placement; "" for
+	// the root.
+	child string
+	// alias marks a second name for parts another span already covers: a
+	// patterned child's bare id, which is every copy, and a definition's repeat
+	// copy. Read for paths, never counted as an occurrence.
+	alias      bool
+	start, end int
+}
+
+// expandAssembliesTraced is expandAssemblies, recording every placement in spans
+// when spans is not nil. Nil costs one comparison per placement.
+func expandAssembliesTraced(d Document, spans *[]treeSpan) (Document, []Problem) {
+	record := func(s treeSpan) {
+		if spans != nil {
+			*spans = append(*spans, s)
+		}
+	}
 	if !d.hasTree() {
 		return d, nil
 	}
@@ -323,6 +364,8 @@ func expandAssemblies(d Document) (Document, []Problem) {
 						index[c.ID+slot.suffix+PathSeparator+rel] = r
 					}
 					index[c.ID+slot.suffix] = partRange{slotStart, len(out.Parts)}
+					record(treeSpan{path: slotName, ref: sub.ID, assembly: true, child: a.ID + PathSeparator + c.ID,
+						start: slotStart, end: len(out.Parts)})
 					if stop {
 						return index, true
 					}
@@ -343,13 +386,19 @@ func expandAssemblies(d Document) (Document, []Problem) {
 					// A definition's own repeat copy, by its copy id ("rivet-2").
 					if suffix != "" {
 						index[c.ID+slot.suffix+suffix] = partRange{partStart, len(out.Parts)}
+						record(treeSpan{path: q.ID, ref: def.ID, child: a.ID + PathSeparator + c.ID, alias: true,
+							start: partStart, end: len(out.Parts)})
 					}
 				}
 				index[c.ID+slot.suffix] = partRange{slotStart, len(out.Parts)}
+				record(treeSpan{path: slotName, ref: def.ID, child: a.ID + PathSeparator + c.ID,
+					start: slotStart, end: len(out.Parts)})
 			}
 			// A patterned child named by its own id is every copy, as a repeated part's is.
 			if len(slots) > 1 {
 				index[c.ID] = partRange{childStart, len(out.Parts)}
+				record(treeSpan{path: name, ref: c.Ref, assembly: isAsm, child: a.ID + PathSeparator + c.ID, alias: true,
+					start: childStart, end: len(out.Parts)})
 			}
 		}
 		// This assembly's own features, in THIS occurrence, after its children's:
@@ -357,6 +406,8 @@ func expandAssemblies(d Document) (Document, []Problem) {
 		out.Features = append(out.Features, occurrenceFeatures(a, path, index, out.Parts, fail)...)
 		return index, false
 	}
+	treeStart := len(out.Parts)
 	walk(root, nil, nil, map[string]bool{root.ID: true}, placementOf(nil, nil, false))
+	record(treeSpan{ref: root.ID, assembly: true, start: treeStart, end: len(out.Parts)})
 	return out, problems
 }

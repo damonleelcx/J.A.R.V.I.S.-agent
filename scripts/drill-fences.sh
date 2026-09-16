@@ -137,6 +137,7 @@ FILES=(
   internal/domain/geometry/interface.go
   internal/domain/geometry/tree_features.go
   internal/domain/geometry/edit.go
+  internal/domain/geometry/edit_paths.go
   internal/agent/currentmodel.go
   internal/domain/geometry/limits.go
   internal/domain/geometry/repeat.go
@@ -2107,6 +2108,50 @@ drill "a refused assembly hides which part it refused" internal/domain/cad/cad.g
   ./internal/domain/cad 'TestKernel_ARefusedAssemblyNamesWhatItRefused'
 
 echo
+echo "An edit by path reaches every occurrence, and says so"
+# Added 2026-09-15 (Phase 7, stage E1). A placed path names the definition or assembly
+# it places and the edit changes that design everywhere, never one copy; every edit
+# reports the placed parts it reached, and the turn says so, within a bound.
+drill "a path is added as a new definition instead of naming one" internal/domain/geometry/edit.go \
+  's = s.replace("\t\t\tin.ID = id\n\t\t\tout.Definitions = upsertPart(out.Definitions, in)", "\t\t\tout.Definitions = upsertPart(out.Definitions, in)", 1)' \
+  ./internal/domain/geometry 'TestEdit_APathToAPatternCopyChangesTheDefinitionAndReportsEveryCopy'
+
+drill "a pattern copy's path is recorded as its child's id" internal/domain/geometry/tree.go \
+  's = s.replace("record(treeSpan{path: slotName, ref: def.ID,", "record(treeSpan{path: name, ref: def.ID,", 1)' \
+  ./internal/domain/geometry 'TestEdit_APathToAPatternCopyChangesTheDefinitionAndReportsEveryCopy'
+
+drill "the report stops at a design's first placement" internal/domain/geometry/edit_paths.go \
+  's = s.replace("\t\tend = max(end, s.end)\n", "\t\tend = max(end, s.end)\n\t\tbreak\n", 1)' \
+  ./internal/domain/geometry 'TestEdit_ADefinitionInASubAssemblyPlacedTwiceReportsEveryOccurrenceAndNothingElse'
+
+drill "a path that places nothing is taken as a new id" internal/domain/geometry/edit_paths.go \
+  's = s.replace("if strings.Contains(name, PathSeparator) {", "if strings.Contains(name, PathSeparator+PathSeparator) {", 1)' \
+  ./internal/domain/geometry 'TestEdit_RefusesAPathThatPlacesNothingOrIsAmbiguousByName'
+
+drill "a path two placements write out is resolved by guessing" internal/domain/geometry/edit_paths.go \
+  's = s.replace("\t\t\tp.ambiguous[s.path] = true\n", "", 1)' \
+  ./internal/domain/geometry 'TestEdit_RefusesAPathThatPlacesNothingOrIsAmbiguousByName'
+
+drill "a repeated flat part is reported as its authored id" internal/domain/geometry/edit_paths.go \
+  's = s.replace("\t\te, _ = expandRepeats(e)\n", "", 1)' \
+  ./internal/domain/geometry 'TestEdit_AFlatDocumentEditReportsExactlyThePartsItEdited'
+
+drill "the turn is not told what an edit reached" internal/agent/converse.go \
+  's = s.replace("\tif note := describeReach(reached); note != \"\" {\n\t\tr.noteRepair(note)\n", "\tif note := describeReach(reached); note != \"\" {\n\t\t_ = note\n", 1)' \
+  ./internal/agent 'TestResolveEdit_TheStreamedTurnSaysEveryOccurrenceAnEditReached'
+
+drill "the note lists every occurrence however many there are" internal/agent/converse.go \
+  's = s.replace("\t\tif n > maxListedOccurrences {", "\t\tif n > maxListedOccurrences*100 {", 1)' \
+  ./internal/agent 'TestResolveEdit_ALongListOfOccurrencesIsCountedAndBounded'
+
+drill "every flat patch leaves a note" internal/agent/converse.go \
+  's = s.replace("\t\tif r.Path == \"\" && len(r.Occurrences) == 1 && r.Occurrences[0] == r.ID {", "\t\tif false {", 1)' \
+  ./internal/agent 'TestResolveEdit_AnEditThatReachesOnlyWhatItNamedAddsNoNote'
+
+drill "the contract's path example is not a path its example places" internal/agent/converse.go \
+  's = s.replace("{\"id\": \"left-wheel/spoke-3\", ...}", "{\"id\": \"left-wheel/spoke-9\", ...}", 1)' \
+  ./internal/agent 'TestTheContractTeachesAPathItsOwnExampleResolves'
+
 echo "Standard parts and patterns in the contract"
 # Added 2026-09-15 (Phase 2, stage A3). A part names a catalogued designation and is
 # written out as the revolve or extrusion it is, at the published figures, the same in

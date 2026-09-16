@@ -206,10 +206,15 @@ instead of "prototype". Never both.
   changed" and never "delete". Naming something that is not there is an error.
 - Removing a part that a feature uses breaks that feature. Remove the feature too.
 - In a tree, change the DESIGN, not one placement. Patch the definition or the
-  assembly by id, whole, and every place it is used changes with it. A placed
-  id like "axle/left-wheel/hub" says where a part IS; to change it, edit the
-  definition "hub" or the assembly "wheel" it comes from. "children" removes
-  one child from one assembly, written "assembly-id/child-id".
+  assembly whole, and every place it is used changes with it. Name it by its id,
+  or by the path of any placement of it: {"id": "left-wheel/spoke-3", ...} in
+  "definitions" is read as the definition "spoke" that placement places, so it
+  changes every spoke on both wheels and never that one copy. "remove" reads a
+  path the same way. A path that places nothing, or places an assembly where a
+  definition is named, is refused. FORGE tells the person every placed part an
+  edit reached, so never say that only the one they pointed at changed.
+  "children" removes one child from one assembly, written
+  "assembly-id/child-id": the assembly's own id, not a path.
 - A patched ASSEMBLY is replaced whole, children and all. To add a child to one,
   send it with every child it already has and the new one after them; an
   assembly sent with only the new child loses the others.
@@ -1118,7 +1123,7 @@ func (r *Reply) resolveEdit(current *Prototype) error {
 				"than recording a version that did not")
 	}
 
-	applied, problems := edit.Apply(*current)
+	applied, reached, problems := edit.ApplyAndReport(*current)
 	if len(problems) > 0 {
 		details := make([]string, 0, len(problems))
 		for _, p := range problems {
@@ -1134,7 +1139,75 @@ func (r *Reply) resolveEdit(current *Prototype) error {
 	// docs/bugfix/2026-09-11-edited-and-repaired-documents-were-never-settled.md
 	// Fence: TestEdit_TheEditedDocumentIsBound.
 	r.Prototype = settleDocument(&applied)
+	// What the edit reached, said in the turn (Phase 7, stage E1). A path reads
+	// like one part and names a design placed everywhere, so "make front-left/hub
+	// bigger" changes all four hubs; the person must hear that before they build
+	// on it. Fence: TestResolveEdit_TheStreamedTurnSaysEveryOccurrenceAnEditReached.
+	if note := describeReach(reached); note != "" {
+		r.noteRepair(note)
+	}
 	return nil
+}
+
+// maxListedOccurrences bounds how many placed ids the note names for one change.
+//
+// # Why bounded
+//
+// A definition placed four thousand times would otherwise put four thousand ids
+// in a notice somebody reads on a screen. The first few say where to look, the
+// count says how far the change went, and the rest are counted rather than
+// dropped, so the list never reads as complete when it is not.
+const maxListedOccurrences = 8
+
+// describeReach is the note an edit leaves about what it reached, or "" when
+// every change reached exactly the one part it named.
+//
+// # Why silent for that case
+//
+// Every pass of a build in passes patches flat parts by id (assemble.go), and a
+// notice saying "changed rib: rib" on each of them would bury the one that says
+// "changed hub: 4 occurrences" — which is the notice this exists for. A removal
+// that reached nothing, or a design named by a path, is always said.
+func describeReach(reached []geometry.Reached) string {
+	var lines []string
+	for _, r := range reached {
+		if r.Path == "" && len(r.Occurrences) == 1 && r.Occurrences[0] == r.ID {
+			continue
+		}
+		verb := "changed"
+		if r.Removed {
+			verb = "removed"
+		}
+		what := r.ID
+		if r.Kind != "part" {
+			what = r.Kind + " " + r.ID
+		}
+		if r.Path != "" {
+			what += " (named by its placement " + r.Path + ")"
+		}
+		n := len(r.Occurrences)
+		if n == 0 {
+			lines = append(lines, fmt.Sprintf("%s %s: no occurrences, since nothing places it", verb, what))
+			continue
+		}
+		listed, more := r.Occurrences, 0
+		if n > maxListedOccurrences {
+			listed, more = r.Occurrences[:maxListedOccurrences], n-maxListedOccurrences
+		}
+		list := strings.Join(listed, ", ")
+		if more > 0 {
+			list += fmt.Sprintf(", and %d more not listed", more)
+		}
+		noun := "occurrences"
+		if n == 1 {
+			noun = "occurrence"
+		}
+		lines = append(lines, fmt.Sprintf("%s %s: %d %s (%s)", verb, what, n, noun, list))
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	return "This edit reached every placement of what it changed: " + strings.Join(lines, "; ") + "."
 }
 
 // ProposedGoal is work FORGE offers to do. Nothing runs until a human starts it.
@@ -1187,6 +1260,11 @@ type Reply struct {
 	// document they are looking at is not byte-for-byte the one the model
 	// produced, and everything else in this system that substitutes something
 	// says so on the screen. See dimensionrepair.go.
+	//
+	// It also carries what an edit REACHED when that is more than the one thing
+	// the edit named (describeReach, Phase 7 stage E1): a patch to
+	// "front-left/hub" changes all four hubs, and the person is owed that as much
+	// as they are owed a repair.
 	Repaired string `json:"repaired,omitempty"`
 }
 
