@@ -107,6 +107,11 @@ FILES=(
   internal/llm/illustrate.go
   internal/agent/render.go
   internal/domain/geometry/mesh.go
+  internal/httpapi/assets/voice.js
+  internal/httpapi/assets/workbench.js
+  internal/httpapi/transcribe.go
+  internal/httpapi/router.go
+  internal/llm/transcribe.go
   internal/domain/geometry/interference.go
   internal/agent/interference.go
   internal/httpapi/goals_start.go
@@ -1185,6 +1190,120 @@ drill "a scripted part is unreachable in the shape dispatch" internal/domain/cad
 drill "a refused assembly hides which part it refused" internal/domain/cad/cad.go \
   's = s.replace("\t\tif len(res.Skipped) > 0 {\n\t\t\tdetail +=", "\t\tif false {\n\t\t\tdetail +=", 1)' \
   ./internal/domain/cad 'TestKernel_ARefusedAssemblyNamesWhatItRefused'
+
+# ---------------------------------------------------------------------------
+# Added 2026-09-15 (workbench voice input).
+#
+# The owner held the workbench microphone from mainland China and nothing
+# reached FORGE. Push-to-talk used only the browser's recogniser, which Chrome
+# runs on Google's servers; a transcript that arrived during a turn was dropped
+# by send(); the hold ended on mouseleave; a quick second press was swallowed;
+# and several failures said nothing. The voice fences run the real voice.js in
+# node against a stubbed browser, so each of these is a behaviour, not a
+# string. See docs/bugfix/2026-09-15-the-microphone-sent-nothing.md.
+# ---------------------------------------------------------------------------
+
+echo
+echo "The workbench microphone"
+drill "push-to-talk goes back to the browser recogniser" internal/httpapi/assets/voice.js \
+  's = s.replace("if (this.serverASR !== null && this._canRecord()) return \x27server\x27;", "if (false) return \x27server\x27;", 1)' \
+  ./internal/httpapi 'TestVoiceInput_PushToTalkRecordsAndUploadsToTheServer'
+
+drill "the upload drops the recording content type" internal/httpapi/assets/voice.js \
+  's = s.replace("headers: { \x27Content-Type\x27: blob.type || \x27audio/webm\x27 },", "headers: {},", 1)' \
+  ./internal/httpapi 'TestVoiceInput_PushToTalkRecordsAndUploadsToTheServer'
+
+drill "a transcript during a turn is sent, and dropped" internal/httpapi/assets/voice.js \
+  's = s.replace("    if (!ctx.busy) {", "    if (true) {", 1)' \
+  ./internal/httpapi 'TestVoiceInput_WhatWasSaidDuringATurnIsKeptInTheTextBox'
+
+drill "what was said overwrites what was typed" internal/httpapi/assets/voice.js \
+  's = s.replace("ctx.input.value = typed ? typed + \x27 \x27 + text : text;", "ctx.input.value = text;", 1)' \
+  ./internal/httpapi 'TestVoiceInput_WhatWasSaidDuringATurnIsKeptInTheTextBox'
+
+drill "the hold captures no pointer" internal/httpapi/assets/voice.js \
+  's = s.replace("      if (button.setPointerCapture && pointer != null) {", "      if (false) {", 1)' \
+  ./internal/httpapi 'TestVoiceInput_TheHoldSurvivesTheCursorLeavingTheButton'
+
+drill "a click is treated as a hold" internal/httpapi/assets/voice.js \
+  's = s.replace("        if (took < min) {", "        if (false) {", 1)' \
+  ./internal/httpapi 'TestVoiceInput_AQuickPressSaysHoldToTalk'
+
+drill "a press before the session ended is swallowed again" internal/httpapi/assets/voice.js \
+  's = s.replace("(self._restartWhenEnded || self.mode === \x27hands-free\x27)", "(self.mode === \x27hands-free\x27)", 1)' \
+  ./internal/httpapi 'TestVoiceInput_PressingAgainBeforeTheLastSessionEndedStillListens'
+
+drill "no-speech during a hold is silent again" internal/httpapi/assets/voice.js \
+  's = s.replace("        if (self.mode === \x27push\x27) {", "        if (false) {", 1)' \
+  ./internal/httpapi 'TestVoiceInput_EveryFailureReachesTheNote/no_speech_while_holding'
+
+drill "a recogniser that cannot reach Google is still offered" internal/httpapi/assets/voice.js \
+  's = s.replace("        self.browserBroken = \"The browser", "        self.browserBrokenX = \"The browser", 1)' \
+  ./internal/httpapi 'TestVoiceInput_EveryFailureReachesTheNote/browser_recognition_blocked'
+
+drill "a deployment with no transcriber is asked again on every hold" internal/httpapi/assets/voice.js \
+  's = s.replace("        this.serverASR = null;\n        this._serverWhy =", "        this._serverWhy =", 1)' \
+  ./internal/httpapi 'TestVoiceInput_EveryFailureReachesTheNote/not_served_here'
+
+drill "an empty transcript is swallowed silently" internal/httpapi/assets/voice.js \
+  's = s.replace("    if (!text) {\n      this.onError(\x27No words", "    if (false) {\n      this.onError(\x27No words", 1)' \
+  ./internal/httpapi 'TestVoiceInput_EveryFailureReachesTheNote/nothing_recognised'
+
+drill "a provider failure is not said" internal/httpapi/assets/voice.js \
+  's = s.replace("      this.onError(\x27Transcription failed (\x27 +", "      void (\x27Transcription failed (\x27 +", 1)' \
+  ./internal/httpapi 'TestVoiceInput_EveryFailureReachesTheNote/provider_error'
+
+drill "an empty recording is uploaded" internal/httpapi/assets/voice.js \
+  's = s.replace("    if (!blob.size) {", "    if (false) {", 1)' \
+  ./internal/httpapi 'TestVoiceInput_EveryFailureReachesTheNote/nothing_captured'
+
+drill "the mic ends the hold on mouseleave again" internal/httpapi/assets/workbench.js \
+  's = s.replace("    var hold = ForgeVoice.bindHold($(\x27mic\x27), voice, { note: voiceNote });", "    var hold = ForgeVoice.makeHold(voice, { note: voiceNote }); $(\x27mic\x27).addEventListener(\x27mouseleave\x27, function () { hold.release(); });", 1)' \
+  ./internal/httpapi 'TestWorkbench_TheMicIsWiredToTheHoldAndKeepsWhatWasSaid'
+
+drill "a transcript goes straight to send() again" internal/httpapi/assets/workbench.js \
+  's = s.replace("        if (ForgeVoice.deliverSpoken(text, { busy: state.busy, input: $(\x27say\x27), send: send, note: voiceNote }) === \x27sent\x27) {", "        send(text); if (false) {", 1)' \
+  ./internal/httpapi 'TestWorkbench_TheMicIsWiredToTheHoldAndKeepsWhatWasSaid'
+
+drill "a typed message is cleared while a turn is in flight" internal/httpapi/assets/workbench.js \
+  's = s.replace("      if (state.busy) {\n        voiceNote(\x27FORGE is still answering. Your message", "      if (false) {\n        voiceNote(\x27FORGE is still answering. Your message", 1)' \
+  ./internal/httpapi 'TestWorkbench_TheMicIsWiredToTheHoldAndKeepsWhatWasSaid'
+
+drill "the workbench never learns the server transcribes" internal/httpapi/assets/workbench.js \
+  's = s.replace("      if (voice) voice.setServerTranscription(", "      if (voice) void (", 1)' \
+  ./internal/httpapi 'TestWorkbench_TheMicIsWiredToTheHoldAndKeepsWhatWasSaid'
+
+drill "the transcription route is not mounted" internal/httpapi/router.go \
+  's = s.replace("\tmux.Handle(\"POST /v1/transcribe\", authed(converse.Transcribe))", "\t_ = converse.Transcribe", 1)' \
+  ./internal/httpapi 'TestTranscribe_TheRouteIsMountedAndRequiresASession'
+
+drill "codec parameters reach the transcriber" internal/httpapi/transcribe.go \
+  's = s.replace("\t\tif mt == c {\n\t\t\treturn c, true", "\t\tif mt == c {\n\t\t\treturn contentType, true", 1)' \
+  ./internal/httpapi 'TestTranscribe_RecordedAudioComesBackAsText|TestTranscribe_EveryBrowserRecordingContainerIsAccepted'
+
+drill "an oversized recording is sent to the provider" internal/httpapi/transcribe.go \
+  's = s.replace("\tif len(audio) > maxRecordingBytes {", "\tif false {", 1)' \
+  ./internal/httpapi 'TestTranscribe_AnOversizedRecordingIsRefusedByName'
+
+drill "a deployment without a transcriber is not refused by name" internal/httpapi/transcribe.go \
+  's = s.replace("\tif stt == nil {", "\tif false {", 1)' \
+  ./internal/httpapi 'TestTranscribe_ADeploymentWithoutATranscriberSaysWhatTurnsItOn'
+
+drill "a model that never answered is reported as silence" internal/httpapi/transcribe.go \
+  's = s.replace("\tif out.Unanswered {", "\tif false {", 1)' \
+  ./internal/httpapi 'TestTranscribe_AModelThatAnsweredWithoutATranscriptIsNotSilence'
+
+drill "the page is never told the server transcribes" internal/httpapi/converse.go \
+  's = s.replace("\"server\": transcriber != \"\"", "\"server\": false", 1)' \
+  ./internal/httpapi 'TestTranscribe_TheWorkbenchIsToldWhetherTheServerTranscribes'
+
+drill "an unserved transcription model is reported as an outage" internal/llm/transcribe.go \
+  's = s.replace("\t\t\tcode = errs.CodeConnectorUnavailable", "\t\t\tcode = errs.CodeExternalUnavailable", 1)' \
+  ./internal/llm 'TestTranscribe_AModelTheEndpointDoesNotServeIsUnavailableHereNotAnOutage'
+
+drill "a 200 with no choices is indistinguishable from silence" internal/llm/transcribe.go \
+  's = s.replace("return &Transcript{Model: model, Unanswered: true}, nil", "return &Transcript{Model: model}, nil", 1)' \
+  ./internal/llm 'TestTranscribe_AnAnswerWithNoTranscriptIsMarkedUnanswered'
 
 echo
 echo "Scripts run their kernel on one thread"

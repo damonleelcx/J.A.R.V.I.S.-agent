@@ -1,11 +1,30 @@
 /* FORGE voice — full-duplex conversation with barge-in.
  *
- * Uses the browser's own speech stack (SpeechRecognition + speechSynthesis).
- * That is a deliberate choice, not a shortcut: it keeps audio on the device,
- * needs no streaming media server, and — the part that actually matters — lets
- * barge-in be handled locally, in the same event loop as playback, rather than
- * over a network round trip. A stop that has to travel to a server and back is
- * not a barge-in, it is a delay.
+ * Two ways in, one way out.
+ *
+ *   IN, push-to-talk   the page RECORDS while the button is held and FORGE's
+ *                      server transcribes the recording (POST /v1/transcribe).
+ *   IN, hands-free     the browser's SpeechRecognition, for its interim results:
+ *                      barge-in needs to know somebody is talking WHILE they
+ *                      talk, and a recording is only text after it ends.
+ *   OUT                FORGE's own voice from /v1/speech, the browser's
+ *                      speechSynthesis as the fallback.
+ *
+ * # Why push-to-talk no longer uses the browser's recogniser
+ *
+ * It used to be the only way in, and "it keeps audio on the device" was the
+ * reason given. That was never true where it mattered: Chrome and Edge send
+ * SpeechRecognition audio to Google's servers. From mainland China those are
+ * unreachable, so a person held the button, spoke, let go — and nothing
+ * happened, with no message. Reported from production on 2026-09-15.
+ *
+ * FORGE's server already transcribed room audio, so push-to-talk now uses that
+ * wherever the deployment has a transcriber, and the page says which path is in
+ * use. The browser's recogniser remains where it adds something — hands-free,
+ * and push-to-talk on a deployment with no transcriber — and is dropped the
+ * moment it reports it cannot reach its service.
+ *
+ * See docs/bugfix/2026-09-15-the-microphone-sent-nothing.md
  *
  * PRD requirements this implements:
  *   AUD-01  listen while speaking; interruption without losing state
@@ -18,9 +37,10 @@
  *
  * Honest limits, stated because a voice interface that overstates itself is
  * worse than one that admits its edges:
- *   - Browser SpeechRecognition is Chrome/Edge (and it sends audio to Google's
- *     service). Firefox and Safari do not implement it usefully. Where it is
- *     missing the UI says so and the text path stays fully functional.
+ *   - Hands-free depends on the browser's recogniser: Chrome/Edge, and only on
+ *     a network that reaches Google. Firefox and Safari do not implement it
+ *     usefully. Where it is missing or blocked the UI says so and push-to-talk
+ *     and the text path stay fully functional.
  *   - AUD-02's ≤700ms first-audio target is NOT verified. It depends on the
  *     model, the network, and the device. The workbench measures and displays
  *     the real figure rather than claiming the target.
@@ -29,6 +49,19 @@
   'use strict';
 
   var SR = global.SpeechRecognition || global.webkitSpeechRecognition;
+
+  /* The longest one hold records. Mirrors maxRecordingSeconds in
+   * internal/httpapi/transcribe.go, which names it when refusing. */
+  var MAX_RECORDING_MS = 60 * 1000;
+
+  /* Shorter than this is a click, not a hold. A click used to do nothing at
+   * all, and "the button does nothing" was part of the report. */
+  var MIN_HOLD_MS = 350;
+
+  /* What MediaRecorder is asked for, in order. The first two are Chrome, Edge
+   * and Firefox; mp4 is Safari. Whatever is chosen is uploaded as recorded —
+   * the server converts nothing. */
+  var RECORDING_TYPES = ['audio/webm;codecs=opus', 'audio/webm', 'audio/mp4', 'audio/ogg;codecs=opus'];
 
   /* A short silent MP3, played once on the first gesture so a later reply can
    * play without one.
@@ -58,12 +91,22 @@
 
     this.mode = 'push';         // 'push' | 'hands-free'
     this.listening = false;
+    this.transcribing = false;  // a released hold is being transcribed
     this.speaking = false;
     this.muted = false;
     this.rate = 1.0;
     this.voiceName = null;
-    this.available = !!SR;
+    this.deviceId = null;
     this.synthAvailable = !!global.speechSynthesis;
+    /* Whether the server transcribes. undefined = not yet told, which is
+     * treated as yes: the upload names its own failure, and asking first would
+     * make the first hold of every page wait on a metadata request. */
+    this.serverASR = undefined;
+    this._serverWhy = '';
+    /* Why the browser's recogniser cannot be used, once it has said so. */
+    this.browserBroken = '';
+    this._refused = false;
+    this.available = this.inputPath() !== 'none';
     /* undefined = not yet tried, false = this deployment has no usable server
      * voice and we stop asking. Never persisted: a vendor that was down when
      * the page loaded may be up on the next load. */
@@ -72,6 +115,12 @@
     this._remoteAbort = null;
     this._spoken = '';
     this._echoTail = null;
+
+    this._session = null;           // the recording in progress
+    this._uploads = 0;              // released holds not yet delivered
+    this._delivery = Promise.resolve();
+    this._recActive = false;        // the recogniser has a session open
+    this._restartWhenEnded = false;
 
     if (SR) this._initRecognition();
 
@@ -154,40 +203,151 @@
       if (final.trim()) self.onTranscript(final.trim());
     };
 
+    /* Every error says something, except the two that are ours.
+     *
+     * ‼️ This used to return silently on 'no-speech', and reported 'network' as
+     * the bare code. During a hold, 'no-speech' is the only sign the microphone
+     * heard nothing; and 'network' is what Chrome reports when Google's service
+     * cannot be reached — the whole of the 2026-09-15 report, shown to nobody. */
     rec.onerror = function (e) {
-      // 'no-speech' and 'aborted' are ordinary in hands-free use and are not
-      // worth showing a user.
-      if (e.error === 'no-speech' || e.error === 'aborted') return;
-      if (e.error === 'not-allowed' || e.error === 'service-not-allowed') {
-        self.available = false;
+      var code = e && e.error;
+      // Ours: cancelListening() aborts a hold that turned out to be a click,
+      // and the note for that is already on screen.
+      if (code === 'aborted') return;
+      if (code === 'no-speech') {
+        // Ordinary in hands-free, where it fires on every pause.
+        if (self.mode === 'push') {
+          self.onError('No speech was heard while the button was held. Check the microphone, then hold and speak.');
+        }
+        return;
+      }
+      if (code === 'not-allowed' || code === 'service-not-allowed') {
+        self._refused = true;
+        self.listening = false;
         self.onError('Microphone access was refused. Voice is unavailable; the text box still works.');
         self._setState();
         return;
       }
-      self.onError('Speech recognition error: ' + e.error);
+      if (code === 'network') {
+        self.browserBroken = "The browser's speech recognition could not reach its service: Chrome and Edge " +
+          "send the audio to Google's servers, which some networks block, mainland China among them.";
+        self.listening = false;
+        self._restartWhenEnded = false;
+        self.onError(self.browserBroken + ' ' + (self.inputPath() === 'server'
+          ? "Push-to-talk uses FORGE's own transcription instead."
+          : self.whyUnavailable()));
+        self._setState();
+        return;
+      }
+      if (code === 'audio-capture') {
+        self.onError('No microphone could be opened for speech recognition. Check which input device the browser is using.');
+        return;
+      }
+      self.onError('Speech recognition error: ' + code);
     };
 
     rec.onend = function () {
-      // The browser ends recognition on its own schedule. In hands-free mode it
-      // is restarted, so a session does not silently stop listening after a
-      // pause — which looks exactly like the app having crashed.
-      if (self.mode === 'hands-free' && self.listening && !self.muted) {
-        try { rec.start(); } catch (err) { /* already starting */ }
-      } else {
-        self.listening = false;
-        self._setState();
+      self._recActive = false;
+      /* A press that arrived while the previous session was still closing.
+       *
+       * ‼️ start() on a recogniser whose last session has not ended throws
+       * InvalidStateError. That throw used to be swallowed ("already running"),
+       * so pressing again quickly did nothing at all. It is now remembered, and
+       * the new session starts here, the moment the old one is gone. */
+      if (self.listening && !self.muted && (self._restartWhenEnded || self.mode === 'hands-free')) {
+        self._restartWhenEnded = false;
+        // The browser ends recognition on its own schedule. In hands-free mode
+        // it is restarted, so a session does not silently stop listening after
+        // a pause — which looks exactly like the app having crashed.
+        self._beginRecognition();
+        return;
       }
+      self.listening = false;
+      self._closeMeter();
+      self._setState();
     };
 
     this.rec = rec;
   };
 
+  /* ---- which way in ------------------------------------------------------ */
+
+  /* setServerTranscription is told by the page what /v1/meta/models said:
+   * {model} when the deployment transcribes, null when it does not. */
+  Voice.prototype.setServerTranscription = function (info) {
+    this.serverASR = info && info.model ? { model: info.model } : null;
+    if (!this.serverASR) this._serverWhy = '';
+    this._setState();
+  };
+
+  Voice.prototype._canRecord = function () {
+    var md = global.navigator && global.navigator.mediaDevices;
+    return !!(global.MediaRecorder && md && md.getUserMedia);
+  };
+
+  Voice.prototype._canRecognise = function () {
+    return !!(SR && this.rec && !this.browserBroken && !this._refused);
+  };
+
+  /* inputPath is how push-to-talk will hear the next hold:
+   * 'server' (record and upload), 'browser' (the recogniser) or 'none'. */
+  Voice.prototype.inputPath = function () {
+    if (this._refused) return 'none';
+    if (this.serverASR !== null && this._canRecord()) return 'server';
+    if (this._canRecognise()) return 'browser';
+    return 'none';
+  };
+
+  Voice.prototype.handsFreeAvailable = function () {
+    return this._canRecognise();
+  };
+
+  /* describePath is the sentence the page shows about the path in use, so a
+   * failure can be read against the path that produced it. */
+  Voice.prototype.describePath = function () {
+    switch (this.inputPath()) {
+      case 'server':
+        return 'voice: transcribed by FORGE' +
+          (this.serverASR && this.serverASR.model ? ' (' + this.serverASR.model + ')' : '');
+      case 'browser':
+        return "voice: the browser's speech recognition (Chrome and Edge send it to Google)";
+      default:
+        return 'voice: unavailable';
+    }
+  };
+
+  /* whyUnavailable explains the gap rather than leaving a dead button.
+   * "Voice is off" with no reason is the kind of thing people file bugs about. */
+  Voice.prototype.whyUnavailable = function () {
+    if (this.inputPath() !== 'none') return '';
+    if (this._refused) {
+      return 'Microphone access was refused. Allow the microphone for this site and reload; everything works by typing.';
+    }
+    var server = this.serverASR === null
+      ? (this._serverWhy || 'This deployment has no speech to text: set FORGE_LLM_TRANSCRIBER_MODEL to a ' +
+          'transcription model its endpoint serves.')
+      : 'This browser cannot record audio for FORGE to transcribe.';
+    var browser = this.browserBroken ||
+      (SR ? '' : 'This browser has no speech recognition of its own (Chrome and Edge have it; Firefox and Safari do not).');
+    return 'The microphone is off. ' + server + (browser ? ' ' + browser : '') + ' Everything works by typing.';
+  };
+
+  Voice.prototype.whyNoHandsFree = function () {
+    if (this._refused) return 'Microphone access was refused, so hands-free cannot listen.';
+    if (this.browserBroken) return 'Hands-free needs the browser’s speech recognition, and it cannot be used here. ' + this.browserBroken;
+    return 'Hands-free needs the browser’s own speech recognition, which this browser does not have ' +
+      '(Chrome and Edge have it). Push-to-talk still works.';
+  };
+
   Voice.prototype._setState = function () {
+    this.available = this.inputPath() !== 'none';
     this.onState({
       listening: this.listening,
+      transcribing: this.transcribing,
       speaking: this.speaking,
       muted: this.muted,
       mode: this.mode,
+      path: this.inputPath(),
       available: this.available,
       synthAvailable: this.synthAvailable
     });
@@ -199,23 +359,287 @@
     this._setState();
   };
 
+  /* ---- listening --------------------------------------------------------- */
+
   Voice.prototype.startListening = function () {
-    if (!this.rec || this.muted) return;
-    try {
-      this.rec.start();
-      this.listening = true;
-      this._setState();
-      this._openMeter();
-    } catch (e) { /* already running */ }
+    if (this.muted) return;
+    if (this.mode === 'hands-free') {
+      if (this.listening) return;
+      if (!this._canRecognise()) { this.onError(this.whyNoHandsFree()); return; }
+      this._startRecognition();
+      return;
+    }
+    switch (this.inputPath()) {
+      case 'server': this._startRecording(); return;
+      case 'browser': this._startRecognition(); return;
+      default: this.onError(this.whyUnavailable());
+    }
   };
 
+  /* stopListening ends a hold and hands what was said on. */
   Voice.prototype.stopListening = function () {
-    if (!this.rec) return;
+    if (this._session) { this._finishRecording(false); return; }
+    this._restartWhenEnded = false;
     this.listening = false;
-    try { this.rec.stop(); } catch (e) {}
+    // stop(), not abort(): what was already heard is still delivered.
+    if (this.rec && this._recActive) this.rec.stop();
     this._closeMeter();
     this._setState();
   };
+
+  /* cancelListening ends a hold and discards it — a click, not a hold. */
+  Voice.prototype.cancelListening = function () {
+    if (this._session) { this._finishRecording(true); return; }
+    this._restartWhenEnded = false;
+    this.listening = false;
+    if (this.rec && this._recActive) this.rec.abort();
+    this._closeMeter();
+    this._setState();
+  };
+
+  Voice.prototype._startRecognition = function () {
+    this.listening = true;
+    this._setState();
+    if (this._recActive) {
+      // The previous session is still closing; onend starts this one.
+      this._restartWhenEnded = true;
+      return;
+    }
+    this._beginRecognition();
+  };
+
+  Voice.prototype._beginRecognition = function () {
+    try {
+      this.rec.start();
+    } catch (e) {
+      if (e && e.name === 'InvalidStateError') {
+        // Still running as far as the browser is concerned: start when it ends.
+        this._recActive = true;
+        this._restartWhenEnded = true;
+        return;
+      }
+      this.listening = false;
+      this._setState();
+      this.onError('Speech recognition could not start: ' + describeError(e));
+      return;
+    }
+    this._recActive = true;
+    this._openMeter();
+  };
+
+  /* ---- push-to-talk by recording ----------------------------------------- */
+
+  Voice.prototype._startRecording = function () {
+    var self = this;
+    if (this._session) return;   // already held, by the button or the space bar
+    var session = { chunks: [], stopped: false, cancelled: false, recorder: null, stream: null, timer: null, failed: '' };
+    this._session = session;
+    this.listening = true;
+    this._setState();
+
+    var opening = global.ForgeAudioInput
+      ? global.ForgeAudioInput.open(this.deviceId)
+      : global.navigator.mediaDevices.getUserMedia({ audio: true });
+
+    opening.then(function (stream) {
+      session.stream = stream;
+      if (session.stopped) {
+        stopTracks(stream);
+        if (!session.cancelled) {
+          self._settleUpload();
+          self.onError('The microphone was not open yet when the button was released. ' +
+            'Hold it until it lights, then speak.');
+        }
+        return;
+      }
+      var type = recordingType();
+      var recorder;
+      try {
+        // 32 kbit/s is plenty for speech and keeps a 60-second hold far inside
+        // the server's 2 MiB limit.
+        recorder = new global.MediaRecorder(stream,
+          type ? { mimeType: type, audioBitsPerSecond: 32000 } : { audioBitsPerSecond: 32000 });
+      } catch (e) {
+        stopTracks(stream);
+        self._endSession(session);
+        self.onError('This browser could not record from the microphone: ' + describeError(e));
+        return;
+      }
+      session.recorder = recorder;
+      recorder.ondataavailable = function (ev) {
+        if (ev.data && ev.data.size) session.chunks.push(ev.data);
+      };
+      recorder.onerror = function (ev) { session.failed = describeError(ev && ev.error); };
+      recorder.onstop = function () { self._recordingStopped(session); };
+      recorder.start();
+      session.timer = global.setTimeout(function () {
+        if (self._session !== session) return;
+        self.onError('Recording stopped at ' + (MAX_RECORDING_MS / 1000) + ' seconds, the most one hold sends. ' +
+          'What you said is being transcribed.');
+        self._finishRecording(false);
+      }, MAX_RECORDING_MS);
+      self._openMeter(stream);
+    }, function (err) {
+      self._endSession(session);
+      self.onError(self._microphoneFailed(err));
+    });
+  };
+
+  Voice.prototype._endSession = function (session) {
+    if (this._session === session) this._session = null;
+    session.stopped = true;
+    if (session.timer) global.clearTimeout(session.timer);
+    this.listening = false;
+    this._closeMeter();
+    this._setState();
+  };
+
+  Voice.prototype._finishRecording = function (cancel) {
+    var session = this._session;
+    if (!session) return;
+    session.cancelled = !!cancel;
+    if (!cancel) {
+      // Counted at release, not when the upload starts, so the state never
+      // flickers to Ready between letting go and the text arriving.
+      this._uploads++;
+      this.transcribing = true;
+    }
+    this._endSession(session);
+    if (session.recorder && session.recorder.state !== 'inactive') {
+      session.recorder.stop();   // onstop → _recordingStopped
+    } else if (session.stream) {
+      stopTracks(session.stream);
+      if (!cancel) this._settleUpload();
+    }
+    // With neither, the microphone is still opening; opening.then sees
+    // session.stopped and says so.
+  };
+
+  Voice.prototype._recordingStopped = function (session) {
+    if (session.stream) stopTracks(session.stream);
+    if (!session.stopped) {
+      // The browser ended the recording itself — the device was unplugged, or
+      // permission revoked mid-hold. What was captured is still sent.
+      this._uploads++;
+      this.transcribing = true;
+      this._endSession(session);
+      this.onError('The recording ended by itself; the microphone may have been disconnected. ' +
+        'What was captured is being transcribed.');
+    }
+    if (session.cancelled) return;
+    if (session.failed) {
+      this._settleUpload();
+      this.onError('Recording failed: ' + session.failed + '. Nothing was sent to FORGE.');
+      return;
+    }
+    var type = (session.recorder && session.recorder.mimeType) ||
+      (session.chunks[0] && session.chunks[0].type) || 'audio/webm';
+    var blob = new global.Blob(session.chunks, { type: type });
+    if (!blob.size) {
+      this._settleUpload();
+      this.onError('No audio was captured: the microphone produced nothing while the button was held. ' +
+        'Check which input device the browser is using. Nothing was sent to FORGE.');
+      return;
+    }
+    this._upload(blob);
+  };
+
+  Voice.prototype._upload = function (blob) {
+    var self = this;
+    var answer = global.fetch('/v1/transcribe', {
+      method: 'POST',
+      credentials: 'same-origin',
+      headers: { 'Content-Type': blob.type || 'audio/webm' },
+      body: blob
+    }).then(function (r) {
+      return r.json().then(function (body) { return { r: r, body: body || {} }; },
+        function () { return { r: r, body: {} }; });
+    });
+
+    /* Delivered in the order spoken, whatever order the answers arrive in: two
+     * quick holds are one sentence in two halves more often than not. */
+    this._delivery = this._delivery.then(function () {
+      return answer.then(function (res) {
+        self._transcribed(res.r, res.body);
+      }, function (err) {
+        self.onError('Could not reach the server to transcribe (' + describeError(err) + '). ' +
+          'Nothing was sent to FORGE; hold and say it again, or type it.');
+      });
+    }).then(function () {
+      self._settleUpload();
+    }, function (err) {
+      self._settleUpload();
+      self.onError('What was said could not be handed to the conversation: ' + describeError(err));
+    });
+  };
+
+  Voice.prototype._transcribed = function (r, body) {
+    if (!r.ok) {
+      var said = (body.details && body.details.detail) || body.message || ('the server answered ' + r.status);
+      if (r.status === 501) {
+        // This deployment cannot transcribe — configuration, not a fault. The
+        // server path is dropped for the page so the next hold does not repeat
+        // the round trip, and the reason is kept for whyUnavailable.
+        this.serverASR = null;
+        this._serverWhy = 'FORGE cannot transcribe on this deployment: ' + said;
+        this.onError(this._serverWhy + (this._canRecognise()
+          ? " The microphone uses the browser's own speech recognition from now on." : ''));
+        this._setState();
+        return;
+      }
+      this.onError('Transcription failed (' + r.status + (body.request_id ? ', request ' + body.request_id : '') +
+        '): ' + said + ' Nothing was sent to FORGE; hold and say it again, or type it.');
+      return;
+    }
+    var text = String(body.text == null ? '' : body.text).trim();
+    if (!text) {
+      this.onError('No words were recognised in that recording. Nothing was sent to FORGE.');
+      return;
+    }
+    this.onTranscript(text);
+  };
+
+  Voice.prototype._settleUpload = function () {
+    this._uploads = Math.max(0, this._uploads - 1);
+    this.transcribing = this._uploads > 0;
+    this._setState();
+  };
+
+  Voice.prototype._microphoneFailed = function (err) {
+    var name = err && err.name;
+    if (name === 'NotAllowedError' || name === 'SecurityError') {
+      this._refused = true;
+      this._setState();
+      return 'Microphone access was refused, so nothing can be recorded. Allow the microphone for this site ' +
+        'in the browser’s address bar, then reload. The text box still works.';
+    }
+    if (name === 'NotFoundError' || name === 'OverconstrainedError') {
+      return 'No microphone was found. Connect one, or check which input device the browser is using.';
+    }
+    if (name === 'NotReadableError' || name === 'AbortError') {
+      return 'The microphone could not be opened; another application may be using it.';
+    }
+    return 'Could not open the microphone: ' + describeError(err);
+  };
+
+  function recordingType() {
+    var MR = global.MediaRecorder;
+    if (!MR || !MR.isTypeSupported) return '';
+    for (var i = 0; i < RECORDING_TYPES.length; i++) {
+      if (MR.isTypeSupported(RECORDING_TYPES[i])) return RECORDING_TYPES[i];
+    }
+    return '';
+  }
+
+  function stopTracks(stream) {
+    if (stream && stream.getTracks) stream.getTracks().forEach(function (t) { t.stop(); });
+  }
+
+  function describeError(e) {
+    if (!e) return 'unknown error';
+    if (e.name && e.message) return e.name + ': ' + e.message;
+    return String(e.message || e.name || e);
+  }
 
   /* The level meter.
    *
@@ -228,6 +652,10 @@
    * on when nobody is holding it. A visual nicety must not be the reason a
    * privacy property stops being true.
    *
+   * When a recording is in progress its own stream is measured (borrowed, and
+   * not stopped here — the recording owns it), so a hold asks for the
+   * microphone once rather than twice.
+   *
    * # Why every failure is silent
    *
    * This measures something for the sake of a drawing. Nothing in the
@@ -235,14 +663,17 @@
    * change, and no interruption to speech recognition — which has already
    * started by the time this runs.
    */
-  Voice.prototype._openMeter = function () {
+  Voice.prototype._openMeter = function (borrowed) {
     var self = this;
-    if (this._meter || !global.AudioContext || !navigator.mediaDevices) return;
-    this._meter = { stopped: false };
+    var md = global.navigator && global.navigator.mediaDevices;
+    if (this._meter || !global.AudioContext) return;
+    if (!borrowed && !md) return;
+    var meter = { stopped: false, borrowed: !!borrowed };
+    this._meter = meter;
 
-    navigator.mediaDevices.getUserMedia({ audio: true }).then(function (stream) {
-      if (!self._meter || self._meter.stopped) {
-        stream.getTracks().forEach(function (t) { t.stop(); });
+    var attach = function (stream) {
+      if (self._meter !== meter || meter.stopped) {
+        if (!meter.borrowed) stopTracks(stream);
         return;
       }
       var ctx = new global.AudioContext();
@@ -253,12 +684,12 @@
       src.connect(analyser);
 
       var buf = new Uint8Array(analyser.frequencyBinCount);
-      self._meter.stream = stream;
-      self._meter.ctx = ctx;
+      meter.stream = stream;
+      meter.ctx = ctx;
 
       // A plain interval rather than rAF: this is a measurement, and it must
       // keep its own time rather than inherit the rendering clock's stalls.
-      self._meter.timer = global.setInterval(function () {
+      meter.timer = global.setInterval(function () {
         analyser.getByteFrequencyData(buf);
         var sum = 0;
         for (var i = 0; i < buf.length; i++) sum += buf[i] * buf[i];
@@ -267,8 +698,14 @@
         // speaking voice in the middle of the range instead of at the floor.
         self.onLevel(Math.min(1, Math.pow(rms * 2.6, 0.75)));
       }, 50);
-    }).catch(function () {
-      self._meter = null; // no meter, no message: see above
+    };
+
+    if (borrowed) {
+      try { attach(borrowed); } catch (e) { this._meter = null; /* no meter, no message: see above */ }
+      return;
+    }
+    md.getUserMedia({ audio: true }).then(attach).catch(function () {
+      if (self._meter === meter) self._meter = null; // no meter, no message: see above
     });
   };
 
@@ -278,7 +715,7 @@
     m.stopped = true;
     this._meter = null;
     if (m.timer) global.clearInterval(m.timer);
-    if (m.stream) m.stream.getTracks().forEach(function (t) { t.stop(); });
+    if (m.stream && !m.borrowed) stopTracks(m.stream);
     if (m.ctx && m.ctx.close) { try { m.ctx.close(); } catch (e) {} }
     this.onLevel(0);
   };
@@ -294,6 +731,126 @@
     this._setState();
     return this.muted;
   };
+
+  /* ---- the hold ----------------------------------------------------------- */
+
+  /* makeHold turns presses and releases into listening, for any source — the
+   * mic button and the space bar share one, so the two cannot overlap.
+   *
+   * A release shorter than MIN_HOLD_MS is a click: the recording is discarded
+   * and the person is told to hold. It used to do nothing, visibly. */
+  function makeHold(voice, opts) {
+    opts = opts || {};
+    var now = opts.now || function () { return Date.now(); };
+    var note = opts.note || function () {};
+    var min = opts.minHoldMs == null ? MIN_HOLD_MS : opts.minHoldMs;
+    var held = null;
+    return {
+      holding: function () { return !!held; },
+      press: function (who) {
+        if (held) return false;
+        held = { who: who, at: now() };
+        voice.startListening();
+        return true;
+      },
+      release: function (who) {
+        if (!held || (who != null && held.who != null && who !== held.who)) return false;
+        var took = now() - held.at;
+        held = null;
+        // Hands-free keeps listening after the button is let go.
+        if (voice.mode !== 'push') return true;
+        if (took < min) {
+          voice.cancelListening();
+          note('Hold to talk: keep the button (or the space bar) held down while you speak, then let go.');
+          return true;
+        }
+        voice.stopListening();
+        return true;
+      }
+    };
+  }
+
+  /* bindHold wires a button to a hold with pointer events.
+   *
+   * ‼️ The hold used to end on `mouseleave`. The mic is a 36px circle, and a
+   * hand holding a mouse button while talking drifts: the cursor left the
+   * circle, the hold ended mid-sentence, and what had been said so far was sent
+   * or lost. Pointer capture routes every event for that pointer to the button
+   * wherever the cursor goes, so the hold ends when the button is let go and not
+   * before. Pointer events also cover touch and pen, which the old
+   * mouse/touch pair handled separately.
+   *
+   * Fenced by TestVoiceInput_TheHoldSurvivesTheCursorLeavingTheButton. */
+  function bindHold(button, voice, opts) {
+    var hold = makeHold(voice, opts);
+    var pointer = null;
+    var release = function (e) {
+      if (pointer == null || (e && e.pointerId != null && e.pointerId !== pointer)) return;
+      pointer = null;
+      global.removeEventListener('pointerup', release, true);
+      hold.release('pointer');
+    };
+    button.addEventListener('pointerdown', function (e) {
+      if (button.disabled || (e.button != null && e.button !== 0)) return;
+      e.preventDefault();
+      if (hold.holding()) return;
+      pointer = e.pointerId;
+      if (button.setPointerCapture && pointer != null) {
+        try {
+          button.setPointerCapture(pointer);
+        } catch (err) {
+          // Without capture a release off the button never reaches it, and the
+          // microphone would stay open; so the release is watched for on the
+          // page instead. Nothing is lost by this, so nothing is said.
+          global.addEventListener('pointerup', release, true);
+        }
+      }
+      hold.press('pointer');
+    });
+    button.addEventListener('pointerup', release);
+    button.addEventListener('pointercancel', release);
+    // Capture lost without a pointerup (the window lost focus, an alert): end
+    // the hold rather than leave the microphone open.
+    button.addEventListener('lostpointercapture', release);
+    // A long press on a phone opens a context menu and cancels the pointer.
+    button.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+    return hold;
+  }
+
+  /* deliverSpoken hands a transcript to the conversation — or, while FORGE is
+   * still answering, to the text box.
+   *
+   * ‼️ send() returns early while a turn is in flight, and every transcript
+   * went straight to it: anything said during "Thinking…" was dropped without a
+   * trace. That is where the owner's words went on 2026-09-15, with the first
+   * token 33 seconds away.
+   *
+   * # Why the text box and not a queue
+   *
+   * A queued utterance is sent later, against a reply the person had not heard
+   * when they spoke, and they cannot see or change it first. The text box keeps
+   * it visible and editable, appends rather than overwriting anything typed,
+   * and sends when the person decides — the same place a typed message waits.
+   *
+   * Fenced by TestVoiceInput_WhatWasSaidDuringATurnIsKeptInTheTextBox. */
+  function deliverSpoken(text, ctx) {
+    text = String(text == null ? '' : text).trim();
+    if (!text) return 'nothing';
+    if (!ctx.busy) {
+      ctx.send(text);
+      return 'sent';
+    }
+    var typed = String(ctx.input.value || '');
+    var end = typed.length;
+    while (end > 0 && /\s/.test(typed.charAt(end - 1))) end--;
+    typed = typed.slice(0, end);
+    ctx.input.value = typed ? typed + ' ' + text : text;
+    ctx.note('FORGE is still answering, so what you said is waiting in the text box instead of being sent. ' +
+      'Press send when she has finished.');
+    return 'kept';
+  }
+
+  /* ---- speaking ---------------------------------------------------------- */
 
   /* speak reads text aloud.
    *
@@ -721,16 +1278,13 @@
 
   Voice.prototype.readable = readable;
 
-  /* whyUnavailable explains the gap rather than leaving a dead button.
-   * "Voice is off" with no reason is the kind of thing people file bugs about. */
-  Voice.prototype.whyUnavailable = function () {
-    if (this.available) return '';
-    if (!SR) {
-      return 'This browser has no speech recognition. Chrome and Edge have it; ' +
-             'Firefox and Safari do not. Everything works by typing.';
-    }
-    return 'Microphone access was refused. Everything works by typing.';
+  global.ForgeVoice = {
+    Voice: Voice,
+    readable: readable,
+    supported: !!SR,
+    makeHold: makeHold,
+    bindHold: bindHold,
+    deliverSpoken: deliverSpoken,
+    MAX_RECORDING_SECONDS: MAX_RECORDING_MS / 1000
   };
-
-  global.ForgeVoice = { Voice: Voice, readable: readable, supported: !!SR };
 })(window);
