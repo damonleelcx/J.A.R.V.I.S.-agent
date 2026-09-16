@@ -1,6 +1,7 @@
 package cad_test
 
 import (
+	"os"
 	"testing"
 )
 
@@ -66,7 +67,26 @@ type bulkKeyRuns struct {
 // ‼️ ReprDiffer is reported, not required to be zero: -0.0 and 0.0 are one dict key
 // and two reprs, and the array path hands out one tuple per key. Unequal is what
 // must be zero.
+//
+// # Why it is gated (FORGE_EXHAUSTIVE_KERNEL_TESTS)
+//
+// It is the slowest test FORGE has: 1,059 s on the ubuntu-24.04-arm runner (CI run
+// 35097920395), when the WHOLE rest of this package takes 686 s there. Run on every
+// pull request it put the kernel job past its 30-minute timeout with every test
+// passing — honest work, not a hang — and charged every PR on the repository an
+// extra eighteen minutes for a property the three-fixture fence below proves on
+// every run in 28 s.
+//
+// ‼️ Gated is not unrun. The nightly `kernel-exhaustive` job in
+// .github/workflows/ci.yml sets the gate and runs this, so the eight fixtures and
+// four placement variants are still checked on arm64 every day. Unset, it SKIPS and
+// says how to run it; it never passes without having run.
 func TestKernel_TheArrayNarrowPhaseGivesTheLoopsAnswer(t *testing.T) {
+	if os.Getenv("FORGE_EXHAUSTIVE_KERNEL_TESTS") == "" {
+		t.Skip("the exhaustive array fence takes ~18 min on CI and runs nightly; set " +
+			"FORGE_EXHAUSTIVE_KERNEL_TESTS=1 to run it here, or `make test-cad-exhaustive`. " +
+			"TestKernel_TheArrayNarrowPhaseGivesTheLoopsAnswerOnThreeFixtures ran instead.")
+	}
 	arrayNarrowPhase(t, 8)
 }
 
@@ -74,10 +94,14 @@ func TestKernel_TheArrayNarrowPhaseGivesTheLoopsAnswer(t *testing.T) {
 // crossbars, and a turned barrel of rivets, which between them reach every branch
 // the array path has.
 //
-// ‼️ It exists so the drills have something to break. The thorough fence above takes
-// about eleven minutes, and a dozen mutations against it is over two hours, which is
-// long enough that the drills would not be run — and a drill that is not run is a
-// claim, which is the thing scripts/drill-fences.sh exists to distrust.
+// ‼️ This is the fence EVERY CI run holds the array narrow phase to, bit for bit,
+// since the eight-fixture one above is gated to the nightly job. It is also what
+// every array-path drill in scripts/drill-fences.sh reddens.
+//
+// It first existed so the drills have something to break. The thorough fence above
+// takes eleven minutes on a laptop, and a dozen mutations against it is over two
+// hours, which is long enough that the drills would not be run — and a drill that is
+// not run is a claim, which is the thing scripts/drill-fences.sh exists to distrust.
 func TestKernel_TheArrayNarrowPhaseGivesTheLoopsAnswerOnThreeFixtures(t *testing.T) {
 	arrayNarrowPhase(t, 3, "--fast")
 }
