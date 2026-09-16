@@ -36,9 +36,12 @@ import (
 
 // Assembly is a group of placed children.
 type Assembly struct {
-	ID       string  `json:"id"`
-	Name     string  `json:"name,omitempty"`
-	Children []Child `json:"children"`
+	ID   string `json:"id"`
+	Name string `json:"name,omitempty"`
+	// Interfaces are named mounting frames a child may be attached at, here or
+	// from a sibling ("front-left/hub"). See interface.go.
+	Interfaces []Interface `json:"interfaces,omitempty"`
+	Children   []Child     `json:"children"`
 }
 
 // Child places a definition, or another assembly, inside an assembly.
@@ -61,6 +64,11 @@ type Child struct {
 	// Pattern writes the child out as several copies, each placed by the pattern
 	// in this assembly's frame (pattern.go). Nil means one copy.
 	Pattern *Pattern `json:"pattern,omitempty"`
+	// At attaches the child to an interface: one on this assembly ("mount") or on
+	// a sibling's placement ("front-left/hub", "bolt-3/seat"). The child's
+	// position, rotation, mirror and pattern are then measured in that
+	// interface's frame. Empty means this assembly's frame. See interface.go.
+	At string `json:"at,omitempty"`
 }
 
 // PathSeparator joins child ids into the id of a flattened part.
@@ -156,6 +164,11 @@ func expandAssemblies(d Document) (Document, []Problem) {
 			asms[a.ID] = a
 		}
 	}
+	for _, a := range d.Assemblies {
+		for _, detail := range interfaceProblems(a) {
+			fail(a.ID, "%s", detail)
+		}
+	}
 	root, ok := asms[d.Root]
 	if !ok {
 		fail(d.Root, "is named as the root but is not an assembly in this document")
@@ -163,6 +176,7 @@ func expandAssemblies(d Document) (Document, []Problem) {
 	}
 
 	placed := 0
+	attach := newAttachments(asms)
 	// The frame is a placement (frame.go), not a position and three angles, so a
 	// reflection anywhere above a part reaches the part.
 	var walk func(a Assembly, path []string, onPath map[string]bool, frame placement) (stop bool)
@@ -205,7 +219,8 @@ func expandAssemblies(d Document) (Document, []Problem) {
 				continue
 			}
 			// A pattern writes the child out as copies, each placed by the pattern in
-			// THIS assembly's frame (pattern.go). No pattern is one copy, unnamed.
+			// the frame the child is measured in (pattern.go). No pattern is one copy,
+			// unnamed.
 			slots, patternProblem := c.Pattern.copies()
 			if patternProblem != nil {
 				patternProblem.Name = name
@@ -213,6 +228,13 @@ func expandAssemblies(d Document) (Document, []Problem) {
 				if patternProblem.Severity == Error {
 					continue
 				}
+			}
+			// Attached at an interface, the child is measured in that interface's frame
+			// -- its position, rotation, mirror and pattern alike (interface.go).
+			reference, attachProblem := attach.reference(a, c, "")
+			if attachProblem != "" {
+				fail(name, "%s", attachProblem)
+				continue
 			}
 			// The definition's own repeat, once, in the DEFINITION's frame, so a pattern
 			// "about the origin" turns about the part's own origin wherever it is placed.
@@ -232,7 +254,7 @@ func expandAssemblies(d Document) (Document, []Problem) {
 				if childName != "" && slot.number != "" {
 					childName = c.Name + " " + slot.number
 				}
-				childFrame := frame.then(slot.at.then(local))
+				childFrame := frame.then(reference.then(slot.at.then(local)))
 				if isAsm {
 					onPath[sub.ID] = true
 					stop := walk(sub, childPath, onPath, childFrame)
