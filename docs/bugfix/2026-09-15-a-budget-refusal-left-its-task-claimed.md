@@ -1,6 +1,6 @@
 # A budget refusal left its task claimed, so a goal past its budget never stopped
 
-**Date:** 2026-09-15 · **Status:** fixed (stacked on #82, stage A1) · **Severity:** high — a spent goal stays active and its task is claimed again every lease
+**Date:** 2026-09-15 · **Status:** fixed on main (found building stage A1, #85) · **Severity:** high — a spent goal stays active and its task is claimed again every lease
 
 ## Summary
 
@@ -43,9 +43,15 @@ the machine requires before `failed`, and `started_at` records when the refusal 
 
 ## Verification
 
-`TestBuildGoal_ABudgetRefusalStopsTheGoalCleanly` runs a three-step build whose ceiling is crossed by step 1: the goal
-must end `failed`, steps `succeeded, failed, skipped`, with `budget.exceeded` on the timeline and step 1's version
-kept. Without the fix it times out with step 2 claimed.
+`TestWorker_ABudgetRefusalStopsTheGoal` (internal/agent/worker_release_test.go) plans two tasks, spends the goal's
+token ceiling before the worker starts, and runs the real worker on Postgres: the goal must end `failed`, the tasks
+`failed` and `skipped`, `budget.exceeded` must be on the timeline, and the model must never be asked. Without the fix
+it times out with the first task claimed.
+
+`TestBuildGoal_ABudgetRefusalStopsTheGoalCleanly` (internal/agent/buildgoal_db_test.go, stage A1) covers the same fence
+on the path the defect was found on: a three-step build whose ceiling is crossed by step 1 must end the goal `failed`
+with steps `succeeded, failed, skipped`, `budget.exceeded` on the timeline and step 1's version kept. Without the fix it
+times out with step 2 claimed.
 
 ## Regression prevention
 
@@ -54,4 +60,4 @@ fence goes red.
 
 ## Not in this fix
 
-**Main has the same defect** and needs the same change in its own PR.
+The stacked branches carry the same change in #85 (stage A1).

@@ -1,6 +1,6 @@
 # Every event written by the real clock failed the audit chain
 
-**Date:** 2026-09-15 · **Status:** fixed (stacked on #82, stage A1/E3) · **Severity:** high — the tamper-evident timeline (PRD SAF-06) reported tampering on untouched rows
+**Date:** 2026-09-15 · **Status:** fixed on main (found building stages A1/E3, #85) · **Severity:** high — the tamper-evident timeline (PRD SAF-06) reported tampering on untouched rows
 
 ## Summary
 
@@ -41,10 +41,10 @@ place events are written.
 
 ## Verification
 
-- `TestAuditChain_AnEventStampedAtNanosecondsVerifies` appends events stamped at `.123456789 s` and requires the chain
-  to verify; it fails without the fix.
-- `TestBuildGoal_AStepKeptInsideAGoalWritesAChainedArtifactEvent` verifies a build goal's whole timeline written by a
-  real worker on the system clock.
+`TestAuditChain_AnEventStampedAtNanosecondsVerifies` (internal/domain/engine/audit_integration_test.go) appends events
+stamped at `.123456789 s` and requires the chain to verify; it fails without the fix. On the stacked branches (#85) a
+build goal's whole timeline, written by a real worker on the system clock, is verified as well, by
+`TestBuildGoal_AStepKeptInsideAGoalWritesAChainedArtifactEvent` (internal/agent/buildgoal_db_test.go).
 
 ## Regression prevention
 
@@ -56,4 +56,4 @@ and runs the engine fence, which goes red (measured: `3 event(s): 3 PROBLEM(S), 
 - **Rows already written are not repaired.** Their nanoseconds are gone, so their recorded hashes cannot be recomputed;
   they will keep reporting `content-altered`. Re-attesting them would mean minting a chain over rows nobody can vouch
   for, which the audit design refuses to do for pre-chain rows too.
-- **Main has the same defect** and needs the same line in its own PR.
+- **The stacked branches carry the same line** in #85.

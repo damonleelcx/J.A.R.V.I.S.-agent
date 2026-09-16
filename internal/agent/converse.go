@@ -68,8 +68,13 @@ How to answer:
 // went on telling the model "there is no sine or cosine here" — a rule the model
 // reads, describing a grammar that had changed underneath it, which is worse
 // than no rule at all. ExpressionFunctionsAreNamedInTheContract fences it.
+//
+// The catalogue of standard parts is substituted the same way and for the same
+// reason (Phase 2, stage A3): a designation the prompt offers and the table does
+// not have is a part every model that trusts the prompt gets refused.
+// TestTheContractTeachesEveryStandardPartFORGEHas fences it.
 var geometryContract = fmt.Sprintf(geometryContractTemplate,
-	strings.Join(geometry.ExpressionFunctions(), ", "))
+	geometry.StandardGuide(), strings.Join(geometry.ExpressionFunctions(), ", "))
 
 var geometryContractTemplate = `Reply with JSON only:
 
@@ -93,8 +98,9 @@ var geometryContractTemplate = `Reply with JSON only:
         "id": "stable-kebab-id",
         "name": "human name",
         "shape": "box" | "cylinder" | "cone" | "sphere" | "plane" |
-                 "extrusion" | "revolve" | "sweep" | "section" | "gear" | "script",
+                 "extrusion" | "revolve" | "sweep" | "section" | "gear" | "standard" | "script",
         "shape_note": "for \"extrusion\", size only needs \"depth\"",
+        "standard": "only for shape \"standard\": a designation from the catalogue below",
         "size": {"width":1,"height":1,"depth":1,"radius":0.5,"radius_top":0.5},
         "profile": [{"x": 0, "y": 0, "radius": 0, "x_from": "", "y_from": "plate_height",
                      "via": null or {"x": 0, "y": 0}}],
@@ -111,7 +117,7 @@ var geometryContractTemplate = `Reply with JSON only:
         "color": "#b8bcc4",
         "opacity": 1.0,
         "note": "what this part is for",
-        "material": null or {"name": "aluminium 6061-T6", "finish": "metal",
+        "material": null or {"name": "aluminium 6061-T6", "finish": "metal", "density": 2700,
                              "how": "observed|retrieved|inferred|assumed", "source": ""}
       }
     ],
@@ -185,6 +191,7 @@ instead of "prototype". Never both.
         "features": [ ...whole features, by id... ],
         "definitions": [ ...whole definitions, by id... ],
         "assemblies": [ ...whole assemblies, by id... ],
+        "root": "ONLY when the model has no root yet: the assembly that will hold everything",
         "parameters": [ ... ], "derived": [ ... ],
         "assumptions": ["what you chose for THIS change"],
         "not_verified": ["what this change does not establish"]
@@ -199,10 +206,18 @@ instead of "prototype". Never both.
   changed" and never "delete". Naming something that is not there is an error.
 - Removing a part that a feature uses breaks that feature. Remove the feature too.
 - In a tree, change the DESIGN, not one placement. Patch the definition or the
-  assembly by id, whole, and every place it is used changes with it. A placed
-  id like "axle/left-wheel/hub" says where a part IS; to change it, edit the
-  definition "hub" or the assembly "wheel" it comes from. "children" removes
-  one child from one assembly, written "assembly-id/child-id".
+  assembly whole, and every place it is used changes with it. Name it by its id,
+  or by the path of any placement of it: {"id": "left-wheel/spoke-3", ...} in
+  "definitions" is read as the definition "spoke" that placement places, so it
+  changes every spoke on both wheels and never that one copy. "remove" reads a
+  path the same way. A path that places nothing, or places an assembly where a
+  definition is named, is refused. FORGE tells the person every placed part an
+  edit reached, so never say that only the one they pointed at changed.
+  "children" removes one child from one assembly, written
+  "assembly-id/child-id": the assembly's own id, not a path.
+- A patched ASSEMBLY is replaced whole, children and all. To add a child to one,
+  send it with every child it already has and the new one after them; an
+  assembly sent with only the new child loses the others.
 - "assumptions" and "not_verified" in a patch are ADDED to what is already there.
   The earlier ones still hold; do not restate them.
 - Send a whole "prototype" instead when there is nothing on screen yet, or when
@@ -212,6 +227,11 @@ About "prototype":
 
 - Positions are in the stated units, Y is up, and the origin is the assembly's
   centre. Parts are centred on their own position.
+- A "cylinder" or "cone" STANDS UPRIGHT: its "height" runs along the part's own
+  Y, with its round faces at the top and bottom. So a wheel, a brake disc or a
+  pulley on an axle that runs across the model, along X, is turned
+  "rotation": [0, 0, 90]. Left unturned it lies flat like a plate, and turned
+  [90, 0, 0] it faces forward and would roll sideways.
 - Part ids are STABLE ACROSS TURNS. When you revise an assembly, the part that
   was "base-plate" stays "base-plate" — that is what lets somebody put the two
   versions side by side and see what changed rather than two unrelated designs.
@@ -265,12 +285,29 @@ About "prototype":
   "align": true}, along straight segments only. The copies are named "child-1",
   "child-2" and so on. "pattern" repeats a placed child, a whole sub-assembly
   included; "repeat" is still how one part appears many times.
+  A "polar" pattern turns its copies about an axis THROUGH THE ORIGIN of the
+  frame the child is measured in: its assembly's, or its interface's when it has
+  "at". So the child's "position" is where the FIRST copy sits on the circle, off
+  that axis: [57, 0, 0] with "about": "y" is a ring of radius 57 round Y, and a
+  child ON the axis puts every copy in the same place. "about" must be the axis
+  of the thing the copies go round. Draw a wheel upright in its own assembly, its
+  axis Y and its lug nuts a ring "about": "y" at its outer face, and turn the
+  whole wheel where it is placed; a rim turned inside the wheel leaves its nuts
+  circling an axis the rim no longer has, straight through the rim and the tyre.
   "interfaces" on an assembly are named mounting frames, each an "id", a
   "position" and a "rotation". A child with "at" is measured in that frame
   instead of its assembly's: "at": "mount" names an interface of its own
   assembly, and "at": "front-left/hub" names the interface "hub" on the sibling
   placed as "front-left" (a pattern copy by its copy id, "bolt-3/seat"). Move
   the interface and everything attached to it follows.
+  An "at" never leaves its own assembly. An assembly is written once and may be
+  placed many times, so a child in it attaches only at that assembly's own
+  interfaces or its own children's ("hub", "knuckle/hub"), never at another
+  subsystem's, and FORGE refuses a path that leaves it. One subsystem mounts on
+  another where BOTH are placed, from the root, by the longer path from there.
+  This child of the root puts the wheel on the "hub" of the suspension the root
+  placed as "suspension-left"; a deeper frame is "suspension-left/knuckle/hub":
+      {"id": "left-wheel", "ref": "wheel", "at": "suspension-left/hub", "rotation": [0, 0, 90]}
   "features" on an assembly are cuts, fuses and fillets between the parts that
   assembly places, written once and applied in EVERY placement of it. Their "of"
   and "with" are paths from that assembly: "hub", "spoke" (every copy of a
@@ -312,6 +349,36 @@ About "prototype":
   lays a gear flat with its axle upright. A hub, a keyway or spokes are ordinary
   parts, fused or cut. Helical, bevel and internal gears and racks are not this
   shape.
+- "standard" is a CATALOGUED part — a screw, a nut, a washer, a bearing or a
+  structural section — and it is how every one of those is made: never draw a
+  screw's head and shank, and never type a bearing's diameters. Give only its
+  designation, exactly as it is listed below —
+    {"id": "screw", "name": "Cap screw", "shape": "standard", "standard": "ISO 4762 M8x30"}
+  FORGE draws it at the published figures, in the document's units. A screw's
+  axis is the part's own Y: its position is the underside of the head, and the
+  shank runs down -Y. A nut, a washer and a bearing are centred on their position
+  with their axis along Y. A section runs along the part's own Z for the length
+  in its "size": {"length": 600}, centred like an extrusion's depth; a hollow
+  section is centred on its axis, and an angle has its heel at the origin and its
+  legs along +X and +Y. Threads, sockets and a bearing's balls are not drawn. A
+  designation that is not listed here is refused, and the nearest are named:
+%s
+- WRITE A DESIGN ONCE AND PLACE IT MANY TIMES. The same screw, bracket or seat
+  appearing again is its definition placed again, never its geometry written a
+  second time; and many of them in a row, a grid or a ring are ONE child with a
+  "pattern", never a child each. FORGE notices children written out one at a
+  time where one pattern would place them, and says which pattern to write.
+  Worked example — six cap screws round a flange:
+      "definitions": [
+        {"id": "screw", "name": "Cap screw", "shape": "standard", "standard": "ISO 4762 M6x20"}
+      ],
+      "assemblies": [
+        {"id": "flange",
+         "children": [
+           {"id": "screw", "ref": "screw", "position": [40, 0, 0], "pattern": {"kind": "polar", "count": 6, "about": "y"}}
+         ]}
+      ],
+      "root": "flange"
 - "script" is the last resort, and only when this deployment offers it: a part
   whose shape is "script" carries build123d Python in "script", and the kernel
   runs it and imports what it built. It is for a shape this vocabulary genuinely
@@ -367,6 +434,13 @@ About "prototype":
   repeat the number. Bind every dimension that follows from a parameter; a
   thickness you simply chose and that follows nothing needs no entry.
   "position_from" keys are "x", "y" and "z", and Y is up.
+  In a tree a definition is bound the same way, and a child or an interface is
+  placed by a parameter's name written in its "position", which FORGE works out
+  from the parameters and keeps as its "position_from", so it follows them:
+      {"id": "rail", "shape": "box", "size": {"width": 50, "height": 80, "depth": 2700}, "size_from": {"depth": "wheelbase"}}
+      {"id": "front-axle", "ref": "axle", "position": ["half_wheelbase", 0, 0]}
+  Never type the number a parameter holds: 1350 where half_wheelbase is 1350 is
+  a position that stays put when the wheelbase changes.
   Fill in "size" and "position" as well, with the values as they stand now. They
   are what gets drawn if an expression cannot be read, and FORGE tells the reader
   when your number and your own expression disagree — so a rib bound to
@@ -600,8 +674,45 @@ About "prototype":
   a real answer and it is shown as one. "finish" is only how it catches light:
   `
 
-var converseFraming = converseManner + geometryContract + geometry.FinishGuide() + `.
-- "states" are named configurations: which parts are shown, and where they sit.
+// densityContract teaches "density" where materials are taught.
+//
+// # The problem this solves
+//
+// Phase 5, stage V3 added Material.Density and a mass roll-up, and the contract
+// never said the field existed. A model cannot write a field it was never shown,
+// so every mass report on a model's document was "weighted by volume, no mass
+// claimed" — correct, and useless.
+//
+// # Why the ceiling is rendered and the mass rule spelled out
+//
+// The ceiling is the validator's own constant (geometry.MaxDensity), so the two
+// cannot disagree. The rule — mass only when EVERY part has a density — is what
+// geometry.MassProperties does, and a model that is not told it puts a density on
+// the three parts it is sure of and expects a mass. It gets none, and is told why.
+// TestTheContractTeachesDensityAsTheValidatorReadsIt holds all three to the code.
+var densityContract = fmt.Sprintf(`  "density" is the material's density in KILOGRAMS PER CUBIC METRE: aluminium
+  about 2700, steel about 7850, ABS about 1050. Write steel as 7850, never 7.85 —
+  that is grams per cubic centimetre, and the part would weigh a thousand times too
+  little. It is part of the same claim as the name, labelled by the same "how",
+  and a density above %d is refused, because no material is that dense. Leave it
+  out when you do not know the material.
+  FORGE reports the model's MASS only when every part has a density. When any part
+  has none, the roll-up is weighted by volume instead, says so, and names the parts
+  without one: a density on some parts and not others gives no mass at all.
+`, geometry.MaxDensity)
+
+// buildContract is the document contract a build step is sent (assemble.go).
+//
+// ‼️ Not geometryContract alone. The template's material paragraph ends on
+// ""finish" is only how it catches light:" and the finish list and the density rule
+// that finish that paragraph are spliced in by converseFraming only, so every build
+// step read a sentence that stopped mid-way and met "density" solely inside the
+// example material — never its unit, its ceiling or the all-parts rule for a mass
+// (2026-09-15; the conversation contract has had them since PR #92).
+// Fence: TestAssemble_EveryStepIsTaughtFinishesAndDensity.
+var buildContract = geometryContract + geometry.FinishGuide() + ".\n" + densityContract
+
+var converseFraming = converseManner + geometryContract + geometry.FinishGuide() + ".\n" + densityContract + `- "states" are named configurations: which parts are shown, and where they sit.
   A state with "offsets" says these pieces separate along this path, and
   NOTHING here checks that they can — there is no interference, clearance or
   kinematic test in this deployment. Offer states when somebody is asking how a
@@ -909,12 +1020,17 @@ func parseReply(resp *llm.Response) (Reply, error) {
 	//
 	// Only after the strict parse has already failed, so a reply that parses is
 	// never rewritten.
-	if repaired, moved := repairDimensions(body); moved {
+	if repaired, relocated, evaluated := repairDimensionsNoted(body); relocated || evaluated {
 		var second Reply
 		if json.Unmarshal(repaired, &second) == nil {
-			second.Repaired = "One or more dimensions arrived as expressions written in the " +
-				"place of a number. They were read as the expressions they are — the " +
-				"contract has a field for each — rather than the reply being discarded."
+			if relocated {
+				second.noteRepair("One or more dimensions arrived as expressions written in the " +
+					"place of a number. They were read as the expressions they are — the " +
+					"contract has a field for each — rather than the reply being discarded.")
+			}
+			if evaluated {
+				second.noteRepair(childPositionNote)
+			}
 			return second, nil
 		}
 	}
@@ -1007,7 +1123,7 @@ func (r *Reply) resolveEdit(current *Prototype) error {
 				"than recording a version that did not")
 	}
 
-	applied, problems := edit.Apply(*current)
+	applied, reached, problems := edit.ApplyAndReport(*current)
 	if len(problems) > 0 {
 		details := make([]string, 0, len(problems))
 		for _, p := range problems {
@@ -1023,7 +1139,75 @@ func (r *Reply) resolveEdit(current *Prototype) error {
 	// docs/bugfix/2026-09-11-edited-and-repaired-documents-were-never-settled.md
 	// Fence: TestEdit_TheEditedDocumentIsBound.
 	r.Prototype = settleDocument(&applied)
+	// What the edit reached, said in the turn (Phase 7, stage E1). A path reads
+	// like one part and names a design placed everywhere, so "make front-left/hub
+	// bigger" changes all four hubs; the person must hear that before they build
+	// on it. Fence: TestResolveEdit_TheStreamedTurnSaysEveryOccurrenceAnEditReached.
+	if note := describeReach(reached); note != "" {
+		r.noteRepair(note)
+	}
 	return nil
+}
+
+// maxListedOccurrences bounds how many placed ids the note names for one change.
+//
+// # Why bounded
+//
+// A definition placed four thousand times would otherwise put four thousand ids
+// in a notice somebody reads on a screen. The first few say where to look, the
+// count says how far the change went, and the rest are counted rather than
+// dropped, so the list never reads as complete when it is not.
+const maxListedOccurrences = 8
+
+// describeReach is the note an edit leaves about what it reached, or "" when
+// every change reached exactly the one part it named.
+//
+// # Why silent for that case
+//
+// Every pass of a build in passes patches flat parts by id (assemble.go), and a
+// notice saying "changed rib: rib" on each of them would bury the one that says
+// "changed hub: 4 occurrences" — which is the notice this exists for. A removal
+// that reached nothing, or a design named by a path, is always said.
+func describeReach(reached []geometry.Reached) string {
+	var lines []string
+	for _, r := range reached {
+		if r.Path == "" && len(r.Occurrences) == 1 && r.Occurrences[0] == r.ID {
+			continue
+		}
+		verb := "changed"
+		if r.Removed {
+			verb = "removed"
+		}
+		what := r.ID
+		if r.Kind != "part" {
+			what = r.Kind + " " + r.ID
+		}
+		if r.Path != "" {
+			what += " (named by its placement " + r.Path + ")"
+		}
+		n := len(r.Occurrences)
+		if n == 0 {
+			lines = append(lines, fmt.Sprintf("%s %s: no occurrences, since nothing places it", verb, what))
+			continue
+		}
+		listed, more := r.Occurrences, 0
+		if n > maxListedOccurrences {
+			listed, more = r.Occurrences[:maxListedOccurrences], n-maxListedOccurrences
+		}
+		list := strings.Join(listed, ", ")
+		if more > 0 {
+			list += fmt.Sprintf(", and %d more not listed", more)
+		}
+		noun := "occurrences"
+		if n == 1 {
+			noun = "occurrence"
+		}
+		lines = append(lines, fmt.Sprintf("%s %s: %d %s (%s)", verb, what, n, noun, list))
+	}
+	if len(lines) == 0 {
+		return ""
+	}
+	return "This edit reached every placement of what it changed: " + strings.Join(lines, "; ") + "."
 }
 
 // ProposedGoal is work FORGE offers to do. Nothing runs until a human starts it.
@@ -1076,6 +1260,11 @@ type Reply struct {
 	// document they are looking at is not byte-for-byte the one the model
 	// produced, and everything else in this system that substitutes something
 	// says so on the screen. See dimensionrepair.go.
+	//
+	// It also carries what an edit REACHED when that is more than the one thing
+	// the edit named (describeReach, Phase 7 stage E1): a patch to
+	// "front-left/hub" changes all four hubs, and the person is owed that as much
+	// as they are owed a repair.
 	Repaired string `json:"repaired,omitempty"`
 }
 
@@ -1144,10 +1333,16 @@ func (c *Conversation) Respond(ctx context.Context, projectID string, history []
 		return nil, err
 	}
 
+	// A child an edit places by the name of a parameter the model on screen has, as
+	// the contract teaches, is read over that model's parameters (dimensionrepair.go).
+	resp, overModel := placementsOverModel(resp, current)
 	reply, err := parseReply(resp)
 	if err != nil {
 		return nil, errs.Wrap(op, errs.CodeExternalProtocol, err).
 			WithDetail("the model returned neither usable JSON nor any text")
+	}
+	if overModel {
+		reply.noteRepair(childPositionNote)
 	}
 	reply.Model = resp.Model
 	reply.Usage = resp.Usage
@@ -1190,6 +1385,9 @@ func (c *Conversation) Respond(ctx context.Context, projectID string, history []
 	// it works — one more reason the streaming path is the one people use.
 	c.repairIfScriptsFail(ctx, &reply, current, nil)
 	noteVanished(&reply, current)
+	// And what is written out one child at a time where one pattern would do, at the
+	// same point the streamed path says it (repetition.go).
+	noteRepetition(&reply)
 	return &reply, nil
 }
 

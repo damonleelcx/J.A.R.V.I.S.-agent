@@ -2,7 +2,6 @@ package agent
 
 import (
 	"bytes"
-	"context"
 	"io"
 	"log/slog"
 	"strings"
@@ -16,49 +15,20 @@ import (
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/logx"
 )
 
-// What a stopping worker does after the task it was running, against real Postgres.
+// What a stopping worker logs when the task it stops in is a BUILD step, against real
+// Postgres.
 //
-// # Why these exist
+// # Why this exists beside worker_stop_test.go
 //
-// A graceful stop cancels the worker's context while a task runs. The task is handed
-// back on a context of its own, and TestBuildGoal_AStoppedWorkerHandsItsStepBack holds
-// that. What came AFTER the hand-back — releasing the tasks the finished one left
-// waiting, settling the goal — ran on the cancelled context, failed at once, and was
-// logged as DATABASE_UNAVAILABLE. Nothing read the log, so the fence stayed green while
-// every live graceful stop reported a database outage.
+// A graceful stop cancels the worker's context while a task runs. What came after the
+// task — releasing the tasks it left waiting, settling the goal — ran on the cancelled
+// context, failed at once, and was logged as DATABASE_UNAVAILABLE. main's fences for
+// that (TestWorker_AWorkerStoppedMidTaskDoesNotReportItsBookkeepingAsADatabaseFailure,
+// TestWorker_ATaskFinishedAsTheStopArrivesStillReleasesItsDependentsAndSettlesItsGoal)
+// stop a worker on the executor path. This one stops it inside runBuildStep, where the
+// defect was found live, and reads the whole log for DATABASE_UNAVAILABLE rather than
+// only the two bookkeeping events.
 // docs/bugfix/2026-09-15-a-stopping-worker-reported-its-own-stop-as-a-database-outage.md
-
-// A worker told to stop in the instant a task finished still releases the tasks that
-// task left waiting, and does not report the database unavailable while doing it.
-func TestWorker_AStoppingWorkerStillReleasesWhatItsLastTaskLeftWaiting(t *testing.T) {
-	h := newBuildHarness(t)
-	goal := h.goal(t, nil)
-	stub := &goalStub{tokens: 1, replies: []string{threeSteps}}
-	h.plan(t, goal, stub)
-
-	// Step 1 finished, exactly as runTask leaves it.
-	first := h.tasks(t, goal.ID)[0]
-	for _, next := range []engine.TaskStatus{engine.StatusClaimed, engine.StatusRunning, engine.StatusSucceeded} {
-		if err := h.repo.TransitionTask(context.Background(), h.pool, first, next, time.Now().UTC(), engine.TaskMutation{}); err != nil {
-			t.Fatal(err)
-		}
-	}
-
-	var logs lockedBuffer
-	w := h.workerLogging(t, stub, &logs)
-	// The stop arrived as the task ended: Run reaches afterTask holding a cancelled ctx.
-	ctx, cancel := context.WithCancel(context.Background())
-	cancel()
-	w.afterTask(ctx, goal.ID)
-
-	if second := h.tasks(t, goal.ID)[1]; second.Status != engine.StatusReady {
-		t.Errorf("step 2 is %s after the worker that finished step 1 stopped; it should be ready for the next "+
-			"worker now, not when some worker's idle poll finds it", second.Status)
-	}
-	if out := logs.String(); strings.Contains(out, "DATABASE_UNAVAILABLE") {
-		t.Errorf("a stopping worker reported the database unavailable; it was only stopping:\n%s", out)
-	}
-}
 
 // A worker stopped in the middle of a step says nothing about the database: the only
 // thing that happened is that it was asked to stop.
