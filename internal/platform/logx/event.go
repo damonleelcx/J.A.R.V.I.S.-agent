@@ -177,6 +177,19 @@ const (
 
 func init() { allEvents = append(allEvents, EventGoalSettled, EventGoalSettleFailed) }
 
+// Releasing the tasks a finished task left waiting.
+const EventTaskReleaseFailed Event = "forge.task.release_failed"
+
+func init() { allEvents = append(allEvents, EventTaskReleaseFailed) }
+
+// A stopping worker handing back the task it was holding.
+const (
+	EventTaskHandedBack     Event = "forge.task.handed_back"
+	EventTaskHandBackFailed Event = "forge.task.hand_back_failed"
+)
+
+func init() { allEvents = append(allEvents, EventTaskHandedBack, EventTaskHandBackFailed) }
+
 // Workbench events.
 const (
 	EventConverseTurn Event = "forge.converse.turn"
@@ -229,6 +242,9 @@ const (
 	EventCADStarted   Event = "forge.cad.started"
 	EventCADRestarted Event = "forge.cad.restarted"
 	EventCADRefused   Event = "forge.cad.refused"
+	// EventCADTimedOut is a build stopped because it ran out of time. Separate from
+	// Restarted because a timeout is NOT retried: the process was working, not dead.
+	EventCADTimedOut Event = "forge.cad.timed_out"
 )
 
 func init() {
@@ -236,7 +252,7 @@ func init() {
 		EventGeometrySaved, EventGeometryExported, EventGeometryRefused, EventGeometryCompared,
 		EventGeometryUnreadable,
 		EventGeometryAdopted, EventGeometryRespecified,
-		EventCADStarted, EventCADRestarted, EventCADRefused,
+		EventCADStarted, EventCADRestarted, EventCADRefused, EventCADTimedOut,
 	)
 }
 

@@ -39,6 +39,11 @@ func (d *Document) Faults() []Problem {
 	// Gears before that, in the same order Solids does it: a gear whose numbers
 	// do not describe one is a part that is NOT in the model, and this is the
 	// check that hands it to the repair loop.
+	// A tree before anything else (tree.go): a placement that cannot be made — an
+	// unknown ref, a tree that places itself — is a part NOT in the model, which is
+	// exactly what this check exists to hand to the repair loop.
+	tree, treeProblems := expandAssemblies(*d)
+	d = &tree
 	expanded, gearProblems := expandGears(*d)
 	expanded, repeatProblems := expandRepeats(expanded)
 	d = &expanded
@@ -49,6 +54,7 @@ func (d *Document) Faults() []Problem {
 	_, _, profileProblems := d.resolvedProfiles()
 	_, featureProblems := d.Operations()
 	profileProblems = append(profileProblems, repeatProblems...)
+	profileProblems = append(profileProblems, treeProblems...)
 	profileProblems = append(profileProblems, gearProblems...)
 	for _, p := range append(profileProblems, featureProblems...) {
 		if p.Severity == Error {

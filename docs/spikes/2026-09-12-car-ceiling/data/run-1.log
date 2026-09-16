@@ -1,0 +1,39 @@
+endpoint=https://token-plan.cn-beijing.maas.aliyuncs.com/compatible-mode budget=150000 cad=yes
+FORGE_LIVE_LLM_TESTS=1 \
+	FORGE_MEASURE_TOKEN_BUDGET="${FORGE_MEASURE_TOKEN_BUDGET:-400000}" \
+	FORGE_CAD_PYTHON="${FORGE_CAD_PYTHON:-/Users/damon/Downloads/repos/jarvis-agent/.cadvenv/bin/python}" \
+	go test -count=1 -v -timeout 60m -run TestLiveCarCeiling ./internal/agent/
+=== RUN   TestLiveCarCeiling
+    car_ceiling_live_test.go:109: step 1/7 Chassis and Frame        parts=5   One or more dimensions arrived as expressions written in the place of a number. They were read as the expressions they are — the contract has a field for each — rather than the reply being discarded.
+    car_ceiling_live_test.go:109: step 2/7 Suspension Geometry      parts=13  Looking at the model it had just built, FORGE found problems and corrected it: Left Damper: The damper is floating in the air near the front left corner, not connected to the chassis or the control arm.
+    car_ceiling_live_test.go:109: step 3/7 Drivetrain Assembly      parts=17  
+    car_ceiling_live_test.go:109: step 4/7 Braking System           parts=24  Looking at the model it had just built, FORGE saw something it could not correct: Left Front Brake Line: The part is a thin line floating in the air between the master cylinder and the left caliper, not physically connected to either component.
+    car_ceiling_live_test.go:109: step 5/7 Steering Mechanism       parts=28  The geometry as first written had 1 part(s) that could not be built. FORGE corrected it and re-checked. Looking at the model it had just built, FORGE found problems and corrected it: Left Tie Rod: The part is a thin line floating in space, not visually connected to the steering rack or the upright.
+    car_ceiling_live_test.go:109: step 6/7 Wheels and Tires         parts=28  Step 6 (Wheels and Tires) was left out: it would have broken the model.
+    car_ceiling_live_test.go:109: step 7/7 Body Panels              parts=28  Step 7 (Body Panels) could not be built: the measurement's token budget is spent: 151638 of 150000 tokens used, so no further model call was placed (FORGE_MEASURE_TOKEN_BUDGET).
+    car_ceiling_live_test.go:115: CAR-SPEND tokens=151638 of 150000 calls=17 refused=2 seconds=556
+    car_ceiling_live_test.go:118: ‼️  the token budget ran out mid-build: 2 calls were refused. Everything below describes a PARTIAL car and is a floor on the ceiling, not the ceiling.
+    car_ceiling_live_test.go:128: note: One or more dimensions arrived as expressions written in the place of a number. They were read as the expressions they are — the contract has a field for each — rather than the reply being discarded.
+    car_ceiling_live_test.go:128: note: Looking at the model it had just built, FORGE found problems and corrected it: Left Damper: The damper is floating in the air near the front left corner, not connected to the chassis or the control arm.
+    car_ceiling_live_test.go:128: note: Looking at the model it had just built, FORGE saw something it could not correct: Left Front Brake Line: The part is a thin line floating in the air between the master cylinder and the left caliper, not physically connected to either component.
+    car_ceiling_live_test.go:128: note: The geometry as first written had 1 part(s) that could not be built. FORGE corrected it and re-checked. Looking at the model it had just built, FORGE found problems and corrected it: Left Tie Rod: The part is a thin line floating in space, not visually connected to the steering rack or the upright.
+    car_ceiling_live_test.go:128: note: Step 6 (Wheels and Tires) was left out: it would have broken the model.
+    car_ceiling_live_test.go:128: note: Step 7 (Body Panels) could not be built: the measurement's token budget is spent: 151638 of 150000 tokens used, so no further model call was placed (FORGE_MEASURE_TOKEN_BUDGET).
+    car_ceiling_live_test.go:142: CAR-CEILING steps_run=7 steps_planned=7 parts=28 features=7 minutes=9.3
+    car_ceiling_live_test.go:147: CAR-SHAPES box=13 cylinder=11 extrusion=3 gear=1
+    car_ceiling_live_test.go:148: CAR-FEATURES fuse=7
+    car_ceiling_live_test.go:154: CAR-FAULTS document_faults=0
+    car_ceiling_live_test.go:174: CAR-KERNEL builds=yes volume=526715693 skipped=0 feature_failures=0 parts_not_in_file=0
+    car_ceiling_live_test.go:192: CAR-OVERLAP-BBOX-PROXY pairs=4 of parts=28 (a part at least half inside another)
+    car_ceiling_live_test.go:199:   master-cylinder is 100% inside engine-block
+    car_ceiling_live_test.go:199:   pinion-gear is 88% inside central-tunnel
+    car_ceiling_live_test.go:199:   left-upright is 70% inside left-front-rotor
+    car_ceiling_live_test.go:199:   right-upright is 70% inside right-front-rotor
+    car_ceiling_live_test.go:204: CAR-SYMMETRY mirror_pairs=9 parts_in_a_pair=18 of 28
+    car_ceiling_live_test.go:210: CAR-PLACEMENT literal_positions=7 bound_positions=21 id_prefixes=12
+    car_ceiling_live_test.go:216: CAR-HOLLOW parts_with_holes=0 cut_features=0 of parts=28
+    car_ceiling_live_test.go:227: CAR-PASSES with_a_problem=3 of 7
+    car_ceiling_live_test.go:230: CAR-MESH triangles=3584
+--- PASS: TestLiveCarCeiling (558.69s)
+PASS
+ok  	github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/agent	559.692s
