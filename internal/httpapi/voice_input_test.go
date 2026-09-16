@@ -125,7 +125,18 @@ const win = {
 function load(opts) {
   opts = opts || {};
   if (opts.recognition !== false) win.webkitSpeechRecognition = FakeRecognition;
-  globalThis.navigator = win.navigator;   // voice.js reads navigator as a free variable
+  // voice.js reads navigator as a free variable, so the fake has to be visible
+  // globally. ‼️ Plain assignment works only on Node 20 and older: Node 21 added
+  // a real navigator global, defined as an accessor with a getter and no
+  // setter, so assigning globalThis.navigator throws
+  //   TypeError: Cannot set property navigator of #<Object> which has only a getter
+  // and every scenario in this file fails with "the scenario could not run".
+  // defineProperty replaces the accessor with a plain value on both, and the
+  // property is configurable on Node 21+ so redefining it is allowed.
+  // ‼️ No backticks in this comment: the whole harness is a Go raw string.
+  Object.defineProperty(globalThis, 'navigator', {
+    value: win.navigator, configurable: true, writable: true
+  });
   ['audio-input.js', 'voice.js'].forEach(function (name) {
     new Function('window', fs.readFileSync(path.join(dir, name), 'utf8'))(win);
   });
