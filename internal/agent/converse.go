@@ -133,6 +133,23 @@ var geometryContractTemplate = `Reply with JSON only:
        "edges": "all" | "vertical" | "horizontal" | "top" | "bottom",
        "note": "what this is for"}
     ],
+    "definitions": [ ...parts written ONCE and placed by the assemblies below... ],
+    "assemblies": [
+      {
+        "id": "stable-kebab-id",
+        "name": "human name",
+        "interfaces": [{"id": "hub", "position": [0,0,0], "rotation": [0,0,0]}],
+        "children": [
+          {"id": "front-left", "ref": "a definition id or an assembly id", "name": "",
+           "position": [0,0,0], "rotation": [0,0,0],
+           "mirror": "" | "x" | "y" | "z",
+           "at": "" | "interface-id" | "sibling-child-id/interface-id",
+           "pattern": null or {"kind": "linear" | "polar" | "grid" | "path", "count": 4}}
+        ],
+        "features": [ ...like "features", with "of" and "with" as paths from this assembly... ]
+      }
+    ],
+    "root": "the assembly that holds everything, when there are assemblies",
     "assumptions": ["anything you chose that they did not specify"],
     "not_verified": ["what this render does NOT establish"],
     "overlays": [
@@ -162,10 +179,12 @@ When a model is on screen and they ask for a CHANGE to it, send "prototype_edit"
 instead of "prototype". Never both.
 
     "prototype_edit": {
-      "remove": {"parts": ["part-id"], "features": ["feature-id"]},
+      "remove": {"parts": ["part-id"], "features": ["feature-id"], "definitions": ["definition-id"], "assemblies": ["assembly-id"], "children": ["assembly-id/child-id"]},
       "patch": {
         "parts": [ ...whole parts, by id... ],
         "features": [ ...whole features, by id... ],
+        "definitions": [ ...whole definitions, by id... ],
+        "assemblies": [ ...whole assemblies, by id... ],
         "parameters": [ ... ], "derived": [ ... ],
         "assumptions": ["what you chose for THIS change"],
         "not_verified": ["what this change does not establish"]
@@ -179,6 +198,11 @@ instead of "prototype". Never both.
   That is deliberate: an edit only says what changes, so an omission means "not
   changed" and never "delete". Naming something that is not there is an error.
 - Removing a part that a feature uses breaks that feature. Remove the feature too.
+- In a tree, change the DESIGN, not one placement. Patch the definition or the
+  assembly by id, whole, and every place it is used changes with it. A placed
+  id like "axle/left-wheel/hub" says where a part IS; to change it, edit the
+  definition "hub" or the assembly "wheel" it comes from. "children" removes
+  one child from one assembly, written "assembly-id/child-id".
 - "assumptions" and "not_verified" in a patch are ADDED to what is already there.
   The earlier ones still hold; do not restate them.
 - Send a whole "prototype" instead when there is nothing on screen yet, or when
@@ -217,6 +241,63 @@ About "prototype":
   Do not use it for things that differ from one another. Treads that get shallower
   are not a repeat; they are separate parts, and forcing them through this makes
   a staircase nobody can climb.
+- "definitions", "assemblies" and "root" are how a design that REPEATS or MATES
+  is written. Use them when the same part or group of parts appears more than
+  once (four wheels, two seats, a row of identical brackets) or when parts mount
+  to named points (a wheel on a hub, a seat on its rails). A single part or a
+  small assembly stays as flat "parts": do not wrap a bracket in a tree.
+  A DEFINITION is a part written once, with no place of its own: its position is
+  where it sits inside whatever places it. An ASSEMBLY is a group of CHILDREN;
+  each child places one definition or one other assembly by "ref", at its own
+  "position" and "rotation", measured in that assembly's frame. "root" names
+  the assembly that holds everything, and top-level "parts" may sit beside it.
+  A placed part's id is the path of child ids down to it: the hub of the wheel
+  placed as "front-left" is "front-left/hub". Change a definition and every
+  placement of it changes, which is the point.
+  "mirror": "x", "y" or "z" reflects a child across that plane in its own
+  frame, so a right-hand corner is the left-hand one mirrored, never a second
+  drawing.
+  "pattern" writes a child out as copies, in the frame the child is measured in:
+  {"kind": "linear", "count": 4, "offset": [0, 0, 30]};
+  {"kind": "polar", "count": 6, "about": "y", "angle": 0};
+  {"kind": "grid", "rows": 2, "columns": 3, "row_offset": [0, 0, 20],
+  "column_offset": [20, 0, 0]}; or {"kind": "path", "count": 8, "path": [points],
+  "align": true}, along straight segments only. The copies are named "child-1",
+  "child-2" and so on. "pattern" repeats a placed child, a whole sub-assembly
+  included; "repeat" is still how one part appears many times.
+  "interfaces" on an assembly are named mounting frames, each an "id", a
+  "position" and a "rotation". A child with "at" is measured in that frame
+  instead of its assembly's: "at": "mount" names an interface of its own
+  assembly, and "at": "front-left/hub" names the interface "hub" on the sibling
+  placed as "front-left" (a pattern copy by its copy id, "bolt-3/seat"). Move
+  the interface and everything attached to it follows.
+  "features" on an assembly are cuts, fuses and fillets between the parts that
+  assembly places, written once and applied in EVERY placement of it. Their "of"
+  and "with" are paths from that assembly: "hub", "spoke" (every copy of a
+  pattern), "spoke-3" (one copy) or "rim/weld-ring". "of" on a group is its
+  first part; "with" takes every part in it.
+  Worked example — two welded wheels on an axle:
+      "definitions": [
+        {"id": "hub", "name": "Hub", "shape": "cylinder", "size": {"radius": 20, "height": 10}},
+        {"id": "spoke", "name": "Spoke", "shape": "box", "size": {"width": 4, "height": 4, "depth": 60}, "position": [0, 0, 30]},
+        {"id": "axle-bar", "name": "Axle", "shape": "cylinder", "size": {"radius": 5, "height": 400}, "rotation": [0, 0, 90]}
+      ],
+      "assemblies": [
+        {"id": "wheel",
+         "children": [
+           {"id": "hub", "ref": "hub"},
+           {"id": "spoke", "ref": "spoke", "pattern": {"kind": "polar", "count": 6, "about": "y"}}
+         ],
+         "features": [{"id": "weld", "op": "fuse", "of": "hub", "with": ["spoke"]}]},
+        {"id": "axle",
+         "interfaces": [{"id": "left-end", "position": [-200, 0, 0]}, {"id": "right-end", "position": [200, 0, 0]}],
+         "children": [
+           {"id": "bar", "ref": "axle-bar"},
+           {"id": "left-wheel", "ref": "wheel", "at": "left-end", "rotation": [0, 0, 90]},
+           {"id": "right-wheel", "ref": "wheel", "at": "right-end", "rotation": [0, 0, 90], "mirror": "x"}
+         ]}
+      ],
+      "root": "axle"
 - "gear" is an involute SPUR gear, and it is how every spur gear is made: never
   draw a gear's outline and never script one. Give only its numbers —
     "size": {"module": 2, "teeth": 20, "depth": 6, "bore_radius": 4}
@@ -905,7 +986,7 @@ func (r *Reply) resolveEdit(current *Prototype) error {
 	// With nothing on screen there is no base to apply an edit to, so the whole
 	// prototype is the only thing that can be used.
 	if r.Prototype != nil {
-		if current == nil || len(current.Parts) == 0 {
+		if current == nil || !current.HasGeometry() {
 			r.PrototypeEdit = nil
 			r.noteRepair("This reply carried both a whole model and an edit to one. There was " +
 				"nothing on screen to edit, so the whole model was used.")
@@ -915,7 +996,7 @@ func (r *Reply) resolveEdit(current *Prototype) error {
 		r.noteRepair("This reply carried both a whole model and an edit to one. The edit was " +
 			"applied, because it leaves every part it does not mention exactly as it was.")
 	}
-	if current == nil || len(current.Parts) == 0 {
+	if current == nil || !current.HasGeometry() {
 		return errs.New(op, errs.CodeValidationFailed).
 			WithDetail("this reply edits the model on screen, and there is no model on screen. " +
 				"Send a whole prototype for the first shape in a project")
@@ -1098,6 +1179,11 @@ func (c *Conversation) Respond(ctx context.Context, projectID string, history []
 	c.repairIfItLooksWrong(ctx, &reply, message, &sheet)
 	// And against the drawing, at the same point the streamed path does it.
 	c.repairAgainstSketch(ctx, &reply, sketch, &sheet, nil)
+	// And whether any two parts are in the same place. After the picture checks
+	// and before the scripts, for the reason they are ordered that way: this one
+	// reads the kernel numbers the render already produced, and the script check
+	// keeps the last word. See interference.go.
+	c.repairIfPartsOverlap(ctx, &reply, &sheet)
 	// And the same script run, at the same point: LAST, because it is the only
 	// check that verifies itself and anything that rewrites the document after
 	// it undoes that. No progress to report on this path, so it is silent while

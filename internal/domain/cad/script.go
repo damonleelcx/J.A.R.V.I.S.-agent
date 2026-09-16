@@ -59,6 +59,10 @@ type ScriptResult struct {
 	// Volume is the solid's, and is positive. A script that produced a surface,
 	// an empty compound or a self-intersecting body is refused before this.
 	Volume float64
+	// KernelThreads is how many threads OpenCASCADE's own pool had while the
+	// script ran: 1, whatever the machine. Reported so the fence can hold it —
+	// docs/bugfix/2026-09-15-scripts-still-failed-on-machines-with-many-cores.md.
+	KernelThreads int
 }
 
 // ErrScriptsDisabled is returned when this deployment does not run scripts.
@@ -198,6 +202,8 @@ func (k *Kernel) RunScript(ctx context.Context, source string, parameters map[st
 		Trace   string  `json:"trace"`
 		STEP    string  `json:"step"`
 		Volume  float64 `json:"volume"`
+		// Threads in OpenCASCADE's own pool; see ScriptResult.KernelThreads.
+		KernelThreads int `json:"kernel_threads"`
 	}
 	if err := json.Unmarshal(out.Bytes(), &reply); err != nil {
 		return nil, errs.Wrap(op, errs.CodeExternalProtocol, err).
@@ -210,7 +216,7 @@ func (k *Kernel) RunScript(ctx context.Context, source string, parameters map[st
 		}
 		return nil, errs.New(op, code).WithDetail("%s", reply.Error)
 	}
-	return &ScriptResult{STEP: reply.STEP, Volume: reply.Volume}, nil
+	return &ScriptResult{STEP: reply.STEP, Volume: reply.Volume, KernelThreads: reply.KernelThreads}, nil
 }
 
 func tail(s string, n int) string {

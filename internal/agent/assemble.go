@@ -206,7 +206,7 @@ func (c *Conversation) buildOneStep(ctx context.Context, doc *Prototype, asked s
 	// back {"type":"box_beam","dimensions":{...}} on every step and produced
 	// nothing seven times out of eight.
 	system, sofar := stepSystem+"\n\n"+geometryContract, fmt.Sprintf("\n\nThe model so far:\n%s", body)
-	if len(doc.Parts) == 0 {
+	if !doc.HasGeometry() {
 		system, sofar = firstStepSystem+"\n\n"+geometryContract, ""
 	}
 	resp, err := c.client.Complete(ctx, llm.Request{
@@ -252,6 +252,11 @@ func (c *Conversation) buildOneStep(ctx context.Context, doc *Prototype, asked s
 	c.repairIfTurned(ctx, &reply, doc)
 	sheet := c.render(ctx, reply.Prototype)
 	c.repairIfItLooksWrong(ctx, &reply, step.What, &sheet)
+	// And whether any two parts are in the same place. After the picture checks
+	// and before the scripts, for the reason they are ordered that way: this one
+	// reads the kernel numbers the render already produced, and the script check
+	// keeps the last word. See interference.go.
+	c.repairIfPartsOverlap(ctx, &reply, &sheet)
 	// Last, for the reason the turn paths run it last: it is the only check that
 	// verifies itself, and a rewrite after it would leave an unrun script behind.
 	c.repairIfScriptsFail(ctx, &reply, doc, nil)
@@ -308,7 +313,7 @@ func (c *Conversation) buildInPasses(ctx context.Context, reply *Reply, asked st
 	}
 
 	doc, notes, err := c.assemble(ctx, asked, current, onStep)
-	if err != nil || doc == nil || len(doc.Parts) == 0 {
+	if err != nil || doc == nil || !doc.HasGeometry() {
 		if err != nil && !errors.Is(err, errNotWorthPlanning) {
 			reply.noteRepair("FORGE tried to build this a piece at a time and could not: " + err.Error())
 		}

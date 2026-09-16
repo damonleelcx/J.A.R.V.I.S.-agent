@@ -52,8 +52,12 @@ func turnedOnItsSide(before, after *Prototype) []geometry.Problem {
 	was := geometry.PartExtents(*before, geometry.Millimetre)
 	now := geometry.PartExtents(*after, geometry.Millimetre)
 
+	// Labels from the EXPANDED document, like the extents above: PartExtents
+	// reports "block-2", and the authored list only knows "block", so a resized
+	// copy used to be reported with no name at all.
+	// docs/bugfix/2026-09-13-repeat-copies-were-invisible-to-most-readers.md
 	label := map[string]string{}
-	for _, p := range after.Parts {
+	for _, p := range after.Expanded().Parts {
 		label[p.ID] = p.Label()
 	}
 
