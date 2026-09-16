@@ -94,8 +94,15 @@ func NewWorker(d WorkerDeps) *Worker {
 	if host == "" {
 		host = "unknown-host"
 	}
+	// ‼️ The LAST eight characters of a fresh id, which are random. It took the
+	// first eight, which are its millisecond timestamp's top bits and change about
+	// once a second, so every worker one process started together — forge-worker
+	// starts FORGE_WORKER_CONCURRENCY of them in one loop — had the same identity,
+	// and no lease guard could tell a worker from its sibling.
+	// docs/bugfix/2026-09-15-workers-started-together-shared-one-lease-identity.md
+	run := id.New(id.PrefixRun)
 	return &Worker{
-		ID:         fmt.Sprintf("%s/%d/%s", host, os.Getpid(), id.New(id.PrefixRun)[4:12]),
+		ID:         fmt.Sprintf("%s/%d/%s", host, os.Getpid(), run[len(run)-8:]),
 		pool:       d.Pool,
 		repo:       d.Repo,
 		queue:      d.Queue,

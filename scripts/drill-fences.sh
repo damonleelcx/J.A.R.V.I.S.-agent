@@ -96,6 +96,7 @@ FILES=(
   internal/agent/assemble.go
   internal/agent/georepair.go
   internal/agent/settledoc.go
+  internal/agent/worker.go
   internal/httpapi/converse.go
   internal/agent/look.go
   internal/domain/cad/script.py
@@ -1191,6 +1192,21 @@ drill "a refused assembly hides which part it refused" internal/domain/cad/cad.g
   's = s.replace("\t\tif len(res.Skipped) > 0 {\n\t\t\tdetail +=", "\t\tif false {\n\t\t\tdetail +=", 1)' \
   ./internal/domain/cad 'TestKernel_ARefusedAssemblyNamesWhatItRefused'
 
+echo
+echo "Workers in one process"
+# Added 2026-09-15 (worker lease identity). NewWorker sliced a fresh id's
+# timestamp rather than its random tail, so every worker forge-worker started
+# together had one identity and no lease guard could tell siblings apart. Found
+# building the off-node STEP export (#99). The second fence needs
+# FORGE_TEST_DATABASE_URL. See
+# docs/bugfix/2026-09-15-workers-started-together-shared-one-lease-identity.md.
+drill "workers started together share one identity" internal/agent/worker.go \
+  's = s.replace("run[len(run)-8:]", "run[4:12]", 1)' \
+  ./internal/agent 'TestNewWorker_WorkersStartedTogetherHaveDistinctIdentities|TestWorker_ASiblingCannotExtendOrReleaseALeaseItDoesNotHold'
+
+drill "a worker is named by its host and pid alone" internal/agent/worker.go \
+  's = s.replace("run[len(run)-8:]", "run[len(run)-8:len(run)-8]", 1)' \
+  ./internal/agent 'TestNewWorker_WorkersStartedTogetherHaveDistinctIdentities|TestWorker_ASiblingCannotExtendOrReleaseALeaseItDoesNotHold'
 # ---------------------------------------------------------------------------
 # Added 2026-09-15 (workbench voice input).
 #
