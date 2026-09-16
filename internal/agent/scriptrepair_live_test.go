@@ -331,6 +331,12 @@ func TestLiveSketchLoop(t *testing.T) {
 
 // liveSolids is the real kernel behind the agent's render contract — the same
 // conversion httpapi uses, sharing geometry.TrianglesFrom rather than copying it.
+//
+// ‼️ In world coordinates and with the check's coverage, as httpapi.kernelSolids has
+// been since stage K4 and Phase 5 V2. This copy still read built.Mesh, which holds a
+// placed definition once in its own frame, and dropped Checked, Pairs and Skipped;
+// the live car measurement (car_ceiling_live_test.go) now renders every build step
+// through it, so it has to draw what production draws.
 type liveSolids struct{ k *cad.Kernel }
 
 func (r liveSolids) BuildSurface(ctx context.Context, doc *geometry.Document) (agent.Built, error) {
@@ -342,14 +348,17 @@ func (r liveSolids) BuildSurface(ctx context.Context, doc *geometry.Document) (a
 	if err != nil {
 		return agent.Built{}, err
 	}
-	out := make([]geometry.RenderPart, 0, len(built.Mesh))
-	for _, m := range built.Mesh {
+	meshes := built.WorldMeshes()
+	out := make([]geometry.RenderPart, 0, len(meshes))
+	for _, m := range meshes {
 		if tris := geometry.TrianglesFrom(m.Vertices, m.Triangles); len(tris) > 0 {
 			out = append(out, geometry.RenderPart{ID: m.ID, Triangles: tris})
 		}
 	}
 	return agent.Built{Parts: out, Interferences: built.Interferences,
-		Truncated: built.InterferencesTruncated}, nil
+		Truncated: built.InterferencesTruncated,
+		Checked:   built.InterferenceBooleans + built.InterferenceReused,
+		Pairs:     built.InterferencePairs, Skipped: built.Skipped}, nil
 }
 
 // TestLiveKernelRenderShowsTheHole is the whole point of rendering the kernel's

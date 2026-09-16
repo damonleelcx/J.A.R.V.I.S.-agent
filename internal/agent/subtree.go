@@ -45,6 +45,9 @@ type subtreeModel struct {
 	Definitions []geometry.Part     `json:"definitions,omitempty"`
 	Assemblies  []geometry.Assembly `json:"assemblies,omitempty"`
 	AttachesTo  []attachment        `json:"attaches_to,omitempty"`
+	// RootChildren is what the root already places, shown to a step that creates
+	// its assembly: it places it by patching the root, which replaces the root whole.
+	RootChildren []geometry.Child `json:"root_children,omitempty"`
 	// OtherPlacements is how many placements the root holds besides the focus's.
 	OtherPlacements int `json:"other_placements"`
 }
@@ -85,6 +88,12 @@ func SubtreeModel(d *Prototype, focus string) string {
 		if len(root.Interfaces) > 0 {
 			view.AttachesTo = []attachment{{Assembly: root.ID, Interfaces: root.Interfaces}}
 		}
+		// ‼️ And what the root already places. The step places its new assembly by
+		// patching the root, a patched assembly is replaced whole, and a step shown only
+		// a count of the root's children can send back only its own (2026-09-15, live car
+		// findings). The placements themselves, never what they contain.
+		// Fence: TestSubtreeModel_ANewAssemblyIsShownWhatTheRootAlreadyPlaces.
+		view.RootChildren = root.Children
 		view.OtherPlacements = len(root.Children)
 		return marshalView(view)
 	}
