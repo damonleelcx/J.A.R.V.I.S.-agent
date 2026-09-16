@@ -499,6 +499,13 @@ const (
 	EventBlobStored      Event = "forge.blob.stored"
 	EventBlobStoreFailed Event = "forge.blob.store_failed"
 	EventBlobCorrupt     Event = "forge.blob.corrupt"
+	// EventBlobReady is logged once at boot by forged and forge-worker: whether
+	// this process has blob storage, and which bucket. Construction makes no
+	// request, so it says what was configured, not that the bucket answers —
+	// `forgectl blob check` is what says that.
+	EventBlobReady Event = "forge.blob.ready"
 )
 
-func init() { allEvents = append(allEvents, EventBlobStored, EventBlobStoreFailed, EventBlobCorrupt) }
+func init() {
+	allEvents = append(allEvents, EventBlobStored, EventBlobStoreFailed, EventBlobCorrupt, EventBlobReady)
+}
