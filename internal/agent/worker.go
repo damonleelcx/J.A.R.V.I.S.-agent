@@ -45,6 +45,7 @@ type Worker struct {
 	assembler *Assembler
 	executor  *Executor
 	verifier  *Verifier
+	builds    *BuildSteps
 
 	cfg        config.EngineConfig
 	production bool
@@ -70,7 +71,11 @@ type WorkerDeps struct {
 	Assembler *Assembler
 	Executor  *Executor
 	Verifier  *Verifier
-	Config    config.EngineConfig
+	// Builds runs a build's steps (Phase 2, stage A1). Nil is a worker that
+	// refuses them by name, which is what every worker was before builds ran as
+	// goals.
+	Builds *BuildSteps
+	Config config.EngineConfig
 	// Production is the deployment context, passed to every grant (PRD SAF-01).
 	// False is the safe default to get wrong in only one direction: a
 	// development deployment mislabelled as production refuses work, where the
@@ -110,6 +115,7 @@ func NewWorker(d WorkerDeps) *Worker {
 		assembler:  d.Assembler,
 		executor:   d.Executor,
 		verifier:   d.Verifier,
+		builds:     d.Builds,
 		cfg:        d.Config,
 		production: d.Production,
 		workspace:  d.WorkspaceRoot,
@@ -412,6 +418,15 @@ func (w *Worker) runTask(ctx context.Context, task *engine.Task) {
 		if !granted {
 			return // parked in awaiting_approval; a human will move it
 		}
+	}
+
+	// A step of a build (Phase 2, stage A1) is run by the build loop, not the
+	// tool loop: it is a model to add to, not an instruction to carry out with
+	// tools, and it is checked by the kernel rather than argued over. See
+	// buildgoal.go.
+	if in, ok := buildStepOf(task); ok {
+		w.runBuildStep(ctx, goal, task, in)
+		return
 	}
 
 	workspace, err := w.goalWorkspace(goal.ID)

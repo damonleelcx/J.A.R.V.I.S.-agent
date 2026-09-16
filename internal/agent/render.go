@@ -61,7 +61,10 @@ type builtSheet struct {
 	Checked int
 	Pairs   int
 	Found   int
-	Skipped []string
+	// Buried and BuriedCounted: see Built.
+	Buried        int
+	BuriedCounted bool
+	Skipped       []string
 	// Parts is what was drawn, part by part, so a sub-assembly can be drawn on
 	// its own from the same build instead of a second one (Phase 5, stage V4).
 	Parts []geometry.RenderPart
@@ -121,6 +124,14 @@ type Built struct {
 	// InterferencesFound). Zero from a builder that does not count reads as the
 	// length of the list.
 	Found int
+	// Buried is how many of the pairs found are buried (geometry.BuriedFraction), and
+	// BuriedCounted says it is all of them (cad.Build, InterferencesBuried). An overlap
+	// repair is judged by it: counted from a list cut at its bound, the buried
+	// clashes cannot fall. BuriedCounted false, from a builder that does not count,
+	// reads as the buried clashes in the list — the whole count only when the list is
+	// the whole list (repairVerdict).
+	Buried        int
+	BuriedCounted bool
 	// Skipped names the parts the kernel could not build. A part that was never
 	// built was never checked for shared material either, and saying nothing about
 	// it would let "no overlaps" cover a part nobody looked at.
@@ -143,7 +154,8 @@ func (c *Conversation) render(ctx context.Context, doc *Prototype) builtSheet {
 			if img := geometry.ContactSheetOf(*doc, built.Parts, sheetSize); img != "" {
 				return builtSheet{Image: img, FromKernel: true,
 					Interferences: built.Interferences, Truncated: built.Truncated,
-					Checked: built.Checked, Pairs: built.Pairs, Found: built.Found, Skipped: built.Skipped,
+					Checked: built.Checked, Pairs: built.Pairs, Found: built.Found,
+					Buried: built.Buried, BuriedCounted: built.BuriedCounted, Skipped: built.Skipped,
 					Parts: built.Parts}
 			}
 		}

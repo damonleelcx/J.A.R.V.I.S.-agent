@@ -252,7 +252,8 @@ func (w *Worker) SettleGoalForTest(ctx context.Context, goalID string) { w.settl
 // nothing in the worker ever promoted again. A task that succeeded left the
 // tasks depending on it pending, a pending task is invisible to Claim, and so
 // every plan with a dependency stopped after its first layer: the goal stayed
-// active, with work outstanding that no worker would ever take.
+// active, with work outstanding that no worker would ever take. Found running a
+// build as a goal (Phase 2, stage A1), whose steps are a chain.
 // docs/bugfix/2026-09-15-a-finished-task-never-released-the-tasks-waiting-on-it.md
 //
 // Readiness is still PromoteReadyTasks' decision, made from the edges exactly as
