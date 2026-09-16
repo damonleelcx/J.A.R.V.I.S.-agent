@@ -155,7 +155,7 @@ export path builds a genuine B-Rep through OpenCASCADE — analytic surfaces, no
 triangles — from the same document the viewport draws:
 
 ```bash
-python3 -m venv .cadvenv && ./.cadvenv/bin/pip install build123d
+make cad-venv   # every package pinned in internal/domain/cad/requirements.txt
 export FORGE_CAD_PYTHON="$PWD/.cadvenv/bin/python"
 ```
 

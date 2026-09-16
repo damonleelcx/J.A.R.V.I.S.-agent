@@ -60,6 +60,21 @@ type Child struct {
 	// a part uses, so nothing about a child's placement reads differently.
 	Position []float64 `json:"position,omitempty"`
 	Rotation []float64 `json:"rotation,omitempty"`
+	// PositionFrom binds the child's position to expressions over the document's
+	// parameters, keyed "x", "y" and "z", exactly as a part's position_from is
+	// (binding.go). Bind writes what they work out to into Position, so the expansion,
+	// the kernel and the browser read numbers and nothing else changes for them.
+	//
+	// # Why a child needs one
+	//
+	// #97 and #111 read a child written at ["-half_wheelbase", 0, 0] and stored the
+	// NUMBER: a respec of half_wheelbase then moved every definition bound to it and
+	// left the wheels where they were. A placement is where most of a tree's
+	// dimensions live (a car's track and wheelbase are where its corners are placed,
+	// not how big a corner is), so a binding only definitions can carry follows the
+	// wrong half of the design. Optional: a child with none stores byte-identically.
+	// Fence: TestBind_AChildsAndAnInterfacesPositionFollowTheirParameters.
+	PositionFrom map[string]string `json:"position_from,omitempty"`
 	// Mirror reflects the child across the plane normal to "x", "y" or "z" in its
 	// own frame, before it is rotated and placed — a whole sub-assembly included.
 	// Two mirrors on the way down cancel. Empty means no reflection.
@@ -76,6 +91,21 @@ type Child struct {
 
 // PathSeparator joins child ids into the id of a flattened part.
 const PathSeparator = "/"
+
+// NameSeparator joins the display names along a part's occurrence path, the way
+// PathSeparator joins its ids: a part a tree places is named by every child above
+// it (the child's name, or its id when it has none, with its pattern number) and
+// then by its own name, e.g. "Front wheel / Hub" or "left / Ell 1".
+//
+// Why: names used to come from a child only when the child was named, and only
+// one level down, so an unnamed child's parts, the copies of an unnamed pattern,
+// and every occurrence of a sub-assembly repeated the definition's names: two
+// "Ell 1"s, two "Hub"s, in the Parts panel and in STEP files alike, while their
+// ids were distinct. Built from the same path as the id, a name is unique
+// whenever sibling names are, and does not change when an unrelated part is added.
+// See docs/bugfix/2026-09-14-tree-copies-shared-display-names.md.
+// Fence: TestTree_EveryPartItPlacesIsNamedByItsOccurrence; mirrored in forge3d.js.
+const NameSeparator = " / "
 
 // maxTreeDepth bounds nesting. A real product structure is a handful of levels
 // deep; a document forty levels deep is a cycle somebody unrolled, and walking it
@@ -181,15 +211,15 @@ func expandAssemblies(d Document) (Document, []Problem) {
 		return out, problems
 	}
 
-	attach := newAttachments(asms)
+	attach := newAttachments(asms, d.Root)
 	// The frame is a placement (frame.go), not a position and three angles, so a
 	// reflection anywhere above a part reaches the part.
 	//
 	// It also returns where each placement's parts landed in out.Parts, by path from
 	// the assembly walked, so that assembly's features can name them
 	// (tree_features.go). Depth first, so everything one placement writes is contiguous.
-	var walk func(a Assembly, path []string, onPath map[string]bool, frame placement) (index map[string]partRange, stop bool)
-	walk = func(a Assembly, path []string, onPath map[string]bool, frame placement) (map[string]partRange, bool) {
+	var walk func(a Assembly, path, names []string, onPath map[string]bool, frame placement) (index map[string]partRange, stop bool)
+	walk = func(a Assembly, path, names []string, onPath map[string]bool, frame placement) (map[string]partRange, bool) {
 		index := map[string]partRange{}
 		if len(path) >= maxTreeDepth {
 			fail(strings.Join(path, PathSeparator), "nests more than %d assemblies deep", maxTreeDepth)
@@ -243,7 +273,20 @@ func expandAssemblies(d Document) (Document, []Problem) {
 			// -- its position, rotation, mirror and pattern alike (interface.go).
 			reference, attachProblem := attach.reference(a, c, "")
 			if attachProblem != "" {
-				fail(name, "%s", attachProblem)
+				// ‼️ A path that leaves the assembly it is written in is refused with the
+				// fix, not with "has no child": run 2's wheels were repaired four times
+				// against that sentence and lost (interface.go, leaves).
+				if leaves(a, root, c.At) {
+					attachProblem = attach.outsideProblem(a, root, c.At)
+				} else {
+					// ‼️ And every other attachment refusal carries what to write instead:
+					// the paths that attach here. Without one, run 4's repair was told what
+					// had failed and nothing it could do (interface.go, attachRemedy).
+					attachProblem += "; " + attach.attachRemedy(a, c)
+				}
+				// The child's own name before it, so the sentence says WHICH child even
+				// where it travels without the fault's Name (the repair's prompt did).
+				fail(name, "%s", namedChild(c)+attachProblem)
 				continue
 			}
 			// The definition's own repeat, once, in the DEFINITION's frame, so a pattern
@@ -262,14 +305,19 @@ func expandAssemblies(d Document) (Document, []Problem) {
 				slotStart := len(out.Parts)
 				childPath := append(append([]string(nil), path...), c.ID+slot.suffix)
 				slotName := strings.Join(childPath, PathSeparator)
-				childName := c.Name
-				if childName != "" && slot.number != "" {
-					childName = c.Name + " " + slot.number
+				// The occurrence's display path, a label per level (see NameSeparator).
+				childLabel := c.Name
+				if childLabel == "" {
+					childLabel = c.ID
 				}
+				if slot.number != "" {
+					childLabel += " " + slot.number
+				}
+				childNames := append(append([]string(nil), names...), childLabel)
 				childFrame := frame.then(reference.then(slot.at.then(local)))
 				if isAsm {
 					onPath[sub.ID] = true
-					subIndex, stop := walk(sub, childPath, onPath, childFrame)
+					subIndex, stop := walk(sub, childPath, childNames, onPath, childFrame)
 					delete(onPath, sub.ID)
 					for rel, r := range subIndex {
 						index[c.ID+slot.suffix+PathSeparator+rel] = r
@@ -287,12 +335,8 @@ func expandAssemblies(d Document) (Document, []Problem) {
 					// expansion's own answer rather than restating its naming rule.
 					suffix := strings.TrimPrefix(lp.ID, def.ID)
 					q.ID = slotName + suffix
-					if childName != "" {
-						q.Name = childName
-						if suffix != "" {
-							q.Name = childName + " " + strings.TrimPrefix(suffix, "-")
-						}
-					}
+					// The definition copy's own name ("Ell 1") after the path above it.
+					q.Name = strings.Join(append(append([]string(nil), childNames...), lp.Label()), NameSeparator)
 					q.Position, q.Rotation, q.Mirrored = childFrame.then(placementOf(lp.Position, lp.Rotation, lp.Mirrored)).stored()
 					q.Size = cloneSize(lp.Size)
 					out.Parts = append(out.Parts, q)
@@ -313,6 +357,6 @@ func expandAssemblies(d Document) (Document, []Problem) {
 		out.Features = append(out.Features, occurrenceFeatures(a, path, index, out.Parts, fail)...)
 		return index, false
 	}
-	walk(root, nil, map[string]bool{root.ID: true}, placementOf(nil, nil, false))
+	walk(root, nil, nil, map[string]bool{root.ID: true}, placementOf(nil, nil, false))
 	return out, problems
 }

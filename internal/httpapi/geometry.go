@@ -93,6 +93,14 @@ type VariantDTO struct {
 }
 
 func toVariantDTO(v geometry.Variant) VariantDTO {
+	// ‼️ Never null, like Assumptions below. A design written as a tree has no
+	// top-level parts, and it was sent as "parts": null — which the workbench read
+	// as "nothing to put back on the stage" and then threw on while listing the
+	// parts, before it drew the assembly tree. Found by the Phase 6, stage W2
+	// acceptance run, opening a stored 30,000-part car and getting an empty grid.
+	if v.Document.Parts == nil {
+		v.Document.Parts = []geometry.Part{}
+	}
 	return VariantDTO{
 		VersionID: v.VersionID, ProjectID: v.ProjectID, Path: v.Path, Version: v.Version,
 		Name: v.Name, Inputs: json.RawMessage(v.Inputs),
@@ -261,6 +269,13 @@ func (h *GeometryHandlers) Mesh(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, r, h.deps.Log, err)
 		return
 	}
+	// One subtree's surface (Phase 6, stage W2), behind the same door and the same
+	// permission check as the whole design's: a subtree of a variant the caller
+	// cannot read reads exactly like a variant that does not exist.
+	if r.URL.Query().Has("subtree") {
+		h.meshSubtree(w, r, v)
+		return
+	}
 	if h.deps.CAD == nil || !h.deps.CAD.Available() {
 		WriteError(w, r, h.deps.Log, errs.New("httpapi.Mesh", errs.CodeConnectorUnavailable).
 			WithDetail("this deployment has no CAD kernel, so the viewport draws the primitives "+
@@ -294,7 +309,8 @@ func (h *GeometryHandlers) Mesh(w http.ResponseWriter, r *http.Request) {
 		"version_id": v.VersionID,
 		// The parts a feature changed, each in assembly coordinates; and every other
 		// part as a placed copy of one definition, tessellated once (Phase 4, stage
-		// K4). The browser expands them with Forge3D.expandMeshInstances.
+		// K4). Since Phase 6, stage W1 the browser draws them as they arrive: each
+		// definition uploaded once, every copy one instance of it (Forge3D.drawBatches).
 		"parts":       parts,
 		"definitions": definitions,
 		"instances":   instances,
@@ -395,7 +411,22 @@ func (h *GeometryHandlers) Compare(w http.ResponseWriter, r *http.Request) {
 			WithDetail("no geometry variant %s", strings.Join(ids, ", ")))
 		return
 	}
+	h.deps.Log.Info(r.Context(), logx.EventGeometryCompared,
+		"user_id", user.ID, "project_id", cmp.ProjectID, "variants", len(cmp.Variants))
 
+	WriteJSON(w, http.StatusOK, comparisonBody(cmp))
+}
+
+// comparisonBody is the compare response, apart from the handler.
+//
+// # Why it is a function of its own
+//
+// The handler reads from Postgres, so a test of the handler skips on any machine
+// without one — and the shape that comes back is the one thing the workbench
+// depends on. Split out, the wire shape is fenced offline
+// (compare_structure_fence_test.go), including that a comparison of flat
+// documents still comes back exactly as it did before trees could be compared.
+func comparisonBody(cmp *geometry.Comparison) map[string]any {
 	variants := make([]VariantDTO, 0, len(cmp.Variants))
 	for _, v := range cmp.Variants {
 		variants = append(variants, toVariantDTO(v))
@@ -428,10 +459,7 @@ func (h *GeometryHandlers) Compare(w http.ResponseWriter, r *http.Request) {
 			"differs":      p.Differs(),
 		})
 	}
-	h.deps.Log.Info(r.Context(), logx.EventGeometryCompared,
-		"user_id", user.ID, "project_id", cmp.ProjectID, "variants", len(cmp.Variants))
-
-	WriteJSON(w, http.StatusOK, map[string]any{
+	body := map[string]any{
 		"project_id": cmp.ProjectID,
 		"variants":   variants,
 		"provenance": provenance,
@@ -442,7 +470,60 @@ func (h *GeometryHandlers) Compare(w http.ResponseWriter, r *http.Request) {
 		// compared" and finding rows that WERE compared learns to skim the box.
 		"not_comparable": orEmptyStrings(cmp.NotComparable),
 		"match_notes":    orEmptyStrings(cmp.MatchNotes),
-	})
+	}
+	// ABSENT, not null, when no variant is a tree: a comparison of flat documents
+	// is then the response it always was, byte for byte, and a client that has
+	// never heard of trees reads nothing new.
+	if cmp.Structure != nil {
+		body["structure"] = structureBody(cmp.Structure)
+	}
+	return body
+}
+
+// structureBody is how the variants' trees differ, on the wire (Phase 7, stage E2;
+// geometry/compare_structure.go).
+//
+// A definition carries how many times each variant places it, one number per
+// column, and never a row per placed part: a wheel placed four times that changed
+// is one row, and a million placements are still one row.
+func structureBody(s *geometry.Structure) map[string]any {
+	members := func(rows []geometry.MemberRow) []map[string]any {
+		out := make([]map[string]any, 0, len(rows))
+		for _, m := range rows {
+			out = append(out, map[string]any{
+				"id": m.ID, "missing_from": orEmptyInts(m.MissingFrom),
+				"changed": orEmptyStrings(m.Changed), "differs": m.Differs(),
+			})
+		}
+		return out
+	}
+	definitions := make([]map[string]any, 0, len(s.Definitions))
+	for _, d := range s.Definitions {
+		definitions = append(definitions, map[string]any{
+			"id": d.ID, "label": d.Label,
+			"occurrences":  d.Occurrences,
+			"missing_from": orEmptyInts(d.MissingFrom),
+			"changed":      orEmptyStrings(d.Changed),
+			"differs":      d.Differs(),
+		})
+	}
+	assemblies := make([]map[string]any, 0, len(s.Assemblies))
+	for _, a := range s.Assemblies {
+		assemblies = append(assemblies, map[string]any{
+			"id": a.ID, "label": a.Label,
+			"missing_from": orEmptyInts(a.MissingFrom),
+			"changed":      orEmptyStrings(a.Changed),
+			"differs":      a.Differs(),
+			"children":     members(a.Children),
+			"interfaces":   members(a.Interfaces),
+			"features":     members(a.Features),
+		})
+	}
+	return map[string]any{
+		"root":        map[string]any{"field": s.Root.Field, "values": s.Root.Values, "differs": s.Root.Differs},
+		"definitions": definitions,
+		"assemblies":  assemblies,
+	}
 }
 
 type adoptRequest struct {

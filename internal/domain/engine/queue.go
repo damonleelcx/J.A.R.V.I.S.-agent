@@ -151,14 +151,34 @@ func (q *Queue) Heartbeat(ctx context.Context, ex db.Querier, taskID, workerID s
 // be safe). Returning it to 'ready' immediately is far better than letting the
 // lease lapse, because the task resumes in seconds rather than after the full
 // lease duration.
+//
+// # Why the attempt is given back
+//
+// ‼️ Claim counts an attempt when it leases a task, and a released task never got the
+// chance to fail: its worker was asked to stop. Keeping the count let a few rolling
+// deploys during one long task use up its attempts without it failing once. What
+// still bounds a task that is stopped again and again is its goal's wall-clock and
+// token budget, which a stop does not refund.
+// docs/bugfix/2026-09-15-a-stopped-worker-left-its-task-to-run-out-its-lease.md
+//
+// # Why verifying is releasable
+//
+// A worker stopped while its verifier runs holds the task in verifying. The lease
+// reaper already returns a verifying task to ready when its lease lapses; this is the
+// same move without the wait.
+//
+// Only a task the caller still holds is released. Anything else (finished, failed,
+// parked at a gate without a lease, or reclaimed by another worker) is a CONFLICT and
+// is left exactly as it is.
 func (q *Queue) Release(ctx context.Context, ex db.Querier, taskID, workerID string, notBefore time.Time) error {
 	const op = "engine.Queue.Release"
 
 	tag, err := ex.Exec(ctx, `
 		update forge_tasks
 		   set status = 'ready', lease_owner = null, lease_expires_at = null,
-		       not_before = $3
-		 where id = $1 and lease_owner = $2 and status in ('claimed','running')`,
+		       not_before = $3,
+		       attempt_count = greatest(attempt_count - 1, 0)
+		 where id = $1 and lease_owner = $2 and status in ('claimed','running','verifying')`,
 		taskID, workerID, notBefore)
 	if err != nil {
 		return errs.Wrap(op, errs.CodeDatabaseUnavail, err)
