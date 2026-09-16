@@ -234,26 +234,182 @@ def _placement(solid, frames=None):
     trsf = gp_Trsf()
     trsf.SetTransformation(gp_Ax3(origin.to_pnt(), axes[0], axes[1]))
     trsf.Invert()
-    return Location(TopLoc_Location(trsf))
+    return _location_of(TopLoc_Location(trsf))
 
 
-def _located(shape, location):
-    """`location * shape` — Shape.moved — without the B-rep copy it discards.
+# # A Location around a TopLoc_Location, without parsing nine keyword arguments
+#
+# Measured 2026-09-15 (docs/spikes/2026-09-15-last-hot-spots): `Location(top_loc)` is
+# 2.4 us of _placement's 10.6, and 181,761 of them were 0.9 s of own time at 90,880
+# occurrences — because Location.__init__ pops nine kwargs, runs four isinstance
+# checks and builds a gp_Trsf it then throws away, whatever it was given.
+#
+# Read from build123d 0.11.1 (geometry.py): given a TopLoc_Location, __init__ sets
+# exactly two instance attributes — `location_index = 0` and `_wrapped = top_loc` —
+# and nothing else; `wrapped` is a read-only property over `_wrapped`. So the object
+# below is that object, attribute for attribute, with the discarded gp_Trsf and the
+# keyword parsing skipped. Its class is Location, as the constructor's is.
+#
+# ‼️ It is NOT a general replacement for Location(): it is correct only for a
+# TopLoc_Location argument, which is the only thing _placement passes.
+# _LOCATION_WITHOUT_INIT = False restores the constructor as the reference
+# testdata/placed_copies.py compares every placement against.
+_LOCATION_WITHOUT_INIT = True
+
+
+def _location_of(top_loc):
+    """build123d's `Location(top_loc)`, without its keyword parsing."""
+    if not _LOCATION_WITHOUT_INIT:
+        return Location(top_loc)
+    out = Location.__new__(Location)
+    out.location_index = 0
+    out._wrapped = top_loc
+    return out
+
+
+# # A placed copy's attributes without a deepcopy per occurrence (last hot spots)
+#
+# Profiled 2026-09-15 on the airframe barrel (docs/spikes/2026-09-15-last-hot-spots):
+# _located was 2.4 s of the 90,880-occurrence shapes phase, 14 us an occurrence, and
+# most of it was the `copy.deepcopy` loop below — 1,265,934 deepcopy calls at 90k, 12
+# an occurrence. The single worst attribute is a shape's `rotation`: Location's own
+# __deepcopy__ IGNORES the memo and rebuilds a Location from its transformation
+# (build123d 0.11.1, geometry.py), which is 0.3 s of own time and 1.1 s cumulative at
+# 90k — paid once per occurrence to produce, every time, the same thing.
+#
+# A definition's attributes do not change between its occurrences, so what deepcopy
+# will DO to each of them is decided once per definition and replayed per occurrence:
+#
+#   - an immutable atomic (int, float, str, bool, None, bytes, complex) is what
+#     copy._deepcopy_atomic returns: the same object, assigned straight across;
+#   - a Location (a Box's `rotation` is a Rotation, which is one) becomes
+#     `Location(value.wrapped.Transformation())` — exactly Location.__deepcopy__,
+#     including that a Rotation comes back a plain Location, and a FRESH object per
+#     copy, never the definition's own;
+#   - an empty dict or list becomes a new empty one of the same type, which is what
+#     _deepcopy_dict and _deepcopy_list give;
+#   - anything else is ASKED, once, whether deepcopy returns it unchanged
+#     (`copy.deepcopy(value, {}) is value`) and assigned across when it does. That is
+#     how `align` — a tuple of Align enum members on every cylinder, cone and sphere —
+#     is carried without a copy per occurrence, without this code having to know the
+#     type; a tuple holding something mutable answers no and is copied;
+#   - ‼️ anything else falls back to `copy.deepcopy(value, memo)`, so this is an
+#     optimization of the cases it recognizes and never a claim about the rest. A
+#     definition carrying an attribute not listed above is copied exactly as before,
+#     and _located_fallbacks counts it so a fence can see it happen.
+#
+# The attributes are set in the same order, so the copy's __dict__ is ordered as
+# build123d's is, and `joints` is re-parented at the same point in the loop.
+#
+# _PLACE_WITHOUT_DEEPCOPY = False restores the deepcopy loop, kept as the reference
+# testdata/placed_copies.py compares every attribute of every copy against.
+_PLACE_WITHOUT_DEEPCOPY = True
+# Attributes the plan below copies by assignment, because deepcopy returns them
+# unchanged. copy._deepcopy_atomic's types, less the ones a shape cannot hold.
+_ATOMIC = (int, float, bool, str, bytes, complex, type(None))
+# How many attributes the plan did not recognize and handed to copy.deepcopy. A
+# count, so a fence can show the fast path is the path taken (and a drill that
+# breaks the classification shows up as this rising).
+_located_fallbacks = 0
+
+
+def _attribute_plan(shape):
+    """What deepcopy does to each of a definition's attributes, worked out once.
+
+    `how` is "parent" (topo_parent, carried not copied), "moved" (the shape itself,
+    which the caller seeds into the memo), "same" (an atomic), "location", "dict",
+    "list", or "deep" (anything else: copy.deepcopy).
+    """
+    plan = []
+    for key, value in shape.__dict__.items():
+        if key == "topo_parent":
+            plan.append((key, "parent", value))
+        elif key == "_wrapped":
+            # deepcopy of this hits memo[id(shape.wrapped)], which IS the moved shape.
+            plan.append((key, "moved", None))
+        elif isinstance(value, _ATOMIC):
+            plan.append((key, "same", value))
+        elif isinstance(value, Location):
+            plan.append((key, "location", value))
+        elif type(value) is dict and not value:
+            plan.append((key, "dict", value))
+        elif type(value) is list and not value:
+            plan.append((key, "list", value))
+        elif copy.deepcopy(value, {}) is value:
+            # ‼️ ASKED, not assumed. deepcopy returns the object itself for anything
+            # it treats as immutable, and that reaches further than the atomics
+            # above: a Cylinder, Cone and Sphere each carry `align`, a tuple of Align
+            # enum members, and _deepcopy_tuple hands back the ORIGINAL tuple when
+            # every element deepcopies to itself, which an Enum member does. Rather
+            # than list more types and be wrong about the next one, the plan runs the
+            # real deepcopy once per definition and assigns across only when the
+            # answer is the same object. A tuple holding something mutable fails this
+            # and is copied below, as it must be.
+            plan.append((key, "same", value))
+        else:
+            plan.append((key, "deep", value))
+    return plan
+
+
+def _located(shape, location, plans=None):
+    """`location * shape` — Shape.moved — without the B-rep copy it discards, and
+    without a deepcopy of every attribute per occurrence.
 
     Shape.__deepcopy__ copies every attribute and, for the TopoDS_Shape, makes a
     BRepBuilderAPI_Copy; moved then overwrites that copy with the original moved.
-    This is the same loop with the moved shape put where the copy would have gone.
+    This is the same loop with the moved shape put where the copy would have gone,
+    and with what the loop does to each attribute decided once per definition
+    (see _attribute_plan).
+
+    ‼️ `plans` is a dict for ONE build, keyed by id(shape). It is never module-level:
+    this process outlives a request, CPython reuses the id of a collected object, and
+    a plan carries the definition's own attribute VALUES — so a stale hit would place
+    another definition's attributes on a copy, silently. Within one build every
+    definition is held alive by `built_once`, so the ids are stable and distinct.
+    Without it, the plan is worked out per occurrence, which is correct and slower.
     """
+    global _located_fallbacks
     if not _PLACE_WITHOUT_COPYING:
         return location * shape
     cls = shape.__class__
     out = cls.__new__(cls)
     moved = downcast(shape.wrapped.Moved(location.wrapped))
     memo = {id(shape): out, id(shape.wrapped): moved}
-    for key, value in shape.__dict__.items():
-        if key == "topo_parent":
+    if not _PLACE_WITHOUT_DEEPCOPY:
+        for key, value in shape.__dict__.items():
+            if key == "topo_parent":
+                out.topo_parent = value
+            else:
+                setattr(out, key, copy.deepcopy(value, memo))
+            if key == "joints":
+                for joint in out.joints.values():
+                    joint.parent = out
+        out.wrapped = moved
+        return out
+    plan = None if plans is None else plans.get(id(shape))
+    if plan is None:
+        plan = _attribute_plan(shape)
+        if plans is not None:
+            plans[id(shape)] = plan
+    for key, how, value in plan:
+        if how == "same":
+            setattr(out, key, value)
+        elif how == "moved":
+            setattr(out, key, moved)
+        elif how == "location":
+            # Location.__deepcopy__ is `Location(self.wrapped.Transformation())`,
+            # which takes __init__'s gp_trsf branch and ends at
+            # `_wrapped = TopLoc_Location(trsf)` with that same transformation. So
+            # this is that object, without the keyword parsing (see _location_of).
+            setattr(out, key, _location_of(TopLoc_Location(value.wrapped.Transformation())))
+        elif how == "dict":
+            setattr(out, key, {})
+        elif how == "list":
+            setattr(out, key, [])
+        elif how == "parent":
             out.topo_parent = value
         else:
+            _located_fallbacks += 1
             setattr(out, key, copy.deepcopy(value, memo))
         if key == "joints":
             for joint in out.joints.values():
@@ -1486,6 +1642,67 @@ def _carried_fast(pose, axes):
     return out
 
 
+# # And containment once per group of pairs (last hot spots)
+#
+# Profiled 2026-09-15 (docs/spikes/2026-09-15-last-hot-spots): with the Locations
+# gone, _inside_split was the single largest thing left in the check — 394,712 calls
+# (two a pair) and 0.86 s of own time of the 2.69 s the 90k keying loop takes under a
+# profiler, 3.79 million abs() among them.
+#
+# It need not be per pair. _inside_split's `mid` is the translation's own entry plus
+# three products of the relative ROTATION with the other solid's box centre, and its
+# `reach` is three products of that rotation with the box's half-extents. Neither
+# depends on the translation, which enters only as mid's first term. The barrel's
+# 197,356 candidate pairs at 90k are 536 groups of (two definitions, two rotations),
+# so the products are taken 536 times instead of 394,712, and a pair adds three
+# floats.
+#
+# ‼️ The additions keep the ORDER the loop had — ((t[r] + p0) + p1) + p2, which is
+# what `mid = t[r]` then three `mid +=` gives — and `reach` stays a term of its own.
+# Folding reach into the bound (mid >= low + reach) is a different float from
+# mid - reach >= low, and would move the answer at the boundary.
+#
+# Only for pairs the rotation memo already covers (both placements one datum, power
+# 1, scale 1); any other pair is measured by _inside_split as before.
+# _CONTAINMENT_PER_GROUP = False restores it, kept as the reference the fence
+# compares every key against.
+_CONTAINMENT_PER_GROUP = True
+
+
+def _containment_plan(rot, half, box):
+    """_inside_split's per-(rotation, box) arithmetic, taken once for a group.
+
+    Returns [(axis, p0, p1, p2, reach, low, high)] for each axis the frame is a slab
+    on, or None when nothing on this side can slide (which is _inside_split's []).
+    """
+    if half is None or box is None:
+        return None
+    lo, hi = box
+    plan = []
+    for r in range(3):
+        if half[r] is None:
+            continue
+        row = 3 * r
+        reach = 0.0
+        p = []
+        for c in range(3):
+            v = rot[row + c]
+            p.append(v * (lo[c] + hi[c]) / 2)
+            reach += abs(v) * (hi[c] - lo[c]) / 2
+        plan.append((r, p[0], p[1], p[2], reach, _SLIDE_MARGIN - half[r], half[r] - _SLIDE_MARGIN))
+    return plan
+
+
+def _inside_planned(plan, t):
+    """_inside_split from a _containment_plan and a translation."""
+    axes = []
+    for r, p0, p1, p2, reach, low, high in plan:
+        mid = ((t[r] + p0) + p1) + p2
+        if mid - reach >= low and mid + reach <= high:
+            axes.append(r)
+    return axes
+
+
 def _pair_keys(placed, shape_ids, slabs, rotations=None):
     """A function (i, j) -> _pair_key(placed, shape_ids, i, j, slabs), the same key.
 
@@ -1495,6 +1712,9 @@ def _pair_keys(placed, shape_ids, slabs, rotations=None):
     # Indexed by solid: lists, not dicts, at a million solids.
     inverses, rotation_of = [None] * len(placed), [None] * len(placed)
     rotation_ids, memo = {}, {}
+    # (rotation i, rotation j, definition a, definition b) -> the two containment
+    # plans for that group of pairs (see _containment_plan).
+    plans = {}
 
     def rotation_id(i, location):
         r = rotation_of[i]
@@ -1531,16 +1751,39 @@ def _pair_keys(placed, shape_ids, slabs, rotations=None):
                 memo[(ri, rj)] = m
         ra, qa, rb, qb = m
         a, b = shape_ids[pi[0]], shape_ids[pj[0]]
-        pose_f, pose_b = _pose_of(qa, ta), _pose_of(qb, tb)
         if not slabs:
-            return min((a, b, pose_f), (b, a, pose_b))
-        frame_i, frame_j = slabs[pi[0]], slabs[pj[0]]
-        inside_i = _inside_split(ra, ta, frame_i[0], frame_j[1])
-        inside_j = _inside_split(rb, tb, frame_j[0], frame_i[1])
+            inside_i = inside_j = ()
+        else:
+            frame_i, frame_j = slabs[pi[0]], slabs[pj[0]]
+            if _CONTAINMENT_PER_GROUP and memoizable:
+                # One pair of definitions at one pair of rotations is one group.
+                g = plans.get((ri, rj, a, b))
+                if g is None:
+                    g = (_containment_plan(ra, frame_i[0], frame_j[1]),
+                         _containment_plan(rb, frame_j[0], frame_i[1]))
+                    if len(plans) < _ROTATION_MEMO_LIMIT:
+                        plans[(ri, rj, a, b)] = g
+                # ‼️ Not named pb: that is the backward POSE a few lines below.
+                plan_a, plan_b = g
+                inside_i = _inside_planned(plan_a, ta) if plan_a else []
+                inside_j = _inside_planned(plan_b, tb) if plan_b else []
+            else:
+                inside_i = _inside_split(ra, ta, frame_i[0], frame_j[1])
+                inside_j = _inside_split(rb, tb, frame_j[0], frame_i[1])
         if not inside_i and not inside_j:
             # Nothing marked on either side: both poses are _slid's input unchanged,
             # and a real pose's translations are finite, so both mark nothing.
-            return min((a, b, pose_f), (b, a, pose_b))
+            #
+            # min() settles on the first element of the tuple whenever the two
+            # definitions differ, so the pose of the direction that cannot win is
+            # never built: 3 round() calls and a tuple saved on the 82% of the
+            # barrel's pairs that are two different definitions (last hot spots).
+            if a < b:
+                return (a, b, _pose_of(qa, ta))
+            if a > b:
+                return (b, a, _pose_of(qb, tb))
+            return min((a, b, _pose_of(qa, ta)), (b, a, _pose_of(qb, tb)))
+        pose_f, pose_b = _pose_of(qa, ta), _pose_of(qb, tb)
         carried_f = _carried_fast(pose_f, inside_j) if inside_j else []
         carried_b = _carried_fast(pose_b, inside_i) if inside_i else []
         forward = (a, b, _slid(pose_f, inside_i, carried_f))
@@ -1553,6 +1796,9 @@ def _pair_keys(placed, shape_ids, slabs, rotations=None):
         return min(forward, backward)
 
     key.memo = memo
+    # The groups of pairs containment was taken once for, so a fence can show the
+    # grouped path is the path taken (last hot spots).
+    key.plans = plans
     return key
 
 
@@ -1822,6 +2068,10 @@ def _build(request):
     shape_builds = 0
     # matrix -> the directions its Plane holds, for this build (see _placement).
     frames = {}
+    # id(definition shape) -> what deepcopy does to each of its attributes, for THIS
+    # build only (see _located): the ids are stable while built_once holds the
+    # shapes, and a plan must never outlive the definition it was taken from.
+    plans = {}
     for s in solids:
         key = _shape_key(s)
         if key in built_once:
@@ -1830,7 +2080,7 @@ def _build(request):
                 skipped.append("%s: %s" % (s.get("label") or s.get("id"), reason))
                 continue
             location = _placement(s, frames)
-            built.append(_located(shape, location))
+            built.append(_located(shape, location, plans))
             names.append(s.get("label") or s.get("id"))
             ids.append(s.get("id"))
             keys.append(key)
@@ -1871,7 +2121,7 @@ def _build(request):
             shape = shape.mirror(Plane.YZ)
         built_once[key] = (shape, None)
         location = _placement(s, frames)
-        built.append(_located(shape, location))
+        built.append(_located(shape, location, plans))
         names.append(s.get("label") or s.get("id"))
         ids.append(s.get("id"))
         keys.append(key)

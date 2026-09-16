@@ -308,13 +308,26 @@ const maxRepairExamples = 3
 // total is how many pairs the kernel found, which is more than found when it
 // summarized its list.
 func repairAsks(doc *Prototype, found []geometry.Interference, total int) []geometry.Problem {
+	return repairAsksWithin(doc, found, total, maxRepairProblemBytes)
+}
+
+// repairAsksWithin is repairAsks against a stated budget, so a measurement can price
+// the bound rather than assume it (docs/spikes/2026-09-15-last-hot-spots). The shipped
+// path is repairAsks and only it chooses the budget; nothing else passes one but
+// TestScaleUp_MeasureTheRepairPrompt, which sweeps candidates to choose the constant.
+//
+// ‼️ The sweep prices the lines that are actually SENT, notes and names included: the
+// placedByNotes call and problemBytes both sit inside here, below the budget, not
+// above it in repairAsks. A sweep that priced bare findings would choose a constant
+// for a prompt nobody sends.
+func repairAsksWithin(doc *Prototype, found []geometry.Interference, total, limit int) []geometry.Problem {
 	// Each line first says which child places its parts (placedByNotes), because a
 	// list that fits is asked line for line and a path alone is not editable. The
 	// budget is then measured on those lines, notes included: they are sent, so they
 	// are spent. A summary needs no notes — it is already told BY placement, and
 	// repeating the sentence per clash is what it exists to replace.
 	buried := placedByNotes(doc, found, geometry.InterferenceProblems(found))
-	if problemBytes(buried) <= maxRepairProblemBytes {
+	if problemBytes(buried) <= limit {
 		return buried
 	}
 	if total < len(found) {
@@ -396,7 +409,7 @@ func repairAsks(doc *Prototype, found []geometry.Interference, total int) []geom
 		return fmt.Sprintf("%d more group(s), %d buried clash(es) between them, are not described here.",
 			groupsLeft, clashesLeft)
 	}
-	budget := maxRepairProblemBytes - problemBytes(out) - len(coverage(len(groups), count)) -
+	budget := limit - problemBytes(out) - len(coverage(len(groups), count)) -
 		len("- \n") - len(tail(len(groups), count))
 	described, covered := 0, 0
 	for n, g := range groups {

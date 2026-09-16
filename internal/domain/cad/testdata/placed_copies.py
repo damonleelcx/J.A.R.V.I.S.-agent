@@ -90,6 +90,11 @@ def transformation(location_or_shape):
 def run(sidecar, fast, fmt, request):
     sidecar._PLACE_WITHOUT_COPYING = fast
     sidecar._ASSEMBLY_VOLUME_PER_DEFINITION = fast
+    # Added 2026-09-15 (last hot spots): off, a copy's attributes come from
+    # copy.deepcopy and its placement from Location.__init__, which is build123d's
+    # own path and the reference every comparison below is against.
+    sidecar._PLACE_WITHOUT_DEEPCOPY = fast
+    sidecar._LOCATION_WITHOUT_INIT = fast
     captured = {}
     real = sidecar._interferences
 
@@ -104,6 +109,8 @@ def run(sidecar, fast, fmt, request):
         sidecar._interferences = real
         sidecar._PLACE_WITHOUT_COPYING = True
         sidecar._ASSEMBLY_VOLUME_PER_DEFINITION = True
+        sidecar._PLACE_WITHOUT_DEEPCOPY = True
+        sidecar._LOCATION_WITHOUT_INIT = True
     if not reply.get("ok") or reply.get("skipped") or reply.get("features_failed"):
         raise SystemExit(json.dumps({"error": "the fixture did not build: %s %s %s" % (
             reply.get("error"), reply.get("skipped"), reply.get("features_failed"))}))
@@ -209,8 +216,23 @@ def counts(sidecar, fast, copies):
     import build123d
     import build123d.topology.shape_core as core
 
-    tally = {"brep_copies": 0, "planes": 0, "volume_integrals": 0, "occurrences": 0}
+    import copy as copy_module
+
+    tally = {"brep_copies": 0, "planes": 0, "volume_integrals": 0, "occurrences": 0,
+             # Added 2026-09-15 (last hot spots): the two costs _located and
+             # _placement paid per occurrence — a deepcopy of every attribute, and a
+             # Location built through __init__'s nine keyword arguments.
+             "deepcopies": 0, "locations": 0, "fallbacks": 0}
     copier, plane_init, lut = core.BRepBuilderAPI_Copy, build123d.Plane.__init__, dict(core.Shape.shape_properties_LUT)
+    deepcopy_real, location_init = copy_module.deepcopy, build123d.Location.__init__
+
+    def counting_deepcopy(*a, **k):
+        tally["deepcopies"] += 1
+        return deepcopy_real(*a, **k)
+
+    def counting_location(self, *a, **k):
+        tally["locations"] += 1
+        return location_init(self, *a, **k)
 
     def copy(*a, **k):
         tally["brep_copies"] += 1
@@ -230,11 +252,18 @@ def counts(sidecar, fast, copies):
     tally["occurrences"] = len(request["solids"])
     core.BRepBuilderAPI_Copy = copy
     build123d.Plane.__init__ = init
+    copy_module.deepcopy = counting_deepcopy
+    build123d.Location.__init__ = counting_location
     for k, fn in lut.items():
         if fn is not None:
             core.Shape.shape_properties_LUT[k] = integrator(fn)
     sidecar._PLACE_WITHOUT_COPYING = fast
     sidecar._ASSEMBLY_VOLUME_PER_DEFINITION = fast
+    sidecar._PLACE_WITHOUT_DEEPCOPY = fast
+    sidecar._LOCATION_WITHOUT_INIT = fast
+    # ‼️ Counted as a DIFFERENCE: the module counter is process-wide and the
+    # comparison runs before this, so its absolute value says nothing.
+    fallbacks_before = sidecar._located_fallbacks
     real = sidecar._interferences
     # Only the phases measured: the interference check measures its own volumes.
     sidecar._interferences = lambda solids, ids, labels, placed=None: (
@@ -244,10 +273,15 @@ def counts(sidecar, fast, copies):
     finally:
         core.BRepBuilderAPI_Copy = copier
         build123d.Plane.__init__ = plane_init
+        copy_module.deepcopy = deepcopy_real
+        build123d.Location.__init__ = location_init
         core.Shape.shape_properties_LUT.update(lut)
         sidecar._interferences = real
         sidecar._PLACE_WITHOUT_COPYING = True
         sidecar._ASSEMBLY_VOLUME_PER_DEFINITION = True
+        sidecar._PLACE_WITHOUT_DEEPCOPY = True
+        sidecar._LOCATION_WITHOUT_INIT = True
+    tally["fallbacks"] = sidecar._located_fallbacks - fallbacks_before
     tally["parts"] = reply.get("parts")
     tally["shape_builds"] = reply.get("shape_builds")
     return tally

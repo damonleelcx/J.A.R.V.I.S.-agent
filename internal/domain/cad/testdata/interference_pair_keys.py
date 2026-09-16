@@ -119,14 +119,21 @@ def shapes_of(sidecar, placed):
     return shape_ids, slabs
 
 
-def keyed(sidecar, solids, placed, with_slabs, memo, out, counted, differ, marks=False):
+def keyed(sidecar, solids, placed, with_slabs, memo, out, counted, differ, marks=False, grouped=True):
     """Every pair's key against _pair_key; memo says whether _pair_keys gets the
-    rotations _measures reads (the memo) or not."""
+    rotations _measures reads (the memo) or not, and grouped whether containment is
+    taken once per group of pairs (_CONTAINMENT_PER_GROUP) or per pair."""
     shape_ids, slabs = shapes_of(sidecar, placed)
     slabs = slabs if with_slabs else {}
-    rotations = [None] * len(solids)
-    sidecar._measures(solids, placed, rotations)
-    direct = sidecar._pair_keys(placed, shape_ids, slabs, rotations if memo else None)
+    sidecar._CONTAINMENT_PER_GROUP = grouped
+    try:
+        return _keyed(sidecar, solids, placed, shape_ids, slabs, memo, out, counted, differ, marks)
+    finally:
+        sidecar._CONTAINMENT_PER_GROUP = True
+
+
+def _keyed(sidecar, solids, placed, shape_ids, slabs, memo, out, counted, differ, marks):
+    direct = sidecar._pair_keys(placed, shape_ids, slabs, rotations_of(sidecar, solids, placed) if memo else None)
     n = len(solids)
     for i in range(n):
         for j in range(i + 1, n):
@@ -141,7 +148,17 @@ def keyed(sidecar, solids, placed, with_slabs, memo, out, counted, differ, marks
                 out["slid"] += any(x == math.inf for x in m)
                 out["carried"] += any(x == -math.inf for x in m)
     out.setdefault(differ, 0)
+    # The groups containment was taken once for (last hot spots). A fixture that
+    # reaches none of them cannot show the grouped path is equivalent.
+    out["plans"] = max(out.get("plans", 0), len(getattr(direct, "plans", {})))
     return len(direct.memo)
+
+
+def rotations_of(sidecar, solids, placed):
+    """_measures' per-solid rotation bits, which the memo is keyed by."""
+    rotations = [None] * len(solids)
+    sidecar._measures(solids, placed, rotations)
+    return rotations
 
 
 def shared(sidecar, placed):
@@ -179,6 +196,8 @@ def compare(sidecar, name, request, variants=False):
     out["memoized"] = keyed(sidecar, solids, placed, True, True, out, "compared", "differ", marks=True)
     keyed(sidecar, solids, placed, False, True, out, "unslid_compared", "unslid_differ")
     keyed(sidecar, solids, placed, True, False, out, "plain_compared", "plain_differ")
+    # Containment per pair rather than once per group of pairs (last hot spots).
+    keyed(sidecar, solids, placed, True, True, out, "planless_compared", "planless_differ", grouped=False)
     out["variants"] = []
     if variants:
         for label, make in (("shared locations", shared), ("chained locations", chained)):
