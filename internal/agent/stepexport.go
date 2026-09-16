@@ -87,6 +87,41 @@ const (
 // repeat, taking a build step's kernel with it on each pass.
 const exportJobAttempts = 3
 
+// MaxLiveExportJobsPerRequester is how many export jobs one person may have
+// queued or running in one project at a time.
+//
+// # Why there is a limit at all
+//
+// Requesting an export needs only the permission to READ the design (the
+// 2026-09-15 decision; httpapi.RequestExport), so anybody who may open a design
+// may spend forge-worker's kernel on it. Three things already bound that spend,
+// and not one of them bounds the NUMBER of jobs: asking for the same version
+// twice returns the export already queued (Request, below), so a double click is
+// one job; the 90,000-occurrence ceiling (geometry.MaxExportJobParts) bounds one
+// job's size; and one export runs per worker process (StepExporter.slot). What is
+// left is a caller walking a project's version list — a read-only caller writes no
+// versions, but a project holds every version its contributors ever saved — and
+// queueing one job per version. That would hold every worker in the deployment
+// for as long as it takes to write them all, with build steps queued behind.
+//
+// # Why three
+//
+// One running and two waiting. Enough to ask for a handful of variants at once
+// and compare the files, which is the ordinary reason to want more than one; small
+// enough that one person cannot fill the queue, since a job near the ceiling is
+// ~21 s of kernel (#89) and may take up to cad.exportJobTimeout per attempt, three
+// attempts each. Three jobs is then a wait for everybody else, not an outage.
+//
+// ‼️ Per requester AND per project, not per project alone. A shared per-project
+// number would let one member's three jobs refuse every other member's — an abuse
+// guard that hands any reader a way to deny the owner their exports is worse than
+// the abuse. Each person is bounded, and nobody is bounded by anybody else.
+//
+// ‼️ Only LIVE jobs count — queued or running, not superseded, succeeded or
+// failed. The limit is on worker time not yet spent, so somebody who has exported
+// a hundred versions over a week is not refused the hundred-and-first.
+const MaxLiveExportJobsPerRequester = 3
+
 // exportStepInputs is what an export task carries.
 type exportStepInputs struct {
 	Kind      string `json:"kind"`
@@ -215,6 +250,37 @@ func (s *StepExports) Request(ctx context.Context, v *geometry.Variant, format, 
 			if live != nil && live.Status != ExportFailed {
 				out = live
 				return nil
+			}
+			// A NEW job is about to be queued, so the limit applies. Counted here,
+			// inside the transaction that writes the goal, and only on this path: the
+			// idempotent answer above hands back an export that already exists and
+			// costs no worker time, so asking twice is never refused for being third.
+			//
+			// ‼️ Two requests for DIFFERENT versions can pass this count in the same
+			// instant and leave one job over the limit. The live unique index
+			// serialises two requests for the SAME version; it says nothing about
+			// these. Accepted deliberately: the guard exists so one caller cannot
+			// queue a project's whole version list, and an off-by-one under an exact
+			// race does not change that. Taking a lock wide enough to close it would
+			// serialise every export request in the project against each other.
+			var inFlight int
+			if err := tx.QueryRow(ctx, `
+				select count(*)
+				  from forge_geometry_exports e
+				  join forge_tasks t on t.id = e.task_id
+				 where e.project_id = $1 and e.requested_by = $2 and e.superseded_at is null
+				   and t.status in ('pending','ready','claimed','running','verifying','awaiting_approval')`,
+				v.ProjectID, userID).Scan(&inFlight); err != nil {
+				return errs.Wrap(op, errs.CodeDatabaseUnavail, err)
+			}
+			if inFlight >= MaxLiveExportJobsPerRequester {
+				return errs.New(op, errs.CodeRateLimited).WithDetail(
+					"you already have %d STEP export job(s) queued or running in this project, which is "+
+						"MaxLiveExportJobsPerRequester (%d) — the most one person may have at once, because each "+
+						"one holds a forge-worker's CAD kernel for as long as the file takes to write. Follow the "+
+						"jobs you have at /v1/geometry/exports/{id}; when one finishes, ask again. Nothing was "+
+						"queued, and nobody else's exports are affected by yours.",
+					inFlight, MaxLiveExportJobsPerRequester)
 			}
 			now := s.clock.Now()
 			if live != nil {

@@ -116,16 +116,47 @@ func (h *GeometryHandlers) RequestExport(w http.ResponseWriter, r *http.Request)
 		WriteError(w, r, h.deps.Log, err)
 		return
 	}
-	// ‼️ AND goal.create, because this writes a goal into that project. Reading a
-	// design is not permission to put work in its project: that is the defect
-	// POST /v1/goals had (docs/bugfix/2026-09-15-a-goal-could-be-drafted-into-a-project-its-caller-was-not-in.md),
-	// and an export job is a goal by another door. A viewer can still download
-	// what fits in a request (GET /v1/geometry/{id}/export) and read or download
-	// an export somebody who may create work asked for.
-	if err := h.deps.requirePermission(r, v.ProjectID, user.ID, access.PermGoalCreate); err != nil {
-		WriteError(w, r, h.deps.Log, err)
-		return
-	}
+	// ‼️ And that is the WHOLE permission check: read access, nothing more —
+	// though this does write a goal. Decided 2026-09-15, replacing the pair of
+	// checks this route shipped with.
+	//
+	// Exporting is reading. A person who may open a design in the viewport may
+	// take the same design away as a file; the file is the design, in another
+	// notation. Requiring goal.create as well meant a viewer could read a design
+	// on screen and not have it — "you may read this, on our screen, in this
+	// building" — and it made the ONE thing a reader most often wants from a CAD
+	// system the one thing a reader could not have.
+	//
+	// # Why this is not the defect of #91 coming back
+	//
+	// POST /v1/goals still requires goal.create, and must
+	// (docs/bugfix/2026-09-15-a-goal-could-be-drafted-into-a-project-its-caller-was-not-in.md).
+	// The difference is who AUTHORS the work. There, the caller writes the
+	// statement, the planner's model is asked on their behalf, and whatever they
+	// asked for lands in the project's console, timeline and budget as their work:
+	// "may this person plan work here" is exactly the question, and a viewer's
+	// answer is no.
+	//
+	// Here the caller authors nothing. FORGE writes the goal, its statement, its
+	// plan and its single task itself (agent.StepExports.create), every one of them
+	// derived from a version the caller may already read — at r0, with no model
+	// call, and with the design unchanged when it finishes. The goal is FORGE's own
+	// mechanism for doing the reading off-node, because forged's pod cannot hold a
+	// 90,000-part kernel; it is not a thing a person is putting into the project. A
+	// mechanism must not demand a permission stronger than the act it implements,
+	// or the implementation detail becomes the policy.
+	//
+	// The requester is still recorded, and deliberately: the goal's created_by and
+	// the export's requested_by are this caller, and the timeline names them
+	// ("Asked for … as a STEP file"). A read-only caller cannot author work here,
+	// but who asked for a design to leave the building is precisely the fact
+	// accountability needs, so it is kept rather than attributed to the system.
+	//
+	// What this does NOT open, all still checked where they live: a viewer cannot
+	// start, replan or cancel a goal, cannot write or adopt a version, and cannot
+	// export a design they may not read — the check above is the whole gate, and a
+	// design they cannot reach is reported as one that does not exist. The worker
+	// time a reader can spend is bounded by agent.MaxLiveExportJobsPerRequester.
 	format := r.URL.Query().Get("format")
 	if format == "" {
 		format = agent.ExportFormatSTEP

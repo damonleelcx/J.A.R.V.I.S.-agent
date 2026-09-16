@@ -208,9 +208,17 @@ func (x *exportsHarness) runWorker(t *testing.T, kernel agent.StepExportKernel, 
 // waitFinished polls the status route until the export has ended.
 func (x *exportsHarness) waitFinished(t *testing.T, exportID string, within time.Duration) ExportDTO {
 	t.Helper()
+	return x.waitFinishedAs(t, x.owner, exportID, within)
+}
+
+// waitFinishedAs polls as one particular person, so a test can show that the
+// status route answers the caller whose export it is.
+func (x *exportsHarness) waitFinishedAs(t *testing.T, user *identity.User, exportID string,
+	within time.Duration) ExportDTO {
+	t.Helper()
 	deadline := time.Now().Add(within)
 	for {
-		got := exportIn(t, x.status(x.owner, exportID))
+		got := exportIn(t, x.status(user, exportID))
 		if got.Status == agent.ExportSucceeded || got.Status == agent.ExportFailed {
 			return got
 		}
@@ -325,23 +333,114 @@ func TestExports_ANonMemberIsToldThereIsNoSuchDesignOrExport(t *testing.T) {
 	}
 }
 
-// A viewer reads the project, so a viewer may follow an export. Asking for one
-// writes a goal into the project, which a viewer may not.
-func TestExports_AViewerMayFollowAnExportButNotAskForOne(t *testing.T) {
-	x := newExportsHarness(t, newExportTestStore())
+// Exporting is reading: a viewer asks for an export of a design they may read,
+// follows it, and downloads the file (the 2026-09-15 decision). The goal FORGE
+// wrote to do the work still records the viewer as the person who asked.
+func TestExports_AViewerMayRequestFollowAndDownloadAnExportOfADesignTheyMayRead(t *testing.T) {
+	store := newExportTestStore()
+	x := newExportsHarness(t, store)
 	v := x.save(t, exportPlate())
 
 	rec := x.request(x.viewer, v.VersionID)
-	if rec.Code != http.StatusForbidden {
-		t.Fatalf("a viewer's request answered %d: %s; want 403", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusAccepted {
+		t.Fatalf("a viewer's request answered %d: %s; want 202 — read access is the whole gate",
+			rec.Code, rec.Body.String())
 	}
-	if n := goalsIn(t, x.pool, x.project); n != 0 {
-		t.Fatalf("a viewer's refused request left %d goal(s) in the project", n)
+	e := exportIn(t, rec)
+	if e.RequestedBy != x.viewer.ID {
+		t.Errorf("the export records %q as its requester, want the viewer %q", e.RequestedBy, x.viewer.ID)
 	}
-	e := exportIn(t, x.request(x.owner, v.VersionID))
-	rec = x.status(x.viewer, e.ID)
-	if rec.Code != http.StatusOK || exportIn(t, rec).ID != e.ID {
-		t.Errorf("a viewer could not follow the owner's export: %d %s", rec.Code, rec.Body.String())
+	// Accountability: the goal is FORGE's mechanism, but the person who asked for
+	// the design to leave the building is recorded as its creator, not the system.
+	var createdBy string
+	if err := x.pool.QueryRow(context.Background(),
+		`select created_by from forge_goals where id = $1`, e.GoalID).Scan(&createdBy); err != nil {
+		t.Fatal(err)
+	}
+	if createdBy != x.viewer.ID {
+		t.Errorf("the export's goal was created by %q; want the viewer %q, who asked for it", createdBy, x.viewer.ID)
+	}
+
+	x.runWorker(t, exportTestKernel{}, store)
+	done := x.waitFinishedAs(t, x.viewer, e.ID, 30*time.Second)
+	if done.Status != agent.ExportSucceeded {
+		t.Fatalf("the viewer's export ended %s: %s", done.Status, done.Reason)
+	}
+	dl := x.download(x.viewer, e.ID)
+	if dl.Code != http.StatusOK || dl.Body.Len() == 0 {
+		t.Fatalf("a viewer's download answered %d with %d bytes: %s", dl.Code, dl.Body.Len(), dl.Body.String())
+	}
+	if done.SHA256 == nil {
+		t.Fatal("the finished export reports no digest")
+	}
+	sum := sha256.Sum256(dl.Body.Bytes())
+	if hex.EncodeToString(sum[:]) != *done.SHA256 {
+		t.Errorf("the viewer downloaded %x, not the stored %s", sum, *done.SHA256)
+	}
+}
+
+// A reader may spend a bounded amount of forge-worker's time: one person's live
+// export jobs in a project are capped, and the refusal names the limit.
+//
+// The bound is per person, so one reader at the cap cannot refuse anybody else's
+// exports, and it counts only jobs not yet finished.
+func TestExports_MoreLiveExportJobsThanTheLimitAreRefusedNamingIt(t *testing.T) {
+	store := newExportTestStore()
+	x := newExportsHarness(t, store)
+
+	// One version per job the viewer may hold, one to be refused, one for the
+	// owner: asking twice for the SAME version is the idempotent answer, never a
+	// refusal, so every job here has to be a different version.
+	versions := make([]*geometry.Variant, 0, agent.MaxLiveExportJobsPerRequester+2)
+	for i := 0; i < agent.MaxLiveExportJobsPerRequester+2; i++ {
+		doc := exportPlate()
+		doc.Name = fmt.Sprintf("plate %d", i)
+		versions = append(versions, x.save(t, doc))
+	}
+
+	queued := make([]string, 0, agent.MaxLiveExportJobsPerRequester)
+	for i := 0; i < agent.MaxLiveExportJobsPerRequester; i++ {
+		rec := x.request(x.viewer, versions[i].VersionID)
+		if rec.Code != http.StatusAccepted {
+			t.Fatalf("the viewer's request %d of %d answered %d: %s",
+				i+1, agent.MaxLiveExportJobsPerRequester, rec.Code, rec.Body.String())
+		}
+		queued = append(queued, exportIn(t, rec).ID)
+	}
+
+	over := versions[agent.MaxLiveExportJobsPerRequester]
+	rec := x.request(x.viewer, over.VersionID)
+	if rec.Code != http.StatusTooManyRequests ||
+		!strings.Contains(rec.Body.String(), "MaxLiveExportJobsPerRequester") {
+		t.Fatalf("export job %d answered %d: %s; want 429 naming MaxLiveExportJobsPerRequester",
+			agent.MaxLiveExportJobsPerRequester+1, rec.Code, rec.Body.String())
+	}
+	if n := goalsIn(t, x.pool, x.project); n != agent.MaxLiveExportJobsPerRequester {
+		t.Fatalf("the project holds %d goal(s), want %d: the refused request queued one anyway",
+			n, agent.MaxLiveExportJobsPerRequester)
+	}
+
+	// Asking again for a version already queued costs no worker time, so it is
+	// answered with the export that exists rather than refused for being over.
+	if rec := x.request(x.viewer, versions[0].VersionID); rec.Code != http.StatusOK {
+		t.Errorf("asking again for an export already queued answered %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	// Per person: the owner is at nought and is not held up by the viewer's jobs.
+	if rec := x.request(x.owner, versions[len(versions)-1].VersionID); rec.Code != http.StatusAccepted {
+		t.Errorf("the owner's first export answered %d while the viewer was at the limit: %s",
+			rec.Code, rec.Body.String())
+	}
+
+	// And a finished job frees the slot: the limit is on work not yet done.
+	x.runWorker(t, exportTestKernel{}, store)
+	for _, id := range queued {
+		if got := x.waitFinishedAs(t, x.viewer, id, 30*time.Second); got.Status != agent.ExportSucceeded {
+			t.Fatalf("export %s ended %s: %s", id, got.Status, got.Reason)
+		}
+	}
+	if rec := x.request(x.viewer, over.VersionID); rec.Code != http.StatusAccepted {
+		t.Errorf("with every earlier job finished, the viewer's next export answered %d, want 202: %s",
+			rec.Code, rec.Body.String())
 	}
 }
 
@@ -426,6 +525,11 @@ func TestExports_TheDownloadIsTheStoredFileAndACorruptOneIsNeverServedWhole(t *t
 // The whole path, with the real kernel and a real S3-compatible server: a design
 // the request refuses to build as STEP is asked for as a job, forge-worker writes
 // it, the blob holds exactly what the status says, and the download is that blob.
+//
+// Asked for by the VIEWER, throughout. The decision that requesting an export
+// needs only read access (2026-09-15) is worth little if it holds against a fake
+// kernel and a fake bucket only, so the one fence that runs the real ones runs
+// them for the caller who has nothing but read access.
 func TestExports_RequestJobWorkerBlobStatusAndDownloadAgree(t *testing.T) {
 	python := os.Getenv("FORGE_CAD_PYTHON")
 	if python == "" {
@@ -467,7 +571,7 @@ func TestExports_RequestJobWorkerBlobStatusAndDownloadAgree(t *testing.T) {
 	withKernel.CAD = cad.New(python, logx.Discard())
 	t.Cleanup(withKernel.CAD.Close)
 	rec := httptest.NewRecorder()
-	r := getAs(x.owner, "/v1/geometry/"+v.VersionID+"/export?format=step")
+	r := getAs(x.viewer, "/v1/geometry/"+v.VersionID+"/export?format=step")
 	r.SetPathValue("id", v.VersionID)
 	NewGeometryHandlers(withKernel).Export(rec, r)
 	if rec.Code != http.StatusBadRequest {
@@ -475,16 +579,16 @@ func TestExports_RequestJobWorkerBlobStatusAndDownloadAgree(t *testing.T) {
 			rec.Code, rec.Body.String())
 	}
 
-	rec = x.request(x.owner, v.VersionID)
+	rec = x.request(x.viewer, v.VersionID)
 	if rec.Code != http.StatusAccepted {
-		t.Fatalf("request: %d %s", rec.Code, rec.Body.String())
+		t.Fatalf("the viewer's request: %d %s", rec.Code, rec.Body.String())
 	}
 	e := exportIn(t, rec)
 
 	kernel := cad.New(python, logx.Discard())
 	t.Cleanup(kernel.Close)
 	x.runWorker(t, kernel, store)
-	done := x.waitFinished(t, e.ID, 6*time.Minute)
+	done := x.waitFinishedAs(t, x.viewer, e.ID, 6*time.Minute)
 	if done.Status != agent.ExportSucceeded {
 		t.Fatalf("the export ended %s: %s", done.Status, done.Reason)
 	}
@@ -514,9 +618,10 @@ func TestExports_RequestJobWorkerBlobStatusAndDownloadAgree(t *testing.T) {
 		t.Errorf("the stored file is not STEP: %q", blobBytes[:min(len(blobBytes), 40)])
 	}
 
-	rec = x.download(x.owner, e.ID)
+	rec = x.download(x.viewer, e.ID)
 	if rec.Code != http.StatusOK || !bytes.Equal(rec.Body.Bytes(), blobBytes) {
-		t.Fatalf("the download (%d, %d bytes) is not the blob (%d bytes)", rec.Code, rec.Body.Len(), len(blobBytes))
+		t.Fatalf("the viewer's download (%d, %d bytes) is not the blob (%d bytes)",
+			rec.Code, rec.Body.Len(), len(blobBytes))
 	}
 	if !strings.Contains(rec.Header().Get("X-Forge-Export-Label"), "no interference check") {
 		t.Errorf("the label does not say no interference check ran: %q", rec.Header().Get("X-Forge-Export-Label"))
