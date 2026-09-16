@@ -1803,6 +1803,14 @@ drill "a test that needs the kernel runs without it" internal/domain/cad/script_
   's = s.replace("\tif !hasBuild123d(py) {\n\t\tt.Skip(", "\tif false {\n\t\tt.Skip(", 1)' \
   ./internal/domain/cad 'TestScript_ATestThatNeedsTheKernelSkipsWithoutIt'
 
+# Added 2026-09-15. The variables above do not reach OpenCASCADE's own thread pool,
+# which build123d's booleans run on and which is sized to the processors online: a
+# 16-CPU machine still started 16 threads.
+# docs/bugfix/2026-09-15-scripts-still-failed-on-machines-with-many-cores.md
+drill "OpenCASCADE's own pool starts a thread per core again" internal/domain/cad/script.py \
+  "s = s.replace('    pool = OSD_ThreadPool.DefaultPool_s(1)\n    if pool.NbThreads() != 1:\n        pool.Init(1)\n', '    pool = OSD_ThreadPool.DefaultPool_s()\n', 1)" \
+  ./internal/domain/cad 'TestScript_RunsOpenCascadeOnOneThread'
+
 if [ "$MODE" = "list" ]; then
   exit 0
 fi

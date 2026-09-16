@@ -519,6 +519,39 @@ def check(source, parameters=None):
     return tree
 
 
+# How many threads OpenCASCADE's own pool had when the script ran, reported with
+# the solid so a caller can see the sandbox held. None until build123d is loaded.
+_KERNEL_THREADS = None
+
+
+def _one_kernel_thread():
+    """Size OpenCASCADE's default thread pool to one thread, and return its size.
+
+    ‼️ Why this is not an environment variable, like the four script.go sets.
+
+    build123d runs every boolean with SetRunParallel(True) (topology/shape_core.py,
+    topology/utils.py), and OpenCASCADE then runs it on its OWN default thread
+    pool, sized to the processors the machine has ONLINE — not the CPUs the
+    process may use, so a cpuset or a Kubernetes CPU limit does not shrink it.
+    Nothing reads an environment variable to size that pool, so OMP, OpenBLAS,
+    TBB and MKL set to 1 left it at one thread per core. On a 16-CPU machine a
+    script started 16 threads: under the 1 GiB address-space cap they could not
+    all get thread-local memory, and under the 10 s CPU limit they spent it in
+    6.9 s of wall clock. Measured in a 16-CPU amd64 container with the fix for
+    four-core machines already in place:
+    docs/bugfix/2026-09-15-scripts-still-failed-on-machines-with-many-cores.md
+
+    DefaultPool sizes the pool only when it is first made, so an existing pool is
+    re-initialised to one thread as well: the order of imports cannot undo this.
+    """
+    from OCP.OSD import OSD_ThreadPool
+
+    pool = OSD_ThreadPool.DefaultPool_s(1)
+    if pool.NbThreads() != 1:
+        pool.Init(1)
+    return pool.NbThreads()
+
+
 def namespace(uses_builders):
     """The only names a script can see, built from the list and nothing else.
 
@@ -541,6 +574,12 @@ def namespace(uses_builders):
         import inspect
 
         import build123d as _b123d
+
+        # One thread for OpenCASCADE's own pool, before any boolean runs. After the
+        # import, so a machine with no kernel still fails on "No module named
+        # 'build123d'", the reason the tests skip on. See _one_kernel_thread.
+        global _KERNEL_THREADS
+        _KERNEL_THREADS = _one_kernel_thread()
 
         for name in dir(_b123d):
             if name.startswith("_") or _is_denied(name):
@@ -951,7 +990,7 @@ def main():
               "closed body."}))
         return
 
-    print(json.dumps({"ok": True, "step": step, "volume": volume}))
+    print(json.dumps({"ok": True, "step": step, "volume": volume, "kernel_threads": _KERNEL_THREADS}))
 
 
 if __name__ == "__main__":
