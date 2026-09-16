@@ -45,6 +45,11 @@ var (
 // build would fence the wrong step. Before K2, build123d's Compound(children=...)
 // took 2.5 s to assemble 4,096 copies and 0.06 s for 512 (quadratic: 8× the parts,
 // ~40× the time); an XDE assembly took 0.11 s for 4,096.
+//
+// ‼️ This fence was green on a writer that is quadratic past it. The STEP writer's
+// validation-property walk costs ~N² in the occurrences under one assembly and is
+// lost in noise below ~10k (measured: docs/spikes/2026-09-15-step-export-scaling).
+// TestKernel_ExportTimeGrowsLinearlyPastTheBuildCeiling covers 4,096 → 65,536.
 func TestKernel_ExportingManyOccurrencesGrowsLinearly(t *testing.T) {
 	k := kernel(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)

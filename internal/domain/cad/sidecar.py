@@ -1307,7 +1307,9 @@ def _step_document(built, names):
     copies: 13.8 s to assemble 10,000 occurrences, against 0.26 s this way, and
     the file is the same — 1 B-rep per definition, N instances, every name kept,
     exact volume (measured: docs/spikes/2026-09-14-xde-assembly-export).
-    Fence: TestKernel_ExportingManyOccurrencesGrowsLinearly.
+    Fence: TestKernel_ExportingManyOccurrencesGrowsLinearly, to 4,096; past it, the
+    writer's own cost is fenced by TestKernel_ExportTimeGrowsLinearlyPastTheBuildCeiling
+    (see _STEP_WRITE_PROPS).
 
     Sharing needs no bookkeeping here. K1's located copies share one TShape, and
     XCAF's AddShape returns the label it already holds for a shape it has seen, so
@@ -1343,9 +1345,39 @@ def _label_name(label, name):
     TDataStd_Name.Set_s(label, TCollection_ExtendedString(name or ""))
 
 
-def _write_step(doc, path):
+# Whether the STEP writer looks for validation properties (area, volume, centroid
+# attributes) on every label. Off: the sidecar sets none, so there is nothing to
+# find, and looking is quadratic in the occurrences under one assembly.
+#
+# # Why
+#
+# Measured 2026-09-15 (docs/spikes/2026-09-15-step-export-scaling) on the airframe
+# barrel: STEPCAFControl_Writer.Transfer took 0.6 s at 10k occurrences, 3.2 s at 30k
+# and 20 s at 90k, while the XCAF document it transfers was built in time linear in
+# the occurrences. OCCT 7.9's WritePropsForLabel visits an assembly's children as
+# `for i = 1 .. label.NbChildren(): label.FindChild(i)`, and both calls walk the
+# child list from its head, so N components under one assembly cost ~N² steps
+# before a single property is written. With props mode off, Transfer is 1.0 s at
+# 30k where it was 2.3–3.2 s, and the file is byte-identical below its header.
+#
+# ‼️ If the sidecar ever writes XCAFDoc_Area, XCAFDoc_Volume or XCAFDoc_Centroid
+# attributes, turning this back on is not enough: they would be written at N² cost
+# again. Fences: TestKernel_ExportTimeGrowsLinearlyPastTheBuildCeiling and
+# TestKernel_ALargeExportIsTheFileThePropertyWalkWrote. Module-level so
+# testdata/step_export_scaling.py can write the old file to compare against.
+_STEP_WRITE_PROPS = False
+
+
+def _write_step(doc, path, phases=None):
     """Write an XDE document as STEP with the settings export_step used, so the
-    file's header, curves and precision do not change with K2."""
+    file's header, curves and precision do not change with K2.
+
+    When given `phases`, records the writer's Transfer alone as "export_transfer".
+    The whole export phase is too blunt to fence it: writing the file and encoding
+    it are linear and, past the ceiling, hide a quadratic Transfer (measured at
+    32,768 occurrences: 4.7 s with the property walk, 3.0 s without, and the two
+    swapped places under load). Go reads only the phases it names, so this one
+    reaches the scaling fence and nothing else."""
     # OCCT prints to the console by default, and this process's stdout is the
     # protocol: a stray line there is an unreadable reply.
     for printer in Message.DefaultMessenger_s().Printers():
@@ -1354,6 +1386,7 @@ def _write_step(doc, path):
     writer.SetColorMode(True)
     writer.SetLayerMode(True)
     writer.SetNameMode(True)
+    writer.SetPropsMode(_STEP_WRITE_PROPS)
     header = APIHeaderSection_MakeHeader(writer.Writer().Model())
     if not header.IsDone():
         header = APIHeaderSection_MakeHeader(0)
@@ -1363,7 +1396,10 @@ def _write_step(doc, path):
     STEPControl_Controller.Init_s()
     Interface_Static.SetIVal_s("write.surfacecurve.mode", 1)
     Interface_Static.SetIVal_s("write.precision.mode", PrecisionMode.AVERAGE.value)
+    transfer = time.perf_counter()
     writer.Transfer(doc, STEPControl_StepModelType.STEPControl_AsIs)
+    if phases is not None:
+        phases["export_transfer"] = time.perf_counter() - transfer
     if writer.Write(path) != IFSelect_ReturnStatus.IFSelect_RetDone:
         raise RuntimeError("the STEP writer could not write the file")
 
@@ -1558,7 +1594,7 @@ def _build(request):
         fd, path = tempfile.mkstemp(suffix=".step")
         os.close(fd)
         try:
-            _write_step(_step_document(built, names), path)
+            _write_step(_step_document(built, names), path, phases)
             with open(path, "rb") as fh:
                 out["step"] = base64.b64encode(fh.read()).decode("ascii")
         finally:
