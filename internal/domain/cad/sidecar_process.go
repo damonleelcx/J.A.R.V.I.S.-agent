@@ -34,17 +34,29 @@ import (
 // when its caller gives up. A mutex cannot be abandoned; a receive in a select
 // with ctx.Done() can. The channel is also FIFO, which is what lets
 // TestRetryAfterEveryProcessInThePoolDies reach each slot deterministically.
+//
+// # Where the build timeout lives
+//
+// On the SLOT, not on the kernel. The limit is enforced by killing the process
+// that is over it (roundTrip), and with a pool there is no longer one process to
+// kill: a slow assembly must cost its own slot's process and leave the others
+// building. So each sidecar copies the kernel's timeout when the pool is made and
+// enforces its own — and BuildDocument resets only the slot the late build ran
+// in. See lateError in cad.go for why a build that ran out of time is refused
+// rather than retried, which the pool does not change.
 
 // sidecar is one kernel process. Whoever holds it (see Kernel.acquire) is the only
 // caller of roundTrip, start and stop.
 type sidecar struct {
 	python string
 	log    *logx.Logger
-	// timeout is how long one build may take (Kernel.timeout).
-	timeout time.Duration
 	// slot is this process's place in the pool, logged so a restart names which
 	// process was replaced.
 	slot int
+	// timeout is how long one build on THIS process may take, copied from the
+	// kernel when the pool was made. Each slot holds its own so the deadline
+	// goroutine below kills this process and reads nothing shared.
+	timeout time.Duration
 
 	// proc guards cmd, because kill is also called by the deadline goroutine in
 	// roundTrip while the holder is blocked reading, and stop clears cmd after.
@@ -62,7 +74,7 @@ func (k *Kernel) pool() chan *sidecar {
 	k.once.Do(func() {
 		k.slots = make(chan *sidecar, k.size)
 		for i := 0; i < k.size; i++ {
-			s := &sidecar{python: k.python, log: k.log, timeout: k.timeout, slot: i}
+			s := &sidecar{python: k.python, log: k.log, slot: i, timeout: k.timeout}
 			k.all = append(k.all, s)
 			k.slots <- s
 		}
@@ -105,6 +117,10 @@ func (k *Kernel) Close() {
 }
 
 // roundTrip sends one request and reads one reply. Caller holds the slot.
+//
+// It returns a *lateError when this slot's process was killed because time ran
+// out — the kernel's limit or the caller's context — which is the one failure
+// BuildDocument does not retry.
 func (s *sidecar) roundTrip(ctx context.Context, req request) (*reply, error) {
 	if err := s.start(ctx); err != nil {
 		return nil, err
@@ -126,6 +142,12 @@ func (s *sidecar) roundTrip(ctx context.Context, req request) (*reply, error) {
 	// read below, a process killed for its time and one that crashed are the same
 	// EOF, and until 2026-09-15 they were treated the same: retried on a fresh
 	// process, killed again, reported as "no working backend". See lateError.
+	//
+	// ‼️ It kills THIS SLOT'S process and reads THIS SLOT'S limit. s.kill takes
+	// s.proc, which is the mutex the holder of this slot and this goroutine
+	// share; no other slot is touched, so a build that runs out of time in one
+	// process does not interrupt the builds running in the others.
+	// Fence: TestKernel_ATimeoutInOneSlotLeavesTheOtherSlotsServing.
 	done := make(chan struct{})
 	defer close(done)
 	var stopped atomic.Pointer[lateError]
@@ -156,33 +178,6 @@ func (s *sidecar) roundTrip(ctx context.Context, req request) (*reply, error) {
 	}
 	return &res, nil
 }
-
-// lateError is a build whose process was killed because time ran out while it was
-// still working: the kernel's own limit, or the caller's context.
-//
-// # Why it is its own type
-//
-// The retry in Kernel.build is for a process that DIED — an OOM, a pkill, a
-// machine asleep — and a fresh process answers that. A process killed for its time
-// was alive and building, and a fresh one given the same build takes as long
-// again: retrying turned a 31 s build into a 60 s wait, and the second kill into
-// "the CAD kernel did not answer, and restarting it did not help" under
-// CONNECTOR_UNAVAILABLE. build asks errors.As for this, and does not retry it.
-type lateError struct {
-	// limit is the kernel's own limit, when that is what ran out.
-	limit time.Duration
-	// caller is the caller's context error, when that ended first.
-	caller error
-}
-
-func (e *lateError) Error() string {
-	if e.caller != nil {
-		return "the request ended before the kernel answered: " + e.caller.Error()
-	}
-	return fmt.Sprintf("the kernel did not answer within %s", e.limit)
-}
-
-func (e *lateError) Unwrap() error { return e.caller }
 
 func (s *sidecar) start(ctx context.Context) error {
 	if s.started {

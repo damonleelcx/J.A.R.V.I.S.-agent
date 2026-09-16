@@ -1,0 +1,122 @@
+// Package cadbridge gives the agent the CAD kernel's two capabilities, running
+// a script and building a surface, without giving it the kernel.
+//
+// It lived in httpapi while forged was the only process that built anything.
+// Since Phase 2, stage A1, forge-worker runs a build's steps too, and two copies
+// of the same translation would be two answers to what a surface is.
+package cadbridge
+
+import (
+	"context"
+
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/agent"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/cad"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/geometry"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/errs"
+)
+
+// Giving the agent something that can run a script, without giving it the kernel.
+//
+// # Why an adapter and not the kernel itself
+//
+// agent.ScriptRunner is `RunScript(ctx, source) error`. The kernel's method
+// returns the STEP it built as well, and the agent deliberately does not want
+// it: the document is the single source of truth for what the model is, and the
+// solid is built from it downstream. A cached shape here would be a second
+// answer to the same question, and the two would eventually differ.
+//
+// It also keeps `internal/agent` free of a dependency on `internal/domain/cad`,
+// which matters more than it looks: the agent is what a live test drives with a
+// stub runner, and a test that had to construct a kernel to exercise a repair
+// would need Python and OpenCASCADE to check a prompt.
+type kernelScripts struct{ k *cad.Kernel }
+
+func (r kernelScripts) RunScript(ctx context.Context, doc *geometry.Document, source string) error {
+	var params map[string]float64
+	if doc != nil {
+		params = cad.ScriptParameters(*doc)
+	}
+	_, err := r.k.RunScript(ctx, source, params)
+	return err
+}
+
+// Scripts returns the runner for a deployment, or nil when it does not run
+// scripts.
+//
+// Returns an untyped nil so `c.runner != nil` means what it says. A typed nil in
+// an interface is not nil, and the mistake would be silent in the worst
+// direction — the contract would offer scripts and every verification would
+// panic or, worse, be skipped.
+func Scripts(k *cad.Kernel) agent.ScriptRunner {
+	if k == nil || !k.ScriptsEnabled() || !k.Available() {
+		return nil
+	}
+	return kernelScripts{k: k}
+}
+
+// kernelSolids builds the real surface of a document for the agent's checks.
+//
+// # Why the conversion lives here
+//
+// The kernel returns MeshPart — a flat []float64 of coordinates and an []int32
+// of indices, which is what a mesh looks like on a wire. The agent wants
+// geometry.Triangle, which is what a rasterizer looks at. Neither package should
+// learn the other's shape to get from one to the other, so the translation sits
+// where the two are already wired together.
+type kernelSolids struct{ k *cad.Kernel }
+
+func (r kernelSolids) BuildSurface(ctx context.Context, doc *geometry.Document) (agent.Built, error) {
+	const op = "cadbridge.kernelSolids.BuildSurface"
+	if doc == nil {
+		return agent.Built{}, errs.New(op, errs.CodeInvariantViolated).WithDetail("no document to build")
+	}
+	// The unit must be one the kernel can convert: BuildDocument refuses an
+	// unknown one outright, because a STEP file declares its own scale and
+	// writing one would put a guess about scale inside the file. A picture has
+	// no scale to get wrong — every view fits whatever it is given — so an
+	// unstated unit falls back to millimetres HERE rather than losing the render.
+	unit, known := geometry.ParseUnit(doc.Units)
+	if !known {
+		unit = geometry.Millimetre
+	}
+	built, err := r.k.BuildMesh(ctx, *doc, unit)
+	if err != nil {
+		return agent.Built{}, err
+	}
+	// Every part in assembly coordinates: a picture draws parts, not instances,
+	// and since stage K4 most parts arrive as placed copies of a definition.
+	meshes := built.WorldMeshes()
+	out := make([]geometry.RenderPart, 0, len(meshes))
+	for _, m := range meshes {
+		tris := geometry.TrianglesFrom(m.Vertices, m.Triangles)
+		if len(tris) == 0 {
+			continue
+		}
+		out = append(out, geometry.RenderPart{ID: m.ID, Triangles: tris})
+	}
+	// The interferences come from the SAME build that produced these triangles —
+	// the kernel computed them while it held the solids, and throwing them away
+	// here would cost a second build per turn to get them back.
+	// So does how much of the model the check covered: a pair answered from a
+	// pose already measured counts as checked (Phase 5, stages V1 and V2).
+	return agent.Built{Parts: out, Interferences: built.Interferences,
+		Truncated: built.InterferencesTruncated,
+		Checked:   built.InterferenceBooleans + built.InterferenceReused,
+		Pairs:     built.InterferencePairs, Found: built.InterferencesFound,
+		// ‼️ And how many of them are BURIED, which is what a repair is judged by.
+		// This adapter moved out of internal/httpapi/scriptrunner.go (Phase 2, stage
+		// A1) while the count was being added there; carried over here rather than
+		// left behind, because a builder that does not pass it reads as "not counted"
+		// and no repair past the list's bound could ever be kept (repairVerdict).
+		Buried: built.InterferencesBuried, BuriedCounted: built.InterferencesBuriedCounted,
+		Skipped: built.Skipped}, nil
+}
+
+// Solids returns the thing that builds a surface, or nil when this
+// deployment has no kernel. Untyped nil, for the reason Scripts returns one.
+func Solids(k *cad.Kernel) agent.SolidBuilder {
+	if k == nil || !k.Available() {
+		return nil
+	}
+	return kernelSolids{k: k}
+}

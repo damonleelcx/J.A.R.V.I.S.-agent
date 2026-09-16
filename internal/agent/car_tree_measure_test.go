@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/agent"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/cad"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/geometry"
 )
@@ -74,6 +75,93 @@ func tokensPer(spent int64, n int) int64 {
 func coverageLine(b *cad.Build) string {
 	return fmt.Sprintf("checked=%d of pairs=%d skipped_parts=%d truncated=%v",
 		b.InterferenceBooleans+b.InterferenceReused, b.InterferencePairs, len(b.Skipped), b.InterferencesTruncated)
+}
+
+// unplacedAssemblies is every assembly that is neither the root nor any child's ref.
+func unplacedAssemblies(d geometry.Document) []string {
+	ref := map[string]bool{}
+	for _, a := range d.Assemblies {
+		for _, c := range a.Children {
+			ref[c.Ref] = true
+		}
+	}
+	var out []string
+	for _, a := range d.Assemblies {
+		if a.ID != d.Root && !ref[a.ID] {
+			out = append(out, a.ID)
+		}
+	}
+	return out
+}
+
+// An assembly built and placed by nothing is counted by name.
+func TestCarMeasure_CountsAssembliesNothingPlaces(t *testing.T) {
+	d := geometry.Document{Root: "car", Assemblies: []geometry.Assembly{
+		{ID: "car", Children: []geometry.Child{{ID: "chassis", Ref: "chassis"}}},
+		{ID: "chassis"}, {ID: "brakes"}, {ID: "steering"},
+	}}
+	if got := strings.Join(unplacedAssemblies(d), ","); got != "brakes,steering" {
+		t.Errorf("unplaced = %q, want brakes,steering", got)
+	}
+}
+
+func orNone(s string) string {
+	if s == "" {
+		return "none"
+	}
+	return s
+}
+
+// Every refusal a build step can make is named by its gate, and a step that was
+// built and corrected is not counted as refused (2026-09-15, live car findings).
+func TestCarMeasure_ARefusedStepIsNamedByItsGate(t *testing.T) {
+	for note, want := range map[string]string{
+		"Step 1 (Chassis Frame) came back unreadable: its JSON does not parse.":                     "unreadable",
+		"Step 1 (Chassis Frame) sent no geometry: it asked to be built in passes.":                  "no-geometry",
+		"Step 2 (Wheels) sent an edit that could not be applied: there is no model on screen.":      "edit-refused",
+		"Step 1 (Chassis Frame) produced a model that places nothing: no \"root\".":                 "places-nothing",
+		"Step 4 (Drivetrain) was left out: it would have broken the model: it had 2 fault(s).":      "faults-added",
+		"Step 3 (Brakes) could not be built: the budget is spent.":                                  "call-failed",
+		"Looking at the model it had just built, FORGE found problems and corrected it: all parts.": "",
+	} {
+		if got := agent.StepGateOf(note); got != want {
+			t.Errorf("StepGateOf(%q) = %q, want %q", note, got, want)
+		}
+	}
+}
+
+// The visual check is counted per step and per sub-assembly, from the calls alone.
+func TestCarMeasure_LooksAreCountedPerStepAndPerSubAssembly(t *testing.T) {
+	records := []callRecord{
+		{Step: 2, Role: "vision", Images: 1, Prompt: "This was built in answer to: a car", Reply: `{"problems": []}`, Seconds: 2},
+		{Step: 2, Role: "vision", Images: 1, Prompt: subAssemblyLook + "left-wheel (an occurrence of wheel), drawn on its own.",
+			Reply: `{"problems": [{"part": "Nut", "detail": "inside the rim"}]}`, Seconds: 4, PromptTokens: 900, CompletionTokens: 40},
+		{Step: 2, Role: "converse", Prompt: "Building: a car"},
+	}
+	lines := lookLines(looksOf(records))
+	if len(lines) != 2 {
+		t.Fatalf("want one line for step 2 and a total, got %q", lines)
+	}
+	for _, want := range []string{"step=2", "whole=1", "sub_assemblies=1", "findings=1", "looked_at=left-wheel", "tokens=940"} {
+		if !strings.Contains(lines[0], want) {
+			t.Errorf("the step's look line %q does not say %s", lines[0], want)
+		}
+	}
+	if !strings.Contains(lines[1], "calls=2") || !strings.Contains(lines[1], "max_seconds=4.0") {
+		t.Errorf("the total %q does not count both vision calls and the slowest", lines[1])
+	}
+}
+
+// A tree's children are counted by how they are placed.
+func TestCarMeasure_CountsChildrenAttachedAtAnInterface(t *testing.T) {
+	d := geometry.Document{Root: "car", Assemblies: []geometry.Assembly{
+		{ID: "car", Interfaces: []geometry.Interface{{ID: "front"}}, Children: []geometry.Child{
+			{ID: "chassis", Ref: "chassis"}, {ID: "axle", Ref: "axle", At: "front"}}},
+	}}
+	d.Assemblies[0].Children[0].PositionFrom = map[string]string{"x": "half_wheelbase"}
+	if children, attached, interfaces, bound := attachments(d); children != 2 || attached != 1 || interfaces != 1 || bound != 1 {
+		t.Errorf("attachments = %d, %d, %d, %d; want 2 children, 1 attached, 1 interface, 1 bound", children, attached, interfaces, bound)
+	}
 }
 
 // A tree is counted by what it defines and what it places, not by its top-level parts.

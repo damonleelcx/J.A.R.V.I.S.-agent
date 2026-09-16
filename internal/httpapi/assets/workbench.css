@@ -459,6 +459,21 @@
 }
 .mic.listening { box-shadow: 0 0 0 4px color-mix(in srgb, var(--core) 24%, transparent); }
 .mic:disabled { opacity: .35; cursor: not-allowed; }
+/* The hold is a pointer gesture the page owns. Without touch-action the browser
+ * claims a held finger for scrolling and sends pointercancel, which ends the
+ * hold; without the callout and selection rules a long press on a phone opens
+ * a menu instead of recording. See ForgeVoice.bindHold. */
+.mic { touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none; }
+/* Between release and the text arriving: the recording is being transcribed. */
+.mic.transcribing { animation: mic-transcribing 1.1s ease-in-out infinite; }
+@keyframes mic-transcribing { 50% { box-shadow: 0 0 0 4px color-mix(in srgb, var(--core) 18%, transparent); } }
+@media (prefers-reduced-motion: reduce) {
+  .mic.transcribing { animation: none; box-shadow: 0 0 0 4px color-mix(in srgb, var(--core) 18%, transparent); }
+}
+.voice-state.transcribing { color: var(--core); }
+/* Which speech path the microphone is using, always visible: the browser's
+ * recogniser and FORGE's own transcription fail in different places. */
+.voice-path { font-size: 11px; color: var(--ink-dim); }
 
 /* Send lights up only when there is something to send. `:placeholder-shown` does
  * the work, so there is no script and no class that can fall out of step with

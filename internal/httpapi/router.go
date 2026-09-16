@@ -283,6 +283,12 @@ func NewRouter(d Deps) http.Handler {
 	converse := NewConverseHandlers(d)
 	mux.Handle("POST /v1/converse", authed(converse.Converse))
 	mux.Handle("POST /v1/speech", authed(converse.Speak))
+	// Push-to-talk's speech to text: the page records, this transcribes. Behind
+	// the session like the two routes above, and like them NOT rate limited by
+	// address — ClientIP reads the connection, so behind the ingress every person
+	// arrives from one address and a per-IP ceiling would be a single ceiling for
+	// the whole deployment. The body is bounded in the handler. See transcribe.go.
+	mux.Handle("POST /v1/transcribe", authed(converse.Transcribe))
 	mux.HandleFunc("GET /v1/meta/models", converse.Models)
 
 	// --- browser landing pages for emailed links ---

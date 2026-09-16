@@ -208,7 +208,9 @@ const searchRowsHarness = `
   const hits = studio.findOccurrences(input.query, 50);
   const html = made.searchRows(hits);
   const rows = html.split('<div class="tnode"').slice(1).map((r) => ({
-    path: (r.match(/data-path="([^"]*)"/) || [])[1], text: visible('<x' + r) }));
+    path: (r.match(/data-path="([^"]*)"/) || [])[1],
+    name: visible((r.match(/<span class="nm"[^>]*>([\s\S]*?)<\/span>/) || [])[1] || ''),
+    text: visible('<x' + r) }));
   process.stdout.write(JSON.stringify({ found: hits.found, total: hits.total, rows: rows }));
 `
 
@@ -238,20 +240,36 @@ func TestWorkbenchSearchRowsSayWhereEachOccurrenceIs(t *testing.T) {
 	var got struct {
 		Total int
 		Found []struct{ ID, Label string }
-		Rows  []struct{ Path, Text string }
+		Rows  []struct{ Path, Name, Text string }
 	}
 	if err := json.Unmarshal(out, &got); err != nil {
 		t.Fatalf("unreadable harness output: %s (%v)", out, err)
 	}
-	labels := map[string]int{}
+	// ‼️ Counted by PATH SEGMENT, not by the whole label.
+	//
+	// This fence was written when a tree copy was named "Rivet 1" outright, so several
+	// occurrences really did read alike and `labels["Rivet 1"]` counted them. main's
+	// PR #70 then named every tree part by its occurrence path — these are
+	// "Seam 1 / Rivet 1 / rivet", "Seam 2 / Rivet 1 / rivet", …
+	// (docs/bugfix/2026-09-14-tree-copies-shared-display-names.md) — so no two labels
+	// are equal any more and that count was 0 after the merge.
+	//
+	// What the fence is FOR is unchanged and still checked below: the row says WHERE
+	// the occurrence is, and no two rows read alike. The precondition it needs is that
+	// the search reaches many occurrences that share a name somewhere in their path,
+	// which is what the segment count holds. Under the old naming this counted the
+	// same occurrences, so the fence has not been loosened — only re-expressed.
+	segments := map[string]int{}
 	for _, f := range got.Found {
-		labels[f.Label]++
+		for _, seg := range strings.Split(f.Label, " / ") {
+			segments[seg]++
+		}
 	}
 	// Fifty rows reach about five seams (each has Rivet 1 and Rivet 10–19), so several
-	// rows share a name and only where they are tells them apart.
-	if len(got.Rows) != len(got.Found) || len(got.Found) != 50 || got.Total < 12*11 || labels["Rivet 1"] < 4 {
-		t.Fatalf("the search for Rivet 1 found %d of %d (rows %d, %d named Rivet 1); the fixture no longer has seams of the same names",
-			len(got.Found), got.Total, len(got.Rows), labels["Rivet 1"])
+	// rows carry the same rivet name and only which seam it is tells them apart.
+	if len(got.Rows) != len(got.Found) || len(got.Found) != 50 || got.Total < 12*11 || segments["Rivet 1"] < 4 {
+		t.Fatalf("the search for Rivet 1 found %d of %d (rows %d, %d placed at a \"Rivet 1\"); the fixture no longer has seams of the same names",
+			len(got.Found), got.Total, len(got.Rows), segments["Rivet 1"])
 	}
 	seen := map[string]string{}
 	for i, r := range got.Rows {
@@ -260,6 +278,17 @@ func TestWorkbenchSearchRowsSayWhereEachOccurrenceIs(t *testing.T) {
 		}
 		if !strings.Contains(r.Text, r.Path) {
 			t.Errorf("the row for %s reads %q, which does not say where it is", r.Path, r.Text)
+		}
+		// The name column says WHAT the occurrence is; the path column says WHERE. The
+		// row's whole text is unique either way once the path is in it, so these two
+		// assertions — not the seen[r.Text] check below — are what hold the division.
+		// geometry.Part.Name is the whole occurrence path since #70 ("Seam 1 / Rivet 1 /
+		// rivet"); a row that took its name from it would say where twice and what never.
+		if r.Name != got.Found[i].Label {
+			t.Errorf("the row for %s is named %q in its name column; the search called it %q", r.Path, r.Name, got.Found[i].Label)
+		}
+		if strings.Contains(r.Name, "Seam") || strings.Contains(r.Name, geometry.NameSeparator) {
+			t.Errorf("the row for %s is named %q, which carries the path above it; the path column says where it is", r.Path, r.Name)
 		}
 		if other, dup := seen[r.Text]; dup {
 			t.Errorf("the rows for %s and %s both read %q", other, r.Path, r.Text)

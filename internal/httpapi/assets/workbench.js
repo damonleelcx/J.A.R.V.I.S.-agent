@@ -975,6 +975,51 @@
     });
     html += '</table>';
 
+    /* How the TREES differ (Phase 7, stage E2), absent for flat documents. A
+     * definition is one row with how many times each variant places it, never a
+     * row per placed part: a wheel placed four times that changed is one change,
+     * and a design of a million parts is still a table a person can read. */
+    var st = cmp.structure;
+    if (st) {
+      var absentCell = '<td class="absent">not in this variant</td>';
+      html += '<table class="cmp-table"><tr><th>Structure</th>' +
+        variants.map(function (v, i) { return '<th>' + (i + 1) + '</th>'; }).join('') + '</tr>';
+      html += '<tr class="' + (st.root.differs ? 'differs' : '') + '"><td>root</td>' +
+        st.root.values.map(function (v) { return '<td>' + esc(v) + '</td>'; }).join('') + '</tr>';
+      (st.definitions || []).forEach(function (d) {
+        html += '<tr class="' + (d.differs ? 'differs' : '') + '"><td>' + esc(d.label) +
+          '<span class="why">definition</span>' +
+          (d.changed.length ? '<ul class="diffs"><li>changed: ' + esc(d.changed.join(', ')) + '</li></ul>' : '') +
+          '</td>' +
+          d.occurrences.map(function (n, i) {
+            return d.missing_from.indexOf(i + 1) >= 0 ? absentCell : '<td>placed ' + n + '×</td>';
+          }).join('') + '</tr>';
+      });
+      (st.assemblies || []).forEach(function (a) {
+        /* Only the members that differ: an assembly of two hundred unchanged
+         * children is otherwise two hundred lines saying so. */
+        var lines = a.changed.length ? ['changed: ' + a.changed.join(', ')] : [];
+        [['child', a.children], ['interface', a.interfaces], ['feature', a.features]].forEach(function (kind) {
+          (kind[1] || []).forEach(function (m) {
+            if (!m.differs) return;
+            var bits = [];
+            if (m.missing_from.length) bits.push('not in column ' + m.missing_from.join(', '));
+            if (m.changed.length) bits.push('changed: ' + m.changed.join(', '));
+            lines.push(kind[0] + ' ' + m.id + ' — ' + bits.join('; '));
+          });
+        });
+        html += '<tr class="' + (a.differs ? 'differs' : '') + '"><td>' + esc(a.label) +
+          '<span class="why">assembly</span>' +
+          (lines.length ? '<ul class="diffs">' + lines.map(function (l) {
+            return '<li>' + esc(l) + '</li>';
+          }).join('') + '</ul>' : '') + '</td>' +
+          variants.map(function (v, i) {
+            return a.missing_from.indexOf(i + 1) >= 0 ? absentCell : '<td>present</td>';
+          }).join('') + '</tr>';
+      });
+      html += '</table>';
+    }
+
     if (cmp.match_notes && cmp.match_notes.length) {
       html += '<div class="cmp-uncompared matched"><b>Matched by name, not by identity</b><ul>' +
         cmp.match_notes.map(function (n) { return '<li>' + esc(n) + '</li>'; }).join('') +
@@ -1051,17 +1096,20 @@
   }
 
   var STATES = {
-    idle:      'Ready',
-    listening: 'Listening…',
-    thinking:  'Thinking…',
-    speaking:  'Speaking…'
+    idle:         'Ready',
+    listening:    'Listening…',
+    transcribing: 'Transcribing…',
+    thinking:     'Thinking…',
+    speaking:     'Speaking…'
   };
 
   function setStatus(s) {
     var el = $('statusword');
     el.textContent = STATES[s] || STATES.idle;
     el.className = 'voice-state ' + s;
-    if (orb) orb.setState(s === 'idle' ? 'idle' : s);
+    /* The orb draws the states it was designed for. Transcribing is FORGE
+     * working on what was said, which is what its thinking state shows. */
+    if (orb) orb.setState(s === 'idle' ? 'idle' : s === 'transcribing' ? 'thinking' : s);
     setPresence();
   }
 
@@ -1571,6 +1619,13 @@
    * run searched a car and read fifty rows of "Rivet 1", "Rivet 10", … with one per seam
    * and nothing to tell the seams apart; a tree row does not need it, because its place
    * in the tree says where it is, but a search row has no place.
+   *
+   * ‼️ h.label is the occurrence's OWN name ("Rivet 1"), not its display path: #70 made
+   * geometry.Part.Name the whole path ("Seam 1 / Rivet 1 / rivet"), which is right where
+   * a name travels alone but would make these rows say where twice — once in prose and
+   * once as ids — and what never. findOccurrences answers with spec.occurrenceName; the
+   * name column matches the tree's label for the same row, and the path column stays the
+   * ids that Isolate and selection use.
    * Fence: TestWorkbenchSearchRowsSayWhereEachOccurrenceIs. */
   function searchRows(hits) {
     return (hits.total ? '' : '<div class="empty">Nothing drawn has that in its name or path.</div>') +
@@ -2631,7 +2686,11 @@
        * industry sent with a project id — the industry belongs to the project,
        * and changing it would change the rules its earlier work was done under —
        * so sending one here would turn every follow-up goal into an error. */
-      industry: state.projectID ? '' : (state.industry || '')
+      industry: state.projectID ? '' : (state.industry || ''),
+      /* Planned as a BUILD: one task per step, each built by forge-worker with
+       * the CAD kernel and kept as a version, so a long build survives a closed
+       * tab or a deploy. Still only planned — "Start it" is still the act. */
+      build: !!state.planAsBuild
     }).then(function (b) {
       state.goal = b.goal;
       state.planTasks = b.tasks || [];
@@ -2743,11 +2802,17 @@
      * planned and running distinct, and the difference between them is invisible
      * unless the interface states it. */
     if (phase === 'proposed' || phase === 'failed') {
+      html += '<label class="foot"><input type="checkbox" id="plan-build"' +
+              (state.planAsBuild ? ' checked' : '') + '> Build it as a model, one step per ' +
+              'task, each kept as a version</label>';
       html += '<div class="foot">Nothing has been created. Starting this writes a draft ' +
               'goal and plans it — it does not run it.</div>';
     } else if (phase === 'planned') {
       html += '<div class="foot">The goal is a <b>draft</b>. These tasks exist and no worker ' +
-              'can claim them until you start it.</div>';
+              'can claim them until you start it.' +
+              (state.planAsBuild ? ' Each is one step of the build; a worker with the CAD ' +
+               'kernel builds it and keeps the model as a version before the next begins.' : '') +
+              '</div>';
     } else if (phase === 'active') {
       html += '<div class="foot">' + esc(state.startMessage || 'Started.') + '</div>';
     }
@@ -2761,6 +2826,10 @@
     setPresence();
     var plan = document.getElementById('do-plan');
     if (plan) plan.addEventListener('click', startThis);
+    var asBuild = document.getElementById('plan-build');
+    if (asBuild) asBuild.addEventListener('change', function () {
+      state.planAsBuild = asBuild.checked;
+    });
     var start = document.getElementById('do-start');
     if (start) start.addEventListener('click', startIt);
   }
@@ -2779,6 +2848,46 @@
     if (state.lastLatency != null) bits.push('full reply ' + state.lastLatency + 'ms');
     if (state.lastBargeIn != null) bits.push('barge-in ' + state.lastBargeIn + 'ms');
     $('meta').textContent = bits.join(' · ');
+  }
+
+  /* #voice-note is where every voice failure is said, and the only place.
+   *
+   * ‼️ Before 2026-09-15 several failures said nothing at all — `no-speech`,
+   * the recogniser's swallowed start error, a transcript dropped during a turn
+   * — and the one that did speak ('network') gave the bare code. A person
+   * holding the button cannot read a console; if it is not here, it did not
+   * happen as far as they can tell. An empty message hides the note. */
+  function voiceNote(msg) {
+    var el = $('voice-note');
+    if (!el) return;
+    el.textContent = msg || '';
+    el.classList.toggle('hidden', !msg);
+  }
+
+  /* Which way the microphone hears, said on the page — and the mic disabled,
+   * with the reason, when no way can work. Re-run on every voice state change,
+   * because a path can be lost mid-session: the recogniser reporting it cannot
+   * reach Google, or the server answering that it has no transcriber. */
+  var lastVoicePath = null;
+  function renderVoicePath() {
+    if (!voice) return;
+    var path = voice.inputPath();
+    var mic = $('mic');
+    $('voice-path').textContent = voice.describePath();
+    mic.disabled = !!state.signedOut || path === 'none';
+    mic.title = path === 'none' ? voice.whyUnavailable() : 'Hold to talk (or hold the space bar)';
+
+    var handsfree = $('handsfree');
+    var handsFreeOK = voice.handsFreeAvailable();
+    handsfree.disabled = !handsFreeOK;
+    handsfree.parentNode.title = handsFreeOK ? '' : voice.whyNoHandsFree();
+    if (!handsFreeOK && handsfree.checked) {
+      handsfree.checked = false;
+      voice.setMode('push');
+    }
+
+    if (path === 'none' && lastVoicePath !== 'none' && !state.signedOut) voiceNote(voice.whyUnavailable());
+    lastVoicePath = path;
   }
 
   function initVoice() {
@@ -2800,12 +2909,29 @@
       e.preventDefault();
       var input = $('say');
       var text = input.value.trim();
-      if (text) { input.value = ''; send(text); }
+      if (!text) return;
+      /* ‼️ Checked BEFORE the box is cleared. send() returns early while a turn
+       * is in flight, so clearing first erased a typed message and sent nothing
+       * — the typed twin of the dropped transcript in
+       * docs/bugfix/2026-09-15-the-microphone-sent-nothing.md. */
+      if (state.busy) {
+        voiceNote('FORGE is still answering. Your message is still in the box; press send again when she has finished.');
+        return;
+      }
+      input.value = '';
+      send(text);
     });
 
     voice = new ForgeVoice.Voice({
       onPartial: function (text) { showPartial(text); },
-      onTranscript: function (text) { clearPartial(); send(text); },
+      /* Never straight to send(): see deliverSpoken in voice.js for where a
+       * transcript goes while a turn is in flight, and why. */
+      onTranscript: function (text) {
+        clearPartial();
+        if (ForgeVoice.deliverSpoken(text, { busy: state.busy, input: $('say'), send: send, note: voiceNote }) === 'sent') {
+          voiceNote('');
+        }
+      },
       // A real measurement, and only while listening. See orb.js for why the
       // orb refuses to draw this shape at any other time.
       onLevel: function (v) { if (orb) orb.setLevel(v); },
@@ -2825,55 +2951,51 @@
         if (s.speaking && state.turnAudio) state.turnAudio(performance.now());
         $('mic').setAttribute('aria-pressed', String(s.listening));
         $('mic').classList.toggle('listening', s.listening);
+        $('mic').classList.toggle('transcribing', !!s.transcribing);
         if (s.speaking) setStatus('speaking');
         else if (s.listening) setStatus('listening');
+        else if (s.transcribing) setStatus('transcribing');
         else if (state.busy) setStatus('thinking');
         else setStatus('idle');
+        renderVoicePath();
       },
-      onError: function (msg) {
-        $('voice-note').textContent = msg;
-        $('voice-note').classList.remove('hidden');
-      }
+      onError: function (msg) { voiceNote(msg); }
     });
 
-    var mic = $('mic');
-    if (!voice.available) {
-      mic.disabled = true;
-      $('voice-note').textContent = voice.whyUnavailable();
-      $('voice-note').classList.remove('hidden');
-    }
+    renderVoicePath();
 
     /* Push-to-talk is HELD, not toggled. A hold cannot be left on by accident,
      * which is the difference between a microphone the user controls and one
-     * that quietly stays open. */
-    ['mousedown', 'touchstart'].forEach(function (ev) {
-      mic.addEventListener(ev, function (e) { e.preventDefault(); voice.startListening(); });
-    });
-    ['mouseup', 'mouseleave', 'touchend'].forEach(function (ev) {
-      mic.addEventListener(ev, function () {
-        if (voice.mode === 'push') voice.stopListening();
-      });
-    });
+     * that quietly stays open.
+     *
+     * ‼️ Through ForgeVoice.bindHold, not mousedown/mouseleave. The hold used to
+     * end on mouseleave, so the cursor drifting off a 36px circle ended it
+     * mid-sentence, and a click did nothing visible. bindHold captures the
+     * pointer and answers a click with "hold to talk". See voice.js and
+     * docs/bugfix/2026-09-15-the-microphone-sent-nothing.md. */
+    var hold = ForgeVoice.bindHold($('mic'), voice, { note: voiceNote });
 
     // Space bar as push-to-talk, so the interface is usable without a mouse
-    // (PRD AUD-06).
-    var spaceHeld = false;
+    // (PRD AUD-06). The same hold as the button, so the two cannot overlap.
     document.addEventListener('keydown', function (e) {
-      if (e.code === 'Space' && !spaceHeld && document.activeElement !== $('say')) {
-        e.preventDefault(); spaceHeld = true; voice.startListening();
+      if (e.code === 'Space' && document.activeElement !== $('say') && !$('mic').disabled) {
+        e.preventDefault();
+        if (!e.repeat) hold.press('space');
       }
       // Escape always stops FORGE talking — the deterministic silence PRD
       // AUD-07 asks for, reachable without hunting for a button.
       if (e.key === 'Escape') voice.stopSpeaking();
     });
     document.addEventListener('keyup', function (e) {
-      if (e.code === 'Space' && spaceHeld) {
-        spaceHeld = false;
-        if (voice.mode === 'push') voice.stopListening();
-      }
+      if (e.code === 'Space') hold.release('space');
     });
 
     $('handsfree').addEventListener('change', function (e) {
+      if (e.target.checked && !voice.handsFreeAvailable()) {
+        e.target.checked = false;
+        voiceNote(voice.whyNoHandsFree());
+        return;
+      }
       voice.setMode(e.target.checked ? 'hands-free' : 'push');
       if (e.target.checked) voice.startListening(); else voice.stopListening();
     });
@@ -3106,6 +3228,10 @@
     renderParts();
 
     fetch('/v1/meta/models').then(function (r) { return r.json(); }).then(function (m) {
+      /* First, so a deployment with no model at all still tells the microphone
+       * it has no transcriber. Until this arrives the voice layer assumes the
+       * server transcribes: the upload names its own failure. */
+      if (voice) voice.setServerTranscription(m.transcription && m.transcription.server ? m.transcription : null);
       if (!m.configured) {
         $('models').textContent = 'no model configured';
         return;
@@ -3141,6 +3267,8 @@
       addTurn('forge', 'You are not signed in. Sign in from the console — it will bring you back — ' +
         'I cannot hold a conversation without knowing whose workspace this is.');
       $('say').disabled = true;
+      // Held on state so a later voice state change cannot re-enable the mic.
+      state.signedOut = true;
       $('mic').disabled = true;
     });
   }
