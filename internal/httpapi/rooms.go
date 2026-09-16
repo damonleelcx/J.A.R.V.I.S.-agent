@@ -93,6 +93,11 @@ func NewRoomHandlers(d Deps) *RoomHandlers {
 		// supported choice rather than a broken one. Passed as nil when there is
 		// no model, and the media plane then has no transcription pipeline at
 		// all rather than one that fails on every segment.
+		//
+		// The same client, and so the same endpoint, as the workbench's
+		// /v1/transcribe: Transcribe goes to FORGE_LLM_TRANSCRIBER_BASE_URL with its
+		// own key when that is set. A room and the microphone cannot hear through
+		// two different providers.
 		var tr media.Transcriber
 		if oc, ok := d.LLM.(*llm.OpenAICompatible); ok && oc != nil {
 			tr = oc

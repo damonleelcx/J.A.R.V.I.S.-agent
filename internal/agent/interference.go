@@ -75,6 +75,14 @@ func (c *Conversation) repairIfPartsOverlap(ctx context.Context, reply *Reply, s
 		return
 	}
 
+	// ‼️ A buried part in a tree is named by where it IS ("wheel/lug-nut-3"), and that
+	// path is not something a repair can edit: the copy comes from a child, its
+	// pattern and a definition. The 2026-09-15 live car buried every lug nut in its
+	// hub, rim and tyre and the repair was shown only the paths. So each finding says
+	// which child places it and, for a pattern copy, which pattern about which axis.
+	// Fence: TestInterference_ARepairIsToldWhichChildPlacesABuriedCopy.
+	problems = placedByNotes(reply.Prototype, found, problems)
+
 	if fixed := c.repairGeometry(ctx, reply.Prototype, problems); fixed != nil {
 		// Re-built, not re-read: the question "is it still inside" can only be
 		// answered by the kernel, and a repair that claimed success against the
@@ -136,6 +144,53 @@ func coverageNote(sheet *builtSheet) string {
 			"shared material: %s%s.", n, strings.Join(named, "; "), more))
 	}
 	return strings.Join(notes, " ")
+}
+
+// placedByNotes adds to each buried finding in a tree which child places the part,
+// so the repair edits the design that put it there. A finding about top-level parts
+// is returned unchanged.
+func placedByNotes(doc *Prototype, found []geometry.Interference, problems []geometry.Problem) []geometry.Problem {
+	if doc == nil || doc.Root == "" {
+		return problems
+	}
+	other := map[string]string{}
+	for _, f := range found {
+		other[f.A+"\x00"+f.Describe()] = f.B
+	}
+	out := make([]geometry.Problem, len(problems))
+	for i, p := range problems {
+		out[i] = p
+		var where []string
+		for _, id := range []string{p.Name, other[p.Name+"\x00"+p.Detail]} {
+			if s := placedBySentence(*doc, id); s != "" {
+				where = append(where, s)
+			}
+		}
+		if len(where) > 0 {
+			out[i].Detail = p.Detail + " (" + strings.Join(where, "; ") + ")"
+		}
+	}
+	return out
+}
+
+// placedBySentence says what places one flattened part, or "".
+func placedBySentence(doc geometry.Document, id string) string {
+	at, ok := doc.PlacedBy(id)
+	if !ok {
+		return ""
+	}
+	if at.Copy > 0 && at.Pattern != nil {
+		kind := strings.ToLower(strings.TrimSpace(at.Pattern.Kind))
+		how := fmt.Sprintf("a %s pattern", kind)
+		if kind == "polar" {
+			how = fmt.Sprintf("a polar pattern about %q, which turns every copy about that axis through the "+
+				"origin of the frame the child is measured in", at.Pattern.About)
+		}
+		return fmt.Sprintf("%s is copy %d of child %q of assembly %q, placed by %s: move that child or change "+
+			"its pattern or the definition %q, not the copy", id, at.Copy, at.Child, at.Assembly, how, at.Ref)
+	}
+	return fmt.Sprintf("%s is placed by child %q of assembly %q: move that child or change %q, not the placed path",
+		id, at.Child, at.Assembly, at.Ref)
 }
 
 // list is the reader's sentence for a set of findings.
