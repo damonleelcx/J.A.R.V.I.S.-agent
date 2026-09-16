@@ -143,6 +143,7 @@ FILES=(
   internal/domain/geometry/export.go
   internal/domain/geometry/service.go
   internal/platform/config/config.go
+  internal/httpapi/assets/workbench.js
   internal/agent/car_tree_measure_test.go
   internal/domain/geometry/compare_structure.go
   internal/httpapi/geometry.go
@@ -555,8 +556,9 @@ echo "A kernel mesh is already placed"
 # Added 2026-09-13. The sidecar tessellates each solid after placing it; the browser
 # placed and turned the mesh a second time, so every kernel-built part away from the
 # origin was drawn somewhere else. docs/bugfix/2026-09-13-kernel-built-parts-were-placed-twice.md
+# Re-anchored 2026-09-15 (Phase 6, stage W1): the draw places through drawBatches.
 drill "the browser places a kernel mesh a second time" internal/httpapi/assets/forge3d.js \
-  "s = s.replace('    if (part.fromKernel) return translation(d);\n', '', 1)" \
+  "s = s.replace('        matrix = inst ? Array.prototype.slice.call(inst.matrix) : IDENTITY.slice();\n', '        matrix = inst ? Array.prototype.slice.call(inst.matrix) : placementMatrix(part);\n', 1)" \
   ./internal/httpapi 'TestRendererDoesNotPlaceAKernelMeshTwice'
 
 echo
@@ -948,7 +950,7 @@ drill "the browser's count forgets a pattern's copies" internal/httpapi/assets/f
   ./internal/httpapi 'TestRendererFlattensATreeLikeTheExporter'
 
 drill "the browser refuses in other words than the exporter" internal/httpapi/assets/forge3d.js \
-  "s = s.replace(\"'nothing was drawn or built.'\", \"'nothing was drawn.'\", 1)" \
+  "s = s.replace(\"'nothing was drawn.'\", \"'nothing was shown.'\", 1)" \
   ./internal/httpapi 'TestRendererFlattensATreeLikeTheExporter'
 
 echo
@@ -2380,6 +2382,59 @@ drill "verify.sh checks the blob round trip in forged only" deploy/verify.sh \
 drill "forgectl blob check does not compare the bytes it read back" cmd/forgectl/blob.go \
   's = s.replace("if !bytes.Equal(got, blobCheckPayload) {", "if !bytes.Equal(got, got) {", 1)' \
   ./cmd/forgectl 'TestBlobCheck_AStoreThatLiesIsNeverReportedOK'
+
+# Added 2026-09-15 (Phase 6, stages W1–W3). Every copy of a shape is one instance of one
+# uploaded mesh, its matrix, colour and highlight read by the GPU at a stride and offset
+# from a buffer written per frame; what is out of view is not sent and what is tiny is
+# drawn as its box; a click is resolved back to the occurrence path through the matrix
+# the copy was drawn with, and a tree row reaches exactly what Go places under it. The
+# fences read what was SENT through scripts/webgl-stub.js, over WebGL2, WebGL1 with
+# ANGLE_instanced_arrays and WebGL1 without it.
+drill "an instance's colour is read one float out" internal/httpapi/assets/forge3d.js \
+  's = s.replace("false, stride, off + 64);", "false, stride, off + 68);", 1)' \
+  ./internal/httpapi 'TestRendererUploadsTheInstancesTheExporterPlaces'
+
+drill "a mirrored primitive is drawn unmirrored" internal/httpapi/assets/forge3d.js \
+  's = s.replace("(spec.mirrored ? -1 : 1)", "1", 1)' \
+  ./internal/httpapi 'TestRendererUploadsTheInstancesTheExporterPlaces'
+
+drill "instance attributes are left on for the grid" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    this._resetInstanceAttributes();\n", "", 1)' \
+  ./internal/httpapi 'TestRendererUploadsTheInstancesTheExporterPlaces'
+
+drill "the mesh reply's copies are drawn as their primitives" internal/httpapi/assets/forge3d.js \
+  's = s.replace("var inst = instanceOf[part.id];", "var inst = null;", 1)' \
+  ./internal/httpapi 'TestRendererDrawsTheMeshReplysInstancesByTheirMatrices'
+
+drill "the workbench stops handing the mesh reply to the studio" internal/httpapi/assets/workbench.js \
+  's = s.replace("studio.load(proto, b);", "studio.load(proto);", 1)' \
+  ./internal/httpapi 'TestWorkbenchDrawsTheMeshReplyInstanced'
+
+drill "nothing out of view is culled" internal/httpapi/assets/forge3d.js \
+  's = s.replace("if (!sphereInFrustum(f.planes, cx, cy, cz, r)) {", "if (false) {", 1)' \
+  ./internal/httpapi 'TestRendererPicksAnInstanceBackToItsOccurrencePath'
+
+drill "a far copy is never drawn as its box" internal/httpapi/assets/forge3d.js \
+  's = s.replace("var proxy = lod > 0 &&", "var proxy = false &&", 1)' \
+  ./internal/httpapi 'TestRendererPicksAnInstanceBackToItsOccurrencePath'
+
+drill "a click names the first copy of whatever it hit" internal/httpapi/assets/forge3d.js \
+  's = s.replace("best = { id: b.ids[i],", "best = { id: b.ids[0],", 1)' \
+  ./internal/httpapi 'TestRendererPicksAnInstanceBackToItsOccurrencePath'
+
+# chr(92): the anchor is a regular expression's escaped backslash, and a backslash
+# written here passes through bash and Python before it reaches the file.
+drill "a tree row misses the copies a patterned ancestor made" internal/httpapi/assets/forge3d.js \
+  's = s.replace("\x27(-" + chr(92) * 2 + "d+)*\x27", "\x27\x27", 1)' \
+  ./internal/httpapi 'TestRendererSelectsAndIsolatesTheOccurrencesUnderATreeNode'
+
+drill "the browser still stops drawing at the kernel's 4096" internal/httpapi/assets/forge3d.js \
+  's = s.replace("var MAX_VIEWPORT_PARTS = 100000;", "var MAX_VIEWPORT_PARTS = 4096;", 1)' \
+  ./internal/httpapi 'TestRendererFlattensATreeLikeTheExporter'
+
+drill "the viewport's ceiling is the kernel's" internal/domain/geometry/limits.go \
+  's = s.replace("const maxViewportParts = DefaultMaxOccurrences", "const maxViewportParts = maxDrawnParts", 1)' \
+  ./internal/domain/geometry 'TestLimits_TheViewportDrawsWhatStorageAcceptsAndNoMore'
 
 if [ "$MODE" = "list" ]; then
   exit 0

@@ -1232,30 +1232,25 @@
     fetch('/v1/geometry/' + encodeURIComponent(versionID) + '/mesh')
       .then(function (r) { return r.ok ? r.json() : null; })
       .then(function (b) {
-        /* Placed copies arrive as a definition and a matrix (Phase 4, stage K4);
-         * expanded here to the placed surfaces the renderer draws. */
-        var meshes = b ? window.Forge3D.expandMeshInstances(b) : [];
-        if (!meshes.length) return;
         /* Still the same prototype on screen? A slow tessellation must not
          * repaint a model the person has already moved on from. */
-        if (state.prototype !== proto) return;
+        if (!b || state.prototype !== proto) return;
 
-        var byID = {};
-        meshes.forEach(function (m) { byID[m.id] = m; });
-        /* Joined by the DRAWN id, onto the part it was drawn from. The kernel
-         * answers "spoke-3", which no authored part is called; joining against the
-         * authored list left every copy of a repeat as its primitive.
+        /* Placed copies arrive as a definition and a matrix (Phase 4, stage K4), and
+         * since Phase 6, stage W1 they are DRAWN that way: the reply goes to the studio
+         * whole, each definition is uploaded once and every copy drawn by its matrix
+         * in one instanced call. Until W1 they were expanded here into placed
+         * triangles and written onto the document's parts, which put 30,000 copies of
+         * a rivet's vertices in memory to draw one rivet 30,000 times.
+         *
+         * Joined by the DRAWN id: the kernel answers "spoke-3", which no authored part
+         * is called. Nothing on screen answered for → the primitives stay, and nothing
+         * is reloaded.
          * docs/bugfix/2026-09-13-repeat-copies-were-invisible-to-most-readers.md */
-        var drawn = 0;
-        window.Forge3D.partsToDraw(proto).forEach(function (d) {
-          var m = byID[d.spec.id];
-          // d.source is the part, copy's part, or definition this was drawn from
-          // (partsToDraw decides, once), so a tree placement finds its mesh too.
-          if (!m || !d.source || d.source === d.spec) return;
-          d.source.meshes = d.source.meshes || {};
-          d.source.meshes[d.spec.id] = { vertices: m.vertices, triangles: m.triangles };
-          drawn++;
-        });
+        var answered = {};
+        (b.parts || []).forEach(function (m) { answered[m.id] = true; });
+        (b.instances || []).forEach(function (m) { answered[m.id] = true; });
+        var drawn = studio.occurrenceIds().filter(function (id) { return answered[id]; }).length;
         if (!drawn) return;
 
         state.builtSolid = {
@@ -1267,7 +1262,7 @@
            * looks like a rendering choice until something names the eighth. */
           notes: (b.inferred || []).concat(b.skipped || [], b.feature_failures || [])
         };
-        studio.load(proto);
+        studio.load(proto, b);
         studio.setOverlays(proto.overlays || [], state.measured);
         renderProvenance();
       })
@@ -1279,6 +1274,8 @@
     state.measured = measured || [];
     state.selectedPart = null;
     state.builtSolid = null;
+    tree.open = {}; tree.query = ''; tree.isolated = '';
+    if ($('tree-search')) $('tree-search').value = '';
     studio.load(proto);
     /* The primitives are drawn FIRST and the built solid replaces them.
      *
@@ -1297,6 +1294,7 @@
     renderStates(proto.states || []);
     setPlace(true);
     renderParts();
+    renderTree();
     renderProvenance();
   }
 
@@ -1523,6 +1521,107 @@
       });
     });
   }
+
+  /* ---- The assembly tree (Phase 6, stage W2) ------------------------------------
+   *
+   * # The problem this solves
+   *
+   * The Parts panel lists a document's top-level parts, and a design written as a
+   * tree has none: a car of 30,000 occurrences showed an empty panel beside a viewport
+   * full of parts nobody could name, select or look at on their own.
+   *
+   * # Lazy, by construction
+   *
+   * A row's children are listed when somebody opens it (Forge3D.treeChildren), never
+   * before. A car's tree is a few hundred rows written once; its occurrences are tens
+   * of thousands, and a list of those is not something a person reads. The search,
+   * which IS over occurrences, shows the first fifty and says how many more there are.
+   *
+   * Selecting a row lights everything under it and Isolate draws only that. Both are a
+   * redraw — the batches on the GPU stay — and both reach exactly the occurrences Go
+   * places under the path (TestRendererSelectsAndIsolatesTheOccurrencesUnderATreeNode).
+   *
+   * ‼️ Lazy LISTING, not lazy loading: every occurrence's geometry is on the GPU from
+   * the first draw. Fetching a subtree's meshes only when it is opened needs a mesh
+   * endpoint that answers for a subtree, and there is none. */
+  var tree = { open: {}, query: '', isolated: '' };
+
+  function renderTree() {
+    var head = $('tree-head'), tools = $('tree-tools'), el = $('tree'), all = $('tree-showall');
+    if (!head || !tools || !el || !all) return;
+    var proto = state.prototype;
+    var has = !!(proto && proto.root && window.Forge3D && window.Forge3D.treeChildren);
+    head.classList.toggle('hidden', !has);
+    tools.classList.toggle('hidden', !has);
+    all.classList.toggle('hidden', !tree.isolated);
+    if (!has) { el.innerHTML = ''; return; }
+    if (tree.query) {
+      var hits = studio.findOccurrences(tree.query, 50);
+      el.innerHTML = (hits.total ? '' : '<div class="empty">Nothing drawn has that in its name or path.</div>') +
+        hits.found.map(function (h) { return treeRow(h.id, h.label, 0, false, false, null); }).join('') +
+        (hits.total > hits.found.length
+          ? '<div class="dim tree-more">' + (hits.total - hits.found.length) + ' more — narrow the search</div>'
+          : '');
+      return;
+    }
+    el.innerHTML = treeRows(proto, proto.root, '', 0);
+  }
+
+  /* The rows under one assembly, and under every row somebody has opened. A patterned
+   * child is one row whose copies are listed when it is opened, named as the exporter
+   * names them ("Bolt 3"). */
+  function treeRows(proto, ref, path, depth) {
+    return window.Forge3D.treeChildren(proto, ref, path).map(function (row) {
+      var open = !!tree.open[row.path];
+      var html = treeRow(row.path, row.label, depth, !!(row.slots || row.assembly), open,
+                         row.slots ? '×' + row.slots.length : null);
+      if (!open) return html;
+      if (!row.slots) return html + treeRows(proto, row.ref, row.path, depth + 1);
+      return html + row.slots.map(function (slot, i) {
+        var slotOpen = !!tree.open[slot];
+        return treeRow(slot, row.label + ' ' + (i + 1), depth + 1, row.assembly, slotOpen, null) +
+          (row.assembly && slotOpen ? treeRows(proto, row.ref, slot, depth + 2) : '');
+      }).join('');
+    }).join('');
+  }
+
+  function treeRow(path, label, depth, expandable, open, count) {
+    return '<div class="tnode" role="treeitem" data-path="' + esc(path) + '"' +
+      (expandable ? ' aria-expanded="' + open + '"' : '') +
+      ' aria-selected="' + (state.selectedPart === path) + '" style="padding-left:' + (depth * 12 + 2) + 'px">' +
+      (expandable
+        ? '<button type="button" class="tw" data-toggle="' + esc(path) + '" aria-label="' +
+          (open ? 'Close ' : 'Open ') + esc(label) + '">' + (open ? '▾' : '▸') + '</button>'
+        : '<span class="tw"></span>') +
+      '<span class="nm" data-select="' + esc(path) + '" title="' + esc(path) + '">' + esc(label) + '</span>' +
+      (count ? '<span class="dim">' + esc(count) + '</span>' : '') +
+      '<button type="button" class="ghost iso" data-isolate="' + esc(path) + '" aria-pressed="' +
+      (tree.isolated === path) + '">Isolate</button></div>';
+  }
+
+  function initTree() {
+    var el = $('tree'), search = $('tree-search'), all = $('tree-showall');
+    if (!el || !search || !all) return;
+    el.addEventListener('click', function (e) {
+      var t = e.target && e.target.closest ? e.target.closest('[data-toggle],[data-select],[data-isolate]') : null;
+      if (!t) return;
+      var path;
+      if ((path = t.getAttribute('data-toggle'))) {
+        tree.open[path] = !tree.open[path];
+      } else if ((path = t.getAttribute('data-select'))) {
+        state.selectedPart = state.selectedPart === path ? null : path;
+        studio.select(state.selectedPart ? window.Forge3D.occurrenceMatcher(state.selectedPart) : null);
+        renderParts();
+      } else if ((path = t.getAttribute('data-isolate'))) {
+        tree.isolated = tree.isolated === path ? '' : path;
+        studio.isolate(tree.isolated ? window.Forge3D.occurrenceMatcher(tree.isolated) : null);
+      }
+      renderTree();
+    });
+    search.addEventListener('input', function () { tree.query = search.value; renderTree(); });
+    all.addEventListener('click', function () { tree.isolated = ''; studio.isolate(null); renderTree(); });
+  }
+
 
   /* Dimensions, with every number carrying its unit (PRD WRK-05).
    *
@@ -2948,6 +3047,14 @@
     safely('orb', function () { orb = new ForgeOrb.Orb($('orb')); });
     studio = new Forge3D.Studio($('canvas'), {
       labels: $('dimlayer'),
+      /* A click on the model names the occurrence under it (Phase 6, stage W2), and
+       * selects it exactly as a row of the Parts panel or the tree would. */
+      onSelect: function (id) {
+        state.selectedPart = id;
+        studio.select(id);
+        renderParts();
+        renderTree();
+      },
       onError: function (msg) {
         // A renderer that cannot start is stated as a failure, in its own words,
         // rather than left to read as "nothing modelled yet".
@@ -2968,6 +3075,7 @@
     safely('attach', initAttach);
     safely('soul', initSoul);
     safely('compare', initCompare);
+    safely('tree', initTree);
     safely('stage', function () {
       window.ForgeStage.mount({ onPanel: function () { setPlace(); } });
     });
