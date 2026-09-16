@@ -187,6 +187,12 @@ type Build struct {
 	// geometry/interference.go and cad/sidecar.py.
 	Interferences          []geometry.Interference
 	InterferencesTruncated bool
+	// ShapeBuilds is how many distinct shapes the kernel built, and ScriptRuns how
+	// many scripts it ran: each distinct shape and each distinct script ONCE per build,
+	// however many occurrences place it (Phase 4, stage K1). Reported so "built once"
+	// is a count a test and a budget can read, not a claim.
+	ShapeBuilds int
+	ScriptRuns  int
 	// Mesh is the built solid's surface, one entry per surviving part, empty
 	// unless it was asked for.
 	//
@@ -250,6 +256,7 @@ type reply struct {
 	Bounds         [6]float64 `json:"bounds"`
 	Skipped        []string   `json:"skipped,omitempty"`
 	FeaturesFailed []string   `json:"features_failed,omitempty"`
+	ShapeBuilds    int        `json:"shape_builds"`
 
 	Interferences          []geometry.Interference `json:"interferences,omitempty"`
 	InterferencesTruncated bool                    `json:"interferences_truncated,omitempty"`
@@ -325,6 +332,16 @@ func (k *Kernel) BuildDocument(ctx context.Context, doc geometry.Document, unit 
 	// A script that will not run leaves its part out, with the reason, exactly
 	// like an outline that cannot be read: a part missing for a stated reason is
 	// something a reader can act on, and one that silently became a box is not.
+	// Phase 4, stage K1 (docs/plan-2026-09-13-millions-of-parts.md): a script is run
+	// ONCE per distinct source, however many copies of its part are placed. Each run
+	// is a Python process of seconds, and a repeated scripted part used to run once
+	// per copy. A failure is remembered too, so N copies do not fail N times.
+	type scriptOutcome struct {
+		step, detail string
+		failed       bool
+	}
+	scripts := map[string]scriptOutcome{}
+	scriptRuns := 0
 	for i := range solids {
 		if solids[i].Shape != "step" {
 			continue
@@ -338,14 +355,24 @@ func (k *Kernel) BuildDocument(ctx context.Context, doc geometry.Document, unit 
 			solids[i].Shape = ""
 			continue
 		}
-		res, err := k.RunScript(ctx, source, ScriptParameters(doc))
-		if err != nil {
+		outcome, ran := scripts[source]
+		if !ran {
+			res, err := k.RunScript(ctx, source, ScriptParameters(doc))
+			scriptRuns++
+			if err != nil {
+				outcome = scriptOutcome{failed: true, detail: errs.DetailOf(err)}
+			} else {
+				outcome = scriptOutcome{step: res.STEP}
+			}
+			scripts[source] = outcome
+		}
+		if outcome.failed {
 			inferred = append(inferred, fmt.Sprintf(
-				"%s: %s, so it is not in this file.", solids[i].Label, errs.DetailOf(err)))
+				"%s: %s, so it is not in this file.", solids[i].Label, outcome.detail))
 			solids[i].Shape = ""
 			continue
 		}
-		solids[i].STEP = res.STEP
+		solids[i].STEP = outcome.step
 	}
 	solids = keepBuildable(solids)
 
@@ -418,7 +445,8 @@ func (k *Kernel) BuildDocument(ctx context.Context, doc geometry.Document, unit 
 
 	out := &Build{Parts: res.Parts, Volume: res.Volume, Bounds: res.Bounds,
 		Skipped: res.Skipped, FeatureFailures: res.FeaturesFailed, Inferred: inferred,
-		Interferences: res.Interferences, InterferencesTruncated: res.InterferencesTruncated}
+		Interferences: res.Interferences, InterferencesTruncated: res.InterferencesTruncated,
+		ShapeBuilds: res.ShapeBuilds, ScriptRuns: scriptRuns}
 	if res.STEP != "" {
 		decoded, err := base64.StdEncoding.DecodeString(res.STEP)
 		if err != nil {

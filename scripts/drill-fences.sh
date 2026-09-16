@@ -939,6 +939,26 @@ drill "the browser refuses in other words than the exporter" internal/httpapi/as
   ./internal/httpapi 'TestRendererFlattensATreeLikeTheExporter'
 
 echo
+echo "Each distinct shape is built once"
+# Added 2026-09-14 (Phase 4, stage K1). The sidecar builds each distinct shape once per
+# request and places located copies; Go runs each distinct script once.
+drill "every occurrence builds its own shape again" internal/domain/cad/sidecar.py \
+  "s = s.replace('        if key in built_once:\n', '        if False:\n', 1)" \
+  ./internal/domain/cad 'TestKernel_OneDefinitionPlacedManyTimesIsBuiltOnce'
+
+drill "a mirrored copy shares the unmirrored build" internal/domain/cad/sidecar.py \
+  "s = s.replace('\"section_frame\", \"axis\", \"step\", \"mirrored\")', '\"section_frame\", \"axis\", \"step\")', 1)" \
+  ./internal/domain/cad 'TestKernel_DistinctShapesAreBuiltOnceEach'
+
+drill "the build does not say how many shapes it built" internal/domain/cad/cad.go \
+  's = s.replace("ShapeBuilds: res.ShapeBuilds, ScriptRuns: scriptRuns}", "ScriptRuns: scriptRuns}", 1)' \
+  ./internal/domain/cad 'TestKernel_OneDefinitionPlacedManyTimesIsBuiltOnce'
+
+drill "a repeated scripted part runs its script once per copy" internal/domain/cad/cad.go \
+  's = s.replace("outcome, ran := scripts[source]", "outcome, ran := scripts[\"\"]", 1)' \
+  ./internal/domain/cad 'TestKernel_ARepeatedScriptedPartRunsItsScriptOnce'
+
+echo
 echo "Islands"
 drill "an island is cut away with its hole" internal/domain/geometry/triangulate.go \
   's = s.replace("\t\tif depth[i]%2 != 0 {\n\t\t\tcontinue // a void, and it belongs to whatever contains it\n\t\t}", "\t\tif i != 0 {\n\t\t\tcontinue\n\t\t}", 1)' \
