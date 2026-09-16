@@ -606,6 +606,142 @@ def _tessellate(solids, ids, names, request):
             "mesh_simplified": simplified}
 
 
+# --- interference ----------------------------------------------------------
+#
+# Two solids occupying the same material. Nothing in FORGE could see this before
+# 2026-09-12: geometry/assembly.go says so in plain words (no interference test,
+# no clearance, no kinematics), and a live car build measured that day came back
+# with document_faults=0, a clean kernel build, a passing visual check and the
+# master cylinder entirely inside the engine block.
+# docs/spikes/2026-09-12-car-ceiling/README.md
+#
+# # Why it is computed HERE, on the kept solids, and nowhere else
+#
+# This is Stage 7's lesson again: look at the solid that was built, not the one
+# that was described. A check written in Go over geometry.Tessellate would be
+# wrong in both directions, because the tessellator performs no boolean:
+#
+#   - every bolt hole would report as an interference, because the cut tool is
+#     still a solid cylinder standing in the plate. That is the exact false
+#     positive look.go had to be taught to ignore, and a checker that complains
+#     about correct models drives repairs that damage them.
+#   - a part sitting inside a HOLLOW enclosure would report too, when the real
+#     answer is zero. Measured: a 5mm cube inside a box shelled to 20mm returns
+#     common volume 0.0 here, and would return "70% buried" from bounding boxes.
+#
+# By the time _build reaches this point the tools have been consumed and the
+# booleans are done, so the solids are what the person will export. Both classes
+# vanish by construction rather than by an exception list somebody has to
+# maintain.
+#
+# # Broad phase, then narrow phase
+#
+# An exact common() is an OCCT boolean and is not free; pairs grow as n squared.
+# Bounding boxes are nearly free and can only ever be too generous, so they are
+# safe as a pre-filter: a pair whose boxes miss cannot share material. Only the
+# survivors pay for a boolean.
+#
+# Measured 2026-09-12 on this machine, parts scattered through a car-sized
+# envelope so the overlap rate is higher than a real assembly's:
+#
+#   parts  pairs   booleans paid for   time
+#      10     45                   2   0.006 s
+#      28    378                  19   0.047 s
+#      60   1770                  62   0.141 s
+#     120   7140                 294   0.661 s
+#
+# Sub-second at four times the largest model this system has built, against turns
+# that take forty to a hundred seconds. That is why it runs on every build rather
+# than on request: a check a caller has to remember to ask for is a check that is
+# off in the one deployment that needed it.
+_INTERFERENCE_PAIR_BUDGET = 2000
+# Below this, it is tolerance noise rather than interference. Two faces that
+# touch have zero common volume in theory and a sliver of it in floating point,
+# and a check that reports those would fire on every correctly assembled model.
+# Relative, with an absolute floor, because "1 mm3" means something very
+# different to a bracket and to a bridge.
+_INTERFERENCE_MIN_VOLUME = 1.0
+_INTERFERENCE_MIN_FRACTION = 0.001
+
+
+def _boxes(solids):
+    """Each solid's axis-aligned bounds, as (lo, hi) triples."""
+    out = []
+    for s in solids:
+        try:
+            b = s.bounding_box()
+            out.append(((float(b.min.X), float(b.min.Y), float(b.min.Z)),
+                        (float(b.max.X), float(b.max.Y), float(b.max.Z))))
+        except Exception:
+            # A solid whose bounds cannot be read is left out of the broad phase
+            # rather than paired with everything: it is already in trouble, and
+            # the parts around it should not be reported because of it.
+            out.append(None)
+    return out
+
+
+def _boxes_miss(a, b):
+    if a is None or b is None:
+        return True
+    for i in range(3):
+        if a[1][i] <= b[0][i] or b[1][i] <= a[0][i]:
+            return True
+    return False
+
+
+def _interferences(solids, ids, labels):
+    """Pairs of kept solids that share material, worst first.
+
+    Returns the list plus a note when the pair budget stopped the search, so a
+    caller never reads a truncated answer as a clean one.
+    """
+    boxes = _boxes(solids)
+    volumes = []
+    for s in solids:
+        try:
+            volumes.append(float(getattr(s, "volume", 0.0)))
+        except Exception:
+            volumes.append(0.0)
+
+    found, tested, truncated = [], 0, False
+    for i in range(len(solids)):
+        for j in range(i + 1, len(solids)):
+            if _boxes_miss(boxes[i], boxes[j]):
+                continue
+            if tested >= _INTERFERENCE_PAIR_BUDGET:
+                truncated = True
+                break
+            tested += 1
+            try:
+                shared = float(getattr(solids[i] & solids[j], "volume", 0.0))
+            except Exception:
+                # OCCT refusing a boolean is not evidence of interference, and
+                # guessing either way would be worse than saying nothing about
+                # this pair. The parts are still reported by every other check.
+                continue
+            if volumes[i] <= 0 or volumes[j] <= 0 or shared <= 0:
+                # A face has no volume, and "what fraction of it is buried" has
+                # no answer. Sections exist to be lofted and are consumed; one
+                # that survives is reported by the volume note in _build.
+                continue
+            smaller = min(volumes[i], volumes[j])
+            if shared < _INTERFERENCE_MIN_VOLUME or shared / smaller < _INTERFERENCE_MIN_FRACTION:
+                continue
+            # The SMALLER solid is reported first, because the fraction is its
+            # share and the sentence built from this reads "a is N% inside b".
+            # Reporting them in build order would produce "the chassis is 100%
+            # inside the master cylinder", which is true of no number here.
+            lo, hi = (i, j) if volumes[i] <= volumes[j] else (j, i)
+            found.append({"a": ids[lo], "b": ids[hi],
+                          "a_label": labels[lo], "b_label": labels[hi],
+                          "volume": shared, "fraction": shared / smaller})
+        if truncated:
+            break
+
+    found.sort(key=lambda f: f["fraction"], reverse=True)
+    return found, truncated
+
+
 def _build(request):
     solids = request.get("solids") or []
     if not solids:
@@ -687,9 +823,16 @@ def _build(request):
     # number and an identical-looking file. Reported so the caller can assert on
     # it — see TestKernel_ACylinderPointsTheWayThisSystemDrawsIt.
     box = assembly.bounding_box()
+    # Computed on the KEPT solids, which is the whole reason it is trustworthy —
+    # see the note above _interferences. Always, not on request: a check that a
+    # caller has to remember to ask for is a check that is off in the one
+    # deployment that needed it, and the broad phase makes the usual case free.
+    clashes, clash_truncated = _interferences(built, ids, names)
     out = {
         "ok": True,
         "parts": len(built),
+        "interferences": clashes,
+        "interferences_truncated": clash_truncated,
         "volume": float(getattr(assembly, "volume", 0.0)),
         "bounds": [float(box.min.X), float(box.min.Y), float(box.min.Z),
                    float(box.max.X), float(box.max.Y), float(box.max.Z)],

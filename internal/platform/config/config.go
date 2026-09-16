@@ -50,6 +50,9 @@ type Config struct {
 	Security SecurityConfig
 	// CAD is the parametric kernel. Empty Python means this deployment has none.
 	CAD CADConfig
+	// Blob is content-addressed storage for large geometry. Empty Bucket means
+	// this deployment has none.
+	Blob BlobConfig
 	// TTS is FORGE's voice. An empty Provider means she speaks through the model
 	// client, which is the default and needs no vendor.
 	TTS TTSConfig
@@ -255,6 +258,28 @@ type CADConfig struct {
 	// unset — the feature then does not exist rather than half-existing.
 	AllowScripts bool
 }
+
+// BlobConfig is where large, immutable geometry bytes go: per-design meshes,
+// B-rep caches, STEP exports (docs/plan-2026-09-13-millions-of-parts.md, Phase 3).
+//
+// UNSET IS A SUPPORTED CONFIGURATION, like the CAD kernel: the document stays in
+// Postgres either way, and a deployment with no bucket refuses the large-model
+// paths with FORGE_BLOB_BUCKET named in the message rather than half-supporting
+// them. Credentials are deliberately not here: production authenticates as the
+// node's instance role, and local S3-compatible servers read the SDK's standard
+// AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY.
+type BlobConfig struct {
+	// Bucket is the S3 bucket. Empty means no blob storage.
+	Bucket string
+	// Region signs the requests. Required when Bucket is set, with no default:
+	// a guessed region fails every request with an error that does not say so.
+	Region string
+	// Endpoint is set only for an S3-compatible server such as MinIO.
+	Endpoint string
+}
+
+// Configured reports whether blob storage was asked for.
+func (b BlobConfig) Configured() bool { return b.Bucket != "" }
 
 type SecurityConfig struct {
 	// DataBoundary is the declared posture of the model endpoint (PRD SEC-01).
@@ -788,6 +813,22 @@ func Load(required ...Section) (*Config, []string, error) {
 		AllowScripts: l.boolVal("FORGE_ALLOW_SCRIPTS", false),
 	}
 
+	cfg.Blob = BlobConfig{
+		Bucket:   strings.TrimSpace(l.str("FORGE_BLOB_BUCKET", "")),
+		Region:   strings.TrimSpace(l.str("FORGE_BLOB_REGION", "")),
+		Endpoint: strings.TrimSpace(l.str("FORGE_BLOB_ENDPOINT", "")),
+	}
+	// Both half-configurations are refused at boot, where they are one line to
+	// fix, instead of on the first model large enough to need a blob.
+	if cfg.Blob.Configured() && cfg.Blob.Region == "" {
+		l.fail("FORGE_BLOB_REGION", "FORGE_BLOB_BUCKET is set, so the region it lives in must be too "+
+			"(us-east-1 for the production bucket); S3 requests are signed per region")
+	}
+	if !cfg.Blob.Configured() && (cfg.Blob.Endpoint != "" || cfg.Blob.Region != "") {
+		l.fail("FORGE_BLOB_BUCKET", "FORGE_BLOB_REGION or FORGE_BLOB_ENDPOINT is set but no bucket is; "+
+			"set FORGE_BLOB_BUCKET too, or unset both to run without blob storage")
+	}
+
 	cfg.TTS = TTSConfig{
 		Provider: strings.ToLower(strings.TrimSpace(l.str("FORGE_TTS_PROVIDER", ""))),
 		APIURL:   strings.TrimSpace(l.str("FORGE_TTS_API_URL", "")),
@@ -921,6 +962,7 @@ func (c *Config) Redacted() map[string]any {
 		// whether this deployment can write a parametric file at all.
 		"cad_kernel":  cadForPrint(c.CAD.Python),
 		"cad_scripts": c.CAD.AllowScripts,
+		"blob_store":  blobForPrint(c.Blob),
 		// The speech vendor and, separately, whether its backbone may be trained
 		// on what FORGE says. FORGE_DATA_BOUNDARY answers that question for the
 		// MODEL endpoint and not for this one, so a deployment that reads
@@ -1030,6 +1072,19 @@ func ttsTrains(t TTSConfig) any {
 // for that fence alone — see backbone_allowlist_test.go for why the duplication
 // is tolerated at all.
 func TTSTrainsForTest(t TTSConfig) any { return ttsTrains(t) }
+
+// blobForPrint says where large geometry goes, or that it has nowhere to go.
+// Printed because "why was this model refused" is answered here first.
+func blobForPrint(b BlobConfig) string {
+	switch {
+	case !b.Configured():
+		return "none — large-model storage is refused (set FORGE_BLOB_BUCKET)"
+	case b.Endpoint != "":
+		return fmt.Sprintf("s3-compatible %s, bucket %s (%s)", b.Endpoint, b.Bucket, b.Region)
+	default:
+		return fmt.Sprintf("s3 bucket %s (%s)", b.Bucket, b.Region)
+	}
+}
 
 func cadForPrint(python string) string {
 	if strings.TrimSpace(python) == "" {
