@@ -75,18 +75,6 @@
     return out;
   }
 
-  function translation(t) {
-    var m = mat4();
-    m[12] = t[0]; m[13] = t[1]; m[14] = t[2];
-    return m;
-  }
-
-  function scaling(s) {
-    var m = mat4();
-    m[0] = s[0]; m[5] = s[1]; m[10] = s[2];
-    return m;
-  }
-
   /* A document's rotation is in DEGREES; this matrix wants radians.
    *
    * Nothing used to convert, and nothing said which unit the document was in.
@@ -102,34 +90,6 @@
     var out = [0, 0, 0];
     for (var i = 0; i < 3; i++) out[i] = num(r && r[i], 0) * Math.PI / 180;
     return out;
-  }
-
-  function rotationXYZ(deg) {
-    var r = rotationRadians(deg);
-    var cx = Math.cos(r[0]), sx = Math.sin(r[0]);
-    var cy = Math.cos(r[1]), sy = Math.sin(r[1]);
-    var cz = Math.cos(r[2]), sz = Math.sin(r[2]);
-    var m = mat4();
-    m[0] = cy*cz;            m[4] = -cy*sz;           m[8]  = sy;
-    m[1] = sx*sy*cz + cx*sz; m[5] = -sx*sy*sz + cx*cz; m[9]  = -sx*cy;
-    m[2] = -cx*sy*cz + sx*sz; m[6] = cx*sy*sz + sx*cz; m[10] = cx*cy;
-    return m;
-  }
-
-  function normalMatrix(m) {
-    /* Inverse-transpose of the upper 3x3, so non-uniform scale does not tilt
-     * the lighting — which shows up as a part that looks lit from the wrong
-     * side and reads as a modelling error rather than a shading one. */
-    var a00=m[0],a01=m[1],a02=m[2], a10=m[4],a11=m[5],a12=m[6], a20=m[8],a21=m[9],a22=m[10];
-    var b01 =  a22*a11 - a12*a21, b11 = -a22*a10 + a12*a20, b21 =  a21*a10 - a11*a20;
-    var det = a00*b01 + a01*b11 + a02*b21;
-    if (!det) return new Float32Array([1,0,0, 0,1,0, 0,0,1]);
-    det = 1.0 / det;
-    return new Float32Array([
-      b01*det, (-a22*a01 + a02*a21)*det, ( a12*a01 - a02*a11)*det,
-      b11*det, ( a22*a00 - a02*a20)*det, (-a12*a00 + a02*a10)*det,
-      b21*det, (-a21*a00 + a01*a20)*det, ( a11*a00 - a01*a10)*det
-    ]);
   }
 
   function sub(a, b) { return [a[0]-b[0], a[1]-b[1], a[2]-b[2]]; }
@@ -282,14 +242,16 @@
   /* size, d1, d2, h */
   var ISO7089 = [['M3', 3.2, 7, 0.5], ['M4', 4.3, 9, 0.8], ['M5', 5.3, 10, 1], ['M6', 6.4, 12, 1.6],
                  ['M8', 8.4, 16, 1.6], ['M10', 10.5, 20, 2], ['M12', 13, 24, 2.5]];
-  /* series, bore, outside diameter, width */
+  /* series, bore, outside diameter, width: ISO/R 15/1-1968 Table 3, dimension series 10
+   * (standard.go names the source, and that ISO 15:2017's own table went unread) */
   var ISO15 = [['608', 8, 22, 7], ['6000', 10, 26, 8], ['6001', 12, 28, 8], ['6002', 15, 32, 9],
                ['6003', 17, 35, 10], ['6004', 20, 42, 12], ['6005', 25, 47, 12]];
   /* kind, B, H, t */
   var EN10219 = [['SHS', 20, 20, 2], ['SHS', 30, 30, 3], ['SHS', 40, 40, 3], ['SHS', 40, 40, 4],
                  ['SHS', 50, 50, 5], ['RHS', 40, 20, 2], ['RHS', 60, 40, 3]];
-  /* leg a, t, root radius r1, toe radius r2 — half the root radius, as EN 10056-1
-   * states (standard.go names the source; the L20's was 2 until 2026-09-15) */
+  /* leg a, t, root radius r1, toe radius r2 — half the root radius, as EN 10056-1:1998
+   * Note 1 states; the 2017 edition prints the same r1 (standard.go names the sources;
+   * the L20's was 2 until 2026-09-15) */
   var EN10056 = [[20, 3, 3.5, 1.75], [30, 3, 5, 2.5], [40, 4, 6, 3], [50, 5, 7, 3.5]];
   /* geometry/units.go unitTable: the factor to millimetres and every alias. */
   var UNIT_TABLE = [[1, ['mm', 'millimetre', 'millimeter', 'millimetres', 'millimeters']],
@@ -1617,8 +1579,15 @@
    * and this does the same, term for term, so the browser draws what the file holds.
    * TestRendererFlattensATreeLikeTheExporter holds it to Go's answer. */
   var MAX_TREE_DEPTH = 16;     // geometry/tree.go maxTreeDepth
-  var MAX_DRAWN_PARTS = 4096;  // geometry/limits.go maxDrawnParts
+  /* The most the VIEWPORT draws (geometry/limits.go maxViewportParts). Until Phase 6,
+   * stage W1 this was 4096 and was the kernel's ceiling too; instanced drawing moved
+   * the browser's own to what storage accepts by default, and the kernel keeps 4096
+   * (Document.DrawRefusal in Go) until building at that size has been measured. */
+  var MAX_VIEWPORT_PARTS = 100000;
   var PATH_SEPARATOR = '/';
+  // A tree part's display name: every child above it, then its own name (tree.go,
+  // NameSeparator; docs/bugfix/2026-09-14-tree-copies-shared-display-names.md).
+  var NAME_SEPARATOR = ' / ';
 
   function degreesToRadians3(r) {
     var p = pad3(r);
@@ -1936,7 +1905,7 @@
         features.push(q);
       });
     }
-    function walk(a, path, onPath, frame, index) {
+    function walk(a, path, names, onPath, frame, index) {
       if (path.length >= MAX_TREE_DEPTH) return true;
       var ids = {}, children = a.children || [];
       for (var i = 0; i < children.length; i++) {
@@ -1963,12 +1932,13 @@
           var slot = slots[s], slotStart = parts.length;
           var childPath = path.concat([cid + slot.suffix]);
           var slotName = childPath.join(PATH_SEPARATOR);
-          var childName = c.name && slot.number ? c.name + ' ' + slot.number : c.name;
+          // The occurrence's display path, a label per level (tree.go, NameSeparator).
+          var childNames = names.concat([(c.name || cid) + (slot.number ? ' ' + slot.number : '')]);
           var childFrame = thenPlacement(frame, thenPlacement(reference, thenPlacement(slot.at, local)));
           if (sub) {
             onPath[sub.id] = true;
             var subIndex = {};
-            var stop = walk(sub, childPath, onPath, childFrame, subIndex);
+            var stop = walk(sub, childPath, childNames, onPath, childFrame, subIndex);
             delete onPath[sub.id];
             for (var rel in subIndex) index[cid + slot.suffix + PATH_SEPARATOR + rel] = subIndex[rel];
             index[cid + slot.suffix] = [slotStart, parts.length];
@@ -1979,7 +1949,7 @@
             var lp = defCopies[j], q = shallowCopy(lp), partStart = parts.length;
             var suffix = lp.id.indexOf(def.id) === 0 ? lp.id.slice(def.id.length) : lp.id;
             q.id = slotName + suffix;
-            if (childName) q.name = suffix ? childName + ' ' + suffix.replace(/^-/, '') : childName;
+            q.name = childNames.concat([lp.name || lp.id]).join(NAME_SEPARATOR);
             var st = storedPlacement(thenPlacement(childFrame, placementOf(lp.position, lp.rotation, !!lp.mirrored)));
             q.position = st.position;
             q.rotation = st.rotation;
@@ -1997,7 +1967,7 @@
     }
     var onPath = {};
     onPath[root.id] = true;
-    walk(root, [], onPath, placementOf(null, null, false), {});
+    walk(root, [], [], onPath, placementOf(null, null, false), {});
     return { parts: parts, definitionOf: definitionOf, features: features };
   }
 
@@ -2046,14 +2016,15 @@
     return sat(total + count(spec.root));
   }
 
-  /* geometry Document.DrawRefusal: why a design is not drawn, in Go's words, or ''.
-   * A design over the ceiling draws NOTHING — the first 4096 parts of a car would
-   * pass for the car. TestRendererFlattensATreeLikeTheExporter holds the text. */
+  /* geometry Document.ViewportRefusal: why a design is not drawn, in Go's words, or ''.
+   * A design over the ceiling draws NOTHING — the first hundred thousand parts of a
+   * design would pass for the design. TestRendererFlattensATreeLikeTheExporter holds
+   * the text. */
   function drawRefusal(spec) {
-    if (occurrences(spec || {}, MAX_DRAWN_PARTS) <= MAX_DRAWN_PARTS) return '';
-    return 'This design places more than ' + MAX_DRAWN_PARTS + ' parts, which is the most FORGE draws or ' +
-      'builds at once until instanced drawing and one build per design land. It is stored as it is; ' +
-      'nothing was drawn or built.';
+    if (occurrences(spec || {}, MAX_VIEWPORT_PARTS) <= MAX_VIEWPORT_PARTS) return '';
+    return 'This design places more than ' + MAX_VIEWPORT_PARTS + ' parts, which is the most the FORGE ' +
+      'viewport draws at once. It is stored as it is; ' +
+      'nothing was drawn.';
   }
 
   function partsToDraw(spec) {
@@ -2099,6 +2070,198 @@
         fromKernel: !!(mesh && mesh.triangles && mesh.triangles.length)
       };
     });
+  }
+
+  /* ---- Instanced drawing: what is drawn with what (Phase 6, stage W1) -----------
+   *
+   * # The problem this solves
+   *
+   * Until W1 every placed part was its own set of buffers and its own drawElements,
+   * with where it goes, its colour and whether it is selected set as uniforms before
+   * each call. A 30,000-occurrence car was 30,000 draw calls and 30,000 copies of a
+   * few rivets' triangles on the GPU, which is why the viewport refused anything over
+   * 4096 parts (Phase 3, stage S0).
+   *
+   * drawBatches groups the parts partsToDraw returns by the triangles they share —
+   * one batch per distinct shape and finish — and gives every part a 4×4
+   * column-major matrix. A batch is uploaded once and drawn with one instanced call;
+   * the matrix, colour, opacity and highlight travel as per-instance attributes. It
+   * is pure (no GL), so the fences run it in node and hold every instance to the
+   * exporter's placement.
+   *
+   * # Three sources of a batch
+   *
+   *   - a kernel DEFINITION from the mesh reply (stage K4): its triangles in its own
+   *     frame, and the reply's matrix for each occurrence of it;
+   *   - a kernel mesh already in assembly coordinates (a part a feature changed, or
+   *     the per-part channel partsToDraw still carries): its own batch, drawn with the
+   *     identity — see modelMatrix for what placing one twice did;
+   *   - a primitive: grouped by the fields buildGeometry reads, and placed by
+   *     placementMatrix, which is the exporter's rotation term for term.
+   *
+   * ‼️ The finish is part of the key. Specular power and gloss are still uniforms, so
+   * two parts of one shape in different finishes cannot share a call. Every part a
+   * definition places shares its material, so a definition is still one call. */
+  var IDENTITY = [1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1];
+
+  /* Where a primitive goes: T · R · S, column-major, in float64. rowMajor is
+   * geometry.RotationMatrix; a mirrored part negates its own x first (Part.Mirrored),
+   * the rule the kernel and the Go mesh follow. */
+  function placementMatrix(spec) {
+    var m = rowMajor(degreesToRadians3(spec.rotation));
+    var p = pad3(spec.position), sc = spec.scale || [1, 1, 1];
+    var sx = num(sc[0], 1) * (spec.mirrored ? -1 : 1), sy = num(sc[1], 1), sz = num(sc[2], 1);
+    return [m[0] * sx, m[3] * sx, m[6] * sx, 0,
+            m[1] * sy, m[4] * sy, m[7] * sy, 0,
+            m[2] * sz, m[5] * sz, m[8] * sz, 0,
+            p[0], p[1], p[2], 1];
+  }
+
+  /* The fields buildGeometry reads, and nothing else: two parts with one key are the
+   * same triangles. A field buildGeometry starts reading has to be added here, or two
+   * different shapes are drawn as whichever of them came first. */
+  function primitiveKey(part) {
+    return JSON.stringify([part.shape, part.size || null, part.profile || null, part.holes || null,
+                           part.path || null, !!part.path_closed, part.axis || null]);
+  }
+
+  /* A batch's own box and the sphere around it, in the batch's frame. Culling moves
+   * the sphere by each instance's matrix; the level of detail draws the box. */
+  function geometryBounds(positions) {
+    var min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
+    for (var i = 0; i + 2 < positions.length; i += 3) {
+      for (var k = 0; k < 3; k++) {
+        var v = positions[i + k];
+        if (v < min[k]) min[k] = v;
+        if (v > max[k]) max[k] = v;
+      }
+    }
+    if (!(min[0] <= max[0])) { min = [0, 0, 0]; max = [0, 0, 0]; }
+    var half = [(max[0] - min[0]) / 2, (max[1] - min[1]) / 2, (max[2] - min[2]) / 2];
+    return { min: min, max: max, half: half, radius: length3(half),
+             centre: [(min[0] + max[0]) / 2, (min[1] + max[1]) / 2, (min[2] + max[2]) / 2] };
+  }
+
+  /* drawn is partsToDraw's list; built is the mesh reply (GET /v1/geometry/{id}/mesh)
+   * or null; opts.wide says whether this browser indexes past 65,535 vertices. */
+  function drawBatches(drawn, built, opts) {
+    opts = opts || {};
+    var wide = opts.wide !== false;
+    var definitions = (built && built.definitions) || [];
+    var placedMesh = {}, instanceOf = {};
+    ((built && built.parts) || []).forEach(function (m) {
+      if (m && m.id && m.triangles && m.triangles.length) placedMesh[m.id] = m;
+    });
+    ((built && built.instances) || []).forEach(function (inst) {
+      var d = inst && definitions[inst.definition];
+      if (d && d.triangles && d.triangles.length && inst.matrix && inst.matrix.length === 16) {
+        instanceOf[inst.id] = inst;
+      }
+    });
+    var byKey = {}, batches = [], approximations = [];
+    (drawn || []).forEach(function (d) {
+      var part = d.spec, shading = shadingFor(part.material);
+      var inst = instanceOf[part.id];
+      var mesh = inst ? definitions[inst.definition] : (placedMesh[part.id] || (d.fromKernel ? d.mesh : null));
+      /* A tessellation this browser cannot index is drawn as its primitive instead,
+       * and named — truncating to 65,535 vertices would draw a shape nobody built,
+       * which is worse than the approximation everybody has been looking at. */
+      var narrow = !!(mesh && !wide && mesh.vertices.length / 3 > 65535);
+      var key, matrix, make;
+      if (mesh && !narrow) {
+        key = inst ? 'definition:' + inst.definition : 'placed:' + part.id;
+        matrix = inst ? Array.prototype.slice.call(inst.matrix) : IDENTITY.slice();
+        make = function () { return kernelGeometry(mesh); };
+      } else {
+        var shape = { shape: part.shape, size: part.size, profile: part.profile, holes: part.holes,
+                      path: part.path, path_closed: part.path_closed, axis: part.axis };
+        key = 'shape:' + primitiveKey(part) + (narrow ? '|narrow' : '');
+        matrix = placementMatrix(part);
+        make = function () {
+          var built2 = buildGeometry(shape);
+          if (narrow) {
+            built2.approximated = 'the built solid needs ' + Math.round(mesh.vertices.length / 3) +
+              ' vertices and this browser indexes 65,535, so the primitive is drawn instead';
+          }
+          return built2;
+        };
+      }
+      key += '|' + shading.join(',');
+      var b = byKey[key];
+      if (!b) {
+        var geo = make();
+        b = byKey[key] = {
+          key: key, fromKernel: !!geo.fromKernel, definition: inst ? inst.definition : -1,
+          shading: shading, geo: geo.geo, approximated: geo.approximated || '',
+          bounds: geometryBounds(geo.geo.positions), instances: []
+        };
+        batches.push(b);
+      }
+      if (b.approximated) approximations.push((part.name || part.id) + ': ' + b.approximated);
+      b.instances.push({ id: part.id, matrix: matrix, spec: part, removed: !!d.removed,
+                         repeatOf: d.repeatOf || '' });
+    });
+    return { batches: batches, approximations: approximations };
+  }
+
+  /* ---- The assembly tree as a browser lists it (Phase 6, stage W2) ---------------
+   *
+   * treeChildren is the rows under ONE assembly, computed when somebody opens it and
+   * not before: a car's tree is a few hundred rows written once, and listing its
+   * 30,000 occurrences up front would put a list nobody can read into the page. A
+   * child placed more than once by a pattern is one row whose slots are its copies.
+   * A child the exporter refuses is left out here too, by expandAssemblies' rules. */
+  function treeChildren(spec, ref, path) {
+    spec = spec || {};
+    var defs = {}, asms = {};
+    (spec.definitions || []).forEach(function (p) {
+      if (p && String(p.id || '').trim() && !defs[p.id]) defs[p.id] = p;
+    });
+    (spec.assemblies || []).forEach(function (a) {
+      if (a && String(a.id || '').trim() && !asms[a.id] && !defs[a.id]) asms[a.id] = a;
+    });
+    var a = asms[ref];
+    if (!a) return [];
+    var attach = makeAttachments(asms), ids = {}, rows = [];
+    (a.children || []).forEach(function (c) {
+      c = c || {};
+      var cid = String(c.id || '');
+      if (!cid.trim() || cid.indexOf(PATH_SEPARATOR) >= 0 || ids[cid]) return;
+      ids[cid] = true;
+      if (!reflectionAcross(c.mirror || '')) return;
+      if (!asms[c.ref] && !defs[c.ref]) return;
+      var slots = patternCopies(c.pattern);
+      if (!slots || !attach.reference(a, c)) return;
+      var childPath = path ? path + PATH_SEPARATOR + cid : cid;
+      rows.push({
+        path: childPath, id: cid, label: c.name || cid, ref: c.ref, assembly: !!asms[c.ref],
+        slots: slots.length > 1 ? slots.map(function (s) { return childPath + s.suffix; }) : null
+      });
+    });
+    return rows;
+  }
+
+  /* Whether a drawn part is under a tree row or IS the part a row names.
+   *
+   * A path names its own occurrence ("front-left/damper"), everything under it
+   * ("front-left/damper/…"), and every copy a pattern or repeat wrote out along the
+   * way: the exporter names a copy by adding "-n" to what it was copied from, at ANY
+   * level, so the row "front-left/pin" reaches "front-left-2/pin-3-1" — the second
+   * copy of the corner, the third pin of its polar pattern, the first of the pin's own
+   * repeat. Each segment of the path may therefore carry copy numbers.
+   *
+   * ‼️ That naming is also why a sibling literally CALLED "front-left-2" is matched by
+   * "front-left" — Go allows the id, and the two cannot be told apart from the drawn
+   * ids alone. TestRendererFlattensATreeLikeTheExporter has a document that does it. */
+  function occurrenceMatcher(path) {
+    var p = String(path || '');
+    if (!p) return null;
+    var pattern = new RegExp('^' + p.split(PATH_SEPARATOR).map(function (seg) {
+      return seg.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(-\\d+)*';
+    }).join(PATH_SEPARATOR) + '(/|$)');
+    return function (id, repeatOf) {
+      return (!!repeatOf && repeatOf === p) || pattern.test(String(id || ''));
+    };
   }
 
   function buildGeometry(part) {
@@ -2202,19 +2365,52 @@
 
   /* ---- shaders ---------------------------------------------------------- */
 
+  /* Where each attribute lives, bound before linking (Phase 6, stage W1).
+   *
+   * Everything a draw used to set per part as a uniform — where it goes, its colour
+   * and opacity, whether it is selected — is an ATTRIBUTE with one value per
+   * instance, so one call draws every copy of a batch.
+   *
+   * ‼️ Two rules the numbers follow, neither visible from the shader:
+   *
+   *   - aPos is location 0 in BOTH programs and is never instanced. WebGL1 with
+   *     ANGLE_instanced_arrays refuses a draw whose attribute 0 has a divisor on
+   *     some drivers, and the line program shares location 0 with the part program.
+   *   - Eight locations in all (a mat4 takes four). Eight is the fewest WebGL
+   *     guarantees, so there is no room for a ninth per-instance value: add one by
+   *     packing it, not by adding an attribute.
+   *
+   * The normal is turned by the cofactor of the model matrix, which is the
+   * inverse-transpose times the determinant: GLSL ES 1.00 has no inverse(), and the
+   * determinant's SIGN is put back so a mirrored copy is lit from the side it faces. */
+  var ATTRIB = { pos: 0, normal: 1, model: 2, colour: 6, highlight: 7 };
+  var PART_ATTRIBUTES = { aPos: ATTRIB.pos, aNormal: ATTRIB.normal, aModel: ATTRIB.model,
+                          aColour: ATTRIB.colour, aHighlight: ATTRIB.highlight };
+  /* One instance: 16 matrix, 4 colour and opacity, 1 highlight. */
+  var INSTANCE_FLOATS = 21;
+
   var VERT = [
     'attribute vec3 aPos;',
     'attribute vec3 aNormal;',
-    'uniform mat4 uModel;',
+    'attribute mat4 aModel;',
+    'attribute vec4 aColour;',
+    'attribute float aHighlight;',
     'uniform mat4 uView;',
     'uniform mat4 uProj;',
-    'uniform mat3 uNormalMat;',
     'varying vec3 vNormal;',
     'varying vec3 vWorld;',
+    'varying vec4 vColour;',
+    'varying float vHighlight;',
     'void main() {',
-    '  vec4 world = uModel * vec4(aPos, 1.0);',
+    '  vec4 world = aModel * vec4(aPos, 1.0);',
+    '  vec3 c0 = aModel[0].xyz;',
+    '  vec3 c1 = aModel[1].xyz;',
+    '  vec3 c2 = aModel[2].xyz;',
+    '  vec3 n = mat3(cross(c1, c2), cross(c2, c0), cross(c0, c1)) * aNormal;',
+    '  vNormal = n * sign(dot(c0, cross(c1, c2)));',
     '  vWorld = world.xyz;',
-    '  vNormal = normalize(uNormalMat * aNormal);',
+    '  vColour = aColour;',
+    '  vHighlight = aHighlight;',
     '  gl_Position = uProj * uView * world;',
     '}'
   ].join('\n');
@@ -2226,13 +2422,12 @@
     'precision mediump float;',
     'varying vec3 vNormal;',
     'varying vec3 vWorld;',
-    'uniform vec3 uColor;',
-    'uniform float uOpacity;',
+    'varying vec4 vColour;',
     'uniform vec3 uLightDir;',
     'uniform vec3 uCamPos;',
     'uniform int uSectionAxis;',   // 0 none, 1 x, 2 y, 3 z
     'uniform float uSectionAt;',
-    'uniform float uHighlight;',
+    'varying float vHighlight;',
     'uniform float uLight;',
     'uniform float uSpecPower;',
     'uniform float uSpecGloss;',
@@ -2259,14 +2454,14 @@
     // Both are driven from one term so the falloff is identical and only its
     // sign changes.
     '  float rim = pow(1.0 - max(dot(N, V), 0.0), 2.5);',
-    '  vec3 ambient = uColor * mix(0.30, 0.46, uLight);',
-    '  vec3 col = ambient + uColor * diff * mix(0.78, 0.62, uLight) + vec3(spec);',
+    '  vec3 ambient = vColour.rgb * mix(0.30, 0.46, uLight);',
+    '  vec3 col = ambient + vColour.rgb * diff * mix(0.78, 0.62, uLight) + vec3(spec);',
     '  col += vec3(0.31, 0.85, 0.91) * rim * 0.30 * (1.0 - uLight);',
     '  col *= 1.0 - rim * 0.30 * uLight;',
     // Selection. Bright cyan reads as "lit" on black and as "washed out" on
     // paper, so the light ground gets the same hue at a legible depth.
-    '  col = mix(col, mix(vec3(0.31, 0.85, 0.91), vec3(0.10, 0.40, 0.50), uLight), uHighlight * 0.45);',
-    '  gl_FragColor = vec4(col, uOpacity);',
+    '  col = mix(col, mix(vec3(0.31, 0.85, 0.91), vec3(0.10, 0.40, 0.50), uLight), vHighlight * 0.45);',
+    '  gl_FragColor = vec4(col, vColour.a);',
     '}'
   ].join('\n');
 
@@ -2294,10 +2489,11 @@
     return sh;
   }
 
-  function program(gl, vsrc, fsrc) {
+  function program(gl, vsrc, fsrc, attributes) {
     var p = gl.createProgram();
     gl.attachShader(p, compile(gl, gl.VERTEX_SHADER, vsrc));
     gl.attachShader(p, compile(gl, gl.FRAGMENT_SHADER, fsrc));
+    for (var name in (attributes || {})) gl.bindAttribLocation(p, attributes[name], name);
     gl.linkProgram(p);
     if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
       throw new Error('link: ' + gl.getProgramInfoLog(p));
@@ -2376,8 +2572,32 @@
     this.onSelect = opts.onSelect || function () {};
     this.onError = opts.onError || function () {};
 
-    var gl = canvas.getContext('webgl', { antialias: true, alpha: false })
-          || canvas.getContext('experimental-webgl', { antialias: true, alpha: false });
+    /* WebGL2 first, WebGL1 with ANGLE_instanced_arrays second (Phase 6, stage W1;
+     * decided 2026-09-15 to keep the WebGL1 path).
+     *
+     * Both draw a batch with ONE call however many copies it has. A WebGL1 context
+     * without the extension still draws — each copy's attributes are set as constant
+     * values and drawn with its own drawElements — so an old browser is slow rather
+     * than blank. All three paths use the same shaders: GLSL ES 1.00 is valid in both
+     * versions, and a second pair would be a second place for the lighting to drift.
+     * TestRendererUploadsTheInstancesTheExporterPlaces draws through all three. */
+    var attrs = { antialias: true, alpha: false };
+    var gl = canvas.getContext('webgl2', attrs), webgl2 = !!gl, instancing = null;
+    if (gl) {
+      instancing = {
+        draw: function (count, type, n) { gl.drawElementsInstanced(gl.TRIANGLES, count, type, 0, n); },
+        divisor: function (loc, d) { gl.vertexAttribDivisor(loc, d); }
+      };
+    } else {
+      gl = canvas.getContext('webgl', attrs) || canvas.getContext('experimental-webgl', attrs);
+      var angle = gl && gl.getExtension ? gl.getExtension('ANGLE_instanced_arrays') : null;
+      if (angle) {
+        instancing = {
+          draw: function (count, type, n) { angle.drawElementsInstancedANGLE(gl.TRIANGLES, count, type, 0, n); },
+          divisor: function (loc, d) { angle.vertexAttribDivisorANGLE(loc, d); }
+        };
+      }
+    }
     /* 32-bit indices, so a tessellated solid is not capped at 65,535 vertices.
      *
      * WebGL 1 indexes with an unsigned short unless this extension is present,
@@ -2385,8 +2605,8 @@
      * came close, so the ceiling was invisible until the kernel started drawing.
      * Where the extension is missing the part falls back to its primitive and
      * SAYS so — a mesh silently truncated to 65k vertices would draw a shape
-     * nobody built. */
-    if (gl && gl.getExtension) gl.getExtension('OES_element_index_uint');
+     * nobody built. WebGL2 has them without asking. */
+    if (gl && !webgl2 && gl.getExtension) gl.getExtension('OES_element_index_uint');
     if (!gl) {
       // Reported, never silently blank. A viewport that renders nothing with no
       // explanation is indistinguishable from a model that produced nothing.
@@ -2395,8 +2615,11 @@
       return;
     }
     this.gl = gl;
-    this.prog = program(gl, VERT, FRAG);
-    this.lineProg = program(gl, LINE_VERT, LINE_FRAG);
+    this.webgl2 = webgl2;
+    this.instancing = instancing;
+    this.renderPath = webgl2 ? 'webgl2' : instancing ? 'webgl1-instanced' : 'webgl1-per-copy';
+    this.prog = program(gl, VERT, FRAG, PART_ATTRIBUTES);
+    this.lineProg = program(gl, LINE_VERT, LINE_FRAG, { aPos: ATTRIB.pos });
 
     this.parts = [];
     this.spec = null;
@@ -2412,6 +2635,11 @@
     this.showGrid = true;
     this.selected = null;
     this.transparency = 1.0;
+    this.batches = [];
+    this.isolated = null;
+    /* Pixels of radius below which a copy is drawn as its box; 0 draws every copy whole. */
+    this.lod = LOD_PIXELS;
+    this.stats = null;
 
     this.camera = { yaw: 0.7, pitch: 0.5, distance: 6, target: [0, 0, 0] };
     this._bindControls();
@@ -2470,15 +2698,24 @@
   };
 
   Studio.prototype._bindControls = function () {
-    var self = this, dragging = false, panning = false, lastX = 0, lastY = 0;
+    var self = this, dragging = false, panning = false, lastX = 0, lastY = 0, downX = 0, downY = 0;
 
     this.canvas.addEventListener('mousedown', function (e) {
       dragging = true;
       panning = e.button === 1 || e.shiftKey;
       lastX = e.clientX; lastY = e.clientY;
+      downX = e.clientX; downY = e.clientY;
       e.preventDefault();
     });
-    window.addEventListener('mouseup', function () { dragging = false; });
+    /* A press that did not move is a click, and a click picks (Phase 6, stage W2).
+     * Five pixels of slack, because a hand on a trackpad does not hold still. */
+    window.addEventListener('mouseup', function (e) {
+      var still = dragging && !panning && Math.abs(e.clientX - downX) + Math.abs(e.clientY - downY) < 5;
+      dragging = false;
+      if (!still) return;
+      var hit = self.pick(e.clientX, e.clientY);
+      self.onSelect(hit ? hit.id : null, hit);
+    });
     window.addEventListener('mousemove', function (e) {
       if (!dragging) return;
       var dx = e.clientX - lastX, dy = e.clientY - lastY;
@@ -2550,18 +2787,15 @@
    * and everything it carries about provenance stays attached to the part so the
    * workbench can state where a shape came from rather than implying it is
    * authoritative. */
-  Studio.prototype.load = function (spec) {
+  Studio.prototype.load = function (spec, built) {
     if (!this.gl) return;
     var gl = this.gl, self = this;
 
-    (this.parts || []).forEach(function (p) {
-      gl.deleteBuffer(p.buffers.position);
-      gl.deleteBuffer(p.buffers.normal);
-      gl.deleteBuffer(p.buffers.index);
-    });
+    (this.batches || []).forEach(function (b) { releaseBatch(gl, b); });
 
     this.spec = spec || { parts: [] };
     this.approximations = [];
+    this.isolated = null;
     /* Refused whole and said out loud (Phase 3, stage S0): partsToDraw draws nothing
      * for a design over the ceiling, and an empty stage must not read as an empty design. */
     var refusal = drawRefusal(this.spec);
@@ -2581,63 +2815,115 @@
      * what was done instead of hiding it. */
     /* Which parts are removed material, and every copy of every repeat, are
      * decided in ONE place — partsToDraw — so what the parity fence checks is
-     * what is drawn. */
+     * what is drawn. What is drawn WITH what is decided in one more — drawBatches
+     * — and `built`, the mesh reply when the kernel answered, is how a definition's
+     * triangles and its copies' matrices reach it (Phase 6, stage W1). */
+    var wide = this.webgl2 || !!gl.getExtension('OES_element_index_uint');
+    var plan = drawBatches(partsToDraw(this.spec), built || null, { wide: wide });
+    this.approximations = plan.approximations;
+    this.batches = plan.batches.map(function (b) { return self._upload(b, wide); });
 
-    var wide = !!gl.getExtension('OES_element_index_uint');
-
-    this.parts = partsToDraw(this.spec).map(function (drawn) {
-      var part = drawn.spec;
-      var built = buildGeometry(drawn.mesh ? withMesh(part, drawn.mesh) : part);
-      /* A tessellation this browser cannot index. Drawn as its primitive
-       * instead, and named — truncating to 65,535 vertices would draw a shape
-       * nobody built, which is worse than drawing the approximation everybody
-       * has been looking at until now. */
-      if (built.fromKernel && !wide && built.geo.positions.length / 3 > 65535) {
-        var fallback = buildGeometry({ shape: part.shape, size: part.size,
-          profile: part.profile, holes: part.holes, path: part.path,
-          path_closed: part.path_closed, axis: part.axis });
-        fallback.approximated = 'the built solid needs ' +
-          Math.round(built.geo.positions.length / 3) + ' vertices and this browser indexes ' +
-          '65,535, so the primitive is drawn instead';
-        built = fallback;
+    /* One entry per drawn part, for the readers that want parts rather than batches:
+     * framing, search, and the count load returns. Held on the WRAPPER and never
+     * written into spec: the document on screen has to stay the document stored. */
+    this.parts = [];
+    for (var n = 0; n < this.batches.length; n++) {
+      var b = this.batches[n];
+      for (var i = 0; i < b.n; i++) {
+        this.parts.push({ id: b.ids[i], spec: b.specs[i], removed: !!b.removed[i],
+                          repeatOf: b.repeatOf[i], fromKernel: b.fromKernel });
       }
-      var geo = built.geo;
-      if (built.approximated) {
-        self.approximations.push((part.name || part.id) + ': ' + built.approximated);
-      }
-      var vertexCount = geo.positions.length / 3;
-      var wideHere = wide && vertexCount > 65535;
-      var buffers = {
-        position: makeBuffer(gl, gl.ARRAY_BUFFER, new Float32Array(geo.positions)),
-        normal:   makeBuffer(gl, gl.ARRAY_BUFFER, new Float32Array(geo.normals)),
-        index:    makeBuffer(gl, gl.ELEMENT_ARRAY_BUFFER,
-                    wideHere ? new Uint32Array(geo.indices) : new Uint16Array(geo.indices))
-      };
-      return {
-        spec: part,
-        buffers: buffers,
-        count: geo.indices.length,
-        // Held per part: one body may need 32-bit indices while its neighbour
-        // does not, and drawing with the wrong width renders noise.
-        indexType: wideHere ? gl.UNSIGNED_INT : gl.UNSIGNED_SHORT,
-        centre: part.position || [0, 0, 0],
-        // Held on the WRAPPER and never written into spec: the document on
-        // screen has to stay the document that was stored, so a presentation
-        // decision must not become a value the model appears to have stated.
-        removed: drawn.removed,
-        // The part this is a copy of, so a state or a selection naming the
-        // pattern reaches every copy. Empty for a part that is not a copy.
-        repeatOf: drawn.repeatOf,
-        // From what was BUILT, not what was asked for: a mesh this browser cannot
-        // index falls back to its primitive, and a primitive must be placed.
-        fromKernel: !!built.fromKernel
-      };
-    });
+    }
 
     this._frameAll();
     this.draw();
     return this.parts.length;
   };
+
+  /* _upload puts one batch on the GPU: its triangles once, the box its level of
+   * detail draws, and every instance's matrix plus what culling needs to decide
+   * about it without touching the matrix again — the centre and radius of its
+   * bounding sphere, and its half-extent along each axis for framing. */
+  Studio.prototype._upload = function (plan, wide) {
+    var gl = this.gl, geo = plan.geo, n = plan.instances.length, bd = plan.bounds;
+    var vertexCount = geo.positions.length / 3;
+    var wideHere = wide && vertexCount > 65535;
+    var b = {
+      key: plan.key, fromKernel: plan.fromKernel, definition: plan.definition, shading: plan.shading,
+      geo: geo, bounds: bd, triangles: geo.indices.length / 3, n: n,
+      buffers: {
+        position: makeBuffer(gl, gl.ARRAY_BUFFER, new Float32Array(geo.positions)),
+        normal:   makeBuffer(gl, gl.ARRAY_BUFFER, new Float32Array(geo.normals)),
+        index:    makeBuffer(gl, gl.ELEMENT_ARRAY_BUFFER,
+                    wideHere ? new Uint32Array(geo.indices) : new Uint16Array(geo.indices))
+      },
+      count: geo.indices.length,
+      // Held per batch: one body may need 32-bit indices while its neighbour
+      // does not, and drawing with the wrong width renders noise.
+      indexType: wideHere ? gl.UNSIGNED_INT : gl.UNSIGNED_SHORT,
+      proxy: proxyBuffers(gl, bd),
+      ids: new Array(n), repeatOf: new Array(n), specs: new Array(n),
+      removed: new Uint8Array(n), mirrored: new Uint8Array(n), opacity: new Float32Array(n),
+      model: new Float32Array(n * 16), centre: new Float64Array(n * 3), radius: new Float32Array(n),
+      extent: new Float32Array(n * 3), anchor: new Float64Array(n * 3),
+      disp: new Float32Array(n * 3), group: new Uint8Array(n), visible: new Uint8Array(n),
+      scratch: new Float32Array(n * INSTANCE_FLOATS), instanceBuffer: gl.createBuffer()
+    };
+    var c = bd.centre, h = bd.half;
+    for (var i = 0; i < n; i++) {
+      var inst = plan.instances[i], m = inst.matrix, s = inst.spec, o = i * 3;
+      b.ids[i] = inst.id;
+      b.repeatOf[i] = inst.repeatOf;
+      b.specs[i] = s;
+      b.removed[i] = inst.removed ? 1 : 0;
+      b.opacity[i] = num(s.opacity, 1);
+      for (var k = 0; k < 16; k++) b.model[i * 16 + k] = m[k];
+      b.centre[o]     = m[0] * c[0] + m[4] * c[1] + m[8] * c[2] + m[12];
+      b.centre[o + 1] = m[1] * c[0] + m[5] * c[1] + m[9] * c[2] + m[13];
+      b.centre[o + 2] = m[2] * c[0] + m[6] * c[1] + m[10] * c[2] + m[14];
+      /* The sphere grows by the longest column: a scaled copy's sphere must still
+       * hold it, or culling drops a part that is on screen. */
+      var s0 = Math.sqrt(m[0] * m[0] + m[1] * m[1] + m[2] * m[2]);
+      var s1 = Math.sqrt(m[4] * m[4] + m[5] * m[5] + m[6] * m[6]);
+      var s2 = Math.sqrt(m[8] * m[8] + m[9] * m[9] + m[10] * m[10]);
+      b.radius[i] = bd.radius * Math.max(s0, s1, s2);
+      for (k = 0; k < 3; k++) {
+        b.extent[o + k] = Math.abs(m[k]) * h[0] + Math.abs(m[4 + k]) * h[1] + Math.abs(m[8 + k]) * h[2];
+      }
+      var det = m[0] * (m[5] * m[10] - m[6] * m[9]) - m[4] * (m[1] * m[10] - m[2] * m[9]) +
+                m[8] * (m[1] * m[6] - m[2] * m[5]);
+      b.mirrored[i] = det < 0 ? 1 : 0;
+      var at = s.position || [0, 0, 0];
+      b.anchor[o] = num(at[0], 0); b.anchor[o + 1] = num(at[1], 0); b.anchor[o + 2] = num(at[2], 0);
+    }
+    return b;
+  };
+
+  /* The box a far-away copy is drawn as: the batch's own bounds, as twelve triangles. */
+  function proxyBuffers(gl, bd) {
+    var box = boxGeometry(bd.half[0] * 2, bd.half[1] * 2, bd.half[2] * 2);
+    for (var i = 0; i < box.positions.length; i += 3) {
+      box.positions[i] += bd.centre[0];
+      box.positions[i + 1] += bd.centre[1];
+      box.positions[i + 2] += bd.centre[2];
+    }
+    return {
+      position: makeBuffer(gl, gl.ARRAY_BUFFER, new Float32Array(box.positions)),
+      normal:   makeBuffer(gl, gl.ARRAY_BUFFER, new Float32Array(box.normals)),
+      index:    makeBuffer(gl, gl.ELEMENT_ARRAY_BUFFER, new Uint16Array(box.indices)),
+      count:    box.indices.length
+    };
+  }
+
+  function releaseBatch(gl, b) {
+    gl.deleteBuffer(b.buffers.position);
+    gl.deleteBuffer(b.buffers.normal);
+    gl.deleteBuffer(b.buffers.index);
+    gl.deleteBuffer(b.proxy.position);
+    gl.deleteBuffer(b.proxy.normal);
+    gl.deleteBuffer(b.proxy.index);
+    gl.deleteBuffer(b.instanceBuffer);
+  }
 
   /* modelMatrix is where one drawn part goes on screen, given the displacement the
    * view adds to it (an exploded view's gap, an assembly state's offset).
@@ -2651,26 +2937,18 @@
    * 60 degrees, outside the frame. The contact sheet the vision check reads was
    * right all along; only what a person saw was wrong.
    * docs/bugfix/2026-09-13-kernel-built-parts-were-placed-twice.md
-   * Fence: TestRendererDoesNotPlaceAKernelMeshTwice. */
+   * Fence: TestRendererDoesNotPlaceAKernelMeshTwice.
+   *
+   * Since Phase 6, stage W1 the matrix itself comes from placementMatrix, the one
+   * copy of the rule the instanced draw reads too. */
   function modelMatrix(part, displacement) {
     var d = displacement || [0, 0, 0];
-    if (part.fromKernel) return translation(d);
-    var s = part.spec;
     /* A mirrored primitive reflects its own x first (Part.Mirrored) — the same
-     * rule the kernel and the Go mesh follow. draw() flips its front face, because
-     * a reflection turns every triangle inside out. */
-    var sc = s.scale || [1, 1, 1];
-    if (s.mirrored) sc = [-sc[0], sc[1], sc[2]];
-    return multiply(translation(add(s.position || [0, 0, 0], d)),
-             multiply(rotationXYZ(s.rotation || [0, 0, 0]), scaling(sc)));
-  }
-
-  /* A drawn part carrying its kernel mesh, without writing the mesh into the
-   * document the part belongs to. */
-  function withMesh(part, mesh) {
-    var out = shallowCopy(part);
-    out.mesh = mesh;
-    return out;
+     * rule the kernel and the Go mesh follow. The draw flips its front face,
+     * because a reflection turns every triangle inside out. */
+    var m = part.fromKernel ? IDENTITY.slice() : placementMatrix(part.spec);
+    m[12] += d[0]; m[13] += d[1]; m[14] += d[2];
+    return new Float32Array(m);
   }
 
   function makeBuffer(gl, target, data) {
@@ -2682,17 +2960,21 @@
 
   /* _frameAll fits the camera to the model. Without it, a model in millimetres
    * and a model in metres both render — one as a speck, one filling the screen —
-   * and the viewer blames the geometry. */
+   * and the viewer blames the geometry.
+   *
+   * From what is DRAWN (each instance's box in the world), not from the document's
+   * positions and sizes: a kernel mesh, an extrusion whose outline sits away from its
+   * origin and a copy placed by a matrix all have a position that is not their middle. */
   Studio.prototype._frameAll = function () {
     if (!this.parts.length) return;
     var min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
-    this.parts.forEach(function (p) {
-      var pos = p.spec.position || [0,0,0];
-      var s = p.spec.size || {};
-      var r = Math.max(num(s.width,1), num(s.height,1), num(s.depth,1), num(s.radius,0.5)*2) / 2;
-      for (var i = 0; i < 3; i++) {
-        min[i] = Math.min(min[i], pos[i] - r);
-        max[i] = Math.max(max[i], pos[i] + r);
+    this.batches.forEach(function (b) {
+      for (var i = 0; i < b.n; i++) {
+        for (var k = 0; k < 3; k++) {
+          var c = b.centre[i * 3 + k], e = b.extent[i * 3 + k];
+          if (c - e < min[k]) min[k] = c - e;
+          if (c + e > max[k]) max[k] = c + e;
+        }
       }
     });
     var centre = [(min[0]+max[0])/2, (min[1]+max[1])/2, (min[2]+max[2])/2];
@@ -2728,7 +3010,37 @@
   Studio.prototype.setExplode = function (v) { this.explode = v; this.draw(); };
   Studio.prototype.setTransparency = function (v) { this.transparency = v; this.draw(); };
   Studio.prototype.setGrid = function (on) { this.showGrid = !!on; this.draw(); };
-  Studio.prototype.select = function (id) { this.selected = id; this.draw(); };
+  /* select highlights what a person picked: a part as written ("spoke" lights every
+   * copy), a path (its whole subtree, Phase 6 stage W2), or a matcher from
+   * occurrenceMatcher, which decides for itself. null clears it. */
+  Studio.prototype.select = function (id) { this.selected = id || null; this.draw(); };
+
+  /* isolate draws only what a matcher accepts, or everything again for null. A
+   * redraw, not a reload: isolating a subtree of a car must not rebuild the car. */
+  Studio.prototype.isolate = function (matcher) {
+    this.isolated = typeof matcher === 'function' ? matcher : null;
+    this.draw();
+  };
+
+  /* Every drawn part's id, which for a tree is its occurrence path. */
+  Studio.prototype.occurrenceIds = function () {
+    return this.parts.map(function (p) { return p.id; });
+  };
+
+  /* Drawn parts whose path or name contains the query, case-insensitively, up to
+   * limit, and how many there were in all — a search over a car must say it found
+   * 500 rivets rather than list them. */
+  Studio.prototype.findOccurrences = function (query, limit) {
+    var q = String(query || '').trim().toLowerCase(), found = [], total = 0;
+    if (!q) return { found: found, total: 0 };
+    for (var i = 0; i < this.parts.length; i++) {
+      var p = this.parts[i], name = String(p.spec.name || '');
+      if (p.id.toLowerCase().indexOf(q) < 0 && name.toLowerCase().indexOf(q) < 0) continue;
+      total++;
+      if (found.length < (limit || 50)) found.push({ id: p.id, label: name || p.id });
+    }
+    return { found: found, total: total };
+  };
 
   Studio.prototype.setSection = function (axis, t) {
     var map = { none: 0, x: 1, y: 2, z: 3 };
@@ -2747,6 +3059,102 @@
     this.draw();
   };
 
+  /* ---- Culling and level of detail (Phase 6, stage W2) --------------------------
+   *
+   * A copy whose bounding sphere is wholly outside the view is not sent at all, and a
+   * copy that would cover fewer than `lod` pixels of radius is drawn as its batch's
+   * box — twelve triangles in place of however many the shape has. Both are decided
+   * per instance, on the CPU, from what _upload worked out once.
+   *
+   * ‼️ Conservative on purpose: the section plane culls nothing (a copy cut in half
+   * is still on screen), and a camera inside a sphere never draws its box. What is
+   * culled only has to be invisible; what is kept may be. */
+  var FOV_DEGREES = 45;
+
+  /* One function, read by both the sort and the draw. Two copies would eventually
+   * disagree, and a part sorted as opaque and drawn translucent is a part that
+   * erases whatever is behind it. */
+  function alphaOf(b, i, transparency) {
+    return b.removed[i] ? REMOVED_ALPHA : b.opacity[i] * transparency;
+  }
+  var LOD_PIXELS = 3;
+  var SKIP = 255;
+
+  /* The six planes of the view, from clip = projection · view, each normalised so a
+   * sphere's distance can be compared with its radius (Gribb and Hartmann). */
+  function frustumPlanes(m) {
+    var rows = [[m[0], m[4], m[8], m[12]], [m[1], m[5], m[9], m[13]],
+                [m[2], m[6], m[10], m[14]], [m[3], m[7], m[11], m[15]]];
+    var out = [];
+    [[0, 1], [0, -1], [1, 1], [1, -1], [2, 1], [2, -1]].forEach(function (p) {
+      var a = rows[3], r = rows[p[0]], s = p[1];
+      var pl = [a[0] + s * r[0], a[1] + s * r[1], a[2] + s * r[2], a[3] + s * r[3]];
+      var l = Math.sqrt(pl[0] * pl[0] + pl[1] * pl[1] + pl[2] * pl[2]) || 1;
+      out.push([pl[0] / l, pl[1] / l, pl[2] / l, pl[3] / l]);
+    });
+    return out;
+  }
+
+  function sphereInFrustum(planes, x, y, z, r) {
+    for (var i = 0; i < 6; i++) {
+      var p = planes[i];
+      if (p[0] * x + p[1] * y + p[2] * z + p[3] < -r) return false;
+    }
+    return true;
+  }
+
+  function invert4(m) {
+    var a00 = m[0], a01 = m[1], a02 = m[2], a03 = m[3], a10 = m[4], a11 = m[5], a12 = m[6], a13 = m[7],
+        a20 = m[8], a21 = m[9], a22 = m[10], a23 = m[11], a30 = m[12], a31 = m[13], a32 = m[14], a33 = m[15];
+    var b00 = a00 * a11 - a01 * a10, b01 = a00 * a12 - a02 * a10, b02 = a00 * a13 - a03 * a10,
+        b03 = a01 * a12 - a02 * a11, b04 = a01 * a13 - a03 * a11, b05 = a02 * a13 - a03 * a12,
+        b06 = a20 * a31 - a21 * a30, b07 = a20 * a32 - a22 * a30, b08 = a20 * a33 - a23 * a30,
+        b09 = a21 * a32 - a22 * a31, b10 = a21 * a33 - a23 * a31, b11 = a22 * a33 - a23 * a32;
+    var det = b00 * b11 - b01 * b10 + b02 * b09 + b03 * b08 - b04 * b07 + b05 * b06;
+    if (!det) return null;
+    det = 1 / det;
+    return [(a11 * b11 - a12 * b10 + a13 * b09) * det, (a02 * b10 - a01 * b11 - a03 * b09) * det,
+            (a31 * b05 - a32 * b04 + a33 * b03) * det, (a22 * b04 - a21 * b05 - a23 * b03) * det,
+            (a12 * b08 - a10 * b11 - a13 * b07) * det, (a00 * b11 - a02 * b08 + a03 * b07) * det,
+            (a32 * b02 - a30 * b05 - a33 * b01) * det, (a20 * b05 - a22 * b02 + a23 * b01) * det,
+            (a10 * b10 - a11 * b08 + a13 * b06) * det, (a01 * b08 - a00 * b10 - a03 * b06) * det,
+            (a30 * b04 - a31 * b02 + a33 * b00) * det, (a21 * b02 - a20 * b04 - a23 * b00) * det,
+            (a11 * b07 - a10 * b09 - a12 * b06) * det, (a00 * b09 - a01 * b07 + a02 * b06) * det,
+            (a31 * b01 - a30 * b03 - a32 * b00) * det, (a20 * b03 - a21 * b01 + a22 * b00) * det];
+  }
+
+  function transformPoint(m, v, w) {
+    var x = m[0] * v[0] + m[4] * v[1] + m[8] * v[2] + m[12] * w;
+    var y = m[1] * v[0] + m[5] * v[1] + m[9] * v[2] + m[13] * w;
+    var z = m[2] * v[0] + m[6] * v[1] + m[10] * v[2] + m[14] * w;
+    var q = m[3] * v[0] + m[7] * v[1] + m[11] * v[2] + m[15] * w;
+    return w && q ? [x / q, y / q, z / q] : [x, y, z];
+  }
+
+  /* The nearest triangle a ray crosses, from either side, as its distance along the
+   * ray (Möller and Trumbore), or null. */
+  function nearestTriangle(pos, idx, o, d) {
+    var best = null;
+    for (var t = 0; t + 2 < idx.length; t += 3) {
+      var a = idx[t] * 3, b = idx[t + 1] * 3, c = idx[t + 2] * 3;
+      var e1x = pos[b] - pos[a], e1y = pos[b + 1] - pos[a + 1], e1z = pos[b + 2] - pos[a + 2];
+      var e2x = pos[c] - pos[a], e2y = pos[c + 1] - pos[a + 1], e2z = pos[c + 2] - pos[a + 2];
+      var px = d[1] * e2z - d[2] * e2y, py = d[2] * e2x - d[0] * e2z, pz = d[0] * e2y - d[1] * e2x;
+      var det = e1x * px + e1y * py + e1z * pz;
+      if (Math.abs(det) < 1e-12) continue;
+      var inv = 1 / det;
+      var sx = o[0] - pos[a], sy = o[1] - pos[a + 1], sz = o[2] - pos[a + 2];
+      var u = (sx * px + sy * py + sz * pz) * inv;
+      if (u < 0 || u > 1) continue;
+      var qx = sy * e1z - sz * e1y, qy = sz * e1x - sx * e1z, qz = sx * e1y - sy * e1x;
+      var v = (d[0] * qx + d[1] * qy + d[2] * qz) * inv;
+      if (v < 0 || u + v > 1) continue;
+      var dist = (e2x * qx + e2y * qy + e2z * qz) * inv;
+      if (dist >= 0 && (best === null || dist < best)) best = dist;
+    }
+    return best;
+  }
+
   Studio.prototype.draw = function () {
     if (!this.gl) return;
     var gl = this.gl;
@@ -2763,30 +3171,23 @@
 
     var eye = this._eye();
     var view = lookAt(eye, this.camera.target, [0, 1, 0]);
-    var proj = perspective(45, w / Math.max(1, h), 0.05, Math.max(200, this.camera.distance * 8));
+    var proj = perspective(FOV_DEGREES, w / Math.max(1, h), 0.05, Math.max(200, this.camera.distance * 8));
 
     if (this.showGrid) this._drawGrid(view, proj);
 
     gl.useProgram(this.prog);
     var P = this.prog;
-    var loc = {
-      pos: gl.getAttribLocation(P, 'aPos'),
-      nrm: gl.getAttribLocation(P, 'aNormal'),
-      model: gl.getUniformLocation(P, 'uModel'),
+    var loc = this._loc || (this._loc = {
       view: gl.getUniformLocation(P, 'uView'),
       proj: gl.getUniformLocation(P, 'uProj'),
-      nmat: gl.getUniformLocation(P, 'uNormalMat'),
-      color: gl.getUniformLocation(P, 'uColor'),
-      opacity: gl.getUniformLocation(P, 'uOpacity'),
       light: gl.getUniformLocation(P, 'uLightDir'),
       cam: gl.getUniformLocation(P, 'uCamPos'),
       secAxis: gl.getUniformLocation(P, 'uSectionAxis'),
       secAt: gl.getUniformLocation(P, 'uSectionAt'),
-      highlight: gl.getUniformLocation(P, 'uHighlight'),
       light2: gl.getUniformLocation(P, 'uLight'),
       specPower: gl.getUniformLocation(P, 'uSpecPower'),
       specGloss: gl.getUniformLocation(P, 'uSpecGloss')
-    };
+    });
     gl.uniformMatrix4fv(loc.view, false, view);
     gl.uniformMatrix4fv(loc.proj, false, proj);
     gl.uniform3fv(loc.light, normalize([0.45, 0.85, 0.5]));
@@ -2795,72 +3196,22 @@
     gl.uniform1i(loc.secAxis, this.section.axis);
     gl.uniform1f(loc.secAt, this.section.at);
 
-    var self = this;
-    /* One function, read by both the sort and the draw. Two copies would
-     * eventually disagree, and a part sorted as opaque and drawn translucent is
-     * a part that erases whatever is behind it. */
-    var alphaOf = function (p) {
-      return p.removed ? REMOVED_ALPHA : num(p.spec.opacity, 1) * self.transparency;
+    /* What the frame was drawn with, kept for pick(): a click is resolved against the
+     * camera and the displacements that were on screen, not whatever changed since. */
+    var frame = this._frame = {
+      view: view, proj: proj, eye: eye, planes: frustumPlanes(multiply(proj, view)),
+      pixels: h / (2 * Math.tan(FOV_DEGREES * Math.PI / 360))
     };
-    // Opaque first, then transparent back-to-front, so a translucent housing
-    // does not erase what is inside it.
-    var order = this.parts.slice().sort(function (a, b) {
-      var oa = alphaOf(a);
-      var ob = alphaOf(b);
-      if ((oa >= 1) !== (ob >= 1)) return oa >= 1 ? -1 : 1;
-      var da = length3(sub(eye, a.spec.position || [0,0,0]));
-      var db = length3(sub(eye, b.spec.position || [0,0,0]));
-      return db - da;
-    });
-
-    order.forEach(function (part) {
-      var s = part.spec;
-      var base = (s.position || [0, 0, 0]).slice();
-      var pos = base.slice();
-
-      // Exploded view: parts move outward from the assembly centre, so the
-      // relationship between them stays readable while the gap opens.
-      if (self.explode > 0 && self.bounds) {
-        var dir = sub(pos, self.bounds.centre);
-        if (length3(dir) < 1e-6) dir = [0, 1, 0];
-        pos = add(pos, scale3(normalize(dir), self.explode * self.bounds.span * 0.6));
-      }
-
-      /* PRD VIS-02. The active assembly state moves parts and hides them. It is
-       * applied here rather than baked into the loaded geometry so that
-       * switching states costs a redraw instead of a rebuild, and so the
-       * document on screen stays the document that was stored. */
-      var st = self._stateFor(s.id, part.repeatOf);
-      if (st.hidden) return;
-      if (st.offset) pos = add(pos, st.offset);
-
-      var model = modelMatrix(part, sub(pos, base));
-      gl.uniformMatrix4fv(loc.model, false, model);
-      gl.uniformMatrix3fv(loc.nmat, false, normalMatrix(model));
-      gl.uniform3fv(loc.color, hexToRGB(part.removed ? g.removed : (s.color || g.part)));
-      gl.uniform1f(loc.opacity, alphaOf(part));
-      gl.uniform1f(loc.highlight,
-        (self.selected === s.id || (part.repeatOf && self.selected === part.repeatOf)) ? 1 : 0);
-      /* The finish, as the document declared it. Not looked up from the material
-       * NAME: that table would have to exist here and in Go, and this codebase
-       * has already recorded what two copies of one rule cost. */
-      var sh = shadingFor(s.material);
-      gl.uniform1f(loc.specPower, sh[0]);
-      gl.uniform1f(loc.specGloss, sh[1]);
-
-      gl.bindBuffer(gl.ARRAY_BUFFER, part.buffers.position);
-      gl.enableVertexAttribArray(loc.pos);
-      gl.vertexAttribPointer(loc.pos, 3, gl.FLOAT, false, 0, 0);
-      gl.bindBuffer(gl.ARRAY_BUFFER, part.buffers.normal);
-      gl.enableVertexAttribArray(loc.nrm);
-      gl.vertexAttribPointer(loc.nrm, 3, gl.FLOAT, false, 0, 0);
-      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, part.buffers.index);
-      /* A reflected primitive's triangles wind the other way, so with back faces
-       * culled it would be drawn inside out. A kernel mesh arrives already
-       * reflected with its winding intact, so only the primitive flips. */
-      gl.frontFace(s.mirrored && !part.fromKernel ? gl.CW : gl.CCW);
-      gl.drawElements(gl.TRIANGLES, part.count, part.indexType || gl.UNSIGNED_SHORT, 0);
-    });
+    /* Counted every frame and kept, because "how many draw calls" is the question a
+     * slow viewport is asked first and the answer must not need a debugger. */
+    var stats = this.stats = { path: this.renderPath, batches: (this.batches || []).length, drawCalls: 0,
+      instances: 0, culled: 0, proxied: 0, hidden: 0, translucent: 0, uploadedBytes: 0 };
+    var translucent = [];
+    for (var n = 0; n < (this.batches || []).length; n++) {
+      this._drawBatch(this.batches[n], frame, stats, translucent);
+    }
+    if (translucent.length) this._drawTranslucent(translucent, stats);
+    this._resetInstanceAttributes();
     gl.frontFace(gl.CCW);
 
     /* PRD VIS-03, drawn last so the marks sit over the model rather than
@@ -2869,6 +3220,244 @@
      * label ends up beside the wrong feature. */
     if (this.showOverlays) this._drawOverlays(view, proj);
     this._placeLabels(view, proj);
+  };
+
+  /* One batch: decide each copy, lay the survivors out in four runs — full or box,
+   * each wound either way — upload them once, and draw each run with one call. */
+  Studio.prototype._drawBatch = function (b, f, stats, translucent) {
+    var gl = this.gl, g = ground();
+    var explode = this.explode > 0 && this.bounds ? this.explode * this.bounds.span * 0.6 : 0;
+    var isolated = this.isolated, state = this.state, lod = this.lod;
+    var counts = [0, 0, 0, 0], i, o;
+    for (i = 0; i < b.n; i++) {
+      b.visible[i] = 0;
+      b.group[i] = SKIP;
+      var id = b.ids[i], rep = b.repeatOf[i];
+      if (isolated && !isolated(id, rep)) { stats.hidden++; continue; }
+      o = i * 3;
+      var dx = 0, dy = 0, dz = 0;
+      /* Exploded view: parts move outward from the assembly centre, so the
+       * relationship between them stays readable while the gap opens. */
+      if (explode) {
+        var ax = b.anchor[o] - this.bounds.centre[0], ay = b.anchor[o + 1] - this.bounds.centre[1],
+            az = b.anchor[o + 2] - this.bounds.centre[2];
+        var len = Math.sqrt(ax * ax + ay * ay + az * az);
+        if (len < 1e-6) { ax = 0; ay = 1; az = 0; len = 1; }
+        dx = ax / len * explode; dy = ay / len * explode; dz = az / len * explode;
+      }
+      /* PRD VIS-02. The active assembly state moves parts and hides them. It is
+       * applied here rather than baked into the loaded geometry so that
+       * switching states costs a redraw instead of a rebuild, and so the
+       * document on screen stays the document that was stored. */
+      if (state) {
+        var st = this._stateFor(id, rep);
+        if (st.hidden) { stats.hidden++; continue; }
+        if (st.offset) { dx += st.offset[0]; dy += st.offset[1]; dz += st.offset[2]; }
+      }
+      b.disp[o] = dx; b.disp[o + 1] = dy; b.disp[o + 2] = dz;
+      var cx = b.centre[o] + dx, cy = b.centre[o + 1] + dy, cz = b.centre[o + 2] + dz, r = b.radius[i];
+      if (!sphereInFrustum(f.planes, cx, cy, cz, r)) { stats.culled++; continue; }
+      b.visible[i] = 1;
+      var ex = cx - f.eye[0], ey = cy - f.eye[1], ez = cz - f.eye[2];
+      var dist = Math.sqrt(ex * ex + ey * ey + ez * ez);
+      var proxy = lod > 0 && b.triangles > 12 && dist > r && r * f.pixels / dist < lod ? 1 : 0;
+      if (alphaOf(b, i, this.transparency) < 1) {
+        translucent.push({ b: b, i: i, proxy: proxy, depth: dist });
+        continue;
+      }
+      b.group[i] = proxy * 2 + b.mirrored[i];
+      counts[b.group[i]]++;
+    }
+    var starts = [0, counts[0], counts[0] + counts[1], counts[0] + counts[1] + counts[2]];
+    var total = starts[3] + counts[3];
+    if (!total) return;
+    var at = starts.slice();
+    for (i = 0; i < b.n; i++) {
+      if (b.group[i] !== SKIP) this._writeInstance(b.scratch, at[b.group[i]]++, b, i, 1, g);
+    }
+    if (this.instancing) {
+      var data = b.scratch.subarray(0, total * INSTANCE_FLOATS);
+      gl.bindBuffer(gl.ARRAY_BUFFER, b.instanceBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, data, gl.DYNAMIC_DRAW);
+      stats.uploadedBytes += data.byteLength;
+    }
+    for (var k = 0; k < 4; k++) {
+      if (counts[k]) this._drawRun(b, k >= 2, k % 2 === 1, b.instanceBuffer, b.scratch, starts[k], counts[k], stats);
+    }
+  };
+
+  /* One instance's 21 floats: its matrix moved by what the view added, its colour and
+   * opacity, and whether it is selected. */
+  Studio.prototype._writeInstance = function (out, slot, b, i, alpha, g) {
+    var o = slot * INSTANCE_FLOATS, m = i * 16;
+    for (var k = 0; k < 16; k++) out[o + k] = b.model[m + k];
+    out[o + 12] += b.disp[i * 3];
+    out[o + 13] += b.disp[i * 3 + 1];
+    out[o + 14] += b.disp[i * 3 + 2];
+    var rgb = this._colour(b.removed[i] ? g.removed : (b.specs[i].color || g.part));
+    out[o + 16] = rgb[0]; out[o + 17] = rgb[1]; out[o + 18] = rgb[2]; out[o + 19] = alpha;
+    out[o + 20] = this._highlighted(b.ids[i], b.repeatOf[i]) ? 1 : 0;
+  };
+
+  /* hexToRGB once per colour per ground, not once per copy per frame. */
+  Studio.prototype._colour = function (hex) {
+    var key = (LIGHT ? 'l' : 'd') + hex, memo = this._colours || (this._colours = {});
+    return memo[key] || (memo[key] = hexToRGB(hex));
+  };
+
+  Studio.prototype._highlighted = function (id, repeatOf) {
+    var sel = this.selected;
+    if (!sel) return false;
+    if (typeof sel === 'function') return !!sel(id, repeatOf);
+    return id === sel || (!!repeatOf && repeatOf === sel) || id.indexOf(sel + PATH_SEPARATOR) === 0;
+  };
+
+  /* Opaque first, then transparent back-to-front, so a translucent housing does not
+   * erase what is inside it. Sorted by COPY, not by batch — a batch's copies can be
+   * in front of and behind another's — and drawn in runs of neighbours that share a
+   * batch, so a cut's tools in a row are still one call. */
+  Studio.prototype._drawTranslucent = function (list, stats) {
+    var gl = this.gl, g = ground();
+    list.sort(function (a, b) { return b.depth - a.depth; });
+    var need = list.length * INSTANCE_FLOATS;
+    if (!this._translucentData || this._translucentData.length < need) {
+      this._translucentData = new Float32Array(need);
+    }
+    var data = this._translucentData, j;
+    for (j = 0; j < list.length; j++) {
+      this._writeInstance(data, j, list[j].b, list[j].i, alphaOf(list[j].b, list[j].i, this.transparency), g);
+    }
+    if (this.instancing) {
+      if (!this._translucentBuffer) this._translucentBuffer = gl.createBuffer();
+      gl.bindBuffer(gl.ARRAY_BUFFER, this._translucentBuffer);
+      gl.bufferData(gl.ARRAY_BUFFER, data.subarray(0, need), gl.DYNAMIC_DRAW);
+      stats.uploadedBytes += need * 4;
+    }
+    stats.translucent = list.length;
+    var start = 0;
+    for (j = 1; j <= list.length; j++) {
+      var a = list[start], e = list[j];
+      if (e && e.b === a.b && e.proxy === a.proxy && e.b.mirrored[e.i] === a.b.mirrored[a.i]) continue;
+      this._drawRun(a.b, !!a.proxy, !!a.b.mirrored[a.i], this._translucentBuffer, data, start, j - start, stats);
+      start = j;
+    }
+  };
+
+  /* Draw `count` instances starting at `start` of `data` (uploaded to `buffer`). */
+  Studio.prototype._drawRun = function (b, proxy, mirrored, buffer, data, start, count, stats) {
+    var gl = this.gl, loc = this._loc;
+    var geo = proxy ? b.proxy : b.buffers;
+    var elements = proxy ? b.proxy.count : b.count, type = proxy ? gl.UNSIGNED_SHORT : b.indexType;
+    /* The finish, as the document declared it. Not looked up from the material
+     * NAME: that table would have to exist here and in Go, and this codebase
+     * has already recorded what two copies of one rule cost. */
+    gl.uniform1f(loc.specPower, b.shading[0]);
+    gl.uniform1f(loc.specGloss, b.shading[1]);
+    gl.bindBuffer(gl.ARRAY_BUFFER, geo.position);
+    gl.enableVertexAttribArray(ATTRIB.pos);
+    gl.vertexAttribPointer(ATTRIB.pos, 3, gl.FLOAT, false, 0, 0);
+    gl.bindBuffer(gl.ARRAY_BUFFER, geo.normal);
+    gl.enableVertexAttribArray(ATTRIB.normal);
+    gl.vertexAttribPointer(ATTRIB.normal, 3, gl.FLOAT, false, 0, 0);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, geo.index);
+    /* A reflected copy's triangles wind the other way, so with back faces culled it
+     * would be drawn inside out. Decided by the sign of the matrix it is drawn with,
+     * which is a mirrored primitive's reflection and nothing for a kernel mesh that
+     * arrived already reflected with its winding intact. */
+    gl.frontFace(mirrored ? gl.CW : gl.CCW);
+
+    var inst = this.instancing, k;
+    if (inst) {
+      var stride = INSTANCE_FLOATS * 4, off = start * stride;
+      gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
+      for (k = 0; k < 4; k++) {
+        gl.enableVertexAttribArray(ATTRIB.model + k);
+        gl.vertexAttribPointer(ATTRIB.model + k, 4, gl.FLOAT, false, stride, off + k * 16);
+        inst.divisor(ATTRIB.model + k, 1);
+      }
+      gl.enableVertexAttribArray(ATTRIB.colour);
+      gl.vertexAttribPointer(ATTRIB.colour, 4, gl.FLOAT, false, stride, off + 64);
+      inst.divisor(ATTRIB.colour, 1);
+      gl.enableVertexAttribArray(ATTRIB.highlight);
+      gl.vertexAttribPointer(ATTRIB.highlight, 1, gl.FLOAT, false, stride, off + 80);
+      inst.divisor(ATTRIB.highlight, 1);
+      inst.draw(elements, type, count);
+      stats.drawCalls++;
+    } else {
+      for (k = ATTRIB.model; k <= ATTRIB.highlight; k++) gl.disableVertexAttribArray(k);
+      for (var j = 0; j < count; j++) {
+        var o = (start + j) * INSTANCE_FLOATS;
+        for (k = 0; k < 4; k++) {
+          gl.vertexAttrib4f(ATTRIB.model + k, data[o + k * 4], data[o + k * 4 + 1], data[o + k * 4 + 2], data[o + k * 4 + 3]);
+        }
+        gl.vertexAttrib4f(ATTRIB.colour, data[o + 16], data[o + 17], data[o + 18], data[o + 19]);
+        gl.vertexAttrib1f(ATTRIB.highlight, data[o + 20]);
+        gl.drawElements(gl.TRIANGLES, elements, type, 0);
+        stats.drawCalls++;
+      }
+    }
+    stats.instances += count;
+    if (proxy) stats.proxied += count;
+  };
+
+  /* ‼️ Divisors and enabled arrays are CONTEXT state, not program state. Left set, the
+   * next grid or overlay drawArrays runs with attribute locations 1–7 still reading
+   * per-instance buffers: WebGL1 with ANGLE refuses the draw, and WebGL2 reads past the
+   * end of a buffer sized for this batch. So every frame puts them back. */
+  Studio.prototype._resetInstanceAttributes = function () {
+    var gl = this.gl;
+    for (var k = ATTRIB.normal; k <= ATTRIB.highlight; k++) {
+      if (this.instancing && k >= ATTRIB.model) this.instancing.divisor(k, 0);
+      gl.disableVertexAttribArray(k);
+    }
+  };
+
+  /* pick is the drawn part under a point on the canvas, as {id, distance}, or null.
+   *
+   * On the CPU and exact: the ray is carried into each candidate's own frame by the
+   * inverse of the matrix it was drawn with, and tested against its batch's real
+   * triangles — never the box a far copy is drawn as, and never a copy that was
+   * hidden, isolated away or culled in the frame the click landed on. The id is the
+   * occurrence path, so a click in a car names "seam-12/rivet-340".
+   * Fence: TestRendererPicksAnInstanceBackToItsOccurrencePath. */
+  Studio.prototype.pick = function (clientX, clientY) {
+    var f = this._frame;
+    if (!f || !this.batches || !this.batches.length) return null;
+    var rect = this.canvas.getBoundingClientRect();
+    var x = (clientX - rect.left) / Math.max(1, rect.width) * 2 - 1;
+    var y = 1 - (clientY - rect.top) / Math.max(1, rect.height) * 2;
+    var inv = invert4(multiply(f.proj, f.view));
+    if (!inv) return null;
+    var near = transformPoint(inv, [x, y, -1], 1), far = transformPoint(inv, [x, y, 1], 1);
+    return this.pickRay(near, normalize(sub(far, near)));
+  };
+
+  Studio.prototype.pickRay = function (origin, dir) {
+    var best = null;
+    for (var n = 0; n < this.batches.length; n++) {
+      var b = this.batches[n];
+      for (var i = 0; i < b.n; i++) {
+        if (!b.visible[i]) continue;
+        var o = i * 3, r = b.radius[i];
+        var cx = b.centre[o] + b.disp[o] - origin[0], cy = b.centre[o + 1] + b.disp[o + 1] - origin[1],
+            cz = b.centre[o + 2] + b.disp[o + 2] - origin[2];
+        var along = cx * dir[0] + cy * dir[1] + cz * dir[2];
+        if (along + r < 0 || cx * cx + cy * cy + cz * cz - along * along > r * r) continue;
+        if (best && along - r > best.distance) continue;
+        var m = Array.prototype.slice.call(b.model, i * 16, i * 16 + 16);
+        m[12] += b.disp[o]; m[13] += b.disp[o + 1]; m[14] += b.disp[o + 2];
+        var inv = invert4(m);
+        if (!inv) continue;
+        /* The same parameter measures distance in both frames: the map is affine, and
+         * the world direction is a unit vector. */
+        var t = nearestTriangle(b.geo.positions, b.geo.indices, transformPoint(inv, origin, 1),
+                                transformPoint(inv, dir, 0));
+        if (t !== null && (!best || t < best.distance)) {
+          best = { id: b.ids[i], repeatOf: b.repeatOf[i], distance: t };
+        }
+      }
+    }
+    return best;
   };
 
   /* The grid is a scale reference (PRD VIS-02), not decoration. Without one a
@@ -3224,8 +3813,10 @@
    * places them ("instances"); only a part a feature changed arrives placed, in
    * "parts". The renderer draws placed parts, so this moves each copy into place —
    * exactly as cad.Build.WorldMeshes does in Go, which
-   * TestRendererExpandsMeshInstancesLikeTheBuild holds it to. Instanced drawing,
-   * which would not need this, is stage W1. */
+   * TestRendererExpandsMeshInstancesLikeTheBuild holds it to. Since Phase 6, stage W1
+   * the workbench does not call it: the reply is drawn instanced (drawBatches), each
+   * definition once. It stays as the browser's statement of the rule for readers
+   * that want placed triangles. */
   function expandMeshInstances(reply) {
     var out = (reply && reply.parts ? reply.parts : []).slice();
     var defs = (reply && reply.definitions) || [];
@@ -3247,6 +3838,13 @@
   global.Forge3D = {
     supportedShapes: SUPPORTED,
     expandMeshInstances: expandMeshInstances,
+    /* What Studio.load draws with what, exported so the fences hold every instance's
+     * matrix to the exporter's placement without a GPU (Phase 6, stages W1 and W3). */
+    drawBatches: drawBatches,
+    /* The tree browser's rows and what a row reaches, exported for the workbench and
+     * for the fence that holds a row's reach to what Go places under it (W2, W3). */
+    treeChildren: treeChildren,
+    occurrenceMatcher: occurrenceMatcher,
     /* A cylinder's length, reading "depth" when "height" is absent.
      *
      * Exported so the Parts panel reads it the same way the stage draws it and

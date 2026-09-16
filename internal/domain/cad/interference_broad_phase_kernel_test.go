@@ -100,6 +100,32 @@ type allPairs struct {
 	EveryPair int              `json:"every_pair"`
 	Sweep     interferenceList `json:"sweep"`
 	Reference interferenceList `json:"all_pairs"`
+	// Candidates is _candidate_pairs against every pair of the same boxes, and
+	// Synthetic the same on box-only sets (the "long" fixture only).
+	Candidates candidateCheck   `json:"candidates"`
+	Synthetic  []candidateCheck `json:"synthetic"`
+}
+
+type candidateCheck struct {
+	Pairs          int  `json:"pairs"`
+	EveryPairPairs int  `json:"every_pair_pairs"`
+	Match          bool `json:"match"`
+	Duplicates     int  `json:"duplicates"`
+	BoxTests       int  `json:"box_tests"`
+	EveryPair      int  `json:"every_pair"`
+}
+
+// samePairs fails unless the broad phase returned exactly the pairs comparing
+// every box would — the same pairs, in index order, each once.
+func samePairs(t *testing.T, what string, c candidateCheck) {
+	t.Helper()
+	if !c.Match || c.Duplicates != 0 || c.Pairs != c.EveryPairPairs {
+		t.Errorf("%s: the broad phase returned %d pair(s) (%d duplicated) and every pair %d; match=%v",
+			what, c.Pairs, c.Duplicates, c.EveryPairPairs, c.Match)
+	}
+	if c.EveryPairPairs == 0 {
+		t.Errorf("%s: no box overlaps any other, so the comparison proves nothing", what)
+	}
 }
 
 type interferenceList struct {
@@ -128,6 +154,7 @@ func compareWithEveryPair(t *testing.T, fixture string) allPairs {
 	t.Logf("%s: %d parts, %d box tests (every pair: %d), %d interference(s), truncated=%v at a budget of %d",
 		fixture, got.Parts, got.BoxTests, got.EveryPair, len(got.Reference.Found), got.Reference.Truncated, got.Budget)
 
+	samePairs(t, fixture, got.Candidates)
 	if got.Sweep.Truncated != got.Reference.Truncated {
 		t.Errorf("truncated: sweep %v, every pair %v", got.Sweep.Truncated, got.Reference.Truncated)
 	}

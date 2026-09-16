@@ -821,7 +821,12 @@ const pageTemplates = `
       <div class="voice-opts">
         <label class="sw"><input type="checkbox" id="handsfree"><span>hands-free</span></label>
         <label class="sw"><input type="checkbox" id="speakback" checked><span>speak replies</span></label>
-        <span id="voice-note" class="bad hidden"></span>
+        <!-- Which speech path the microphone is using. The browser's recogniser
+             and FORGE's own transcription fail in different places, so a note
+             in #voice-note can only be read against the path that produced it.
+             docs/bugfix/2026-09-15-the-microphone-sent-nothing.md -->
+        <span id="voice-path" class="voice-path" aria-live="polite"></span>
+        <span id="voice-note" class="bad hidden" role="status"></span>
       </div>
     </div>
   </div>
@@ -842,6 +847,16 @@ const pageTemplates = `
 
     <div class="h">Parts</div>
     <div id="parts"></div>
+
+    <!-- The assembly tree (Phase 6, stage W2). Shown only for a design written as a
+         tree, whose Parts panel above is empty. Rows open lazily, the search runs
+         over what is drawn, and Isolate draws one subtree on its own. -->
+    <div class="h hidden" id="tree-head">Assembly</div>
+    <div class="tree-tools hidden" id="tree-tools">
+      <input type="search" id="tree-search" placeholder="Find by name or path" aria-label="Find a part in the assembly">
+      <button type="button" class="ghost hidden" id="tree-showall">Show all</button>
+    </div>
+    <div class="tree" id="tree" role="tree" aria-label="Assembly tree"></div>
 
     <!-- Variants (PRD VIS-04). Every shape FORGE proposes in this conversation
          is kept as a version, so an earlier one is still there to be compared
@@ -903,6 +918,7 @@ const pageTemplates = `
 <script src="{{asset "theme.js"}}"></script>
 <script src="{{asset "sigil.js"}}"></script>
 <script src="{{asset "forge3d.js"}}"></script>
+<script src="{{asset "audio-input.js"}}"></script>
 <script src="{{asset "voice.js"}}"></script>
 <script src="{{asset "orb.js"}}"></script>
 <script src="{{asset "stage.js"}}"></script>

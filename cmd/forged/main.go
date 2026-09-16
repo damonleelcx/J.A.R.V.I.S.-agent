@@ -18,6 +18,7 @@ import (
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/httpapi"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/llm"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/mail"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/blob"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/clock"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/config"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/db"
@@ -143,6 +144,18 @@ func run() error {
 	// processes serve builds at once (Phase 4, stage K3), one by default.
 	cadKernel := cad.New(cfg.CAD.Python, log).WithScripts(cfg.CAD.AllowScripts).WithPool(cfg.CAD.Pool)
 	defer cadKernel.Close()
+
+	// Blob storage (docs/plan-2026-09-13-millions-of-parts.md, Phase 3). No handler
+	// uses it yet; it is built here for the same two reasons as in forge-worker —
+	// the first consumer only has to be handed it, and an AWS SDK configuration
+	// that cannot load is reported at boot. It makes no request, so S3 being
+	// unreachable never stops the API serving; verify.sh check 9 asks that
+	// question from inside this pod. Never nil: unconfigured, it refuses by name.
+	blobs, err := blob.New(ctx, cfg.Blob, log)
+	if err != nil {
+		return err
+	}
+	log.Info(ctx, logx.EventBlobReady, "available", blobs.Available(), "bucket", cfg.Blob.Bucket)
 
 	handler := httpapi.NewRouter(httpapi.Deps{
 		Config:   cfg,
