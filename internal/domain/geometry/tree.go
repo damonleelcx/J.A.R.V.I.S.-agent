@@ -60,6 +60,21 @@ type Child struct {
 	// a part uses, so nothing about a child's placement reads differently.
 	Position []float64 `json:"position,omitempty"`
 	Rotation []float64 `json:"rotation,omitempty"`
+	// PositionFrom binds the child's position to expressions over the document's
+	// parameters, keyed "x", "y" and "z", exactly as a part's position_from is
+	// (binding.go). Bind writes what they work out to into Position, so the expansion,
+	// the kernel and the browser read numbers and nothing else changes for them.
+	//
+	// # Why a child needs one
+	//
+	// #97 and #111 read a child written at ["-half_wheelbase", 0, 0] and stored the
+	// NUMBER: a respec of half_wheelbase then moved every definition bound to it and
+	// left the wheels where they were. A placement is where most of a tree's
+	// dimensions live (a car's track and wheelbase are where its corners are placed,
+	// not how big a corner is), so a binding only definitions can carry follows the
+	// wrong half of the design. Optional: a child with none stores byte-identically.
+	// Fence: TestBind_AChildsAndAnInterfacesPositionFollowTheirParameters.
+	PositionFrom map[string]string `json:"position_from,omitempty"`
 	// Mirror reflects the child across the plane normal to "x", "y" or "z" in its
 	// own frame, before it is rotated and placed — a whole sub-assembly included.
 	// Two mirrors on the way down cancel. Empty means no reflection.

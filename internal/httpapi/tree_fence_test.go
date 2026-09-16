@@ -118,6 +118,22 @@ func TestRendererFlattensATreeLikeTheExporter(t *testing.T) {
 			d.Assemblies[1].Children[1].Pattern = &geometry.Pattern{Kind: "polar", Count: 5, About: "x", Angle: 130}
 			return d
 		}()},
+		// 2026-09-15 (bound child positions): the browser never evaluates a binding. It
+		// reads the numbers Bind wrote, so a re-specified tree must draw where Go builds it.
+		{"children and an interface bound to parameters, re-specified", func() geometry.Document {
+			d := corner()
+			d.Parameters = []geometry.Parameter{{Name: "half_track", Value: 1000, Unit: "mm", How: geometry.Chosen}}
+			d.Assemblies[0].Children[0].PositionFrom = map[string]string{"x": "half_track", "z": "half_track / 2"}
+			d.Assemblies[0].Children[1].PositionFrom = map[string]string{"x": "-half_track"}
+			d.Assemblies[1].Interfaces = []geometry.Interface{{ID: "mount", Position: []float64{0, 50, 0},
+				PositionFrom: map[string]string{"y": "half_track / 20"}}}
+			d.Assemblies[1].Children[1].At = "mount"
+			v, problems := d.WithParameters(map[string]float64{"half_track": 1234})
+			if len(problems) != 0 || v.Assemblies[0].Children[0].Position[0] != 1234 || v.Assemblies[1].Interfaces[0].Position[1] != 61.7 {
+				panic("the re-specified tree did not move its bound placements")
+			}
+			return *v
+		}()},
 		{"a named grid", func() geometry.Document {
 			d := corner()
 			d.Assemblies[1].Children[0].Name = "Bolt"

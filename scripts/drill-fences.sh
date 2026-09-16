@@ -2882,6 +2882,85 @@ drill "a conversational edit over the model's parameters is lost" internal/agent
   's = s.replace("resp, overModel := placementsOverModel(resp, current)", "overModel := false", 1)' \
   ./internal/agent 'TestRespond_AnEditPlacingAChildByTheModelsParameterIsRead'
 
+echo
+echo "Bound child positions: a placement written with a parameter follows it, and binding a copy leaves its source alone"
+# Added 2026-09-15 (bound child positions).
+drill "a child's position_from is never bound" internal/domain/geometry/binding.go \
+  's = s.replace("\tif placementsBound(d.Assemblies) {\n", "\tif false {\n", 1)' \
+  ./internal/domain/geometry 'TestBind_AChildsAndAnInterfacesPositionFollowTheirParameters|TestBind_APlacementThatCannotBeBoundKeepsItsNumberAndSaysWhich'
+
+drill "an interface's position_from is never bound" internal/domain/geometry/binding.go \
+  's = s.replace("onPlacement(bindPosition(&f.Position, f.PositionFrom,", "onPlacement(bindPosition(&f.Position, nil,", 1)' \
+  ./internal/domain/geometry 'TestBind_AChildsAndAnInterfacesPositionFollowTheirParameters'
+
+drill "a respec's copy drops a child's binding" internal/domain/geometry/binding.go \
+  's = s.replace("c.PositionFrom = copyStringMap(c.PositionFrom)", "c.PositionFrom = nil", 1)' \
+  ./internal/domain/geometry 'TestBind_AChildsAndAnInterfacesPositionFollowTheirParameters'
+
+drill "a stored child's binding is dropped by a respec" internal/domain/geometry/binding.go \
+  's = s.replace("c.PositionFrom = copyStringMap(c.PositionFrom)", "c.PositionFrom = nil", 1)' \
+  ./internal/domain/geometry 'TestRespec_ABoundChildMovesAndItsBindingSurvivesStorage'
+
+drill "binding writes into the size map the base shares" internal/domain/geometry/binding.go \
+  's = s.replace("\t\tp.Size = copyFloatMap(p.Size)\n", "\t\tp.Size = p.Size\n", 1)' \
+  ./internal/domain/geometry 'TestBind_BindingAnEditedModelLeavesTheModelItWasMadeFromAlone'
+
+drill "a refused step leaves its parameter's numbers in the kept model" internal/domain/geometry/binding.go \
+  's = s.replace("\t\tp.Size = copyFloatMap(p.Size)\n", "\t\tp.Size = p.Size\n", 1)' \
+  ./internal/agent 'TestAssemble_ARefusedStepThatChangedAParameterLeavesTheModelAsItWas'
+
+drill "binding writes into the position the base shares" internal/domain/geometry/binding.go \
+  's = s.replace("pos = append(make([]float64, 0, len(*position)), *position...)", "pos = *position", 1)' \
+  ./internal/domain/geometry 'TestBind_BindingAnEditedModelLeavesTheModelItWasMadeFromAlone'
+
+drill "binding writes into the children the base shares" internal/domain/geometry/binding.go \
+  's = s.replace("a.Children = append([]Child(nil), a.Children...)", "a.Children = a.Children", 1)' \
+  ./internal/domain/geometry 'TestBind_BindingAnEditedModelLeavesTheModelItWasMadeFromAlone'
+
+drill "binding writes an outline back into the base's points" internal/domain/geometry/binding.go \
+  's = s.replace("\t\tp.Profile = clonePoints(p.Profile)\n", "", 1)' \
+  ./internal/domain/geometry 'TestBind_BindingAnEditedModelLeavesTheModelItWasMadeFromAlone'
+
+drill "a respec shares its outline with its source" internal/domain/geometry/binding.go \
+  's = s.replace("\t\tp.Profile = clonePoints(p.Profile)\n", "", 1); s = s.replace("\t\tq.Profile = clonePoints(p.Profile)\n", "\t\tq.Profile = p.Profile\n", 1)' \
+  ./internal/domain/geometry 'TestWithParameters_LeavesTheSourcesOutlineAlone'
+
+drill "a bound child is offered as a pattern" internal/domain/geometry/repetition.go \
+  's = s.replace("if c.Pattern != nil || len(c.PositionFrom) > 0 || ", "if c.Pattern != nil || ", 1)' \
+  ./internal/domain/geometry 'TestRepetition_ABoundChildIsNotOfferedAsAPattern'
+
+drill "a placement's expression is stored as its number only" internal/agent/dimensionrepair.go \
+  's = s.replace("\t\t\t\t\t\tbindPlacementAxis(obj, i, s)\n", "", 1)' \
+  ./internal/agent 'TestAssemble_AStepsChildPlacedByAParameterFollowsItAfterStorageAndRespec|TestAssemble_ADeclaredPlacementByAParameterKeepsItsBinding|TestParseReply_TheContractsChildPlacedByAParameterFollowsARespec|TestParseReply_ReadsAnExpressionInAChildsPositionAtItsValue|TestPlacementsOverModel_ReadsOverTheModelWithoutAddingToTheReply'
+
+drill "a bound child is counted as a literal" internal/agent/literals.go \
+  's = s.replace("scan(key, c.Position, c.PositionFrom)", "scan(key, c.Position, nil)", 1)' \
+  ./internal/agent 'TestAssemble_AStepThatRetypesAMultipleOfAParameterIsToldTheForm|TestAssemble_AStepsChildPlacedByAParameterFollowsItAfterStorageAndRespec'
+
+drill "a bound interface is counted as a literal" internal/agent/literals.go \
+  's = s.replace("scan(key, f.Position, f.PositionFrom)", "scan(key, f.Position, nil)", 1)' \
+  ./internal/agent 'TestAssemble_AStepsChildPlacedByAParameterFollowsItAfterStorageAndRespec'
+
+drill "a multiple of a parameter is never read" internal/agent/literals.go \
+  's = s.replace("const maxLiteralMultiple = 4", "const maxLiteralMultiple = 1", 1)' \
+  ./internal/agent 'TestAssemble_AStepThatRetypesAMultipleOfAParameterIsToldTheForm'
+
+drill "four times a parameter is not read" internal/agent/literals.go \
+  's = s.replace("const maxLiteralMultiple = 4", "const maxLiteralMultiple = 3", 1)' \
+  ./internal/agent 'TestAssemble_AStepThatRetypesAMultipleOfAParameterIsToldTheForm'
+
+drill "multiples of a small parameter are read" internal/agent/literals.go \
+  's = s.replace("const minMultipliedMM = 50", "const minMultipliedMM = 20", 1)' \
+  ./internal/agent 'TestAssemble_AStepThatRetypesAMultipleOfAParameterIsToldTheForm'
+
+drill "a multiple is named before a value a parameter holds" internal/agent/literals.go \
+  's = s.replace("for k := 1; k <= maxLiteralMultiple; k++ {", "for k := maxLiteralMultiple; k >= 1; k-- {", 1)' \
+  ./internal/agent 'TestAssemble_AStepThatRetypesAMultipleOfAParameterIsToldTheForm'
+
+drill "the car harness does not count bound placements" internal/agent/car_ceiling_live_test.go \
+  's = s.replace("\t\t\tif len(c.PositionFrom) > 0 {\n\t\t\t\tbound++", "\t\t\tif false {\n\t\t\t\tbound++", 1)' \
+  ./internal/agent 'TestCarMeasure_CountsChildrenAttachedAtAnInterface'
+
 if [ "$MODE" = "list" ]; then
   exit 0
 fi

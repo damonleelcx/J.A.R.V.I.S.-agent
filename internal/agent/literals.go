@@ -139,23 +139,18 @@ func literalPositionNote(before, after *Prototype) string {
 			if i > 2 || lit == 0 || from[positionAxes[i]] != "" {
 				continue
 			}
-			var names []string
-			for _, v := range lengths {
-				if math.Abs(math.Abs(lit)-math.Abs(v.number)) <= 1e-9*math.Max(1, math.Abs(v.number)) {
-					names = append(names, v.name)
-				}
-			}
-			if len(names) == 0 {
+			forms, held := literalForms(lengths, lit)
+			if len(forms) == 0 {
 				continue
 			}
-			key := strings.Join(names, " or ")
+			key := strings.Join(forms, " or ")
 			if _, seen := uses[key]; !seen {
 				keys = append(keys, key)
 			}
 			// The axis a name goes under, and the sign the parameter needs: a literal is
 			// half_wheelbase or -half_wheelbase, never the other way round.
 			uses[key] = append(uses[key], literalUse{place: place + " " + positionAxes[i], value: lit,
-				negative: (lit < 0) != (firstValue(lengths, names[0]) < 0)})
+				negative: (lit < 0) != (held < 0)})
 			total++
 		}
 	}
@@ -183,14 +178,16 @@ func literalPositionNote(before, after *Prototype) string {
 		}
 	}
 	for _, a := range after.Assemblies {
+		// A bound placement is the habit this note asks for, never a literal: a child or
+		// an interface carries "position_from" since 2026-09-15 (bound child positions).
 		for _, c := range a.Children {
 			if key := a.ID + "/" + c.ID; !samePosition(oldPlacements, key, c.Position) {
-				scan(key, c.Position, nil)
+				scan(key, c.Position, c.PositionFrom)
 			}
 		}
 		for _, f := range a.Interfaces {
 			if key := a.ID + " interface " + f.ID; !samePosition(oldPlacements, key, f.Position) {
-				scan(key, f.Position, nil)
+				scan(key, f.Position, f.PositionFrom)
 			}
 		}
 	}
@@ -223,17 +220,72 @@ func literalPositionNote(before, after *Prototype) string {
 	axis := first.place[strings.LastIndex(first.place, " ")+1:]
 	return fmt.Sprintf("This step typed %d position(s) as the number a parameter already holds: %s. Write the "+
 		"parameter's name so the position follows it: \"position_from\": {%q: %q} on a part or a definition, and "+
-		"%q in a child's or an interface's \"position\", which FORGE works out from the parameters.",
+		"%q in a child's or an interface's \"position\", which FORGE keeps bound to the parameters.",
 		total, strings.Join(groups, "; "), axis, name, name)
 }
 
-func firstValue(values []namedValue, name string) float64 {
-	for _, v := range values {
-		if v.name == name {
-			return v.number
+// maxLiteralMultiple is the largest k for which a coordinate is read as k times one
+// parameter: a track is two half tracks, and a model that knows half_track types 1600.
+const maxLiteralMultiple = 4
+
+// minMultipliedMM is the smallest parameter, in millimetres, whose multiples are read.
+//
+// # Why a threshold, and why 50 mm
+//
+// A multiple is a far weaker match than the value itself, because every round number
+// is a multiple of something small: a 10 mm pitch holds 20, 30 and 40 mm, and a 25 mm
+// wall holds 50, 75 and 100 mm — offsets a model types for reasons that follow
+// nothing, and three of them in one step are ordinary. From 50 mm the first multiple
+// is 100 mm, where coordinates are placements (a track, a wheelbase, a hub offset),
+// and three in one step are a habit. Below it only a parameter's own value is read, as
+// before. A value whose unit is not a length is never read at all.
+// Fence: TestAssemble_AStepThatRetypesAMultipleOfAParameterIsToldTheForm.
+const minMultipliedMM = 50
+
+// literalForms is what a coordinate retypes, sign ignored, and the number the first
+// form holds, sign kept, so the caller can say which sign the coordinate needs.
+//
+// Every length parameter or derived value that holds it exactly, in document order.
+// Failing that, "k * name" for the smallest k from 2 to maxLiteralMultiple that one
+// holds it at, each of at least minMultipliedMM, in document order. The value is
+// preferred to a multiple, so 1600 beside both track = 1600 and half_track = 800 is
+// track: the name that already says it.
+func literalForms(lengths []namedValue, lit float64) ([]string, float64) {
+	for k := 1; k <= maxLiteralMultiple; k++ {
+		var forms []string
+		held := 0.0
+		for _, v := range lengths {
+			if k > 1 && !atLeastMM(v, minMultipliedMM) {
+				continue
+			}
+			target := float64(k) * v.number
+			if math.Abs(math.Abs(lit)-math.Abs(target)) > 1e-9*math.Max(1, math.Abs(target)) {
+				continue
+			}
+			if len(forms) == 0 {
+				held = target
+			}
+			if k == 1 {
+				forms = append(forms, v.name)
+			} else {
+				forms = append(forms, fmt.Sprintf("%d * %s", k, v.name))
+			}
+		}
+		if len(forms) > 0 {
+			return forms, held
 		}
 	}
-	return 0
+	return nil, 0
+}
+
+// atLeastMM reports whether a length value is at least mm millimetres, sign ignored.
+func atLeastMM(v namedValue, mm float64) bool {
+	unit, ok := geometry.ParseUnit(v.unit)
+	if !ok {
+		return false
+	}
+	q, ok := geometry.NewQuantity(math.Abs(v.number), unit).In(geometry.Millimetre)
+	return ok && q.Value() >= mm
 }
 
 func positionsByID(d *Prototype, list func(*Prototype) []geometry.Part) map[string][]float64 {
