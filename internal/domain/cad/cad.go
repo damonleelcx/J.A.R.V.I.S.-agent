@@ -276,16 +276,6 @@ type meshPart struct {
 // which is the behaviour this kernel was chosen for — so "could not build" is a
 // normal answer and arrives as an error the caller reports, not as a dead
 // process. The kernel restarts itself on the next call if the process died.
-// scriptFor finds a part's script by id.
-func scriptFor(doc geometry.Document, id string) string {
-	for _, p := range doc.Parts {
-		if p.ID == id {
-			return p.Script
-		}
-	}
-	return ""
-}
-
 // keepBuildable drops the parts marked unbuildable above, keeping order.
 func keepBuildable(in []geometry.Solid) []geometry.Solid {
 	out := in[:0]
@@ -312,7 +302,12 @@ func (k *Kernel) BuildDocument(ctx context.Context, doc geometry.Document, unit 
 				"its own scale — writing one would put a guess about scale inside the file. " +
 				"Restate the assembly in mm, cm, m or in.")
 	}
-	solids, inferred := geometry.Solids(doc, unit)
+	// The solids and the operations come from ONE expansion of the document.
+	// They used to be taken separately — solids expanded, operations from the
+	// authored document — so a feature naming a repeated part named an id the
+	// kernel had never been sent, and was dropped from every export.
+	// docs/bugfix/2026-09-13-features-on-repeated-parts-were-never-applied.md
+	solids, operations, featureProblems, inferred := geometry.SolidsAndOperations(doc, unit)
 
 	// Scripted parts are RUN here, and only here.
 	//
@@ -328,7 +323,9 @@ func (k *Kernel) BuildDocument(ctx context.Context, doc geometry.Document, unit 
 		if solids[i].Shape != "step" {
 			continue
 		}
-		source := scriptFor(doc, solids[i].ID)
+		// Carried on the solid, not looked up by id: a copy of a repeated
+		// scripted part is "part-2", which the authored document never knew.
+		source := solids[i].Script
 		if source == "" {
 			inferred = append(inferred, fmt.Sprintf(
 				"%s is a scripted part with no script, so it is not in this file.", solids[i].Label))
@@ -355,7 +352,6 @@ func (k *Kernel) BuildDocument(ctx context.Context, doc geometry.Document, unit 
 	// DROPPED rather than approximated, and the problem travels with the build:
 	// an assembly missing a hole is wrong in a way a reader is told about, and
 	// one where the hole landed somewhere else is wrong in a way nobody sees.
-	operations, featureProblems := doc.Operations()
 	for _, p := range featureProblems {
 		inferred = append(inferred, fmt.Sprintf("%s %s.", p.Name, p.Detail))
 	}

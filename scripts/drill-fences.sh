@@ -448,6 +448,26 @@ drill "a repair is accepted without rebuilding" internal/agent/interference.go \
   ./internal/agent 'TestInterference_ARepairThatDoesNotHelpIsRefused'
 
 echo
+echo "Features on repeated parts"
+# Added 2026-09-13. The kernel was sent solids from the EXPANDED document and
+# operations from the AUTHORED one, so a fuse naming "spoke" reached a sidecar
+# holding "spoke-1" … and was dropped from every export. Scripts on repeated
+# parts were looked up by an id the authored document never had.
+# docs/bugfix/2026-09-13-features-on-repeated-parts-were-never-applied.md
+drill "the kernel reads the operations from the authored document again" internal/domain/cad/cad.go \
+  's = s.replace("\tsolids, operations, featureProblems, inferred := geometry.SolidsAndOperations(doc, unit)\n", "\tsolids, _, _, inferred := geometry.SolidsAndOperations(doc, unit)\n\toperations, featureProblems := doc.Operations()\n", 1)' \
+  ./internal/domain/cad 'TestKernel_AFeatureNamingARepeatedPartIsApplied'
+
+drill "the operations are read from the document before it is expanded" internal/domain/geometry/solid.go \
+  's = s.replace("func SolidsAndOperations(d Document, unit Unit) ([]Solid, []Operation, []Problem, []string) {\n", "func SolidsAndOperations(d Document, unit Unit) ([]Solid, []Operation, []Problem, []string) {\n\tauthored := d\n", 1)
+s = s.replace("\toperations, featureProblems := d.Operations()\n", "\toperations, featureProblems := authored.Operations()\n", 1)' \
+  ./internal/domain/geometry 'TestRepeat_TheKernelIsSentFeaturesNamingTheCopiesItIsSent'
+
+drill "a copy of a scripted part reaches the kernel without its script" internal/domain/geometry/solid.go \
+  's = s.replace("\t\t\tscript = p.Script\n", "", 1)' \
+  ./internal/domain/geometry 'TestRepeat_EveryCopyOfAScriptedPartCarriesItsScript'
+
+echo
 echo "Islands"
 drill "an island is cut away with its hole" internal/domain/geometry/triangulate.go \
   's = s.replace("\t\tif depth[i]%2 != 0 {\n\t\t\tcontinue // a void, and it belongs to whatever contains it\n\t\t}", "\t\tif i != 0 {\n\t\t\tcontinue\n\t\t}", 1)' \
