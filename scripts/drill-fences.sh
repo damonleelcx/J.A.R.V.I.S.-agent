@@ -2192,6 +2192,39 @@ drill "the direction that cannot win is skipped on a tie too" internal/domain/ca
   's = s.replace("            if a < b:\n", "            if a <= b:\n", 1)' \
   ./internal/domain/cad 'TestKernel_APairKeyWithoutLocationsIsTheKeyBuild123dGave'
 
+echo "A repair may not add contacts: the found total is judged beside the buried one"
+# Added 2026-09-15 (a repair may not add contacts). #115 judged a repair by the kernel's
+# BURIED total, because #113's list is capped at 10,000 and so could never fall on a large
+# model, and it ignored the FOUND total deliberately. A repair that pulls a part out of the
+# solid it was inside and leaves it touching ten new neighbours is not a fix, and the found
+# total is the number that says so. Both are judged now: the buried total must fall AND the
+# found total must not rise, and a refusal names the test that failed with both numbers.
+#
+# ‼️ The found total gets the buried one's epistemics. found below buried PROVES found is a
+# floor — a reply carrying interferences_buried and not interferences_found — and a floor is
+# never compared as a total nor read as unchanged. Three of the five below hold that half,
+# because it is the half no reader can check by eye
+# (docs/bugfix/2026-09-15-a-found-floor-was-printed-as-a-total.md).
+drill "a repair that adds contacts is kept as long as fewer are buried" internal/agent/interference.go \
+  's = s.replace("\t\tcase a.found > b.found:\n", "\t\tcase false:\n", 1)' \
+  ./internal/agent 'TestInterference_ARepairThatBuriesFewerPartsButTouchesMoreIsRefused'
+
+drill "the found totals are compared the wrong way round" internal/agent/interference.go \
+  's = s.replace("a.found > b.found", "a.found < b.found", 1)' \
+  ./internal/agent 'TestInterference_(ARepairThatBuriesFewerPartsButTouchesMoreIsRefused|ARepairIsKeptWhenFewerAreBuriedAndNoMorePairsShareMaterial)'
+
+drill "a found total the kernel never took is called a total" internal/agent/interference.go \
+  's = s.replace("\tt.foundCounted = t.found >= t.buried\n", "\tt.foundCounted = true\n", 1)' \
+  ./internal/agent 'TestInterference_AFoundTotalTheKernelDidNotTakeIsNeitherComparedNorCalledUnchanged'
+
+drill "the found totals are compared when only the one after the repair is a total" internal/agent/interference.go \
+  's = s.replace("\t\tcase !b.foundCounted || !a.foundCounted:\n", "\t\tcase !a.foundCounted:\n", 1)' \
+  ./internal/agent 'TestInterference_AFoundTotalTheKernelDidNotTakeIsNeitherComparedNorCalledUnchanged'
+
+drill "a note states the pairs it listed as the pairs sharing material" internal/agent/interference.go \
+  's = s.replace("\tcase !t.foundCounted:\n", "\tcase false && !t.foundCounted:\n", 1)' \
+  ./internal/agent 'TestInterference_AFoundTotalTheKernelDidNotTakeIsNeitherComparedNorCalledUnchanged'
+
 if [ "$MODE" = "list" ]; then
   exit 0
 fi
