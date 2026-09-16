@@ -382,8 +382,9 @@ func TestRendererUploadsTheInstancesTheExporterPlaces(t *testing.T) {
 				}
 			}
 		}
-		// One call per batch per winding and level of detail, for what is opaque; a batch
-		// per distinct shape. What is translucent is sorted by copy and may take more.
+		// One call per batch per winding and level of detail (three since Phase 6, stage W2:
+		// whole, simplified, box), for what is opaque; a batch per distinct shape. What is
+		// translucent is sorted by copy and may take more.
 		if f.Stats.Batches != len(geometries) {
 			t.Errorf("%s: %d batches for %d distinct shapes", mode, f.Stats.Batches, len(geometries))
 		}
@@ -399,8 +400,8 @@ func TestRendererUploadsTheInstancesTheExporterPlaces(t *testing.T) {
 				t.Errorf("%s: %d draw calls for %d copies without instancing", mode, f.Stats.DrawCalls, len(want))
 			}
 		default:
-			if opaqueCalls > 4*f.Stats.Batches {
-				t.Errorf("%s: %d opaque draw calls for %d batches; instancing draws each batch in at most four",
+			if opaqueCalls > 6*f.Stats.Batches {
+				t.Errorf("%s: %d opaque draw calls for %d batches; instancing draws each batch in at most six",
 					mode, opaqueCalls, f.Stats.Batches)
 			}
 		}

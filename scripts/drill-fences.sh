@@ -143,6 +143,10 @@ FILES=(
   internal/domain/geometry/export.go
   internal/domain/geometry/service.go
   internal/platform/config/config.go
+  internal/httpapi/assets/workbench.js
+  internal/httpapi/assets/workbench.css
+  internal/domain/geometry/subtree.go
+  internal/httpapi/geometry_subtree.go
   internal/agent/buildgoal.go
   internal/agent/spend.go
   internal/domain/engine/repository.go
@@ -488,8 +492,11 @@ drill "a described render reports interference it cannot know about" internal/ag
   's = s.replace("sheet == nil || !sheet.FromKernel {", "sheet == nil {", 1)' \
   ./internal/agent 'TestInterference_ADescribedRenderClaimsNothing'
 
+# Re-anchored 2026-09-16 merging #115: the three-part acceptance condition this used
+# to delete is now repairVerdict, which answers the same question and says why. The
+# mutation keeps every repair instead, which is what it always did.
 drill "a repair is accepted without rebuilding" internal/agent/interference.go \
-  's = s.replace("\t\tif after.FromKernel &&\n\t\t\tlen(fixed.Faults()) <= len(reply.Prototype.Faults()) &&\n\t\t\tlen(geometry.InterferenceProblems(after.Interferences)) < len(problems) {", "\t\tif true {", 1)' \
+  's = s.replace("\t\tkeep, why := repairVerdict(*sheet, after, len(fixed.Faults()) <= len(reply.Prototype.Faults()))\n", "\t\tkeep, why := true, \"\"\n\t\t_ = repairVerdict\n", 1)' \
   ./internal/agent 'TestInterference_ARepairThatDoesNotHelpIsRefused'
 
 echo
@@ -1154,9 +1161,13 @@ drill "a part that was never built is never mentioned" internal/agent/interferen
   's = s.replace("\tif n := len(sheet.Skipped); n > 0 {", "\tif n := len(sheet.Skipped); false && n > 0 {", 1)' \
   ./internal/agent 'TestInterference_APartThatWasNotBuiltIsNamedAsUnchecked'
 
+# Re-anchored 2026-09-16 merging #115, which put the kernel's buried count on its own
+# line in this literal. ‼️ It also had a SECOND mutation argument, which drill() has no
+# parameter for: it was read as the package and the package as the test regex, so this
+# drill ran `go test` on nonsense rather than on the fence. Dropped, so the drill tests
+# what its name says. Nothing else in this file passes two mutations.
 drill "the render drops how much was checked" internal/agent/render.go \
-  's = s.replace("\n\t\t\t\t\tChecked: built.Checked, Pairs: built.Pairs, Found: built.Found, Skipped: built.Skipped,", "\n\t\t\t\t\tSkipped: built.Skipped,", 1)' \
-  's = s.replace("\n\t\t\t\t\tChecked: built.Checked, Pairs: built.Pairs, Skipped: built.Skipped,\n\t\t\t\t\tParts: built.Parts}", "\n\t\t\t\t\tParts: built.Parts}", 1)' \
+  's = s.replace("\n\t\t\t\t\tChecked: built.Checked, Pairs: built.Pairs, Found: built.Found,", "", 1)' \
   ./internal/agent 'TestRender_CarriesHowMuchTheCheckCovered'
 
 echo
@@ -2531,12 +2542,14 @@ drill "the workbench stops handing the mesh reply to the studio" internal/httpap
   's = s.replace("studio.load(proto, b);", "studio.load(proto);", 1)' \
   ./internal/httpapi 'TestWorkbenchDrawsTheMeshReplyInstanced'
 
+# Re-anchored by stage W2: a copy is culled by its own test or by a node of its batch's
+# hierarchy, so both are switched off; and the box is one of three levels (levelFor).
 drill "nothing out of view is culled" internal/httpapi/assets/forge3d.js \
-  's = s.replace("if (!sphereInFrustum(f.planes, cx, cy, cz, r)) {", "if (false) {", 1)' \
+  's = s.replace("if (!whole && !sphereInFrustum(f.planes, cx, cy, cz, r)) {", "if (false) {", 1).replace("if (most < -eps) return -1;", "", 1)' \
   ./internal/httpapi 'TestRendererPicksAnInstanceBackToItsOccurrencePath'
 
 drill "a far copy is never drawn as its box" internal/httpapi/assets/forge3d.js \
-  's = s.replace("var proxy = lod > 0 &&", "var proxy = false &&", 1)' \
+  's = s.replace("if (b.triangles > 12 && px < lod) return 2;", "if (false) return 2;", 1)' \
   ./internal/httpapi 'TestRendererPicksAnInstanceBackToItsOccurrencePath'
 
 drill "a click names the first copy of whatever it hit" internal/httpapi/assets/forge3d.js \
@@ -2557,6 +2570,75 @@ drill "the viewport's ceiling is the kernel's" internal/domain/geometry/limits.g
   's = s.replace("const maxViewportParts = DefaultMaxOccurrences", "const maxViewportParts = maxDrawnParts", 1)' \
   ./internal/domain/geometry 'TestLimits_TheViewportDrawsWhatStorageAcceptsAndNoMore'
 
+# Added 2026-09-15 (Phase 6, stage W2). A large tree is loaded a subtree at a time: the
+# mesh endpoint answers for one occurrence path (the kernel within its ceiling, the Go
+# tessellator past it), and the studio asks for a path when its first view or a row calls
+# for it. Culling walks a hierarchy over each batch's copies, a small copy is drawn as a
+# simplified mesh before it becomes a box, and search reads an index. Each fence holds
+# the faster path to the slower one it replaced, or to Go's own answer, and to doing less.
+drill "a subtree reply ignores its path and sends the whole design" internal/domain/geometry/subtree.go \
+  's = s.replace("\t\tif under(part.ID) {", "\t\tif under(part.ID) || true {", 1)' \
+  ./internal/httpapi 'TestMeshSubtree_TheSubtreeReplysInstancesAreTheWholeReplysFilteredToThePath'
+
+drill "a path that places nothing is answered with an empty mesh" internal/domain/geometry/subtree.go \
+  's = s.replace("\tif len(s.Parts) == 0 {", "\tif false {", 1)' \
+  ./internal/httpapi 'TestMeshSubtree_AnUnknownPathIsRefusedByName'
+
+drill "a feature that straddles the path is applied in the subtree" internal/domain/geometry/subtree.go \
+  's = s.replace("if touched == len(named) {", "if touched > 0 {", 1)' \
+  ./internal/httpapi 'TestMeshSubtree_TheSubtreeReplysInstancesAreTheWholeReplysFilteredToThePath'
+
+drill "a subtree's ceiling is counted on the whole design" internal/domain/geometry/subtree.go \
+  's = s.replace("\tif len(s.Parts) <= maxViewportParts {", "\tif occurrences(s.expanded, maxViewportParts) <= maxViewportParts {", 1)' \
+  ./internal/httpapi 'TestMeshSubtree_LimitsAreTheSubtreesOwn'
+
+drill "a subtree past the kernel's ceiling is sent to the kernel" internal/httpapi/geometry_subtree.go \
+  's = s.replace("\tcase parts > geometry.MaxBuiltParts():", "\tcase false:", 1)' \
+  ./internal/httpapi 'TestMeshSubtree_LimitsAreTheSubtreesOwn'
+
+drill "the Go tessellator draws a mirrored copy unmirrored" internal/domain/geometry/subtree.go \
+  's = s.replace("\t\tif mirrored {\n\t\t\tt = mirrorTriangle(t)\n\t\t}\n", "", 1)' \
+  ./internal/httpapi 'TestMeshSubtree_TheGoInstancesAreTessellateWrittenOutOncePerShape'
+
+drill "the Go tessellator's copies are left in the document's unit" internal/domain/geometry/subtree.go \
+  's = s.replace("pos[0] * scale, pos[1] * scale, pos[2] * scale, 1}", "pos[0], pos[1], pos[2], 1}", 1)' \
+  ./internal/httpapi 'TestMeshSubtree_TheGoInstancesAreTessellateWrittenOutOncePerShape'
+
+drill "opening a tree row asks for nothing" internal/httpapi/assets/workbench.js \
+  's = s.replace("        if (tree.open[path]) studio.requestSubtree(path);\n", "", 1)' \
+  ./internal/httpapi 'TestWorkbenchLoadsALargeTreeASubtreeAtATime'
+
+drill "a subtree already covered is asked for again" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    if (this._covered(path)) return false;\n", "", 1)' \
+  ./internal/httpapi 'TestRendererLoadsASubtreeWhenItIsAskedForAndDrawsWhatGoPlacesThere'
+
+drill "the first view asks for every row however large" internal/httpapi/assets/forge3d.js \
+  's = s.replace("if (n > 0 && n <= LAZY_OCCURRENCES && total + n <= FIRST_VIEW_OCCURRENCES) {", "if (n > 0) {", 1)' \
+  ./internal/httpapi 'TestRendererLoadsASubtreeWhenItIsAskedForAndDrawsWhatGoPlacesThere'
+
+drill "a subtree is drawn from its primitives, not its reply" internal/httpapi/assets/forge3d.js \
+  's = s.replace("var plan = drawBatches(drawn, reply || null, { wide: lazy.wide });", "var plan = drawBatches(drawn, null, { wide: lazy.wide });", 1)' \
+  ./internal/httpapi 'TestRendererLoadsASubtreeWhenItIsAskedForAndDrawsWhatGoPlacesThere'
+
+drill "a node that straddles a plane is kept whole" internal/httpapi/assets/forge3d.js \
+  's = s.replace("if (least < eps) inside = 0;", "", 1)' \
+  ./internal/httpapi 'TestRendererCullsAHierarchyExactlyAsItCullsEachCopy'
+
+drill "the hierarchy opens every node down to its leaves" internal/httpapi/assets/forge3d.js \
+  's = s.replace("if (rel > 0 || !node.left) {", "if (!node.left) {", 1)' \
+  ./internal/httpapi 'TestRendererCullsAHierarchyExactlyAsItCullsEachCopy'
+
+drill "a small copy is never drawn simplified" internal/httpapi/assets/forge3d.js \
+  's = s.replace("if (b.simple && px < simple) return 1;", "if (false) return 1;", 1)' \
+  ./internal/httpapi 'TestRendererDrawsACopyAtTheLevelItsProjectedSizeCalls'
+
+drill "the search index answers from its runs without checking the query" internal/httpapi/assets/forge3d.js \
+  's = s.replace("      if (text[0].indexOf(q) < 0 && text[1].indexOf(q) < 0) continue;\n", "", 1)' \
+  ./internal/httpapi 'TestRendererFindsOccurrencesThroughAnIndexLikeTheScan'
+
+drill "the search reads every occurrence again" internal/httpapi/assets/forge3d.js \
+  's = s.replace("if (q.length >= SEARCH_RUN) {", "if (false) {", 1)' \
+  ./internal/httpapi 'TestRendererFindsOccurrencesThroughAnIndexLikeTheScan'
 echo "A3's gaps: the catalogue read, a real build, the turn told, flat parts, density taught"
 # Added 2026-09-15 (A3 gaps and density). Every catalogue family was read against a
 # published table (standard.go names each), which found the L20x20x3 toe radius
@@ -3073,12 +3155,19 @@ drill "a summarized list reads as a whole one in the turn" internal/agent/interf
   's = s.replace("\tif listed := len(sheet.Interferences); sheet.Found > listed {", "\tif listed := len(sheet.Interferences); false && sheet.Found > listed {", 1)' \
   ./internal/agent 'TestInterference_ASummarizedListSaysHowManyWereFound'
 
+# ‼️ Re-anchored 2026-09-16. This STAYED GREEN. The anchor was the clamp in list(),
+# but #114 added repairAsks with the same three lines ABOVE it, so replace(…, 1) hit
+# repairAsks and the sentence this fence is about was never touched. Anchored on the
+# line after it, which only list() has. The defect is on main as of #114; the fence
+# itself was always right.
 drill "\"and N more\" counts only the list" internal/agent/interference.go \
-  's = s.replace("\tif total < len(found) {\n\t\ttotal = len(found)\n\t}\n", "\ttotal = len(found)\n", 1)' \
+  's = s.replace("\tif total < len(found) {\n\t\ttotal = len(found)\n\t}\n\tparts := make([]string, 0, most+1)\n", "\ttotal = len(found)\n\tparts := make([]string, 0, most+1)\n", 1)' \
   ./internal/agent 'TestInterference_ASummarizedListSaysHowManyWereFound'
 
+# Re-anchored 2026-09-16 merging #115: Skipped moved to the next line, beside the
+# kernel's buried count.
 drill "the render drops how many were found" internal/agent/render.go \
-  's = s.replace("Pairs: built.Pairs, Found: built.Found, Skipped:", "Pairs: built.Pairs, Skipped:", 1)' \
+  's = s.replace("Pairs: built.Pairs, Found: built.Found,\n", "Pairs: built.Pairs,\n", 1)' \
   ./internal/agent 'TestRender_CarriesHowMuchTheCheckCovered'
 
 drill "a cylinder slides across its round section" internal/domain/cad/sidecar.py \
@@ -3234,6 +3323,100 @@ drill "a moved box forgets its far corner" internal/domain/cad/sidecar.py \
 drill "the check keys a pair through build123d again" internal/domain/cad/sidecar.py \
   's = s.replace("    if not _PAIR_KEY_DIRECT:\n        return lambda i, j:", "    if True:\n        return lambda i, j:", 1)' \
   ./internal/domain/cad 'TestKernel_KeyingMorePairsBuildsNoMoreLocations'
+
+echo "An overlap repair judged by the kernel's total, not by the list it cut"
+# Added 2026-09-15 (repair judged by the kernel total). #113 cut the kernel's clash
+# list to the worst 10,000 and counted all of them; the repair went on comparing the
+# LISTED buried count before and after, which past 10,000 is pinned whatever a repair
+# does. The kernel now counts the buried clashes too, and a repair is kept only when
+# that count falls — never on a count the kernel did not take.
+drill "a repair is judged by the buried clashes listed, not the ones found" internal/agent/interference.go \
+  's = s.replace("\tt.counted = t.found <= t.listed\n\tif s.BuriedCounted {\n", "\tt.counted = true\n\tif false && s.BuriedCounted {\n", 1)' \
+  ./internal/agent 'TestInterference_ARepairPastTheListBoundIsJudgedByTheKernelsTotal'
+
+drill "a cut list with no count is read as the whole count" internal/agent/interference.go \
+  's = s.replace("\tt.counted = t.found <= t.listed\n", "\tt.counted = true\n", 1)' \
+  ./internal/agent 'TestInterference_ARepairIsNotKeptOnACountTheKernelDidNotTake'
+
+drill "a re-check that counted nothing is taken on trust" internal/agent/interference.go \
+  's = s.replace("\tcase !a.counted:\n", "\tcase false && !a.counted:\n", 1)' \
+  ./internal/agent 'TestInterference_ARepairIsNotKeptOnACountTheKernelDidNotTake'
+
+drill "a repair that leaves as many buried is kept" internal/agent/interference.go \
+  's = s.replace("\tcase a.buried < b.buried:\n", "\tcase a.buried <= b.buried:\n", 1)' \
+  ./internal/agent 'TestInterference_ARepairPastTheListBoundIsJudgedByTheKernelsTotal'
+
+drill "a kept repair's note does not say the totals" internal/agent/interference.go \
+  's = s.replace("reply.noteRepair(\"FORGE kept a repair and re-checked it with the kernel: \" + why + \".\")", "reply.noteRepair(\"FORGE kept a repair and re-checked it with the kernel.\")", 1)' \
+  ./internal/agent 'TestInterference_ARepairPastTheListBoundIsJudgedByTheKernelsTotal'
+
+drill "a refused repair does not say why it was refused" internal/agent/interference.go \
+  's = s.replace("\tif refused != \"\" {\n", "\tif false && refused != \"\" {\n", 1)' \
+  ./internal/agent 'TestInterference_(ARepairPastTheListBoundIsJudgedByTheKernelsTotal|ARepairIsNotKeptOnACountTheKernelDidNotTake)'
+
+drill "a re-check stopped part-way says the parts were moved apart" internal/agent/interference.go \
+  's = s.replace("\t\t\tcase after.Truncated:\n", "\t\t\tcase false && after.Truncated:\n", 1)' \
+  ./internal/agent 'TestInterference_ARepairReCheckedOnlyInPartNeverReadsAsClean'
+
+drill "the render drops the kernel's buried count" internal/agent/render.go \
+  's = s.replace("\t\t\t\t\tBuried: built.Buried, BuriedCounted: built.BuriedCounted, Skipped: built.Skipped,\n", "\t\t\t\t\tSkipped: built.Skipped,\n", 1)' \
+  ./internal/agent 'TestRender_CarriesHowMuchTheCheckCovered'
+
+drill "buildOf ignores the buried count the kernel sent" internal/domain/cad/cad.go \
+  's = s.replace("\tif res.InterferencesBuried != nil {\n", "\tif false && res.InterferencesBuried != nil {\n", 1)' \
+  ./internal/domain/cad 'TestBuildOf_ABuriedCountIsNeverBelowTheListAndSaysWhetherItIsAll|TestKernel_AReplyWithMoreClashesThanItListsCountsThemAll'
+
+drill "a buried count below the list is believed" internal/domain/cad/cad.go \
+  's = s.replace("out.InterferencesBuried = max(out.InterferencesBuried, *res.InterferencesBuried)", "out.InterferencesBuried = *res.InterferencesBuried", 1)' \
+  ./internal/domain/cad 'TestBuildOf_ABuriedCountIsNeverBelowTheListAndSaysWhetherItIsAll'
+
+drill "a cut list with no buried count is called counted" internal/domain/cad/cad.go \
+  's = s.replace("out.InterferencesBuriedCounted = !out.InterferencesSummarized", "out.InterferencesBuriedCounted = true", 1)' \
+  ./internal/domain/cad 'TestBuildOf_ABuriedCountIsNeverBelowTheListAndSaysWhetherItIsAll'
+
+drill "the kernel counts the buried clashes it listed" internal/domain/cad/sidecar.py \
+  's = s.replace("buried = sum(1 for f in found if f[0] >= _BURIED_FRACTION)", "buried = sum(1 for f in worst if f[0] >= _BURIED_FRACTION)", 1)' \
+  ./internal/domain/cad 'TestKernel_AReplyWithMoreClashesThanItListsCountsThemAll'
+
+drill "the kernel counts buried at a different line than the turn" internal/domain/cad/sidecar.py \
+  's = s.replace("_BURIED_FRACTION = 0.5", "_BURIED_FRACTION = 0.4", 1)' \
+  ./internal/domain/cad 'TestKernel_TheBuriedCountIsTheClashesTheTurnCallsBuried'
+
+# Added 2026-09-15 (kernel build ceiling and viewport follow-ups). Three findings of the
+# W2 acceptance run: a mesh reply, which is in millimetres, was drawn on a stage in the
+# document's unit; a search row named a part without saying where it was; and the
+# provenance banner covered most of an 800-px stage. docs/spikes/2026-09-15-kernel-build-ceiling.
+drill "a mesh reply is drawn in millimetres on a stage in the document's unit" internal/httpapi/assets/forge3d.js \
+  's = s.replace("var fromMM = opts.toMM > 0 ? 1 / opts.toMM : 1;", "var fromMM = 1;", 1)' \
+  ./internal/httpapi 'TestMeshSubtree_ADesignInInchesOrMetresIsDrawnWhereItsPrimitivesAre'
+
+drill "a copy's vertices are scaled and its translation is not" internal/httpapi/assets/forge3d.js \
+  's = s.replace("if (inst) { matrix[12] *= fromMM; matrix[13] *= fromMM; matrix[14] *= fromMM; }", "", 1)' \
+  ./internal/httpapi 'TestMeshSubtree_ADesignInInchesOrMetresIsDrawnWhereItsPrimitivesAre'
+
+drill "the whole design's reply is drawn in millimetres" internal/httpapi/assets/forge3d.js \
+  's = s.replace("{ wide: wide, toMM: unitToMM(this.spec.units) }", "{ wide: wide }", 1)' \
+  ./internal/httpapi 'TestMeshSubtree_ADesignInInchesOrMetresIsDrawnWhereItsPrimitivesAre'
+
+drill "a subtree's reply is drawn in millimetres" internal/httpapi/assets/forge3d.js \
+  's = s.replace("{ wide: lazy.wide, toMM: unitToMM(this.spec.units) }", "{ wide: lazy.wide }", 1)' \
+  ./internal/httpapi 'TestMeshSubtree_ADesignInInchesOrMetresIsDrawnWhereItsPrimitivesAre'
+
+drill "a search row names a part without saying where it is" internal/httpapi/assets/workbench.js \
+  's = s.replace("return treeRow(h.id, h.label, 0, false, false, null, h.id);", "return treeRow(h.id, h.label, 0, false, false, null);", 1)' \
+  ./internal/httpapi 'TestWorkbenchSearchRowsSayWhereEachOccurrenceIs'
+
+drill "the provenance banner's details are never folded" internal/httpapi/assets/workbench.js \
+  's = s.replace("var open = !!state.provenanceOpen;", "var open = true;", 1)' \
+  ./internal/httpapi 'TestWorkbenchProvenanceBannerFoldsItsDetailsOffTheStage'
+
+drill "the provenance banner's toggle does nothing" internal/httpapi/assets/workbench.js \
+  's = s.replace("      state.provenanceOpen = !state.provenanceOpen;\n", "", 1)' \
+  ./internal/httpapi 'TestWorkbenchProvenanceBannerFoldsItsDetailsOffTheStage'
+
+drill "a folded banner's details are hidden only by load order" internal/httpapi/assets/workbench.css \
+  's = s.replace(".provenance .prov-details.hidden { display: none; }", "", 1)' \
+  ./internal/httpapi 'TestWorkbenchProvenanceBannerFoldsItsDetailsOffTheStage'
 
 echo "A build starts from the API"
 # Added 2026-09-15 (Phase 2, A1 follow-ups). POST /v1/goals takes build:true and plans

@@ -80,8 +80,9 @@ for (const mode of ['webgl2', 'webgl1', 'webgl1-noext']) {
   } else {
     const opaque = s.drawCalls - (s.translucent ? made.record.draws.filter((d) =>
       d.instances.length && d.instances[0].colour[3] < 1).length : 0);
-    check('at most four opaque calls per definition (winding × level of detail)',
-      opaque <= 4 * s.batches, opaque + ' opaque calls for ' + s.batches + ' batches');
+    /* Six since Phase 6, stage W2: whole, simplified or box, each wound either way. */
+    check('at most six opaque calls per definition (winding × three levels of detail)',
+      opaque <= 6 * s.batches, opaque + ' opaque calls for ' + s.batches + ' batches');
   }
   rows.push({ mode: mode, loadMs: loadMs, drawMs: drawMs, orbitMs: orbitMs, stats: s,
               uploadMB: made.record.uploadedBytes / 1048576 });

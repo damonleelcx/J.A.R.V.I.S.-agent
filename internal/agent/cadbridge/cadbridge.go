@@ -102,7 +102,14 @@ func (r kernelSolids) BuildSurface(ctx context.Context, doc *geometry.Document) 
 	return agent.Built{Parts: out, Interferences: built.Interferences,
 		Truncated: built.InterferencesTruncated,
 		Checked:   built.InterferenceBooleans + built.InterferenceReused,
-		Pairs:     built.InterferencePairs, Found: built.InterferencesFound, Skipped: built.Skipped}, nil
+		Pairs:     built.InterferencePairs, Found: built.InterferencesFound,
+		// ‼️ And how many of them are BURIED, which is what a repair is judged by.
+		// This adapter moved out of internal/httpapi/scriptrunner.go (Phase 2, stage
+		// A1) while the count was being added there; carried over here rather than
+		// left behind, because a builder that does not pass it reads as "not counted"
+		// and no repair past the list's bound could ever be kept (repairVerdict).
+		Buried: built.InterferencesBuried, BuriedCounted: built.InterferencesBuriedCounted,
+		Skipped: built.Skipped}, nil
 }
 
 // Solids returns the thing that builds a surface, or nil when this
