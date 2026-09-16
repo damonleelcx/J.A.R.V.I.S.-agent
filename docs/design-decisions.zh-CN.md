@@ -64,7 +64,7 @@ PRD **VIS-04** 要求把多个变体并排放，并且每一张渲染图都要�
 OpenCASCADE 构建真正的 B-Rep（解析曲面，不是三角面片），几何体和视口里画的是同一份文档：
 
 ```bash
-python3 -m venv .cadvenv && ./.cadvenv/bin/pip install build123d
+make cad-venv   # 全部依赖的版本锁定在 internal/domain/cad/requirements.txt
 export FORGE_CAD_PYTHON="$PWD/.cadvenv/bin/python"
 ```
 
