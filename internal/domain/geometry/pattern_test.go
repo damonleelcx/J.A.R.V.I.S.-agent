@@ -149,7 +149,9 @@ func TestPattern_CopiesOfANamedChildAreNumbered(t *testing.T) {
 	child := Child{ID: "rail", Ref: "block", Name: "Rail",
 		Pattern: &Pattern{Kind: "linear", Count: 2, Offset: []float64{10, 0, 0}}}
 	e, _ := expandAssemblies(patterned(child))
-	if e.Parts[0].Name != "Rail 1" || e.Parts[1].Name != "Rail 2" {
+	// Named by the occurrence path: the child's name and copy number, then the part's
+	// own (docs/bugfix/2026-09-14-tree-copies-shared-display-names.md).
+	if e.Parts[0].Name != "Rail 1 / Block" || e.Parts[1].Name != "Rail 2 / Block" {
 		t.Errorf("names %q, %q", e.Parts[0].Name, e.Parts[1].Name)
 	}
 }

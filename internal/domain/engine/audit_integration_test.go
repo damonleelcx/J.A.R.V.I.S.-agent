@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/engine"
 )
@@ -282,5 +283,29 @@ func TestAuditChain_DetectsAStrippedHash(t *testing.T) {
 	}
 	if report.Findings[0].Problem != "missing-hash" || report.Findings[0].Seq != 3 {
 		t.Fatalf("want missing-hash at seq 3, got %+v", report.Findings[0])
+	}
+}
+
+// An event stamped by the system clock verifies. The clock reads nanoseconds and
+// timestamptz keeps microseconds; the chain hashed the first and verified against
+// the second, so every event a real worker wrote failed its own audit. The tests
+// above use a whole-second fake clock, which is why none of them saw it.
+// docs/bugfix/2026-09-15-every-event-written-by-the-real-clock-failed-the-audit-chain.md
+func TestAuditChain_AnEventStampedAtNanosecondsVerifies(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	at := h.clk.Now().Add(123456789) // .123456789 s: below a microsecond is 789 ns
+	for i := 0; i < 3; i++ {
+		ev := &engine.Event{GoalID: h.goalID, Kind: engine.EventTaskStarted, Actor: engine.ActorExecutor, Summary: "step"}
+		if err := h.repo.AppendEvent(ctx, h.pool, ev, at.Add(time.Duration(i)*1001)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	report, err := h.repo.VerifyChain(ctx, h.pool, h.goalID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !report.Intact() {
+		t.Fatalf("events stamped below a microsecond did not verify: %s\n%+v", report.Summary(), report.Findings)
 	}
 }

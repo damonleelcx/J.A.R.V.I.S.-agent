@@ -1,0 +1,321 @@
+2026-09-15T17:16:37 cpu  16.2% mem 34.7 GB used | System Idle Process 84.5%, Cursor.exe 5.2%, MsMpEng.exe 1.3%, System 0.5%, python.exe 0.4%
+2026-09-15T17:16:47 cpu  16.2% mem 34.7 GB used | System Idle Process 84.2%, python.exe 6.2%, Cursor.exe 5.2%, System 0.5%, python.exe 0.4%
+2026-09-15T17:16:58 cpu  18.4% mem 34.9 GB used | System Idle Process 82.1%, python.exe 6.2%, Cursor.exe 5.2%, Cursor.exe 2.2%, MsMpEng.exe 0.8%
+2026-09-15T17:17:09 cpu  21.1% mem 34.7 GB used | System Idle Process 79.3%, python.exe 6.2%, Cursor.exe 5.3%, MsMpEng.exe 1.8%, Cursor.exe 1.7%
+2026-09-15T17:17:19 cpu  17.5% mem 34.9 GB used | System Idle Process 82.8%, Cursor.exe 5.0%, MsMpEng.exe 1.0%, System 0.6%, svchost.exe 0.6%
+2026-09-15T17:17:30 cpu  16.5% mem 35.5 GB used | System Idle Process 83.9%, python.exe 6.2%, Cursor.exe 4.9%, Docker Desktop.exe 0.6%, System 0.5%
+2026-09-15T17:17:41 cpu  16.8% mem 35.5 GB used | System Idle Process 83.6%, python.exe 6.2%, Cursor.exe 4.9%, Cursor.exe 1.1%, Docker Desktop.exe 0.5%
+2026-09-15T17:17:51 cpu  17.7% mem 35.5 GB used | System Idle Process 82.6%, python.exe 6.2%, Cursor.exe 4.8%, System 1.0%, Cursor.exe 0.7%
+2026-09-15T17:18:02 cpu  16.5% mem 35.5 GB used | System Idle Process 83.9%, python.exe 6.2%, Cursor.exe 4.9%, System 0.5%, Docker Desktop.exe 0.5%
+2026-09-15T17:18:12 cpu  19.3% mem 35.6 GB used | System Idle Process 81.1%, python.exe 6.2%, Cursor.exe 5.2%, System 1.0%, MsMpEng.exe 0.7%
+2026-09-15T17:18:23 cpu  16.2% mem 35.6 GB used | System Idle Process 84.1%, python.exe 6.2%, Cursor.exe 5.2%, System 0.6%, Docker Desktop.exe 0.5%
+2026-09-15T17:18:34 cpu  16.7% mem 35.5 GB used | System Idle Process 83.7%, python.exe 6.2%, Cursor.exe 5.3%, System 0.4%, MsMpEng.exe 0.4%
+2026-09-15T17:18:44 cpu  16.0% mem 35.5 GB used | System Idle Process 84.3%, python.exe 6.2%, Cursor.exe 5.1%, System 0.5%, Docker Desktop.exe 0.5%
+2026-09-15T17:18:55 cpu  17.1% mem 35.5 GB used | System Idle Process 83.3%, python.exe 6.2%, Cursor.exe 5.0%, svchost.exe 0.6%, MsMpEng.exe 0.6%
+2026-09-15T17:19:06 cpu  21.1% mem 35.5 GB used | System Idle Process 79.3%, python.exe 6.2%, Cursor.exe 5.0%, MsMpEng.exe 2.6%, svchost.exe 2.1%
+2026-09-15T17:19:16 cpu  17.2% mem 35.5 GB used | System Idle Process 83.2%, python.exe 6.2%, Cursor.exe 5.1%, MsMpEng.exe 0.6%, System 0.5%
+2026-09-15T17:19:27 cpu  17.6% mem 34.3 GB used | System Idle Process 83.0%, Cursor.exe 4.9%, MsMpEng.exe 0.7%, System 0.6%, Docker Desktop.exe 0.6%
+2026-09-15T17:19:38 cpu  16.4% mem 36.0 GB used | System Idle Process 84.1%, python.exe 6.1%, Cursor.exe 4.9%, MsMpEng.exe 0.6%, Docker Desktop.exe 0.5%
+2026-09-15T17:19:48 cpu  16.4% mem 36.6 GB used | System Idle Process 83.9%, python.exe 6.2%, Cursor.exe 5.3%, System 0.6%, Docker Desktop.exe 0.5%
+2026-09-15T17:19:59 cpu  16.6% mem 37.2 GB used | System Idle Process 83.7%, python.exe 6.2%, Cursor.exe 5.1%, System 0.5%, Docker Desktop.exe 0.4%
+2026-09-15T17:20:10 cpu  15.8% mem 37.8 GB used | System Idle Process 84.5%, python.exe 6.2%, Cursor.exe 5.0%, Docker Desktop.exe 0.6%, python.exe 0.4%
+2026-09-15T17:20:20 cpu  16.4% mem 37.9 GB used | System Idle Process 84.0%, python.exe 6.2%, Cursor.exe 5.2%, MsMpEng.exe 0.4%, python.exe 0.4%
+2026-09-15T17:20:31 cpu  15.6% mem 38.0 GB used | System Idle Process 84.8%, python.exe 6.2%, Cursor.exe 5.0%, Docker Desktop.exe 0.6%, python.exe 0.4%
+2026-09-15T17:20:42 cpu  17.4% mem 38.0 GB used | System Idle Process 83.0%, python.exe 6.2%, Cursor.exe 5.1%, System 0.5%, MsMpEng.exe 0.5%
+2026-09-15T17:20:52 cpu  15.9% mem 38.0 GB used | System Idle Process 84.5%, python.exe 6.2%, Cursor.exe 5.0%, Docker Desktop.exe 0.5%, System 0.4%
+2026-09-15T17:21:03 cpu  16.1% mem 38.0 GB used | System Idle Process 84.3%, python.exe 6.2%, Cursor.exe 5.1%, Docker Desktop.exe 0.5%, System 0.4%
+2026-09-15T17:21:14 cpu  16.5% mem 38.0 GB used | System Idle Process 83.7%, python.exe 6.2%, Cursor.exe 5.4%, System 0.4%, Docker Desktop.exe 0.4%
+2026-09-15T17:21:24 cpu  16.6% mem 38.0 GB used | System Idle Process 83.9%, python.exe 6.2%, Cursor.exe 5.2%, System 0.4%, python.exe 0.4%
+2026-09-15T17:21:35 cpu  15.8% mem 38.0 GB used | System Idle Process 84.7%, python.exe 6.2%, Cursor.exe 4.8%, Docker Desktop.exe 0.7%, python.exe 0.4%
+2026-09-15T17:21:46 cpu  15.1% mem 38.0 GB used | System Idle Process 85.1%, python.exe 6.2%, Cursor.exe 5.1%, Docker Desktop.exe 0.6%, python.exe 0.4%
+2026-09-15T17:21:56 cpu  15.8% mem 38.0 GB used | System Idle Process 84.5%, python.exe 6.2%, Cursor.exe 5.2%, Docker Desktop.exe 0.4%, python.exe 0.4%
+2026-09-15T17:22:07 cpu  16.7% mem 38.0 GB used | System Idle Process 83.6%, python.exe 6.2%, Cursor.exe 5.3%, System 0.6%, Docker Desktop.exe 0.4%
+2026-09-15T17:22:17 cpu  17.9% mem 37.9 GB used | System Idle Process 82.8%, python.exe 6.2%, Cursor.exe 4.8%, svchost.exe 0.5%, System 0.5%
+2026-09-15T17:22:28 cpu  17.8% mem 38.1 GB used | System Idle Process 82.5%, python.exe 6.2%, Cursor.exe 5.0%, System 0.5%, python.exe 0.5%
+2026-09-15T17:22:39 cpu  22.1% mem 38.1 GB used | System Idle Process 78.3%, python.exe 6.2%, Cursor.exe 5.0%, svchost.exe 2.3%, MsMpEng.exe 1.7%
+2026-09-15T17:22:50 cpu  23.0% mem 38.1 GB used | System Idle Process 77.7%, python.exe 6.2%, svchost.exe 5.4%, Cursor.exe 3.3%, System 1.4%
+2026-09-15T17:23:00 cpu  22.9% mem 38.2 GB used | System Idle Process 77.7%, python.exe 6.2%, svchost.exe 5.0%, Cursor.exe 3.7%, System 1.1%
+2026-09-15T17:23:11 cpu  17.1% mem 38.4 GB used | System Idle Process 83.4%, python.exe 6.2%, Cursor.exe 5.1%, System 0.4%, python.exe 0.4%
+2026-09-15T17:23:22 cpu  16.6% mem 38.3 GB used | System Idle Process 83.8%, python.exe 6.2%, Cursor.exe 5.3%, System 0.5%, python.exe 0.4%
+2026-09-15T17:23:33 cpu  25.3% mem 38.2 GB used | System Idle Process 75.4%, python.exe 6.2%, Cursor.exe 4.7%, MsMpEng.exe 2.5%, NortonSvc.exe 0.7%
+2026-09-15T17:23:43 cpu  18.0% mem 38.2 GB used | System Idle Process 82.5%, python.exe 6.2%, Cursor.exe 5.1%, System 0.6%, python.exe 0.4%
+2026-09-15T17:23:54 cpu  17.5% mem 38.1 GB used | System Idle Process 83.0%, python.exe 6.2%, Cursor.exe 5.2%, MsMpEng.exe 0.7%, python.exe 0.4%
+2026-09-15T17:24:05 cpu  18.8% mem 38.2 GB used | System Idle Process 81.5%, python.exe 6.2%, Cursor.exe 5.2%, MsMpEng.exe 0.7%, svchost.exe 0.6%
+2026-09-15T17:24:16 cpu  20.0% mem 38.2 GB used | System Idle Process 80.7%, python.exe 6.2%, Cursor.exe 5.3%, MsMpEng.exe 1.5%, svchost.exe 1.3%
+2026-09-15T17:24:26 cpu  17.7% mem 38.1 GB used | System Idle Process 82.8%, python.exe 6.2%, Cursor.exe 5.1%, MsMpEng.exe 0.6%, System 0.5%
+2026-09-15T17:24:37 cpu  16.9% mem 38.2 GB used | System Idle Process 83.5%, python.exe 6.2%, Cursor.exe 5.0%, System 0.5%, Docker Desktop.exe 0.4%
+2026-09-15T17:24:48 cpu  19.1% mem 38.2 GB used | System Idle Process 81.5%, python.exe 6.2%, Cursor.exe 5.2%, MsMpEng.exe 0.9%, svchost.exe 0.7%
+2026-09-15T17:24:58 cpu  19.4% mem 38.1 GB used | System Idle Process 81.1%, python.exe 6.2%, Cursor.exe 5.1%, MsMpEng.exe 1.2%, svchost.exe 0.7%
+2026-09-15T17:25:09 cpu  18.6% mem 38.1 GB used | System Idle Process 81.9%, python.exe 6.2%, Cursor.exe 5.1%, System 0.8%, MsMpEng.exe 0.6%
+2026-09-15T17:25:20 cpu  17.8% mem 38.2 GB used | System Idle Process 82.7%, python.exe 6.2%, Cursor.exe 5.1%, MsMpEng.exe 0.6%, System 0.5%
+2026-09-15T17:25:30 cpu  20.4% mem 38.2 GB used | System Idle Process 80.3%, python.exe 6.2%, Cursor.exe 4.7%, MsMpEng.exe 1.6%, svchost.exe 1.3%
+2026-09-15T17:25:41 cpu  18.0% mem 38.2 GB used | System Idle Process 82.6%, python.exe 6.2%, Cursor.exe 4.9%, MsMpEng.exe 0.6%, System 0.6%
+2026-09-15T17:25:52 cpu  16.2% mem 38.2 GB used | System Idle Process 84.0%, python.exe 6.2%, Cursor.exe 5.2%, System 0.5%, python.exe 0.4%
+2026-09-15T17:26:02 cpu  21.3% mem 38.2 GB used | System Idle Process 79.4%, python.exe 6.2%, Cursor.exe 5.0%, MsMpEng.exe 1.6%, svchost.exe 1.1%
+2026-09-15T17:26:13 cpu  18.2% mem 38.2 GB used | System Idle Process 82.4%, python.exe 6.2%, Cursor.exe 5.5%, MsMpEng.exe 0.8%, System 0.6%
+2026-09-15T17:26:24 cpu  17.2% mem 38.2 GB used | System Idle Process 83.2%, python.exe 6.2%, Cursor.exe 5.2%, MsMpEng.exe 0.6%, System 0.5%
+2026-09-15T17:26:34 cpu  15.7% mem 34.2 GB used | System Idle Process 84.8%, Cursor.exe 5.3%, System 0.5%, python.exe 0.4%, MsMpEng.exe 0.3%
+2026-09-15T17:26:45 cpu  12.7% mem 34.2 GB used | System Idle Process 88.3%, Cursor.exe 5.4%, System 0.9%, python.exe 0.4%, svchost.exe 0.3%
+2026-09-15T17:26:56 cpu  13.0% mem 34.2 GB used | System Idle Process 88.0%, Cursor.exe 5.2%, System 0.8%, python.exe 0.4%, MsMpEng.exe 0.4%
+2026-09-15T17:27:07 cpu  13.2% mem 34.2 GB used | System Idle Process 87.7%, Cursor.exe 5.3%, System 1.0%, python.exe 0.4%, claude.exe 0.3%
+2026-09-15T17:27:17 cpu  13.0% mem 34.2 GB used | System Idle Process 87.7%, Cursor.exe 5.0%, System 0.8%, svchost.exe 0.5%, MsMpEng.exe 0.5%
+2026-09-15T17:27:28 cpu  14.2% mem 34.2 GB used | System Idle Process 86.7%, Cursor.exe 5.3%, System 1.1%, MsMpEng.exe 0.6%, claude.exe 0.4%
+2026-09-15T17:27:38 cpu  14.8% mem 34.2 GB used | System Idle Process 86.2%, Cursor.exe 5.2%, System 1.2%, MsMpEng.exe 0.6%, python.exe 0.4%
+2026-09-15T17:27:49 cpu  18.1% mem 34.7 GB used | System Idle Process 82.5%, Cursor.exe 5.1%, MsMpEng.exe 1.0%, System 0.9%, python.exe 0.4%
+2026-09-15T17:28:00 cpu  18.4% mem 34.6 GB used | System Idle Process 81.9%, python.exe 8.6%, Cursor.exe 5.0%, System 0.7%, python.exe 0.4%
+2026-09-15T17:28:11 cpu  18.7% mem 34.6 GB used | System Idle Process 81.9%, python.exe 8.4%, Cursor.exe 5.1%, System 0.4%, python.exe 0.4%
+2026-09-15T17:28:21 cpu  18.8% mem 34.7 GB used | System Idle Process 81.7%, python.exe 7.8%, Cursor.exe 5.4%, System 0.7%, python.exe 0.4%
+2026-09-15T17:28:32 cpu  17.9% mem 34.6 GB used | System Idle Process 82.4%, python.exe 7.4%, Cursor.exe 5.2%, python.exe 0.4%, System 0.4%
+2026-09-15T17:28:43 cpu  25.5% mem 34.4 GB used | System Idle Process 75.3%, Cursor.exe 5.2%, MsMpEng.exe 3.6%, System 1.2%, python.exe 0.4%
+2026-09-15T17:28:53 cpu  22.1% mem 34.2 GB used | System Idle Process 78.5%, Cursor.exe 5.6%, MsMpEng.exe 5.3%, System 0.7%, python.exe 0.4%
+2026-09-15T17:29:04 cpu  13.3% mem 34.2 GB used | System Idle Process 87.9%, Cursor.exe 5.3%, System 0.6%, python.exe 0.4%, MsMpEng.exe 0.3%
+2026-09-15T17:29:15 cpu  12.8% mem 34.2 GB used | System Idle Process 87.9%, Cursor.exe 5.3%, System 0.8%, svchost.exe 0.4%, python.exe 0.4%
+2026-09-15T17:29:26 cpu  14.0% mem 34.3 GB used | System Idle Process 87.2%, Cursor.exe 5.1%, System 0.7%, MsMpEng.exe 0.6%, python.exe 0.5%
+2026-09-15T17:29:36 cpu  28.9% mem 34.7 GB used | System Idle Process 71.7%, MsMpEng.exe 6.0%, Cursor.exe 5.3%, svchost.exe 2.4%, svchost.exe 1.1%
+2026-09-15T17:29:47 cpu  23.6% mem 34.8 GB used | System Idle Process 76.8%, python.exe 7.8%, Cursor.exe 5.3%, MsMpEng.exe 1.5%, System 0.7%
+2026-09-15T17:29:58 cpu  31.8% mem 34.8 GB used | System Idle Process 68.8%, python.exe 8.1%, agent.test.exe 6.1%, Cursor.exe 6.0%, MsMpEng.exe 5.9%
+2026-09-15T17:30:09 cpu  22.4% mem 34.7 GB used | System Idle Process 78.2%, python.exe 8.7%, Cursor.exe 5.1%, MsMpEng.exe 1.0%, System 0.6%
+2026-09-15T17:30:20 cpu  18.1% mem 34.7 GB used | System Idle Process 82.3%, python.exe 7.5%, Cursor.exe 5.3%, System 0.5%, python.exe 0.4%
+2026-09-15T17:30:30 cpu  16.9% mem 34.7 GB used | System Idle Process 83.5%, Cursor.exe 5.1%, MsMpEng.exe 0.8%, System 0.6%, python.exe 0.4%
+2026-09-15T17:30:41 cpu  19.4% mem 34.7 GB used | System Idle Process 81.2%, python.exe 8.2%, Cursor.exe 5.0%, System 0.6%, MsMpEng.exe 0.4%
+2026-09-15T17:30:52 cpu  20.4% mem 35.1 GB used | System Idle Process 79.9%, python.exe 7.5%, Cursor.exe 5.1%, MsMpEng.exe 0.8%, System 0.6%
+2026-09-15T17:31:03 cpu  25.6% mem 35.3 GB used | System Idle Process 74.9%, python.exe 7.6%, python.exe 6.1%, Cursor.exe 5.4%, System 0.5%
+2026-09-15T17:31:13 cpu  29.7% mem 35.3 GB used | System Idle Process 70.8%, python.exe 9.2%, python.exe 5.9%, Cursor.exe 5.7%, MsMpEng.exe 1.6%
+2026-09-15T17:31:24 cpu  24.9% mem 35.3 GB used | System Idle Process 75.7%, python.exe 6.7%, python.exe 6.2%, Cursor.exe 5.2%, MsMpEng.exe 0.7%
+2026-09-15T17:31:35 cpu  20.6% mem 34.9 GB used | System Idle Process 79.8%, python.exe 6.2%, Cursor.exe 5.0%, System 0.6%, python.exe 0.4%
+2026-09-15T17:31:46 cpu  20.3% mem 34.2 GB used | System Idle Process 80.2%, Cursor.exe 4.9%, MsMpEng.exe 1.7%, svchost.exe 1.4%, svchost.exe 0.5%
+2026-09-15T17:31:56 cpu  12.3% mem 34.2 GB used | System Idle Process 88.4%, Cursor.exe 5.1%, MsMpEng.exe 0.8%, System 0.6%, svchost.exe 0.4%
+2026-09-15T17:32:07 cpu  12.5% mem 34.2 GB used | System Idle Process 88.5%, Cursor.exe 5.2%, System 0.5%, python.exe 0.4%, svchost.exe 0.4%
+2026-09-15T17:32:18 cpu  13.1% mem 34.2 GB used | System Idle Process 87.8%, Cursor.exe 5.0%, System 0.7%, MsMpEng.exe 0.7%, svchost.exe 0.6%
+2026-09-15T17:32:28 cpu  12.7% mem 34.2 GB used | System Idle Process 88.0%, Cursor.exe 5.1%, System 0.7%, MsMpEng.exe 0.5%, python.exe 0.4%
+2026-09-15T17:32:39 cpu  16.0% mem 34.2 GB used | System Idle Process 84.8%, Cursor.exe 5.1%, MsMpEng.exe 1.6%, svchost.exe 1.4%, System 1.1%
+2026-09-15T17:32:50 cpu  14.8% mem 34.2 GB used | System Idle Process 86.0%, Cursor.exe 5.4%, System 1.4%, MsMpEng.exe 0.7%, svchost.exe 0.4%
+2026-09-15T17:33:00 cpu  13.7% mem 34.2 GB used | System Idle Process 87.2%, Cursor.exe 5.2%, System 1.1%, MsMpEng.exe 0.5%, svchost.exe 0.4%
+2026-09-15T17:33:11 cpu  20.0% mem 34.4 GB used | System Idle Process 80.7%, Cursor.exe 5.2%, MsMpEng.exe 2.5%, svchost.exe 1.2%, System 1.0%
+2026-09-15T17:33:22 cpu  23.5% mem 34.4 GB used | System Idle Process 77.0%, Cursor.exe 6.1%, MsMpEng.exe 5.6%, System 0.5%, python.exe 0.5%
+2026-09-15T17:33:33 cpu  20.4% mem 34.3 GB used | System Idle Process 80.2%, Cursor.exe 4.7%, MsMpEng.exe 3.6%, Cursor.exe 0.7%, NortonSvc.exe 0.7%
+2026-09-15T17:33:43 cpu  14.7% mem 34.2 GB used | System Idle Process 86.2%, Cursor.exe 5.1%, System 0.9%, svchost.exe 0.5%, MsMpEng.exe 0.5%
+2026-09-15T17:33:54 cpu  12.6% mem 34.2 GB used | System Idle Process 88.2%, Cursor.exe 5.0%, System 0.8%, svchost.exe 0.4%, python.exe 0.4%
+2026-09-15T17:34:05 cpu  16.9% mem 34.2 GB used | System Idle Process 84.1%, Cursor.exe 5.2%, MsMpEng.exe 1.7%, svchost.exe 1.1%, System 0.9%
+2026-09-15T17:34:16 cpu  13.3% mem 34.2 GB used | System Idle Process 87.6%, Cursor.exe 5.3%, System 0.7%, python.exe 0.4%, Cursor.exe 0.4%
+2026-09-15T17:34:26 cpu  13.6% mem 34.2 GB used | System Idle Process 87.5%, Cursor.exe 5.1%, System 0.9%, python.exe 0.4%, MsMpEng.exe 0.4%
+2026-09-15T17:34:37 cpu  18.1% mem 34.6 GB used | System Idle Process 82.6%, Cursor.exe 5.2%, MsMpEng.exe 2.1%, svchost.exe 1.2%, System 0.8%
+2026-09-15T17:34:48 cpu  13.0% mem 34.2 GB used | System Idle Process 87.5%, Cursor.exe 5.5%, MsMpEng.exe 0.7%, System 0.6%, python.exe 0.4%
+2026-09-15T17:34:58 cpu  12.2% mem 34.2 GB used | System Idle Process 88.6%, Cursor.exe 5.3%, System 0.7%, python.exe 0.4%, MsMpEng.exe 0.3%
+2026-09-15T17:35:09 cpu  11.7% mem 34.2 GB used | System Idle Process 89.0%, Cursor.exe 5.2%, System 0.9%, Docker Desktop.exe 0.5%, python.exe 0.4%
+2026-09-15T17:35:20 cpu  14.2% mem 34.2 GB used | System Idle Process 86.4%, Cursor.exe 5.3%, MsMpEng.exe 1.4%, svchost.exe 1.1%, System 0.8%
+2026-09-15T17:35:30 cpu  14.4% mem 34.2 GB used | System Idle Process 86.4%, Cursor.exe 5.0%, MsMpEng.exe 1.9%, svchost.exe 1.5%, svchost.exe 0.7%
+2026-09-15T17:35:41 cpu  16.6% mem 34.2 GB used | System Idle Process 84.0%, Cursor.exe 5.0%, MsMpEng.exe 2.3%, svchost.exe 2.1%, svchost.exe 1.0%
+2026-09-15T17:35:52 cpu  19.6% mem 34.2 GB used | System Idle Process 81.5%, Cursor.exe 4.8%, MsMpEng.exe 3.0%, svchost.exe 2.1%, System 1.2%
+2026-09-15T17:36:02 cpu  14.1% mem 34.2 GB used | System Idle Process 86.8%, Cursor.exe 4.9%, MsMpEng.exe 1.7%, svchost.exe 1.0%, System 0.7%
+2026-09-15T17:36:13 cpu  12.5% mem 34.2 GB used | System Idle Process 88.4%, Cursor.exe 5.3%, System 0.8%, MsMpEng.exe 0.6%, python.exe 0.4%
+2026-09-15T17:36:24 cpu  12.0% mem 34.2 GB used | System Idle Process 88.7%, Cursor.exe 5.3%, System 0.7%, Docker Desktop.exe 0.4%, python.exe 0.4%
+2026-09-15T17:36:34 cpu  13.9% mem 34.2 GB used | System Idle Process 87.0%, Cursor.exe 5.2%, NortonUI.exe 1.3%, System 0.9%, python.exe 0.4%
+2026-09-15T17:36:45 cpu  12.3% mem 34.2 GB used | System Idle Process 88.3%, Cursor.exe 5.2%, System 0.7%, NortonUI.exe 0.7%, svchost.exe 0.4%
+2026-09-15T17:36:56 cpu  18.8% mem 34.2 GB used | System Idle Process 82.3%, Cursor.exe 4.9%, MsMpEng.exe 2.5%, svchost.exe 2.1%, svchost.exe 1.0%
+2026-09-15T17:37:06 cpu  12.8% mem 34.1 GB used | System Idle Process 87.9%, Cursor.exe 5.2%, MsMpEng.exe 1.1%, System 0.7%, svchost.exe 0.6%
+2026-09-15T17:37:17 cpu  13.0% mem 34.1 GB used | System Idle Process 87.7%, Cursor.exe 5.0%, MsMpEng.exe 1.0%, System 0.7%, svchost.exe 0.6%
+2026-09-15T17:37:28 cpu  11.3% mem 34.1 GB used | System Idle Process 89.6%, Cursor.exe 5.1%, System 0.7%, Docker Desktop.exe 0.5%, python.exe 0.4%
+2026-09-15T17:37:38 cpu  13.3% mem 34.2 GB used | System Idle Process 87.6%, Cursor.exe 5.2%, System 0.8%, Docker Desktop.exe 0.4%, python.exe 0.4%
+2026-09-15T17:37:49 cpu  12.2% mem 34.2 GB used | System Idle Process 88.7%, Cursor.exe 5.4%, System 0.7%, python.exe 0.4%, MsMpEng.exe 0.4%
+2026-09-15T17:38:00 cpu  12.2% mem 34.2 GB used | System Idle Process 88.5%, Cursor.exe 5.3%, System 1.1%, MsMpEng.exe 0.4%, python.exe 0.4%
+2026-09-15T17:38:10 cpu  13.7% mem 34.5 GB used | System Idle Process 87.0%, Cursor.exe 5.4%, MsMpEng.exe 0.8%, System 0.7%, claude.exe 0.7%
+2026-09-15T17:38:21 cpu  16.9% mem 35.0 GB used | System Idle Process 83.6%, python.exe 6.1%, Cursor.exe 5.0%, MsMpEng.exe 0.6%, System 0.5%
+2026-09-15T17:38:32 cpu  13.1% mem 34.2 GB used | System Idle Process 87.4%, Cursor.exe 5.3%, System 0.5%, MsMpEng.exe 0.5%, python.exe 0.4%
+2026-09-15T17:38:42 cpu  13.1% mem 34.6 GB used | System Idle Process 87.5%, Cursor.exe 5.6%, MsMpEng.exe 0.8%, System 0.6%, python.exe 0.4%
+2026-09-15T17:38:53 cpu  17.7% mem 34.6 GB used | System Idle Process 82.6%, python.exe 7.8%, Cursor.exe 5.4%, System 0.5%, MsMpEng.exe 0.5%
+2026-09-15T17:39:04 cpu  17.7% mem 34.6 GB used | System Idle Process 82.6%, python.exe 8.0%, Cursor.exe 5.2%, svchost.exe 0.5%, Docker Desktop.exe 0.5%
+2026-09-15T17:39:15 cpu  25.3% mem 34.6 GB used | System Idle Process 75.2%, python.exe 8.1%, Cursor.exe 5.2%, MsMpEng.exe 2.8%, svchost.exe 2.5%
+2026-09-15T17:39:26 cpu  18.5% mem 34.6 GB used | System Idle Process 81.9%, python.exe 8.9%, Cursor.exe 5.3%, MsMpEng.exe 0.6%, python.exe 0.5%
+2026-09-15T17:39:36 cpu  16.7% mem 34.6 GB used | System Idle Process 83.7%, python.exe 6.4%, Cursor.exe 5.3%, System 0.8%, Docker Desktop.exe 0.4%
+2026-09-15T17:39:47 cpu  11.2% mem 34.2 GB used | System Idle Process 89.2%, Cursor.exe 5.2%, Docker Desktop.exe 0.5%, MsMpEng.exe 0.4%, python.exe 0.4%
+2026-09-15T17:39:57 cpu  13.3% mem 34.1 GB used | System Idle Process 87.8%, Cursor.exe 5.3%, System 0.6%, python.exe 0.3%, MsMpEng.exe 0.3%
+2026-09-15T17:40:08 cpu  11.1% mem 34.1 GB used | System Idle Process 89.6%, Cursor.exe 5.5%, System 0.5%, python.exe 0.3%, Docker Desktop.exe 0.3%
+2026-09-15T17:40:19 cpu  10.6% mem 34.1 GB used | System Idle Process 89.8%, Cursor.exe 5.6%, System 0.6%, python.exe 0.3%, MsMpEng.exe 0.3%
+2026-09-15T17:40:29 cpu  11.5% mem 34.1 GB used | System Idle Process 89.2%, Cursor.exe 5.2%, System 0.6%, MsMpEng.exe 0.4%, python.exe 0.3%
+2026-09-15T17:40:40 cpu  10.7% mem 34.1 GB used | System Idle Process 89.9%, Cursor.exe 5.3%, System 0.5%, Docker Desktop.exe 0.4%, python.exe 0.3%
+2026-09-15T17:40:51 cpu  15.2% mem 34.1 GB used | System Idle Process 85.6%, Cursor.exe 4.9%, MsMpEng.exe 1.7%, svchost.exe 1.7%, svchost.exe 1.1%
+2026-09-15T17:41:01 cpu  14.4% mem 34.1 GB used | System Idle Process 86.3%, Cursor.exe 5.3%, MsMpEng.exe 1.6%, svchost.exe 1.2%, System 0.9%
+2026-09-15T17:41:12 cpu  14.1% mem 34.1 GB used | System Idle Process 86.8%, Cursor.exe 5.1%, MsMpEng.exe 0.7%, System 0.6%, Docker Desktop.exe 0.4%
+2026-09-15T17:41:22 cpu  13.4% mem 34.1 GB used | System Idle Process 87.8%, Cursor.exe 5.3%, System 0.8%, python.exe 0.3%, claude.exe 0.3%
+2026-09-15T17:41:33 cpu  10.8% mem 34.1 GB used | System Idle Process 90.1%, Cursor.exe 5.4%, System 0.6%, python.exe 0.3%, MsMpEng.exe 0.3%
+2026-09-15T17:41:44 cpu  12.9% mem 34.4 GB used | System Idle Process 87.9%, Cursor.exe 5.4%, System 0.7%, MsMpEng.exe 0.6%, claude.exe 0.5%
+2026-09-15T17:41:54 cpu  19.6% mem 35.0 GB used | System Idle Process 80.9%, python.exe 6.1%, Cursor.exe 5.1%, Cursor.exe 1.6%, System 1.2%
+2026-09-15T17:42:05 cpu  20.4% mem 35.0 GB used | System Idle Process 80.0%, python.exe 6.2%, Cursor.exe 5.3%, Cursor.exe 2.4%, System 1.0%
+2026-09-15T17:42:16 cpu  14.1% mem 34.1 GB used | System Idle Process 86.4%, Cursor.exe 4.9%, MsMpEng.exe 0.7%, System 0.6%, svchost.exe 0.5%
+2026-09-15T17:42:26 cpu  12.3% mem 34.2 GB used | System Idle Process 88.4%, Cursor.exe 5.5%, System 0.8%, MsMpEng.exe 0.5%, python.exe 0.4%
+2026-09-15T17:42:37 cpu  11.4% mem 34.1 GB used | System Idle Process 89.2%, Cursor.exe 5.5%, System 0.6%, MsMpEng.exe 0.4%, python.exe 0.3%
+2026-09-15T17:42:47 cpu  12.5% mem 34.1 GB used | System Idle Process 88.3%, Cursor.exe 5.6%, System 0.7%, python.exe 0.3%, vmmemWSL 0.3%
+2026-09-15T17:42:58 cpu  12.8% mem 34.2 GB used | System Idle Process 88.0%, Cursor.exe 5.0%, System 1.2%, Docker Desktop.exe 0.4%, MsMpEng.exe 0.4%
+2026-09-15T17:43:09 cpu  11.9% mem 34.2 GB used | System Idle Process 88.9%, Cursor.exe 5.3%, System 0.8%, Docker Desktop.exe 0.4%, python.exe 0.4%
+2026-09-15T17:43:19 cpu  13.2% mem 34.2 GB used | System Idle Process 87.8%, Cursor.exe 5.1%, System 0.8%, svchost.exe 0.6%, python.exe 0.4%
+2026-09-15T17:43:30 cpu  20.4% mem 34.2 GB used | System Idle Process 80.5%, Cursor.exe 4.9%, MsMpEng.exe 3.8%, svchost.exe 2.6%, System 1.2%
+2026-09-15T17:43:41 cpu  15.0% mem 34.2 GB used | System Idle Process 85.7%, Cursor.exe 4.8%, MsMpEng.exe 1.6%, System 0.5%, NortonSvc.exe 0.4%
+2026-09-15T17:43:52 cpu  15.3% mem 34.2 GB used | System Idle Process 86.1%, Cursor.exe 5.0%, System 0.8%, claude.exe 0.8%, Cursor.exe 0.4%
+2026-09-15T17:44:02 cpu  12.1% mem 34.1 GB used | System Idle Process 88.5%, Cursor.exe 5.6%, System 0.6%, MsMpEng.exe 0.5%, python.exe 0.4%
+2026-09-15T17:44:13 cpu  11.4% mem 34.1 GB used | System Idle Process 89.4%, Cursor.exe 5.4%, System 0.6%, python.exe 0.3%, MsMpEng.exe 0.3%
+2026-09-15T17:44:23 cpu  11.8% mem 34.1 GB used | System Idle Process 89.0%, Cursor.exe 5.4%, System 0.5%, MsMpEng.exe 0.4%, python.exe 0.3%
+2026-09-15T17:44:34 cpu  12.6% mem 34.1 GB used | System Idle Process 88.4%, Cursor.exe 5.1%, System 0.8%, MsMpEng.exe 0.4%, Docker Desktop.exe 0.4%
+2026-09-15T17:44:45 cpu  11.3% mem 34.1 GB used | System Idle Process 89.5%, Cursor.exe 5.3%, System 0.6%, MsMpEng.exe 0.5%, Docker Desktop.exe 0.4%
+2026-09-15T17:44:55 cpu  13.5% mem 34.1 GB used | System Idle Process 87.4%, Cursor.exe 5.3%, System 0.6%, Docker Desktop.exe 0.4%, python.exe 0.4%
+2026-09-15T17:45:06 cpu  10.4% mem 34.1 GB used | System Idle Process 90.1%, Cursor.exe 5.4%, System 0.5%, Docker Desktop.exe 0.4%, python.exe 0.3%
+2026-09-15T17:45:17 cpu  18.6% mem 34.2 GB used | System Idle Process 82.4%, Cursor.exe 4.8%, MsMpEng.exe 3.1%, svchost.exe 2.8%, svchost.exe 1.4%
+2026-09-15T17:45:27 cpu  17.5% mem 34.1 GB used | System Idle Process 83.5%, Cursor.exe 4.9%, MsMpEng.exe 2.8%, svchost.exe 2.2%, System 1.1%
+2026-09-15T17:45:38 cpu  13.3% mem 34.1 GB used | System Idle Process 87.6%, Cursor.exe 5.1%, MsMpEng.exe 1.1%, System 0.8%, svchost.exe 0.4%
+2026-09-15T17:45:48 cpu  11.0% mem 34.1 GB used | System Idle Process 89.5%, Cursor.exe 5.7%, System 0.8%, python.exe 0.3%, MsMpEng.exe 0.3%
+2026-09-15T17:45:59 cpu  12.1% mem 34.1 GB used | System Idle Process 88.9%, Cursor.exe 5.1%, System 0.6%, Docker Desktop.exe 0.4%, python.exe 0.4%
+2026-09-15T17:46:10 cpu  12.1% mem 34.1 GB used | System Idle Process 88.6%, Cursor.exe 5.3%, System 0.6%, MsMpEng.exe 0.5%, claude.exe 0.4%
+2026-09-15T17:46:20 cpu  13.2% mem 34.1 GB used | System Idle Process 87.8%, Cursor.exe 5.3%, System 0.6%, claude.exe 0.4%, python.exe 0.4%
+2026-09-15T17:46:31 cpu  12.3% mem 34.1 GB used | System Idle Process 88.4%, Cursor.exe 5.3%, System 0.7%, claude.exe 0.4%, python.exe 0.4%
+2026-09-15T17:46:42 cpu  13.2% mem 34.1 GB used | System Idle Process 87.8%, Cursor.exe 5.5%, System 0.6%, claude.exe 0.5%, vmmemWSL 0.4%
+2026-09-15T17:46:52 cpu  14.2% mem 34.1 GB used | System Idle Process 86.8%, Cursor.exe 5.2%, System 0.7%, claude.exe 0.6%, MsMpEng.exe 0.5%
+2026-09-15T17:47:03 cpu  11.2% mem 34.1 GB used | System Idle Process 89.6%, Cursor.exe 5.6%, System 0.6%, MsMpEng.exe 0.4%, python.exe 0.4%
+2026-09-15T17:47:14 cpu  14.9% mem 34.5 GB used | System Idle Process 85.7%, Cursor.exe 5.2%, MsMpEng.exe 1.0%, System 0.7%, svchost.exe 0.6%
+2026-09-15T17:47:25 cpu  17.3% mem 34.5 GB used | System Idle Process 83.1%, python.exe 7.7%, Cursor.exe 5.0%, System 0.6%, Docker Desktop.exe 0.5%
+2026-09-15T17:47:35 cpu  17.2% mem 34.5 GB used | System Idle Process 83.1%, python.exe 7.9%, Cursor.exe 5.3%, python.exe 0.5%, System 0.4%
+2026-09-15T17:47:46 cpu  17.2% mem 34.5 GB used | System Idle Process 83.2%, python.exe 7.8%, Cursor.exe 5.3%, python.exe 0.5%, System 0.4%
+2026-09-15T17:47:57 cpu  18.3% mem 34.6 GB used | System Idle Process 82.0%, python.exe 7.5%, Cursor.exe 5.1%, System 1.0%, Docker Desktop.exe 0.5%
+2026-09-15T17:48:08 cpu  17.3% mem 34.5 GB used | System Idle Process 83.2%, python.exe 7.5%, Cursor.exe 5.1%, System 0.6%, python.exe 0.4%
+2026-09-15T17:48:18 cpu  15.7% mem 34.6 GB used | System Idle Process 84.6%, python.exe 6.2%, Cursor.exe 5.3%, Docker Desktop.exe 0.4%, MsMpEng.exe 0.4%
+2026-09-15T17:48:29 cpu  22.3% mem 34.2 GB used | System Idle Process 78.2%, Cursor.exe 5.0%, MsMpEng.exe 2.4%, svchost.exe 1.9%, svchost.exe 1.0%
+2026-09-15T17:48:40 cpu  15.8% mem 34.2 GB used | System Idle Process 85.3%, Cursor.exe 5.2%, MsMpEng.exe 1.6%, svchost.exe 0.9%, System 0.7%
+2026-09-15T17:48:51 cpu  21.2% mem 34.7 GB used | System Idle Process 79.8%, Cursor.exe 5.0%, MsMpEng.exe 2.5%, svchost.exe 1.7%, System 0.9%
+2026-09-15T17:49:01 cpu  16.5% mem 34.9 GB used | System Idle Process 83.8%, python.exe 6.2%, Cursor.exe 5.2%, MsMpEng.exe 0.5%, System 0.5%
+2026-09-15T17:49:12 cpu  16.9% mem 34.9 GB used | System Idle Process 83.5%, python.exe 6.2%, Cursor.exe 5.1%, MsMpEng.exe 0.6%, Docker Desktop.exe 0.5%
+2026-09-15T17:49:23 cpu  21.6% mem 34.9 GB used | System Idle Process 78.9%, python.exe 6.2%, Cursor.exe 5.1%, MsMpEng.exe 2.3%, svchost.exe 2.2%
+2026-09-15T17:49:34 cpu  21.6% mem 34.1 GB used | System Idle Process 78.8%, Cursor.exe 4.8%, MsMpEng.exe 2.0%, svchost.exe 1.5%, svchost.exe 0.6%
+2026-09-15T17:49:44 cpu  15.2% mem 34.1 GB used | System Idle Process 85.8%, Cursor.exe 5.3%, MsMpEng.exe 1.1%, System 0.7%, claude.exe 0.4%
+2026-09-15T17:49:55 cpu  12.0% mem 34.1 GB used | System Idle Process 88.8%, Cursor.exe 4.9%, System 0.6%, Docker Desktop.exe 0.5%, python.exe 0.4%
+2026-09-15T17:50:06 cpu   9.9% mem 34.1 GB used | System Idle Process 90.5%, Cursor.exe 5.6%, System 0.5%, python.exe 0.4%, claude.exe 0.3%
+2026-09-15T17:50:16 cpu  18.5% mem 34.2 GB used | System Idle Process 82.6%, Cursor.exe 4.6%, MsMpEng.exe 2.4%, svchost.exe 2.2%, System 1.4%
+2026-09-15T17:50:27 cpu  21.8% mem 34.3 GB used | System Idle Process 78.8%, Cursor.exe 5.6%, MsMpEng.exe 4.4%, System 1.3%, SearchIndexer.exe 0.7%
+2026-09-15T17:50:38 cpu  19.3% mem 34.6 GB used | System Idle Process 81.1%, Cursor.exe 5.2%, MsMpEng.exe 1.6%, System 0.6%, python.exe 0.4%
+2026-09-15T17:50:48 cpu  21.8% mem 34.6 GB used | System Idle Process 78.6%, python.exe 7.8%, Cursor.exe 5.2%, svchost.exe 1.4%, MsMpEng.exe 1.4%
+2026-09-15T17:50:59 cpu  18.3% mem 34.6 GB used | System Idle Process 82.2%, python.exe 7.8%, Cursor.exe 5.3%, System 0.5%, python.exe 0.4%
+2026-09-15T17:51:10 cpu  17.4% mem 34.6 GB used | System Idle Process 82.9%, python.exe 8.0%, Cursor.exe 5.4%, python.exe 0.4%, System 0.4%
+2026-09-15T17:51:21 cpu  17.5% mem 34.6 GB used | System Idle Process 82.9%, python.exe 7.4%, Cursor.exe 5.3%, python.exe 0.5%, System 0.4%
+2026-09-15T17:51:31 cpu  17.6% mem 34.7 GB used | System Idle Process 82.8%, python.exe 7.7%, Cursor.exe 5.4%, python.exe 0.4%, System 0.3%
+2026-09-15T17:51:42 cpu  18.6% mem 34.7 GB used | System Idle Process 81.8%, python.exe 6.2%, Cursor.exe 5.1%, MsMpEng.exe 1.3%, svchost.exe 1.2%
+2026-09-15T17:51:53 cpu  27.8% mem 34.5 GB used | System Idle Process 72.6%, Cursor.exe 4.8%, MsMpEng.exe 2.9%, System 0.6%, SearchIndexer.exe 0.6%
+2026-09-15T17:52:04 cpu  17.1% mem 34.7 GB used | System Idle Process 83.4%, python.exe 6.6%, Cursor.exe 5.0%, MsMpEng.exe 0.8%, System 0.5%
+2026-09-15T17:52:14 cpu  17.9% mem 34.7 GB used | System Idle Process 82.4%, python.exe 7.5%, Cursor.exe 5.0%, System 0.4%, svchost.exe 0.4%
+2026-09-15T17:52:25 cpu  18.2% mem 34.7 GB used | System Idle Process 82.2%, python.exe 7.6%, Cursor.exe 5.1%, Docker Desktop.exe 0.4%, python.exe 0.4%
+2026-09-15T17:52:36 cpu  17.2% mem 34.7 GB used | System Idle Process 83.3%, python.exe 7.4%, Cursor.exe 5.2%, python.exe 0.4%, Docker Desktop.exe 0.4%
+2026-09-15T17:52:47 cpu  20.3% mem 34.7 GB used | System Idle Process 80.2%, python.exe 9.1%, Cursor.exe 5.4%, System 0.6%, python.exe 0.5%
+2026-09-15T17:52:57 cpu  18.0% mem 34.7 GB used | System Idle Process 82.4%, python.exe 6.2%, Cursor.exe 5.0%, System 1.0%, Docker Desktop.exe 0.5%
+2026-09-15T17:53:08 cpu  16.3% mem 34.7 GB used | System Idle Process 84.1%, python.exe 6.2%, Cursor.exe 5.5%, System 0.5%, python.exe 0.4%
+2026-09-15T17:53:19 cpu  18.4% mem 34.7 GB used | System Idle Process 82.1%, Cursor.exe 5.2%, MsMpEng.exe 1.0%, System 0.7%, python.exe 0.5%
+2026-09-15T17:53:30 cpu  22.2% mem 34.7 GB used | System Idle Process 78.2%, python.exe 9.6%, Cursor.exe 5.1%, MsMpEng.exe 1.2%, System 0.8%
+2026-09-15T17:53:41 cpu  26.0% mem 34.7 GB used | System Idle Process 74.6%, Cursor.exe 4.9%, MsMpEng.exe 1.8%, System 0.6%, python.exe 0.5%
+2026-09-15T17:53:52 cpu  25.4% mem 34.3 GB used | System Idle Process 75.1%, MsMpEng.exe 5.9%, Cursor.exe 5.8%, System 0.8%, python.exe 0.4%
+2026-09-15T17:54:03 cpu  17.2% mem 34.2 GB used | System Idle Process 83.4%, Cursor.exe 5.3%, MsMpEng.exe 2.7%, System 0.5%, claude.exe 0.5%
+2026-09-15T17:54:13 cpu  13.4% mem 34.2 GB used | System Idle Process 87.7%, Cursor.exe 5.2%, System 0.7%, MsMpEng.exe 0.4%, python.exe 0.4%
+2026-09-15T17:54:24 cpu  15.2% mem 34.2 GB used | System Idle Process 86.1%, Cursor.exe 5.2%, System 0.8%, claude.exe 0.6%, MsMpEng.exe 0.4%
+2026-09-15T17:54:35 cpu  15.9% mem 34.4 GB used | System Idle Process 84.7%, Cursor.exe 5.1%, MsMpEng.exe 1.4%, System 0.7%, claude.exe 0.5%
+2026-09-15T17:54:45 cpu  24.8% mem 36.5 GB used | System Idle Process 75.5%, geometry.test.exe 10.3%, Cursor.exe 5.9%, MsMpEng.exe 5.1%, System 0.7%
+2026-09-15T17:54:56 cpu  17.9% mem 35.0 GB used | System Idle Process 82.6%, Cursor.exe 5.3%, MsMpEng.exe 1.3%, System 0.6%, python.exe 0.4%
+2026-09-15T17:55:07 cpu  18.3% mem 34.5 GB used | System Idle Process 82.3%, Cursor.exe 5.2%, System 0.7%, MsMpEng.exe 0.6%, python.exe 0.4%
+2026-09-15T17:55:18 cpu  17.2% mem 35.4 GB used | System Idle Process 83.3%, python.exe 6.0%, Cursor.exe 5.3%, MsMpEng.exe 0.9%, System 0.7%
+2026-09-15T17:55:28 cpu  16.1% mem 36.1 GB used | System Idle Process 84.2%, python.exe 6.2%, Cursor.exe 5.4%, python.exe 0.4%, System 0.4%
+2026-09-15T17:55:39 cpu  22.5% mem 36.0 GB used | System Idle Process 78.2%, python.exe 6.2%, Cursor.exe 5.0%, MsMpEng.exe 2.6%, svchost.exe 2.0%
+2026-09-15T17:55:50 cpu  23.8% mem 36.0 GB used | System Idle Process 76.6%, python.exe 6.2%, Cursor.exe 5.0%, MsMpEng.exe 3.5%, svchost.exe 3.0%
+2026-09-15T17:56:00 cpu  17.2% mem 34.7 GB used | System Idle Process 83.2%, python.exe 6.2%, Cursor.exe 5.2%, MsMpEng.exe 0.6%, Docker Desktop.exe 0.5%
+2026-09-15T17:56:11 cpu  18.2% mem 36.0 GB used | System Idle Process 82.2%, Cursor.exe 4.9%, MsMpEng.exe 1.5%, svchost.exe 0.8%, svchost.exe 0.6%
+2026-09-15T17:56:22 cpu  20.5% mem 36.6 GB used | System Idle Process 79.9%, python.exe 6.2%, Cursor.exe 5.0%, MsMpEng.exe 2.0%, svchost.exe 1.7%
+2026-09-15T17:56:32 cpu  16.6% mem 37.2 GB used | System Idle Process 83.8%, python.exe 6.2%, Cursor.exe 5.0%, MsMpEng.exe 0.6%, Docker Desktop.exe 0.5%
+2026-09-15T17:56:43 cpu  16.2% mem 37.8 GB used | System Idle Process 84.2%, python.exe 6.2%, Cursor.exe 5.1%, Docker Desktop.exe 0.5%, python.exe 0.4%
+2026-09-15T17:56:54 cpu  16.7% mem 38.2 GB used | System Idle Process 83.8%, python.exe 6.2%, Cursor.exe 5.2%, MsMpEng.exe 0.5%, System 0.4%
+2026-09-15T17:57:04 cpu  16.4% mem 38.6 GB used | System Idle Process 83.9%, python.exe 6.2%, Cursor.exe 5.3%, Docker Desktop.exe 0.5%, System 0.4%
+2026-09-15T17:57:15 cpu  22.3% mem 39.2 GB used | System Idle Process 78.4%, python.exe 6.2%, Cursor.exe 4.6%, MsMpEng.exe 2.5%, svchost.exe 1.9%
+2026-09-15T17:57:26 cpu  21.1% mem 38.9 GB used | System Idle Process 79.3%, python.exe 6.2%, Cursor.exe 5.0%, MsMpEng.exe 2.1%, svchost.exe 1.8%
+2026-09-15T17:57:37 cpu  18.7% mem 38.9 GB used | System Idle Process 81.7%, python.exe 6.2%, Cursor.exe 5.3%, MsMpEng.exe 1.3%, svchost.exe 1.0%
+2026-09-15T17:57:47 cpu  21.1% mem 38.9 GB used | System Idle Process 79.3%, python.exe 6.2%, Cursor.exe 4.8%, MsMpEng.exe 2.3%, svchost.exe 2.1%
+2026-09-15T17:57:58 cpu  18.4% mem 38.9 GB used | System Idle Process 82.1%, python.exe 6.2%, Cursor.exe 5.1%, System 1.1%, MsMpEng.exe 0.9%
+2026-09-15T17:58:09 cpu  17.0% mem 39.0 GB used | System Idle Process 83.3%, python.exe 6.2%, Cursor.exe 5.3%, MsMpEng.exe 0.7%, System 0.5%
+2026-09-15T17:58:19 cpu  17.6% mem 39.0 GB used | System Idle Process 83.1%, python.exe 6.2%, Cursor.exe 5.2%, System 0.5%, Docker Desktop.exe 0.4%
+2026-09-15T17:58:30 cpu  17.6% mem 39.0 GB used | System Idle Process 82.9%, python.exe 6.2%, Cursor.exe 5.0%, System 0.5%, Docker Desktop.exe 0.5%
+2026-09-15T17:58:40 cpu  16.9% mem 39.0 GB used | System Idle Process 83.6%, python.exe 6.2%, Cursor.exe 5.4%, System 0.4%, Docker Desktop.exe 0.4%
+2026-09-15T17:58:51 cpu  15.8% mem 39.0 GB used | System Idle Process 84.5%, python.exe 6.2%, Cursor.exe 5.4%, Docker Desktop.exe 0.5%, python.exe 0.4%
+2026-09-15T17:59:02 cpu  17.5% mem 34.7 GB used | System Idle Process 82.9%, Cursor.exe 5.3%, MsMpEng.exe 1.0%, System 0.5%, Docker Desktop.exe 0.4%
+2026-09-15T17:59:13 cpu  19.4% mem 34.5 GB used | System Idle Process 81.0%, Cursor.exe 5.2%, MsMpEng.exe 1.6%, svchost.exe 1.4%, svchost.exe 0.6%
+2026-09-15T17:59:23 cpu  21.7% mem 35.4 GB used | System Idle Process 78.8%, python.exe 6.1%, Cursor.exe 5.0%, MsMpEng.exe 2.6%, svchost.exe 1.8%
+2026-09-15T17:59:34 cpu  21.1% mem 35.9 GB used | System Idle Process 79.5%, python.exe 6.2%, Cursor.exe 5.0%, MsMpEng.exe 2.1%, svchost.exe 1.6%
+2026-09-15T17:59:45 cpu  16.7% mem 36.0 GB used | System Idle Process 83.6%, python.exe 6.2%, Cursor.exe 5.2%, MsMpEng.exe 0.5%, python.exe 0.4%
+2026-09-15T17:59:55 cpu  18.6% mem 35.9 GB used | System Idle Process 81.9%, Cursor.exe 5.1%, MsMpEng.exe 1.5%, svchost.exe 0.9%, System 0.6%
+2026-09-15T18:00:06 cpu  20.5% mem 36.4 GB used | System Idle Process 79.9%, python.exe 6.2%, Cursor.exe 5.1%, MsMpEng.exe 2.1%, svchost.exe 1.6%
+2026-09-15T18:00:17 cpu  22.8% mem 37.1 GB used | System Idle Process 77.6%, python.exe 6.2%, Cursor.exe 5.0%, MsMpEng.exe 2.9%, svchost.exe 2.3%
+2026-09-15T18:00:27 cpu  17.0% mem 37.7 GB used | System Idle Process 83.6%, python.exe 6.2%, Cursor.exe 5.2%, MsMpEng.exe 0.5%, Docker Desktop.exe 0.5%
+2026-09-15T18:00:38 cpu  18.6% mem 38.2 GB used | System Idle Process 81.6%, python.exe 6.2%, Cursor.exe 5.1%, svchost.exe 1.2%, MsMpEng.exe 1.1%
+2026-09-15T18:00:49 cpu  24.2% mem 38.7 GB used | System Idle Process 76.4%, python.exe 6.2%, Cursor.exe 5.1%, MsMpEng.exe 2.9%, svchost.exe 2.6%
+2026-09-15T18:01:00 cpu  20.3% mem 39.2 GB used | System Idle Process 80.3%, python.exe 6.2%, Cursor.exe 5.2%, MsMpEng.exe 1.4%, svchost.exe 1.1%
+2026-09-15T18:01:10 cpu  18.4% mem 39.1 GB used | System Idle Process 81.9%, python.exe 6.2%, Cursor.exe 5.2%, MsMpEng.exe 1.1%, svchost.exe 0.8%
+2026-09-15T18:01:21 cpu  22.0% mem 39.2 GB used | System Idle Process 78.4%, python.exe 6.2%, Cursor.exe 4.8%, MsMpEng.exe 2.5%, svchost.exe 2.0%
+2026-09-15T18:01:32 cpu  16.4% mem 39.4 GB used | System Idle Process 83.9%, python.exe 6.2%, Cursor.exe 5.3%, MsMpEng.exe 0.5%, System 0.4%
+2026-09-15T18:01:42 cpu  17.0% mem 34.8 GB used | System Idle Process 83.3%, Cursor.exe 5.2%, MsMpEng.exe 0.9%, svchost.exe 0.5%, System 0.5%
+2026-09-15T18:01:53 cpu  19.0% mem 34.9 GB used | System Idle Process 81.5%, python.exe 6.2%, Cursor.exe 5.2%, MsMpEng.exe 1.5%, svchost.exe 1.4%
+2026-09-15T18:02:04 cpu  19.5% mem 34.9 GB used | System Idle Process 80.8%, python.exe 6.2%, Cursor.exe 5.1%, MsMpEng.exe 1.9%, svchost.exe 1.7%
+2026-09-15T18:02:14 cpu  18.2% mem 34.9 GB used | System Idle Process 82.3%, python.exe 6.2%, Cursor.exe 4.9%, MsMpEng.exe 0.7%, System 0.5%
+2026-09-15T18:02:25 cpu  20.9% mem 34.5 GB used | System Idle Process 79.5%, Cursor.exe 5.1%, MsMpEng.exe 2.0%, svchost.exe 1.5%, svchost.exe 0.9%
+2026-09-15T18:02:36 cpu  19.6% mem 35.3 GB used | System Idle Process 80.9%, python.exe 6.1%, Cursor.exe 5.1%, MsMpEng.exe 1.8%, svchost.exe 1.2%
+2026-09-15T18:02:47 cpu  22.5% mem 35.7 GB used | System Idle Process 78.0%, python.exe 6.2%, Cursor.exe 5.0%, MsMpEng.exe 2.7%, svchost.exe 2.5%
+2026-09-15T18:02:57 cpu  21.6% mem 35.7 GB used | System Idle Process 78.8%, python.exe 6.2%, Cursor.exe 4.8%, MsMpEng.exe 1.9%, svchost.exe 1.4%
+2026-09-15T18:03:08 cpu  16.6% mem 35.6 GB used | System Idle Process 84.0%, python.exe 6.2%, Cursor.exe 5.2%, System 0.6%, MsMpEng.exe 0.6%
+2026-09-15T18:03:19 cpu  16.4% mem 35.6 GB used | System Idle Process 83.9%, python.exe 6.2%, Cursor.exe 5.3%, System 0.5%, Docker Desktop.exe 0.4%
+2026-09-15T18:03:30 cpu  18.3% mem 35.6 GB used | System Idle Process 82.1%, python.exe 6.2%, Cursor.exe 4.8%, MsMpEng.exe 1.4%, python.exe 0.6%
+2026-09-15T18:03:40 cpu  21.2% mem 35.7 GB used | System Idle Process 79.2%, python.exe 6.2%, Cursor.exe 4.8%, MsMpEng.exe 1.8%, System 0.6%
+2026-09-15T18:03:51 cpu  15.8% mem 35.6 GB used | System Idle Process 84.5%, python.exe 6.2%, Cursor.exe 5.4%, python.exe 0.4%, System 0.4%
+2026-09-15T18:04:02 cpu  16.2% mem 35.6 GB used | System Idle Process 84.1%, python.exe 6.2%, Cursor.exe 5.4%, System 0.5%, Docker Desktop.exe 0.4%
+2026-09-15T18:04:12 cpu  16.9% mem 35.7 GB used | System Idle Process 83.6%, python.exe 6.2%, Cursor.exe 5.3%, System 0.6%, Docker Desktop.exe 0.5%
+2026-09-15T18:04:23 cpu  15.8% mem 35.6 GB used | System Idle Process 84.6%, python.exe 6.2%, Cursor.exe 5.4%, python.exe 0.4%, System 0.3%
+2026-09-15T18:04:34 cpu  15.9% mem 35.6 GB used | System Idle Process 84.3%, python.exe 6.2%, Cursor.exe 4.9%, Docker Desktop.exe 0.5%, python.exe 0.4%
+2026-09-15T18:04:44 cpu  16.3% mem 35.6 GB used | System Idle Process 84.1%, python.exe 6.2%, Cursor.exe 5.2%, Docker Desktop.exe 0.5%, System 0.4%
+2026-09-15T18:04:55 cpu  16.6% mem 34.5 GB used | System Idle Process 83.6%, Cursor.exe 5.3%, MsMpEng.exe 0.7%, System 0.5%, python.exe 0.4%
+2026-09-15T18:05:06 cpu  16.3% mem 36.1 GB used | System Idle Process 84.2%, python.exe 6.2%, Cursor.exe 5.2%, System 0.5%, Docker Desktop.exe 0.4%
+2026-09-15T18:05:16 cpu  16.3% mem 36.7 GB used | System Idle Process 84.2%, python.exe 6.2%, Cursor.exe 5.0%, Docker Desktop.exe 0.5%, System 0.4%
+2026-09-15T18:05:27 cpu  15.9% mem 37.4 GB used | System Idle Process 84.6%, python.exe 6.2%, Cursor.exe 5.3%, System 0.4%, python.exe 0.4%
+2026-09-15T18:05:38 cpu  16.1% mem 38.1 GB used | System Idle Process 84.3%, python.exe 6.2%, Cursor.exe 5.2%, Docker Desktop.exe 0.5%, System 0.5%
+2026-09-15T18:05:48 cpu  16.1% mem 38.0 GB used | System Idle Process 84.2%, python.exe 6.2%, Cursor.exe 5.3%, python.exe 0.4%, MsMpEng.exe 0.4%
+2026-09-15T18:05:59 cpu  16.1% mem 38.2 GB used | System Idle Process 84.2%, python.exe 6.2%, Cursor.exe 5.2%, System 0.5%, MsMpEng.exe 0.4%
+2026-09-15T18:06:10 cpu  16.5% mem 38.1 GB used | System Idle Process 83.9%, python.exe 6.2%, Cursor.exe 5.2%, Docker Desktop.exe 0.6%, System 0.4%
+2026-09-15T18:06:20 cpu  16.9% mem 38.2 GB used | System Idle Process 83.7%, python.exe 6.2%, Cursor.exe 5.4%, System 0.7%, python.exe 0.4%
+2026-09-15T18:06:31 cpu  17.5% mem 38.3 GB used | System Idle Process 83.0%, python.exe 6.2%, Cursor.exe 5.3%, NortonUI.exe 1.0%, System 0.5%
+2026-09-15T18:06:42 cpu  18.9% mem 38.0 GB used | System Idle Process 81.4%, python.exe 6.2%, Cursor.exe 5.0%, NortonUI.exe 1.0%, System 0.8%
+2026-09-15T18:06:52 cpu  16.0% mem 38.1 GB used | System Idle Process 84.4%, python.exe 6.2%, Cursor.exe 5.2%, Docker Desktop.exe 0.5%, System 0.4%
+2026-09-15T18:07:03 cpu  16.1% mem 38.1 GB used | System Idle Process 84.2%, python.exe 6.2%, Cursor.exe 5.4%, python.exe 0.4%, System 0.3%
+2026-09-15T18:07:14 cpu  16.7% mem 38.1 GB used | System Idle Process 83.8%, python.exe 6.2%, Cursor.exe 5.0%, MsMpEng.exe 0.5%, System 0.4%
+2026-09-15T18:07:24 cpu  16.6% mem 38.1 GB used | System Idle Process 83.8%, python.exe 6.2%, Cursor.exe 5.3%, System 0.5%, MsMpEng.exe 0.5%
+2026-09-15T18:07:35 cpu  16.0% mem 38.1 GB used | System Idle Process 84.2%, python.exe 6.2%, Cursor.exe 5.4%, python.exe 0.4%, MsMpEng.exe 0.4%
+2026-09-15T18:07:46 cpu  16.6% mem 38.1 GB used | System Idle Process 83.9%, python.exe 6.2%, Cursor.exe 5.3%, System 0.5%, python.exe 0.4%
+2026-09-15T18:07:56 cpu  17.0% mem 38.1 GB used | System Idle Process 83.3%, python.exe 6.2%, Cursor.exe 5.4%, System 1.0%, python.exe 0.4%
+2026-09-15T18:08:07 cpu  16.0% mem 38.1 GB used | System Idle Process 84.3%, python.exe 6.2%, Cursor.exe 5.2%, System 0.7%, Docker Desktop.exe 0.4%
+2026-09-15T18:08:18 cpu  16.1% mem 38.1 GB used | System Idle Process 84.2%, python.exe 6.2%, Cursor.exe 5.5%, Docker Desktop.exe 0.4%, python.exe 0.4%
+2026-09-15T18:08:28 cpu  16.3% mem 38.1 GB used | System Idle Process 84.2%, python.exe 6.2%, Cursor.exe 5.4%, System 0.5%, MsMpEng.exe 0.4%
+2026-09-15T18:08:39 cpu  16.6% mem 38.1 GB used | System Idle Process 83.8%, python.exe 6.2%, Cursor.exe 5.4%, System 0.4%, python.exe 0.4%
+2026-09-15T18:08:49 cpu  16.7% mem 38.1 GB used | System Idle Process 83.8%, python.exe 6.2%, Cursor.exe 5.2%, System 0.6%, Docker Desktop.exe 0.4%
+2026-09-15T18:09:00 cpu  15.3% mem 38.1 GB used | System Idle Process 85.0%, python.exe 6.2%, Cursor.exe 5.1%, Docker Desktop.exe 0.5%, System 0.5%
+2026-09-15T18:09:11 cpu  16.9% mem 38.1 GB used | System Idle Process 83.5%, python.exe 6.2%, Cursor.exe 5.0%, System 0.7%, python.exe 0.4%
+2026-09-15T18:09:21 cpu  16.8% mem 38.0 GB used | System Idle Process 83.8%, python.exe 6.2%, Cursor.exe 5.2%, System 0.5%, python.exe 0.4%
+2026-09-15T18:09:32 cpu  16.0% mem 38.1 GB used | System Idle Process 84.3%, python.exe 6.2%, Cursor.exe 5.4%, python.exe 0.4%, System 0.4%
+2026-09-15T18:09:43 cpu  15.4% mem 38.0 GB used | System Idle Process 84.8%, python.exe 6.2%, Cursor.exe 5.0%, Docker Desktop.exe 0.5%, System 0.4%
+2026-09-15T18:09:53 cpu  15.9% mem 38.0 GB used | System Idle Process 84.4%, python.exe 6.2%, Cursor.exe 5.3%, Docker Desktop.exe 0.6%, System 0.4%
+2026-09-15T18:10:04 cpu  16.1% mem 38.0 GB used | System Idle Process 84.2%, python.exe 6.2%, Cursor.exe 5.2%, System 0.6%, python.exe 0.4%
+2026-09-15T18:10:15 cpu  16.2% mem 38.1 GB used | System Idle Process 84.2%, python.exe 6.2%, Cursor.exe 5.2%, System 0.6%, python.exe 0.4%
+2026-09-15T18:10:25 cpu  16.5% mem 38.1 GB used | System Idle Process 84.0%, python.exe 6.2%, Cursor.exe 5.3%, System 0.5%, Docker Desktop.exe 0.4%
+2026-09-15T18:10:36 cpu  17.5% mem 38.2 GB used | System Idle Process 83.0%, python.exe 6.2%, Cursor.exe 5.2%, System 0.5%, MsMpEng.exe 0.4%
+2026-09-15T18:10:47 cpu  16.8% mem 38.3 GB used | System Idle Process 83.8%, python.exe 6.2%, Cursor.exe 5.3%, System 0.5%, Docker Desktop.exe 0.4%
+2026-09-15T18:10:57 cpu  16.6% mem 38.5 GB used | System Idle Process 83.8%, python.exe 6.2%, Cursor.exe 5.3%, System 0.6%, Docker Desktop.exe 0.4%
+2026-09-15T18:11:08 cpu  16.8% mem 38.6 GB used | System Idle Process 83.7%, python.exe 6.2%, Cursor.exe 5.2%, System 0.7%, Docker Desktop.exe 0.5%
+2026-09-15T18:11:18 cpu  16.7% mem 38.0 GB used | System Idle Process 83.7%, python.exe 6.2%, Cursor.exe 5.3%, System 0.4%, MsMpEng.exe 0.3%
+2026-09-15T18:11:29 cpu  16.1% mem 38.0 GB used | System Idle Process 84.2%, python.exe 6.2%, Cursor.exe 5.2%, System 0.5%, Docker Desktop.exe 0.5%
+2026-09-15T18:11:40 cpu  16.4% mem 38.2 GB used | System Idle Process 84.1%, python.exe 6.2%, Cursor.exe 5.2%, Docker Desktop.exe 0.5%, System 0.4%
+2026-09-15T18:11:50 cpu  15.9% mem 38.2 GB used | System Idle Process 84.3%, python.exe 6.2%, Cursor.exe 5.2%, Docker Desktop.exe 0.5%, System 0.4%
+2026-09-15T18:12:01 cpu  16.1% mem 38.1 GB used | System Idle Process 84.2%, python.exe 6.2%, Cursor.exe 5.1%, System 0.5%, Docker Desktop.exe 0.4%
+2026-09-15T18:12:11 cpu  16.0% mem 38.1 GB used | System Idle Process 84.3%, python.exe 6.2%, Cursor.exe 5.1%, Docker Desktop.exe 0.5%, System 0.4%
+2026-09-15T18:12:22 cpu  16.3% mem 38.1 GB used | System Idle Process 84.0%, python.exe 6.2%, Cursor.exe 5.0%, System 0.5%, svchost.exe 0.4%
+2026-09-15T18:12:33 cpu  15.9% mem 38.2 GB used | System Idle Process 84.3%, python.exe 6.2%, Cursor.exe 5.3%, System 0.6%, python.exe 0.4%
+2026-09-15T18:12:43 cpu  16.6% mem 38.3 GB used | System Idle Process 83.9%, python.exe 6.2%, Cursor.exe 5.2%, System 0.4%, Docker Desktop.exe 0.4%
+2026-09-15T18:12:54 cpu  17.2% mem 38.1 GB used | System Idle Process 83.2%, python.exe 6.2%, Cursor.exe 4.9%, System 1.0%, Docker Desktop.exe 0.5%
+2026-09-15T18:13:05 cpu  16.5% mem 34.2 GB used | System Idle Process 84.3%, Cursor.exe 5.2%, MsMpEng.exe 1.4%, System 1.1%, svchost.exe 1.1%
+2026-09-15T18:13:15 cpu  13.7% mem 34.2 GB used | System Idle Process 87.1%, Cursor.exe 5.4%, MsMpEng.exe 1.1%, System 0.9%, svchost.exe 0.5%
+2026-09-15T18:13:26 cpu  16.2% mem 34.2 GB used | System Idle Process 84.5%, Cursor.exe 5.0%, MsMpEng.exe 1.2%, System 0.8%, claude.exe 0.6%
+2026-09-15T18:13:36 cpu  19.5% mem 34.2 GB used | System Idle Process 81.4%, Cursor.exe 4.4%, MsMpEng.exe 3.1%, System 0.9%, nllToolsSvc.exe 0.7%

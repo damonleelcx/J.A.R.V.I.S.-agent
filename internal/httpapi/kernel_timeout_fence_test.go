@@ -18,11 +18,13 @@ import (
 )
 
 // A kernel build that takes too long says so on the wire, on every endpoint that
-// builds: 504 CAD_KERNEL_TIMEOUT, not 501 "no working backend in this deployment".
+// builds with the kernel: 504 CAD_KERNEL_TIMEOUT, not 501 "no working backend in
+// this deployment". Those are the built mesh, the STEP export and the mass
+// properties: every one of them answers by asking the kernel to build.
 //
-// ‼️ The 501 is what the 2026-09-15 ceiling spike got for a 30,023-part car after
-// 66 s, and it sends whoever reads it to FORGE_CAD_PYTHON on a deployment whose
-// kernel was working. docs/bugfix/2026-09-15-a-kernel-build-that-ran-out-of-time-was-reported-as-no-kernel.md
+// ‼️ The 501 is what the 2026-09-15 ceiling spike (PR #95) got for a 30,023-part
+// car after 66 s, and it sends whoever reads it to FORGE_CAD_PYTHON on a deployment
+// whose kernel was working. docs/bugfix/2026-09-15-a-kernel-build-that-ran-out-of-time-was-reported-as-no-kernel.md
 //
 // The kernel is cadtest's fake, and the time that runs out is the request's own
 // deadline: the kernel's 30 s limit cannot be shortened from outside the package,
@@ -58,6 +60,9 @@ func TestAPI_AKernelBuildThatTakesTooLongIsA504ThatSaysSo(t *testing.T) {
 	}{
 		{"mesh", "/v1/geometry/" + v.VersionID + "/mesh", g.h.Mesh},
 		{"step export", "/v1/geometry/" + v.VersionID + "/export?format=step", g.h.Export},
+		// ‼️ The mass endpoint is here because #100 fenced it and the port to main
+		// did not: it builds through the same kernel, so it turned the same 501 for
+		// a design that was only large, and nothing else would have caught that.
 		{"mass", "/v1/geometry/" + v.VersionID + "/mass", g.h.Mass},
 	} {
 		t.Run(c.name, func(t *testing.T) {

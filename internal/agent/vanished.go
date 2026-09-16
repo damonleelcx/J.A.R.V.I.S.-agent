@@ -38,6 +38,16 @@ func vanishedParts(before, after *Prototype) []string {
 	if before == nil || after == nil {
 		return nil
 	}
+	// ‼️ A tree's parts are its PLACEMENTS, and a tree has no top-level parts to
+	// compare (2026-09-15, live car findings). A build step that places a new
+	// assembly patches the root, a patched assembly is replaced whole, and a root
+	// sent with only the new child dropped every subsystem before it — while this
+	// compared two empty top-level part lists and said nothing.
+	// docs/bugfix/2026-09-15-a-failed-build-step-said-no-geometry-whatever-refused-it.md
+	// Fence: TestAssemble_AStepThatDropsAPlacementSaysSo.
+	if before.Root != "" {
+		return vanishedPlacements(before, after)
+	}
 	kept := make(map[string]bool, len(after.Parts))
 	for _, p := range after.Parts {
 		kept[p.ID] = true
@@ -71,6 +81,48 @@ func vanishedParts(before, after *Prototype) []string {
 
 // noteVanished tells the reader what a revision removed, when it removed
 // anything. Silent when nothing went, which is the ordinary case.
+// vanishedPlacements is vanishedParts for a tree: every part the model placed
+// before and does not place after, by its path. A dropped sub-assembly is said once
+// with how many parts went with it rather than part by part, so a lost chassis of
+// two hundred parts is one readable line.
+func vanishedPlacements(before, after *Prototype) []string {
+	was, now := before.Expanded(), after.Expanded()
+	kept := make(map[string]bool, len(now.Parts))
+	for _, p := range now.Parts {
+		kept[p.ID] = true
+	}
+	// A tool is not a part anybody saw, as above.
+	consumed := map[string]bool{}
+	for _, f := range append(append([]geometry.Feature{}, was.Features...), now.Features...) {
+		for _, id := range f.With {
+			consumed[id] = true
+		}
+	}
+	var gone []string
+	lost, label := map[string]int{}, map[string]string{}
+	for _, p := range was.Parts {
+		if kept[p.ID] || consumed[p.ID] {
+			continue
+		}
+		head, _, nested := strings.Cut(p.ID, geometry.PathSeparator)
+		if !nested {
+			gone = append(gone, p.Label())
+			continue
+		}
+		lost[head]++
+		label[head] = p.ID
+	}
+	for head, n := range lost {
+		if n == 1 {
+			gone = append(gone, label[head])
+			continue
+		}
+		gone = append(gone, fmt.Sprintf("%s (%d parts)", head, n))
+	}
+	sort.Strings(gone)
+	return gone
+}
+
 func noteVanished(reply *Reply, before *Prototype) {
 	if reply == nil || reply.Prototype == nil || before == nil {
 		return

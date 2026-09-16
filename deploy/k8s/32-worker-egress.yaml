@@ -1,0 +1,129 @@
+# forge-worker's egress: every destination it may reach, and by omission every
+# destination it may not.
+#
+# # Why this exists
+#
+# forge-worker is the process that sends content to the model and runs a shell
+# (tools.ShellTool, limited by FORGE_SHELL_ALLOWED_COMMANDS). Until 2026-09-15
+# nothing in the forge namespace limited where it could connect. Blob storage
+# (docs/plan-2026-09-13-millions-of-parts.md, Phase 3, stage S4) adds S3 and the
+# instance role to what it needs, and that is the moment to write the whole list
+# down: a NetworkPolicy with policyTypes Egress denies every flow it does not
+# name, so this file IS the list. It is enforced by k3s's embedded kube-router,
+# the same controller that enforces the postgres and mail policies in `heros`.
+#
+# Committed, NOT applied (owner decision, 2026-09-15). apply.sh applies every
+# file in this directory, so the next deploy applies this one: run
+# deploy/verify.sh straight after it. Check 3 (the worker stays up, which needs
+# DNS and postgres) and check 9 (the blob round trip, which needs DNS, IMDS and
+# 443) exercise every rule below from inside the worker.
+#
+# # What it does NOT constrain
+#
+# ‼️ forged. forged runs with hostNetwork (30-forged.yaml), and a NetworkPolicy
+# has no effect on a host-network pod: it has no pod IP, its traffic leaves as
+# the node's. Selecting forged here would read as a control and be none. Its
+# egress is the node's egress.
+#
+# ‼️ Ingress. policyTypes is Egress alone. Listing Ingress with no ingress rules
+# would deny every inbound connection to the worker — nothing connects to it
+# today, but that would be a second, unannounced change hiding inside this one.
+#
+# # Adding a dependency to the worker
+#
+# A new outbound connection that no rule below allows fails at the network
+# layer, as a connect or DNS timeout that names nothing in this file. Add the
+# rule here, with why it exists, in the same change that adds the connection.
+#
+# The cluster's conventions, followed below (see deploy/README.md's traps and
+# heros-agent's deploy/k8s/40-networkpolicy.yaml):
+#   - a namespaceSelector and a podSelector in ONE `to` entry are ANDed. As two
+#     entries they are ORed — "anything in that namespace" OR "any pod with that
+#     label anywhere" — which is far wider and looks identical in `kubectl get`.
+#   - every rule names its ports. A rule with no ports allows every port.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: forge-worker-egress
+  namespace: forge
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: forge-worker
+  policyTypes: [Egress]
+  egress:
+    # 1. DNS, to CoreDNS. The worker's dnsPolicy is ClusterFirst, so every name
+    #    it dials — postgres.heros.svc.cluster.local, the model endpoint, S3 —
+    #    is resolved by kube-dns first. Without this rule every other rule is
+    #    unreachable by name: the worker cannot even find its database, and
+    #    WaitForConnect spends its 90 seconds on what looks like a database
+    #    outage. TCP as well as UDP, because a response too large for UDP is
+    #    retried over TCP.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    # 2. Postgres: the shared postgres-0 in `heros` (a StatefulSet labelled
+    #    app.kubernetes.io/name: postgres, port 5432). FORGE_DATABASE_URL points
+    #    there. Every task claim, lease and ledger row goes through it; without
+    #    this rule the worker exits after dbWaitLimit and crash-loops. This is
+    #    the egress half; the ingress half is heros's own postgres policy, which
+    #    deploy/patch-heros-shared.sh adds forge to. Both are needed.
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: heros
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: postgres
+      ports:
+        - { protocol: TCP, port: 5432 }
+    # 3. IMDS, for the instance role. The blob store has no keys
+    #    (20-config.yaml): the SDK's default chain fetches heros-vm's credentials
+    #    from 169.254.169.254 over plain HTTP. Without this rule the credential
+    #    fetch times out and every blob call fails as "could not store a blob",
+    #    with nothing that says the network refused it.
+    #
+    #    ‼️ Allowing the address is necessary, not sufficient. The worker is not
+    #    on the host network, so its IMDSv2 token request crosses one more hop
+    #    than the node's own; at an instance hop limit of 1 IMDS drops it however
+    #    open this policy is. deploy/bootstrap-s3.sh reports the hop limit.
+    #    verify.sh check 9 run in THIS pod is what proves both.
+    - to:
+        - ipBlock:
+            cidr: 169.254.169.254/32
+      ports:
+        - { protocol: TCP, port: 80 }
+    # 4. HTTPS to public addresses: S3 (the blob store) and the model endpoint
+    #    (FORGE_LLM_BASE_URL, token-plan.cn-beijing.maas.aliyuncs.com, which also
+    #    serves the vision and image models). An ipBlock rather than hosts because
+    #    L3/L4 policy has no DNS, and S3 publishes no stable addresses to list.
+    #    Without it the worker cannot plan, execute or verify anything, and cannot
+    #    reach the bucket.
+    #
+    #    The private ranges are excluded, as heros-eval's policy does, so this
+    #    rule cannot become a path to other in-cluster services (pods 10.42/16,
+    #    Services 10.43/16) or the VPC (172.31/16). IMDS is port 80 and rule 3.
+    #    ‼️ If S3 is ever reached through a VPC INTERFACE endpoint with private
+    #    DNS, its name resolves into 172.31/16 and this exclusion blocks it; a
+    #    gateway endpoint, or none, uses public addresses and is unaffected.
+    #
+    #    This also carries `git` over https from the shell tool. git over ssh
+    #    (22) is not allowed, and nor is the mail relay (587): the worker sends no
+    #    mail — it does not load the mail section or link internal/mail — so the
+    #    hostAliases entry in 31-worker.yaml resolves a name it never dials.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.0.0.0/8
+              - 172.16.0.0/12
+              - 192.168.0.0/16
+      ports:
+        - { protocol: TCP, port: 443 }

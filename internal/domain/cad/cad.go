@@ -82,6 +82,13 @@ type Kernel struct {
 	// that executes text a model produced — see script.go for what the sandbox
 	// does and does not promise.
 	scripts bool
+	// timeout is how long one build may take: buildTimeout, except in the fences
+	// that need a limit short enough to cross on purpose. Not a setting.
+	//
+	// Each slot COPIES it when the pool is made and enforces it on its own
+	// process, so a build that runs out of time kills that slot's process and
+	// nobody else's. Like size, it is read when the pool is made and not after.
+	timeout time.Duration
 
 	// size is how many processes serve builds at once. The pool is made on
 	// first use, so a kernel nobody builds with owns nothing.
@@ -89,10 +96,6 @@ type Kernel struct {
 	once  sync.Once
 	slots chan *sidecar
 	all   []*sidecar
-
-	// timeout is how long one build may take: buildTimeout, except in the fences
-	// that need a limit short enough to cross on purpose.
-	timeout time.Duration
 }
 
 // New returns a kernel that runs through the given Python interpreter.
@@ -153,8 +156,9 @@ func (k *Kernel) Available() bool { return k != nil && k.python != "" }
 func Unavailable(op string) error {
 	return errs.New(op, errs.CodeConnectorUnavailable).
 		WithDetail("this deployment has no CAD kernel, so it cannot produce a parametric file. " +
-			"Set FORGE_CAD_PYTHON to a Python interpreter with build123d installed " +
-			"(python3 -m venv venv && ./venv/bin/pip install build123d). It is unset by default: " +
+			"Set FORGE_CAD_PYTHON to a Python interpreter with the pinned kernel packages installed: " +
+			"in the FORGE image that is /opt/cad/venv/bin/python; from a checkout, `make cad-venv` builds " +
+			"one from internal/domain/cad/requirements.txt. It is unset by default: " +
 			"writing a STEP file full of tessellated facets and calling it parametric is a lie " +
 			"with a file extension on it.")
 }
@@ -199,6 +203,43 @@ type Build struct {
 	// geometry/interference.go and cad/sidecar.py.
 	Interferences          []geometry.Interference
 	InterferencesTruncated bool
+	// InterferencesFound is how many pairs the check found sharing material, and
+	// Interferences lists at most the worst _INTERFERENCE_LIST_LIMIT of them
+	// (sidecar.py, 10,000). A reply
+	// that found more is SUMMARIZED, never cut silently: InterferencesFound says how
+	// many there were, and InterferencesSummarized says the list is the worst of
+	// them rather than all of them.
+	//
+	// # Why a list has a bound at all
+	//
+	// A million-occurrence airframe barrel shares material in 1,760,000 pairs — every
+	// rivet in its skin and its stringer — and those are 15 distinct answers reused.
+	// Listed in full the reply is hundreds of megabytes that no reader uses: the turn
+	// names three, and a repair that sent them all would send a model a prompt of
+	// that size (docs/spikes/2026-09-15-next-scale-walls).
+	//
+	// This is not a truncated CHECK. Every pair was checked; what is bounded is how
+	// many of the answers are written down. InterferencesTruncated keeps meaning
+	// "not every pair was checked", and the two are said separately.
+	InterferencesFound      int
+	InterferencesSummarized bool
+	// InterferencesBuried is how many of the pairs found are BURIED
+	// (geometry.BuriedFraction), and InterferencesBuriedCounted says that number is
+	// all of them rather than only the ones listed.
+	//
+	// # Why the kernel counts them (repair judged by the kernel total)
+	//
+	// An overlap repair is kept only when the kernel finds fewer buried clashes after
+	// it. Counted from a list cut at 10,000, the 1M barrel's 768,000 buried rivets
+	// read as 10,000 before a repair and 10,000 after it, whatever the repair did.
+	// docs/bugfix/2026-09-15-an-overlap-repair-was-judged-by-a-list-that-could-not-shrink.md
+	//
+	// ‼️ A reply that does not carry the count (a sidecar from before it did) leaves
+	// the buried ones in the list. That is every buried clash when the list is the
+	// whole list, and only a floor when it is a summary — so Counted is false then,
+	// and a reader must not treat the floor as the total.
+	InterferencesBuried        int
+	InterferencesBuriedCounted bool
 	// InterferenceBoxTests is how many pairs of bounding boxes the interference
 	// check compared to choose which pairs pay for a boolean. Reported so the broad
 	// phase's cost is a count a test can read (Phase 4, stage K2b): sorting and
@@ -208,7 +249,9 @@ type Build struct {
 	InterferenceBoxTests int
 	// InterferencePairs is how many pairs' boxes overlap, InterferenceBooleans how
 	// many exact booleans were paid for, and InterferenceReused how many pairs were
-	// answered by a boolean already measured at the same pose (Phase 5, stage V1).
+	// answered by a boolean already measured at the same pose (Phase 5, stage V1) —
+	// or at a pose slid along a box it lies wholly inside, which shares the same
+	// volume (sidecar.py, _INTERFERENCE_SLIDE; docs/spikes/2026-09-15-large-box-index).
 	// The pair budget counts booleans, so Booleans + Reused below Pairs is exactly
 	// a truncated check — the count "checked X of Y" is built from.
 	InterferencePairs    int
@@ -361,10 +404,16 @@ type reply struct {
 
 	Interferences          []geometry.Interference `json:"interferences,omitempty"`
 	InterferencesTruncated bool                    `json:"interferences_truncated,omitempty"`
-	InterferenceBoxTests   int                     `json:"interference_box_tests"`
-	InterferencePairs      int                     `json:"interference_pairs"`
-	InterferenceBooleans   int                     `json:"interference_booleans"`
-	InterferenceReused     int                     `json:"interference_reused"`
+	// A pointer, so a reply that does not carry the count is told apart from one
+	// that found nothing (see buildOf).
+	InterferencesFound      *int `json:"interferences_found"`
+	InterferencesSummarized bool `json:"interferences_summarized,omitempty"`
+	// A pointer for the same reason as InterferencesFound.
+	InterferencesBuried  *int `json:"interferences_buried"`
+	InterferenceBoxTests int  `json:"interference_box_tests"`
+	InterferencePairs    int  `json:"interference_pairs"`
+	InterferenceBooleans int  `json:"interference_booleans"`
+	InterferenceReused   int  `json:"interference_reused"`
 
 	STEP            string           `json:"step,omitempty"`
 	Mesh            []meshPart       `json:"mesh,omitempty"`
@@ -595,9 +644,17 @@ func (k *Kernel) build(ctx context.Context, doc geometry.Document, unit geometry
 	}
 	if err != nil {
 		if errors.As(err, &late) {
-			// The killed process is reaped and the slot reset NOW, so the next build
-			// starts a fresh process instead of spending its one retry discovering
-			// this one is dead. Fence: TestKernel_AfterATimeoutTheSlotHasAFreshProcessForTheNextBuild.
+			// The killed process is reaped and THIS SLOT reset NOW, so the next
+			// build that takes this slot starts a fresh process instead of
+			// spending its one retry discovering this one is dead.
+			//
+			// ‼️ Only this slot. The kill in roundTrip and this reset both go
+			// through the sidecar that ran the build, so a slow assembly costs
+			// the deployment one process and not the pool: the other slots keep
+			// the processes they have, and a build already running in one is not
+			// interrupted. Fences:
+			// TestKernel_AfterATimeoutTheKernelStartsAFreshProcessForTheNextBuild
+			// and TestKernel_ATimeoutInOneSlotLeavesTheOtherSlotsServing.
 			s.stop()
 			k.log.Warn(ctx, logx.EventCADTimedOut, "slot", s.slot, "detail", late.Error())
 			return nil, lateRefusal(op, late)
@@ -626,11 +683,40 @@ func (k *Kernel) build(ctx context.Context, doc geometry.Document, unit geometry
 			WithDetail("the CAD kernel could not build this assembly: %s", detail)
 	}
 
+	return buildOf(res, inferred, scriptRuns)
+}
+
+// buildOf is what a successful reply says, as a Build. Separate from build so the
+// reply's cost at scale can be measured on exactly this path
+// (TestScaleUp_MeasureTheInterferenceReply).
+func buildOf(res *reply, inferred []string, scriptRuns int) (*Build, error) {
+	const op = "cad.Kernel.BuildDocument"
 	out := &Build{Parts: res.Parts, Volume: res.Volume, Bounds: res.Bounds,
 		Skipped: res.Skipped, FeatureFailures: res.FeaturesFailed, Inferred: inferred,
 		Interferences: res.Interferences, InterferencesTruncated: res.InterferencesTruncated, InterferenceBoxTests: res.InterferenceBoxTests,
 		InterferencePairs: res.InterferencePairs, InterferenceBooleans: res.InterferenceBooleans, InterferenceReused: res.InterferenceReused,
 		ShapeBuilds: res.ShapeBuilds, ScriptRuns: scriptRuns, Phases: res.Phases.durations()}
+	// ‼️ Never fewer found than listed, and a list shorter than the count is a
+	// summary whatever the flag says: a reader that sees N findings and a count of
+	// N must be able to trust that nothing was left out.
+	out.InterferencesFound = len(res.Interferences)
+	if res.InterferencesFound != nil && *res.InterferencesFound > out.InterferencesFound {
+		out.InterferencesFound = *res.InterferencesFound
+	}
+	out.InterferencesSummarized = res.InterferencesSummarized || out.InterferencesFound > len(res.Interferences)
+	// ‼️ The same rule for the buried count: never fewer than the list holds. Without
+	// the count, the list's own buried clashes are the whole count only when the list
+	// is the whole list.
+	for _, f := range res.Interferences {
+		if f.Buried() {
+			out.InterferencesBuried++
+		}
+	}
+	out.InterferencesBuriedCounted = !out.InterferencesSummarized
+	if res.InterferencesBuried != nil {
+		out.InterferencesBuried = max(out.InterferencesBuried, *res.InterferencesBuried)
+		out.InterferencesBuriedCounted = true
+	}
 	if res.STEP != "" {
 		decoded, err := base64.StdEncoding.DecodeString(res.STEP)
 		if err != nil {
@@ -671,29 +757,6 @@ func (k *Kernel) build(ctx context.Context, doc geometry.Document, unit geometry
 	return out, nil
 }
 
-// lateRefusal is the error for a build stopped because time ran out.
-//
-// CAD_KERNEL_TIMEOUT (504, not retryable — errs/code.go says why), with a detail
-// naming which time ran out. A caller that CANCELLED rather than ran out of time
-// has gone, and gets the pool's existing "request ended" wording under the code
-// acquire already uses: nobody is reading that reply.
-func lateRefusal(op string, late *lateError) error {
-	switch {
-	case late.caller == nil:
-		return errs.Wrap(op, errs.CodeKernelTimeout, late).
-			WithDetail("this build took longer than the CAD kernel's %s limit, so it was stopped and "+
-				"not retried: the same build would take as long again. Build part of the design at a "+
-				"time, or split it into smaller subassemblies", late.limit)
-	case errors.Is(late.caller, context.DeadlineExceeded):
-		return errs.Wrap(op, errs.CodeKernelTimeout, late).
-			WithDetail("the request's own deadline ended before the CAD kernel finished this build, " +
-				"so it was stopped and not retried: the same build would take at least as long again")
-	default:
-		return errs.Wrap(op, errs.CodeConnectorUnavailable, late).
-			WithDetail("the request ended before the CAD kernel finished, so the build was stopped")
-	}
-}
-
 // BuildMesh builds a document and returns the surface of the solid it makes.
 //
 // Separate from BuildDocument only in what it asks the kernel for. Deliberately
@@ -702,4 +765,64 @@ func lateRefusal(op string, late *lateError) error {
 // two claims about one design.
 func (k *Kernel) BuildMesh(ctx context.Context, doc geometry.Document, unit geometry.Unit) (*Build, error) {
 	return k.BuildDocument(ctx, doc, unit, "mesh")
+}
+
+// lateError is a build whose process was killed because time ran out while it was
+// still working: the kernel's own limit, or the caller's context.
+//
+// # Why it is its own type
+//
+// The retry in BuildDocument is for a process that DIED — an OOM, a pkill, a
+// machine asleep — and a fresh process answers that. A process killed for its time
+// was alive and building, and a fresh one given the same build takes as long
+// again: retrying turned a 31 s build into a 60 s wait, and the second kill into
+// "the CAD kernel did not answer, and restarting it did not help" under
+// CONNECTOR_UNAVAILABLE. BuildDocument asks errors.As for this, and does not
+// retry it.
+//
+// # What the pool changed
+//
+// One of these is about ONE SLOT. The sidecar that ran the build recorded it and
+// killed its own process (sidecar.roundTrip), and BuildDocument resets that slot
+// and nothing else. A pool makes the distinction matter more, not less: before,
+// a wrongly retried timeout cost the deployment its only process twice over;
+// now it would also take a slot out of service that the other builds are still
+// being served by.
+type lateError struct {
+	// limit is the kernel's own limit, when that is what ran out.
+	limit time.Duration
+	// caller is the caller's context error, when that ended first.
+	caller error
+}
+
+func (e *lateError) Error() string {
+	if e.caller != nil {
+		return "the request ended before the kernel answered: " + e.caller.Error()
+	}
+	return fmt.Sprintf("the kernel did not answer within %s", e.limit)
+}
+
+func (e *lateError) Unwrap() error { return e.caller }
+
+// lateRefusal is the error for a build stopped because time ran out.
+//
+// CAD_KERNEL_TIMEOUT (504, not retryable — errs/code.go says why), with a detail
+// naming which time ran out. A caller that CANCELLED rather than ran out of time
+// has gone, and keeps CONNECTOR_UNAVAILABLE with a sentence that says what
+// happened: nobody is reading that reply.
+func lateRefusal(op string, late *lateError) error {
+	switch {
+	case late.caller == nil:
+		return errs.Wrap(op, errs.CodeKernelTimeout, late).
+			WithDetail("this build took longer than the CAD kernel's %s limit, so it was stopped and "+
+				"not retried: the same build would take as long again. Build a smaller part of the "+
+				"design, or split it into smaller subassemblies", late.limit)
+	case errors.Is(late.caller, context.DeadlineExceeded):
+		return errs.Wrap(op, errs.CodeKernelTimeout, late).
+			WithDetail("the request's own deadline ended before the CAD kernel finished this build, " +
+				"so it was stopped and not retried: the same build would take at least as long again")
+	default:
+		return errs.Wrap(op, errs.CodeConnectorUnavailable, late).
+			WithDetail("the request ended before the CAD kernel finished, so the build was stopped")
+	}
 }

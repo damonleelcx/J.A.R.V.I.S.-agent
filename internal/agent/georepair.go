@@ -74,7 +74,16 @@ func (c *Conversation) repairGeometry(ctx context.Context, proto *Prototype, fau
 	}
 	lines := make([]string, 0, len(faults))
 	for _, f := range faults {
-		lines = append(lines, "- "+f.Detail)
+		// ‼️ NAMED. The fault's sentence alone does not say what it is about — an
+		// attachment refusal reads "is attached at …", with nothing before the verb —
+		// and this prompt used to send only that. Measured live 2026-09-15
+		// (docs/spikes/2026-09-15-car-verified): the repair of the suspension step was
+		// shown `- is attached at "chassis/cockpit-floor", but …` and could not tell
+		// which of the step's nine children was meant. The name is the part's path, and
+		// the step's note has always printed it; only this prompt dropped it.
+		// docs/bugfix/2026-09-15-a-placement-from-the-root-could-not-name-the-root.md
+		// Fence: TestRepair_EveryFaultTheRepairIsShownNamesThePartItIsAbout.
+		lines = append(lines, "- "+strings.TrimSpace(f.Name+" "+f.Detail))
 	}
 	body, err := json.Marshal(proto)
 	if err != nil {
@@ -236,7 +245,8 @@ func (c *Conversation) repairIfFaulty(ctx context.Context, reply *Reply) bool {
 		note := fmt.Sprintf("The geometry as first written had %d part(s) that could not be "+
 			"built. FORGE corrected it and re-checked.", len(first))
 		if left := reply.Prototype.Faults(); len(left) > 0 {
-			note += fmt.Sprintf(" %d could not be corrected: %s", len(left), left[0].Detail)
+			note += fmt.Sprintf(" %d could not be corrected: %s", len(left),
+				strings.TrimSpace(left[0].Name+" "+left[0].Detail))
 		}
 		if reply.Repaired != "" {
 			reply.Repaired += " " + note

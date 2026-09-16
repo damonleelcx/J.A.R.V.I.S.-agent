@@ -27,9 +27,12 @@ the renderer does it (internal/domain/geometry/solid.go). Any convention decided
 here would be a second opinion about what the document means.
 """
 import base64
+import copy
+import heapq
 import json
 import math
 import os
+import struct
 import sys
 import tempfile
 import time
@@ -44,6 +47,9 @@ try:
         make_face, revolve, sweep, Transition, Line, ThreePointArc, Wire, Face,
         import_step,
     )
+    # A located copy without the B-rep copy Shape.moved makes and discards; see _located.
+    from build123d.topology.shape_core import downcast
+    from OCP.gp import gp_Ax3, gp_Trsf
     # The STEP writer's own pieces, used directly rather than through build123d's
     # export_step, which only accepts a Compound(children=...) — see _step_document.
     from OCP.APIHeaderSection import APIHeaderSection_MakeHeader
@@ -182,19 +188,78 @@ def _fused(solids):
     return out
 
 
-def _placement(solid):
+# Place each occurrence without the work build123d does and throws away: a B-rep
+# copy per located copy (_located), and a Plane per placement (_placement).
+#
+# # Why (next scale walls)
+#
+# Measured 2026-09-15 on the airframe barrel at 90,880 occurrences
+# (docs/spikes/2026-09-15-next-scale-walls): the shapes phase was 10.0 s of
+# _placement (110 us each) and 10.0 s of `location * shape`, 5.9 s of it
+# BRepBuilderAPI_Copy. Shape.moved deep-copies the shape, which copies its whole
+# B-rep, then replaces the copy's TopoDS_Shape with the original's, moved — so the
+# copy is made and dropped once per occurrence. K1's sharing never used it.
+#
+# Both replacements produce the SAME objects, not close ones: the same class and
+# attributes, the same TShape, and a location equal bit for bit (fence:
+# TestKernel_APlacedCopyIsTheCopyBuild123dMade). Off, the build123d calls run as
+# before; the switch exists so that reference stays available.
+_PLACE_WITHOUT_COPYING = True
+
+
+def _placement(solid, frames=None):
     """The part's frame, from the matrix the caller computed.
 
     x_dir and z_dir are the matrix's first and third COLUMNS — where the frame's
     own x and z axes end up. Reading rows instead would apply the inverse
     rotation, which is wrong in a way that looks plausible for symmetric parts
     and only shows on the asymmetric ones.
+
+    With `frames` (a dict for one build), each distinct matrix builds its Plane
+    ONCE, and every occurrence with that matrix repeats only the last step
+    Location(plane) takes: an axis system at the occurrence's origin with the
+    Plane's own directions, set as a transformation and inverted. The directions a
+    Plane holds do not depend on its origin, so the transformation is the one the
+    Plane would give, to the bit. Keyed by repr, which tells -0.0 from 0.
     """
     m = solid["matrix"]
-    x_dir = Vector(m[0], m[3], m[6])
-    z_dir = Vector(m[2], m[5], m[8])
     origin = Vector(*solid["position"])
-    return Location(Plane(origin=origin, x_dir=x_dir, z_dir=z_dir))
+    if frames is None or not _PLACE_WITHOUT_COPYING:
+        return Location(Plane(origin=origin, x_dir=Vector(m[0], m[3], m[6]), z_dir=Vector(m[2], m[5], m[8])))
+    key = repr(m)
+    axes = frames.get(key)
+    if axes is None:
+        plane = Plane(origin=origin, x_dir=Vector(m[0], m[3], m[6]), z_dir=Vector(m[2], m[5], m[8]))
+        axes = frames[key] = (plane.z_dir.to_dir(), plane.x_dir.to_dir())
+    trsf = gp_Trsf()
+    trsf.SetTransformation(gp_Ax3(origin.to_pnt(), axes[0], axes[1]))
+    trsf.Invert()
+    return Location(TopLoc_Location(trsf))
+
+
+def _located(shape, location):
+    """`location * shape` — Shape.moved — without the B-rep copy it discards.
+
+    Shape.__deepcopy__ copies every attribute and, for the TopoDS_Shape, makes a
+    BRepBuilderAPI_Copy; moved then overwrites that copy with the original moved.
+    This is the same loop with the moved shape put where the copy would have gone.
+    """
+    if not _PLACE_WITHOUT_COPYING:
+        return location * shape
+    cls = shape.__class__
+    out = cls.__new__(cls)
+    moved = downcast(shape.wrapped.Moved(location.wrapped))
+    memo = {id(shape): out, id(shape.wrapped): moved}
+    for key, value in shape.__dict__.items():
+        if key == "topo_parent":
+            out.topo_parent = value
+        else:
+            setattr(out, key, copy.deepcopy(value, memo))
+        if key == "joints":
+            for joint in out.joints.values():
+                joint.parent = out
+    out.wrapped = moved
+    return out
 
 
 def _shape(solid):
@@ -737,6 +802,39 @@ _INTERFERENCE_PAIR_BUDGET = 2000
 # different to a bracket and to a bridge.
 _INTERFERENCE_MIN_VOLUME = 1.0
 _INTERFERENCE_MIN_FRACTION = 0.001
+# How many clashes a reply LISTS. Every clash is still found and counted
+# ("interferences_found"); past this many, the reply lists the worst and says it is
+# a summary ("interferences_summarized"), and is never cut silently.
+#
+# # Why (next scale walls)
+#
+# The 1,008,160-occurrence airframe barrel finds 1,760,000 clashes. Listed in full
+# (measured 2026-09-15, docs/spikes/2026-09-15-next-scale-walls) the reply was 312 MB,
+# all but 541 bytes of it the list; Go decoded it in 2.5 s, allocating 921 MiB and
+# holding 299 MiB; and 768,000 of the clashes were buried, which the turn's repair
+# would have sent a model as 108 MB of problem lines. No reader uses more than the
+# head: the turn names three, and the list is sorted worst first, so a bound never
+# hides the biggest.
+#
+# 10,000 is a chosen count, not a measured optimum: above every fence's clash count
+# (2,400 at most), and about 1.8 MB of reply at the barrel's 177 bytes a clash.
+_INTERFERENCE_LIST_LIMIT = 10000
+# The share of the smaller solid inside the other at which a clash is BURIED, and
+# drives a repair. geometry.BuriedFraction, the same number and the same comparison
+# (>=), counted here because only here are all the clashes still held.
+#
+# # Why the kernel counts them (repair judged by the kernel total)
+#
+# A repair is kept only when the kernel finds fewer buried clashes after it than
+# before. Past _INTERFERENCE_LIST_LIMIT the list is the worst 10,000, so on the 1M
+# barrel's 768,000 buried rivets it holds 10,000 buried clashes whatever a repair
+# does: counted from the list, a repair could never be kept and a worse one never
+# seen (docs/bugfix/2026-09-15-an-overlap-repair-was-judged-by-a-list-that-could-not-shrink.md).
+#
+# ‼️ Change it only together with geometry.BuriedFraction. A count taken at a
+# different line than the list is read at would judge a repair by clashes the turn
+# does not call buried.
+_BURIED_FRACTION = 0.5
 
 
 def _box_of(solid):
@@ -786,7 +884,34 @@ def _moved_box(box, location):
     return (tuple(lo), tuple(hi))
 
 
-def _measures(solids, placed=None):
+# # A moved box without a min() per corner (repair bound and check profile)
+#
+# _measures was 11 s of the 1M check (docs/spikes/2026-09-15-check-profile): a
+# moved box per occurrence, each 24 corner sums read through nested lists and folded
+# with 24 min() and max() calls. _moved_box_direct evaluates the same sums —
+# (a*x + b*y) + c*z + d, each product the same float — in the same corner order, and
+# takes min() and max() of the eight at once. min and max return the FIRST of tied
+# values either way, so even a -0.0 beside a 0.0 comes out the same. The box is the
+# same tuple, bit for bit. _MOVED_BOX_DIRECT = False restores the loop, kept as the
+# reference testdata/interference_pair_keys.py compares every box against.
+_MOVED_BOX_DIRECT = True
+
+
+def _moved_box_direct(box, e):
+    """_moved_box from a placement's _entries."""
+    (x0, y0, z0), (x1, y1, z1) = box
+    lo, hi = [], []
+    for r in (0, 4, 8):
+        a, b, c, d = e[r], e[r + 1], e[r + 2], e[r + 3]
+        ax0, ax1, by0, by1, cz0, cz1 = a * x0, a * x1, b * y0, b * y1, c * z0, c * z1
+        corners = (ax0 + by0 + cz0 + d, ax0 + by0 + cz1 + d, ax0 + by1 + cz0 + d, ax0 + by1 + cz1 + d,
+                   ax1 + by0 + cz0 + d, ax1 + by0 + cz1 + d, ax1 + by1 + cz0 + d, ax1 + by1 + cz1 + d)
+        lo.append(min(corners))
+        hi.append(max(corners))
+    return (tuple(lo), tuple(hi))
+
+
+def _measures(solids, placed=None, rotations=None):
     """Every kept solid's box and volume.
 
     # Once per definition (Phase 5, stage V1)
@@ -797,8 +922,13 @@ def _measures(solids, placed=None):
     and each copy's box is that box moved by its placement; volume does not change
     under a rigid motion. A part a feature changed (placed entry None) is measured
     as the solid it is.
+
+    rotations, when a list as long as solids, receives each placed solid's rotation
+    entries as bytes, interned so that equal rotations are one object: read here for
+    the box anyway, and what _pair_keys memoizes relative rotations by (repair bound
+    and check profile). Filled only on the direct path (_MOVED_BOX_DIRECT).
     """
-    boxes, volumes, local = [], [], {}
+    boxes, volumes, local, interned = [], [], {}, {}
     for i, solid in enumerate(solids):
         p = placed[i] if placed else None
         if p is None:
@@ -809,7 +939,14 @@ def _measures(solids, placed=None):
         if key not in local:
             local[key] = (_box_of(shape), _volume_of(shape))
         box, volume = local[key]
-        boxes.append(_moved_box(box, location))
+        if _MOVED_BOX_DIRECT:
+            e = _entries(location.wrapped)
+            if rotations is not None:
+                bits = _PACK_ROTATION(e[0], e[1], e[2], e[4], e[5], e[6], e[8], e[9], e[10])
+                rotations[i] = interned.setdefault(bits, bits)
+            boxes.append(None if box is None else _moved_box_direct(box, e))
+        else:
+            boxes.append(_moved_box(box, location))
         volumes.append(volume)
     return boxes, volumes
 
@@ -882,13 +1019,26 @@ def _boxes_miss(a, b):
     return False
 
 
-# A box longer than this many grid cells on any axis is tested against every box
-# instead of being filed in every cell it crosses. See _candidate_pairs.
+# A box longer than this many cells of a level on an axis is filed one level up
+# on that axis. See _candidate_pairs.
 _GRID_LARGE = 4.0
+# Each level's cells are 2**_GRID_LEVEL_SHIFT (4) times the level below's, on each
+# axis separately. A power of two, so a level's cell index is the finest level's
+# index shifted right, which is exact integer arithmetic.
+_GRID_LEVEL_SHIFT = 2
 
 
 def _cell(value, size):
     return int(math.floor(value / size))
+
+
+def _grid_level(extent, cell):
+    """The coarsest-needed level on one axis: the first whose cells are at least
+    extent / _GRID_LARGE long, so a box crosses at most five of them."""
+    level = 0
+    while extent > _GRID_LARGE * math.ldexp(cell, _GRID_LEVEL_SHIFT * level) and level < 512:
+        level += 1
+    return level
 
 
 def _candidate_pairs(boxes):
@@ -917,11 +1067,40 @@ def _candidate_pairs(boxes):
     inside both boxes whenever they overlap, and so in a cell both were filed in.
     That is exactly one cell, so a pair is never tested, or counted, twice.
 
-    # Boxes much larger than a cell
+    # Boxes much larger than a cell: a level for each axis (large-box index)
 
     A chassis rail filed in every cell it crosses would cost more cells than it has
-    neighbours. A box longer than _GRID_LARGE cells is kept out of the grid and
-    tested against every box instead; an assembly has few of them.
+    neighbours. Until 2026-09-15 a box longer than _GRID_LARGE cells was kept out of
+    the grid and tested against EVERY box, on the grounds that an assembly has few
+    of them. An airframe barrel does not: every skin panel, frame segment and
+    stringer is one, 16,160 of them at 1,008,160 occurrences, and 16.2 billion box
+    tests priced the check at ~2,650 s — the build hit its 40-minute cap
+    (docs/spikes/2026-09-15-one-million-occurrences).
+
+    ‼️ One coarser cubic grid does not fix that. A 50 m stringer needs a 50 m cell,
+    and every rivet in the barrel shares that cell with every stringer: 80 million
+    tests at 1M. Long parts are long on ONE axis and thin on the others, so the
+    level is chosen per axis. Level l's cells are 4**l finest cells long on that
+    axis, and a box's level on an axis is the first whose cells it crosses at most
+    five of: a rivet is (0, 0, 0), a stringer (5, 0, 0) — cells 14 m along the
+    barrel and 14 mm across it — and a skin panel (2, 0, 1). Boxes with the same
+    levels form a group; (0, 0, 0) is the grid as it was, box for box.
+
+    A pair from groups A and B is tested in the grid whose level on each axis is
+    the larger of the two: both boxes cross at most five of its cells a side, and
+    only boxes sharing a cell are tested. Every pair of groups is one such pass —
+    the fewer boxes filed, the other group looking up the cells it crosses — and a
+    pair belongs to exactly one pass. Cost is a few cells per box per group, not
+    one test per box per large box (docs/spikes/2026-09-15-large-box-index).
+
+    # Each pair is tested in one cell only, at every level
+
+    The home cell above holds at any level. Cell indices are computed once, at the
+    finest level, as integers, and a coarser index is that integer shifted right —
+    floor(floor(x / c) / 4**l) is floor(x / (c * 4**l)) — so the home cell of a pair
+    at any level is the larger of their two low-corner indices, shifted. It is in
+    both boxes' ranges whenever they overlap (floor is monotone), and it is one
+    cell, so a pair is tested, and counted, once.
 
     # Why the pairs are sorted back into index order
 
@@ -935,36 +1114,68 @@ def _candidate_pairs(boxes):
         return [], 0
     longest = sorted(max(boxes[k][1][a] - boxes[k][0][a] for a in range(3)) for k in present)
     cell = max(longest[len(longest) // 2], 1e-6)
-    cells, large = {}, []
+    # Each box's low and high cell at the finest level, and its group.
+    lows, highs, groups = {}, {}, {}
     for k in present:
         lo, hi = boxes[k]
-        if max(hi[a] - lo[a] for a in range(3)) > _GRID_LARGE * cell:
-            large.append(k)
-            continue
-        for cx in range(_cell(lo[0], cell), _cell(hi[0], cell) + 1):
-            for cy in range(_cell(lo[1], cell), _cell(hi[1], cell) + 1):
-                for cz in range(_cell(lo[2], cell), _cell(hi[2], cell) + 1):
-                    cells.setdefault((cx, cy, cz), []).append(k)
+        lows[k] = (_cell(lo[0], cell), _cell(lo[1], cell), _cell(lo[2], cell))
+        highs[k] = (_cell(hi[0], cell), _cell(hi[1], cell), _cell(hi[2], cell))
+        level = (_grid_level(hi[0] - lo[0], cell), _grid_level(hi[1] - lo[1], cell),
+                 _grid_level(hi[2] - lo[2], cell))
+        groups.setdefault(level, []).append(k)
+
+    def file(members, sx, sy, sz):
+        cells = {}
+        for k in members:
+            q, r = lows[k], highs[k]
+            for cx in range(q[0] >> sx, (r[0] >> sx) + 1):
+                for cy in range(q[1] >> sy, (r[1] >> sy) + 1):
+                    for cz in range(q[2] >> sz, (r[2] >> sz) + 1):
+                        cells.setdefault((cx, cy, cz), []).append(k)
+        return cells
+
     pairs, tests = [], 0
-    for home, members in cells.items():
-        for m, a in enumerate(members):
-            for b in members[m + 1:]:
-                if (_cell(max(boxes[a][0][0], boxes[b][0][0]), cell) != home[0]
-                        or _cell(max(boxes[a][0][1], boxes[b][0][1]), cell) != home[1]
-                        or _cell(max(boxes[a][0][2], boxes[b][0][2]), cell) != home[2]):
-                    continue
-                tests += 1
-                if not _boxes_miss(boxes[a], boxes[b]):
-                    pairs.append((a, b) if a < b else (b, a))
-    done = set()
-    for a in large:
-        done.add(a)
-        for b in present:
-            if b in done:
+    order = sorted(groups)
+    for n, level_a in enumerate(order):
+        for level_b in order[n:]:
+            sx = _GRID_LEVEL_SHIFT * max(level_a[0], level_b[0])
+            sy = _GRID_LEVEL_SHIFT * max(level_a[1], level_b[1])
+            sz = _GRID_LEVEL_SHIFT * max(level_a[2], level_b[2])
+            if level_a == level_b:
+                for home, members in file(groups[level_a], sx, sy, sz).items():
+                    for m, a in enumerate(members):
+                        qa = lows[a]
+                        for b in members[m + 1:]:
+                            qb = lows[b]
+                            if (max(qa[0], qb[0]) >> sx != home[0]
+                                    or max(qa[1], qb[1]) >> sy != home[1]
+                                    or max(qa[2], qb[2]) >> sz != home[2]):
+                                continue
+                            tests += 1
+                            if not _boxes_miss(boxes[a], boxes[b]):
+                                pairs.append((a, b) if a < b else (b, a))
                 continue
-            tests += 1
-            if not _boxes_miss(boxes[a], boxes[b]):
-                pairs.append((a, b) if a < b else (b, a))
+            filed, looking = groups[level_a], groups[level_b]
+            if len(filed) > len(looking):
+                filed, looking = looking, filed
+            cells = file(filed, sx, sy, sz)
+            for a in looking:
+                qa, ra = lows[a], highs[a]
+                for cx in range(qa[0] >> sx, (ra[0] >> sx) + 1):
+                    for cy in range(qa[1] >> sy, (ra[1] >> sy) + 1):
+                        for cz in range(qa[2] >> sz, (ra[2] >> sz) + 1):
+                            members = cells.get((cx, cy, cz))
+                            if members is None:
+                                continue
+                            for b in members:
+                                qb = lows[b]
+                                if (max(qa[0], qb[0]) >> sx != cx
+                                        or max(qa[1], qb[1]) >> sy != cy
+                                        or max(qa[2], qb[2]) >> sz != cz):
+                                    continue
+                                tests += 1
+                                if not _boxes_miss(boxes[a], boxes[b]):
+                                    pairs.append((a, b) if a < b else (b, a))
     pairs.sort()
     return pairs, tests
 
@@ -984,6 +1195,54 @@ def _candidate_pairs(boxes):
 # (testdata/interference_cache.py).
 _INTERFERENCE_CACHE = True
 
+# # A clash inside a box is the same clash wherever it slides (large-box index)
+#
+# A rivet row along a stringer is a hundred different poses against ONE stringer,
+# so the pose cache above reused nothing there: an airframe barrel's booleans grew
+# ~96 a bay and the 2,000 budget truncated it from ~20 bays (316,976 of 528,000
+# clashes at 300k; docs/spikes/2026-09-15-one-million-occurrences).
+#
+# ‼️ "Key the pose modulo the stringer's translational invariance" is WRONG: a
+# stringer is finite, and a rivet hanging over its end shares less of it. What is
+# true is narrower. A box is the intersection of three slabs, one per local axis.
+# If the other solid lies wholly inside the slab of axis u, then its common volume
+# with the box is its common volume with the other two slabs alone, and those do
+# not change when it moves along u. So two placements that differ only along u,
+# and are BOTH inside that slab, share the same volume. The key marks the axis
+# (its translation becomes inf, which no real pose has) only when containment is
+# shown — with the other solid's own box, which is never smaller than the solid,
+# and a margin — so a pose near an end keeps its full key and is measured.
+#
+# The same holds from the other side. When THIS frame's box lies inside the other
+# box's slab on the other's axis v, and v lies along this frame's axis w, moving
+# the other along w is moving it along its own v: marked -inf ("carried"). Without
+# it a skin panel keyed a barrel-long stringer by where along the stringer the
+# panel sits — a boolean a bay again.
+#
+# Why marks can be combined: each containment is an interval on ONE translation
+# component in this frame (a rotation that lines v up with w leaves the other
+# components out of it). Two placements with equal keys differ only in marked
+# components, each inside its interval in both; intervals are convex, so moving
+# one component at a time from one to the other stays inside every interval, and
+# no move changes the volume. The sign says which containment marked a component,
+# so both placements slide for the same reason.
+#
+# Boxes, and since 2026-09-15 (next scale walls) the one slab of a cylinder and of
+# an extrusion. The proof never used that the frame's solid is a box, only that it
+# is a slab S intersected with something invariant along S's axis: P inside S gives
+# P ∩ (S ∩ R) = P ∩ R, and R does not change when P moves along the axis. A box is
+# S ∩ (two slabs); a cylinder is |y| <= h/2 ∩ (a round prism along y); an extrusion
+# is |z| <= d/2 ∩ (its outline's prism along z). So a pin slides along a shaft it
+# lies within the length of, a cleat along an extruded girder, and a collar is
+# carried along the shaft through it. The prism's cross-section axes are NOT slabs
+# and are never marked (see _slabs). Slabs are known exactly from dims, checked
+# against measured bounds before they are trusted. _INTERFERENCE_SLIDE turns this
+# off; it exists so a measurement can say what sliding saves.
+_INTERFERENCE_SLIDE = True
+# Containment must hold by this much (mm): far above bounds noise and the 1e-6 mm
+# the pose is rounded to, far below any clash worth reporting.
+_SLIDE_MARGIN = 1e-4
+
 
 def _pose(location):
     """A placement as twelve numbers, rounded so float noise does not split one
@@ -992,16 +1251,309 @@ def _pose(location):
     return tuple(round(t.Value(r, c), 6 if c == 4 else 9) for r in (1, 2, 3) for c in (1, 2, 3, 4))
 
 
-def _pair_key(placed, shape_ids, i, j):
+def _slabs(key, shape):
+    """A shape's half-lengths along the own axes it is a SLAB on — None on an axis
+    it is not, or None altogether — and its own box, for _slid.
+
+    - A box centred on its origin is three slabs.
+    - A cylinder (a "cylinder" or "cone" whose top radius is its radius, which is
+      when _shape builds a Cylinder) is a round prism along its own y, cut by ONE
+      slab, |y| <= height / 2. Added 2026-09-15 (next scale walls).
+    - An extrusion is its outline's prism along its own z, cut by |z| <= depth / 2:
+      _shape extrudes half the depth both ways. Holes and islands are prisms too.
+      Added 2026-09-15 (next scale walls).
+
+    Nothing else is claimed: a cone, a sphere, a revolve, a sweep and an imported
+    STEP are not a prism cut by a slab, and are keyed by their full pose.
+    """
+    box = _box_of(shape)
+    half = None
+    try:
+        spec = json.loads(key)
+        kind, d = spec.get("shape"), spec.get("dims") or {}
+        if box is None:
+            half = None
+        elif kind == "box":
+            half = (float(d["width"]) / 2, float(d["height"]) / 2, float(d["depth"]) / 2)
+        elif kind in ("cylinder", "cone") and d.get("radius_top", d["radius"]) == d["radius"]:
+            half = (None, float(d["height"]) / 2, None)
+        elif kind == "extrusion":
+            half = (None, None, float(d["depth"]) / 2)
+        # Trusted only if the solid really is that shape. Bounds are never tighter
+        # than the solid, so bounds within a micron of a slab on both sides are the
+        # slab. Checked on the slab axes only: a prism's other bounds are its outline's.
+        if half is not None and any(half[r] is not None and (abs(box[0][r] + half[r]) > 1e-3
+                                                             or abs(box[1][r] - half[r]) > 1e-3)
+                                    for r in range(3)):
+            half = None
+    except (ValueError, KeyError, TypeError):
+        half = None
+    return half, box
+
+
+def _inside(relative, frame, other):
+    """The axes of the frame's box whose slab the other solid lies wholly inside,
+    by _SLIDE_MARGIN. relative places the other in the frame."""
+    half, box = frame[0], other[1]
+    axes = []
+    if half is None or box is None:
+        return axes
+    t = relative.wrapped.Transformation()
+    for r in range(3):
+        if half[r] is None:
+            # Not a slab on this axis (a prism's cross-section): nothing slides.
+            continue
+        mid, reach = t.Value(r + 1, 4), 0.0
+        for c in range(3):
+            v = t.Value(r + 1, c + 1)
+            mid += v * (box[0][c] + box[1][c]) / 2
+            reach += abs(v) * (box[1][c] - box[0][c]) / 2
+        if mid - reach >= _SLIDE_MARGIN - half[r] and mid + reach <= half[r] - _SLIDE_MARGIN:
+            axes.append(r)
+    return axes
+
+
+def _carried(pose, axes):
+    """The frame's axes that the other solid's own axes `axes` lie along.
+
+    A column of pose's rotation is one of the other's axes in this frame; it lies
+    along the frame's axis w when that entry is ±1 and the rest round to zero — the
+    same 1e-9 the pose is compared to."""
+    out = []
+    for v in axes:
+        for w in range(3):
+            if (abs(pose[4 * w + v]) >= 1 - 1e-9
+                    and all(abs(pose[4 * o + v]) <= 1e-9 for o in range(3) if o != w)):
+                out.append(w)
+    return out
+
+
+def _slid(pose, inside, carried):
+    """pose with the translation along each axis the volume cannot depend on marked:
+    inf where the other solid is inside this frame's box on that axis, -inf where
+    this frame's solid is inside the other's box along it. Marked by WHICH reason,
+    so two equal keys slide for the same reason and the proof never mixes them."""
+    if not inside and not carried:
+        return pose
+    out = list(pose)
+    for r in carried:
+        out[4 * r + 3] = -math.inf
+    for r in inside:
+        out[4 * r + 3] = math.inf
+    return tuple(out)
+
+
+def _marks(pose):
+    return sum(1 for r in range(3) if math.isinf(pose[4 * r + 3]))
+
+
+def _pair_key(placed, shape_ids, i, j, slabs=None):
     """Which two shapes, and where the second sits in the first's frame — the same
-    for the pair in either order — or None when either was changed by a feature."""
+    for the pair in either order — or None when either was changed by a feature.
+
+    With slabs (shape key -> _slabs), each translation the volume cannot depend on
+    is marked (see _INTERFERENCE_SLIDE), and the frame that marks more of them is
+    the key: a rivet is keyed in its stringer's frame, not the stringer in the
+    rivet's."""
     pi, pj = placed[i], placed[j]
     if pi is None or pj is None:
         return None
     a, b = shape_ids[pi[0]], shape_ids[pj[0]]
-    forward = (a, b, _pose(pi[1].inverse() * pj[1]))
-    backward = (b, a, _pose(pj[1].inverse() * pi[1]))
+    ahead, back = pi[1].inverse() * pj[1], pj[1].inverse() * pi[1]
+    forward = (a, b, _pose(ahead))
+    backward = (b, a, _pose(back))
+    if not slabs:
+        return min(forward, backward)
+    inside_i = _inside(ahead, slabs[pi[0]], slabs[pj[0]])
+    inside_j = _inside(back, slabs[pj[0]], slabs[pi[0]])
+    forward = (a, b, _slid(forward[2], inside_i, _carried(forward[2], inside_j)))
+    backward = (b, a, _slid(backward[2], inside_j, _carried(backward[2], inside_i)))
+    marked_f, marked_b = _marks(forward[2]), _marks(backward[2])
+    if marked_f != marked_b:
+        return forward if marked_f > marked_b else backward
     return min(forward, backward)
+
+
+# # A pair's key without a build123d Location per step (repair bound and check profile)
+#
+# Profiled 2026-09-15 on the airframe barrel (docs/spikes/2026-09-15-check-profile):
+# the check was 121 s of the 1M build, and ~80% of it was _pair_key, run once for
+# each of 2,191,348 candidate pairs to find 15 booleans' worth of distinct clashes.
+# Each key built four build123d Locations (two inverses, two products), each
+# Location.__init__ parsing nine keyword arguments and four isinstance checks
+# around one OCCT call; read each relative transformation's twelve entries twice
+# (once for the pose, once more for containment); and ran _carried and _marks as
+# generator expressions.
+#
+# _pair_keys makes the SAME OCCT calls on the same TopLoc_Locations — Inverted(),
+# then the product, then Transformation() — without a Python Location around any of
+# them, and reads each transformation's entries once. A placement's inverse is taken
+# once per solid rather than once per pair it is in; TopLoc_Location is immutable,
+# so the inverse reused is the inverse that would have been taken. The arithmetic of
+# the pose, the rounding, the containment test and the marks is written out in the
+# order the originals do it, so every key is the same tuple, bit for bit.
+#
+# _PAIR_KEY_DIRECT = False restores _pair_key through build123d, kept as the
+# reference the fence compares every key against (testdata/interference_pair_keys.py).
+_PAIR_KEY_DIRECT = True
+
+
+#
+# # And the relative ROTATION once per pair of rotations
+#
+# With the Locations gone, what was left of a key was reading and rounding: 24
+# Value() calls and 24 round() calls a pair, about 15 µs of 22. Measured on the 90k
+# barrel: 197,356 pairs have 80 distinct placement rotations and 224 distinct pairs
+# of them, and in every pair, both ways, the relative rotation's bits were the same
+# for every pair with the same two rotations.
+#
+# Why that holds, from OCCT's gp_Trsf: a product's vectorial part is computed from
+# the factors' matrices, forms and scale factors, and an inverse's from its own —
+# never from a translation. TopLoc_Location composes a chain item by item, so the
+# argument covers a placement that is ONE datum at power 1, which is what every
+# placement _placement makes. So the key memoizes the relative rotation, raw and
+# rounded, by the two placements' (form, rotation bits), and reads and rounds only
+# the three translations per direction.
+#
+# ‼️ Guarded, not assumed: a placement that is a chain, a power other than 1, or a
+# scale factor other than 1 is keyed without the memo; so is a pair whose two
+# placements are one datum, where TopLoc_Location cancels the powers to the exact
+# identity and a product of the two would not. The memo holds at most
+# _ROTATION_MEMO_LIMIT pairs of rotations (65,536 at ~1 KB each); past that a pair
+# is keyed without it.
+_ROTATION_MEMO_LIMIT = 1 << 16
+_PACK_ROTATION = struct.Struct("<9d").pack
+
+
+def _entries(location):
+    """A TopLoc_Location's transformation as its twelve entries, row by row, each
+    row's rotation then its translation — _pose's order, unrounded."""
+    v = location.Transformation().Value
+    return (v(1, 1), v(1, 2), v(1, 3), v(1, 4), v(2, 1), v(2, 2), v(2, 3), v(2, 4),
+            v(3, 1), v(3, 2), v(3, 3), v(3, 4))
+
+
+def _rotation(v):
+    """A transformation's rotation entries, row by row, from its Value."""
+    return (v(1, 1), v(1, 2), v(1, 3), v(2, 1), v(2, 2), v(2, 3), v(3, 1), v(3, 2), v(3, 3))
+
+
+def _rounded_rotation(r):
+    """_pose's rounding of a rotation: 1e-9."""
+    return (round(r[0], 9), round(r[1], 9), round(r[2], 9), round(r[3], 9), round(r[4], 9),
+            round(r[5], 9), round(r[6], 9), round(r[7], 9), round(r[8], 9))
+
+
+def _pose_of(q, t):
+    """_pose from a rounded rotation and a translation, which is rounded to 1e-6 here."""
+    return (q[0], q[1], q[2], round(t[0], 6), q[3], q[4], q[5], round(t[1], 6),
+            q[6], q[7], q[8], round(t[2], 6))
+
+
+def _inside_split(rot, t, half, box):
+    """_inside on a rotation and a translation: the same sums, in the same order."""
+    axes = []
+    if half is None or box is None:
+        return axes
+    lo, hi = box
+    for r in range(3):
+        if half[r] is None:
+            continue
+        row = 3 * r
+        mid, reach = t[r], 0.0
+        for c in range(3):
+            v = rot[row + c]
+            mid += v * (lo[c] + hi[c]) / 2
+            reach += abs(v) * (hi[c] - lo[c]) / 2
+        if mid - reach >= _SLIDE_MARGIN - half[r] and mid + reach <= half[r] - _SLIDE_MARGIN:
+            axes.append(r)
+    return axes
+
+
+def _carried_fast(pose, axes):
+    """_carried without generators."""
+    out = []
+    for v in axes:
+        for w in range(3):
+            if abs(pose[4 * w + v]) >= 1 - 1e-9:
+                clear = True
+                for o in range(3):
+                    if o != w and not abs(pose[4 * o + v]) <= 1e-9:
+                        clear = False
+                        break
+                if clear:
+                    out.append(w)
+    return out
+
+
+def _pair_keys(placed, shape_ids, slabs, rotations=None):
+    """A function (i, j) -> _pair_key(placed, shape_ids, i, j, slabs), the same key.
+
+    rotations is _measures' per-solid rotation bits, or None for no memo."""
+    if not _PAIR_KEY_DIRECT:
+        return lambda i, j: _pair_key(placed, shape_ids, i, j, slabs)
+    # Indexed by solid: lists, not dicts, at a million solids.
+    inverses, rotation_of = [None] * len(placed), [None] * len(placed)
+    rotation_ids, memo = {}, {}
+
+    def rotation_id(i, location):
+        r = rotation_of[i]
+        if r is None:
+            r = -1
+            bits = rotations[i] if rotations is not None else None
+            if bits is not None and location.FirstPower() == 1 and location.NextLocation().IsIdentity():
+                t = location.Transformation()
+                if t.ScaleFactor() == 1.0:
+                    r = rotation_ids.setdefault((int(t.Form()), bits), len(rotation_ids))
+            rotation_of[i] = r
+        return r
+
+    def key(i, j):
+        pi, pj = placed[i], placed[j]
+        if pi is None or pj is None:
+            return None
+        li, lj = pi[1].wrapped, pj[1].wrapped
+        inv_i = inverses[i]
+        if inv_i is None:
+            inv_i = inverses[i] = li.Inverted()
+        inv_j = inverses[j]
+        if inv_j is None:
+            inv_j = inverses[j] = lj.Inverted()
+        va, vb =(inv_i * lj).Transformation().Value, (inv_j * li).Transformation().Value
+        ta, tb = (va(1, 4), va(2, 4), va(3, 4)), (vb(1, 4), vb(2, 4), vb(3, 4))
+        ri, rj = rotation_id(i, li), rotation_id(j, lj)
+        memoizable = ri >= 0 and rj >= 0 and not (ri == rj and li.IsEqual(lj))
+        m = memo.get((ri, rj)) if memoizable else None
+        if m is None:
+            ra, rb = _rotation(va), _rotation(vb)
+            m = (ra, _rounded_rotation(ra), rb, _rounded_rotation(rb))
+            if memoizable and len(memo) < _ROTATION_MEMO_LIMIT:
+                memo[(ri, rj)] = m
+        ra, qa, rb, qb = m
+        a, b = shape_ids[pi[0]], shape_ids[pj[0]]
+        pose_f, pose_b = _pose_of(qa, ta), _pose_of(qb, tb)
+        if not slabs:
+            return min((a, b, pose_f), (b, a, pose_b))
+        frame_i, frame_j = slabs[pi[0]], slabs[pj[0]]
+        inside_i = _inside_split(ra, ta, frame_i[0], frame_j[1])
+        inside_j = _inside_split(rb, tb, frame_j[0], frame_i[1])
+        if not inside_i and not inside_j:
+            # Nothing marked on either side: both poses are _slid's input unchanged,
+            # and a real pose's translations are finite, so both mark nothing.
+            return min((a, b, pose_f), (b, a, pose_b))
+        carried_f = _carried_fast(pose_f, inside_j) if inside_j else []
+        carried_b = _carried_fast(pose_b, inside_i) if inside_i else []
+        forward = (a, b, _slid(pose_f, inside_i, carried_f))
+        backward = (b, a, _slid(pose_b, inside_j, carried_b))
+        pf, pb = forward[2], backward[2]
+        marked_f = math.isinf(pf[3]) + math.isinf(pf[7]) + math.isinf(pf[11])
+        marked_b = math.isinf(pb[3]) + math.isinf(pb[7]) + math.isinf(pb[11])
+        if marked_f != marked_b:
+            return forward if marked_f > marked_b else backward
+        return min(forward, backward)
+
+    key.memo = memo
+    return key
 
 
 def _interferences(solids, ids, labels, placed=None):
@@ -1013,21 +1565,26 @@ def _interferences(solids, ids, labels, placed=None):
     Returns the list, whether the budget stopped the search (so a caller never
     reads a truncated answer as a clean one), how many box tests the broad phase
     made, and {"pairs", "booleans", "reused"}: the pairs whose boxes overlap, the
-    booleans paid for, and the answers reused from an identical pose.
+    booleans paid for, and the answers reused from an identical pose (or one slid
+    along a box it lies inside; see _INTERFERENCE_SLIDE).
     """
-    boxes, volumes = _measures(solids, placed)
+    cached = _INTERFERENCE_CACHE and placed is not None
+    rotations = [None] * len(solids) if cached else None
+    boxes, volumes = _measures(solids, placed, rotations)
     pairs, box_tests = _candidate_pairs(boxes)
 
-    cached = _INTERFERENCE_CACHE and placed is not None
-    shape_ids, cache = {}, {}
+    shape_ids, cache, slabs = {}, {}, {}
     if cached:
         for p in placed:
             if p is not None and p[0] not in shape_ids:
                 shape_ids[p[0]] = len(shape_ids)
+                if _INTERFERENCE_SLIDE:
+                    slabs[p[0]] = _slabs(p[0], p[2])
 
     found, truncated, booleans, reused = [], False, 0, 0
+    pair_key = _pair_keys(placed, shape_ids, slabs, rotations) if cached else None
     for i, j in pairs:
-        key = _pair_key(placed, shape_ids, i, j) if cached else None
+        key = pair_key(i, j) if cached else None
         if key is not None and key in cache:
             shared = cache[key]
             reused += 1
@@ -1060,12 +1617,21 @@ def _interferences(solids, ids, labels, placed=None):
         # Reporting them in build order would produce "the chassis is 100%
         # inside the master cylinder", which is true of no number here.
         lo, hi = (i, j) if volumes[i] <= volumes[j] else (j, i)
-        found.append({"a": ids[lo], "b": ids[hi],
-                      "a_label": labels[lo], "b_label": labels[hi],
-                      "volume": shared, "fraction": shared / smaller})
+        # A tuple, not the reply's dict: at 1M there are 1.76 M of these and only
+        # _INTERFERENCE_LIST_LIMIT of them are written down.
+        found.append((shared / smaller, len(found), lo, hi, shared))
 
-    found.sort(key=lambda f: f["fraction"], reverse=True)
-    return found, truncated, box_tests, {"pairs": len(pairs), "booleans": booleans, "reused": reused}
+    # Worst first, ties in the order they were found — what a stable sort by fraction,
+    # descending, gives — and only the first _INTERFERENCE_LIST_LIMIT of that order.
+    worst = heapq.nsmallest(_INTERFERENCE_LIST_LIMIT, found, key=lambda f: (-f[0], f[1]))
+    listed = [{"a": ids[lo], "b": ids[hi], "a_label": labels[lo], "b_label": labels[hi],
+               "volume": shared, "fraction": fraction}
+              for fraction, _, lo, hi, shared in worst]
+    # Every buried clash found, not the listed ones: see _BURIED_FRACTION.
+    buried = sum(1 for f in found if f[0] >= _BURIED_FRACTION)
+    return listed, truncated, box_tests, {"pairs": len(pairs), "booleans": booleans, "reused": reused,
+                                          "found": len(found), "summarized": len(found) > len(listed),
+                                          "buried": buried}
 
 
 # The fields that decide what a solid IS, before it is placed. Everything else a
@@ -1085,6 +1651,41 @@ def _shape_key(solid):
     return json.dumps({k: solid.get(k) for k in _SHAPE_KEYS}, sort_keys=True, separators=(",", ":"))
 
 
+# The assembly's volume from each definition's, once per definition (next scale walls).
+#
+# Compound.volume wraps every child in a Python Solid and integrates each one:
+# 16.4 s of a 90,880-occurrence barrel's 20 s assembly phase, 7.4 s of it the
+# wrappers (docs/spikes/2026-09-15-next-scale-walls). A copy is its shape moved,
+# and a rigid motion does not change a volume, so a copy counts what its shape
+# counts. A part a feature changed is measured as the solid it is.
+#
+# ‼️ Equal to about 1e-12, not to the bit: OCCT integrates a located solid in its
+# placed coordinates, so the same solid moved reports a volume differing in the last
+# digits. Fence: TestKernel_APlacedCopyIsTheCopyBuild123dMade, to 1e-9 of the whole.
+# The switch keeps Compound.volume available as that reference.
+_ASSEMBLY_VOLUME_PER_DEFINITION = True
+
+
+def _counted_volume(shape):
+    """What Compound.volume counts for one child: its own solids and shells, by the
+    same rule, because it is the same call on a compound of that child alone."""
+    return float(getattr(Compound([shape]), "volume", 0.0))
+
+
+def _assembly_volume(assembly, built, placed):
+    if not _ASSEMBLY_VOLUME_PER_DEFINITION:
+        return float(getattr(assembly, "volume", 0.0))
+    total, counted = 0.0, {}
+    for solid, p in zip(built, placed):
+        if p is None:
+            total += _counted_volume(solid)
+            continue
+        if p[0] not in counted:
+            counted[p[0]] = _counted_volume(p[2])
+        total += counted[p[0]]
+    return total
+
+
 def _lap(phases, name, since):
     """Record the seconds since `since` as phase `name`, and return now."""
     now = time.perf_counter()
@@ -1102,7 +1703,9 @@ def _step_document(built, names):
     copies: 13.8 s to assemble 10,000 occurrences, against 0.26 s this way, and
     the file is the same — 1 B-rep per definition, N instances, every name kept,
     exact volume (measured: docs/spikes/2026-09-14-xde-assembly-export).
-    Fence: TestKernel_ExportingManyOccurrencesGrowsLinearly.
+    Fence: TestKernel_ExportingManyOccurrencesGrowsLinearly, to 4,096; past it, the
+    writer's own cost is fenced by TestKernel_ExportTimeGrowsLinearlyPastTheBuildCeiling
+    (see _STEP_WRITE_PROPS).
 
     Sharing needs no bookkeeping here. K1's located copies share one TShape, and
     XCAF's AddShape returns the label it already holds for a shape it has seen, so
@@ -1138,9 +1741,39 @@ def _label_name(label, name):
     TDataStd_Name.Set_s(label, TCollection_ExtendedString(name or ""))
 
 
-def _write_step(doc, path):
+# Whether the STEP writer looks for validation properties (area, volume, centroid
+# attributes) on every label. Off: the sidecar sets none, so there is nothing to
+# find, and looking is quadratic in the occurrences under one assembly.
+#
+# # Why
+#
+# Measured 2026-09-15 (docs/spikes/2026-09-15-step-export-scaling) on the airframe
+# barrel: STEPCAFControl_Writer.Transfer took 0.6 s at 10k occurrences, 3.2 s at 30k
+# and 20 s at 90k, while the XCAF document it transfers was built in time linear in
+# the occurrences. OCCT 7.9's WritePropsForLabel visits an assembly's children as
+# `for i = 1 .. label.NbChildren(): label.FindChild(i)`, and both calls walk the
+# child list from its head, so N components under one assembly cost ~N² steps
+# before a single property is written. With props mode off, Transfer is 1.0 s at
+# 30k where it was 2.3–3.2 s, and the file is byte-identical below its header.
+#
+# ‼️ If the sidecar ever writes XCAFDoc_Area, XCAFDoc_Volume or XCAFDoc_Centroid
+# attributes, turning this back on is not enough: they would be written at N² cost
+# again. Fences: TestKernel_ExportTimeGrowsLinearlyPastTheBuildCeiling and
+# TestKernel_ALargeExportIsTheFileThePropertyWalkWrote. Module-level so
+# testdata/step_export_scaling.py can write the old file to compare against.
+_STEP_WRITE_PROPS = False
+
+
+def _write_step(doc, path, phases=None):
     """Write an XDE document as STEP with the settings export_step used, so the
-    file's header, curves and precision do not change with K2."""
+    file's header, curves and precision do not change with K2.
+
+    When given `phases`, records the writer's Transfer alone as "export_transfer".
+    The whole export phase is too blunt to fence it: writing the file and encoding
+    it are linear and, past the ceiling, hide a quadratic Transfer (measured at
+    32,768 occurrences: 4.7 s with the property walk, 3.0 s without, and the two
+    swapped places under load). Go reads only the phases it names, so this one
+    reaches the scaling fence and nothing else."""
     # OCCT prints to the console by default, and this process's stdout is the
     # protocol: a stray line there is an unreadable reply.
     for printer in Message.DefaultMessenger_s().Printers():
@@ -1149,6 +1782,7 @@ def _write_step(doc, path):
     writer.SetColorMode(True)
     writer.SetLayerMode(True)
     writer.SetNameMode(True)
+    writer.SetPropsMode(_STEP_WRITE_PROPS)
     header = APIHeaderSection_MakeHeader(writer.Writer().Model())
     if not header.IsDone():
         header = APIHeaderSection_MakeHeader(0)
@@ -1158,7 +1792,10 @@ def _write_step(doc, path):
     STEPControl_Controller.Init_s()
     Interface_Static.SetIVal_s("write.surfacecurve.mode", 1)
     Interface_Static.SetIVal_s("write.precision.mode", PrecisionMode.AVERAGE.value)
+    transfer = time.perf_counter()
     writer.Transfer(doc, STEPControl_StepModelType.STEPControl_AsIs)
+    if phases is not None:
+        phases["export_transfer"] = time.perf_counter() - transfer
     if writer.Write(path) != IFSelect_ReturnStatus.IFSelect_RetDone:
         raise RuntimeError("the STEP writer could not write the file")
 
@@ -1183,6 +1820,8 @@ def _build(request):
     # on the same key and the dict still holds one entry. A mutation drill that
     # rebuilt every occurrence stayed green against len(built_once).
     shape_builds = 0
+    # matrix -> the directions its Plane holds, for this build (see _placement).
+    frames = {}
     for s in solids:
         key = _shape_key(s)
         if key in built_once:
@@ -1190,8 +1829,8 @@ def _build(request):
             if shape is None:
                 skipped.append("%s: %s" % (s.get("label") or s.get("id"), reason))
                 continue
-            location = _placement(s)
-            built.append(location * shape)
+            location = _placement(s, frames)
+            built.append(_located(shape, location))
             names.append(s.get("label") or s.get("id"))
             ids.append(s.get("id"))
             keys.append(key)
@@ -1231,8 +1870,8 @@ def _build(request):
             # Phase 1, stage D1c of docs/plan-2026-09-13-millions-of-parts.md.
             shape = shape.mirror(Plane.YZ)
         built_once[key] = (shape, None)
-        location = _placement(s)
-        built.append(location * shape)
+        location = _placement(s, frames)
+        built.append(_located(shape, location))
         names.append(s.get("label") or s.get("id"))
         ids.append(s.get("id"))
         keys.append(key)
@@ -1310,7 +1949,7 @@ def _build(request):
     # number and an identical-looking file. Reported so the caller can assert on
     # it — see TestKernel_ACylinderPointsTheWayThisSystemDrawsIt.
     box = assembly.bounding_box()
-    volume = float(getattr(assembly, "volume", 0.0))
+    volume = _assembly_volume(assembly, built, kept_placed)
     mark = _lap(phases, "assembly", mark)
     # Computed on the KEPT solids, which is the whole reason it is trustworthy —
     # see the note above _interferences. Always, not on request: a check that a
@@ -1328,6 +1967,15 @@ def _build(request):
         "parts": len(built),
         "interferences": clashes,
         "interferences_truncated": clash_truncated,
+        # How many clashes were found, and whether "interferences" lists only the
+        # worst of them (_INTERFERENCE_LIST_LIMIT). A replaced check that does not
+        # count them lists every one it has.
+        "interferences_found": clash_pairs.get("found", len(clashes)),
+        "interferences_summarized": clash_pairs.get("summarized", False),
+        # How many of the clashes found are buried, the number a repair is judged by.
+        # A replaced check that does not count them counts the ones it lists.
+        "interferences_buried": clash_pairs.get(
+            "buried", sum(1 for c in clashes if c["fraction"] >= _BURIED_FRACTION)),
         "interference_box_tests": box_tests,
         "interference_pairs": clash_pairs["pairs"],
         "interference_booleans": clash_pairs["booleans"],
@@ -1353,7 +2001,7 @@ def _build(request):
         fd, path = tempfile.mkstemp(suffix=".step")
         os.close(fd)
         try:
-            _write_step(_step_document(built, names), path)
+            _write_step(_step_document(built, names), path, phases)
             with open(path, "rb") as fh:
                 out["step"] = base64.b64encode(fh.read()).decode("ascii")
         finally:
