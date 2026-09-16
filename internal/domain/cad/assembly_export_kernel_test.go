@@ -40,7 +40,8 @@ var (
 // definition and N instances, and assembling and writing them grows linearly.
 //
 // The time fence reads the kernel's own phase times, not the whole build: the
-// interference check is still quadratic until stage K2b, and timing the whole
+// interference check is fenced on its own, by the box tests it counts
+// (TestKernel_InterferenceBoxTestsGrowLinearly, stage K2b), and timing the whole
 // build would fence the wrong step. Before K2, build123d's Compound(children=...)
 // took 2.5 s to assemble 4,096 copies and 0.06 s for 512 (quadratic: 8× the parts,
 // ~40× the time); an XDE assembly took 0.11 s for 4,096.

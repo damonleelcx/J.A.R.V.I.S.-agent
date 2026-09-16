@@ -450,11 +450,16 @@ drill "nothing is ever reported as interfering" internal/domain/cad/sidecar.py \
 # the solids as they are BEFORE the feature loop, which is what this does.
 drill "interference is measured BEFORE the tools are consumed" internal/domain/cad/sidecar.py \
   's = s.replace("    shapes = dict(zip(ids, built))", "    shapes = dict(zip(ids, built))\n    _pre = (list(built), list(ids), list(names))", 1)
-s = s.replace("clashes, clash_truncated = _interferences(built, ids, names)", "clashes, clash_truncated = _interferences(*_pre)", 1)' \
+s = s.replace("clashes, clash_truncated, box_tests = _interferences(built, ids, names)", "clashes, clash_truncated, box_tests = _interferences(*_pre)", 1)' \
   ./internal/domain/cad 'TestKernel_ACutToolIsNotAnInterference'
 
+# ‼️ Both anchors here moved when stage K2b unfolded the pair loop in _interferences
+# (one indent less) and gave it a third return value, and neither drill said so:
+# this one's FIRST replacement still applied, so the file changed and the script
+# saw no moved anchor, while the second — the one that makes it a drill — matched
+# nothing. Found by a whole-script dry run on 2026-09-15.
 drill "the pair is reported in build order, not smaller first" internal/domain/cad/sidecar.py \
-  "s = s.replace('            lo, hi = (i, j) if volumes[i] <= volumes[j] else (j, i)', '            lo, hi = i, j', 1)" \
+  "s = s.replace('        lo, hi = (i, j) if volumes[i] <= volumes[j] else (j, i)', '        lo, hi = i, j', 1)" \
   ./internal/domain/cad 'TestKernel_ASwallowedPartIsReportedAsBuried'
 
 drill "every graze counts as buried, so a weld drives a rewrite" internal/domain/geometry/interference.go \
@@ -992,6 +997,31 @@ drill "an occurrence is written without its placement" internal/domain/cad/sidec
 drill "the build does not say where its time went" internal/domain/cad/sidecar.py \
   "s = s.replace('        \"phases\": phases,\n', '', 1)" \
   ./internal/domain/cad 'TestKernel_ExportingManyOccurrencesGrowsLinearly'
+
+echo
+echo "The interference broad phase sweeps instead of comparing every pair"
+# Added 2026-09-15 (Phase 4, stage K2b). Boxes are sorted along the axis the parts
+# spread furthest and each is tested only against the boxes still open; the pairs
+# found are handed to the narrow phase in the order comparing every pair would.
+drill "a box is never closed, so the sweep compares every pair" internal/domain/cad/sidecar.py \
+  "s = s.replace('        still_open = [a for a in still_open if boxes[a][1][axis] > start]\n', '', 1)" \
+  ./internal/domain/cad 'TestKernel_InterferenceBoxTestsGrowLinearly'
+
+drill "the sweep always runs along x" internal/domain/cad/sidecar.py \
+  "s = s.replace('    axis = _sweep_axis(boxes, present)\n', '    axis = 0\n', 1)" \
+  ./internal/domain/cad 'TestKernel_InterferenceBoxTestsGrowLinearly'
+
+drill "boxes are swept in the order they end, closing boxes still open" internal/domain/cad/sidecar.py \
+  "s = s.replace('    present.sort(key=lambda k: boxes[k][0][axis])', '    present.sort(key=lambda k: boxes[k][1][axis])', 1)" \
+  ./internal/domain/cad 'TestKernel_TheBroadPhaseFindsWhatEveryPairFinds'
+
+drill "the budget is spent in sweep order" internal/domain/cad/sidecar.py \
+  "s = s.replace('    pairs.sort()\n', '', 1)" \
+  ./internal/domain/cad 'TestKernel_ATruncatedBroadPhaseStopsWhereEveryPairStops'
+
+drill "the build does not say how many boxes it compared" internal/domain/cad/cad.go \
+  's = s.replace(" InterferenceBoxTests: res.InterferenceBoxTests,\n", "\n", 1)' \
+  ./internal/domain/cad 'TestKernel_InterferenceBoxTestsGrowLinearly'
 
 echo
 echo "Islands"
