@@ -126,22 +126,34 @@ func (k *Kernel) Close() {
 // which passes exportJobTimeout (cad.go, ExportSTEPJob). The holder chooses it
 // from this slot, so it is still this slot's limit enforced on this process.
 func (s *sidecar) roundTrip(ctx context.Context, req request, limit time.Duration) (*reply, error) {
+	// ‼️ A caller whose time has already run out is refused as the lateError it
+	// is, and nothing is started; so is one whose time runs out while its process
+	// is starting. Until 2026-09-17 both came back as a plain ctx error, which
+	// BuildDocument took for a crash: it started a SECOND process for a caller
+	// that had gone, and refused the build as CONNECTOR_UNAVAILABLE ("restarting
+	// it did not help") instead of saying the deadline ended.
+	// Fence: TestKernel_ACallerWhoseDeadlineEndsWhileTheKernelStartsIsNotRetried.
+	if err := ctx.Err(); err != nil {
+		return nil, &lateError{caller: err}
+	}
 	if err := s.start(ctx); err != nil {
+		if cerr := ctx.Err(); cerr != nil {
+			return nil, &lateError{caller: cerr}
+		}
 		return nil, err
 	}
 	body, err := json.Marshal(req)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := s.stdin.Write(append(body, '\n')); err != nil {
-		return nil, fmt.Errorf("writing to the kernel: %w", err)
-	}
 
 	// The deadline is enforced by a goroutine that kills the process, because a
 	// blocking Read on a pipe does not observe a context. Killing is the only
 	// thing that ends it, and it is also the right outcome: a kernel that has
 	// not answered by its limit is not going to. Thirty seconds for a build in a
-	// request (buildTimeout); an export job's is longer (exportJobTimeout).
+	// request (buildTimeout); an export job's is longer (exportJobTimeout). It is
+	// running before the request is written, so a kernel that stops reading its
+	// stdin is bounded too.
 	//
 	// ‼️ The goroutine records WHY it killed the process before it does. To the
 	// read below, a process killed for its time and one that crashed are the same
@@ -153,28 +165,79 @@ func (s *sidecar) roundTrip(ctx context.Context, req request, limit time.Duratio
 	// share; no other slot is touched, so a build that runs out of time in one
 	// process does not interrupt the builds running in the others.
 	// Fence: TestKernel_ATimeoutInOneSlotLeavesTheOtherSlotsServing.
+	//
+	// ‼️ The end of the round trip is decided ONCE, and the goroutine does not
+	// outlive it. Until 2026-09-17 roundTrip returned with `defer close(done)`
+	// and did not wait: a caller that cancelled its context right after a build
+	// ANSWERED (`defer cancel()`, as every handler and fence does) could find the
+	// goroutine not yet in its select, with done and ctx.Done() both ready — and
+	// select picks at random. Half of those times it killed the process of a build
+	// that had succeeded, and recorded a lateError nobody read. The slot kept the
+	// dead process as started; the next build on it met EOF, took it for a crash
+	// and spent its one retry there. CI saw both halves: a document that crashes
+	// once then failed ("reading from the kernel: EOF"), and a build that ran out
+	// of time started a second process. Because s.kill reads s.cmd when it runs,
+	// a goroutine late enough could also kill the NEXT holder's process mid-build.
+	// docs/bugfix/2026-09-17-a-cancel-after-a-build-answered-killed-its-process.md
+	//
+	// So: whoever ends the round trip first claims it by compare-and-swap — the
+	// holder when its write or read returns, the goroutine when time runs out —
+	// and only a goroutine that won kills. roundTrip waits for the goroutine to
+	// exit before it returns, so any kill has landed before the holder resets or
+	// releases the slot. Fence: TestKernel_ACancelAfterABuildAnsweredLeavesItsProcessServing.
+	const (
+		running = iota
+		answered
+		outOfTime
+	)
+	var end atomic.Int32
+	var late *lateError // written by the goroutine only after it won; read after it exited
 	done := make(chan struct{})
-	defer close(done)
-	var stopped atomic.Pointer[lateError]
+	exited := make(chan struct{})
 	go func() {
+		defer close(exited)
 		timer := time.NewTimer(limit)
 		defer timer.Stop()
+		var why *lateError
 		select {
 		case <-done:
+			return
 		case <-ctx.Done():
-			stopped.Store(&lateError{caller: ctx.Err()})
-			s.kill()
+			why = &lateError{caller: ctx.Err()}
 		case <-timer.C:
-			stopped.Store(&lateError{limit: limit})
-			s.kill()
+			why = &lateError{limit: limit}
 		}
+		if !end.CompareAndSwap(running, outOfTime) {
+			return
+		}
+		late = why
+		s.kill()
 	}()
+	// finish claims the end of the round trip for the holder and waits for the
+	// goroutine. It returns the lateError when time ran out first instead.
+	finish := func() *lateError {
+		claimed := end.CompareAndSwap(running, answered)
+		close(done)
+		<-exited
+		if claimed {
+			return nil
+		}
+		return late
+	}
 
-	line, err := s.stdout.ReadBytes('\n')
-	if err != nil {
-		if late := stopped.Load(); late != nil {
+	if _, err := s.stdin.Write(append(body, '\n')); err != nil {
+		if late := finish(); late != nil {
 			return nil, late
 		}
+		return nil, fmt.Errorf("writing to the kernel: %w", err)
+	}
+	line, err := s.stdout.ReadBytes('\n')
+	if late := finish(); late != nil {
+		// Time ran out first and the process was killed for it, whatever the read
+		// returned: a reply that raced the kill came from a process that is gone.
+		return nil, late
+	}
+	if err != nil {
 		return nil, fmt.Errorf("reading from the kernel: %w", err)
 	}
 	var res reply

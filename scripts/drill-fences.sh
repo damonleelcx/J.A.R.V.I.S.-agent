@@ -2313,8 +2313,11 @@ drill "a timed-out build is retried like a crashed one" internal/domain/cad/cad.
 # Re-anchored 2026-09-16 (K3): the round trip, and the kill that bounds it, moved
 # onto the SLOT — sidecar_process.go — and the reset after a late error is that
 # slot's rather than the kernel's. The three drills below follow the code.
+# Re-anchored 2026-09-17: the goroutine now claims the end of the round trip before
+# it records why and kills, so "does not record" is a kill that neither claims nor
+# records — the holder then reads a plain EOF, as it did before 2026-09-15.
 drill "the kill does not record that the kernel's limit ran out" internal/domain/cad/sidecar_process.go \
-  's = s.replace("\t\t\tstopped.Store(&lateError{limit: limit})\n", "", 1)' \
+  's = s.replace("\t\tcase <-timer.C:\n\t\t\twhy = &lateError{limit: limit}\n", "\t\tcase <-timer.C:\n\t\t\ts.kill()\n\t\t\treturn\n", 1)' \
   ./internal/domain/cad 'TestKernel_ABuildThatRunsOutOfTimeIsNotRetriedAndSaysSo'
 
 drill "a timeout leaves the killed process in the slot" internal/domain/cad/cad.go \
@@ -2353,6 +2356,22 @@ drill "a timeout resets every slot in the pool" internal/domain/cad/cad.go \
 drill "a slot enforces a limit that is not the kernel's" internal/domain/cad/sidecar_process.go \
   's = s.replace("slot: i, timeout: k.timeout}", "slot: i, timeout: buildTimeout}", 1)' \
   ./internal/domain/cad 'TestKernel_ABuildThatRunsOutOfTimeIsNotRetriedAndSaysSo'
+
+# Added 2026-09-17 (kernel timeout race). roundTrip returned without waiting for
+# its deadline goroutine, and the goroutine killed whatever process the slot held
+# once ctx was done — so a caller cancelling right after a build ANSWERED killed
+# that process whenever the goroutine had not yet reached its select, and the next
+# build spent its one retry replacing it. CI saw it as the crash-once fence
+# failing and the timeout fence retrying. The first drill restores exactly that:
+# no claim, no wait. The second restores start's ctx error coming back as a crash.
+# docs/bugfix/2026-09-17-a-cancel-after-a-build-answered-killed-its-process.md
+drill "a cancel after a build answered can kill its process" internal/domain/cad/sidecar_process.go \
+  's = s.replace("\t\tif !end.CompareAndSwap(running, outOfTime) {\n\t\t\treturn\n\t\t}\n", "\t\tend.Store(outOfTime)\n", 1).replace("\t\tclose(done)\n\t\t<-exited\n", "\t\tclose(done)\n", 1)' \
+  ./internal/domain/cad 'TestKernel_ACancelAfterABuildAnsweredLeavesItsProcessServing'
+
+drill "a deadline that ends while the kernel starts is retried as a crash" internal/domain/cad/sidecar_process.go \
+  's = s.replace("\tif err := ctx.Err(); err != nil {\n\t\treturn nil, &lateError{caller: err}\n\t}\n\tif err := s.start(ctx); err != nil {\n\t\tif cerr := ctx.Err(); cerr != nil {\n\t\t\treturn nil, &lateError{caller: cerr}\n\t\t}\n\t\treturn nil, err\n\t}\n", "\tif err := s.start(ctx); err != nil {\n\t\treturn nil, err\n\t}\n", 1)' \
+  ./internal/domain/cad 'TestKernel_ACallerWhoseDeadlineEndsWhileTheKernelStartsIsNotRetried'
 echo "Workers in one process"
 # Added 2026-09-15 (worker lease identity). NewWorker sliced a fresh id's
 # timestamp rather than its random tail, so every worker forge-worker started
