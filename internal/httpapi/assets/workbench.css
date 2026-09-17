@@ -1107,6 +1107,9 @@
 .exportlabel b { color: var(--warn-ink-strong); }
 .exportlabel ul { margin: 4px 0 8px; padding-left: 16px; }
 .exportlabel .go { display: inline-block; margin-top: 2px; color: var(--core); }
+/* The off-node STEP job's panel (workbench.js watchExport). */
+.exportjob .exportjob-err { margin-top: 4px; color: var(--warn-ink-strong); }
+.exportjob button { margin-left: 6px; font: inherit; font-size: 11px; }
 
 .compare {
   position: fixed; inset: 0; z-index: 60;

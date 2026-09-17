@@ -4279,6 +4279,54 @@ drill "the workbench gives Space no refusal note" internal/httpapi/assets/workbe
   's = s.replace("        voiceNote(state.signedOut ? \x27Sign in from the console to talk to FORGE.\x27 : voice.whyUnavailable());", "        void 0;", 1)' \
   ./internal/httpapi 'TestWorkbench_SpaceAndTheServerReasonAreWiredThroughVoiceJS'
 
+echo "Workbench and viewport open items, 2026-09-17"
+# The viewport limit stays 100,000 on its measured basis, and a first view at that
+# ceiling stays within 8,192 parts (geometry/limits.go maxViewportParts says why).
+drill "the viewport limit is lowered in Go without a new measurement" internal/domain/geometry/limits.go \
+  's = s.replace("const maxViewportParts = DefaultMaxOccurrences", "const maxViewportParts = 30000", 1)' \
+  ./internal/httpapi 'TestViewportLimitIsTheMeasuredOneAndAFirstViewStaysSmall'
+
+drill "the browser's viewport limit drifts from Go's" internal/httpapi/assets/forge3d.js \
+  's = s.replace("  var MAX_VIEWPORT_PARTS = 100000;", "  var MAX_VIEWPORT_PARTS = 30000;", 1)' \
+  ./internal/httpapi 'TestViewportLimitIsTheMeasuredOneAndAFirstViewStaysSmall'
+
+drill "a first view at the viewport's ceiling is not bounded" internal/httpapi/assets/forge3d.js \
+  's = s.replace("  var FIRST_VIEW_OCCURRENCES = 8192;", "  var FIRST_VIEW_OCCURRENCES = 100000;", 1)' \
+  ./internal/httpapi 'TestViewportLimitIsTheMeasuredOneAndAFirstViewStaysSmall'
+
+drill "a centimetre design's mesh reply is drawn in millimetres" internal/httpapi/assets/forge3d.js \
+  's = s.replace("[10, [\x27cm\x27, \x27centimetre\x27", "[1, [\x27cm\x27, \x27centimetre\x27", 1)' \
+  ./internal/httpapi 'TestMeshSubtree_ADesignInInchesOrMetresIsDrawnWhereItsPrimitivesAre'
+
+# The off-node STEP export job (#99) reached from the workbench rail.
+drill "the rail offers no STEP via the worker" internal/httpapi/assets/workbench.js \
+  's = s.replace("\x27<button type=\"button\" data-export-job=\"\x27 + esc(versionID)", "\x27<button type=\"button\" data-export-worker=\"\x27 + esc(versionID)", 1)' \
+  ./internal/httpapi 'TestWorkbenchExportsSTEPThroughTheWorkerJob'
+
+drill "the rail's STEP-via-worker button is bound to nothing" internal/httpapi/assets/workbench.js \
+  's = s.replace("      b.addEventListener(\x27click\x27, function () { toggleExportJob(b.getAttribute(\x27data-export-job\x27)); });\n", "", 1)' \
+  ./internal/httpapi 'TestWorkbenchExportsSTEPThroughTheWorkerJob'
+
+drill "an export job is read again after it settled" internal/httpapi/assets/workbench.js \
+  's = s.replace("if (stopped || (current && EXPORT_SETTLED[current.status])) return;", "if (stopped) return;", 1)' \
+  ./internal/httpapi 'TestWorkbenchExportsSTEPThroughTheWorkerJob'
+
+drill "an export job queued forever is read forever" internal/httpapi/assets/workbench.js \
+  's = s.replace("if (reads >= limit) { tell({ stopped: true }); return; }", "", 1)' \
+  ./internal/httpapi 'TestWorkbenchExportsSTEPThroughTheWorkerJob'
+
+drill "an export status the caller may not read is asked again" internal/httpapi/assets/workbench.js \
+  's = s.replace("if (err.status === 401 || err.status === 403 || err.status === 404) return;", "", 1)' \
+  ./internal/httpapi 'TestWorkbenchExportsSTEPThroughTheWorkerJob'
+
+drill "a finished export offers its file without saying no interference check ran" internal/httpapi/assets/workbench.js \
+  's = s.replace("\x27<b>no interference check ran for this file</b>.</div>\x27", "\x27</div>\x27", 1)' \
+  ./internal/httpapi 'TestWorkbenchExportsSTEPThroughTheWorkerJob'
+
+drill "the workbench asks for an export through the goals route" internal/httpapi/assets/workbench.js \
+  's = s.replace("read(\x27/v1/geometry/\x27 + encodeURIComponent(versionID) + \x27/exports?format=step\x27, { method: \x27POST\x27 })", "read(\x27/v1/goals\x27, { method: \x27POST\x27 })", 1)' \
+  ./internal/httpapi 'TestWorkbenchExportsSTEPThroughTheWorkerJob'
+
 echo
 
 if [ "$MODE" = "list" ]; then

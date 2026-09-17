@@ -110,7 +110,7 @@ type stageBox struct {
 func TestMeshSubtree_ADesignInInchesOrMetresIsDrawnWhereItsPrimitivesAre(t *testing.T) {
 	cases := map[string]any{}
 	parts := map[string]int{}
-	for _, unit := range []string{"in", "m", "mm"} {
+	for _, unit := range []string{"in", "cm", "m", "mm"} {
 		doc := unitRig(unit)
 		u := geometry.Unit(unit)
 		parts[unit] = len(doc.Expanded().Parts)
@@ -134,7 +134,7 @@ func TestMeshSubtree_ADesignInInchesOrMetresIsDrawnWhereItsPrimitivesAre(t *test
 	if err := json.Unmarshal(out, &got); err != nil {
 		t.Fatalf("unreadable renderer output: %v", err)
 	}
-	for _, unit := range []string{"in", "m", "mm"} {
+	for _, unit := range []string{"in", "cm", "m", "mm"} {
 		g := got[unit]
 		if len(g.Primitives) != parts[unit] || parts[unit] < 15 {
 			t.Fatalf("%s: the primitives draw %d parts; Go places %d", unit, len(g.Primitives), parts[unit])
