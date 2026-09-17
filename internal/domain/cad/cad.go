@@ -715,7 +715,13 @@ func (k *Kernel) buildWith(ctx context.Context, doc geometry.Document, unit geom
 		return nil, errs.Wrap(op, errs.CodeConnectorUnavailable, err).
 			WithDetail("no CAD kernel process became free before the request ended")
 	}
-	defer k.release(s)
+	// held is false once an abandoned round trip has taken over giving the slot back.
+	held := true
+	defer func() {
+		if held {
+			k.release(s)
+		}
+	}()
 
 	req := request{Solids: solids, Operations: operations, Format: format, Properties: properties,
 		SkipInterferences: job}
@@ -752,6 +758,15 @@ func (k *Kernel) buildWith(ctx context.Context, doc geometry.Document, unit geom
 	}
 	if err != nil {
 		if errors.As(err, &late) {
+			// ‼️ A caller that cancelled mid-build left its process building for
+			// nobody: that round trip gives the slot back itself once the reply is
+			// read and discarded (sidecar.abandon). Releasing it here would hand
+			// the next build a pipe with this build's answer still in it.
+			// Fence: TestKernel_ACancelledCallerLeavesItsProcessToFinishAndServeTheNextBuild.
+			if late.abandoned {
+				held = false
+				return nil, lateRefusal(op, late)
+			}
 			// The killed process is reaped and THIS SLOT reset NOW, so the next
 			// build that takes this slot starts a fresh process instead of
 			// spending its one retry discovering this one is dead.
@@ -908,6 +923,9 @@ type lateError struct {
 	limit time.Duration
 	// caller is the caller's context error, when that ended first.
 	caller error
+	// abandoned says the caller cancelled mid-build and the build is finishing
+	// for nobody (sidecar.abandon), which gives the slot back itself.
+	abandoned bool
 }
 
 func (e *lateError) Error() string {

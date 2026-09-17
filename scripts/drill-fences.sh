@@ -2366,8 +2366,11 @@ drill "a slot enforces a limit that is not the kernel's" internal/domain/cad/sid
 # failing and the timeout fence retrying. The first drill restores exactly that:
 # no claim, no wait. The second restores start's ctx error coming back as a crash.
 # docs/bugfix/2026-09-17-a-cancel-after-a-build-answered-killed-its-process.md
+# Since a cancelled caller no longer kills at all (same day, PR 144), the first
+# drill also restores the kill on cancel: the claim and the wait still guard a
+# DEADLINE that ends as a build answers, and this is the fence that times it.
 drill "a cancel after a build answered can kill its process" internal/domain/cad/sidecar_process.go \
-  's = s.replace("\t\tif !end.CompareAndSwap(running, outOfTime) {\n\t\t\treturn\n\t\t}\n", "\t\tend.Store(outOfTime)\n", 1).replace("\t\tclose(done)\n\t\t<-exited\n", "\t\tclose(done)\n", 1)' \
+  's = s.replace("\t\tif !end.CompareAndSwap(running, outOfTime) {\n\t\t\treturn\n\t\t}\n", "\t\tend.Store(outOfTime)\n", 1).replace("\t\tclose(done)\n\t\t<-exited\n", "\t\tclose(done)\n", 1).replace("\t\t\tif errors.Is(ctx.Err(), context.DeadlineExceeded) {\n\t\t\t\twhy = &lateError{caller: ctx.Err()}", "\t\t\tif true {\n\t\t\t\twhy = &lateError{caller: ctx.Err()}", 1)' \
   ./internal/domain/cad 'TestKernel_ACancelAfterABuildAnsweredLeavesItsProcessServing'
 
 drill "a deadline that ends while the kernel starts is retried as a crash" internal/domain/cad/sidecar_process.go \
@@ -2393,7 +2396,7 @@ drill "a start that ran out of time is reported as no working backend" internal/
   ./internal/domain/cad 'TestKernel_AKernelThatDoesNotStartInTimeIsNotStartedAgain'
 
 drill "a slot starts with the default start limit" internal/domain/cad/sidecar_process.go \
-  's = s.replace("startLimit: k.startLimit}", "startLimit: startTimeout}", 1)' \
+  's = s.replace("startLimit: k.startLimit, ", "startLimit: startTimeout, ", 1)' \
   ./internal/domain/cad 'TestKernel_AKernelThatDoesNotStartInTimeIsNotStartedAgain'
 
 drill "the kernel is built without the configured build timeout" internal/domain/cad/cad.go \
@@ -2403,6 +2406,38 @@ drill "the kernel is built without the configured build timeout" internal/domain
 drill "prestart starts no process" internal/domain/cad/sidecar_process.go \
   's = s.replace("\t\tif err := s.start(ctx); err != nil && ctx.Err() == nil {", "\t\tif err := error(nil); err != nil && ctx.Err() == nil {", 1)' \
   ./internal/domain/cad 'TestKernel_APrestartedKernelAnswersTheFirstQueueWithoutPayingForAStart'
+
+# Added 2026-09-17 (same PR). A caller that cancelled mid-build had its process
+# killed, so the next viewer paid a kernel start. Now the build finishes for nobody,
+# its reply is read before the slot is reused, the limit and crashes still reset
+# the slot, and Close ends an abandoned build rather than waiting out its limit.
+drill "a cancelled caller's process is killed" internal/domain/cad/sidecar_process.go \
+  's = s.replace("\t\t\tif errors.Is(ctx.Err(), context.DeadlineExceeded) {\n\t\t\t\twhy = &lateError{caller: ctx.Err()}", "\t\t\tif true {\n\t\t\t\twhy = &lateError{caller: ctx.Err()}", 1)' \
+  ./internal/domain/cad 'TestKernel_ACancelledCallerLeavesItsProcessToFinishAndServeTheNextBuild'
+
+drill "a cancelled caller waits for the build to finish" internal/domain/cad/sidecar_process.go \
+  's = s.replace("\t\tif !errors.Is(ctx.Err(), context.DeadlineExceeded) {\n\t\t\t// ‼️ A caller that CANCELLED", "\t\tif false {\n\t\t\t// ‼️ A caller that CANCELLED", 1)' \
+  ./internal/domain/cad 'TestKernel_ACancelledCallerLeavesItsProcessToFinishAndServeTheNextBuild'
+
+drill "an abandoned slot goes back before its reply is read" internal/domain/cad/sidecar_process.go \
+  's = s.replace("\tgo func() {\n\t\tgot := <-read\n", "\ts.home <- s\n\tgo func() {\n\t\tgot := <-read\n", 1).replace("\t\ts.abandoned.Store(false)\n\t\ts.home <- s\n", "\t\ts.abandoned.Store(false)\n", 1)' \
+  ./internal/domain/cad 'TestKernel_ACancelledCallerLeavesItsProcessToFinishAndServeTheNextBuild'
+
+drill "the build that abandoned its slot releases it too" internal/domain/cad/cad.go \
+  's = s.replace("\t\t\tif late.abandoned {\n\t\t\t\theld = false\n", "\t\t\tif late.abandoned {\n", 1)' \
+  ./internal/domain/cad 'TestKernel_ACancelledCallerLeavesItsProcessToFinishAndServeTheNextBuild'
+
+drill "an abandoned build is not killed at its limit" internal/domain/cad/sidecar_process.go \
+  's = s.replace("\t\t\tcase <-done:\n\t\t\t\treturn\n\t\t\tcase <-timer.C:\n\t\t\t\twhy = &lateError{limit: limit}\n\t\t\t}", "\t\t\tcase <-done:\n\t\t\t\treturn\n\t\t\t}", 1)' \
+  ./internal/domain/cad 'TestKernel_AnAbandonedBuildIsStillKilledAtItsLimit'
+
+drill "an abandoned build that died is handed back without a reset" internal/domain/cad/sidecar_process.go \
+  's = s.replace("\t\t\ts.stop()\n\t\t\ts.log.Warn(bg, logx.EventCADRestarted", "\t\t\ts.log.Warn(bg, logx.EventCADRestarted", 1)' \
+  ./internal/domain/cad 'TestKernel_AnAbandonedBuildIsStillKilledAtItsLimit'
+
+drill "Close waits out an abandoned build" internal/domain/cad/sidecar_process.go \
+  's = s.replace("\t\tif s.abandoned.Load() {\n\t\t\ts.kill()\n\t\t}", "\t\tif s.abandoned.Load() {\n\t\t}", 1)' \
+  ./internal/domain/cad 'TestKernel_AnAbandonedBuildIsStillKilledAtItsLimit'
 
 drill "a zero kernel build timeout is accepted" internal/platform/config/config.go \
   's = s.replace("\tcase cfg.CAD.BuildTimeout <= 0:", "\tcase cfg.CAD.BuildTimeout < 0:", 1)' \

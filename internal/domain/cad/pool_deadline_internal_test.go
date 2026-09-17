@@ -209,3 +209,94 @@ func TestKernel_PrestartWithoutAKernelIsANoOp(t *testing.T) {
 		t.Error("prestart of a deployment with no kernel made a pool")
 	}
 }
+
+// ‼️ Until 2026-09-17 a caller that cancelled mid-build — a closed tab, a navigation
+// away from a design loading a subtree at a time — had its kernel process KILLED, so
+// the next person to open a design paid build123d's import for a build nobody read.
+// The cancelled caller now gets its answer at once; the build finishes for nobody,
+// its reply is read and thrown away, and the SAME process serves the next build.
+//
+// The next build asks for two parts and the abandoned one for one, so a slot handed
+// back with the abandoned reply still in its pipe answers the next build with 1.
+func TestKernel_ACancelledCallerLeavesItsProcessToFinishAndServeTheNextBuild(t *testing.T) {
+	python, dir := cadtest.FakeKernel(t)
+	const build = time.Second
+	cadtest.SlowBuilds(t, build)
+	k := New(python, logx.Discard())
+	defer k.Close()
+	warm(t, k)
+	served := pid(k, 0)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(100*time.Millisecond, cancel)
+	began := time.Now()
+	_, err := k.BuildDocument(ctx, cue("abandoned"), geometry.Millimetre, "")
+	if took := time.Since(began); took >= build/2 {
+		t.Errorf("the cancelled caller waited %s, half the %s build or more: it waited for the build", took, build)
+	}
+	if got := errs.CodeOf(err); got != errs.CodeConnectorUnavailable {
+		t.Errorf("a cancelled caller got %s, want %s (%v)", got, errs.CodeConnectorUnavailable, err)
+	}
+	// The abandoned build is still running and its reply is unread, so its slot
+	// must not be free yet: whoever took it would share the pipe with that reply.
+	if n := len(k.slots); n != 0 {
+		t.Errorf("%d slot(s) free while the abandoned build's reply is still unread, want 0", n)
+	}
+
+	two := cue("first")
+	two.Parts = append(two.Parts, cue("second").Parts...)
+	next, cancelNext := context.WithTimeout(context.Background(), time.Minute)
+	defer cancelNext()
+	got, err := k.BuildDocument(next, two, geometry.Millimetre, "")
+	if err != nil {
+		t.Fatalf("the build after a cancelled one failed: %v", err)
+	}
+	if got.Parts != 2 {
+		t.Errorf("the next build was answered with %d parts, want its own 2: it read the abandoned build's reply", got.Parts)
+	}
+	if n := cadtest.Starts(t, dir); n != 1 {
+		t.Errorf("%d processes started, want 1: the cancel killed the process and the next build restarted it", n)
+	}
+	if p := pid(k, 0); p != served {
+		t.Errorf("slot 0 holds process %d, was %d", p, served)
+	}
+}
+
+// An abandoned build is still bounded: past the limit its process is killed and the
+// slot reset, and Close ends one rather than waiting out its limit.
+func TestKernel_AnAbandonedBuildIsStillKilledAtItsLimit(t *testing.T) {
+	python, dir := cadtest.FakeKernel(t)
+	k := New(python, logx.Discard())
+	k.timeout = 500 * time.Millisecond
+	defer k.Close()
+	warm(t, k)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	time.AfterFunc(100*time.Millisecond, cancel)
+	if _, err := k.BuildDocument(ctx, cue(cadtest.Slow), geometry.Millimetre, ""); err == nil {
+		t.Fatal("a cancelled build that never answers succeeded")
+	}
+	next, cancelNext := context.WithTimeout(context.Background(), time.Minute)
+	defer cancelNext()
+	// A next build that crashes once needs its one retry, and only has it if the
+	// killed process was already cleared from the slot (as in
+	// TestKernel_AfterATimeoutTheKernelStartsAFreshProcessForTheNextBuild).
+	if _, err := k.BuildDocument(next, cue(cadtest.CrashOnce), geometry.Millimetre, ""); err != nil {
+		t.Fatalf("the build after an abandoned build that ran past its limit spent its retry on the killed process: %v", err)
+	}
+	if n := cadtest.Starts(t, dir); n != 3 {
+		t.Errorf("%d processes started, want 3: the one killed at its limit, the one that crashed, its replacement", n)
+	}
+
+	// Close does not wait out a hung abandoned build's limit.
+	k2 := New(python, logx.Discard())
+	warm(t, k2)
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	time.AfterFunc(100*time.Millisecond, cancel2)
+	_, _ = k2.BuildDocument(ctx2, cue(cadtest.Slow), geometry.Millimetre, "")
+	began := time.Now()
+	k2.Close()
+	if took := time.Since(began); took >= 10*time.Second {
+		t.Errorf("Close took %s with an abandoned build running: it waited for the build's limit", took)
+	}
+}

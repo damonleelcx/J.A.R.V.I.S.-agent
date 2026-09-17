@@ -79,6 +79,20 @@ before each run.
 This is the time a prestarted forged takes off the first person to open a design. #93 measured 9.3 s for the same
 step, but that figure included the first subtree build, under heavier load.
 
+## A cancelled caller no longer kills its process
+
+Before this change, a caller that cancelled mid-build had its process killed. Examples are a closed tab, or a
+navigation away while a design loads a subtree at a time. The next viewer then paid a kernel start.
+
+Now:
+- **The caller** gets its answer at once, still `CONNECTOR_UNAVAILABLE`.
+- **The build** finishes for nobody. Its one reply line is read and discarded before the slot goes back to the
+  pool (`sidecar.abandon`). The protocol is one request and one line on one pipe, so the slot must not be reusable
+  while that line is unread.
+- **The build limit still kills it.** A process that crashes still resets the slot.
+- **Close** kills an abandoned build instead of waiting out its limit.
+- **A caller whose DEADLINE ends** is unchanged: the process is killed and the answer is `CAD_KERNEL_TIMEOUT`.
+
 ## Not established
 
 - The effect on the arm64 node, and forged's memory from boot to the first view. The steady state is unchanged by
