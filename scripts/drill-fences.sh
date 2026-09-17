@@ -179,6 +179,8 @@ FILES=(
   # Added 2026-09-17: the new-conversation drills target these two.
   internal/domain/conversation/repository.go
   internal/httpapi/pages.go
+  # Added 2026-09-17 (one million after): the prism yard generator's drill.
+  internal/domain/geometry/prism_yard_scale_test.go
   # Added 2026-09-17: the unverified-paths drills (verifier spend, last_seen_at).
   internal/agent/verifier.go
   internal/httpapi/goals.go
@@ -4667,6 +4669,28 @@ drill "a new goal route is added with no access row" internal/httpapi/router.go 
 drill "a goal route is mounted without a session" internal/httpapi/router.go \
   's = s.replace("\tmux.Handle(\"GET /v1/goals/{id}/timeline\", authed(goals.Timeline))", "\tmux.Handle(\"GET /v1/goals/{id}/timeline\", http.HandlerFunc(goals.Timeline))", 1)' \
   ./internal/httpapi 'TestAccessFence_EveryGoalApprovalAndExportRouteIsInTheAccessTable'
+
+echo
+echo "A build without the cycle collector (one million after), 2026-09-17"
+drill "a build leaves the cycle collector running" internal/domain/cad/sidecar.py \
+  's = s.replace("    gc.disable()\n    try:\n        return _build_collected(request)", "    try:\n        return _build_collected(request)", 1)' \
+  ./internal/domain/cad 'TestKernel_ABuildWithTheCycleCollectorPausedAnswersTheSameAndRestoresIt'
+
+drill "a build that raised leaves the collector paused" internal/domain/cad/sidecar.py \
+  's = s.replace("    try:\n        return _build_collected(request)\n    finally:\n        gc.enable()", "    out = _build_collected(request)\n    gc.enable()\n    return out", 1)' \
+  ./internal/domain/cad 'TestKernel_ABuildWithTheCycleCollectorPausedAnswersTheSameAndRestoresIt'
+
+drill "a build turns on a collector its caller paused" internal/domain/cad/sidecar.py \
+  's = s.replace("    if not _BUILD_WITHOUT_GC or not gc.isenabled():", "    if not _BUILD_WITHOUT_GC:", 1)' \
+  ./internal/domain/cad 'TestKernel_ABuildWithTheCycleCollectorPausedAnswersTheSameAndRestoresIt'
+
+drill "a paused build answers differently" internal/domain/cad/sidecar.py \
+  's = s.replace("    try:\n        return _build_collected(request)\n    finally:", "    try:\n        return dict(_build_collected(request), parts=-1)\n    finally:", 1)' \
+  ./internal/domain/cad 'TestKernel_ABuildWithTheCycleCollectorPausedAnswersTheSameAndRestoresIt'
+
+drill "the prism yard lists its leaning pins" internal/domain/geometry/prism_yard_scale_test.go \
+  's = s.replace("\t\t\tPattern: &Pattern{Kind: \"linear\", Count: 95, Offset: []float64{0, 0, 40}}},", "\t\t},\n\t\t{ID: \"leaning-extra\", Ref: \"pin\", Position: []float64{20, 1003, 1920}, Rotation: []float64{35, 0, 0}},\n\t\t{ID: \"leaning-extra-2\", Ref: \"pin\", Position: []float64{20, 1003, 1960}, Rotation: []float64{35, 0, 0}},", 1)' \
+  ./internal/domain/geometry 'TestPrismYard_PlacesItsPrismsByPatternsNotByListing'
 
 echo
 

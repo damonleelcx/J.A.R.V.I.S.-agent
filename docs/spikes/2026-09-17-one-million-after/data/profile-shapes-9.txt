@@ -1,0 +1,99 @@
+== 9: by own time ==
+         7288800 function calls (7106615 primitive calls) in 4.750 seconds
+
+   Ordered by: internal time
+   List reduced from 107 to 40 due to restriction <40>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+  91276/9    0.924    0.000    0.000    0.000 C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\geometry.py:203(__init__)
+  90801/0    0.670    0.000    0.000          C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\geometry.py:508(to_pnt)
+        5    0.513    0.103    0.513    0.103 {built-in method OCP.OCP.BRepBndLib.AddOptimal_s}
+   545280    0.380    0.000    0.380    0.000 {built-in method builtins.repr}
+    90880    0.345    0.000    0.666    0.000 C:\Users\damon\AppData\Local\Temp\claude\C--Users-damon-Downloads-agents\9c73bcba-7500-4641-9433-f7c8efd05843\scratchpad\m1m\sidecar-main-81c6263.py:2338(_shape_key)
+  1548784    0.312    0.000    0.312    0.000 {method 'get' of 'dict' objects}
+        5    0.216    0.043    0.216    0.043 {built-in method OCP.OCP.BRepTools.Clean_s}
+   272715    0.199    0.000    0.199    0.000 C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\topology\shape_core.py:317(wrapped)
+  1088972    0.161    0.000    0.161    0.000 {built-in method builtins.setattr}
+   817996    0.138    0.000    0.138    0.000 {method 'append' of 'list' objects}
+    90911    0.123    0.000    0.123    0.000 {built-in method OCP.OCP.TopoDS.TopoDS.Compound}
+   365043    0.111    0.000    0.157    0.000 C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\geometry.py:211(<genexpr>)
+    91896    0.092    0.000    0.248    0.000 {built-in method builtins.all}
+   181760    0.079    0.000    0.124    0.000 C:\Users\damon\AppData\Local\Temp\claude\C--Users-damon-Downloads-agents\9c73bcba-7500-4641-9433-f7c8efd05843\scratchpad\m1m\sidecar-main-81c6263.py:271(_location_of)
+   272641    0.073    0.000    0.073    0.000 {built-in method __new__ of type object at 0x00007FF880FD98A0}
+    90880    0.056    0.000    0.056    0.000 {built-in method builtins.sorted}
+   272675    0.049    0.000    0.049    0.000 {built-in method builtins.id}
+   275885    0.047    0.000    0.047    0.000 {built-in method builtins.isinstance}
+    91866    0.045    0.000    0.045    0.000 {method 'difference' of 'set' objects}
+    91866    0.044    0.000    0.044    0.000 {method 'join' of 'str' objects}
+   183806    0.031    0.000    0.031    0.000 {built-in method builtins.len}
+    90881    0.024    0.000    0.024    0.000 {method 'values' of 'dict' objects}
+   181782    0.023    0.000    0.023    0.000 C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\geometry.py:1805(wrapped)
+    91866    0.023    0.000    0.023    0.000 {method 'keys' of 'dict' objects}
+    90886    0.022    0.000    0.022    0.000 {method 'items' of 'dict' objects}
+    91059    0.020    0.000    0.020    0.000 {built-in method builtins.max}
+    90881    0.014    0.000    0.014    0.000 C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\topology\shape_core.py:323(wrapped)
+    92163    0.013    0.000    0.013    0.000 C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\geometry.py:279(wrapped)
+     49/3    0.001    0.000    0.000    0.000 C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\topology\shape_core.py:3779(shapetype)
+        4    0.001    0.000    0.001    0.000 C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\topology\shape_core.py:802(compute_mass)
+        4    0.000    0.000    0.000    0.000 {built-in method OCP.OCP.BRepGProp.VolumeProperties_s}
+      406    0.000    0.000    0.000    0.000 {built-in method _abc._abc_instancecheck}
+      406    0.000    0.000    0.001    0.000 <frozen abc>:117(__instancecheck__)
+      4/0    0.000    0.000    0.000          C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\topology\shape_core.py:3834(_make_topods_compound_from_shapes)
+        4    0.000    0.000    0.000    0.000 C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\geometry.py:1051(__init__)
+      794    0.000    0.000    0.000    0.000 {method 'pop' of 'dict' objects}
+        1    0.000    0.000    0.000    0.000 C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\topology\shape_core.py:293(__init__)
+     27/1    0.000    0.000    0.000    0.000 C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\topology\shape_core.py:3701(downcast)
+      473    0.000    0.000    0.000    0.000 {built-in method builtins.hasattr}
+        4    0.000    0.000    0.000    0.000 C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\geometry.py:3260(to_gp_ax2)
+
+
+
+== 9: by cumulative time ==
+         7288800 function calls (7106615 primitive calls) in 4.750 seconds
+
+   Ordered by: cumulative time
+   List reduced from 107 to 40 due to restriction <40>
+
+   ncalls  tottime  percall  cumtime  percall filename:lineno(function)
+    90880    0.345    0.000    0.666    0.000 C:\Users\damon\AppData\Local\Temp\claude\C--Users-damon-Downloads-agents\9c73bcba-7500-4641-9433-f7c8efd05843\scratchpad\m1m\sidecar-main-81c6263.py:2338(_shape_key)
+        5    0.513    0.103    0.513    0.103 {built-in method OCP.OCP.BRepBndLib.AddOptimal_s}
+   545280    0.380    0.000    0.380    0.000 {built-in method builtins.repr}
+  1548784    0.312    0.000    0.312    0.000 {method 'get' of 'dict' objects}
+    91896    0.092    0.000    0.248    0.000 {built-in method builtins.all}
+        5    0.216    0.043    0.216    0.043 {built-in method OCP.OCP.BRepTools.Clean_s}
+   272715    0.199    0.000    0.199    0.000 C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\topology\shape_core.py:317(wrapped)
+  1088972    0.161    0.000    0.161    0.000 {built-in method builtins.setattr}
+   365043    0.111    0.000    0.157    0.000 C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\geometry.py:211(<genexpr>)
+   817996    0.138    0.000    0.138    0.000 {method 'append' of 'list' objects}
+   181760    0.079    0.000    0.124    0.000 C:\Users\damon\AppData\Local\Temp\claude\C--Users-damon-Downloads-agents\9c73bcba-7500-4641-9433-f7c8efd05843\scratchpad\m1m\sidecar-main-81c6263.py:271(_location_of)
+    90911    0.123    0.000    0.123    0.000 {built-in method OCP.OCP.TopoDS.TopoDS.Compound}
+   272641    0.073    0.000    0.073    0.000 {built-in method __new__ of type object at 0x00007FF880FD98A0}
+    90880    0.056    0.000    0.056    0.000 {built-in method builtins.sorted}
+   272675    0.049    0.000    0.049    0.000 {built-in method builtins.id}
+   275885    0.047    0.000    0.047    0.000 {built-in method builtins.isinstance}
+    91866    0.045    0.000    0.045    0.000 {method 'difference' of 'set' objects}
+    91866    0.044    0.000    0.044    0.000 {method 'join' of 'str' objects}
+   183806    0.031    0.000    0.031    0.000 {built-in method builtins.len}
+    90881    0.024    0.000    0.024    0.000 {method 'values' of 'dict' objects}
+   181782    0.023    0.000    0.023    0.000 C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\geometry.py:1805(wrapped)
+    91866    0.023    0.000    0.023    0.000 {method 'keys' of 'dict' objects}
+    90886    0.022    0.000    0.022    0.000 {method 'items' of 'dict' objects}
+    91059    0.020    0.000    0.020    0.000 {built-in method builtins.max}
+    90881    0.014    0.000    0.014    0.000 C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\topology\shape_core.py:323(wrapped)
+    92163    0.013    0.000    0.013    0.000 C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\geometry.py:279(wrapped)
+      406    0.000    0.000    0.001    0.000 <frozen abc>:117(__instancecheck__)
+        4    0.001    0.000    0.001    0.000 C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\topology\shape_core.py:802(compute_mass)
+        4    0.000    0.000    0.000    0.000 {built-in method OCP.OCP.BRepGProp.VolumeProperties_s}
+      406    0.000    0.000    0.000    0.000 {built-in method _abc._abc_instancecheck}
+        4    0.000    0.000    0.000    0.000 C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\geometry.py:1051(__init__)
+       21    0.000    0.000    0.000    0.000 C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\anytree\node\nodemixin.py:240(children)
+        1    0.000    0.000    0.000    0.000 C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\topology\shape_core.py:293(__init__)
+      794    0.000    0.000    0.000    0.000 {method 'pop' of 'dict' objects}
+  91276/9    0.924    0.000    0.000    0.000 C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\geometry.py:203(__init__)
+      473    0.000    0.000    0.000    0.000 {built-in method builtins.hasattr}
+        4    0.000    0.000    0.000    0.000 C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\geometry.py:3260(to_gp_ax2)
+        4    0.000    0.000    0.000    0.000 C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\geometry.py:320(add)
+       16    0.000    0.000    0.000    0.000 C:\Users\damon\Downloads\agents\jarvis-k2b\.cadvenv\Lib\site-packages\build123d\geometry.py:101(_rounded_key)
+        4    0.000    0.000    0.000    0.000 C:\Users\damon\AppData\Local\Temp\claude\C--Users-damon-Downloads-agents\9c73bcba-7500-4641-9433-f7c8efd05843\scratchpad\m1m\sidecar-main-81c6263.py:327(_attribute_plan)
+
+

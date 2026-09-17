@@ -1,0 +1,23 @@
+Selected drills
+  ✅ went red      — a build leaves the cycle collector running
+           build_without_gc_kernel_test.go:41: format '': 491 parts, 298 clashes; collector ran 6 time(s) running, 6 paused; 0 unreachable after; identical true
+           build_without_gc_kernel_test.go:41: mesh: 491 parts, 298 clashes; collector ran 13 time(s) running, 13 paused; 0 unreachable after; identical true
+  ✅ went red      — a build that raised leaves the collector paused
+           build_without_gc_kernel_test.go:41: format '': 491 parts, 298 clashes; collector ran 6 time(s) running, 0 paused; 0 unreachable after; identical true
+           build_without_gc_kernel_test.go:41: mesh: 491 parts, 298 clashes; collector ran 13 time(s) running, 0 paused; 0 unreachable after; identical true
+  ✅ went red      — a build turns on a collector its caller paused
+           build_without_gc_kernel_test.go:41: format '': 491 parts, 298 clashes; collector ran 6 time(s) running, 0 paused; 0 unreachable after; identical true
+           build_without_gc_kernel_test.go:41: mesh: 491 parts, 298 clashes; collector ran 13 time(s) running, 0 paused; 0 unreachable after; identical true
+  ✅ went red      — a paused build answers differently
+           build_without_gc_kernel_test.go:41: format '': -1 parts, 298 clashes; collector ran 6 time(s) running, 0 paused; 0 unreachable after; identical false
+           build_without_gc_kernel_test.go:41: mesh: -1 parts, 298 clashes; collector ran 13 time(s) running, 0 paused; 0 unreachable after; identical false
+  ✅ went red      — the prism yard lists its leaning pins
+           prism_yard_scale_test.go:94: 9472 solids (want 12416), 0 operations, notes []
+       --- FAIL: TestPrismYard_PlacesItsPrismsByPatternsNotByListing (0.02s)
+
+
+The tree is byte-identical to how the drill found it.
+5 went red, 0 stayed green, 0 unproven, 0 anchor(s) moved.
+Covered: the sweep fences. NOT covered: the extrusion and revolve fences,
+which have no drills — see the note in this script.
+runner exited 0

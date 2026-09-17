@@ -1,0 +1,12 @@
+bays=9 full run 1: ok=True build 19.0s [shapes 7.1 assembly 1.4 interf 9.5 props 0.0 mesh 0.0] peak 0.88 GB host cpu 23% (max 35%) host mem peak 24% 
+bays=9 mesh run 1: ok=True build 32.6s [shapes 8.8 assembly 2.0 interf 5.2 props 11.2 mesh 4.3] peak 0.91 GB host cpu 23% (max 32%) host mem peak 25% 
+bays=9 full run 2: ok=True build 15.0s [shapes 7.3 assembly 1.5 interf 5.5 props 0.0 mesh 0.0] peak 0.89 GB host cpu 15% (max 18%) host mem peak 24% 
+bays=9 mesh run 2: ok=True build 29.9s [shapes 7.4 assembly 1.5 interf 2.9 props 10.9 mesh 6.5] peak 0.91 GB host cpu 27% (max 38%) host mem peak 26% 
+bays=30 full run 1: ok=True build 50.2s [shapes 24.3 assembly 5.1 interf 18.4 props 0.0 mesh 0.0] peak 2.02 GB host cpu 26% (max 40%) host mem peak 28% 
+bays=30 mesh run 1: ok=True build 81.4s [shapes 28.6 assembly 4.7 interf 9.3 props 26.3 mesh 10.4] peak 2.10 GB host cpu 28% (max 58%) host mem peak 30% 
+bays=30 full run 2: ok=True build 50.6s [shapes 25.1 assembly 4.7 interf 18.4 props 0.0 mesh 0.0] peak 2.02 GB host cpu 29% (max 48%) host mem peak 30% 
+bays=30 mesh run 2: ok=True build 86.4s [shapes 26.3 assembly 4.8 interf 14.0 props 27.9 mesh 11.0] peak 2.10 GB host cpu 35% (max 55%) host mem peak 31% 
+bays=100 full run 1: ok=True build 259.5s [shapes 131.1 assembly 23.9 interf 90.1 props 0.0 mesh 0.0] peak 5.90 GB host cpu 36% (max 59%) host mem peak 36% 
+bays=100 mesh run 1: ok=True build 151.3s [shapes 43.3 assembly 10.1 interf 18.6 props 49.7 mesh 22.2] peak 6.12 GB host cpu 55% (max 67%) host mem peak 49% 
+bays=100 full run 2: ok=True build 103.8s [shapes 45.6 assembly 8.9 interf 41.1 props 0.0 mesh 0.0] peak 5.90 GB host cpu 58% (max 82%) host mem peak 51% 
+bays=100 mesh run 2: ok=True build 161.2s [shapes 45.2 assembly 11.1 interf 24.3 props 50.0 mesh 23.2] peak 6.12 GB host cpu 59% (max 75%) host mem peak 50% 
