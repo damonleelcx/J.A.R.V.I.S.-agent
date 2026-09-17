@@ -42,6 +42,10 @@ const (
 
 const envDir = "FORGE_CAD_FAKE_KERNEL_DIR"
 
+// envStartDelay holds the ready banner back, so a fence can end a caller's
+// deadline while the process is still starting (SlowStart).
+const envStartDelay = "FORGE_CAD_FAKE_KERNEL_START_DELAY"
+
 // RunIfAsked becomes the fake kernel, and exits, when this process was started as
 // one. Call it first in TestMain.
 func RunIfAsked() {
@@ -65,6 +69,13 @@ func FakeKernel(t *testing.T) (python, dir string) {
 	return exe, dir
 }
 
+// SlowStart makes every fake kernel process started after it wait d before it
+// says it is ready — the stand-in for build123d's import, which is seconds.
+func SlowStart(t *testing.T, d time.Duration) {
+	t.Helper()
+	t.Setenv(envStartDelay, d.String())
+}
+
 // Starts is how many fake kernel processes have started so far.
 func Starts(t *testing.T, dir string) int {
 	t.Helper()
@@ -86,6 +97,9 @@ func serve(dir string) int {
 	_, _ = fmt.Fprintf(f, "%d\n", os.Getpid())
 	_ = f.Close()
 
+	if d, err := time.ParseDuration(os.Getenv(envStartDelay)); err == nil {
+		time.Sleep(d)
+	}
 	fmt.Println(`{"ready":true}`)
 	in := bufio.NewReaderSize(os.Stdin, 1<<20)
 	for {

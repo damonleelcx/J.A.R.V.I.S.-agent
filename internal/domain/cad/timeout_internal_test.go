@@ -2,7 +2,9 @@ package cad
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -290,5 +292,126 @@ func TestKernel_ATimeoutInOneSlotLeavesTheOtherSlotsServing(t *testing.T) {
 	}
 	if n := cadtest.Starts(t, dir); n != 2 {
 		t.Errorf("%d processes started, want 2: the build after the timeout had to restart the other slot's process", n)
+	}
+}
+
+// A caller that cancels its context right after a build ANSWERED keeps the
+// process that answered it.
+//
+// ‼️ Until 2026-09-17 the deadline goroutine in roundTrip could still be on its
+// way into its select when roundTrip returned, and `defer cancel()` right behind
+// the build then made done and ctx.Done() ready together. select chose at random,
+// so about half of those times it killed a process whose build had succeeded. The
+// slot kept it as started, and the next build on it met EOF and spent its one
+// retry there. CI saw it as the two fences above failing in opposite directions:
+// warm() was then itself a BuildDocument with `defer cancel()`.
+// docs/bugfix/2026-09-17-a-cancel-after-a-build-answered-killed-its-process.md
+//
+// # Why many builds and not one
+//
+// Whether the goroutine has reached its select when roundTrip returns is up to
+// the scheduler, and nothing outside roundTrip can hold it back. The fix makes
+// the outcome not depend on it — roundTrip waits for the goroutine, and the
+// goroutine kills only a round trip nobody has ended — so every one of these
+// builds must keep the process. Before it, each was a coin that could land wrong:
+// with the old roundTrip restored, eight runs of this fence went red by build 2,
+// 2, 8, 40, 47, 61, 65 and 108. The builds are microseconds each against the
+// fake, so a thousand cost about a second.
+func TestKernel_ACancelAfterABuildAnsweredLeavesItsProcessServing(t *testing.T) {
+	python, dir := cadtest.FakeKernel(t)
+	k := New(python, logx.Discard())
+	defer k.Close()
+	warm(t, k)
+	served := pid(k, 0)
+
+	// One P, so the goroutine is not run until the holder yields — and against a
+	// fake that answers in microseconds the holder often does not before the
+	// build returns. That is the interleaving: done and ctx.Done() both ready at
+	// the goroutine's first select. More Ps only make it rarer.
+	defer runtime.GOMAXPROCS(runtime.GOMAXPROCS(1))
+
+	const builds = 1000
+	for i := 0; i < builds; i++ {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		got, err := k.BuildDocument(ctx, cue("fine"), geometry.Millimetre, "")
+		cancel()
+		if err != nil {
+			t.Fatalf("build %d of %d, on a kernel that answers every build, failed: %v", i+1, builds, err)
+		}
+		if got.Parts != 1 {
+			t.Fatalf("build %d made %d parts, want 1", i+1, got.Parts)
+		}
+		if n := cadtest.Starts(t, dir); n != 1 {
+			t.Fatalf("%d processes started by build %d of %d, want 1: a cancel after a build answered "+
+				"killed the process that answered it, and the next build spent its retry replacing it", n, i+1, builds)
+		}
+	}
+	if p := pid(k, 0); p != served {
+		t.Errorf("slot 0 holds process %d, was %d", p, served)
+	}
+
+	// And the retry that a stray kill would have spent is still there for a real
+	// crash on the same slot.
+	ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+	defer cancel()
+	if _, err := k.BuildDocument(ctx, cue(cadtest.CrashOnce), geometry.Millimetre, ""); err != nil {
+		t.Fatalf("a process that died once was not retried after %d cancelled builds: %v", builds, err)
+	}
+}
+
+// A caller whose deadline ends while its process is still STARTING is refused
+// as out of time, and no second process is started for it.
+//
+// ‼️ Until 2026-09-17 start's ctx.Err() came back to BuildDocument as a plain
+// error, so it was taken for a crash: the slot was reset, a second process was
+// started for a caller that had gone, and the refusal said CONNECTOR_UNAVAILABLE,
+// "restarting it did not help". In production every build that takes a slot
+// after a crash or a timeout starts a process first — build123d's import is
+// seconds — inside the request's 30 s.
+func TestKernel_ACallerWhoseDeadlineEndsWhileTheKernelStartsIsNotRetried(t *testing.T) {
+	python, dir := cadtest.FakeKernel(t)
+	cadtest.SlowStart(t, 10*time.Second)
+	k := New(python, logx.Discard())
+	defer k.Close()
+
+	const deadline = 500 * time.Millisecond
+	ctx, cancel := context.WithTimeout(context.Background(), deadline)
+	defer cancel()
+	began := time.Now()
+	_, err := k.BuildDocument(ctx, cue("fine"), geometry.Millimetre, "")
+	took := time.Since(began)
+
+	if err == nil {
+		t.Fatal("a build whose kernel never finished starting succeeded")
+	}
+	if got := errs.CodeOf(err); got != errs.CodeKernelTimeout {
+		t.Errorf("code %s, want %s: the caller's deadline ended while the kernel started, and it was "+
+			"taken for a crash (%v)", got, errs.CodeKernelTimeout, err)
+	}
+	if d := errs.DetailOf(err); !strings.Contains(d, "the request's own deadline ended") {
+		t.Errorf("detail %q does not say the request's own deadline ended", d)
+	}
+	if n := cadtest.Starts(t, dir); n > 1 {
+		t.Errorf("%d kernel processes started for a caller whose deadline ended, want at most 1: it was retried", n)
+	}
+	if took >= 5*time.Second {
+		t.Errorf("took %s: the build waited for the kernel to start after its deadline ended", took)
+	}
+
+	// A caller that has already run out of time when it reaches the process is
+	// refused the same way, and starts nothing.
+	k2 := New(python, logx.Discard())
+	defer k2.Close()
+	s := <-k2.pool()
+	expired, cancel2 := context.WithDeadline(context.Background(), time.Now().Add(-time.Second))
+	defer cancel2()
+	_, err = s.roundTrip(expired, request{}, buildTimeout)
+	k2.release(s)
+	var late *lateError
+	if !errors.As(err, &late) || !errors.Is(late.caller, context.DeadlineExceeded) {
+		t.Errorf("a round trip for a caller already out of time returned %v, want its lateError", err)
+	}
+	if s.process() != nil {
+		t.Error("a round trip for a caller already out of time started a process")
 	}
 }
