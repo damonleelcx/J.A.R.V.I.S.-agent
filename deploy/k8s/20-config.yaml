@@ -88,23 +88,24 @@ data:
   FORGE_LLM_PLANNER_MODEL: "qwen3.8-max"
 
   # Speech to text: the workbench microphone (POST /v1/transcribe) and room
-  # transcripts. ‼️ NOT TRANSCRIBING TODAY. The token-plan endpoint above serves
-  # no speech-to-text model — measured 2026-09-15, qwen3-asr-flash-2026-02-10
-  # answers 404 "Model not exist" and its chat models reject audio — so with
-  # this unset every hold of the mic is refused, by name.
+  # transcripts. The token-plan endpoint above serves no speech-to-text model
+  # (measured 2026-09-15: qwen3-asr-flash-2026-02-10 answers 404 there), so
+  # transcription goes to DashScope's standard Beijing compatible-mode endpoint,
+  # a pay-as-you-go key separate from the token plan.
   #
-  # To turn it on, point transcription at an endpoint that serves qwen3-asr-flash,
-  # e.g. DashScope's standard Beijing compatible-mode endpoint (Alibaba's
-  # Qwen-ASR reference, checked 2026-09-15: chat/completions with input_audio, or
-  # the workspace domain https://{WorkspaceId}.cn-beijing.maas.aliyuncs.com/compatible-mode/v1):
+  # Measured 2026-09-17 with that key: /models lists qwen3-asr-flash-2026-02-10,
+  # and chat/completions with an input_audio part transcribed a WebM/Opus clip
+  # (what browsers record) and a WAV clip word for word.
   #
-  #   FORGE_LLM_TRANSCRIBER_BASE_URL: "https://dashscope.aliyuncs.com/compatible-mode/v1"
+  # ‼️ The key is FORGE_LLM_TRANSCRIBER_API_KEY in the `forge` Secret, from its
+  # own Secrets Manager entry forge/transcriber (11-externalsecret.yaml), never
+  # here: a ConfigMap is not a secret store. forged refuses to start with this
+  # base URL and no key, because it never sends the token plan's key to another
+  # host (and a Beijing key does not work in Singapore, nor a token-plan key here).
   #
-  # ‼️ AND add FORGE_LLM_TRANSCRIBER_API_KEY — the key THAT endpoint issued — to
-  # the `forge` Secret (11-externalsecret.yaml, from forge/prod), never here: a
-  # ConfigMap is not a secret store. forged refuses to start with the base URL
-  # and no key, because it never sends the token plan's key to another host
-  # (and a Beijing key does not work in Singapore, nor a token-plan key there).
+  # ‼️ /compatible-mode/v1, NOT /apps/anthropic: FORGE posts input_audio to
+  # {base}/chat/completions, which only the OpenAI-compatible surface serves.
+  FORGE_LLM_TRANSCRIBER_BASE_URL: "https://dashscope.aliyuncs.com/compatible-mode/v1"
   #
   # FORGE_LLM_TRANSCRIBER_MODEL keeps its default (qwen3-asr-flash-2026-02-10),
   # which is not set in this file. FORGE_DATA_BOUNDARY describes the model
