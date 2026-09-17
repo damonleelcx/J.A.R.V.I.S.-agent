@@ -121,6 +121,9 @@
     this._delivery = Promise.resolve();
     this._recActive = false;        // the recogniser has a session open
     this._restartWhenEnded = false;
+    /* What the browser's recogniser has produced during the current push-to-talk
+     * hold: null outside one. See rec.onend for why it is tracked. */
+    this._browserHold = null;
 
     if (SR) this._initRecognition();
 
@@ -163,6 +166,11 @@
         var text = event.results[i][0].transcript;
         if (event.results[i].isFinal) final += text;
         else interim += text;
+      }
+      if (self._browserHold) {
+        self._browserHold.heard = true;
+        self._browserHold.interim = interim;
+        if (final.trim()) self._browserHold.delivered = true;
       }
 
       /* Is this her own voice coming back through the microphone?
@@ -211,6 +219,7 @@
      * cannot be reached — the whole of the 2026-09-15 report, shown to nobody. */
     rec.onerror = function (e) {
       var code = e && e.error;
+      if (self._browserHold && code !== 'aborted') self._browserHold.errored = true;
       // Ours: cancelListening() aborts a hold that turned out to be a click,
       // and the note for that is already on screen.
       if (code === 'aborted') return;
@@ -221,7 +230,24 @@
         }
         return;
       }
-      if (code === 'not-allowed' || code === 'service-not-allowed') {
+      /* ‼️ 'service-not-allowed' is not the person refusing the microphone. It is
+       * the BROWSER refusing its own speech service — Chromium builds without
+       * Google's key, and browsers that disable it by policy. It used to be
+       * reported as "Microphone access was refused", which sent people to a
+       * permission prompt that was never the problem, and it turned off the
+       * server path too. */
+      if (code === 'service-not-allowed') {
+        self.browserBroken = 'This browser has speech recognition but will not let the page use its service ' +
+          '(service-not-allowed), so it cannot hear you.';
+        self.listening = false;
+        self._restartWhenEnded = false;
+        self.onError(self.browserBroken + ' ' + (self.inputPath() === 'server'
+          ? "Push-to-talk uses FORGE's own transcription instead."
+          : self.whyUnavailable()));
+        self._setState();
+        return;
+      }
+      if (code === 'not-allowed') {
         self._refused = true;
         self.listening = false;
         self.onError('Microphone access was refused. Voice is unavailable; the text box still works.');
@@ -248,6 +274,34 @@
 
     rec.onend = function () {
       self._recActive = false;
+      /* A push-to-talk hold on the browser's recogniser has ended: did anything
+       * reach the conversation?
+       *
+       * ‼️ Two ways it used to reach nothing, silently. Both look like the
+       * owner's "the mic still does not work" after the fallback on 2026-09-17,
+       * on a network where Chrome's recogniser has to reach Google:
+       *   - the session ends with no result and no error at all. Chrome does
+       *     this when its service is slow or blocked rather than refused, and
+       *     the page showed nothing: no text, no note.
+       *   - the session produced interim words and ended before a final result;
+       *     interim words went only to the caption, never to the conversation.
+       * Words heard are delivered; nothing heard is said, with the likely cause.
+       *
+       * Fenced by TestVoiceInput_AServerThatCannotTranscribeFallsBackAndTheNextHoldIsHeard. */
+      var held = self._browserHold;
+      if (held && !self.listening) {
+        self._browserHold = null;
+        if (!held.delivered && !held.errored) {
+          var partial = String(held.interim || '').trim();
+          if (partial) {
+            self.onTranscript(partial);
+          } else if (!held.heard) {
+            self.onError("The browser's speech recognition returned nothing for that hold. Chrome and Edge " +
+              'send the audio to Google, and on a network that blocks it (mainland China among them) ' +
+              'nothing comes back and no error is given. Hold and speak again, or type it.');
+          }
+        }
+      }
       /* A press that arrived while the previous session was still closing.
        *
        * ‼️ start() on a recogniser whose last session has not ended throws
@@ -273,11 +327,20 @@
   /* ---- which way in ------------------------------------------------------ */
 
   /* setServerTranscription is told by the page what /v1/meta/models said:
-   * {model} when the deployment transcribes, null when it does not. */
-  Voice.prototype.setServerTranscription = function (info) {
+   * {model} when the deployment transcribes, null when it does not — and, when
+   * it does not, the server's own reason, so the page can say why before anybody
+   * presses the button rather than after their first sentence is lost. */
+  Voice.prototype.setServerTranscription = function (info, reason) {
     this.serverASR = info && info.model ? { model: info.model } : null;
-    if (!this.serverASR) this._serverWhy = '';
+    if (!this.serverASR) {
+      this._serverWhy = reason ? 'FORGE does not transcribe here: ' + String(reason).replace(/\.?\s*$/, '.') : '';
+    }
     this._setState();
+  };
+
+  /* serverWhy is why FORGE's own transcription is not in use, or ''. */
+  Voice.prototype.serverWhy = function () {
+    return this.serverASR === null ? this._serverWhy : '';
   };
 
   Voice.prototype._canRecord = function () {
@@ -390,6 +453,7 @@
   /* cancelListening ends a hold and discards it — a click, not a hold. */
   Voice.prototype.cancelListening = function () {
     if (this._session) { this._finishRecording(true); return; }
+    this._browserHold = null;   // a click: nothing is owed
     this._restartWhenEnded = false;
     this.listening = false;
     if (this.rec && this._recActive) this.rec.abort();
@@ -398,6 +462,8 @@
   };
 
   Voice.prototype._startRecognition = function () {
+    this._browserHold = this.mode === 'push'
+      ? { heard: false, delivered: false, errored: false, interim: '' } : null;
     this.listening = true;
     this._setState();
     if (this._recActive) {
@@ -582,8 +648,17 @@
         // the round trip, and the reason is kept for whyUnavailable.
         this.serverASR = null;
         this._serverWhy = 'FORGE cannot transcribe on this deployment: ' + said;
-        this.onError(this._serverWhy + (this._canRecognise()
-          ? " The microphone uses the browser's own speech recognition from now on." : ''));
+        /* ‼️ Say what happens next as it really is. This used to promise "the
+         * microphone uses the browser's own speech recognition from now on" —
+         * to a person whose browser's recogniser sends audio to Google from a
+         * network that may not reach it, and in a browser that may have none.
+         * The words just spoken are gone either way, so that is said too. */
+        this.onError(this._serverWhy + ' What you just said was not transcribed. ' + (this._canRecognise()
+          ? "Hold the button and say it again: it now uses the browser's own speech recognition, which in " +
+            'Chrome and Edge sends the audio to Google. If a network blocks that, nothing comes back; ' +
+            'typing always works.'
+          : 'This browser has no speech recognition of its own to fall back on (Firefox has none), so the ' +
+            'microphone is off here. Everything works by typing.'));
         this._setState();
         return;
       }
@@ -815,6 +890,55 @@
     // A long press on a phone opens a context menu and cancels the pointer.
     button.addEventListener('contextmenu', function (e) { e.preventDefault(); });
     return hold;
+  }
+
+  /* spaceIsPushToTalk says whether a Space press on `el` may be taken for
+   * push-to-talk.
+   *
+   * ‼️ Space already MEANS something on most things that can hold focus: it
+   * presses a button, ticks a checkbox, opens a select, types a space. The
+   * push-to-talk handler used to take Space from everything but the text box,
+   * so Space on a focused Delete, New conversation or Send button pressed the
+   * microphone instead — keyboard users could not operate the page, which is
+   * the opposite of what the shortcut was added for (PRD AUD-06).
+   *
+   * So Space is push-to-talk only where it would otherwise do nothing but
+   * scroll: the page itself, or something focusable that Space does not
+   * operate. The mic button is the exception that proves the rule — Space on
+   * it is holding it.
+   *
+   * Fenced by TestVoiceInput_SpaceOperatesAFocusedControlAndTalksEverywhereElse. */
+  var SPACE_OPERATES_TAG = /^(BUTTON|INPUT|TEXTAREA|SELECT|OPTION|A|SUMMARY|AUDIO|VIDEO|IFRAME|EMBED|OBJECT)$/;
+  var SPACE_OPERATES_ROLE = /^(button|checkbox|switch|radio|link|menuitem|menuitemcheckbox|menuitemradio|tab|option|treeitem|gridcell|textbox|searchbox|combobox|listbox|slider|spinbutton|scrollbar)$/;
+  function spaceIsPushToTalk(el, mic) {
+    if (!el) return true;
+    if (mic && el === mic) return true;
+    if (el.isContentEditable) return false;
+    if (SPACE_OPERATES_TAG.test(String(el.tagName || '').toUpperCase())) return false;
+    var role = el.getAttribute ? el.getAttribute('role') : null;
+    if (role && SPACE_OPERATES_ROLE.test(String(role).trim().toLowerCase())) return false;
+    return true;
+  }
+
+  /* bindSpaceHold makes the space bar a second way of holding `hold`.
+   *
+   * opts.mic is the mic button; opts.enabled() says whether the mic can be used
+   * at all. A press Space already operates is left entirely alone — not
+   * prevented, not pressed — and a release only ends a hold Space began. */
+  function bindSpaceHold(doc, hold, opts) {
+    opts = opts || {};
+    var enabled = opts.enabled || function () { return true; };
+    doc.addEventListener('keydown', function (e) {
+      if (e.code !== 'Space' || e.ctrlKey || e.altKey || e.metaKey || e.isComposing) return;
+      if (!spaceIsPushToTalk(e.target, opts.mic) || !enabled()) return;
+      e.preventDefault();
+      if (!e.repeat) hold.press('space');
+    });
+    doc.addEventListener('keyup', function (e) {
+      if (e.code !== 'Space') return;
+      // Only a hold Space started: a Space that pressed a button ends nothing.
+      if (hold.release('space')) e.preventDefault();
+    });
   }
 
   /* deliverSpoken hands a transcript to the conversation — or, while FORGE is
@@ -1284,6 +1408,8 @@
     supported: !!SR,
     makeHold: makeHold,
     bindHold: bindHold,
+    bindSpaceHold: bindSpaceHold,
+    spaceIsPushToTalk: spaceIsPushToTalk,
     deliverSpoken: deliverSpoken,
     MAX_RECORDING_SECONDS: MAX_RECORDING_MS / 1000
   };

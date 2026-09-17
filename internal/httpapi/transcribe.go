@@ -7,6 +7,7 @@ import (
 	"mime"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/llm"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/errs"
@@ -100,6 +101,49 @@ func transcriberOf(c llm.Client) (speechToText, string) {
 		return nil, ""
 	}
 	return stt, model
+}
+
+// transcriberAvailability is a transcriber that can say whether its endpoint
+// really serves its model (llm.OpenAICompatible does; see
+// internal/llm/transcriber_served.go).
+type transcriberAvailability interface {
+	TranscriberAvailability(ctx context.Context, wait time.Duration) llm.TranscriberAvailability
+}
+
+// firstAnswerWait is how long the first /v1/meta/models after startup waits for
+// the served-model check that forged began at boot. Every later request reads
+// the cached answer and waits for nothing.
+const firstAnswerWait = 3 * time.Second
+
+// transcriptionOf is what /v1/meta/models advertises about speech to text.
+//
+// # Why "server" is no longer "a model is configured"
+//
+// It was, and a model name is always configured because it has a default. On
+// 2026-09-17 production advertised qwen3-asr-flash-2026-02-10 from an endpoint
+// that serves no speech-to-text model: the page said "transcribed by FORGE",
+// recorded the owner's first sentence, lost it to a 501, and only then told
+// him. "server": true now means the endpoint's own model list contains the
+// model — or that list could not be read, in which case "verified" is false and
+// the upload still names its own failure. "reason" says, in words an owner can
+// act on, why it is off.
+//
+// ‼️ This handler is public. The reason names settings and models, never the
+// provider host; that goes to the log (forge.asr.checked).
+func transcriptionOf(ctx context.Context, c llm.Client) map[string]any {
+	stt, model := transcriberOf(c)
+	if model == "" {
+		return map[string]any{"server": false, "model": "", "verified": true,
+			"reason": "this deployment has no speech to text: no model client, or no FORGE_LLM_TRANSCRIBER_MODEL"}
+	}
+	checker, ok := stt.(transcriberAvailability)
+	if !ok {
+		// A client that cannot be asked keeps the old meaning, and says so.
+		return map[string]any{"server": true, "model": model, "verified": false,
+			"reason": "this model client cannot say whether its endpoint serves " + model}
+	}
+	a := checker.TranscriberAvailability(ctx, firstAnswerWait)
+	return map[string]any{"server": a.Served, "model": model, "verified": a.Verified, "reason": a.Reason}
 }
 
 // recordingContainer reads the container from a Content-Type, parameters

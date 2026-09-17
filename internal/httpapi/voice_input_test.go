@@ -99,6 +99,12 @@ FakeRecognition.prototype.start = function () {
 FakeRecognition.prototype.stop = function () { /* ends later, on the browser's schedule */ };
 FakeRecognition.prototype.abort = function () { /* likewise */ };
 world.endRecognition = function () { const r = world.recognitions[0]; r.active = false; if (r.onend) r.onend(); };
+// hear delivers one recognition result, as Chrome does while a session is open.
+world.hear = function (text, isFinal) {
+  const r = world.recognitions[0], res = [[{ transcript: text }]];
+  res[0].isFinal = !!isFinal;
+  if (r.onresult) r.onresult({ resultIndex: 0, results: res });
+};
 world.recognitionError = function (code) { const r = world.recognitions[0]; if (r.onerror) r.onerror({ error: code }); };
 
 const win = {
@@ -338,6 +344,17 @@ await settle();
 expect(noted(/Google/), 'a blocked recogniser did not say why: ' + JSON.stringify(m.errors));
 expect(v.inputPath() === 'none', 'the mic still offers a recogniser that cannot reach its service (path ' + v.inputPath() + ')');
 `},
+		// ‼️ service-not-allowed is the browser refusing its own speech service,
+		// not the person refusing the microphone. Read as a refusal it said
+		// "Microphone access was refused" and turned the server path off too.
+		{"service_not_allowed_is_not_a_refused_microphone", serverHold + `
+world.recognitionError('service-not-allowed');
+await settle();
+expect(!noted(/refused/i), 'the browser refusing its speech service was reported as a refused microphone: ' + JSON.stringify(m.errors));
+expect(noted(/service-not-allowed/), 'service-not-allowed left no note that names it: ' + JSON.stringify(m.errors));
+expect(v.inputPath() === 'server', 'the server path was turned off by the browser recogniser (path ' + v.inputPath() + ')');
+expect(!v.handsFreeAvailable(), 'hands-free is still offered on a recogniser whose service is not allowed');
+`},
 		{"no_speech_while_holding", browserHold + `
 v.startListening();
 world.recognitionError('no-speech');
@@ -512,5 +529,219 @@ func TestWorkbench_TheMicIsWiredToTheHoldAndKeepsWhatWasSaid(t *testing.T) {
 	ai, vj := strings.Index(page, "audio-input.js"), strings.Index(page, "voice.js")
 	if ai < 0 || vj < 0 || ai > vj {
 		t.Error("audio-input.js is not loaded before voice.js on the workbench, so recording cannot use its microphone constraints")
+	}
+}
+
+// Problem 2 of 2026-09-17: after the server said it cannot transcribe, the mic
+// still did not work.
+//
+// # What production showed
+//
+// The page said "voice: transcribed by FORGE (qwen3-asr-flash-2026-02-10)", the
+// first hold came back 501, the note promised "the microphone uses the browser's
+// own speech recognition from now on" — and the next holds produced nothing.
+//
+// # Why these scenarios and not one
+//
+// The flag was set and the next press did reach the recogniser; the state was
+// not stuck. What failed was everything a real recogniser does that the old fake
+// did not: in Chrome on a network that cannot reach Google a session can end
+// with no result AND no error, and it can end with interim words and no final
+// one. Both reached nothing and said nothing. And in a browser with no
+// recogniser at all the note still read as if a fallback existed. Each of those
+// is a scenario here, driven through the same bindHold the page uses, in the
+// exact order: server advertised, press, 501, fallback, press again.
+//
+// ‼️ The fake recogniser's stop() does not end the session; world.endRecognition
+// does, when the scenario says — which is Chrome's order, not an idealised one.
+func TestVoiceInput_AServerThatCannotTranscribeFallsBackAndTheNextHoldIsHeard(t *testing.T) {
+	sequence := `
+const m = makeVoice(FV), v = m.v;
+function noted(re) { return m.errors.some(function (e) { return re.test(e); }); }
+v.setServerTranscription({ model: 'qwen3-asr-flash-2026-02-10' });
+world.reply = { status: 501, body: { code: 'CONNECTOR_UNAVAILABLE', message: 'Not available here.',
+  details: { detail: 'the transcription provider returned 404: Model not exist.' } } };
+let now = 1000;
+const btn = fakeButton();
+FV.bindHold(btn, v, { now: function () { return now; }, note: function (s) { m.errors.push(s); } });
+async function holdOnce(id, during) {
+  btn.fire('pointerdown', { pointerId: id, button: 0 }); await settle();
+  if (during) await during();
+  now += 2000;
+  btn.fire('pointerup', { pointerId: id, button: 0 }); await settle();
+}
+
+// Press 1: the server path, as advertised.
+expect(v.inputPath() === 'server', 'setup: the server path is not in use (' + v.inputPath() + ')');
+await holdOnce(1);
+expect(world.fetches.length === 1, 'the first hold was not uploaded (' + world.fetches.length + ')');
+expect(!v.listening && !v.transcribing, 'the mic is stuck listening or transcribing after the 501');
+expect(!m.errors.some(function (e) { return /from now on/.test(e); }), 'the 501 note still promises a fallback that may not work: ' + JSON.stringify(m.errors));
+expect(noted(/not transcribed/), 'the 501 note does not say the words just spoken were lost: ' + JSON.stringify(m.errors));
+`
+	for _, tc := range []struct{ name, scenario string }{
+		{"the_next_hold_is_heard", `const FV = load();` + sequence + `
+expect(v.inputPath() === 'browser', 'after the 501 the path is ' + v.inputPath() + ', want browser');
+expect(noted(/Google/), 'the 501 note does not say where the browser sends the audio: ' + JSON.stringify(m.errors));
+await holdOnce(2);
+expect(world.fetches.length === 1, 'the second hold went to the server again (' + world.fetches.length + ' uploads)');
+expect(world.recorders.length === 1, 'the second hold recorded for an upload instead of recognising');
+expect(world.srStarts === 1, 'the second hold did not start the browser recogniser (' + world.srStarts + ')');
+world.hear('make it thicker', true);
+world.endRecognition(); await settle();
+expect(JSON.stringify(m.said) === '["make it thicker"]', 'what the recogniser heard never reached the conversation: ' + JSON.stringify(m.said));
+expect(!v.listening && !v.transcribing, 'the mic is stuck after the fallback hold');
+`},
+		{"the_recogniser_returns_nothing", `const FV = load();` + sequence + `
+await holdOnce(2);
+world.endRecognition(); await settle();
+expect(m.said.length === 0, 'something was sent from a session that heard nothing');
+expect(noted(/returned nothing/), 'a fallback hold that came back empty, with no error, said nothing: ' + JSON.stringify(m.errors));
+expect(!v.listening, 'the mic is stuck listening');
+`},
+		{"only_interim_words_arrive", `const FV = load();` + sequence + `
+await holdOnce(2, async function () { world.hear('round the corners', false); });
+world.endRecognition(); await settle();
+expect(JSON.stringify(m.said) === '["round the corners"]', 'words the recogniser showed as interim were dropped when the session ended: ' + JSON.stringify(m.said));
+`},
+		{"the_recogniser_cannot_reach_google", `const FV = load();` + sequence + `
+await holdOnce(2);
+world.recognitionError('network');
+world.endRecognition(); await settle();
+expect(noted(/could not reach its service/), 'a blocked recogniser did not say why: ' + JSON.stringify(m.errors));
+expect(!noted(/returned nothing/), 'an error the recogniser reported was also reported as silence');
+expect(v.inputPath() === 'none', 'the mic still offers a recogniser that cannot reach its service (' + v.inputPath() + ')');
+`},
+		{"no_recogniser_in_this_browser", `const FV = load({ recognition: false });` + sequence + `
+expect(v.inputPath() === 'none', 'with no server and no recogniser the path is ' + v.inputPath());
+expect(noted(/no speech recognition of its own/) && noted(/typing/), 'a browser with no recogniser was not told plainly that the mic is off: ' + JSON.stringify(m.errors));
+m.errors.length = 0;
+await holdOnce(2);
+expect(world.fetches.length === 1 && world.recorders.length === 1, 'a press with no path recorded or uploaded anyway');
+expect(noted(/microphone is off/), 'a press with no path said nothing: ' + JSON.stringify(m.errors));
+`},
+		{"the_server_said_so_before_the_press", `const FV = load();
+const m = makeVoice(FV), v = m.v;
+v.setServerTranscription(null, 'server transcription is off: the transcription endpoint does not serve qwen3-asr-flash-2026-02-10');
+expect(v.inputPath() === 'browser', 'the path is ' + v.inputPath() + ', want browser');
+expect(/does not serve qwen3-asr-flash-2026-02-10/.test(v.serverWhy()), 'the server reason is not kept for the page: ' + v.serverWhy());
+v.startListening(); await settle();
+expect(world.fetches.length === 0 && world.recorders.length === 0, 'a deployment that said it cannot transcribe was still recorded for');
+expect(world.srStarts === 1, 'the browser recogniser did not start');
+`},
+	} {
+		t.Run(tc.name, func(t *testing.T) { runVoiceScenario(t, tc.scenario) })
+	}
+}
+
+// Problem 3 of 2026-09-17: push-to-talk stole the space bar.
+//
+// # What was wrong
+//
+// The page took Space for push-to-talk whenever focus was not the text box. So
+// Space on a focused Delete, New conversation or Send button held the
+// microphone instead of pressing the button, and Space on a checkbox did not
+// tick it. The shortcut exists for keyboard users (PRD AUD-06), and it made the
+// page's other controls unusable for exactly them.
+//
+// # The rule
+//
+// Space is push-to-talk only where it would otherwise do nothing but scroll.
+// Anything Space operates — buttons, checkboxes, links, selects, anything typed
+// into, and their ARIA equivalents — keeps it: not prevented, not pressed. The
+// mic button itself is the exception, because Space on it is holding it.
+func TestVoiceInput_SpaceOperatesAFocusedControlAndTalksEverywhereElse(t *testing.T) {
+	runVoiceScenario(t, `
+const FV = load();
+const on = {};
+const doc = { addEventListener: function (t, fn) { (on[t] = on[t] || []).push(fn); } };
+function el(tag, attrs) {
+  attrs = attrs || {};
+  return { tagName: tag, isContentEditable: !!attrs.editable,
+    getAttribute: function (n) { return attrs[n] == null ? null : attrs[n]; } };
+}
+const calls = [];
+let held = null;
+const hold = {
+  press: function (who) { if (held) return false; held = who; calls.push('press'); return true; },
+  release: function (who) { if (!held || held !== who) return false; held = null; calls.push('release'); return true; }
+};
+const mic = el('BUTTON');
+let micDisabled = false;
+FV.bindSpaceHold(doc, hold, { mic: mic, enabled: function () { return !micDisabled; } });
+function key(type, target, extra) {
+  const e = Object.assign({ type: type, code: 'Space', key: ' ', target: target, prevented: false,
+    preventDefault: function () { this.prevented = true; } }, extra || {});
+  (on[type] || []).forEach(function (fn) { fn(e); });
+  return e;
+}
+
+const operated = {
+  'a Delete button': el('BUTTON'), 'the New conversation button': el('BUTTON'), 'the Send button': el('BUTTON'),
+  'a checkbox': el('INPUT', { type: 'checkbox' }), 'the text box': el('INPUT', { type: 'text' }),
+  'a textarea': el('TEXTAREA'), 'a select': el('SELECT'), 'a link': el('A', { href: '#' }),
+  'a contenteditable': el('DIV', { editable: true }), 'a div with role=button': el('DIV', { role: 'button' }),
+  'a tree row with role=treeitem': el('LI', { role: 'treeitem' })
+};
+Object.keys(operated).forEach(function (name) {
+  calls.length = 0;
+  const down = key('keydown', operated[name]), up = key('keyup', operated[name]);
+  expect(!down.prevented && !up.prevented, 'Space on ' + name + ' was prevented, so it no longer operates it');
+  expect(calls.length === 0, 'Space on ' + name + ' held the microphone: ' + calls.join());
+});
+
+calls.length = 0;
+const body = el('BODY');
+const down = key('keydown', body);
+key('keydown', body, { repeat: true });
+const up = key('keyup', body);
+expect(down.prevented && up.prevented, 'Space with focus on the page itself was not taken for push-to-talk (the page would scroll)');
+expect(calls.join() === 'press,release', 'Space with focus on the page did not hold exactly once: ' + calls.join());
+
+calls.length = 0;
+key('keydown', mic); key('keyup', mic);
+expect(calls.join() === 'press,release', 'Space on the mic button is not holding it: ' + calls.join());
+
+calls.length = 0;
+key('keydown', null); key('keyup', null);
+expect(calls.join() === 'press,release', 'Space with no focused element did not hold: ' + calls.join());
+
+calls.length = 0;
+key('keydown', body, { ctrlKey: true }); key('keyup', body);
+expect(calls.length === 0, 'Ctrl+Space was taken for push-to-talk: ' + calls.join());
+
+calls.length = 0;
+micDisabled = true;
+const off = key('keydown', body); key('keyup', body);
+expect(calls.length === 0 && !off.prevented, 'Space held a disabled microphone: ' + calls.join());
+micDisabled = false;
+
+// A hold begun on the page ends when Space is let go, wherever focus is by then.
+calls.length = 0;
+key('keydown', body);
+key('keyup', operated['the Send button']);
+expect(calls.join() === 'press,release', 'a Space hold did not end on release after focus moved: ' + calls.join());
+`)
+}
+
+// The page uses both of the above.
+//
+// voice.js can be right and workbench.js still wire the old key handler, or
+// drop the server's reason on the floor. codeOnly strips comments, so the history
+// of the old handler can stay written beside the new one.
+func TestWorkbench_SpaceAndTheServerReasonAreWiredThroughVoiceJS(t *testing.T) {
+	b, err := assetFS.ReadFile("assets/workbench.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := codeOnly(string(b))
+	if !strings.Contains(js, "ForgeVoice.bindSpaceHold(document, hold") {
+		t.Error("the space bar is not bound through ForgeVoice.bindSpaceHold, so it is taken from focused buttons")
+	}
+	if strings.Contains(js, "e.code === 'Space'") {
+		t.Error("workbench.js still handles Space itself, beside or instead of bindSpaceHold")
+	}
+	if !strings.Contains(js, "voice.setServerTranscription(tr.server ? tr : null, tr.server ? '' : tr.reason)") {
+		t.Error("the workbench does not pass the server's reason to the voice layer, so nobody is told why FORGE does not transcribe")
 	}
 }

@@ -571,12 +571,9 @@ func userFacing(err error) string {
 // `transcription` tells the workbench whether push-to-talk can be transcribed
 // here and by which model, so the page can say which speech path it is using
 // before anybody presses the button — and pick the browser's recogniser only
-// when the server has none. "server": true means a model is CONFIGURED, not that
-// the endpoint serves it; a retired model is found on first use and reported
-// then, by name (see transcribe.go).
+// when the server has none. See transcriptionOf for what "server" means.
 func (h *ConverseHandlers) Models(w http.ResponseWriter, r *http.Request) {
-	_, transcriber := transcriberOf(h.deps.LLM)
-	transcription := map[string]any{"server": transcriber != "", "model": transcriber}
+	transcription := transcriptionOf(r.Context(), h.deps.LLM)
 	if h.deps.LLM == nil {
 		WriteJSON(w, http.StatusOK, map[string]any{"configured": false, "transcription": transcription})
 		return

@@ -9,10 +9,14 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/identity"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/llm"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/clock"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/config"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/errs"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/logx"
 )
 
 // The workbench's server-side speech to text.
@@ -294,5 +298,61 @@ func TestTranscribe_TheWorkbenchIsToldWhetherTheServerTranscribes(t *testing.T) 
 	}
 	if ok, _ := read(nil); ok {
 		t.Error("a deployment with no model client is reported as transcribing")
+	}
+}
+
+// The production failure of 2026-09-17, replayed through the real model client.
+//
+// # Why
+//
+// The endpoint listed fourteen models, none of them speech to text, and
+// /v1/meta/models still said "server": true because a model NAME was
+// configured. The page believed it, recorded the owner's first sentence, lost it
+// to a 501, and only then said so. "server" must now come from the endpoint's
+// own list, and "reason" must say why it is off in words an owner can act on.
+//
+// ‼️ Through llm.OpenAICompatible, not a stub: the stub has no model list, and
+// the property is exactly that the list is consulted.
+func TestTranscribe_TheServerDoesNotAdvertiseTranscriptionTheEndpointDoesNotServe(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/models" {
+			_, _ = w.Write([]byte(`{"data":[{"id":"qwen3.8-flash"},{"id":"qwen-audio-3.0-realtime-plus"},{"id":"qwen-audio-3.0-tts-plus"}]}`))
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	client := llm.NewOpenAICompatible(config.LLMConfig{
+		BaseURL: srv.URL, APIKey: "test-key", Transcriber: "qwen3-asr-flash-2026-02-10",
+		Converse: "qwen3.8-flash", RequestTimeout: 10 * time.Second,
+	}, logx.Discard(), clock.System{})
+
+	rec := httptest.NewRecorder()
+	transcribeHandlers(client).Models(rec, httptest.NewRequest("GET", "/v1/meta/models", nil))
+	var body struct {
+		Transcription struct {
+			Server   bool   `json:"server"`
+			Model    string `json:"model"`
+			Verified bool   `json:"verified"`
+			Reason   string `json:"reason"`
+		} `json:"transcription"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("%v: %s", err, rec.Body.String())
+	}
+	tr := body.Transcription
+	if tr.Server {
+		t.Fatalf("transcription is advertised from an endpoint that does not serve the model: %s", rec.Body.String())
+	}
+	if !tr.Verified || tr.Model != "qwen3-asr-flash-2026-02-10" {
+		t.Errorf("verified=%v model=%q, want a verified answer about the configured model", tr.Verified, tr.Model)
+	}
+	for _, want := range []string{"server transcription is off", "does not serve qwen3-asr-flash-2026-02-10", "FORGE_LLM_TRANSCRIBER_API_KEY"} {
+		if !strings.Contains(tr.Reason, want) {
+			t.Errorf("the advertised reason does not say %q: %s", want, tr.Reason)
+		}
+	}
+	if strings.Contains(rec.Body.String(), strings.TrimPrefix(srv.URL, "http://")) {
+		t.Errorf("the public /v1/meta/models names the provider host: %s", rec.Body.String())
 	}
 }

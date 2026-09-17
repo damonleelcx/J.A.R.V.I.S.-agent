@@ -3263,6 +3263,9 @@
     var path = voice.inputPath();
     var mic = $('mic');
     $('voice-path').textContent = voice.describePath();
+    // Why FORGE's own transcription is not the path, when it is not — the
+    // server's reason, readable before anybody presses the button.
+    $('voice-path').title = voice.serverWhy();
     mic.disabled = !!state.signedOut || path === 'none';
     mic.title = path === 'none' ? voice.whyUnavailable() : 'Hold to talk (or hold the space bar)';
 
@@ -3366,17 +3369,19 @@
 
     // Space bar as push-to-talk, so the interface is usable without a mouse
     // (PRD AUD-06). The same hold as the button, so the two cannot overlap.
-    document.addEventListener('keydown', function (e) {
-      if (e.code === 'Space' && document.activeElement !== $('say') && !$('mic').disabled) {
-        e.preventDefault();
-        if (!e.repeat) hold.press('space');
-      }
-      // Escape always stops FORGE talking — the deterministic silence PRD
-      // AUD-07 asks for, reachable without hunting for a button.
-      if (e.key === 'Escape') voice.stopSpeaking();
+    //
+    // ‼️ Through ForgeVoice.bindSpaceHold, which leaves Space alone on anything
+    // Space already operates. This used to take Space from every focused
+    // element but the text box, so Space on a focused Delete, New conversation
+    // or Send button held the microphone instead of pressing the button.
+    ForgeVoice.bindSpaceHold(document, hold, {
+      mic: $('mic'),
+      enabled: function () { return !$('mic').disabled; }
     });
-    document.addEventListener('keyup', function (e) {
-      if (e.code === 'Space') hold.release('space');
+    // Escape always stops FORGE talking — the deterministic silence PRD
+    // AUD-07 asks for, reachable without hunting for a button.
+    document.addEventListener('keydown', function (e) {
+      if (e.key === 'Escape') voice.stopSpeaking();
     });
 
     $('handsfree').addEventListener('change', function (e) {
@@ -3621,7 +3626,15 @@
       /* First, so a deployment with no model at all still tells the microphone
        * it has no transcriber. Until this arrives the voice layer assumes the
        * server transcribes: the upload names its own failure. */
-      if (voice) voice.setServerTranscription(m.transcription && m.transcription.server ? m.transcription : null);
+      /* The server says whether its endpoint really serves the model, and why
+       * not when it does not (see transcriptionOf in transcribe.go) — so a
+       * deployment with no usable transcriber starts on the browser's path and
+       * says why, instead of losing the first sentence to a 501. */
+      if (voice) {
+        var tr = m.transcription || {};
+        voice.setServerTranscription(tr.server ? tr : null, tr.server ? '' : tr.reason);
+        if (!tr.server && tr.model && tr.reason && voice.inputPath() !== 'none') voiceNote(voice.serverWhy());
+      }
       if (!m.configured) {
         $('models').textContent = 'no model configured';
         return;
