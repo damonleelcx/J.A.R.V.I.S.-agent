@@ -183,6 +183,15 @@ type treeSpan struct {
 // expandAssembliesTraced is expandAssemblies, recording every placement in spans
 // when spans is not nil. Nil costs one comparison per placement.
 func expandAssembliesTraced(d Document, spans *[]treeSpan) (Document, []Problem) {
+	return expandTree(d, spans, nil)
+}
+
+// expandTree is expandAssembliesTraced, walking only the placements `within` accepts
+// when it is not nil: a placement whose path it refuses is not walked, and nothing
+// beneath it is placed. Document.Subtree passes one that accepts only what can lead to
+// the path asked for (occurrencePrefix), so one car of a million-part fleet is placed
+// without placing the other 33.
+func expandTree(d Document, spans *[]treeSpan, within func(path []string) bool) (Document, []Problem) {
 	record := func(s treeSpan) {
 		if spans != nil {
 			*spans = append(*spans, s)
@@ -345,6 +354,9 @@ func expandAssembliesTraced(d Document, spans *[]treeSpan) (Document, []Problem)
 			for _, slot := range slots {
 				slotStart := len(out.Parts)
 				childPath := append(append([]string(nil), path...), c.ID+slot.suffix)
+				if within != nil && !within(childPath) {
+					continue
+				}
 				slotName := strings.Join(childPath, PathSeparator)
 				// The occurrence's display path, a label per level (see NameSeparator).
 				childLabel := c.Name

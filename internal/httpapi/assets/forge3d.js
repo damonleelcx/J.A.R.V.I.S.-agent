@@ -1883,7 +1883,7 @@
   /* geometry expandAssemblies: top-level parts, then every part the tree places.
    * definitionOf maps each placed part's id to the definition it came from. A
    * placement Go refuses is left out here too; Go says why, in the export notes. */
-  function expandAssemblies(spec) {
+  function expandAssemblies(spec, within) {
     var definitionOf = {};
     var hasTree = !!(spec.root || (spec.assemblies && spec.assemblies.length) ||
                      (spec.definitions && spec.definitions.length));
@@ -1959,6 +1959,10 @@
         for (var s = 0; s < slots.length; s++) {
           var slot = slots[s], slotStart = parts.length;
           var childPath = path.concat([cid + slot.suffix]);
+          /* Pruned to one occurrence path when asked (occurrencePrefix): a slot that can
+           * lead to nothing under that path is not walked, so one car of a million-part
+           * fleet is placed without placing the other 33. */
+          if (within && !within(childPath)) continue;
           var slotName = childPath.join(PATH_SEPARATOR);
           // The occurrence's display path, a label per level (tree.go, NameSeparator).
           var childNames = names.concat([(c.name || cid) + (slot.number ? ' ' + slot.number : '')]);
@@ -2068,11 +2072,13 @@
       'nothing was drawn.';
   }
 
-  function partsToDraw(spec) {
+  function partsToDraw(spec, under) {
     spec = spec || {};
-    if (drawRefusal(spec)) return [];
+    /* `under`, an occurrence path, draws only what that path places (partsUnder). Its
+     * caller bounds it, having counted it first (occurrencesUnder). */
+    if (!under && drawRefusal(spec)) return [];
     // The tree first, then repeats — the exporter's order (geometry.Expanded).
-    var tree = expandAssemblies(spec);
+    var tree = expandAssemblies(spec, under ? occurrencePrefix(under) : null);
     // Top-level features first, then the tree's, as the exporter orders them.
     // Standard parts after the tree and before the repeats, as geometry.Expanded does.
     var expanded = expandRepeats(expandStandards(tree.parts, spec.units), (spec.features || []).concat(tree.features));
@@ -2110,7 +2116,7 @@
         // back to the primitive.
         fromKernel: !!(mesh && mesh.triangles && mesh.triangles.length)
       };
-    });
+    }).filter(underFilter(under));
   }
 
   /* ---- Instanced drawing: what is drawn with what (Phase 6, stage W1) -----------
@@ -2321,6 +2327,198 @@
     return function (id, repeatOf) {
       return (!!repeatOf && repeatOf === p) || pattern.test(String(id || ''));
     };
+  }
+
+  function underFilter(path) {
+    if (!path) return function () { return true; };
+    var m = occurrenceMatcher(path);
+    return function (d) { return m(d.spec.id, d.repeatOf); };
+  }
+
+  /* ---- Browsing a design past the viewport's limit (2026-09-17) ------------------
+   *
+   * # The decision
+   *
+   * MAX_VIEWPORT_PARTS bounds what is DRAWN at once, not what may be browsed (taken by
+   * the coordinator under damon's delegation, after the workbench check found a stored
+   * 1,020,782-part design listed in the tree with nothing searchable and no row that
+   * would load). A design past it is still refused WHOLE (drawRefusal, in Go's words),
+   * and is then browsed a subtree at a time: a row loads when it is opened, selected or
+   * isolated, as long as what is drawn stays within the limit; a subtree that alone
+   * places more is refused by name, with its count; and search reads every occurrence
+   * the tree lists, not only what is drawn.
+   *
+   * # Why nothing here places the whole design
+   *
+   * Placing a million occurrences in the browser is ~10 s and over a gigabyte (the
+   * 30,023-part car alone: 302 ms and 35 MB in node). So each reader below walks only
+   * what it needs: occurrencePrefix prunes expandAssemblies to one path, and
+   * occurrencesUnder and searchTree read the tree's definitions and patterns without
+   * composing a frame or making a part. */
+
+  /* Whether a slot's path (an array of segments) can lead to an occurrence at or under
+   * `path`, by occurrenceMatcher's rule segment for segment: each segment it has so far
+   * matches the path's segment there, copy numbers allowed. */
+  function occurrencePrefix(path) {
+    var segs = String(path || '').split(PATH_SEPARATOR).map(function (seg) {
+      return new RegExp('^' + seg.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(-\\d+)*$');
+    });
+    return function (childPath) {
+      var n = Math.min(childPath.length, segs.length);
+      for (var i = 0; i < n; i++) if (!segs[i].test(childPath[i])) return false;
+      return true;
+    };
+  }
+
+  /* The occurrences one path places, as the list Studio draws them. */
+  function partsUnder(spec, path) {
+    return partsToDraw(spec || {}, String(path || ''));
+  }
+
+  /* The tree prepared once per call: each assembly's children, with what the exporter
+   * refuses left out as expandAssemblies leaves it out, and each definition's copies. */
+  function preparedTree(spec) {
+    var defs = {}, asms = {};
+    (spec.definitions || []).forEach(function (p) {
+      if (!p || !String(p.id || '').trim() || defs[p.id]) return;
+      defs[p.id] = p;
+    });
+    (spec.assemblies || []).forEach(function (a) {
+      if (!a || !String(a.id || '').trim() || asms[a.id] || defs[a.id]) return;
+      asms[a.id] = a;
+    });
+    var root = asms[spec.root] || null;
+    var attach = root ? makeAttachments(asms, spec.root) : null;
+    var children = {}, copies = {};
+    function childrenOf(a) {
+      if (children[a.id]) return children[a.id];
+      var ids = {}, out = [];
+      (a.children || []).forEach(function (c) {
+        c = c || {};
+        var cid = String(c.id || '');
+        if (!cid.trim() || cid.indexOf(PATH_SEPARATOR) >= 0 || ids[cid]) return;
+        ids[cid] = true;
+        if (!reflectionAcross(c.mirror || '')) return;
+        var sub = asms[c.ref], def = defs[c.ref];
+        if (!sub && !def) return;
+        var slots = patternCopies(c.pattern);
+        if (!slots || !attach.reference(a, c)) return;
+        out.push({ id: cid, label: c.name || cid, sub: sub || null, def: def || null, slots: slots });
+      });
+      return (children[a.id] = out);
+    }
+    function copiesOf(def) {
+      if (copies[def.id]) return copies[def.id];
+      return (copies[def.id] = expandRepeats([def], []).parts.map(function (lp) {
+        return { suffix: lp.id.indexOf(def.id) === 0 ? lp.id.slice(def.id.length) : lp.id, name: lp.name || lp.id };
+      }));
+    }
+    return { root: root, childrenOf: childrenOf, copiesOf: copiesOf };
+  }
+
+  /* How many parts `path` places, counted without placing them, so a refusal can say how
+   * many. The expansion's rules: what expandAssemblies leaves out is not counted. */
+  function occurrencesUnder(spec, path) {
+    spec = spec || {};
+    var within = occurrencePrefix(path), matcher = occurrenceMatcher(path), total = 0;
+    var top = expandRepeats(spec.parts || [], []);
+    top.parts.forEach(function (p) { if (matcher(p.id, top.copyOf[p.id] || '')) total++; });
+    if (!spec.root) return total;
+    var t = preparedTree(spec);
+    if (!t.root) return total;
+    var memo = {};
+    function all(a, onPath, depth) {   // everything one assembly places
+      if (depth >= MAX_TREE_DEPTH) return 0;
+      if (memo[a.id] !== undefined) return memo[a.id];
+      var n = 0;
+      t.childrenOf(a).forEach(function (c) {
+        if (c.sub && onPath[c.sub.id]) return;
+        if (!c.sub) { n += c.slots.length * t.copiesOf(c.def).length; return; }
+        onPath[c.sub.id] = true;
+        n += c.slots.length * all(c.sub, onPath, depth + 1);
+        delete onPath[c.sub.id];
+      });
+      return (memo[a.id] = n);
+    }
+    function walk(a, path, onPath) {
+      if (path.length >= MAX_TREE_DEPTH) return 0;
+      var n = 0;
+      t.childrenOf(a).forEach(function (c) {
+        if (c.sub && onPath[c.sub.id]) return;
+        c.slots.forEach(function (slot) {
+          var childPath = path.concat([c.id + slot.suffix]);
+          if (!within(childPath)) return;
+          var slotName = childPath.join(PATH_SEPARATOR);
+          if (!c.sub) {
+            t.copiesOf(c.def).forEach(function (lp) { if (matcher(slotName + lp.suffix, '')) n++; });
+            return;
+          }
+          onPath[c.sub.id] = true;
+          n += matcher(slotName, '') ? all(c.sub, onPath, childPath.length) : walk(c.sub, childPath, onPath);
+          delete onPath[c.sub.id];
+        });
+      });
+      return n;
+    }
+    var onPath = {};
+    onPath[t.root.id] = true;
+    return total + walk(t.root, [], onPath);
+  }
+
+  /* Studio.findOccurrences' answer for a design that is not placed in the browser: every
+   * occurrence the tree lists, in the exporter's order, matched on its path and name as
+   * findOccurrences matches them and labelled as occurrenceLabel labels them — without
+   * making a part. Fence: TestRendererBrowsesADesignPastTheViewportLimit. */
+  function searchTree(spec, query, limit) {
+    spec = spec || {};
+    var q = String(query || '').trim().toLowerCase(), found = [], total = 0;
+    limit = limit || 50;
+    if (!q) return { found: found, total: 0 };
+    function hit(id, label) {
+      total++;
+      if (found.length < limit) found.push({ id: id, label: label });
+    }
+    expandRepeats(expandStandards(spec.parts || [], spec.units), []).parts.forEach(function (p) {
+      var name = String(p.name || '');
+      if (String(p.id).toLowerCase().indexOf(q) >= 0 || name.toLowerCase().indexOf(q) >= 0) hit(p.id, name || p.id);
+    });
+    if (!spec.root) return { found: found, total: total };
+    var t = preparedTree(spec);
+    if (!t.root) return { found: found, total: total };
+    var stopped = false;
+    function walk(a, path, lowPath, names, depth, onPath) {
+      // expandAssemblies stops the whole walk at the depth limit, so this does too.
+      if (depth >= MAX_TREE_DEPTH) { stopped = true; return; }
+      var kids = t.childrenOf(a);
+      for (var i = 0; i < kids.length && !stopped; i++) {
+        var c = kids[i];
+        if (c.sub && onPath[c.sub.id]) continue;
+        var lowID = c.id.toLowerCase(), copies = c.sub ? null : t.copiesOf(c.def);
+        for (var s = 0; s < c.slots.length && !stopped; s++) {
+          var slot = c.slots[s];
+          var slotName = (path ? path + PATH_SEPARATOR : '') + c.id + slot.suffix;
+          var lowSlot = (path ? lowPath + PATH_SEPARATOR : '') + lowID + slot.suffix;
+          var childName = c.label + (slot.number ? ' ' + slot.number : '');
+          var childNames = names ? names + NAME_SEPARATOR + childName : childName;
+          if (c.sub) {
+            onPath[c.sub.id] = true;
+            walk(c.sub, slotName, lowSlot, childNames, depth + 1, onPath);
+            delete onPath[c.sub.id];
+            continue;
+          }
+          for (var j = 0; j < copies.length; j++) {
+            var lp = copies[j];
+            if ((lowSlot + lp.suffix.toLowerCase()).indexOf(q) < 0 &&
+                (childNames + NAME_SEPARATOR + lp.name).toLowerCase().indexOf(q) < 0) continue;
+            hit(slotName + lp.suffix, copies.length > 1 ? childName + NAME_SEPARATOR + lp.name : childName);
+          }
+        }
+      }
+    }
+    var onPath = {};
+    onPath[t.root.id] = true;
+    walk(t.root, '', '', '', 0, onPath);
+    return { found: found, total: total };
   }
 
   function buildGeometry(part) {
@@ -2630,6 +2828,9 @@
     this.canvas = canvas;
     this.onSelect = opts.onSelect || function () {};
     this.onError = opts.onError || function () {};
+    /* What the stage says about a design it browses rather than draws whole, and why a
+     * row did not load; '' when there is nothing to say. Falls back to onError. */
+    this.onNotice = opts.onNotice || null;
 
     /* WebGL2 first, WebGL1 with ANGLE_instanced_arrays second (Phase 6, stage W1;
      * decided 2026-09-15 to keep the WebGL1 path).
@@ -2713,6 +2914,18 @@
 
     var self = this;
     window.addEventListener('resize', function () { self._resize(); self.draw(); });
+    /* Hidden and shown again (2026-09-17). This is draw-on-demand, so nothing redraws a
+     * viewport whose pane comes back unless something asks: a pane re-shown at a new
+     * size without a window resize (a tab, a split, the desktop app's Browser pane)
+     * kept the buffer it had while hidden. Re-sized and redrawn when the page is
+     * visible again. Fence: TestRendererRedrawsWhenItsPaneIsShownAgain. */
+    if (typeof document !== 'undefined' && document && document.addEventListener) {
+      document.addEventListener('visibilitychange', function () {
+        if (document.visibilityState === 'hidden') return;
+        self._resize();
+        self.draw();
+      });
+    }
 
     /* Registered so a theme change repaints this viewport.
      *
@@ -2757,6 +2970,12 @@
 
   Studio.prototype._resize = function () {
     var dpr = Math.min(window.devicePixelRatio || 1, 2);
+    /* ‼️ A canvas with no size is HIDDEN (a collapsed pane, display: none), not small.
+     * Its buffer is kept rather than set to the 640×480 a canvas never sized starts
+     * with, so a resize while hidden does not leave the viewport drawing at the wrong
+     * size once shown; showing it sizes it again (visibilitychange, resize). */
+    if ((!this.canvas.clientWidth || !this.canvas.clientHeight) && this._sized) return;
+    this._sized = !!(this.canvas.clientWidth && this.canvas.clientHeight);
     var w = this.canvas.clientWidth || 640, h = this.canvas.clientHeight || 480;
     this.canvas.width = Math.floor(w * dpr);
     this.canvas.height = Math.floor(h * dpr);
@@ -3125,6 +3344,12 @@
   Studio.prototype.findOccurrences = function (query, limit) {
     var q = String(query || '').trim().toLowerCase(), found = [], total = 0;
     if (!q) return { found: found, total: 0 };
+    /* A browsed design lists every occurrence of its tree, drawn or not, and is not placed
+     * in the browser to be searched: the tree is walked instead (searchTree). */
+    if (this.lazy && this.lazy.browse) {
+      this.searchStats = { rows: 0, examined: 0, indexed: false, tree: true };
+      return searchTree(this.spec, q, limit || 50);
+    }
     var index = this._searchIndex || (this._searchIndex = searchIndex(this.parts));
     var candidates = null, k;
     if (q.length >= SEARCH_RUN) {
@@ -3223,8 +3448,18 @@
   var FIRST_VIEW_OCCURRENCES = 8192;
   var PLACEHOLDER_COLOUR = '#8a94a6', PLACEHOLDER_OPACITY = 0.18;
 
+  /* ‼️ A design past MAX_VIEWPORT_PARTS loads this way too, BROWSED (see "Browsing a
+   * design past the viewport's limit"): refused whole in Go's words, then drawn a subtree
+   * at a time within the limit. Until 2026-09-17 it was refused and nothing more. */
   function loadsLazily(spec) {
-    return !!(spec && spec.root) && !drawRefusal(spec) && occurrences(spec, MAX_VIEWPORT_PARTS) > LAZY_OCCURRENCES;
+    return !!(spec && spec.root) && occurrences(spec, MAX_VIEWPORT_PARTS) > LAZY_OCCURRENCES;
+  }
+
+  /* geometry Subtree.Refusal, in Go's words: one subtree that alone places more than the
+   * viewport draws at once. Fence: TestRendererBrowsesADesignPastTheViewportLimit. */
+  function subtreeRefusal(path, n) {
+    return 'The subtree ' + path + ' places ' + n + ' parts, more than ' + MAX_VIEWPORT_PARTS +
+      ', which is the most the FORGE viewport draws at once. Open a row beneath it instead; nothing was sent.';
   }
 
   /* What a first view asks for, by the policy above. */
@@ -3255,9 +3490,16 @@
     this.isolated = null;
     this._searchIndex = null;
     var refusal = drawRefusal(this.spec);
-    if (refusal) this.onError(refusal);
+    /* Past the limit the design is BROWSED: nothing is listed as parts up front (placing
+     * a million in the browser is seconds and a gigabyte), each row is placed when it is
+     * asked for, and the stage says so beside Go's refusal. */
+    var browse = !!refusal;
+    if (browse) {
+      this._notice(refusal + ' Open, select or isolate a row of the tree to draw that part of it; up to ' +
+        MAX_VIEWPORT_PARTS + ' parts are drawn at once.');
+    }
 
-    var drawn = partsToDraw(this.spec);
+    var drawn = browse ? [] : partsToDraw(this.spec);
     this.parts = drawn.map(function (d) {
       return { id: d.spec.id, spec: d.spec, removed: !!d.removed, repeatOf: d.repeatOf, fromKernel: false };
     });
@@ -3282,7 +3524,8 @@
       });
     });
     this.lazy = { request: request || function () {}, drawn: drawn, wide: wide, loaded: {}, pending: {},
-                  failed: {}, requested: [], matchers: {}, slots: slots, slotOrder: order, placeholder: null };
+                  failed: {}, requested: [], matchers: {}, slots: slots, slotOrder: order, placeholder: null,
+                  browse: browse, counts: {}, used: 0, recent: [] };
     this._placeholders();
     this._frameAll();
     firstViewPaths(this.spec).forEach(function (path) { self.requestSubtree(path); });
@@ -3314,6 +3557,27 @@
     path = String(path || '');
     if (!lazy || !path) return false;
     if (this._covered(path)) return false;
+    if (lazy.browse) {
+      /* Counted before anything is asked for or placed: a row that alone is past the
+       * limit is refused by name with its count, and room is made for one that is not
+       * by putting back the rows drawn longest ago. */
+      var n = occurrencesUnder(this.spec, path);
+      if (!n) return false;
+      if (n > MAX_VIEWPORT_PARTS) {
+        lazy.failed[path] = subtreeRefusal(path, n);
+        this._notice(lazy.failed[path]);
+        return false;
+      }
+      if (!this._makeRoom(path, n)) {
+        lazy.failed[path] = 'Drawing ' + path + ' (' + n + ' parts) as well as the rows still on their way would ' +
+          'draw more than ' + MAX_VIEWPORT_PARTS + ' parts at once, the most the FORGE viewport draws; ask again ' +
+          'when they have arrived. Nothing was sent.';
+        this._notice(lazy.failed[path]);
+        return false;
+      }
+      lazy.counts[path] = n;
+      lazy.used += n;
+    }
     lazy.pending[path] = true;
     delete lazy.failed[path];
     lazy.requested.push(path);
@@ -3331,12 +3595,24 @@
     var under = this._matcher(path);
     Object.keys(lazy.loaded).forEach(function (key) {
       if (!under(key, '')) return;
+      if (lazy.browse) { self._putBack(key); return; }
       var gone = lazy.loaded[key];
       gone.forEach(function (b) { releaseBatch(gl, b); });
       self.batches = self.batches.filter(function (b) { return gone.indexOf(b) < 0; });
       delete lazy.loaded[key];
     });
-    var drawn = lazy.drawn.filter(function (d) { return under(d.spec.id, d.repeatOf); });
+    var drawn = lazy.browse ? partsUnder(this.spec, path)
+      : lazy.drawn.filter(function (d) { return under(d.spec.id, d.repeatOf); });
+    var framed = !lazy.browse || this.parts.length > 0;
+    if (lazy.browse) {
+      lazy.used += drawn.length - (lazy.counts[path] || 0);
+      lazy.counts[path] = drawn.length;
+      lazy.recent.push(path);
+      this.parts = this.parts.concat(drawn.map(function (d) {
+        return { id: d.spec.id, spec: d.spec, removed: !!d.removed, repeatOf: d.repeatOf, fromKernel: false };
+      }));
+      this._searchIndex = null;
+    }
     var plan = drawBatches(drawn, reply || null, { wide: lazy.wide, toMM: unitToMM(this.spec.units) });
     var batches = plan.batches.map(function (p) {
       p.key = path + '|' + p.key;
@@ -3346,14 +3622,54 @@
     this.batches = this.batches.concat(batches);
     this.approximations = this.approximations.concat(plan.approximations);
     this._placeholders();
+    if (lazy.browse) {
+      // A browsed design has no boxes to frame before its first row arrives.
+      if (!framed) this._frameAll();
+      this._notice('');
+    }
     this.draw();
     return drawn.length;
+  };
+
+  /* Say something about the stage, or clear it with ''. */
+  Studio.prototype._notice = function (msg) {
+    if (this.onNotice) this.onNotice(msg || '');
+    else if (msg) this.onError(msg);
+  };
+
+  /* A browsed row put back: its batches released and its parts no longer listed. */
+  Studio.prototype._putBack = function (key) {
+    var lazy = this.lazy, gl = this.gl, gone = lazy.loaded[key] || [], under = this._matcher(key);
+    gone.forEach(function (b) { releaseBatch(gl, b); });
+    this.batches = this.batches.filter(function (b) { return gone.indexOf(b) < 0; });
+    delete lazy.loaded[key];
+    lazy.used -= lazy.counts[key] || 0;
+    delete lazy.counts[key];
+    lazy.recent = lazy.recent.filter(function (k) { return k !== key; });
+    this.parts = this.parts.filter(function (p) { return !under(p.id, p.repeatOf); });
+    this._searchIndex = null;
+  };
+
+  /* Room for n more parts within MAX_VIEWPORT_PARTS: rows under `path` will be replaced
+   * by it, and the rows drawn longest ago are put back until it fits. False when even
+   * that is not enough, because rows still on their way hold the room. */
+  Studio.prototype._makeRoom = function (path, n) {
+    var lazy = this.lazy, under = this._matcher(path), self = this;
+    var replaced = 0;
+    Object.keys(lazy.loaded).forEach(function (key) { if (under(key, '')) replaced += lazy.counts[key] || 0; });
+    var others = lazy.recent.filter(function (key) { return !under(key, ''); });
+    while (lazy.used - replaced + n > MAX_VIEWPORT_PARTS && others.length) self._putBack(others.shift());
+    return lazy.used - replaced + n <= MAX_VIEWPORT_PARTS;
   };
 
   /* A request the host could not answer: the path stays a box, and may be asked again. */
   Studio.prototype.failSubtree = function (path, why) {
     if (!this.lazy || !this.lazy.pending[path]) return;
     delete this.lazy.pending[path];
+    if (this.lazy.browse) {
+      this.lazy.used -= this.lazy.counts[path] || 0;
+      delete this.lazy.counts[path];
+    }
     this.lazy.failed[path] = why || true;
   };
 
@@ -3362,7 +3678,10 @@
     if (!lazy) return null;
     return { loaded: Object.keys(lazy.loaded), pending: Object.keys(lazy.pending),
              failed: Object.keys(lazy.failed), requested: lazy.requested.slice(),
-             placeholders: lazy.placeholder ? lazy.placeholder.n : 0 };
+             placeholders: lazy.placeholder ? lazy.placeholder.n : 0,
+             browse: !!lazy.browse, drawn: lazy.browse ? lazy.used : this.parts.length,
+             refusals: Object.keys(lazy.failed).map(function (k) { return lazy.failed[k]; })
+               .filter(function (w) { return typeof w === 'string'; }) };
   };
 
   /* One box per top-level slot that no loaded path covers yet. */
@@ -4414,6 +4733,9 @@
      * for the fence that holds a row's reach to what Go places under it (W2, W3). */
     treeChildren: treeChildren,
     occurrenceMatcher: occurrenceMatcher,
+    /* Browsing a design past the viewport's limit (2026-09-17): one path's parts, how
+     * many a path places, and a search over what the tree lists — none places the whole. */
+    partsUnder: partsUnder, occurrencesUnder: occurrencesUnder, searchTree: searchTree,
     /* Whether a design is loaded a subtree at a time, and what its first view asks for
      * (W2): exported for the workbench, and for the fence that holds the policy. */
     loadsLazily: loadsLazily,
