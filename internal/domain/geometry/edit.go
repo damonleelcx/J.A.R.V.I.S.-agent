@@ -167,7 +167,9 @@ func (e Edit) ApplyAndReport(base Document) (Document, []Reached, []Problem) {
 		out.Features = kept
 		if !found {
 			fail("cannot remove feature %q, which is not in this assembly", id)
+			continue
 		}
+		reached = append(reached, Reached{Kind: "feature", ID: id, Removed: true})
 	}
 
 	for _, name := range e.Remove.Definitions {
@@ -234,6 +236,7 @@ func (e Edit) ApplyAndReport(base Document) (Document, []Reached, []Problem) {
 		}
 		for _, in := range p.Features {
 			out.Features = upsertFeature(out.Features, in)
+			reached = append(reached, Reached{Kind: "feature", ID: in.ID})
 		}
 		// The design of a tree, by id and whole, like parts: a definition changed here
 		// changes every placement of it. Named by a placed path, the entry takes the
@@ -284,7 +287,14 @@ func (e Edit) ApplyAndReport(base Document) (Document, []Reached, []Problem) {
 	if touchesTree {
 		after = placedTreeOf(out)
 	}
-	return out, fillReached(reached, base, out, before, after), problems
+	reached = fillReached(reached, base, out, before, after)
+	// Last, because what follows a parameter is what nothing above already reported.
+	if e.Patch != nil {
+		if r, ok := parameterReach(base, out, e.Patch, reached); ok {
+			reached = append(reached, r)
+		}
+	}
+	return out, reached, problems
 }
 
 func upsertPart(list []Part, in Part) []Part {

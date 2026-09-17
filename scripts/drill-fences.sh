@@ -4280,6 +4280,111 @@ drill "the workbench gives Space no refusal note" internal/httpapi/assets/workbe
   ./internal/httpapi 'TestWorkbench_SpaceAndTheServerReasonAreWiredThroughVoiceJS'
 
 echo
+echo "Model semantics: repeat counts, rounded literals, what a parameter reached, a wheel in the kernel"
+# Added 2026-09-17 (geometry/remaining). E2: a definition's own repeat is multiplied
+# into how many times it is placed, and "repeat" in Changed names a layout change. The
+# literal-position note reads a coordinate to the digits it was written with. E1: an
+# edit that changes a parameter, a derived value or a feature says which placed parts
+# it reached, measured by binding both documents. And a car's wheels with lug nuts on a
+# polar pattern, attached across assemblies, are built in the real kernel (the two
+# kernel drills need FORGE_CAD_PYTHON, and are UNPROVEN without it).
+drill "a definition's own repeat is not multiplied into its count" internal/domain/geometry/compare_structure.go \
+  's = s.replace("m[c.Ref] = sat(m[c.Ref] + mul(k, own))", "m[c.Ref] = sat(m[c.Ref] + k)", 1)' \
+  ./internal/domain/geometry 'TestCompare_ADefinitionsOwnRepeatIsMultipliedIntoItsCount'
+
+drill "a change in how many copies is reported as a changed field too" internal/domain/geometry/compare_structure.go \
+  's = s.replace("if repeatCount(a) < 2 || repeatCount(b) < 2 {\n\t\t\treturn true", "if a.Repeat == nil || b.Repeat == nil {\n\t\t\treturn a.Repeat == nil && b.Repeat == nil", 1)' \
+  ./internal/domain/geometry 'TestCompare_ADefinitionsOwnRepeatIsMultipliedIntoItsCount'
+
+drill "copies laid out differently are not compared" internal/domain/geometry/compare_structure.go \
+  's = s.replace("return ra.About == rb.About && sameAngle(ra.Angle, rb.Angle) && l.vector(ra.Offset, rb.Offset)", "return true", 1)' \
+  ./internal/domain/geometry 'TestCompare_ADefinitionsOwnRepeatIsMultipliedIntoItsCount'
+
+drill "an unplaced definition's copies change unseen" internal/domain/geometry/compare_structure.go \
+  's = s.replace("\t\trow.Changed = repeatChanged(row, m)\n", "", 1)' \
+  ./internal/domain/geometry 'TestCompare_ADefinitionsOwnRepeatIsMultipliedIntoItsCount'
+
+drill "a rounded parameter value is never read" internal/agent/literals.go \
+  's = s.replace("forms, held := formsWithin(lengths, lit, writtenTolerance(lit))", "forms, held := formsWithin(lengths, lit, exactly)", 1)' \
+  ./internal/agent 'TestAssemble_AStepThatRoundsAParametersValueIsToldWhichParameter'
+
+drill "a coordinate is read past the last digit written" internal/agent/literals.go \
+  's = s.replace("half = 0.5 * math.Pow10(-(len(text) - dot - 1))", "half = 5 * math.Pow10(-(len(text) - dot - 1))", 1)' \
+  ./internal/agent 'TestAssemble_AStepThatRoundsAParametersValueIsToldWhichParameter'
+
+drill "a coarse number is read as a small value rounded" internal/agent/literals.go \
+  's = s.replace("if half > maxRoundingShare*math.Abs(target) {", "if false {", 1)' \
+  ./internal/agent 'TestAssemble_AStepThatRoundsAParametersValueIsToldWhichParameter'
+
+drill "a rounded match is taken before an exact one" internal/agent/literals.go \
+  's = s.replace("if forms, held := formsWithin(lengths, lit, exactly); len(forms) > 0 {", "if forms, held := formsWithin(lengths, lit, writtenTolerance(lit)); len(forms) > 0 {", 1)' \
+  ./internal/agent 'TestAssemble_AStepThatRoundsAParametersValueIsToldWhichParameter'
+
+drill "a rounded group is headed by the typed number" internal/agent/literals.go \
+  's = s.replace("headline = list[0].held", "headline = list[0].value", 1)' \
+  ./internal/agent 'TestAssemble_AStepThatRoundsAParametersValueIsToldWhichParameter'
+
+drill "the note does not say a value was read rounded" internal/agent/literals.go \
+  's = s.replace("holds += \" to the digits written\"", "holds += \"\"", 1)' \
+  ./internal/agent 'TestAssemble_AStepThatRoundsAParametersValueIsToldWhichParameter'
+
+drill "a parameter change is not traced to parts" internal/domain/geometry/edit.go \
+  's = s.replace("if r, ok := parameterReach(base, out, e.Patch, reached); ok {", "if r, ok := parameterReach(base, out, e.Patch, reached); ok && false {", 1)' \
+  ./internal/domain/geometry 'TestEdit_AParameterChangeReportsThePlacedPartsThatFollowIt'
+
+drill "what follows a parameter is read off unbound documents" internal/domain/geometry/edit_paths.go \
+  's = s.replace("\t\tc.bind(false)\n", "", 1)' \
+  ./internal/domain/geometry 'TestEdit_AParameterChangeReportsThePlacedPartsThatFollowIt'
+
+drill "a part another entry reports is reported again under the parameter" internal/domain/geometry/edit_paths.go \
+  's = s.replace("(!ok || !reflect.DeepEqual(old, p)) && !reported[p.ID] {", "(!ok || !reflect.DeepEqual(old, p)) {", 1)' \
+  ./internal/domain/geometry 'TestEdit_AParameterChangeReportsThePlacedPartsThatFollowIt'
+
+drill "a parameter restated at its value is reported" internal/domain/geometry/edit_paths.go \
+  's = s.replace("ok && (was.Value != in.Value || was.Unit != in.Unit)", "ok && (true || was.Value != in.Value || was.Unit != in.Unit)", 1)' \
+  ./internal/domain/geometry 'TestEdit_AParameterChangeReportsThePlacedPartsThatFollowIt'
+
+drill "a newly declared parameter is reported" internal/domain/geometry/edit_paths.go \
+  's = s.replace("if was, ok := parameterNamed(base, in.Name); ok && (", "if was, ok := parameterNamed(base, in.Name); !ok || (", 1)' \
+  ./internal/domain/geometry 'TestEdit_AParameterChangeReportsThePlacedPartsThatFollowIt'
+
+drill "a patched feature is not reported" internal/domain/geometry/edit.go \
+  's = s.replace("reached = append(reached, Reached{Kind: \"feature\", ID: in.ID})", "_ = in", 1)' \
+  ./internal/domain/geometry 'TestEdit_AFeatureChangeReportsThePartsItActsOn'
+
+drill "a removed feature is not reported" internal/domain/geometry/edit.go \
+  's = s.replace("reached = append(reached, Reached{Kind: \"feature\", ID: id, Removed: true})", "_ = id", 1)' \
+  ./internal/domain/geometry 'TestEdit_AFeatureChangeReportsThePartsItActsOn'
+
+drill "a feature's repeated tool is reported as its authored id" internal/domain/geometry/edit_paths.go \
+  's = s.replace("was, is = wasFeatures.targets(r.ID), isFeatures.targets(r.ID)", "was, is = authoredTargets(base, r.ID), authoredTargets(out, r.ID)", 1)' \
+  ./internal/domain/geometry 'TestEdit_AFeatureChangeReportsThePartsItActsOn'
+
+drill "a feature is silent whatever it reached" internal/agent/converse.go \
+  's = s.replace("if r.Kind == \"feature\" && sameIDs(r.Occurrences, r.Named) {", "if r.Kind == \"feature\" {", 1)' \
+  ./internal/agent 'TestResolveEdit_AParameterOrFeatureEditSaysWhatItReached'
+
+drill "every feature edit leaves a note" internal/agent/converse.go \
+  's = s.replace("if r.Kind == \"feature\" && sameIDs(r.Occurrences, r.Named) {", "if false {", 1)' \
+  ./internal/agent 'TestResolveEdit_AParameterOrFeatureEditSaysWhatItReached'
+
+drill "a parameter nothing follows reads as a design nothing places" internal/agent/converse.go \
+  's = s.replace("case n == 0 && r.Kind == \"parameter\":", "case n == 0 && r.Kind == \"parameter\" && false:", 1)' \
+  ./internal/agent 'TestResolveEdit_AParameterOrFeatureEditSaysWhatItReached'
+
+drill "a polar pattern turns its copies about z whatever it says" internal/domain/geometry/pattern.go \
+  's = s.replace("at.m = RotationMatrix(axisRotation(p.About,", "at.m = RotationMatrix(axisRotation(\"z\",", 1)' \
+  ./internal/agent 'TestKernelCar_LugNutsOnAPolarPatternAcrossAssembliesSitOnTheRimFace'
+
+drill "a catalogued nut is not stood on its Y" internal/domain/geometry/standard.go \
+  's = s.replace("then(placementOf(nil, []float64{-90, 0, 0}, false))", "then(placementOf(nil, []float64{0, 0, 0}, false))", 1)' \
+  ./internal/agent 'TestKernelCar_LugNutsOnAPolarPatternAcrossAssembliesSitOnTheRimFace'
+
+drill "a nut swallowed by its rim is not called buried" internal/domain/geometry/interference.go \
+  's = s.replace("const BuriedFraction = 0.5", "const BuriedFraction = 1.5", 1)' \
+  ./internal/agent 'TestKernelCar_LugNutsRingedAtTheWheelsCentreAreReportedBuried'
+
+echo
 
 if [ "$MODE" = "list" ]; then
   exit 0
