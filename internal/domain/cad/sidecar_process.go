@@ -57,6 +57,15 @@ type sidecar struct {
 	// kernel when the pool was made. Each slot holds its own so the deadline
 	// goroutine below kills this process and reads nothing shared.
 	timeout time.Duration
+	// startLimit is how long this process may take to start, copied from the
+	// kernel like timeout.
+	startLimit time.Duration
+	// home is the pool this slot goes back to; abandon uses it, because the
+	// build that took the slot has already returned.
+	home chan *sidecar
+	// abandoned is set while a cancelled caller's build finishes for nobody, so
+	// Close can end it rather than wait up to its limit.
+	abandoned atomic.Bool
 
 	// proc guards cmd, because kill is also called by the deadline goroutine in
 	// roundTrip while the holder is blocked reading, and stop clears cmd after.
@@ -74,7 +83,7 @@ func (k *Kernel) pool() chan *sidecar {
 	k.once.Do(func() {
 		k.slots = make(chan *sidecar, k.size)
 		for i := 0; i < k.size; i++ {
-			s := &sidecar{python: k.python, log: k.log, slot: i, timeout: k.timeout}
+			s := &sidecar{python: k.python, log: k.log, slot: i, timeout: k.timeout, startLimit: k.startLimit, home: k.slots}
 			k.all = append(k.all, s)
 			k.slots <- s
 		}
@@ -96,6 +105,47 @@ func (k *Kernel) acquire(ctx context.Context) (*sidecar, error) {
 // release puts a process back for the next build.
 func (k *Kernel) release(s *sidecar) { k.slots <- s }
 
+// Prestart starts every process in the pool that is not running yet, one at a
+// time, and returns when they have started or ctx has ended. forged calls it in
+// the background at boot (FORGE_CAD_PRESTART); a kernel with no interpreter
+// starts nothing. A process that fails to start is logged and left for the first
+// build to start, exactly as if Prestart had not run.
+//
+// # Why, and why not a second process (#93's open item, #125's decision)
+//
+// A design loaded a subtree at a time asks for up to a dozen subtree meshes at
+// once, and they queue for the one process forged has. #125 measured that queue
+// at forged's 1 CPU: it is a CPU limit — a second process was slower in every run
+// and two kernels want ~1,010 MiB of the pod's 1 GiB — so the queue stays. What
+// is not CPU is the first request paying build123d's import in front of the whole
+// queue: 9.3 s of #93's 17.2 s cold first view. Starting the process before
+// anybody asks takes that off the person, and costs no memory a first view would
+// not take anyway: a started process is kept for the life of forged.
+// Fence: TestKernel_APrestartedKernelAnswersTheFirstQueueWithoutPayingForAStart.
+//
+// Each slot is taken the way a build takes it, so a build that arrives while a
+// process is starting waits for that start instead of beginning a second one.
+func (k *Kernel) Prestart(ctx context.Context) error {
+	if !k.Available() {
+		return nil
+	}
+	var first error
+	for i := 0; i < k.size; i++ {
+		s, err := k.acquire(ctx)
+		if err != nil {
+			return err
+		}
+		if err := s.start(ctx); err != nil && ctx.Err() == nil {
+			k.log.Warn(ctx, logx.EventCADPrestartFailed, "slot", s.slot, "detail", err.Error())
+			if first == nil {
+				first = err
+			}
+		}
+		k.release(s)
+	}
+	return first
+}
+
 // Close stops every process in the pool. Safe on a kernel that was never started.
 //
 // It takes every slot first, so it waits for the builds in flight exactly as the
@@ -105,6 +155,12 @@ func (k *Kernel) Close() {
 		return
 	}
 	slots := k.pool()
+	// A build nobody is waiting for is ended rather than waited for.
+	for _, s := range k.all {
+		if s.abandoned.Load() {
+			s.kill()
+		}
+	}
 	held := make([]*sidecar, 0, k.size)
 	for i := 0; i < k.size; i++ {
 		s := <-slots
@@ -118,9 +174,10 @@ func (k *Kernel) Close() {
 
 // roundTrip sends one request and reads one reply. Caller holds the slot.
 //
-// It returns a *lateError when this slot's process was killed because time ran
-// out — the limit or the caller's context — which is the one failure
-// BuildDocument does not retry.
+// It returns a *lateError when time ran out — the limit or the caller's deadline,
+// and this slot's process was killed for it — or when the caller cancelled, in
+// which case the process is left to finish and the slot comes back by itself
+// (abandon). Neither is retried.
 //
 // limit is the slot's own timeout for every build but the off-node export job's,
 // which passes exportJobTimeout (cad.go, ExportSTEPJob). The holder chooses it
@@ -203,7 +260,18 @@ func (s *sidecar) roundTrip(ctx context.Context, req request, limit time.Duratio
 		case <-done:
 			return
 		case <-ctx.Done():
-			why = &lateError{caller: ctx.Err()}
+			if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+				why = &lateError{caller: ctx.Err()}
+				break
+			}
+			// A caller that CANCELLED is no reason to kill: its round trip is
+			// abandoned below and finishes for nobody. The limit still holds.
+			select {
+			case <-done:
+				return
+			case <-timer.C:
+				why = &lateError{limit: limit}
+			}
 		case <-timer.C:
 			why = &lateError{limit: limit}
 		}
@@ -225,26 +293,94 @@ func (s *sidecar) roundTrip(ctx context.Context, req request, limit time.Duratio
 		return late
 	}
 
-	if _, err := s.stdin.Write(append(body, '\n')); err != nil {
-		if late := finish(); late != nil {
-			return nil, late
+	// The write and the read run on their own goroutine so a caller that cancels
+	// can stop waiting for them. They own this request's reply line: nothing else
+	// reads this process's stdout until they have read it or the process is dead.
+	stdin, stdout := s.stdin, s.stdout
+	read := make(chan exchange, 1)
+	go func() {
+		if _, err := stdin.Write(append(body, '\n')); err != nil {
+			read <- exchange{err: fmt.Errorf("writing to the kernel: %w", err)}
+			return
 		}
-		return nil, fmt.Errorf("writing to the kernel: %w", err)
+		line, err := stdout.ReadBytes('\n')
+		if err != nil {
+			err = fmt.Errorf("reading from the kernel: %w", err)
+		}
+		read <- exchange{line: line, err: err}
+	}()
+
+	var got exchange
+	select {
+	case got = <-read:
+	case <-ctx.Done():
+		if !errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			// ‼️ A caller that CANCELLED — a closed tab, a navigation away — gets its
+			// answer now, and the process is NOT killed. Until 2026-09-17 the
+			// goroutine above killed it, so the next person to open a design paid
+			// build123d's import (seconds) for a build nobody was reading.
+			//
+			// The build finishes for nobody and its reply is read and discarded
+			// BEFORE the slot goes back to the pool (abandon): the protocol is one
+			// request, one line, on one pipe, so a slot handed back with that line
+			// still unread would give the next caller this build's answer. Past its
+			// limit the goroutine above still kills it, and a crash still resets it.
+			// Fence: TestKernel_ACancelledCallerLeavesItsProcessToFinishAndServeTheNextBuild.
+			s.abandon(ctx, read, finish)
+			return nil, &lateError{caller: ctx.Err(), abandoned: true}
+		}
+		// The caller's DEADLINE ended: the goroutine above is killing the process
+		// for it, which ends the read.
+		got = <-read
 	}
-	line, err := s.stdout.ReadBytes('\n')
 	if late := finish(); late != nil {
 		// Time ran out first and the process was killed for it, whatever the read
 		// returned: a reply that raced the kill came from a process that is gone.
 		return nil, late
 	}
-	if err != nil {
-		return nil, fmt.Errorf("reading from the kernel: %w", err)
+	if got.err != nil {
+		return nil, got.err
 	}
 	var res reply
-	if err := json.Unmarshal(line, &res); err != nil {
+	if err := json.Unmarshal(got.line, &res); err != nil {
 		return nil, fmt.Errorf("the kernel wrote something that is not a reply: %w", err)
 	}
 	return &res, nil
+}
+
+// exchange is what one request's write and read came to.
+type exchange struct {
+	line []byte
+	err  error
+}
+
+// abandon finishes a round trip whose caller cancelled, for nobody, and then puts
+// the slot back in the pool. The caller of roundTrip must NOT release the slot
+// (lateError.abandoned says so).
+//
+// It waits for the reply line — or for the process to die, whether killed at its
+// limit, by Close, or by a crash — before the slot is reused, so a later build can
+// never read this build's answer. A process that answered is kept; one that did not
+// is stopped, so the next build starts a fresh one instead of meeting EOF.
+func (s *sidecar) abandon(ctx context.Context, read <-chan exchange, finish func() *lateError) {
+	bg := context.WithoutCancel(ctx)
+	s.abandoned.Store(true)
+	go func() {
+		got := <-read
+		late := finish()
+		if late != nil || got.err != nil {
+			detail := "the process died while finishing a build nobody was waiting for"
+			if late != nil {
+				detail = late.Error()
+			} else if got.err != nil {
+				detail = got.err.Error()
+			}
+			s.stop()
+			s.log.Warn(bg, logx.EventCADRestarted, "slot", s.slot, "abandoned", true, "detail", detail)
+		}
+		s.abandoned.Store(false)
+		s.home <- s
+	}()
 }
 
 func (s *sidecar) start(ctx context.Context) error {
@@ -321,9 +457,9 @@ func (s *sidecar) start(ctx context.Context) error {
 			}
 			return errors.New(detail)
 		}
-	case <-time.After(startTimeout):
+	case <-time.After(s.startLimit):
 		s.stop()
-		return fmt.Errorf("the CAD kernel did not start within %s", startTimeout)
+		return &startTimeoutError{limit: s.startLimit}
 	case <-ctx.Done():
 		s.stop()
 		return ctx.Err()

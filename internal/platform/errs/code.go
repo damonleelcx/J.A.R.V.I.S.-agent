@@ -310,11 +310,13 @@ var registry = map[Code]Definition{
 	// again. The mesh fetch and the agent's render fall back to primitives on any
 	// failure and never read the flag. A build that only crossed the limit because
 	// the machine was busy is the exception, and a person can still ask again.
-	// ‼️ The "30 seconds" in the remedy is cad.buildTimeout; the kernel's own fence
+	// ‼️ The "30 seconds" in the remedy is cad.buildTimeout, the default of
+	// FORGE_CAD_BUILD_TIMEOUT; the kernel's own fence
 	// (TestKernel_ABuildThatRunsOutOfTimeIsNotRetriedAndSaysSo) fails if they drift.
+	// The limit a build actually had is in its detail.
 	CodeKernelTimeout: {CodeKernelTimeout, CategoryExternal, 504,
 		"The CAD kernel took too long: it was still building this design when the time a build is allowed ran out, so the build was stopped. The kernel itself is working.",
-		"Do not ask for the same build again straight away: it will take as long again. Build part of the design at a time (open one subassembly), or split the assembly into smaller subassemblies. A kernel build is allowed 30 seconds.", false},
+		"Do not ask for the same build again straight away: it will take as long again. Build part of the design at a time (open one subassembly), or split the assembly into smaller subassemblies. A kernel build is allowed 30 seconds unless the deployment sets FORGE_CAD_BUILD_TIMEOUT.", false},
 	CodeToolRefused: {CodeToolRefused, CategoryBusiness, 403,
 		"The policy plane declined to run this tool for this goal.",
 		"Raise the goal's autonomy level or grant the missing capability if that is appropriate. A prohibited (R5) action is refused regardless of permissions.", false},

@@ -46,6 +46,10 @@ const envDir = "FORGE_CAD_FAKE_KERNEL_DIR"
 // deadline while the process is still starting (SlowStart).
 const envStartDelay = "FORGE_CAD_FAKE_KERNEL_START_DELAY"
 
+// envBuildDelay holds every answer back, so a fence can queue several builds for
+// one process and time how long each waited (SlowBuilds).
+const envBuildDelay = "FORGE_CAD_FAKE_KERNEL_BUILD_DELAY"
+
 // RunIfAsked becomes the fake kernel, and exits, when this process was started as
 // one. Call it first in TestMain.
 func RunIfAsked() {
@@ -76,6 +80,14 @@ func SlowStart(t *testing.T, d time.Duration) {
 	t.Setenv(envStartDelay, d.String())
 }
 
+// SlowBuilds makes every fake kernel process started after it answer each build
+// only after d — the stand-in for a real build's seconds, so the time a build
+// spends waiting for a process can be told apart from the time it spends in one.
+func SlowBuilds(t *testing.T, d time.Duration) {
+	t.Helper()
+	t.Setenv(envBuildDelay, d.String())
+}
+
 // Starts is how many fake kernel processes have started so far.
 func Starts(t *testing.T, dir string) int {
 	t.Helper()
@@ -101,6 +113,7 @@ func serve(dir string) int {
 		time.Sleep(d)
 	}
 	fmt.Println(`{"ready":true}`)
+	buildDelay, _ := time.ParseDuration(os.Getenv(envBuildDelay))
 	in := bufio.NewReaderSize(os.Stdin, 1<<20)
 	for {
 		line, err := in.ReadBytes('\n')
@@ -139,6 +152,7 @@ func serve(dir string) int {
 				return 3
 			}
 		}
+		time.Sleep(buildDelay)
 		fmt.Printf("{\"ok\":true,\"parts\":%d}\n", len(req.Solids))
 	}
 }
