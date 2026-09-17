@@ -145,9 +145,14 @@
   var CONV_KEY = 'forge.workbench.conversation';
 
   function rememberConversation(id) {
-    if (!id || id === state.conversationID) return;
-    state.conversationID = id;
-    try { window.localStorage.setItem(CONV_KEY, id); } catch (e) { /* not fatal */ }
+    adoptConversation(state, storage(), id);
+  }
+
+  /* State only, so the new-conversation fence can run it in node. */
+  function adoptConversation(s, store, id) {
+    if (!id || id === s.conversationID) return;
+    s.conversationID = id;
+    try { store.setItem(CONV_KEY, id); } catch (e) { /* not fatal */ }
   }
 
   function rememberProject(id) {
@@ -201,6 +206,11 @@
 
     return fetch('/v1/conversations/' + encodeURIComponent(id))
       .then(function (r) {
+        /* ‼️ "New conversation" pressed while this read was on its way. The
+         * page has moved on, and painting the old turns into the new pane —
+         * or forgetting an id the new conversation has since been given —
+         * would undo it. */
+        if (state.conversationID !== id) return null;
         if (r.status === 404) {
           /* Deleted, or never this person's. Forgetting the key is right: a
            * workbench that kept asking for a conversation that is gone would
@@ -211,6 +221,7 @@
         return r.ok ? r.json() : null;
       })
       .then(function (b) {
+        if (state.conversationID !== id) return false;
         if (!b || !b.turns || !b.turns.length) return false;
         b.turns.forEach(function (t) {
           var who = t.role === 'human' ? 'you' : 'forge';
@@ -251,6 +262,145 @@
     try { window.localStorage.removeItem(CONV_KEY); } catch (e) { /* not fatal */ }
   }
 
+  /* ---- a new conversation (2026-09-17) ---------------------------------
+   *
+   * # What was missing
+   *
+   * The server has always held any number of conversations per person: a turn
+   * sent with no conversation_id is the first turn of a NEW one, the server
+   * mints its id, and the model's history is read from that id's record alone
+   * (converse.go, historyFor). The workbench simply never sent an empty id
+   * again once it had one. The only ways out of a conversation were deleting
+   * it, switching project, or opening another from the console — so there was
+   * no way to start from scratch on the design you were looking at.
+   *
+   * # What "new" means here, and what it does not
+   *
+   * It forgets which conversation this page is continuing. It does NOT delete
+   * the old one (it stays in the record and in the console's Conversations
+   * panel), and it does NOT leave the project: the design on the stage, the
+   * variants, the requirements and the project id all stay, so the first
+   * message of the new conversation still lands in the same project and still
+   * describes what is on screen. A fresh conversation, not a fresh project.
+   *
+   * ‼️ Clearing the pane is the cosmetic half. The half that matters is that the
+   * next request carries conversation_id "" — the server builds history ONLY
+   * from the id it is sent, so an empty id is what guarantees no earlier turn
+   * reaches the model. Fenced from both ends: TestWorkbench_ANewConversation*
+   * (node) and TestANewConversation_* (the endpoint, against Postgres).
+   *
+   * # While something is in flight
+   *
+   * Refused, with the reason, while a turn is streaming or a goal is being
+   * planned or started. A streaming reply is recorded into the OLD conversation
+   * and would be painted into the new pane; a planning call can come back
+   * asking a clarifying question that belongs to the old one. Waiting a few
+   * seconds is cheaper than either. A proposal card that already has a goal
+   * behind it (planned, or running) is WORK in the project, like a variant, and
+   * stays; a bare proposal that nothing was created from belonged only to the
+   * old conversation, and goes with it. */
+  function newConversationRefusal(s) {
+    if (s.busy) {
+      return 'FORGE is still answering. Start a new conversation when she has finished.';
+    }
+    if (s.goalPhase === 'planning' || s.goalPhase === 'starting') {
+      return 'A goal is being ' + (s.goalPhase === 'planning' ? 'planned' : 'started') +
+        '. Start a new conversation once it has.';
+    }
+    return '';
+  }
+
+  /* State only, no DOM, so node can run it (see the fence). Returns what the
+   * page should say: { refused } or { previous }. */
+  function beginNewConversation(s, store) {
+    var refused = newConversationRefusal(s);
+    if (refused) return { refused: refused };
+    var previous = s.conversationID;
+    s.conversationID = null;
+    try { store.removeItem(CONV_KEY); } catch (e) { /* not fatal */ }
+    if (!s.goal) {
+      s.proposal = null;
+      s.planTasks = null;
+      s.goalPhase = 'none';
+      s.error = null;
+    }
+    return { previous: previous };
+  }
+
+  /* The body of POST /v1/converse, built in one place so what the fence reads is
+   * what the page sends. */
+  function converseRequest(s, text, images, fromNodes, onScreen) {
+    return {
+      message: text,
+      /* The project this conversation's variants accumulate in (PRD VIS-04).
+       * Empty on the first turn: the server makes one and returns its id in
+       * the `variant` event, and it is sent back on every turn afterwards so
+       * a conversation builds ONE history of variants rather than a project
+       * per turn. The server checks it against membership every time, so
+       * naming somebody else's project is refused rather than trusted. */
+      project_id: s.projectID || '',
+      /* Sent every turn. The server ignores it once the project exists, so
+       * the client does not have to know which turn happened to be the one
+       * that created it. */
+      industry: s.projectID ? '' : (s.industry || ''),
+      /* The record this turn joins (PRD RSN-07). Empty on the first turn — and
+       * on the first turn after "New conversation": the server mints one and
+       * sends it back in the `conversation` event. A id that is not this
+       * person's is REFUSED rather than swapped for a new one, so "continue
+       * that conversation" cannot quietly become "start a different one". */
+      conversation_id: s.conversationID || '',
+      /* PRD VIS-01. Attached to THIS turn only; the array is cleared as soon
+       * as it is sent, so a sketch does not silently ride along on every
+       * later message. */
+      images: images && images.length ? images : undefined,
+      /* Ids only. The server reads the requirement's own words out of the
+       * graph — a client that sent both could name requirement A and paste
+       * the words of B, and the variant's provenance would then record a
+       * requirement the model never saw. */
+      from_nodes: fromNodes && fromNodes.length ? fromNodes : undefined,
+      on_screen: onScreen
+    };
+  }
+
+  /* localStorage, or a store that keeps nothing: private browsing, cleared site
+   * data and blocked storage all throw, and none is a reason to fail. */
+  function storage() {
+    var none = { setItem: function () {}, removeItem: function () {} };
+    try { return window.localStorage || none; } catch (e) { return none; }
+  }
+
+  function startNewConversation() {
+    var r = beginNewConversation(state, storage());
+    if (r.refused) {
+      voiceNote(r.refused);
+      return false;
+    }
+    voiceNote('');
+    /* What FORGE was saying belongs to the conversation just left. */
+    if (voice) voice.stopSpeaking();
+    clearPartial();
+    $('transcript').innerHTML = '';
+    renderProposal();
+    setStatus('idle');
+    setCaption('', false);
+    addTurn('forge', 'New conversation. Nothing said before this is sent to me. ' +
+      'The design and its project are still here' +
+      (r.previous ? ', and the previous conversation is kept — reopen it from Conversations in the console.' : '.'));
+    var say = $('say');
+    if (say && !say.disabled) say.focus();
+    return true;
+  }
+
+  function initNewConversation() {
+    var btn = $('new-conversation');
+    if (!btn) return;
+    btn.addEventListener('click', function () { startNewConversation(); });
+  }
+
+  window.ForgeConversation = {
+    begin: beginNewConversation, adopt: adoptConversation, request: converseRequest, key: CONV_KEY
+  };
+
   /* Deleting the record, in two deliberate steps (PRD AUD-07, MEM-01).
    *
    * This layer's retention is "until the person says otherwise", which is only
@@ -285,9 +435,13 @@
         return;
       }
       btn.disabled = true;
-      fetch('/v1/conversations/' + encodeURIComponent(state.conversationID), { method: 'DELETE' })
+      var deleting = state.conversationID;
+      fetch('/v1/conversations/' + encodeURIComponent(deleting), { method: 'DELETE' })
         .then(function (r) {
           if (!r.ok) throw new Error('the record could not be deleted');
+          /* A new conversation started while the delete was on its way is not
+           * the one deleted, and its id and pane are left alone. */
+          if (state.conversationID !== deleting) return;
           forgetConversationKey();
           $('transcript').innerHTML = '';
           addTurn('forge', 'The record of this conversation is deleted. What you built — the ' +
@@ -2087,36 +2241,7 @@
     return fetch('/v1/converse', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        message: text,
-        /* The project this conversation's variants accumulate in (PRD VIS-04).
-         * Empty on the first turn: the server makes one and returns its id in
-         * the `variant` event, and it is sent back on every turn afterwards so
-         * a conversation builds ONE history of variants rather than a project
-         * per turn. The server checks it against membership every time, so
-         * naming somebody else's project is refused rather than trusted. */
-        project_id: state.projectID || '',
-        /* Sent every turn. The server ignores it once the project exists, so
-         * the client does not have to know which turn happened to be the one
-         * that created it. */
-        industry: state.projectID ? '' : (state.industry || ''),
-        /* The record this turn joins (PRD RSN-07). Empty on the first turn: the
-         * server mints one and sends it back in the `conversation` event. A id
-         * that is not this person's is REFUSED rather than swapped for a new
-         * one, so "continue that conversation" cannot quietly become "start a
-         * different one". */
-        conversation_id: state.conversationID || '',
-        /* PRD VIS-01. Attached to THIS turn only; the array is cleared as soon
-         * as it is sent, so a sketch does not silently ride along on every
-         * later message. */
-        images: images && images.length ? images : undefined,
-        /* Ids only. The server reads the requirement's own words out of the
-         * graph — a client that sent both could name requirement A and paste
-         * the words of B, and the variant's provenance would then record a
-         * requirement the model never saw. */
-        from_nodes: fromNodes && fromNodes.length ? fromNodes : undefined,
-        on_screen: describeOnScreen()
-      })
+      body: JSON.stringify(converseRequest(state, text, images, fromNodes, describeOnScreen()))
     }).then(function (r) {
       if (!r.ok) {
         return r.json().catch(function () { return {}; }).then(function (b) {
@@ -3481,6 +3606,7 @@
     });
     safely('variants', restoreVariants);
     safely('forget', initForget);
+    safely('new-conversation', initNewConversation);
 
     /* Started here and awaited below, so the restored turns are on screen before
      * anything is said about being ready — a greeting above a conversation that
