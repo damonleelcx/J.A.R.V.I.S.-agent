@@ -181,6 +181,9 @@ FILES=(
   internal/httpapi/pages.go
   # Added 2026-09-17 (one million after): the prism yard generator's drill.
   internal/domain/geometry/prism_yard_scale_test.go
+  # Added 2026-09-17: the unverified-paths drills (verifier spend, last_seen_at).
+  internal/agent/verifier.go
+  internal/httpapi/goals.go
 )
 
 BACKUP=""
@@ -981,7 +984,7 @@ drill "configuration accepts a zero occurrence bound" internal/platform/config/c
   ./internal/platform/config 'TestGeometryLimitsMustBePositive'
 
 drill "the browser draws a design too large to draw" internal/httpapi/assets/forge3d.js \
-  "s = s.replace('    if (drawRefusal(spec)) return [];\n', '', 1)" \
+  "s = s.replace('    if (!under && drawRefusal(spec)) return [];\n', '', 1)" \
   ./internal/httpapi 'TestRendererFlattensATreeLikeTheExporter'
 
 drill "the browser's count forgets a pattern's copies" internal/httpapi/assets/forge3d.js \
@@ -2310,7 +2313,7 @@ echo "A kernel build that runs out of time"
 # they need no build123d; the HTTP one needs FORGE_TEST_DATABASE_URL.
 # docs/bugfix/2026-09-15-a-kernel-build-that-ran-out-of-time-was-reported-as-no-kernel.md
 drill "a timed-out build is retried like a crashed one" internal/domain/cad/cad.go \
-  's = s.replace("\tif err != nil && !errors.As(err, &late) {", "\tif err != nil {", 1)' \
+  's = s.replace("\tif err != nil && !errors.As(err, &late) && !errors.As(err, &slow) {", "\tif err != nil && !errors.As(err, &slow) {", 1)' \
   ./internal/domain/cad 'TestKernel_ABuildThatRunsOutOfTimeIsNotRetriedAndSaysSo'
 
 # Re-anchored 2026-09-16 (K3): the round trip, and the kill that bounds it, moved
@@ -2336,7 +2339,7 @@ drill "the caller's deadline is reported as no working backend" internal/domain/
   ./internal/httpapi 'TestAPI_AKernelBuildThatTakesTooLongIsA504ThatSaysSo'
 
 drill "a kernel timeout is offered as retryable" internal/platform/errs/code.go \
-  's = s.replace("A kernel build is allowed 30 seconds.\", false},", "A kernel build is allowed 30 seconds.\", true},", 1)' \
+  's = s.replace("unless the deployment sets FORGE_CAD_BUILD_TIMEOUT.\", false},", "unless the deployment sets FORGE_CAD_BUILD_TIMEOUT.\", true},", 1)' \
   ./internal/httpapi 'TestAPI_AKernelBuildThatTakesTooLongIsA504ThatSaysSo'
 
 drill "a kernel timeout is a 501" internal/platform/errs/code.go \
@@ -2357,7 +2360,7 @@ drill "a timeout resets every slot in the pool" internal/domain/cad/cad.go \
   ./internal/domain/cad 'TestKernel_ATimeoutInOneSlotLeavesTheOtherSlotsServing'
 
 drill "a slot enforces a limit that is not the kernel's" internal/domain/cad/sidecar_process.go \
-  's = s.replace("slot: i, timeout: k.timeout}", "slot: i, timeout: buildTimeout}", 1)' \
+  's = s.replace("slot: i, timeout: k.timeout, ", "slot: i, timeout: buildTimeout, ", 1)' \
   ./internal/domain/cad 'TestKernel_ABuildThatRunsOutOfTimeIsNotRetriedAndSaysSo'
 
 # Added 2026-09-17 (kernel timeout race). roundTrip returned without waiting for
@@ -2368,13 +2371,90 @@ drill "a slot enforces a limit that is not the kernel's" internal/domain/cad/sid
 # failing and the timeout fence retrying. The first drill restores exactly that:
 # no claim, no wait. The second restores start's ctx error coming back as a crash.
 # docs/bugfix/2026-09-17-a-cancel-after-a-build-answered-killed-its-process.md
+# Since a cancelled caller no longer kills at all (same day, PR 144), the first
+# drill also restores the kill on cancel: the claim and the wait still guard a
+# DEADLINE that ends as a build answers, and this is the fence that times it.
 drill "a cancel after a build answered can kill its process" internal/domain/cad/sidecar_process.go \
-  's = s.replace("\t\tif !end.CompareAndSwap(running, outOfTime) {\n\t\t\treturn\n\t\t}\n", "\t\tend.Store(outOfTime)\n", 1).replace("\t\tclose(done)\n\t\t<-exited\n", "\t\tclose(done)\n", 1)' \
+  's = s.replace("\t\tif !end.CompareAndSwap(running, outOfTime) {\n\t\t\treturn\n\t\t}\n", "\t\tend.Store(outOfTime)\n", 1).replace("\t\tclose(done)\n\t\t<-exited\n", "\t\tclose(done)\n", 1).replace("\t\t\tif errors.Is(ctx.Err(), context.DeadlineExceeded) {\n\t\t\t\twhy = &lateError{caller: ctx.Err()}", "\t\t\tif true {\n\t\t\t\twhy = &lateError{caller: ctx.Err()}", 1)' \
   ./internal/domain/cad 'TestKernel_ACancelAfterABuildAnsweredLeavesItsProcessServing'
 
 drill "a deadline that ends while the kernel starts is retried as a crash" internal/domain/cad/sidecar_process.go \
   's = s.replace("\tif err := ctx.Err(); err != nil {\n\t\treturn nil, &lateError{caller: err}\n\t}\n\tif err := s.start(ctx); err != nil {\n\t\tif cerr := ctx.Err(); cerr != nil {\n\t\t\treturn nil, &lateError{caller: cerr}\n\t\t}\n\t\treturn nil, err\n\t}\n", "\tif err := s.start(ctx); err != nil {\n\t\treturn nil, err\n\t}\n", 1)' \
   ./internal/domain/cad 'TestKernel_ACallerWhoseDeadlineEndsWhileTheKernelStartsIsNotRetried'
+
+# Added 2026-09-17 (kernel pool deadlines, the items #100 left open). A deadline
+# that ended waiting for a busy kernel was a 501 "no working backend"; a process
+# still starting at startTimeout was retried like a crash; the 30 s build limit
+# was a constant; and the first queue of subtree meshes paid for build123d's
+# import in front of every subtree (#93's 9.3 s of 17.2 s), which forged now pays
+# at boot instead (FORGE_CAD_PRESTART).
+drill "a deadline waiting for a busy kernel is reported as no working backend" internal/domain/cad/cad.go \
+  's = s.replace("\t\tif errors.Is(err, context.DeadlineExceeded) {\n\t\t\tk.log.Warn(ctx, logx.EventCADTimedOut, \"waiting\", true", "\t\tif false {\n\t\t\tk.log.Warn(ctx, logx.EventCADTimedOut, \"waiting\", true", 1)' \
+  ./internal/domain/cad 'TestKernel_ADeadlineThatEndsWaitingForABusyKernelIsATimeout'
+
+drill "a start that ran out of time is retried as a crash" internal/domain/cad/cad.go \
+  's = s.replace("if err != nil && !errors.As(err, &late) && !errors.As(err, &slow) {", "if err != nil && !errors.As(err, &late) {", 1)' \
+  ./internal/domain/cad 'TestKernel_AKernelThatDoesNotStartInTimeIsNotStartedAgain'
+
+drill "a start that ran out of time is reported as no working backend" internal/domain/cad/cad.go \
+  's = s.replace("\t\tif errors.As(err, &slow) {\n\t\t\tk.log.Warn(ctx, logx.EventCADTimedOut, \"slot\", s.slot, \"starting\", true", "\t\tif false {\n\t\t\tk.log.Warn(ctx, logx.EventCADTimedOut, \"slot\", s.slot, \"starting\", true", 1)' \
+  ./internal/domain/cad 'TestKernel_AKernelThatDoesNotStartInTimeIsNotStartedAgain'
+
+drill "a slot starts with the default start limit" internal/domain/cad/sidecar_process.go \
+  's = s.replace("startLimit: k.startLimit, ", "startLimit: startTimeout, ", 1)' \
+  ./internal/domain/cad 'TestKernel_AKernelThatDoesNotStartInTimeIsNotStartedAgain'
+
+drill "the kernel is built without the configured build timeout" internal/domain/cad/cad.go \
+  's = s.replace(".WithPool(c.Pool).WithBuildTimeout(c.BuildTimeout)", ".WithPool(c.Pool)", 1)' \
+  ./internal/domain/cad 'TestKernel_FromConfigCarriesTheBuildTimeout'
+
+drill "prestart starts no process" internal/domain/cad/sidecar_process.go \
+  's = s.replace("\t\tif err := s.start(ctx); err != nil && ctx.Err() == nil {", "\t\tif err := error(nil); err != nil && ctx.Err() == nil {", 1)' \
+  ./internal/domain/cad 'TestKernel_APrestartedKernelAnswersTheFirstQueueWithoutPayingForAStart'
+
+# Added 2026-09-17 (same PR). A caller that cancelled mid-build had its process
+# killed, so the next viewer paid a kernel start. Now the build finishes for nobody,
+# its reply is read before the slot is reused, the limit and crashes still reset
+# the slot, and Close ends an abandoned build rather than waiting out its limit.
+drill "a cancelled caller's process is killed" internal/domain/cad/sidecar_process.go \
+  's = s.replace("\t\t\tif errors.Is(ctx.Err(), context.DeadlineExceeded) {\n\t\t\t\twhy = &lateError{caller: ctx.Err()}", "\t\t\tif true {\n\t\t\t\twhy = &lateError{caller: ctx.Err()}", 1)' \
+  ./internal/domain/cad 'TestKernel_ACancelledCallerLeavesItsProcessToFinishAndServeTheNextBuild'
+
+drill "a cancelled caller waits for the build to finish" internal/domain/cad/sidecar_process.go \
+  's = s.replace("\t\tif !errors.Is(ctx.Err(), context.DeadlineExceeded) {\n\t\t\t// ‼️ A caller that CANCELLED", "\t\tif false {\n\t\t\t// ‼️ A caller that CANCELLED", 1)' \
+  ./internal/domain/cad 'TestKernel_ACancelledCallerLeavesItsProcessToFinishAndServeTheNextBuild'
+
+drill "an abandoned slot goes back before its reply is read" internal/domain/cad/sidecar_process.go \
+  's = s.replace("\tgo func() {\n\t\tgot := <-read\n", "\ts.home <- s\n\tgo func() {\n\t\tgot := <-read\n", 1).replace("\t\ts.abandoned.Store(false)\n\t\ts.home <- s\n", "\t\ts.abandoned.Store(false)\n", 1)' \
+  ./internal/domain/cad 'TestKernel_ACancelledCallerLeavesItsProcessToFinishAndServeTheNextBuild'
+
+drill "the build that abandoned its slot releases it too" internal/domain/cad/cad.go \
+  's = s.replace("\t\t\tif late.abandoned {\n\t\t\t\theld = false\n", "\t\t\tif late.abandoned {\n", 1)' \
+  ./internal/domain/cad 'TestKernel_ACancelledCallerLeavesItsProcessToFinishAndServeTheNextBuild'
+
+drill "an abandoned build is not killed at its limit" internal/domain/cad/sidecar_process.go \
+  's = s.replace("\t\t\tcase <-done:\n\t\t\t\treturn\n\t\t\tcase <-timer.C:\n\t\t\t\twhy = &lateError{limit: limit}\n\t\t\t}", "\t\t\tcase <-done:\n\t\t\t\treturn\n\t\t\t}", 1)' \
+  ./internal/domain/cad 'TestKernel_AnAbandonedBuildIsStillKilledAtItsLimit'
+
+drill "an abandoned build that died is handed back without a reset" internal/domain/cad/sidecar_process.go \
+  's = s.replace("\t\t\ts.stop()\n\t\t\ts.log.Warn(bg, logx.EventCADRestarted", "\t\t\ts.log.Warn(bg, logx.EventCADRestarted", 1)' \
+  ./internal/domain/cad 'TestKernel_AnAbandonedBuildIsStillKilledAtItsLimit'
+
+drill "Close waits out an abandoned build" internal/domain/cad/sidecar_process.go \
+  's = s.replace("\t\tif s.abandoned.Load() {\n\t\t\ts.kill()\n\t\t}", "\t\tif s.abandoned.Load() {\n\t\t}", 1)' \
+  ./internal/domain/cad 'TestKernel_AnAbandonedBuildIsStillKilledAtItsLimit'
+
+drill "a zero kernel build timeout is accepted" internal/platform/config/config.go \
+  's = s.replace("\tcase cfg.CAD.BuildTimeout <= 0:", "\tcase cfg.CAD.BuildTimeout < 0:", 1)' \
+  ./internal/platform/config 'TestCADBuildTimeoutMustBePositiveAndFitTheWriteTimeout'
+
+drill "a kernel build timeout past the write timeout is accepted" internal/platform/config/config.go \
+  's = s.replace("\tcase cfg.HTTP.WriteTimeout > 0 && cfg.CAD.BuildTimeout > cfg.HTTP.WriteTimeout:", "\tcase false:", 1)' \
+  ./internal/platform/config 'TestCADBuildTimeoutMustBePositiveAndFitTheWriteTimeout'
+
+drill "the kernel build timeout is not printed at startup" internal/platform/config/config.go \
+  's = s.replace("\"cad_build_timeout\":", "\"cad_timeout\":", 1)' \
+  ./internal/platform/config 'TestCADBuildTimeoutIsThirtySecondsByDefaultAndPrinted'
 echo "Workers in one process"
 # Added 2026-09-15 (worker lease identity). NewWorker sliced a fresh id's
 # timestamp rather than its random tail, so every worker forge-worker started
@@ -4280,6 +4360,315 @@ drill "Space on a microphone that is off says nothing" internal/httpapi/assets/v
 drill "the workbench gives Space no refusal note" internal/httpapi/assets/workbench.js \
   's = s.replace("        voiceNote(state.signedOut ? \x27Sign in from the console to talk to FORGE.\x27 : voice.whyUnavailable());", "        void 0;", 1)' \
   ./internal/httpapi 'TestWorkbench_SpaceAndTheServerReasonAreWiredThroughVoiceJS'
+
+echo "Workbench and viewport open items, 2026-09-17"
+# The viewport limit stays 100,000 on its measured basis, and a first view at that
+# ceiling stays within 8,192 parts (geometry/limits.go maxViewportParts says why).
+drill "the viewport limit is lowered in Go without a new measurement" internal/domain/geometry/limits.go \
+  's = s.replace("const maxViewportParts = DefaultMaxOccurrences", "const maxViewportParts = 30000", 1)' \
+  ./internal/httpapi 'TestViewportLimitIsTheMeasuredOneAndAFirstViewStaysSmall'
+
+drill "the browser's viewport limit drifts from Go's" internal/httpapi/assets/forge3d.js \
+  's = s.replace("  var MAX_VIEWPORT_PARTS = 100000;", "  var MAX_VIEWPORT_PARTS = 30000;", 1)' \
+  ./internal/httpapi 'TestViewportLimitIsTheMeasuredOneAndAFirstViewStaysSmall'
+
+drill "a first view at the viewport's ceiling is not bounded" internal/httpapi/assets/forge3d.js \
+  's = s.replace("  var FIRST_VIEW_OCCURRENCES = 8192;", "  var FIRST_VIEW_OCCURRENCES = 100000;", 1)' \
+  ./internal/httpapi 'TestViewportLimitIsTheMeasuredOneAndAFirstViewStaysSmall'
+
+drill "a centimetre design's mesh reply is drawn in millimetres" internal/httpapi/assets/forge3d.js \
+  's = s.replace("[10, [\x27cm\x27, \x27centimetre\x27", "[1, [\x27cm\x27, \x27centimetre\x27", 1)' \
+  ./internal/httpapi 'TestMeshSubtree_ADesignInInchesOrMetresIsDrawnWhereItsPrimitivesAre'
+
+# The off-node STEP export job (#99) reached from the workbench rail.
+drill "the rail offers no STEP via the worker" internal/httpapi/assets/workbench.js \
+  's = s.replace("\x27<button type=\"button\" data-export-job=\"\x27 + esc(versionID)", "\x27<button type=\"button\" data-export-worker=\"\x27 + esc(versionID)", 1)' \
+  ./internal/httpapi 'TestWorkbenchExportsSTEPThroughTheWorkerJob'
+
+drill "the rail's STEP-via-worker button is bound to nothing" internal/httpapi/assets/workbench.js \
+  's = s.replace("      b.addEventListener(\x27click\x27, function () { toggleExportJob(b.getAttribute(\x27data-export-job\x27)); });\n", "", 1)' \
+  ./internal/httpapi 'TestWorkbenchExportsSTEPThroughTheWorkerJob'
+
+drill "an export job is read again after it settled" internal/httpapi/assets/workbench.js \
+  's = s.replace("if (stopped || (current && EXPORT_SETTLED[current.status])) return;", "if (stopped) return;", 1)' \
+  ./internal/httpapi 'TestWorkbenchExportsSTEPThroughTheWorkerJob'
+
+drill "an export job queued forever is read forever" internal/httpapi/assets/workbench.js \
+  's = s.replace("if (reads >= limit) { tell({ stopped: true }); return; }", "", 1)' \
+  ./internal/httpapi 'TestWorkbenchExportsSTEPThroughTheWorkerJob'
+
+drill "an export status the caller may not read is asked again" internal/httpapi/assets/workbench.js \
+  's = s.replace("if (err.status === 401 || err.status === 403 || err.status === 404) return;", "", 1)' \
+  ./internal/httpapi 'TestWorkbenchExportsSTEPThroughTheWorkerJob'
+
+drill "a finished export offers its file without saying no interference check ran" internal/httpapi/assets/workbench.js \
+  's = s.replace("\x27<b>no interference check ran for this file</b>.</div>\x27", "\x27</div>\x27", 1)' \
+  ./internal/httpapi 'TestWorkbenchExportsSTEPThroughTheWorkerJob'
+
+drill "the workbench asks for an export through the goals route" internal/httpapi/assets/workbench.js \
+  's = s.replace("read(\x27/v1/geometry/\x27 + encodeURIComponent(versionID) + \x27/exports?format=step\x27, { method: \x27POST\x27 })", "read(\x27/v1/goals\x27, { method: \x27POST\x27 })", 1)' \
+  ./internal/httpapi 'TestWorkbenchExportsSTEPThroughTheWorkerJob'
+
+drill "an export refusal shows the code's general words instead of its detail" internal/httpapi/assets/workbench.js \
+  's = s.replace("    if (detail) return detail;\n", "", 1)' \
+  ./internal/httpapi 'TestWorkbenchExportsSTEPThroughTheWorkerJob'
+
+drill "the request-path export label drops a refusal's detail" internal/httpapi/assets/workbench.js \
+  's = s.replace("throw new Error(refusalText(e, r.status, \x27Export refused\x27));", "throw new Error((e.message || \x27Export refused\x27) + (e.remedy ? \x27 - \x27 + e.remedy : \x27\x27));", 1)' \
+  ./internal/httpapi 'TestWorkbenchExportsSTEPThroughTheWorkerJob'
+
+# Seen checking the build goal card in the browser at other widths and the light theme.
+drill "the stage tab strip may not shrink, so a phone page widens" internal/httpapi/assets/workbench.css \
+  's = s.replace("flex-shrink: 1; overflow-x: auto;", "overflow-x: auto;", 1)' \
+  ./internal/httpapi 'TestWorkbenchStageTabsScrollInsideTheirStripOnAPhone'
+
+drill "the section-cut picker is dark on the light theme again" internal/httpapi/pages.go \
+  's = s.replace("<select id=\"section\">", "<select id=\"section\" style=\"background:#0f131b;color:var(--ink)\">", 1)' \
+  ./internal/httpapi 'TestPagesWriteNoColourLiteralInAStyleAttribute'
+
+drill "the section-cut picker has no themed rule" internal/httpapi/assets/workbench.css \
+  's = s.replace(".sliders select {", ".sliders .select-gone {", 1)' \
+  ./internal/httpapi 'TestPagesWriteNoColourLiteralInAStyleAttribute'
+
+# Defects the workbench check found on main while loading large designs (2026-09-17).
+drill "a STEP label past the request ceiling refuses in the build ceiling's general words" internal/httpapi/geometry.go \
+  's = s.replace("if refusal := v.Document.STEPRefusal(); refusal != \"\" && h.deps.CAD.Available() &&", "if refusal := v.Document.STEPRefusal(); false &&", 1)' \
+  ./internal/httpapi 'TestExportLabel_STEPWithAKernelSaysTheCeilingNotAMissingKernel'
+
+drill "a STEP export past the request ceiling refuses in the kernel's general words" internal/httpapi/geometry.go \
+  's = s.replace("if refusal := v.Document.STEPRefusal(); refusal != \"\" {", "if refusal := \"\"; refusal != \"\" {", 1)' \
+  ./internal/httpapi 'TestExportLabel_STEPWithAKernelSaysTheCeilingNotAMissingKernel'
+
+drill "a STEP refusal within the job's ceiling no longer points to the export job" internal/domain/geometry/limits.go \
+  's = s.replace("/v1/geometry/{id}/exports): forge-worker writes up to", "nowhere): forge-worker writes up to", 1)' \
+  ./internal/httpapi 'TestExportLabel_STEPWithAKernelSaysTheCeilingNotAMissingKernel'
+
+drill "a variants listing measures every design again" internal/httpapi/geometry.go \
+  's = s.replace("out = append(out, listedVariant(v))", "out = append(out, listedVariantDTO{VariantDTO: toVariantDTO(v)})", 1)' \
+  ./internal/httpapi 'TestVariantsListCountsWhatADesignPlacesWithoutExpandingIt'
+
+drill "a listed design counts its top-level parts" internal/httpapi/geometry.go \
+  's = s.replace("\t\t\tOccurrences: v.Document.Occurrences(),", "\t\t\tOccurrences: len(v.Document.Parts),", 1)' \
+  ./internal/httpapi 'TestVariantsListCountsWhatADesignPlacesWithoutExpandingIt'
+
+drill "a kept variant's live event counts its top-level parts" internal/httpapi/converse.go \
+  's = s.replace("Parts: v.Document.Occurrences(),", "Parts: len(v.Document.Parts),", 1)' \
+  ./internal/httpapi 'TestVariantsListCountsWhatADesignPlacesWithoutExpandingIt'
+
+drill "the variants rail counts top-level parts again" internal/httpapi/assets/workbench.js \
+  's = s.replace("(typeof v.occurrences === \x27number\x27) ? v.occurrences\n      : ", "", 1)' \
+  ./internal/httpapi 'TestWorkbenchRailCountsWhatADesignPlaces'
+
+drill "the workbench asks for the whole mesh of a design it refused to draw" internal/httpapi/assets/workbench.js \
+  's = s.replace("      if (window.Forge3D.drawRefusal(proto)) versionID = null;\n", "", 1)' \
+  ./internal/httpapi 'TestWorkbenchAsksNoWholeMeshForADesignItRefused'
+
+drill "a design past the viewport limit is refused and not browsed" internal/httpapi/assets/forge3d.js \
+  's = s.replace("return !!(spec && spec.root) && occurrences(spec, MAX_VIEWPORT_PARTS) > LAZY_OCCURRENCES;", "return !!(spec && spec.root) && !drawRefusal(spec) && occurrences(spec, MAX_VIEWPORT_PARTS) > LAZY_OCCURRENCES;", 1)' \
+  ./internal/httpapi 'TestRendererBrowsesADesignPastTheViewportLimit|TestWorkbenchAsksNoWholeMeshForADesignItRefused'
+
+drill "a browsed design is searched only where it is drawn" internal/httpapi/assets/forge3d.js \
+  's = s.replace("if (this.lazy && this.lazy.browse) {\n      this.searchStats", "if (false) {\n      this.searchStats", 1)' \
+  ./internal/httpapi 'TestRendererBrowsesADesignPastTheViewportLimit'
+
+drill "a browsed row past the viewport limit is asked for anyway" internal/httpapi/assets/forge3d.js \
+  's = s.replace("if (n > MAX_VIEWPORT_PARTS) {\n        lazy.failed[path] = subtreeRefusal(path, n);", "if (false) {\n        lazy.failed[path] = subtreeRefusal(path, n);", 1)' \
+  ./internal/httpapi 'TestRendererBrowsesADesignPastTheViewportLimit'
+
+drill "a browsed design puts no row back to make room" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    while (lazy.used - replaced + n > MAX_VIEWPORT_PARTS && others.length) self._putBack(others.shift());\n", "", 1)' \
+  ./internal/httpapi 'TestRendererBrowsesADesignPastTheViewportLimit'
+
+drill "a browsed row's count forgets a pattern's copies" internal/httpapi/assets/forge3d.js \
+  's = s.replace("n += c.slots.length * all(c.sub, onPath, depth + 1);", "n += all(c.sub, onPath, depth + 1);", 1)' \
+  ./internal/httpapi 'TestRendererBrowsesADesignPastTheViewportLimit'
+
+drill "the tree search names a pattern's copies without their numbers" internal/httpapi/assets/forge3d.js \
+  's = s.replace("var childName = c.label + (slot.number ? \x27 \x27 + slot.number : \x27\x27);", "var childName = c.label;", 1)' \
+  ./internal/httpapi 'TestRendererBrowsesADesignPastTheViewportLimit'
+
+drill "a resize while hidden sizes the viewport to 640x480" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    if ((!this.canvas.clientWidth || !this.canvas.clientHeight) && this._sized) return;\n", "", 1)' \
+  ./internal/httpapi 'TestRendererRedrawsWhenItsPaneIsShownAgain'
+
+drill "a viewport shown again is not redrawn" internal/httpapi/assets/forge3d.js \
+  's = s.replace("        if (document.visibilityState === \x27hidden\x27) return;\n        self._resize();", "        return;\n        self._resize();", 1)' \
+  ./internal/httpapi 'TestRendererRedrawsWhenItsPaneIsShownAgain'
+
+drill "a STEP label is shown as 0 triangles" internal/httpapi/assets/workbench.js \
+  's = s.replace("(l.format_kind === \x27parametric\x27 ? \x27B-Rep, not tessellated\x27\n          : b.triangles + \x27 triangles\x27)", "b.triangles + \x27 triangles\x27", 1)' \
+  ./internal/httpapi 'TestWorkbenchSTEPLabelSaysBRepNotTriangles'
+
+drill "a subtree expands the whole design again" internal/domain/geometry/subtree.go \
+  's = s.replace("\te := d.expandedWithin(p)\n", "\te := d.Expanded()\n", 1)' \
+  ./internal/httpapi 'TestSubtree_PlacesOnlyWhatLeadsToItsPathAndTheSameParts'
+
+drill "a subtree prunes a design whose assemblies have features" internal/domain/geometry/subtree.go \
+  's = s.replace("\t\tif len(a.Features) > 0 {\n\t\t\treturn d.Expanded()", "\t\tif false {\n\t\t\treturn d.Expanded()", 1)' \
+  ./internal/httpapi 'TestSubtree_PlacesOnlyWhatLeadsToItsPathAndTheSameParts'
+
+drill "a subtree's pruning reads every segment against the first" internal/domain/geometry/subtree.go \
+  's = s.replace("if !segs[i].MatchString(childPath[i]) {", "if !segs[0].MatchString(childPath[i]) {", 1)' \
+  ./internal/httpapi 'TestSubtree_PlacesOnlyWhatLeadsToItsPathAndTheSameParts'
+
+echo
+echo "Model semantics: repeat counts, rounded literals, what a parameter reached, a wheel in the kernel"
+# Added 2026-09-17 (geometry/remaining). E2: a definition's own repeat is multiplied
+# into how many times it is placed, and "repeat" in Changed names a layout change. The
+# literal-position note reads a coordinate to the digits it was written with. E1: an
+# edit that changes a parameter, a derived value or a feature says which placed parts
+# it reached, measured by binding both documents. And a car's wheels with lug nuts on a
+# polar pattern, attached across assemblies, are built in the real kernel (the two
+# kernel drills need FORGE_CAD_PYTHON, and are UNPROVEN without it).
+drill "a definition's own repeat is not multiplied into its count" internal/domain/geometry/compare_structure.go \
+  's = s.replace("m[c.Ref] = sat(m[c.Ref] + mul(k, own))", "m[c.Ref] = sat(m[c.Ref] + k)", 1)' \
+  ./internal/domain/geometry 'TestCompare_ADefinitionsOwnRepeatIsMultipliedIntoItsCount'
+
+drill "a change in how many copies is reported as a changed field too" internal/domain/geometry/compare_structure.go \
+  's = s.replace("if repeatCount(a) < 2 || repeatCount(b) < 2 {\n\t\t\treturn true", "if a.Repeat == nil || b.Repeat == nil {\n\t\t\treturn a.Repeat == nil && b.Repeat == nil", 1)' \
+  ./internal/domain/geometry 'TestCompare_ADefinitionsOwnRepeatIsMultipliedIntoItsCount'
+
+drill "copies laid out differently are not compared" internal/domain/geometry/compare_structure.go \
+  's = s.replace("return ra.About == rb.About && sameAngle(ra.Angle, rb.Angle) && l.vector(ra.Offset, rb.Offset)", "return true", 1)' \
+  ./internal/domain/geometry 'TestCompare_ADefinitionsOwnRepeatIsMultipliedIntoItsCount'
+
+drill "an unplaced definition's copies change unseen" internal/domain/geometry/compare_structure.go \
+  's = s.replace("\t\trow.Changed = repeatChanged(row, m)\n", "", 1)' \
+  ./internal/domain/geometry 'TestCompare_ADefinitionsOwnRepeatIsMultipliedIntoItsCount'
+
+drill "a rounded parameter value is never read" internal/agent/literals.go \
+  's = s.replace("forms, held := formsWithin(lengths, lit, writtenTolerance(lit))", "forms, held := formsWithin(lengths, lit, exactly)", 1)' \
+  ./internal/agent 'TestAssemble_AStepThatRoundsAParametersValueIsToldWhichParameter'
+
+drill "a coordinate is read past the last digit written" internal/agent/literals.go \
+  's = s.replace("half = 0.5 * math.Pow10(-(len(text) - dot - 1))", "half = 5 * math.Pow10(-(len(text) - dot - 1))", 1)' \
+  ./internal/agent 'TestAssemble_AStepThatRoundsAParametersValueIsToldWhichParameter'
+
+drill "a coarse number is read as a small value rounded" internal/agent/literals.go \
+  's = s.replace("if half > maxRoundingShare*math.Abs(target) {", "if false {", 1)' \
+  ./internal/agent 'TestAssemble_AStepThatRoundsAParametersValueIsToldWhichParameter'
+
+drill "a rounded match is taken before an exact one" internal/agent/literals.go \
+  's = s.replace("if forms, held := formsWithin(lengths, lit, exactly); len(forms) > 0 {", "if forms, held := formsWithin(lengths, lit, writtenTolerance(lit)); len(forms) > 0 {", 1)' \
+  ./internal/agent 'TestAssemble_AStepThatRoundsAParametersValueIsToldWhichParameter'
+
+drill "a rounded group is headed by the typed number" internal/agent/literals.go \
+  's = s.replace("headline = list[0].held", "headline = list[0].value", 1)' \
+  ./internal/agent 'TestAssemble_AStepThatRoundsAParametersValueIsToldWhichParameter'
+
+drill "the note does not say a value was read rounded" internal/agent/literals.go \
+  's = s.replace("holds += \" to the digits written\"", "holds += \"\"", 1)' \
+  ./internal/agent 'TestAssemble_AStepThatRoundsAParametersValueIsToldWhichParameter'
+
+drill "a parameter change is not traced to parts" internal/domain/geometry/edit.go \
+  's = s.replace("if r, ok := parameterReach(base, out, e.Patch, reached); ok {", "if r, ok := parameterReach(base, out, e.Patch, reached); ok && false {", 1)' \
+  ./internal/domain/geometry 'TestEdit_AParameterChangeReportsThePlacedPartsThatFollowIt'
+
+drill "what follows a parameter is read off unbound documents" internal/domain/geometry/edit_paths.go \
+  's = s.replace("\t\tc.bind(false)\n", "", 1)' \
+  ./internal/domain/geometry 'TestEdit_AParameterChangeReportsThePlacedPartsThatFollowIt'
+
+drill "a part another entry reports is reported again under the parameter" internal/domain/geometry/edit_paths.go \
+  's = s.replace("(!ok || !reflect.DeepEqual(old, p)) && !reported[p.ID] {", "(!ok || !reflect.DeepEqual(old, p)) {", 1)' \
+  ./internal/domain/geometry 'TestEdit_AParameterChangeReportsThePlacedPartsThatFollowIt'
+
+drill "a parameter restated at its value is reported" internal/domain/geometry/edit_paths.go \
+  's = s.replace("ok && (was.Value != in.Value || was.Unit != in.Unit)", "ok && (true || was.Value != in.Value || was.Unit != in.Unit)", 1)' \
+  ./internal/domain/geometry 'TestEdit_AParameterChangeReportsThePlacedPartsThatFollowIt'
+
+drill "a newly declared parameter is reported" internal/domain/geometry/edit_paths.go \
+  's = s.replace("if was, ok := parameterNamed(base, in.Name); ok && (", "if was, ok := parameterNamed(base, in.Name); !ok || (", 1)' \
+  ./internal/domain/geometry 'TestEdit_AParameterChangeReportsThePlacedPartsThatFollowIt'
+
+drill "a patched feature is not reported" internal/domain/geometry/edit.go \
+  's = s.replace("reached = append(reached, Reached{Kind: \"feature\", ID: in.ID})", "_ = in", 1)' \
+  ./internal/domain/geometry 'TestEdit_AFeatureChangeReportsThePartsItActsOn'
+
+drill "a removed feature is not reported" internal/domain/geometry/edit.go \
+  's = s.replace("reached = append(reached, Reached{Kind: \"feature\", ID: id, Removed: true})", "_ = id", 1)' \
+  ./internal/domain/geometry 'TestEdit_AFeatureChangeReportsThePartsItActsOn'
+
+drill "a feature's repeated tool is reported as its authored id" internal/domain/geometry/edit_paths.go \
+  's = s.replace("was, is = wasFeatures.targets(r.ID), isFeatures.targets(r.ID)", "was, is = authoredTargets(base, r.ID), authoredTargets(out, r.ID)", 1)' \
+  ./internal/domain/geometry 'TestEdit_AFeatureChangeReportsThePartsItActsOn'
+
+drill "a feature is silent whatever it reached" internal/agent/converse.go \
+  's = s.replace("if r.Kind == \"feature\" && sameIDs(r.Occurrences, r.Named) {", "if r.Kind == \"feature\" {", 1)' \
+  ./internal/agent 'TestResolveEdit_AParameterOrFeatureEditSaysWhatItReached'
+
+drill "every feature edit leaves a note" internal/agent/converse.go \
+  's = s.replace("if r.Kind == \"feature\" && sameIDs(r.Occurrences, r.Named) {", "if false {", 1)' \
+  ./internal/agent 'TestResolveEdit_AParameterOrFeatureEditSaysWhatItReached'
+
+drill "a parameter nothing follows reads as a design nothing places" internal/agent/converse.go \
+  's = s.replace("case n == 0 && r.Kind == \"parameter\":", "case n == 0 && r.Kind == \"parameter\" && false:", 1)' \
+  ./internal/agent 'TestResolveEdit_AParameterOrFeatureEditSaysWhatItReached'
+
+drill "a polar pattern turns its copies about z whatever it says" internal/domain/geometry/pattern.go \
+  's = s.replace("at.m = RotationMatrix(axisRotation(p.About,", "at.m = RotationMatrix(axisRotation(\"z\",", 1)' \
+  ./internal/agent 'TestKernelCar_LugNutsOnAPolarPatternAcrossAssembliesSitOnTheRimFace'
+
+drill "a catalogued nut is not stood on its Y" internal/domain/geometry/standard.go \
+  's = s.replace("then(placementOf(nil, []float64{-90, 0, 0}, false))", "then(placementOf(nil, []float64{0, 0, 0}, false))", 1)' \
+  ./internal/agent 'TestKernelCar_LugNutsOnAPolarPatternAcrossAssembliesSitOnTheRimFace'
+
+drill "a nut swallowed by its rim is not called buried" internal/domain/geometry/interference.go \
+  's = s.replace("const BuriedFraction = 0.5", "const BuriedFraction = 1.5", 1)' \
+  ./internal/agent 'TestKernelCar_LugNutsRingedAtTheWheelsCentreAreReportedBuried'
+
+echo
+echo "Paths nobody had run: build goals, stops, approvals, access, exports, 2026-09-17"
+drill "an ordinary goal's planning is not charged to it" internal/agent/intake.go \
+  's = s.replace("\tcharged.client = chargeTo(in.planner.client, in.applier.budget, pool, goal, in.clock, in.logger())", "\tcharged.client = in.planner.client", 1)' \
+  ./internal/agent 'TestIntake_AnOrdinaryGoalsPlanningIsChargedToTheGoal'
+
+drill "the verifier's call is not charged to the goal" internal/agent/verifier.go \
+  's = s.replace("\tc.client = chargeTo(v.client, budget, pool, goal, clk, log)", "\tc.client = v.client", 1)' \
+  ./internal/agent 'TestWorker_TheVerifiersCallIsChargedToTheGoal'
+
+drill "a running task is stamped alive only as often as its lease heartbeat" internal/agent/worker.go \
+  's = s.replace("\tif w.aliveEvery > 0 && (every <= 0 || w.aliveEvery < every) {", "\tif false {", 1)' \
+  ./internal/agent 'TestWorker_ARunningTaskIsStampedAliveWhileItsModelCallRunsWhateverTheLeaseHeartbeat'
+
+drill "a running task is stamped alive every 20 s" internal/agent/worker.go \
+  's = s.replace("const AliveEvery = 5 * time.Second", "const AliveEvery = 20 * time.Second", 1)' \
+  ./internal/agent 'TestAliveEvery_LeavesAClientPollingAtItAFreshStampInsideTenSeconds'
+
+drill "a held task does not say when its worker was last seen" internal/httpapi/goals.go \
+  's = s.replace("\t\td.LastSeenAt = &s", "\t\t_ = s", 1)' \
+  ./internal/httpapi 'TestTaskDTO_AHeldTaskSaysWhenItsWorkerWasLastSeenAndOtherTasksDoNot'
+
+drill "every task says when a worker was last seen, held or not" internal/httpapi/goals.go \
+  's = s.replace("\tcase engine.StatusClaimed, engine.StatusRunning, engine.StatusVerifying:", "\tdefault:", 1)' \
+  ./internal/httpapi 'TestTaskDTO_AHeldTaskSaysWhenItsWorkerWasLastSeenAndOtherTasksDoNot'
+
+drill "a model call its caller cancelled is retried" internal/llm/openai_compatible.go \
+  's = s.replace("\t\tif ctx.Err() != nil {\n\t\t\treturn nil, errs.Wrap(op, errs.CodeInternal, ctx.Err()).\n\t\t\t\tWithDetail(\"cancelled during attempt", "\t\tif false {\n\t\t\treturn nil, errs.Wrap(op, errs.CodeInternal, ctx.Err()).\n\t\t\t\tWithDetail(\"cancelled during attempt", 1)' \
+  ./internal/llm 'TestComplete_ACallItsCallerCancelsIsNotRetriedOrBlamedOnTheEndpoint'
+
+drill "the STEP label ignores the kernel" internal/httpapi/geometry.go \
+  's = s.replace("\tif strings.EqualFold(format, \"step\") && h.deps.CAD.Available() {\n\t\tlabel, err := geometry.KernelLabelFor(v)", "\tif false {\n\t\tlabel, err := geometry.KernelLabelFor(v)", 1)' \
+  ./internal/httpapi 'TestAPI_TheSTEPLabelIsTheKernelsWhereThereIsAKernelAndARefusalWhereThereIsNone'
+
+drill "the STEP label's headline calls a B-Rep tessellated" internal/domain/geometry/export.go \
+  's = s.replace("\tif l.FormatKind == KindParametric {", "\tif false {", 1)' \
+  ./internal/httpapi 'TestAPI_TheSTEPLabelIsTheKernelsWhereThereIsAKernelAndARefusalWhereThereIsNone'
+
+drill "a viewer may start a goal" internal/httpapi/goals_start.go \
+  's = s.replace("\tgoal, err := h.loadGoalFor(r, goalID, user.ID, access.PermGoalStart)", "\tgoal, err := h.loadGoalFor(r, goalID, user.ID, access.PermProjectRead)", 1)' \
+  ./internal/httpapi 'TestAccessFence_GoalApprovalAndExportRoutesAnswerNobodyStrangerViewerAndOwnerAsDecided'
+
+drill "a viewer may decide an approval" internal/httpapi/goals.go \
+  's = s.replace("requireGoalPermission(r, goalOfApproval, user.ID, access.PermApprovalDecide)", "requireGoalPermission(r, goalOfApproval, user.ID, access.PermProjectRead)", 1)' \
+  ./internal/httpapi 'TestAccessFence_GoalApprovalAndExportRoutesAnswerNobodyStrangerViewerAndOwnerAsDecided'
+
+drill "a new goal route is added with no access row" internal/httpapi/router.go \
+  's = s.replace("\tmux.Handle(\"GET /v1/goals/{id}/timeline\", authed(goals.Timeline))", "\tmux.Handle(\"GET /v1/goals/{id}/timeline\", authed(goals.Timeline))\n\tmux.Handle(\"GET /v1/goals/{id}/events\", authed(goals.Timeline))", 1)' \
+  ./internal/httpapi 'TestAccessFence_EveryGoalApprovalAndExportRouteIsInTheAccessTable'
+
+drill "a goal route is mounted without a session" internal/httpapi/router.go \
+  's = s.replace("\tmux.Handle(\"GET /v1/goals/{id}/timeline\", authed(goals.Timeline))", "\tmux.Handle(\"GET /v1/goals/{id}/timeline\", http.HandlerFunc(goals.Timeline))", 1)' \
+  ./internal/httpapi 'TestAccessFence_EveryGoalApprovalAndExportRouteIsInTheAccessTable'
 
 echo
 echo "A build without the cycle collector (one million after), 2026-09-17"

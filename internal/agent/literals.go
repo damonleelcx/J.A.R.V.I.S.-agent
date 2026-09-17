@@ -116,7 +116,9 @@ func parametersForStep(d *Prototype) string {
 type literalUse struct {
 	place    string
 	value    float64
+	held     float64
 	negative bool
+	rounded  bool
 }
 
 // literalPositionNote says which parameters a step's new positions retyped as
@@ -134,12 +136,13 @@ func literalPositionNote(before, after *Prototype) string {
 	var keys []string
 	uses := map[string][]literalUse{}
 	total := 0
+	anyRounded := false
 	scan := func(place string, pos []float64, from map[string]string) {
 		for i, lit := range pos {
 			if i > 2 || lit == 0 || from[positionAxes[i]] != "" {
 				continue
 			}
-			forms, held := literalForms(lengths, lit)
+			forms, held, rounded := literalForms(lengths, lit)
 			if len(forms) == 0 {
 				continue
 			}
@@ -149,8 +152,9 @@ func literalPositionNote(before, after *Prototype) string {
 			}
 			// The axis a name goes under, and the sign the parameter needs: a literal is
 			// half_wheelbase or -half_wheelbase, never the other way round.
-			uses[key] = append(uses[key], literalUse{place: place + " " + positionAxes[i], value: lit,
-				negative: (lit < 0) != (held < 0)})
+			uses[key] = append(uses[key], literalUse{place: place + " " + positionAxes[i], value: lit, held: held,
+				negative: (lit < 0) != (held < 0), rounded: rounded})
+			anyRounded = anyRounded || rounded
 			total++
 		}
 	}
@@ -210,7 +214,13 @@ func literalPositionNote(before, after *Prototype) string {
 			}
 			places = append(places, u.place+" = "+formatNumber(u.value))
 		}
-		groups = append(groups, fmt.Sprintf("%s is %s (%s)", formatNumber(math.Abs(list[0].value)), key, strings.Join(places, ", ")))
+		// The number the parameter holds heads the group: the typed ones are beside
+		// their places, so a rounded 386 reads "385.714286 is x (... = 386)".
+		headline := list[0].value
+		if list[0].rounded {
+			headline = list[0].held
+		}
+		groups = append(groups, fmt.Sprintf("%s is %s (%s)", formatNumber(math.Abs(headline)), key, strings.Join(places, ", ")))
 	}
 	first := uses[keys[0]][0]
 	name := strings.SplitN(keys[0], " or ", 2)[0]
@@ -218,10 +228,14 @@ func literalPositionNote(before, after *Prototype) string {
 		name = "-" + name
 	}
 	axis := first.place[strings.LastIndex(first.place, " ")+1:]
-	return fmt.Sprintf("This step typed %d position(s) as the number a parameter already holds: %s. Write the "+
+	holds := "the number a parameter already holds"
+	if anyRounded {
+		holds += " to the digits written"
+	}
+	return fmt.Sprintf("This step typed %d position(s) as %s: %s. Write the "+
 		"parameter's name so the position follows it: \"position_from\": {%q: %q} on a part or a definition, and "+
 		"%q in a child's or an interface's \"position\", which FORGE keeps bound to the parameters.",
-		total, strings.Join(groups, "; "), axis, name, name)
+		total, holds, strings.Join(groups, "; "), axis, name, name)
 }
 
 // maxLiteralMultiple is the largest k for which a coordinate is read as k times one
@@ -250,7 +264,69 @@ const minMultipliedMM = 50
 // holds it at, each of at least minMultipliedMM, in document order. The value is
 // preferred to a multiple, so 1600 beside both track = 1600 and half_track = 800 is
 // track: the name that already says it.
-func literalForms(lengths []namedValue, lit float64) ([]string, float64) {
+//
+// Only when nothing holds it exactly is it read to the digits written (rounded is
+// then true): see writtenTolerance. An exact match always beats a rounded one, so a
+// document holding both 385.714286 and 386 names 386 for a typed 386.
+func literalForms(lengths []namedValue, lit float64) ([]string, float64, bool) {
+	if forms, held := formsWithin(lengths, lit, exactly); len(forms) > 0 {
+		return forms, held, false
+	}
+	forms, held := formsWithin(lengths, lit, writtenTolerance(lit))
+	return forms, held, len(forms) > 0
+}
+
+// exactly is the float-noise tolerance of an exact match: the one bindingEpsilon uses.
+func exactly(target float64) float64 { return 1e-9 * math.Max(1, math.Abs(target)) }
+
+// maxRoundingShare is the coarsest a written coordinate may be, as a share of the
+// value it is read as, for a rounded match: half its last digit's place must be at
+// most one part in 200 of the value.
+//
+// # Why the digits written, and why one part in 200
+//
+// A step is shown each value as FORGE formats it (formatNumber, 6 decimals), and a
+// model copies what it sees or rounds it: half_wheelbase / 3 is shown as 450 but
+// wheelbase / 7 as 385.714286, and the model types 385.714286, 385.71 or 386. An
+// exact match reads only the first, so a model that rounded a derived value was
+// never told — the note's commonest miss once values stop being round. The digits a
+// coordinate was written with say how precisely it was meant: 385.71 claims two
+// decimals, so it is that value rounded when the value lies within 0.005 of it, and
+// never when it does not (385.72). Nothing here is an engineering tolerance; it is
+// the rounding the model itself declared.
+//
+// The share stops a coarse number claiming a small value: 12 would be 12.34 to the
+// digits written, but ±0.5 is 4% of it, and a 12 typed near a 12.34 mm lip is as
+// likely any other 12. At one part in 200 an integer is read as a value of at least
+// 100 (a hub offset, a track), one decimal as a value of at least 10. Chosen, not
+// measured against live replies.
+// Fence: TestAssemble_AStepThatRoundsAParametersValueIsToldWhichParameter.
+const maxRoundingShare = 1.0 / 200
+
+// writtenTolerance is how far a value may lie from lit and still be lit to the digits
+// lit was written with: half its last digit's place, when that is within
+// maxRoundingShare of the value.
+//
+// The digits are the shortest decimal that reads back as lit (strconv's 'f', -1):
+// what the reply's JSON said, trailing zeros aside, which change no digit's place
+// that matters (385.70 is 385.7 to the model and to this).
+func writtenTolerance(lit float64) func(target float64) float64 {
+	text := strconv.FormatFloat(math.Abs(lit), 'f', -1, 64)
+	half := 0.5
+	if dot := strings.IndexByte(text, '.'); dot >= 0 {
+		half = 0.5 * math.Pow10(-(len(text) - dot - 1))
+	}
+	return func(target float64) float64 {
+		if half > maxRoundingShare*math.Abs(target) {
+			return -1
+		}
+		return half + exactly(target)
+	}
+}
+
+// formsWithin is literalForms' walk for one tolerance: every form within
+// tolerance(target) of lit, for the smallest k that has one.
+func formsWithin(lengths []namedValue, lit float64, tolerance func(target float64) float64) ([]string, float64) {
 	for k := 1; k <= maxLiteralMultiple; k++ {
 		var forms []string
 		held := 0.0
@@ -259,7 +335,7 @@ func literalForms(lengths []namedValue, lit float64) ([]string, float64) {
 				continue
 			}
 			target := float64(k) * v.number
-			if math.Abs(math.Abs(lit)-math.Abs(target)) > 1e-9*math.Max(1, math.Abs(target)) {
+			if math.Abs(math.Abs(lit)-math.Abs(target)) > tolerance(target) {
 				continue
 			}
 			if len(forms) == 0 {

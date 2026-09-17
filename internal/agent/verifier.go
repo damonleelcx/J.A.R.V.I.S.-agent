@@ -9,7 +9,10 @@ import (
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/engine"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/llm"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/persona"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/clock"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/db"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/errs"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/logx"
 )
 
 // verifierFraming frames the verifier adversarially on purpose.
@@ -74,6 +77,19 @@ func NewVerifier(client llm.Client, char persona.Character) *Verifier {
 
 // WithCharacters makes verification honour the project's critique intensity.
 func (v *Verifier) WithCharacters(s *CharacterStore) *Verifier { v.characters = s; return v }
+
+// chargedTo is this verifier with its call charged to the goal it verifies for.
+//
+// ‼️ The verifier's call was never charged: Verdict.Usage was filled in and nothing
+// read it, so a goal's tokens_spent and its ceiling left out every verification. A
+// copy, because one Verifier serves every task the worker runs.
+// docs/bugfix/2026-09-17-a-goals-planner-and-verifier-calls-were-never-charged.md
+func (v *Verifier) chargedTo(budget *engine.BudgetGuard, pool db.Querier, goal *engine.Goal,
+	clk clock.Clock, log *logx.Logger) *Verifier {
+	c := *v
+	c.client = chargeTo(v.client, budget, pool, goal, clk, log)
+	return &c
+}
 
 // Verdict is a verification result.
 type Verdict struct {

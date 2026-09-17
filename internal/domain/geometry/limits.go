@@ -86,7 +86,30 @@ const maxBuiltParts = 8192
 // shared machine: docs/spikes/2026-09-15-instanced-viewport. It is not a claim of 60
 // frames a second at the ceiling. forge3d.js holds the same number as
 // MAX_VIEWPORT_PARTS, and TestRendererFlattensATreeLikeTheExporter the words.
+//
+// # Decided 2026-09-15: keep 100,000, not ~30,000 (PR #88's open question)
+//
+// damon delegated the choice. 100,000 stays, as USABLE, not smooth, for two reasons
+// that both have to keep holding:
+//
+//  1. It was measured, at the ceiling: 99,971 occurrences drew in 23.4 ms a frame with
+//     level of detail in real Chrome (above). ~30,000 would have been a guess below a
+//     number already in hand.
+//  2. Nobody's first view is 100,000 copies. Past maxBuiltParts the workbench lists
+//     every occurrence but uploads none, and its first view asks for top-level rows
+//     of at most maxBuiltParts each and at most 8,192 parts in all (forge3d.js
+//     FIRST_VIEW_OCCURRENCES, PR #93); the rest arrives a subtree at a time, when a
+//     person opens, selects or isolates it. The whole design is drawn at once only
+//     if somebody opens every row.
+//
+// TestViewportLimitIsTheMeasuredOneAndAFirstViewStaysSmall holds both: this number, the
+// browser's copy of it, and a first view of a design AT the ceiling staying within
+// 8,192 parts. If the first view stops being bounded, reason 2 is gone and this limit
+// is to be re-measured, not kept.
 const maxViewportParts = DefaultMaxOccurrences
+
+// MaxViewportParts is the most parts the browser draws at once (maxViewportParts).
+func MaxViewportParts() int { return maxViewportParts }
 
 // MaxExportJobParts is the most occurrences an off-node STEP export job builds
 // (forge-worker, POST /v1/geometry/{id}/exports; internal/agent/stepexport.go).
@@ -180,6 +203,40 @@ func (d Document) DrawRefusal() string {
 	return fmt.Sprintf("This design places more than %d parts, which is the most FORGE builds or exports "+
 		"at once until building at that size has been measured. It is stored as it is, and the viewport "+
 		"can still show it if it places no more than %d; nothing was built.", maxDrawnParts, maxViewportParts)
+}
+
+// Occurrences is how many parts this design places, counted without placing any of
+// them (occurrences), saturating one past the storage bound in force. A stored design
+// is within that bound, so for one the count is exact; it costs a walk over the
+// document's definitions and assemblies, not over its placements, which is why a
+// listing may show it for a design of a million parts.
+func (d Document) Occurrences() int {
+	return occurrences(d, CurrentLimits().MaxOccurrences)
+}
+
+// STEPRefusal is why a STEP file of this design is not written during a REQUEST (GET
+// /v1/geometry/{id}/export?format=step, and its label), or "" when it is.
+//
+// It is DrawRefusal's ceiling, said for STEP: the count, the limit, and where the file
+// can come from instead. ‼️ Found on 2026-09-17 by the workbench check: the label for a
+// 30,023-part car answered 501 "This deployment has no CAD kernel configured" with a
+// kernel configured, because the label read the build-time format table. A refusal that
+// names the wrong cause sends somebody to fix a deployment that is not broken.
+func (d Document) STEPRefusal() string {
+	if occurrences(d, maxDrawnParts) <= maxDrawnParts {
+		return ""
+	}
+	n := d.Occurrences()
+	if n <= MaxExportJobParts {
+		return fmt.Sprintf("This design places %d parts, and a STEP file written during a request is built from "+
+			"at most %d, until building at that size has been measured. Use \"STEP via worker\" (POST "+
+			"/v1/geometry/{id}/exports): forge-worker writes up to %d parts as STEP off-node and keeps the "+
+			"file. Nothing was built.", n, maxDrawnParts, MaxExportJobParts)
+	}
+	return fmt.Sprintf("This design places %d parts, and a STEP file written during a request is built from "+
+		"at most %d, until building at that size has been measured. \"STEP via worker\" does not reach it "+
+		"either: an export job writes at most %d. Export a smaller subtree as its own design. Nothing was built.",
+		n, maxDrawnParts, MaxExportJobParts)
 }
 
 // BuildRefusal is why the CAD kernel does not build this design for a view

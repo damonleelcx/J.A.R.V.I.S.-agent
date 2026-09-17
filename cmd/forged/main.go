@@ -144,13 +144,21 @@ func run() error {
 			"detail", "no FORGE_LLM_API_KEY: the workbench will load but cannot hold a conversation")
 	}
 
-	// The CAD kernel (PRD VIS-05). Nothing starts here: the process is created
-	// on the first parametric export, so a deployment that never asks for one
-	// never pays the 2.5 s import, and a deployment with no interpreter
-	// configured simply refuses and says how to configure one. FORGE_CAD_POOL
-	// processes serve builds at once (Phase 4, stage K3), one by default.
-	cadKernel := cad.New(cfg.CAD.Python, log).WithScripts(cfg.CAD.AllowScripts).WithPool(cfg.CAD.Pool)
+	// The CAD kernel (PRD VIS-05). A deployment with no interpreter configured
+	// simply refuses and says how to configure one. FORGE_CAD_POOL processes serve
+	// builds at once (Phase 4, stage K3), one by default, each allowed
+	// FORGE_CAD_BUILD_TIMEOUT per build.
+	//
+	// With FORGE_CAD_PRESTART (the default) they are started now, in the
+	// background, rather than by the first person to open a design — who otherwise
+	// waits for build123d's import in front of every subtree queued behind it
+	// (cad.Kernel.Prestart says why that and not a second process). Serving does
+	// not wait for it, and a start that fails leaves the first build to start one.
+	cadKernel := cad.FromConfig(cfg.CAD, log)
 	defer cadKernel.Close()
+	if cfg.CAD.Prestart {
+		go func() { _ = cadKernel.Prestart(ctx) }()
+	}
 
 	// Blob storage (docs/plan-2026-09-13-millions-of-parts.md, Phase 3). No handler
 	// uses it yet; it is built here for the same two reasons as in forge-worker —

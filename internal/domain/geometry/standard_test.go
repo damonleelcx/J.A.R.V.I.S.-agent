@@ -297,6 +297,7 @@ func TestStandard_EveryFamilyCarriesTheFiguresItsSourcePublishes(t *testing.T) {
 	rows("ISO 7089", 7)
 
 	// ISO/R 15/1-1968 Table 3, diameter series 0, dimension series 10: d, D and B.
+	// GOST R 52598-2006 (ISO 15:1998, MOD) Table 4 prints the same seven rows.
 	// ISO 15:2017's own table was not reachable; standard.go says what carries these
 	// figures forward to it.
 	for _, b := range []struct {
@@ -338,7 +339,8 @@ func TestStandard_EveryFamilyCarriesTheFiguresItsSourcePublishes(t *testing.T) {
 
 	// EN 10056-1:1998 Table 1 and EN 10056-1:2017 Table 1, which print the same a, t, root
 	// radius and area for these rows; the 1998 Note 1's toe radius of half the root radius
-	// (what the 2017 edition says of it was not reachable); and the sectional area by that
+	// (what the 2017 text says of it was not reachable; the Blue Book's BS EN 10056-1:2017
+	// table prints r2 = r1 / 2 for all four); and the sectional area by that
 	// note's formula is the printed one.
 	for _, a := range []struct {
 		size             string

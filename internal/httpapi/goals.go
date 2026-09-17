@@ -156,6 +156,13 @@ type TaskDTO struct {
 	ErrorDetail      string   `json:"error_detail,omitempty"`
 	StartedAt        *string  `json:"started_at,omitempty"`
 	EndedAt          *string  `json:"ended_at,omitempty"`
+	// LastSeenAt is when the worker holding a task last said it is still at work, and
+	// is present only while one does (claimed, running, verifying). PRD NFR-02: a build
+	// step can run for a minute with nothing else on the goal changing, and this is
+	// the progress a client can show meanwhile. The worker stamps it at least every
+	// agent.AliveEvery (5 s).
+	// docs/bugfix/2026-09-17-a-long-build-step-showed-no-progress-for-its-whole-length.md
+	LastSeenAt *string `json:"last_seen_at,omitempty"`
 }
 
 func toTaskDTO(t *engine.Task, deps []string) TaskDTO {
@@ -178,6 +185,11 @@ func toTaskDTO(t *engine.Task, deps []string) TaskDTO {
 	if t.EndedAt != nil {
 		s := t.EndedAt.UTC().Format(time.RFC3339)
 		d.EndedAt = &s
+	}
+	switch t.Status {
+	case engine.StatusClaimed, engine.StatusRunning, engine.StatusVerifying:
+		s := t.UpdatedAt.UTC().Format(time.RFC3339)
+		d.LastSeenAt = &s
 	}
 	return d
 }

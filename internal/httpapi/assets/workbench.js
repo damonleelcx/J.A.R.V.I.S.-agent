@@ -67,13 +67,34 @@
     goalPhase: 'none',    // none | proposed | planning | planned | starting | active | failed
     /* Whether the provenance banner's details are open. Folded until somebody opens
      * them, and kept across designs: see renderProvenance. */
-    provenanceOpen: false
+    provenanceOpen: false,
+    /* STEP files being written off-node, by version id: see watchExport. */
+    exportJobs: {}
   };
 
   function esc(s) {
     return String(s == null ? '' : s)
       .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
       .replace(/"/g, '&quot;');
+  }
+
+  /* What to show for a refused export request (2026-09-17).
+   *
+   * An error reply carries the code's GENERAL words in message and remedy
+   * ("One or more request fields failed validation." / "Correct the fields named
+   * in the details array and resubmit.") and the sentence written for THIS refusal
+   * in details.detail ("This design places more than 90000 parts, the most FORGE
+   * writes as STEP in an export job: …"). The export panels showed only the
+   * general words, so a viewer who asked for a STEP of a million-part design read
+   * that some field was wrong and nothing about which limit it met. Seen in the
+   * browser: docs/spikes/2026-09-17-workbench-viewport. The detail, when there is
+   * one, is the answer; the general words are the fallback.
+   * Fence: TestWorkbenchExportsSTEPThroughTheWorkerJob. */
+  function refusalText(e, status, fallback) {
+    e = e || {};
+    var detail = e.details && typeof e.details.detail === 'string' ? e.details.detail.trim() : '';
+    if (detail) return detail;
+    return (e.message || (fallback + ' (' + status + ')')) + (e.remedy ? ' — ' + e.remedy : '');
   }
 
   /* ---- variants (PRD VIS-04) --------------------------------------------
@@ -96,8 +117,14 @@
    * them. Normalised once, here, so the row cannot render differently depending
    * on how it arrived. */
   function railRow(v) {
-    var parts = (typeof v.parts === 'number')
-      ? v.parts
+    /* What the design PLACES: the listing's occurrence count, and the live event's
+     * `parts`, which the server counts the same way. ‼️ Never document.parts.length —
+     * a design written as a tree has no top-level parts, and the rail read "0 part(s)"
+     * for every one (found by the 2026-09-17 workbench check). The count comes with the
+     * listing, so the page expands nothing to show it.
+     * Fence: TestWorkbenchRailCountsWhatADesignPlaces. */
+    var parts = (typeof v.occurrences === 'number') ? v.occurrences
+      : (typeof v.parts === 'number') ? v.parts
       : ((v.document && v.document.parts) ? v.document.parts.length : 0);
     var assumptions = (typeof v.assumptions === 'number')
       ? v.assumptions
@@ -637,6 +664,7 @@
         exportButtons(v.version_id) +
         '</div>' +
         '<div class="exportlabel hidden" data-label="' + esc(v.version_id) + '"></div>' +
+        '<div class="exportlabel exportjob hidden" data-export-job-panel="' + esc(v.version_id) + '"></div>' +
         '<div class="params hidden" data-params-panel="' + esc(v.version_id) + '"></div>' +
         '</span></div>';
     }).join('');
@@ -663,6 +691,11 @@
         showExportLabel(b.getAttribute('data-export'), b.getAttribute('data-format'));
       });
     });
+    Array.prototype.forEach.call(el.querySelectorAll('[data-export-job]'), function (b) {
+      b.addEventListener('click', function () { toggleExportJob(b.getAttribute('data-export-job')); });
+    });
+    /* A job being followed keeps its panel through a re-render of the rail. */
+    Object.keys(state.exportJobs).forEach(paintExportJob);
     var open = $('cmp-open');
     if (open) open.addEventListener('click', openCompare);
   }
@@ -751,6 +784,22 @@
      * Geometry is parts OR a root, as geometry.Document.HasGeometry says. */
     if (!pick || !pick.document || !(pick.document.parts || pick.document.root)) return;
     loadPrototype(pick.document, pick.measured || [], pick.version_id);
+    /* A listing no longer measures (measuring places every part: 3.4-4.1 s for a
+     * project holding a million-part design, 2026-09-17), so the dimensions of the one
+     * design drawn are read from that variant, and put on the stage if it is still
+     * the one there. */
+    if (!pick.measured && pick.version_id) loadMeasured(pick.version_id, pick.document);
+  }
+
+  function loadMeasured(versionID, proto) {
+    fetch('/v1/geometry/' + encodeURIComponent(versionID))
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (b) {
+        if (!b || !b.variant || state.prototype !== proto) return;
+        state.measured = b.variant.measured || [];
+        studio.setOverlays(proto.overlays || [], state.measured);
+      })
+      .catch(function () { /* the drawing stands without derived dimensions */ });
   }
 
   /* What this deployment can write, and what it cannot.
@@ -791,7 +840,13 @@
        * being read. */
       return '<button type="button" disabled class="unavail" title="' +
         esc(f.reason || 'not available in this deployment') + '">' + esc(label) + '</button>';
-    }).join('');
+    }).join('') +
+      /* Offered on every variant, to everyone who can see it: exporting is
+       * reading (PR #123), and whether this deployment has a worker and a bucket
+       * is the server's to say, by name, when asked (see watchExport). */
+      '<button type="button" data-export-job="' + esc(versionID) + '" title="Written off-node by ' +
+      'forge-worker with its own CAD kernel and kept in blob storage: the way to a STEP file for a ' +
+      'design larger than a request builds">STEP via worker</button>';
   }
 
   /* ---- parameters, and re-deriving from them (waves 10, 11) ---------------
@@ -980,8 +1035,7 @@
         return r.json().catch(function () { return {}; }).then(function (b) {
           if (!r.ok) {
             var e = (b && b.error) || {};
-            throw new Error((e.message || ('Export refused (' + r.status + ')')) +
-                            (e.remedy ? ' — ' + e.remedy : ''));
+            throw new Error(refusalText(e, r.status, 'Export refused'));
           }
           return b;
         });
@@ -1001,7 +1055,10 @@
         html += section('Lost in this conversion', l.lossy);
         html += section('Assumed, not specified', l.assumptions);
         html += section('This file does not establish', l.not_verified);
-        html += '<div>' + b.triangles + ' triangles · ' + esc(l.units) + '</div>' +
+        /* A STEP label is a B-Rep's: it has no triangles to count, and "0 triangles" would
+         * read as an empty file (2026-09-17, once the label answered STEP with a kernel). */
+        html += '<div>' + (l.format_kind === 'parametric' ? 'B-Rep, not tessellated'
+          : b.triangles + ' triangles') + ' · ' + esc(l.units) + '</div>' +
           '<a class="go" href="/v1/geometry/' + encodeURIComponent(versionID) +
           '/export?format=' + encodeURIComponent(format) + '">Download the ' +
           esc(String(format).toUpperCase()) + ' →</a>';
@@ -1016,6 +1073,234 @@
     if (!items || !items.length) return '';
     return '<div style="margin-top:6px"><b>' + esc(title) + '</b><ul>' +
       items.map(function (i) { return '<li>' + esc(i) + '</li>'; }).join('') + '</ul></div>';
+  }
+
+  /* ---- a STEP file written off-node (2026-09-17) ---------------------------
+   *
+   * # What was missing
+   *
+   * PR #99 built the job: POST /v1/geometry/{id}/exports asks forge-worker to write
+   * the version as STEP with its own kernel, GET /v1/geometry/exports/{id} says how
+   * it is going, and …/file streams it from blob storage. That is the only way a
+   * design past the 4,096 parts a request builds leaves FORGE as a B-Rep — and no
+   * button reached it. A person could look at a 30,000-part car and not have it.
+   *
+   * # What this does
+   *
+   * One button per variant, "STEP via worker". It asks once, then reads the
+   * status every EXPORT_POLL_MS until the job succeeds or fails, and shows, in the
+   * variant's own panel: queued (and that nothing runs until a worker does),
+   * running, the attempt, why it failed. On success the LABEL comes first — what
+   * the kernel left out, that no interference check ran for this file — and the
+   * download link after it, as showExportLabel does for the request-path files.
+   *
+   * # Who may press it
+   *
+   * Anyone who can see the variant. PR #123 decided exporting is reading: the
+   * request needs project.read, not goal.create, so a viewer may export. The page
+   * does not guess at roles; the server answers, and a refusal (404 for a design
+   * the caller cannot read, 429 past MaxLiveExportJobsPerRequester, 503 with no
+   * blob store) is shown in its own words with its remedy. It asks through the
+   * export routes ONLY — never POST /v1/goals, which a viewer is refused.
+   *
+   * # When it stops asking
+   *
+   * On succeeded or failed; on 401, 403 or 404 (asking again will not change the
+   * answer); when the variant's panel is closed; and after EXPORT_POLL_LIMIT reads
+   * (30 minutes — a 300k export took about five), saying it stopped and offering to
+   * look again. Asking twice for one version is one job: the server answers 200
+   * with the job it already has.
+   *
+   * Fence: TestWorkbenchExportsSTEPThroughTheWorkerJob (runs this code in node). */
+  var EXPORT_POLL_MS = 4000;
+  var EXPORT_POLL_LIMIT = 450;
+  var EXPORT_SETTLED = { succeeded: true, failed: true };
+
+  function exportBytes(n) {
+    if (n == null) return '';
+    if (n < 1024) return n + ' B';
+    if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' kB';
+    return (n / (1024 * 1024)).toFixed(1) + ' MB';
+  }
+
+  /* exportJobHTML says what a person needs about one export job. extra is
+   * { error, stopped } from the watcher. */
+  function exportJobHTML(exp, extra) {
+    extra = extra || {};
+    var html = '';
+    if (exp) {
+      var attempt = exp.max_attempts ? ' (attempt ' + (exp.attempts || 0) + ' of ' + exp.max_attempts + ')' : '';
+      if (exp.status === 'queued') {
+        html += '<b>STEP export queued' + attempt + '.</b><div>forge-worker writes it with its own CAD kernel; ' +
+          'nothing runs until a worker is running.' + (exp.reason ? ' ' + esc(exp.reason) : '') + '</div>';
+      } else if (exp.status === 'running') {
+        html += '<b>forge-worker is writing the STEP file' + attempt + '.</b>';
+      } else if (exp.status === 'failed') {
+        html += '<b>Not exported.</b><div>' + esc(exp.reason || 'The export job failed and gave no reason.') + '</div>';
+      } else if (exp.status === 'succeeded') {
+        /* The label BEFORE the link: the same words the download carries in
+         * X-Forge-Export-Label (geometry_exports.go exportJobLabel). */
+        var skipped = exp.skipped || [], failures = exp.feature_failures || [];
+        html += '<b>This STEP file is an unverified proposal.</b>';
+        if (skipped.length) {
+          html += section(skipped.length + ' part(s) could not be built and are NOT in this file', skipped);
+        }
+        if (failures.length) {
+          html += section(failures.length + ' feature(s) could NOT be applied, so this shape is not what the design describes', failures);
+        }
+        html += '<div>B-Rep, not tessellated. Nothing about this shape has been analysed or checked, and ' +
+          '<b>no interference check ran for this file</b>.</div>' +
+          '<div>' + (exp.parts == null ? '' : exp.parts + ' parts · ') + esc(exportBytes(exp.size_bytes)) +
+          (exp.sha256 ? ' · sha256 <code>' + esc(String(exp.sha256).slice(0, 12)) + '…</code>' : '') + '</div>';
+        if (exp.download_url) {
+          html += '<a class="go" href="' + esc(exp.download_url) + '">Download ' + esc(exp.filename || 'the STEP') + ' →</a>';
+        }
+      } else {
+        html += '<b>STEP export: ' + esc(exp.status || 'unknown') + '.</b>';
+      }
+    }
+    if (extra.error) {
+      html += '<div class="exportjob-err">' + (exp ? 'Its status could not be read: ' : '<b>Not exported.</b> ') +
+        esc(extra.error) + '</div>';
+    }
+    if (extra.stopped) {
+      html += '<div>Stopped checking after ' + Math.round(EXPORT_POLL_LIMIT * EXPORT_POLL_MS / 60000) +
+        ' minutes. <button type="button" data-export-job-again="1">Check again</button></div>';
+    }
+    return html;
+  }
+
+  /* watchExport asks for a version's STEP job (or, given opts.exportID, only
+   * follows one already asked for) and reads its status until it settles.
+   * opts.fetch, opts.setTimeout and opts.clearTimeout default to the browser's; the
+   * fence replaces them. onUpdate gets { export, error, status, stopped, settled }. */
+  function watchExport(versionID, opts) {
+    opts = opts || {};
+    var get = opts.fetch || function (path, init) { return fetch(path, init); };
+    var later = opts.setTimeout || setTimeout;
+    var cancel = opts.clearTimeout || clearTimeout;
+    var interval = opts.interval || EXPORT_POLL_MS;
+    var limit = opts.limit || EXPORT_POLL_LIMIT;
+    var onUpdate = opts.onUpdate || function () {};
+    var stopped = false, timer = null, reads = 0, current = opts.export || null;
+
+    function read(path, init) {
+      return get(path, init).then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (b) {
+          if (!r.ok) {
+            var e = (b && b.error) || {};
+            var err = new Error(refusalText(e, r.status, 'Request failed'));
+            err.status = r.status;
+            throw err;
+          }
+          return b;
+        });
+      });
+    }
+    function tell(extra) {
+      if (stopped) return;
+      var u = { export: current, error: extra.error || null, status: extra.status || 0, stopped: !!extra.stopped,
+        settled: !!(current && EXPORT_SETTLED[current.status]) };
+      onUpdate(u);
+    }
+    function next() {
+      if (stopped || (current && EXPORT_SETTLED[current.status])) return;
+      if (reads >= limit) { tell({ stopped: true }); return; }
+      timer = later(poll, interval);
+    }
+    function poll() {
+      timer = null;
+      reads++;
+      read(current.status_url).then(function (b) {
+        if (stopped) return;
+        current = b.export || current;
+        tell({});
+        next();
+      }, function (err) {
+        if (stopped) return;
+        tell({ error: err.message, status: err.status });
+        if (err.status === 401 || err.status === 403 || err.status === 404) return;
+        next();
+      });
+    }
+    if (current && current.status_url) {
+      poll();
+    } else {
+      read('/v1/geometry/' + encodeURIComponent(versionID) + '/exports?format=step', { method: 'POST' })
+        .then(function (b) {
+          if (stopped) return;
+          current = b.export || null;
+          tell({});
+          if (current && current.status_url) next();
+        }, function (err) {
+          tell({ error: err.message, status: err.status });
+        });
+    }
+    return {
+      stop: function () {
+        stopped = true;
+        if (timer !== null) cancel(timer);
+        timer = null;
+      }
+    };
+  }
+
+  window.ForgeExportJob = {
+    watch: watchExport, html: exportJobHTML, interval: EXPORT_POLL_MS, limit: EXPORT_POLL_LIMIT
+  };
+
+  /* The rail's side: one job per version, kept across re-renders of the rail. */
+  function toggleExportJob(versionID) {
+    var jobs = state.exportJobs;
+    var job = jobs[versionID];
+    if (job && job.open) {
+      /* Closing the panel stops the reading; the job itself carries on in the
+       * worker, and opening the panel again picks it up (the server answers 200
+       * with the job it already has). */
+      if (job.watch) job.watch.stop();
+      job.watch = null;
+      job.open = false;
+      paintExportJob(versionID);
+      return;
+    }
+    job = jobs[versionID] = { open: true, update: job && job.update ? job.update : null, watch: null };
+    followExportJob(versionID, job);
+  }
+
+  function followExportJob(versionID, job) {
+    var known = job.update && job.update.export;
+    job.update = job.update || { export: null };
+    job.watch = watchExport(versionID, {
+      export: known && known.status_url && !EXPORT_SETTLED[known.status] ? known : null,
+      onUpdate: function (u) {
+        if (state.exportJobs[versionID] !== job) return;
+        job.update = u;
+        paintExportJob(versionID);
+      }
+    });
+    paintExportJob(versionID);
+  }
+
+  function paintExportJob(versionID) {
+    var box = document.querySelector('[data-export-job-panel="' + versionID + '"]');
+    var job = state.exportJobs[versionID];
+    if (!box) return;
+    if (!job || !job.open) {
+      box.classList.add('hidden');
+      box.innerHTML = '';
+      return;
+    }
+    box.classList.remove('hidden');
+    var u = job.update || {};
+    box.innerHTML = u.export || u.error || u.stopped ? exportJobHTML(u.export, u) : 'Asking forge-worker for a STEP file…';
+    var again = box.querySelector('[data-export-job-again]');
+    if (again) {
+      again.addEventListener('click', function () {
+        if (job.watch) job.watch.stop();
+        job.update = { export: u.export };
+        followExportJob(versionID, job);
+      });
+    }
   }
 
   /* ---- side by side ------------------------------------------------------ */
@@ -1478,6 +1763,13 @@
       studio.loadLazy(proto, function (path) { fetchSubtree(versionID, proto, path); });
     } else {
       studio.load(proto);
+      /* ‼️ Not for a design the viewport has refused to draw: the whole-design mesh of
+       * one past MAX_VIEWPORT_PARTS is refused too (400), and asking for it anyway was a
+       * request with nothing to receive (found by the 2026-09-17 workbench check, on a
+       * stored million-part design). Such a design is browsed a subtree at a time above;
+       * this branch is reached for one only with forge.viewport.eager set, or when it
+       * has no tree to browse. Fence: TestWorkbenchAsksNoWholeMeshForADesignItRefused. */
+      if (window.Forge3D.drawRefusal(proto)) versionID = null;
       /* The primitives are drawn FIRST and the built solid replaces them.
        *
        * Not "instead of": the kernel is a subsystem that can be absent, and it
@@ -3596,6 +3888,13 @@
         // rather than left to read as "nothing modelled yet".
         $('stage-empty').textContent = msg;
         $('stage-empty').classList.remove('hidden');
+      },
+      /* A design browsed past the viewport's limit: why it is not drawn whole and how to
+       * draw part of it, or why a row did not load (its name and count); cleared when a
+       * row arrives. */
+      onNotice: function (msg) {
+        $('stage-empty').textContent = msg;
+        $('stage-empty').classList.toggle('hidden', !msg);
       }
     });
     /* BEFORE anything reads the stored project or conversation, so a switch is

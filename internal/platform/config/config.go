@@ -265,6 +265,21 @@ type CADConfig struct {
 	// nothing caps one below its pod's limit, so raising it is a decision to take
 	// on a measured memory number for that pod, not a tuning knob.
 	Pool int
+	// BuildTimeout is how long one kernel build may take before its process is
+	// killed and the build refused as CAD_KERNEL_TIMEOUT (FORGE_CAD_BUILD_TIMEOUT,
+	// default 30s). The off-node export job keeps its own longer limit. At most
+	// FORGE_HTTP_WRITE_TIMEOUT: a build that outlives the response's write deadline
+	// finishes for nobody.
+	BuildTimeout time.Duration
+	// Prestart starts forged's kernel processes at boot, in the background,
+	// instead of on the first build (FORGE_CAD_PRESTART, default true; ignored
+	// without FORGE_CAD_PYTHON and by forge-worker, whose builds are jobs nobody
+	// watches start). The first person to open a design otherwise waits for
+	// build123d's import on top of every subtree queued behind it: 9.3 s of the
+	// 17.2 s first view of a 30k car (docs/spikes/2026-09-15-subtree-loading).
+	// A process started once is kept for the life of forged either way, so this
+	// moves WHEN the memory is taken, not how much.
+	Prestart bool
 }
 
 // GeometryConfig is what one stored design may be (Phase 3, stage S0 of
@@ -896,9 +911,22 @@ func Load(required ...Section) (*Config, []string, error) {
 		Python:       strings.TrimSpace(l.str("FORGE_CAD_PYTHON", "")),
 		AllowScripts: l.boolVal("FORGE_ALLOW_SCRIPTS", false),
 		Pool:         l.intVal("FORGE_CAD_POOL", 1),
+		BuildTimeout: l.dur("FORGE_CAD_BUILD_TIMEOUT", 30*time.Second),
+		Prestart:     l.boolVal("FORGE_CAD_PRESTART", true),
 	}
 	if cfg.CAD.Pool <= 0 {
 		l.fail("FORGE_CAD_POOL", "must be a positive number; it is how many CAD kernel processes serve builds at once")
+	}
+	switch {
+	case cfg.CAD.BuildTimeout <= 0:
+		l.fail("FORGE_CAD_BUILD_TIMEOUT", fmt.Sprintf(
+			"must be a positive duration such as 30s; it is how long one CAD kernel build may take, got %s",
+			cfg.CAD.BuildTimeout))
+	case cfg.HTTP.WriteTimeout > 0 && cfg.CAD.BuildTimeout > cfg.HTTP.WriteTimeout:
+		l.fail("FORGE_CAD_BUILD_TIMEOUT", fmt.Sprintf(
+			"is %s, longer than FORGE_HTTP_WRITE_TIMEOUT (%s): a build that outlives the response's write "+
+				"deadline finishes for nobody. Lower it, or raise FORGE_HTTP_WRITE_TIMEOUT with it",
+			cfg.CAD.BuildTimeout, cfg.HTTP.WriteTimeout))
 	}
 
 	// Phase 3, stage S0. Defaults decided 2026-09-14 from measurements: a car stored
@@ -1075,7 +1103,12 @@ func (c *Config) Redacted() map[string]any {
 		// whether this deployment can write a parametric file at all.
 		"cad_kernel":  cadForPrint(c.CAD.Python),
 		"cad_scripts": c.CAD.AllowScripts,
-		"blob_store":  blobForPrint(c.Blob),
+		// How many kernel processes, how long a build may take, and whether forged
+		// starts them at boot: the three numbers a "CAD_KERNEL_TIMEOUT" is read against.
+		"cad_pool":          c.CAD.Pool,
+		"cad_build_timeout": c.CAD.BuildTimeout.String(),
+		"cad_prestart":      c.CAD.Prestart,
+		"blob_store":        blobForPrint(c.Blob),
 		// The speech vendor and, separately, whether its backbone may be trained
 		// on what FORGE says. FORGE_DATA_BOUNDARY answers that question for the
 		// MODEL endpoint and not for this one, so a deployment that reads
