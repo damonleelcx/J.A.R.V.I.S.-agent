@@ -4210,7 +4210,7 @@ drill "service-not-allowed is a refused microphone again" internal/httpapi/asset
   ./internal/httpapi 'TestVoiceInput_EveryFailureReachesTheNote/service_not_allowed_is_not_a_refused_microphone'
 
 drill "Space is taken from a focused button again" internal/httpapi/assets/voice.js \
-  's = s.replace("    if (SPACE_OPERATES_TAG.test(", "    if (false && SPACE_OPERATES_TAG.test(", 1)' \
+  's = s.replace("    if (use === \x27activates\x27) return !!byPointer;", "    if (use === \x27activates\x27) return true;", 1)' \
   ./internal/httpapi 'TestVoiceInput_SpaceOperatesAFocusedControlAndTalksEverywhereElse'
 
 drill "Space never holds the microphone" internal/httpapi/assets/voice.js \
@@ -4227,6 +4227,56 @@ drill "the workbench takes Space itself again" internal/httpapi/assets/workbench
 
 drill "the workbench does not pass the server reason on" internal/httpapi/assets/workbench.js \
   's = s.replace("tr.server ? \x27\x27 : tr.reason);", "\x27\x27);", 1)' \
+  ./internal/httpapi 'TestWorkbench_SpaceAndTheServerReasonAreWiredThroughVoiceJS'
+
+# ---------------------------------------------------------------------------
+# Added 2026-09-17 (Space push-to-talk when nothing looks focused).
+#
+# "Fix the push-to-talk space key when not focused." In Chrome a mouse click
+# leaves focus on the button it clicked, with no ring, and PR 138 gave Space to
+# every focused button — so after clicking Send or New conversation, Space
+# pressed it again instead of talking. How focus arrived is now read at focusin
+# with :focus-visible (NOT at keydown, where Chrome already reports it visible).
+# A Space hold also ends when the window loses focus, and Space on a mic that
+# is off says why. See bindSpaceHold in internal/httpapi/assets/voice.js.
+# ---------------------------------------------------------------------------
+
+echo
+echo "Space push-to-talk after a click, 2026-09-17"
+drill "Space after a mouse click presses the button again" internal/httpapi/assets/voice.js \
+  's = s.replace("    if (use === \x27activates\x27) return !!byPointer;", "    if (use === \x27activates\x27) return false;", 1)' \
+  ./internal/httpapi 'TestVoiceInput_SpaceAfterAMouseClickTalksAndDoesNotPressTheButtonAgain'
+
+drill "focus origin is asked at keydown" internal/httpapi/assets/voice.js \
+  's = s.replace("target != null && target === pointerFocused)) return;", "focusCameFromPointer(target))) return;", 1)' \
+  ./internal/httpapi 'TestVoiceInput_SpaceAfterAMouseClickTalksAndDoesNotPressTheButtonAgain'
+
+drill "a text box clicked with the mouse loses Space" internal/httpapi/assets/voice.js \
+  's = s.replace("    if (use === \x27edits\x27) return false;", "    if (use === \x27edits\x27) return !!byPointer;", 1)' \
+  ./internal/httpapi 'TestVoiceInput_SpaceAfterAMouseClickTalksAndDoesNotPressTheButtonAgain'
+
+drill "a browser without focus-visible takes Space from buttons" internal/httpapi/assets/voice.js \
+  's = s.replace("      return !el.matches(\x27:focus-visible\x27);\n    } catch (e) {\n      return false;", "      return !el.matches(\x27:focus-visible\x27);\n    } catch (e) {\n      return true;", 1)' \
+  ./internal/httpapi 'TestVoiceInput_SpaceAfterAMouseClickTalksAndDoesNotPressTheButtonAgain'
+
+drill "a window blur leaves the Space hold on" internal/httpapi/assets/voice.js \
+  's = s.replace("    if (win && win.addEventListener) win.addEventListener(\x27blur\x27, letGo);", "    void win;", 1)' \
+  ./internal/httpapi 'TestVoiceInput_ASpaceHoldEndsWhenThePageLosesFocus|TestVoiceInput_ASpaceHoldListensTheSameWayAsTheButton'
+
+drill "a hidden page leaves the Space hold on" internal/httpapi/assets/voice.js \
+  's = s.replace("      if (doc.visibilityState === \x27hidden\x27) letGo();", "      if (false) letGo();", 1)' \
+  ./internal/httpapi 'TestVoiceInput_ASpaceHoldEndsWhenThePageLosesFocus'
+
+drill "a blur ends the mic button hold" internal/httpapi/assets/voice.js \
+  's = s.replace("      taken = false;\n      hold.release(\x27space\x27);", "      taken = false;\n      hold.release();", 1)' \
+  ./internal/httpapi 'TestVoiceInput_ASpaceHoldEndsWhenThePageLosesFocus'
+
+drill "Space on a microphone that is off says nothing" internal/httpapi/assets/voice.js \
+  's = s.replace("        if (!e.repeat) refused();", "        void 0;", 1)' \
+  ./internal/httpapi 'TestVoiceInput_SpaceOnAMicrophoneThatIsOffSaysWhy'
+
+drill "the workbench gives Space no refusal note" internal/httpapi/assets/workbench.js \
+  's = s.replace("        voiceNote(state.signedOut ? \x27Sign in from the console to talk to FORGE.\x27 : voice.whyUnavailable());", "        void 0;", 1)' \
   ./internal/httpapi 'TestWorkbench_SpaceAndTheServerReasonAreWiredThroughVoiceJS'
 
 echo

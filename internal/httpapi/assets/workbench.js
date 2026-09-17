@@ -3373,10 +3373,17 @@
     // ‼️ Through ForgeVoice.bindSpaceHold, which leaves Space alone on anything
     // Space already operates. This used to take Space from every focused
     // element but the text box, so Space on a focused Delete, New conversation
-    // or Send button held the microphone instead of pressing the button.
+    // or Send button held the microphone instead of pressing the button. It
+    // also tells a mouse click from Tab (Space after CLICKING a button talks),
+    // ends a Space hold when the window loses focus, and calls `refused` when
+    // the mic is off — whose reason was said once, when it went off, and may
+    // have been cleared since.
     ForgeVoice.bindSpaceHold(document, hold, {
       mic: $('mic'),
-      enabled: function () { return !$('mic').disabled; }
+      enabled: function () { return !$('mic').disabled; },
+      refused: function () {
+        voiceNote(state.signedOut ? 'Sign in from the console to talk to FORGE.' : voice.whyUnavailable());
+      }
     });
     // Escape always stops FORGE talking — the deterministic silence PRD
     // AUD-07 asks for, reachable without hunting for a button.
