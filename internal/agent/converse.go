@@ -1170,10 +1170,19 @@ const maxListedOccurrences = 8
 // notice saying "changed rib: rib" on each of them would bury the one that says
 // "changed hub: 4 occurrences" — which is the notice this exists for. A removal
 // that reached nothing, or a design named by a path, is always said.
+//
+// The same rule holds for a feature (2026-09-17): one that acts on exactly the parts
+// it names is silent, and one whose tool is a repeated part says every copy it cuts
+// or fuses. A parameter change is never silent: what follows it is not written in
+// the edit at all, and "no placed part follows it" is the finding a person most needs
+// before they believe the model is parametric.
 func describeReach(reached []geometry.Reached) string {
 	var lines []string
 	for _, r := range reached {
 		if r.Path == "" && len(r.Occurrences) == 1 && r.Occurrences[0] == r.ID {
+			continue
+		}
+		if r.Kind == "feature" && sameIDs(r.Occurrences, r.Named) {
 			continue
 		}
 		verb := "changed"
@@ -1184,11 +1193,25 @@ func describeReach(reached []geometry.Reached) string {
 		if r.Kind != "part" {
 			what = r.Kind + " " + r.ID
 		}
+		if r.Kind == "parameter" && len(r.Named) > 1 {
+			what = "parameters " + r.ID
+		}
 		if r.Path != "" {
 			what += " (named by its placement " + r.Path + ")"
 		}
 		n := len(r.Occurrences)
-		if n == 0 {
+		switch {
+		case n == 0 && r.Kind == "parameter" && len(reached) > 1:
+			lines = append(lines, fmt.Sprintf("%s %s: no other placed part moved or resized with it", verb, what))
+			continue
+		case n == 0 && r.Kind == "parameter":
+			lines = append(lines, fmt.Sprintf("%s %s: no placed part follows it, so nothing moved or resized; "+
+				"a size or position typed as its number stays as typed", verb, what))
+			continue
+		case n == 0 && r.Kind == "feature":
+			lines = append(lines, fmt.Sprintf("%s %s: it acts on no part this design places", verb, what))
+			continue
+		case n == 0:
 			lines = append(lines, fmt.Sprintf("%s %s: no occurrences, since nothing places it", verb, what))
 			continue
 		}
@@ -1210,6 +1233,23 @@ func describeReach(reached []geometry.Reached) string {
 		return ""
 	}
 	return "This edit reached every placement of what it changed: " + strings.Join(lines, "; ") + "."
+}
+
+// sameIDs reports whether a and b hold the same ids, in any order.
+func sameIDs(a, b []string) bool {
+	if len(a) != len(b) {
+		return false
+	}
+	in := make(map[string]bool, len(a))
+	for _, id := range a {
+		in[id] = true
+	}
+	for _, id := range b {
+		if !in[id] {
+			return false
+		}
+	}
+	return true
 }
 
 // ProposedGoal is work FORGE offers to do. Nothing runs until a human starts it.

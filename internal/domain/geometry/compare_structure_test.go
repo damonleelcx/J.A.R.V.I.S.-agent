@@ -316,3 +316,61 @@ func TestCompare_ADefinitionIsComparedInMillimetres(t *testing.T) {
 		t.Errorf("millimetres and centimetres were said to be uncomparable: %v", c.NotComparable)
 	}
 }
+
+// A definition's own repeat multiplies how many times it is placed, exactly as the
+// tree places it, and a change to how many copies it makes is that count and not a
+// "changed: repeat" beside an unchanged count (settled 2026-09-17; E2 left it for
+// review). "repeat" still names a change to how the copies are laid out, and a
+// change in copies nobody places, which no count can show.
+func TestCompare_ADefinitionsOwnRepeatIsMultipliedIntoItsCount(t *testing.T) {
+	boltCount := func(d Document) int {
+		n := 0
+		for _, p := range d.Expanded().Parts {
+			if strings.Contains(p.ID, "/bolt") {
+				n++
+			}
+		}
+		return n
+	}
+	doubled := carDoc()
+	doubled.Definitions[1].Repeat = &Repeat{Count: 2, Offset: []float64{0, 0, 20}}
+	if placed := boltCount(doubled); placed != 40 {
+		t.Fatalf("the fixture places %d bolts; 5 at each of 4 corners, each repeated twice, is 40", placed)
+	}
+	c := Compare([]Variant{treeVariant("a", Millimetre, carDoc()), treeVariant("b", Millimetre, doubled)})
+	bolt := definitionRow(t, c.Structure, "bolt")
+	if !slices.Equal(bolt.Occurrences, []int{20, 40}) {
+		t.Errorf("20 bolts, then each repeated twice, are 20 then 40 as placed; the row counts %v", bolt.Occurrences)
+	}
+	if len(bolt.Changed) != 0 || !bolt.Differs() {
+		t.Errorf("how many copies is the count, said once: changed %v, differs %v", bolt.Changed, bolt.Differs())
+	}
+
+	// The same number of copies laid out differently is a changed field with the same count.
+	spread := carDoc()
+	spread.Definitions[1].Repeat = &Repeat{Count: 2, Offset: []float64{0, 0, 35}}
+	c = Compare([]Variant{treeVariant("a", Millimetre, doubled), treeVariant("b", Millimetre, spread)})
+	bolt = definitionRow(t, c.Structure, "bolt")
+	if !slices.Equal(bolt.Occurrences, []int{40, 40}) || !slices.Equal(bolt.Changed, []string{"repeat"}) {
+		t.Errorf("two copies 20 mm apart then 35 mm apart: placed %v, changed %v; want 40, 40 and repeat",
+			bolt.Occurrences, bolt.Changed)
+	}
+
+	// A definition nobody places: no count can show its copies, so the field says it,
+	// in the table's order.
+	unplaced := func(repeat *Repeat, radius float64) Document {
+		d := carDoc()
+		d.Definitions = append(d.Definitions, Part{ID: "washer", Shape: "cylinder",
+			Size: map[string]float64{"radius": radius, "height": 2}, Repeat: repeat})
+		return d
+	}
+	c = Compare([]Variant{
+		treeVariant("a", Millimetre, unplaced(nil, 4)),
+		treeVariant("b", Millimetre, unplaced(&Repeat{Count: 3, Offset: []float64{5, 0, 0}}, 5)),
+	})
+	washer := definitionRow(t, c.Structure, "washer")
+	if !slices.Equal(washer.Occurrences, []int{0, 0}) || !slices.Equal(washer.Changed, []string{"size", "repeat"}) {
+		t.Errorf("an unplaced washer made 3 times and wider: placed %v, changed %v; want 0, 0 and size, repeat",
+			washer.Occurrences, washer.Changed)
+	}
+}

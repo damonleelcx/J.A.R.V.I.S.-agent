@@ -2,6 +2,7 @@ package geometry
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 )
 
@@ -36,17 +37,29 @@ import (
 // patches or removes reports the placed part ids — as Expanded names them — that
 // show the change, in the document before the edit and after it.
 //
-// # What it does not report, on purpose
+// # Parameters and features are traced too, by what they actually reach
 //
-// Parameters, derived values and features are not traced to parts. A parameter
-// can reach any number, and a feature changes the solid of parts whose own entry
-// is untouched; a count that included them would be a guess dressed as a figure.
+// E1 left them out: a parameter can reach any number of parts, and a feature
+// changes the solid of parts whose own entry is untouched, so a count read off the
+// edit would be a guess dressed as a figure. Settled 2026-09-17: it is not read off
+// the edit. A feature reaches the placed parts it acts on as the build reads it
+// (Expanded's features, a repeated tool retargeted to its copies), and a parameter
+// or derived value reaches the placed parts whose bound geometry differs between
+// the document before the edit and after it, both bound (parameterReach) — a
+// measurement, and the one a person needs most: "changed half_track: no placed
+// part follows it" is the literal-positions finding (literals.go) said at the
+// moment it matters.
 
 // Reached is one thing an edit patched or removed, and every placed part that
 // shows the change.
 type Reached struct {
-	// Kind is "part", "definition", "assembly" or "child".
+	// Kind is "part", "definition", "assembly", "child", "feature" or "parameter".
 	Kind string `json:"kind"`
+	// Named is what the edit itself named for a feature (its "of" and "with", as
+	// written) and for a parameter entry (every parameter and derived value the patch
+	// changed, in patch order; ID joins them). Empty for the other kinds, whose ID is
+	// what they named.
+	Named []string `json:"named,omitempty"`
 	// ID is what was changed: a part, definition or assembly id, or a child as
 	// "assembly-id/child-id". Always the design's own id, even when it was named by
 	// a path.
@@ -159,11 +172,18 @@ func (p placedTree) resolveDesign(name string, assembly bool, ids map[string]boo
 func fillReached(reached []Reached, base, out Document, before, after placedTree) []Reached {
 	merged := make([]Reached, 0, len(reached))
 	at := map[string]int{}
+	var wasFeatures, isFeatures *expandedFeatures
 	for _, r := range reached {
 		var was, is []string
 		switch r.Kind {
 		case "part":
 			was, is = topLevelOccurrences(base, r.ID), topLevelOccurrences(out, r.ID)
+		case "feature":
+			if wasFeatures == nil {
+				wasFeatures, isFeatures = featuresOf(base), featuresOf(out)
+			}
+			r.Named = unionIDs(authoredTargets(base, r.ID), authoredTargets(out, r.ID))
+			was, is = wasFeatures.targets(r.ID), isFeatures.targets(r.ID)
 		case "child":
 			child := func(s treeSpan) bool { return s.child == r.ID }
 			was, is = before.occurrences(child), after.occurrences(child)
@@ -184,6 +204,141 @@ func fillReached(reached []Reached, base, out Document, before, after placedTree
 		merged = append(merged, r)
 	}
 	return merged
+}
+
+// expandedFeatures is a document's features as the build reads them, beside the ids
+// of the parts it places.
+type expandedFeatures struct {
+	features []Feature
+	placed   map[string]bool
+}
+
+func featuresOf(d Document) *expandedFeatures {
+	e := d.Expanded()
+	placed := make(map[string]bool, len(e.Parts))
+	for _, p := range e.Parts {
+		placed[p.ID] = true
+	}
+	return &expandedFeatures{features: e.Features, placed: placed}
+}
+
+// targets is every placed part the feature with id acts on, "of" first, as the
+// build reads it: a repeated tool is all of its copies. A name that places nothing is
+// left out; it reaches no part.
+func (f *expandedFeatures) targets(id string) []string {
+	var ids []string
+	for _, feat := range f.features {
+		if feat.ID != id {
+			continue
+		}
+		for _, name := range append([]string{feat.Of}, feat.With...) {
+			if f.placed[name] {
+				ids = unionIDs(ids, []string{name})
+			}
+		}
+	}
+	return ids
+}
+
+// authoredTargets is the feature's "of" and "with" as written.
+func authoredTargets(d Document, id string) []string {
+	for _, f := range d.Features {
+		if f.ID == id {
+			return unionIDs([]string{f.Of}, f.With)
+		}
+	}
+	return nil
+}
+
+// parameterReach is the entry for the parameters and derived values a patch changed,
+// with every placed part whose bound geometry differs because of the edit and that no
+// other entry already reports. ok is false when the patch changed none: a parameter
+// restated at its value reached nothing and says nothing.
+//
+// Only a CHANGE to a value the base already had counts. A step declaring a new
+// parameter moves nothing that was there (nothing could follow a name that did not
+// exist), and saying so on every build step that adds one would bury the note that
+// matters: an existing half_track changed and nothing followed it.
+//
+// # Why measured and not traced through expressions
+//
+// Following names through size_from, position_from, outlines and derived values
+// would restate bind's rules here, and drift from them. Binding both documents and
+// comparing what they place is bind's own answer, and it sees what an expression walk
+// would miss: a child placed under a moved interface moves too.
+//
+// Costs two expansions, only when a patch changes a parameter.
+func parameterReach(base, out Document, patch *Document, reached []Reached) (Reached, bool) {
+	var names []string
+	for _, in := range patch.Parameters {
+		if was, ok := parameterNamed(base, in.Name); ok && (was.Value != in.Value || was.Unit != in.Unit) {
+			names = unionIDs(names, []string{in.Name})
+		}
+	}
+	for _, in := range patch.Derived {
+		if was, ok := derivedNamed(base, in.Name); ok && was.Expression != in.Expression {
+			names = unionIDs(names, []string{in.Name})
+		}
+	}
+	if len(names) == 0 {
+		return Reached{}, false
+	}
+	reported := map[string]bool{}
+	for _, r := range reached {
+		for _, id := range r.Occurrences {
+			reported[id] = true
+		}
+	}
+	placedBound := func(d Document) []Part {
+		c := d.clone()
+		c.bind(false)
+		return c.Expanded().Parts
+	}
+	before := placedBound(base)
+	was := make(map[string]Part, len(before))
+	for _, p := range before {
+		was[p.ID] = p
+	}
+	var ids []string
+	seen := map[string]bool{}
+	for _, p := range placedBound(out) {
+		seen[p.ID] = true
+		if old, ok := was[p.ID]; (!ok || !reflect.DeepEqual(old, p)) && !reported[p.ID] {
+			ids = append(ids, p.ID)
+		}
+	}
+	// A part the edit stopped placing reached it too, after those it still places.
+	for _, p := range before {
+		if !seen[p.ID] && !reported[p.ID] {
+			ids = append(ids, p.ID)
+		}
+	}
+	return Reached{Kind: "parameter", ID: strings.Join(names, ", "), Named: names, Occurrences: orEmpty(ids)}, true
+}
+
+func orEmpty(ids []string) []string {
+	if ids == nil {
+		return []string{}
+	}
+	return ids
+}
+
+func parameterNamed(d Document, name string) (Parameter, bool) {
+	for _, p := range d.Parameters {
+		if p.Name == name {
+			return p, true
+		}
+	}
+	return Parameter{}, false
+}
+
+func derivedNamed(d Document, name string) (Derived, bool) {
+	for _, v := range d.Derived {
+		if v.Name == name {
+			return v, true
+		}
+	}
+	return Derived{}, false
 }
 
 // topLevelOccurrences is the ids a top-level part is written out as: itself, or

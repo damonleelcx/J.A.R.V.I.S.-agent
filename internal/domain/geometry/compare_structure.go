@@ -83,9 +83,13 @@ type DefinitionRow struct {
 	// per variant: every copy of every pattern, on every path down from the root.
 	// Zero where the variant does not define it or places it nowhere.
 	//
-	// A definition's own repeat does not multiply it. The repeat is a field of the
-	// definition and is reported in Changed; counting its copies here too would
-	// report one edit twice.
+	// A definition's own repeat multiplies it, as it multiplies what the tree places
+	// (limits.go, repeatCount): a bolt with "repeat": {"count": 6} placed at four
+	// corners is 24 bolts, the number a person counting them sees. So how many copies
+	// the repeat makes is shown here, once, and "repeat" in Changed means the copies
+	// are LAID OUT differently (repeatChanged has the one exception). Settled
+	// 2026-09-17: it was reported as a changed field and left out of the count, so 6
+	// bolts becoming 8 read "placed 4×, changed: repeat".
 	Occurrences []int
 	// MissingFrom lists the variants, by 1-based column, that do not define it.
 	MissingFrom []int
@@ -199,6 +203,7 @@ func structureOf(vs []Variant) (*Structure, []string) {
 				row.Occurrences[i] = counts[i][m.id]
 			}
 		}
+		row.Changed = repeatChanged(row, m)
 		incomparable("definition "+row.Label, pairs)
 		s.Definitions = append(s.Definitions, row)
 	}
@@ -230,6 +235,43 @@ func structureOf(vs []Variant) (*Structure, []string) {
 		s.Assemblies = append(s.Assemblies, row)
 	}
 	return s, notes
+}
+
+// repeatChanged adds "repeat" to a definition row's Changed list, in
+// definitionFields order, when variants make a different number of copies of it and
+// the occurrence counts cannot show that: the definition is placed nowhere, so every
+// count is the same.
+//
+// Where the counts differ the copy count is already said, as a count; naming the
+// field as well would report one edit twice.
+func repeatChanged(row DefinitionRow, m matched[Part]) []string {
+	if slices.Contains(row.Changed, "repeat") || !slices.Equal(row.Occurrences, uniform(row.Occurrences)) {
+		return row.Changed
+	}
+	copies, differs := -1, false
+	for _, c := range m.cells {
+		if c == nil {
+			continue
+		}
+		if n := repeatCount(*c); copies < 0 {
+			copies = n
+		} else if n != copies {
+			differs = true
+		}
+	}
+	if !differs {
+		return row.Changed
+	}
+	at := 0
+	for _, f := range definitionFields {
+		if f.name == "repeat" {
+			break
+		}
+		if at < len(row.Changed) && row.Changed[at] == f.name {
+			at++
+		}
+	}
+	return slices.Insert(slices.Clone(row.Changed), at, "repeat")
 }
 
 // featureID is the id a feature on an assembly is known by: its own, or the one
@@ -371,13 +413,16 @@ var definitionFields = []field[Part]{
 	}},
 	{"axis", func(a, b Part, _ *lengths) bool { return a.Axis == b.Axis }},
 	{"script", func(a, b Part, _ *lengths) bool { return a.Script == b.Script }},
+	// "repeat" is how the copies are LAID OUT, judged only where both variants make
+	// copies: how MANY is multiplied into Occurrences (repeatChanged covers a
+	// definition no count can show). A definition drawn once has no layout, so a
+	// repeat of 1 beside none is the same design, as expandRepeats draws it.
 	{"repeat", func(a, b Part, l *lengths) bool {
-		if a.Repeat == nil || b.Repeat == nil {
-			return a.Repeat == nil && b.Repeat == nil
+		if repeatCount(a) < 2 || repeatCount(b) < 2 {
+			return true
 		}
 		ra, rb := a.Repeat, b.Repeat
-		return ra.Count == rb.Count && ra.About == rb.About && sameAngle(ra.Angle, rb.Angle) &&
-			l.vector(ra.Offset, rb.Offset)
+		return ra.About == rb.About && sameAngle(ra.Angle, rb.Angle) && l.vector(ra.Offset, rb.Offset)
 	}},
 	{"material", func(a, b Part, _ *lengths) bool { return reflect.DeepEqual(a.Material, b.Material) }},
 	{"appearance", func(a, b Part, _ *lengths) bool { return a.Color == b.Color && a.Opacity == b.Opacity }},
@@ -540,7 +585,8 @@ func uniform(xs []int) []int {
 // nothing, and a count saturates just past MaxOccurrences — a design that large was
 // refused expansion, and "more than the limit" is all that can honestly be said.
 //
-// A definition's own repeat is not counted here; see DefinitionRow.Occurrences.
+// A definition's own repeat multiplies every placement of it, by repeatCount, the
+// rule the occurrence limit counts with; see DefinitionRow.Occurrences.
 func placements(d Document) map[string]int {
 	if d.Root == "" {
 		return nil
@@ -562,15 +608,17 @@ func placements(d Document) map[string]int {
 		return sat(a * b)
 	}
 
-	defs := map[string]bool{}
+	// How many copies each definition makes of itself, read from the first with its
+	// id, the one occurrences (limits.go) counts.
+	copiesOf := map[string]int{}
 	for _, p := range d.Definitions {
-		if strings.TrimSpace(p.ID) != "" {
-			defs[p.ID] = true
+		if _, seen := copiesOf[p.ID]; strings.TrimSpace(p.ID) != "" && !seen {
+			copiesOf[p.ID] = repeatCount(p)
 		}
 	}
 	asms := map[string]Assembly{}
 	for _, a := range d.Assemblies {
-		if strings.TrimSpace(a.ID) != "" && asms[a.ID].ID == "" && !defs[a.ID] {
+		if _, isDef := copiesOf[a.ID]; strings.TrimSpace(a.ID) != "" && asms[a.ID].ID == "" && !isDef {
 			asms[a.ID] = a
 		}
 	}
@@ -590,8 +638,8 @@ func placements(d Document) map[string]int {
 		for _, c := range a.Children {
 			slots, _ := c.Pattern.copies()
 			k := len(slots)
-			if defs[c.Ref] {
-				m[c.Ref] = sat(m[c.Ref] + k)
+			if own, isDef := copiesOf[c.Ref]; isDef {
+				m[c.Ref] = sat(m[c.Ref] + mul(k, own))
 				continue
 			}
 			for def, n := range count(c.Ref) {
