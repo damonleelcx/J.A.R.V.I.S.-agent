@@ -1,0 +1,17 @@
+== bays 9 rep 1 before (sidecar-main-81c6263.py)
+bays=9 step run 1: ok=True build 15.1s [shapes 3.3 assembly 0.8 interf 1.7 props 0.0 mesh 0.0] peak 1.35 GB host cpu 37% (max 39%) host mem peak 43% 
+== bays 9 rep 1 after (sidecar-gcoff.py)
+bays=9 step run 1: ok=True build 15.2s [shapes 2.8 assembly 1.0 interf 1.8 props 0.0 mesh 0.0] peak 1.35 GB host cpu 36% (max 38%) host mem peak 43% 
+== bays 9 rep 2 before (sidecar-main-81c6263.py)
+bays=9 step run 1: ok=True build 13.7s [shapes 2.9 assembly 0.8 interf 1.4 props 0.0 mesh 0.0] peak 1.35 GB host cpu 27% (max 30%) host mem peak 43% 
+== bays 9 rep 2 after (sidecar-gcoff.py)
+bays=9 step run 1: ok=True build 13.5s [shapes 2.4 assembly 0.7 interf 1.3 props 0.0 mesh 0.0] peak 1.35 GB host cpu 30% (max 36%) host mem peak 43% 
+== bays 30 rep 1 before (sidecar-main-81c6263.py)
+bays=30 step run 1: ok=True build 44.1s [shapes 10.1 assembly 2.3 interf 4.9 props 0.0 mesh 0.0] peak 3.55 GB host cpu 29% (max 34%) host mem peak 46% 
+== bays 30 rep 1 after (sidecar-gcoff.py)
+bays=30 step run 1: ok=True build 42.7s [shapes 8.2 assembly 2.3 interf 4.9 props 0.0 mesh 0.0] peak 3.55 GB host cpu 30% (max 38%) host mem peak 48% 
+== bays 30 rep 2 before (sidecar-main-81c6263.py)
+bays=30 step run 1: ok=True build 45.7s [shapes 10.2 assembly 2.6 interf 5.1 props 0.0 mesh 0.0] peak 3.55 GB host cpu 34% (max 42%) host mem peak 46% 
+== bays 30 rep 2 after (sidecar-gcoff.py)
+bays=30 step run 1: ok=True build 39.8s [shapes 7.8 assembly 2.3 interf 4.7 props 0.0 mesh 0.0] peak 3.55 GB host cpu 24% (max 30%) host mem peak 46% 
+== interleave done

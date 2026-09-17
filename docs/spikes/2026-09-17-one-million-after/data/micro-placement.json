@@ -1,0 +1,12 @@
+{
+ "Vector(*pos).to_pnt() r1": 4.304786000002423,
+ "gp_Pnt(*pos) r1": 0.9039780000011888,
+ "downcast(Moved) r1": 4.667428000011569,
+ "cast(Moved) r1": 1.6982439999992494,
+ "Vector(*pos).to_pnt() r2": 4.29198649999762,
+ "gp_Pnt(*pos) r2": 0.8229389999996783,
+ "downcast(Moved) r2": 4.591017999991891,
+ "cast(Moved) r2": 1.707593999999517,
+ "same_bits": true,
+ "host_cpu_pct": 24.0
+}

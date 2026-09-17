@@ -28,6 +28,7 @@ here would be a second opinion about what the document means.
 """
 import base64
 import copy
+import gc
 import heapq
 import json
 import math
@@ -2493,7 +2494,44 @@ def _write_step(doc, path, phases=None):
         raise RuntimeError("the STEP writer could not write the file")
 
 
+# # A build without Python's cycle collector (one million after)
+#
+# Measured 2026-09-17 on the airframe barrel (docs/spikes/2026-09-17-one-million-after):
+# a build allocates a handful of Python objects per occurrence (a Location, a placed
+# copy, its attributes, tuples and list entries) and keeps nearly all of them until it
+# returns. CPython's generational collector is triggered by allocation counts, so it
+# ran 501 times during a 90,880-occurrence build with the check replaced and spent
+# 1.23-1.33 s of its 6.5-6.6 s traversing objects that were all still alive — and
+# found nothing: `gc.collect()` straight after a build with the collector off finds
+# 0 unreachable objects, with the same peak RSS to 1 MB.
+#
+# Reference counting still frees everything as before; only the CYCLE collector is
+# paused, for the duration of one request, and restored however the build ends. The
+# answer cannot depend on it (no code here reads gc state or relies on a finalizer
+# running at a particular moment); the fence builds every format with it on and off
+# and compares the replies whole.
+#
+# ‼️ What this gives up: a reference cycle created during a build is freed when the
+# collector next runs after it, not during it. A build that made cycles per occurrence
+# would hold them to its end. None of the measured fixtures makes any (the fence counts
+# them), and the collector is restored before the next request is read.
+#
+# _BUILD_WITHOUT_GC = False keeps the collector running, as before.
+_BUILD_WITHOUT_GC = True
+
+
 def _build(request):
+    """_build_collected with the cycle collector paused, when it was running."""
+    if not _BUILD_WITHOUT_GC or not gc.isenabled():
+        return _build_collected(request)
+    gc.disable()
+    try:
+        return _build_collected(request)
+    finally:
+        gc.enable()
+
+
+def _build_collected(request):
     solids = request.get("solids") or []
     if not solids:
         return {"ok": False, "error": "no parts to build"}

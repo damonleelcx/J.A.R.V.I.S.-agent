@@ -1,0 +1,25 @@
+== bays 9 rep 1 before (sidecar-main-81c6263.py)
+bays=9 full run 1: ok=True build 8.6s [shapes 3.5 assembly 0.9 interf 3.6 props 0.0 mesh 0.0] peak 0.88 GB host cpu 46% (max 53%) host mem peak 41% 
+== bays 9 rep 1 after (sidecar-gcoff.py)
+bays=9 full run 1: ok=True build 7.8s [shapes 3.0 assembly 0.9 interf 3.6 props 0.0 mesh 0.0] peak 0.89 GB host cpu 46% (max 47%) host mem peak 42% 
+== bays 9 rep 2 before (sidecar-main-81c6263.py)
+bays=9 full run 1: ok=True build 8.6s [shapes 3.6 assembly 0.9 interf 3.4 props 0.0 mesh 0.0] peak 0.88 GB host cpu 48% (max 53%) host mem peak 41% 
+== bays 9 rep 2 after (sidecar-gcoff.py)
+bays=9 full run 1: ok=True build 8.6s [shapes 3.0 assembly 0.9 interf 4.3 props 0.0 mesh 0.0] peak 0.88 GB host cpu 54% (max 71%) host mem peak 41% 
+== bays 30 rep 1 before (sidecar-main-81c6263.py)
+bays=30 full run 1: ok=True build 30.1s [shapes 12.4 assembly 2.8 interf 12.8 props 0.0 mesh 0.0] peak 2.02 GB host cpu 52% (max 58%) host mem peak 43% 
+== bays 30 rep 1 after (sidecar-gcoff.py)
+bays=30 full run 1: ok=True build 28.2s [shapes 10.9 assembly 3.1 interf 12.7 props 0.0 mesh 0.0] peak 2.02 GB host cpu 60% (max 69%) host mem peak 43% 
+== bays 30 rep 2 before (sidecar-main-81c6263.py)
+bays=30 full run 1: ok=True build 32.1s [shapes 14.1 assembly 3.0 interf 12.7 props 0.0 mesh 0.0] peak 2.02 GB host cpu 61% (max 67%) host mem peak 44% 
+== bays 30 rep 2 after (sidecar-gcoff.py)
+bays=30 full run 1: ok=True build 30.6s [shapes 11.9 assembly 3.1 interf 14.1 props 0.0 mesh 0.0] peak 2.02 GB host cpu 66% (max 83%) host mem peak 44% 
+== bays 100 rep 1 before (sidecar-main-81c6263.py)
+bays=100 full run 1: ok=True build 111.3s [shapes 47.7 assembly 10.6 interf 45.7 props 0.0 mesh 0.0] peak 5.90 GB host cpu 61% (max 96%) host mem peak 51% 
+== bays 100 rep 1 after (sidecar-gcoff.py)
+bays=100 full run 1: ok=True build 94.6s [shapes 38.0 assembly 11.1 interf 40.6 props 0.0 mesh 0.0] peak 5.90 GB host cpu 60% (max 78%) host mem peak 51% 
+== bays 100 rep 2 before (sidecar-main-81c6263.py)
+bays=100 full run 1: ok=True build 93.1s [shapes 36.3 assembly 8.6 interf 40.9 props 0.0 mesh 0.0] peak 5.90 GB host cpu 41% (max 73%) host mem peak 51% 
+== bays 100 rep 2 after (sidecar-gcoff.py)
+bays=100 full run 1: ok=True build 81.5s [shapes 33.2 assembly 8.9 interf 34.9 props 0.0 mesh 0.0] peak 5.90 GB host cpu 39% (max 55%) host mem peak 50% 
+== interleave done

@@ -179,6 +179,8 @@ FILES=(
   # Added 2026-09-17: the new-conversation drills target these two.
   internal/domain/conversation/repository.go
   internal/httpapi/pages.go
+  # Added 2026-09-17 (one million after): the prism yard generator's drill.
+  internal/domain/geometry/prism_yard_scale_test.go
 )
 
 BACKUP=""
@@ -4278,6 +4280,28 @@ drill "Space on a microphone that is off says nothing" internal/httpapi/assets/v
 drill "the workbench gives Space no refusal note" internal/httpapi/assets/workbench.js \
   's = s.replace("        voiceNote(state.signedOut ? \x27Sign in from the console to talk to FORGE.\x27 : voice.whyUnavailable());", "        void 0;", 1)' \
   ./internal/httpapi 'TestWorkbench_SpaceAndTheServerReasonAreWiredThroughVoiceJS'
+
+echo
+echo "A build without the cycle collector (one million after), 2026-09-17"
+drill "a build leaves the cycle collector running" internal/domain/cad/sidecar.py \
+  's = s.replace("    gc.disable()\n    try:\n        return _build_collected(request)", "    try:\n        return _build_collected(request)", 1)' \
+  ./internal/domain/cad 'TestKernel_ABuildWithTheCycleCollectorPausedAnswersTheSameAndRestoresIt'
+
+drill "a build that raised leaves the collector paused" internal/domain/cad/sidecar.py \
+  's = s.replace("    try:\n        return _build_collected(request)\n    finally:\n        gc.enable()", "    out = _build_collected(request)\n    gc.enable()\n    return out", 1)' \
+  ./internal/domain/cad 'TestKernel_ABuildWithTheCycleCollectorPausedAnswersTheSameAndRestoresIt'
+
+drill "a build turns on a collector its caller paused" internal/domain/cad/sidecar.py \
+  's = s.replace("    if not _BUILD_WITHOUT_GC or not gc.isenabled():", "    if not _BUILD_WITHOUT_GC:", 1)' \
+  ./internal/domain/cad 'TestKernel_ABuildWithTheCycleCollectorPausedAnswersTheSameAndRestoresIt'
+
+drill "a paused build answers differently" internal/domain/cad/sidecar.py \
+  's = s.replace("    try:\n        return _build_collected(request)\n    finally:", "    try:\n        return dict(_build_collected(request), parts=-1)\n    finally:", 1)' \
+  ./internal/domain/cad 'TestKernel_ABuildWithTheCycleCollectorPausedAnswersTheSameAndRestoresIt'
+
+drill "the prism yard lists its leaning pins" internal/domain/geometry/prism_yard_scale_test.go \
+  's = s.replace("\t\t\tPattern: &Pattern{Kind: \"linear\", Count: 95, Offset: []float64{0, 0, 40}}},", "\t\t},\n\t\t{ID: \"leaning-extra\", Ref: \"pin\", Position: []float64{20, 1003, 1920}, Rotation: []float64{35, 0, 0}},\n\t\t{ID: \"leaning-extra-2\", Ref: \"pin\", Position: []float64{20, 1003, 1960}, Rotation: []float64{35, 0, 0}},", 1)' \
+  ./internal/domain/geometry 'TestPrismYard_PlacesItsPrismsByPatternsNotByListing'
 
 echo
 
