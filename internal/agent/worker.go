@@ -54,6 +54,10 @@ type Worker struct {
 	clock      clock.Clock
 	log        *logx.Logger
 
+	// aliveEvery is the longest a running task goes without its row saying so
+	// (AliveEvery); a field only so a fence can shorten it.
+	aliveEvery time.Duration
+
 	// approvalRowWrittenForTest runs between checkApproval writing a request row and
 	// recording it on the timeline. Nil outside the fence that stops a worker there.
 	approvalRowWrittenForTest func()
@@ -126,8 +130,34 @@ func NewWorker(d WorkerDeps) *Worker {
 		workspace:  d.WorkspaceRoot,
 		clock:      d.Clock,
 		log:        d.Log,
+		aliveEvery: AliveEvery,
 	}
 }
+
+// AliveEvery is the longest a running task's row goes without the worker holding it
+// saying it is still at work (PRD NFR-02: long jobs report progress at least every
+// 10 s).
+//
+// # Why this exists
+//
+// A build step is one model call, the kernel, a look and any repairs, and nothing
+// about the goal changes until the step is kept: a 10-step build on a stand-in model
+// that took 12 s a step showed a client no change for 11.7-13.1 s at a time
+// (docs/spikes/2026-09-17-unverified-paths), and a live step has taken over a minute.
+// The lease heartbeat already writes the task's row, and the row's updated_at trigger
+// stamps it, but FORGE_LEASE_HEARTBEAT defaults to 20 s and is tuned for leases, not
+// for a person watching. So the heartbeat runs at least this often, whatever that
+// setting says, and GET /v1/goals/{id} shows the stamp as a running task's
+// last_seen_at.
+//
+// 5 s, not 10: a client polling every few seconds must see a fresh stamp inside 10 s,
+// so the beat has to leave room for the poll. One UPDATE of one row per running task.
+// docs/bugfix/2026-09-17-a-long-build-step-showed-no-progress-for-its-whole-length.md
+const AliveEvery = 5 * time.Second
+
+// SetAliveEveryForTest shortens how often a running task is stamped alive, so a fence
+// can watch several stamps inside one blocked model call.
+func (w *Worker) SetAliveEveryForTest(d time.Duration) { w.aliveEvery = d }
 
 // Run drives the worker until ctx is cancelled.
 //
@@ -542,7 +572,8 @@ func (w *Worker) completeTask(ctx context.Context, goal *engine.Goal, task *engi
 		return
 	}
 
-	verdict, err := w.verifier.Verify(ctx, tc, outcome, w.rawToolOutput(ctx, task.ID))
+	verdict, err := w.verifier.chargedTo(w.budget, w.pool, goal, w.clock, w.log).
+		Verify(ctx, tc, outcome, w.rawToolOutput(ctx, task.ID))
 	if err != nil {
 		// A verifier that could not produce a verdict has verified nothing.
 		// Treating that as a pass is exactly the failure the verifier exists to
@@ -734,8 +765,17 @@ func (w *Worker) checkApproval(ctx context.Context, goal *engine.Goal, task *eng
 }
 
 // heartbeat extends the lease while a task runs.
+//
+// At least every AliveEvery, whatever FORGE_LEASE_HEARTBEAT says: each beat writes the
+// task's row, the row's trigger stamps updated_at, and that stamp is how a person
+// watching a long step sees it is still being worked on (PRD NFR-02). A lease renewed
+// more often than it needs to be is harmless; a step silent for a minute is not.
 func (w *Worker) heartbeat(ctx context.Context, taskID string) {
-	ticker := time.NewTicker(w.cfg.LeaseHeartbeat)
+	every := w.cfg.LeaseHeartbeat
+	if w.aliveEvery > 0 && (every <= 0 || w.aliveEvery < every) {
+		every = w.aliveEvery
+	}
+	ticker := time.NewTicker(every)
 	defer ticker.Stop()
 
 	for {

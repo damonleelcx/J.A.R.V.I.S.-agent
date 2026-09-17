@@ -179,6 +179,9 @@ FILES=(
   # Added 2026-09-17: the new-conversation drills target these two.
   internal/domain/conversation/repository.go
   internal/httpapi/pages.go
+  # Added 2026-09-17: the unverified-paths drills (verifier spend, last_seen_at).
+  internal/agent/verifier.go
+  internal/httpapi/goals.go
 )
 
 BACKUP=""
@@ -4278,6 +4281,60 @@ drill "Space on a microphone that is off says nothing" internal/httpapi/assets/v
 drill "the workbench gives Space no refusal note" internal/httpapi/assets/workbench.js \
   's = s.replace("        voiceNote(state.signedOut ? \x27Sign in from the console to talk to FORGE.\x27 : voice.whyUnavailable());", "        void 0;", 1)' \
   ./internal/httpapi 'TestWorkbench_SpaceAndTheServerReasonAreWiredThroughVoiceJS'
+
+echo
+echo "Paths nobody had run: build goals, stops, approvals, access, exports, 2026-09-17"
+drill "an ordinary goal's planning is not charged to it" internal/agent/intake.go \
+  's = s.replace("\tcharged.client = chargeTo(in.planner.client, in.applier.budget, pool, goal, in.clock, in.logger())", "\tcharged.client = in.planner.client", 1)' \
+  ./internal/agent 'TestIntake_AnOrdinaryGoalsPlanningIsChargedToTheGoal'
+
+drill "the verifier's call is not charged to the goal" internal/agent/verifier.go \
+  's = s.replace("\tc.client = chargeTo(v.client, budget, pool, goal, clk, log)", "\tc.client = v.client", 1)' \
+  ./internal/agent 'TestWorker_TheVerifiersCallIsChargedToTheGoal'
+
+drill "a running task is stamped alive only as often as its lease heartbeat" internal/agent/worker.go \
+  's = s.replace("\tif w.aliveEvery > 0 && (every <= 0 || w.aliveEvery < every) {", "\tif false {", 1)' \
+  ./internal/agent 'TestWorker_ARunningTaskIsStampedAliveWhileItsModelCallRunsWhateverTheLeaseHeartbeat'
+
+drill "a running task is stamped alive every 20 s" internal/agent/worker.go \
+  's = s.replace("const AliveEvery = 5 * time.Second", "const AliveEvery = 20 * time.Second", 1)' \
+  ./internal/agent 'TestAliveEvery_LeavesAClientPollingAtItAFreshStampInsideTenSeconds'
+
+drill "a held task does not say when its worker was last seen" internal/httpapi/goals.go \
+  's = s.replace("\t\td.LastSeenAt = &s", "\t\t_ = s", 1)' \
+  ./internal/httpapi 'TestTaskDTO_AHeldTaskSaysWhenItsWorkerWasLastSeenAndOtherTasksDoNot'
+
+drill "every task says when a worker was last seen, held or not" internal/httpapi/goals.go \
+  's = s.replace("\tcase engine.StatusClaimed, engine.StatusRunning, engine.StatusVerifying:", "\tdefault:", 1)' \
+  ./internal/httpapi 'TestTaskDTO_AHeldTaskSaysWhenItsWorkerWasLastSeenAndOtherTasksDoNot'
+
+drill "a model call its caller cancelled is retried" internal/llm/openai_compatible.go \
+  's = s.replace("\t\tif ctx.Err() != nil {\n\t\t\treturn nil, errs.Wrap(op, errs.CodeInternal, ctx.Err()).\n\t\t\t\tWithDetail(\"cancelled during attempt", "\t\tif false {\n\t\t\treturn nil, errs.Wrap(op, errs.CodeInternal, ctx.Err()).\n\t\t\t\tWithDetail(\"cancelled during attempt", 1)' \
+  ./internal/llm 'TestComplete_ACallItsCallerCancelsIsNotRetriedOrBlamedOnTheEndpoint'
+
+drill "the STEP label ignores the kernel" internal/httpapi/geometry.go \
+  's = s.replace("\tif strings.EqualFold(format, \"step\") && h.deps.CAD.Available() {\n\t\tlabel, err := geometry.KernelLabelFor(v)", "\tif false {\n\t\tlabel, err := geometry.KernelLabelFor(v)", 1)' \
+  ./internal/httpapi 'TestAPI_TheSTEPLabelIsTheKernelsWhereThereIsAKernelAndARefusalWhereThereIsNone'
+
+drill "the STEP label's headline calls a B-Rep tessellated" internal/domain/geometry/export.go \
+  's = s.replace("\tif l.FormatKind == KindParametric {", "\tif false {", 1)' \
+  ./internal/httpapi 'TestAPI_TheSTEPLabelIsTheKernelsWhereThereIsAKernelAndARefusalWhereThereIsNone'
+
+drill "a viewer may start a goal" internal/httpapi/goals_start.go \
+  's = s.replace("\tgoal, err := h.loadGoalFor(r, goalID, user.ID, access.PermGoalStart)", "\tgoal, err := h.loadGoalFor(r, goalID, user.ID, access.PermProjectRead)", 1)' \
+  ./internal/httpapi 'TestAccessFence_GoalApprovalAndExportRoutesAnswerNobodyStrangerViewerAndOwnerAsDecided'
+
+drill "a viewer may decide an approval" internal/httpapi/goals.go \
+  's = s.replace("requireGoalPermission(r, goalOfApproval, user.ID, access.PermApprovalDecide)", "requireGoalPermission(r, goalOfApproval, user.ID, access.PermProjectRead)", 1)' \
+  ./internal/httpapi 'TestAccessFence_GoalApprovalAndExportRoutesAnswerNobodyStrangerViewerAndOwnerAsDecided'
+
+drill "a new goal route is added with no access row" internal/httpapi/router.go \
+  's = s.replace("\tmux.Handle(\"GET /v1/goals/{id}/timeline\", authed(goals.Timeline))", "\tmux.Handle(\"GET /v1/goals/{id}/timeline\", authed(goals.Timeline))\n\tmux.Handle(\"GET /v1/goals/{id}/events\", authed(goals.Timeline))", 1)' \
+  ./internal/httpapi 'TestAccessFence_EveryGoalApprovalAndExportRouteIsInTheAccessTable'
+
+drill "a goal route is mounted without a session" internal/httpapi/router.go \
+  's = s.replace("\tmux.Handle(\"GET /v1/goals/{id}/timeline\", authed(goals.Timeline))", "\tmux.Handle(\"GET /v1/goals/{id}/timeline\", http.HandlerFunc(goals.Timeline))", 1)' \
+  ./internal/httpapi 'TestAccessFence_EveryGoalApprovalAndExportRouteIsInTheAccessTable'
 
 echo
 

@@ -598,6 +598,18 @@ func (h *GeometryHandlers) ExportLabel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	format := r.URL.Query().Get("format")
+	// STEP is written by the kernel when there is one (Export, below), so its label is
+	// the kernel's: geometry.LabelFor alone answered this deployment has no kernel.
+	if strings.EqualFold(format, "step") && h.deps.CAD.Available() {
+		label, err := geometry.KernelLabelFor(v)
+		if err != nil {
+			h.logRefusal(r, v, format, err)
+			WriteError(w, r, h.deps.Log, err)
+			return
+		}
+		WriteJSON(w, http.StatusOK, map[string]any{"label": labelDTO(label), "triangles": 0})
+		return
+	}
 	label, mesh, err := geometry.LabelFor(v, format)
 	if err != nil {
 		h.logRefusal(r, v, format, err)
