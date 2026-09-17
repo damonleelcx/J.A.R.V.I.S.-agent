@@ -724,11 +724,323 @@ expect(calls.join() === 'press,release', 'a Space hold did not end on release af
 `)
 }
 
+// spaceWorld is the page the space-bar scenarios below run in: a document and
+// its window that record listeners, elements that answer :focus-visible, and a
+// hold that records what it was asked to do.
+//
+// ‼️ The fake models Chromium's :focus-visible TIMING, because that is the
+// trap. After a mouse click on a button, :focus-visible is false at focusin —
+// and becomes TRUE the moment any non-modifier key goes down, BEFORE the
+// keydown listeners run (Chromium records "had a keyboard event" first, then
+// dispatches). Measured in Chrome on 2026-09-17 with real input through the
+// DevTools protocol: click Send, focusin says false; press Space, the keydown
+// listener sees true. So a handler that asks :focus-visible at keydown sees
+// every focused button as keyboard-focused and fixes nothing. key() below flips
+// the focused element to visible before dispatching keydown, the way Chrome
+// does; the focus-origin must be read at focusin.
+const spaceWorld = `
+const on = {}, winOn = {};
+const win = { addEventListener: function (t, fn) { (winOn[t] = winOn[t] || []).push(fn); } };
+const doc = { visibilityState: 'visible', defaultView: win,
+  addEventListener: function (t, fn) { (on[t] = on[t] || []).push(fn); } };
+function el(tag, attrs) {
+  attrs = attrs || {};
+  return { tagName: tag, isContentEditable: !!attrs.editable, fv: false, throws: !!attrs.throws,
+    type: attrs.type, id: attrs.id || tag,
+    getAttribute: function (n) { return attrs[n] == null ? null : attrs[n]; },
+    matches: function (sel) {
+      if (this.throws) throw new SyntaxError("'" + sel + "' is not a valid selector");
+      if (sel !== ':focus-visible') throw new Error('unexpected selector ' + sel);
+      return this.fv;
+    } };
+}
+let focused = null;
+// focus moves focus to target: 'pointer' is a mouse click (not focus-visible),
+// 'keyboard' is Tab or an arrow key (focus-visible).
+function focus(target, how) {
+  focused = target;
+  target.fv = how === 'keyboard';
+  (on.focusin || []).forEach(function (fn) { fn({ type: 'focusin', target: target }); });
+}
+function key(type, target, extra) {
+  // Chromium: a key press makes the focused element :focus-visible before any
+  // listener hears it. See the note above.
+  if (type === 'keydown' && target && target.matches && !target.throws) target.fv = true;
+  const e = Object.assign({ type: type, code: 'Space', key: ' ', target: target, prevented: false,
+    preventDefault: function () { this.prevented = true; } }, extra || {});
+  (on[type] || []).forEach(function (fn) { fn(e); });
+  return e;
+}
+function blurWindow() { (winOn.blur || []).forEach(function (fn) { fn({ type: 'blur' }); }); }
+function hide() {
+  doc.visibilityState = 'hidden';
+  (on.visibilitychange || []).forEach(function (fn) { fn({ type: 'visibilitychange' }); });
+}
+const calls = [];
+let held = null;
+const hold = {
+  holding: function () { return !!held; },
+  press: function (who) { if (held) return false; held = who; calls.push('press:' + who); return true; },
+  release: function (who) { if (!held || (who != null && held !== who)) return false; calls.push('release:' + held); held = null; return true; }
+};
+const mic = el('BUTTON', { id: 'mic' });
+let micDisabled = false;
+const refusals = [];
+FV.bindSpaceHold(doc, hold, { mic: mic, enabled: function () { return !micDisabled; },
+  refused: function () { refusals.push('refused'); } });
+`
+
+// Space after a MOUSE click on a button is push-to-talk, and does not press
+// that button again.
+//
+// # What was wrong
+//
+// The owner: "fix the push-to-talk space key when not focused". Nothing looked
+// focused — but in Chrome a mouse click on a button leaves keyboard focus on
+// it, with no ring drawn. PR 138 gave Space back to every focused button, so
+// after clicking Send, New conversation, Delete, a stage panel tab or the
+// hands-free checkbox, Space did not talk: it pressed that button AGAIN — a
+// second new conversation, a re-send, the checkbox toggled back. Reproduced in
+// Chrome with real input: click Send, press Space, Send's click handler ran and
+// no hold began.
+//
+// # The rule
+//
+// How focus ARRIVED decides it, read at focusin with :focus-visible:
+//
+//   - reached from the keyboard (Tab, arrow keys): Space operates the control,
+//     as PR 138 made it — the keyboard user it was for is unchanged;
+//   - reached by a pointer, on something Space ACTIVATES (button, link,
+//     summary, checkbox, radio, and their ARIA roles, tabs included): Space is
+//     push-to-talk, and the control does not receive it;
+//   - anything Space EDITS — a text box, a textarea, contenteditable, a select,
+//     a slider, a listbox — keeps Space however it was focused. Typing a space
+//     is the whole point of a text box.
+//
+// ‼️ Not :focus-visible at keydown: see spaceWorld. And a browser that throws
+// on the selector keeps PR 138's behaviour, never the other way round.
+func TestVoiceInput_SpaceAfterAMouseClickTalksAndDoesNotPressTheButtonAgain(t *testing.T) {
+	runVoiceScenario(t, `
+const FV = load();
+`+spaceWorld+`
+function press(target) {
+  calls.length = 0;
+  const down = key('keydown', target), rep = key('keydown', target, { repeat: true }), up = key('keyup', target);
+  return { down: down, rep: rep, up: up, calls: calls.join() };
+}
+
+const activated = {
+  'the Send button': el('BUTTON'), 'the New conversation button': el('BUTTON'), 'a Delete button': el('BUTTON'),
+  'a stage panel tab': el('BUTTON', { role: 'tab' }), 'the hands-free checkbox': el('INPUT', { type: 'checkbox' }),
+  'a link': el('A', { href: '#' }), 'a div with role=button': el('DIV', { role: 'button' }),
+  'a submit input': el('INPUT', { type: 'submit' })
+};
+Object.keys(activated).forEach(function (name) {
+  focus(activated[name], 'pointer');
+  const r = press(activated[name]);
+  expect(r.calls === 'press:space,release:space', 'Space after a mouse click on ' + name + ' did not hold the microphone exactly once: [' + r.calls + ']');
+  expect(r.down.prevented && r.rep.prevented && r.up.prevented, 'Space after a mouse click on ' + name + ' was not prevented, so it presses ' + name + ' again');
+
+  focus(activated[name], 'keyboard');
+  const k = press(activated[name]);
+  expect(k.calls === '', 'Space on ' + name + ' reached with Tab held the microphone: [' + k.calls + ']');
+  expect(!k.down.prevented && !k.up.prevented, 'Space on ' + name + ' reached with Tab was prevented, so a keyboard user cannot press it');
+});
+
+const edited = {
+  'the text box': el('INPUT', { type: 'text' }), 'an input with no type': el('INPUT'), 'a textarea': el('TEXTAREA'),
+  'a contenteditable': el('DIV', { editable: true }), 'a select': el('SELECT'), 'a range slider': el('INPUT', { type: 'range' }),
+  'a div with role=slider': el('DIV', { role: 'slider' }), 'a div with role=textbox': el('DIV', { role: 'textbox' }),
+  'a listbox option': el('LI', { role: 'option' })
+};
+Object.keys(edited).forEach(function (name) {
+  ['pointer', 'keyboard'].forEach(function (how) {
+    focus(edited[name], how);
+    const r = press(edited[name]);
+    expect(r.calls === '' && !r.down.prevented && !r.up.prevented,
+      'Space in ' + name + ' focused by ' + how + ' was taken for push-to-talk, so it cannot be typed or edited: [' + r.calls + ']');
+  });
+});
+
+// Tab away from a clicked button: the next control was reached by keyboard.
+const send = el('BUTTON'), newConv = el('BUTTON');
+focus(send, 'pointer'); focus(newConv, 'keyboard');
+let r = press(newConv);
+expect(r.calls === '' && !r.down.prevented, 'Space on a button tabbed to after a click held the microphone: [' + r.calls + ']');
+
+// Keyboard focus, then a click elsewhere: the clicked one is pointer-focused.
+focus(newConv, 'keyboard'); focus(send, 'pointer');
+r = press(send);
+expect(r.calls === 'press:space,release:space', 'Space after clicking away from a tabbed-to button did not talk: [' + r.calls + ']');
+
+// A pointer-focused record is for THAT element only.
+focus(send, 'pointer');
+r = press(newConv);
+expect(r.calls === '' && !r.down.prevented, 'Space on a different button than the clicked one held the microphone: [' + r.calls + ']');
+
+// A browser that cannot answer :focus-visible keeps PR 138's rule.
+const old = el('BUTTON', { throws: true });
+focus(old, 'pointer');
+r = press(old);
+expect(r.calls === '' && !r.down.prevented, 'Space on a button where :focus-visible throws held the microphone: [' + r.calls + ']');
+
+// PR 138's cases still stand: the page itself, the mic, nothing focused.
+[['the page itself', el('BODY')], ['the mic button', mic], ['no focused element', null]].forEach(function (c) {
+  r = press(c[1]);
+  expect(r.calls === 'press:space,release:space' && r.down.prevented && r.up.prevented, 'Space on ' + c[0] + ' no longer holds: [' + r.calls + ']');
+});
+`)
+}
+
+// A Space hold ends when the page loses focus, exactly once.
+//
+// # What was wrong
+//
+// A keyup goes to the window that has focus. Hold Space, alt-tab away (or click
+// another app, or the browser's address bar) and let go: the page never hears
+// the release, and the microphone stays open — listening, and in Chrome sending
+// audio to Google — until the next time Space happens to be pressed and let go
+// on the page. The mic button already guards this (lostpointercapture); the
+// space bar had nothing.
+//
+// # The rule
+//
+// A window blur, or the page becoming hidden, ends a hold SPACE began. Not a
+// hold the button began — pointer capture already owns that one — and never a
+// second release: the keyup that may still arrive later finds nothing to end.
+func TestVoiceInput_ASpaceHoldEndsWhenThePageLosesFocus(t *testing.T) {
+	runVoiceScenario(t, `
+const FV = load();
+`+spaceWorld+`
+const body = el('BODY');
+
+key('keydown', body);
+blurWindow();
+expect(calls.join() === 'press:space,release:space', 'a window blur mid-hold did not end the Space hold: [' + calls.join() + ']');
+blurWindow();
+const late = key('keyup', body);
+expect(calls.join() === 'press:space,release:space', 'the hold was ended twice (blur, then a late blur or keyup): [' + calls.join() + ']');
+expect(!late.prevented, 'a keyup after the blur ended the hold was still prevented');
+
+calls.length = 0;
+key('keydown', body);
+hide();
+expect(calls.join() === 'press:space,release:space', 'the page going hidden mid-hold did not end the Space hold: [' + calls.join() + ']');
+doc.visibilityState = 'visible';
+
+// ‼️ A pointer hold is the button's to end.
+calls.length = 0;
+hold.press('pointer');
+blurWindow(); hide(); doc.visibilityState = 'visible';
+expect(calls.join() === 'press:pointer', 'a blur ended a hold the mic button began: [' + calls.join() + ']');
+hold.release('pointer');
+
+// Blur with nothing held does nothing.
+calls.length = 0;
+blurWindow();
+expect(calls.length === 0, 'a blur with nothing held did something: [' + calls.join() + ']');
+`)
+}
+
+// A Space hold on the real voice layer ends the microphone exactly once when
+// the window blurs, in both of the ways the microphone hears.
+//
+// The scenario above uses a stand-in hold that only notes its calls. This one
+// uses makeHold and Voice as the page does, and compares a Space hold to a button hold: the same
+// listening starts, the same thing is delivered, and a blur releases the
+// microphone once — the recorder stopped once, the recogniser stopped, nothing
+// left listening.
+func TestVoiceInput_ASpaceHoldListensTheSameWayAsTheButton(t *testing.T) {
+	for _, mode := range []string{"browser", "server"} {
+		t.Run(mode, func(t *testing.T) {
+			runVoiceScenario(t, `
+const FV = load();
+const mode = '`+mode+`';
+let now = 1000;
+async function run(how) {
+  world.gumCalls = 0; world.recorders.length = 0; world.fetches.length = 0; world.srStarts = 0; world.recognitions.length = 0;
+  const m = makeVoice(FV), v = m.v;
+  v.setServerTranscription(mode === 'server' ? { model: 'asr-test' } : null);
+  const btn = fakeButton();
+  const hold = FV.bindHold(btn, v, { now: function () { return now; }, note: function (s) { m.errors.push(s); } });
+  const docOn = {}, winOn = {};
+  const doc = { visibilityState: 'visible', addEventListener: function (t, fn) { (docOn[t] = docOn[t] || []).push(fn); },
+    defaultView: { addEventListener: function (t, fn) { (winOn[t] = winOn[t] || []).push(fn); } } };
+  FV.bindSpaceHold(doc, hold, { mic: btn });
+  let stops = 0;
+  const stop = v.stopListening;
+  v.stopListening = function () { stops++; return stop.apply(this, arguments); };
+  function fireDoc(t, e) { (docOn[t] || []).forEach(function (fn) { fn(Object.assign({ type: t, preventDefault: function () {} }, e)); }); }
+  if (how === 'space') fireDoc('keydown', { code: 'Space', target: null });
+  else btn.fire('pointerdown', { pointerId: 1, button: 0 });
+  await settle();
+  const listening = v.listening;
+  now += 2000;
+  if (how === 'space') (winOn.blur || []).forEach(function (fn) { fn({ type: 'blur' }); });
+  else btn.fire('lostpointercapture', { pointerId: 1 });
+  const stopsAtBlur = stops;
+  fireDoc('keyup', { code: 'Space', target: null });
+  (winOn.blur || []).forEach(function (fn) { fn({ type: 'blur' }); });
+  await settle();
+  if (mode === 'browser') { world.hear('make the wall thicker', true); if (world.recognitions[0].onend) world.endRecognition(); await settle(); }
+  return { listening: listening, stopsAtBlur: stopsAtBlur, stops: stops, gum: world.gumCalls, recorders: world.recorders.length,
+    uploads: world.fetches.length, sr: world.srStarts, said: JSON.stringify(m.said), stillListening: v.listening };
+}
+const bySpace = await run('space'), byButton = await run('pointer');
+expect(bySpace.listening, 'a Space hold did not start listening on the ' + mode + ' path');
+expect(bySpace.stopsAtBlur === 1, 'a blur mid-Space-hold did not stop the microphone (' + bySpace.stopsAtBlur + ' stops): it stays open until Space is next let go on the page');
+expect(bySpace.stops === 1, 'a Space hold stopped the microphone ' + bySpace.stops + ' times after a blur and a late keyup, want once');
+expect(!bySpace.stillListening, 'the microphone is still listening after the blur');
+expect(bySpace.said === '["make the wall thicker"]', 'a Space hold ended by a blur delivered ' + bySpace.said);
+expect(JSON.stringify(bySpace) === JSON.stringify(byButton),
+  'a Space hold and a button hold differ on the ' + mode + ' path:\n    space  ' + JSON.stringify(bySpace) + '\n    button ' + JSON.stringify(byButton));
+`)
+		})
+	}
+}
+
+// Space on a microphone that is off says why, the way the page says it when
+// the microphone goes off.
+//
+// # What was wrong
+//
+// The mic is disabled when no way of hearing can work — in production that is
+// the browser's recogniser reporting it cannot reach Google, which is the
+// owner's situation — or when nobody is signed in. The reason is written to the
+// voice note once, at the moment the mic goes off; anything later (a sent
+// transcript) clears it. After that, Space did nothing and said nothing: it
+// looked exactly like the key not being heard.
+//
+// Space now puts the reason back in the note — once per press, not per key
+// repeat, and only where Space would have been push-to-talk. A Space that types
+// or presses a control is not a refused press and says nothing.
+func TestVoiceInput_SpaceOnAMicrophoneThatIsOffSaysWhy(t *testing.T) {
+	runVoiceScenario(t, `
+const FV = load();
+`+spaceWorld+`
+micDisabled = true;
+const body = el('BODY');
+const down = key('keydown', body); key('keydown', body, { repeat: true }); key('keyup', body);
+expect(calls.length === 0 && !down.prevented, 'Space held a microphone that is off: [' + calls.join() + ']');
+expect(refusals.length === 1, 'Space on a microphone that is off said why ' + refusals.length + ' times, want once per press');
+
+refusals.length = 0;
+const box = el('INPUT', { type: 'text' });
+focus(box, 'pointer'); key('keydown', box); key('keyup', box);
+const tabbed = el('BUTTON');
+focus(tabbed, 'keyboard'); key('keydown', tabbed); key('keyup', tabbed);
+expect(refusals.length === 0, 'Space typed into the text box or pressed a tabbed-to button, and the page said the microphone is off');
+`)
+}
+
 // The page uses both of the above.
 //
 // voice.js can be right and workbench.js still wire the old key handler, or
 // drop the server's reason on the floor. codeOnly strips comments, so the history
 // of the old handler can stay written beside the new one.
+//
+// And the page must give bindSpaceHold something to say when Space is refused,
+// or a microphone that is off is silent to the space bar again.
 func TestWorkbench_SpaceAndTheServerReasonAreWiredThroughVoiceJS(t *testing.T) {
 	b, err := assetFS.ReadFile("assets/workbench.js")
 	if err != nil {
@@ -737,6 +1049,10 @@ func TestWorkbench_SpaceAndTheServerReasonAreWiredThroughVoiceJS(t *testing.T) {
 	js := codeOnly(string(b))
 	if !strings.Contains(js, "ForgeVoice.bindSpaceHold(document, hold") {
 		t.Error("the space bar is not bound through ForgeVoice.bindSpaceHold, so it is taken from focused buttons")
+	}
+	// Line endings removed: a Windows checkout embeds CRLF.
+	if !strings.Contains(strings.ReplaceAll(js, "\r", ""), "refused: function () {\n        voiceNote(state.signedOut ? 'Sign in from the console to talk to FORGE.' : voice.whyUnavailable());") {
+		t.Error("Space on a microphone that is off does not say why on the page (bindSpaceHold is given no refused note)")
 	}
 	if strings.Contains(js, "e.code === 'Space'") {
 		t.Error("workbench.js still handles Space itself, beside or instead of bindSpaceHold")

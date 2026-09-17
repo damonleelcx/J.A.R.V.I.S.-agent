@@ -893,7 +893,9 @@
   }
 
   /* spaceIsPushToTalk says whether a Space press on `el` may be taken for
-   * push-to-talk.
+   * push-to-talk. `byPointer` says focus reached `el` from a pointer (a mouse
+   * click, a tap) rather than from the keyboard — see bindSpaceHold for how
+   * that is known.
    *
    * ‼️ Space already MEANS something on most things that can hold focus: it
    * presses a button, ticks a checkbox, opens a select, types a space. The
@@ -902,42 +904,139 @@
    * microphone instead — keyboard users could not operate the page, which is
    * the opposite of what the shortcut was added for (PRD AUD-06).
    *
-   * So Space is push-to-talk only where it would otherwise do nothing but
-   * scroll: the page itself, or something focusable that Space does not
-   * operate. The mic button is the exception that proves the rule — Space on
-   * it is holding it.
+   * ‼️ And then PR 138 gave Space back to every focused button, however the
+   * focus got there. In Chrome a mouse click leaves keyboard focus on the
+   * button it clicked, with no ring drawn, so after clicking Send, New
+   * conversation or a panel tab nothing LOOKED focused — and Space pressed that
+   * button again instead of talking. That was "push-to-talk does not work when
+   * nothing is focused".
    *
-   * Fenced by TestVoiceInput_SpaceOperatesAFocusedControlAndTalksEverywhereElse. */
-  var SPACE_OPERATES_TAG = /^(BUTTON|INPUT|TEXTAREA|SELECT|OPTION|A|SUMMARY|AUDIO|VIDEO|IFRAME|EMBED|OBJECT)$/;
-  var SPACE_OPERATES_ROLE = /^(button|checkbox|switch|radio|link|menuitem|menuitemcheckbox|menuitemradio|tab|option|treeitem|gridcell|textbox|searchbox|combobox|listbox|slider|spinbutton|scrollbar)$/;
-  function spaceIsPushToTalk(el, mic) {
+   * So there are three kinds of thing:
+   *
+   *   - what Space EDITS — a text box, a textarea, contenteditable, a select, a
+   *     slider, a listbox, media, an embedded frame. Space stays with it
+   *     however it was focused: typing a space is the point of a text box, and
+   *     a select or slider clicked with the mouse is still being edited.
+   *   - what Space ACTIVATES — buttons, links, summaries, checkboxes, radios and
+   *     their ARIA roles (tabs included). Reached from the keyboard, Space
+   *     presses it, for the keyboard user. Reached by a pointer, the person is
+   *     not keyboard-navigating: Space is push-to-talk, and the control does not
+   *     receive it.
+   *   - everything else — the page itself, a scroller, the canvas. Space would
+   *     only scroll, so it is push-to-talk.
+   *
+   * The mic button is push-to-talk however it was focused: Space on it is
+   * holding it.
+   *
+   * Fenced by TestVoiceInput_SpaceOperatesAFocusedControlAndTalksEverywhereElse
+   * and TestVoiceInput_SpaceAfterAMouseClickTalksAndDoesNotPressTheButtonAgain. */
+  var SPACE_EDITS_TAG = /^(TEXTAREA|SELECT|OPTION|AUDIO|VIDEO|IFRAME|EMBED|OBJECT)$/;
+  var SPACE_ACTIVATES_INPUT = /^(button|submit|reset|image|checkbox|radio)$/;
+  var SPACE_EDITS_ROLE = /^(option|gridcell|textbox|searchbox|combobox|listbox|slider|spinbutton|scrollbar)$/;
+  var SPACE_ACTIVATES_ROLE = /^(button|checkbox|switch|radio|link|menuitem|menuitemcheckbox|menuitemradio|tab|treeitem)$/;
+  var SPACE_ACTIVATES_TAG = /^(BUTTON|A|SUMMARY)$/;
+  function spaceUse(el) {
+    if (el.isContentEditable) return 'edits';
+    var tag = String(el.tagName || '').toUpperCase();
+    if (SPACE_EDITS_TAG.test(tag)) return 'edits';
+    if (tag === 'INPUT') {
+      // A native input types whatever role it is given; an unknown type is
+      // treated as text, because losing a typed space is the worse mistake.
+      var type = el.type || (el.getAttribute ? el.getAttribute('type') : '') || 'text';
+      return SPACE_ACTIVATES_INPUT.test(String(type).toLowerCase()) ? 'activates' : 'edits';
+    }
+    var role = String((el.getAttribute ? el.getAttribute('role') : '') || '').trim().toLowerCase();
+    if (role && SPACE_EDITS_ROLE.test(role)) return 'edits';
+    if (role && SPACE_ACTIVATES_ROLE.test(role)) return 'activates';
+    if (SPACE_ACTIVATES_TAG.test(tag)) return 'activates';
+    return 'nothing';
+  }
+  function spaceIsPushToTalk(el, mic, byPointer) {
     if (!el) return true;
     if (mic && el === mic) return true;
-    if (el.isContentEditable) return false;
-    if (SPACE_OPERATES_TAG.test(String(el.tagName || '').toUpperCase())) return false;
-    var role = el.getAttribute ? el.getAttribute('role') : null;
-    if (role && SPACE_OPERATES_ROLE.test(String(role).trim().toLowerCase())) return false;
+    var use = spaceUse(el);
+    if (use === 'edits') return false;
+    if (use === 'activates') return !!byPointer;
     return true;
+  }
+
+  /* focusCameFromPointer says whether `el`, just focused, was focused by a
+   * pointer. Asked at focusin, and ONLY there.
+   *
+   * ‼️ Not at keydown. Chromium makes the focused element match :focus-visible
+   * as soon as a non-modifier key goes down, before any keydown listener runs —
+   * measured in Chrome on 2026-09-17 with real input: after a mouse click on
+   * Send, :focus-visible is false at focusin and true inside the Space keydown.
+   * Asked at keydown, every clicked button looks keyboard-focused.
+   *
+   * A browser that cannot answer (no :focus-visible, so matches() throws) is
+   * treated as keyboard focus: Space presses the button, as in PR 138, rather
+   * than taking Space from a keyboard user on a guess. */
+  function focusCameFromPointer(el) {
+    if (!el || typeof el.matches !== 'function') return false;
+    try {
+      return !el.matches(':focus-visible');
+    } catch (e) {
+      return false;
+    }
   }
 
   /* bindSpaceHold makes the space bar a second way of holding `hold`.
    *
    * opts.mic is the mic button; opts.enabled() says whether the mic can be used
-   * at all. A press Space already operates is left entirely alone — not
-   * prevented, not pressed — and a release only ends a hold Space began. */
+   * at all, and opts.refused() is called — once per press, not per key repeat —
+   * when Space would have been push-to-talk but the mic is off, so the page can
+   * say why instead of looking as if the key was not heard. A press Space
+   * operates is left entirely alone — not prevented, not pressed — and a
+   * release only ends a hold Space began.
+   *
+   * ‼️ A keyup goes to whichever window has focus. Hold Space, alt-tab away (or
+   * click another app, or the address bar), let go: the page never hears it,
+   * and the microphone stayed open until Space was next let go on the page. So a
+   * window blur, or the page going hidden, ends a hold SPACE began — never one
+   * the mic button began, whose pointer capture already ends it, and never
+   * twice: release() answers false when there is nothing of Space's to end.
+   *
+   * Fenced by TestVoiceInput_ASpaceHoldEndsWhenThePageLosesFocus and
+   * TestVoiceInput_SpaceOnAMicrophoneThatIsOffSaysWhy. */
   function bindSpaceHold(doc, hold, opts) {
     opts = opts || {};
     var enabled = opts.enabled || function () { return true; };
+    var refused = opts.refused || function () {};
+    var pointerFocused = null;   // the element a pointer last focused, if it still has focus
+    var taken = false;           // this Space press was push-to-talk, so its keyup is ours too
+    doc.addEventListener('focusin', function (e) {
+      pointerFocused = focusCameFromPointer(e.target) ? e.target : null;
+    }, true);
     doc.addEventListener('keydown', function (e) {
       if (e.code !== 'Space' || e.ctrlKey || e.altKey || e.metaKey || e.isComposing) return;
-      if (!spaceIsPushToTalk(e.target, opts.mic) || !enabled()) return;
+      var target = e.target;
+      if (!spaceIsPushToTalk(target, opts.mic, target != null && target === pointerFocused)) return;
+      if (!enabled()) {
+        if (!e.repeat) refused();
+        return;
+      }
       e.preventDefault();
+      taken = true;
       if (!e.repeat) hold.press('space');
     });
     doc.addEventListener('keyup', function (e) {
       if (e.code !== 'Space') return;
+      var took = taken;
+      taken = false;
       // Only a hold Space started: a Space that pressed a button ends nothing.
       if (hold.release('space')) e.preventDefault();
+      // Taken while the button already held the mic: still not the control's.
+      else if (took) e.preventDefault();
+    });
+    var letGo = function () {
+      taken = false;
+      hold.release('space');
+    };
+    var win = doc.defaultView;
+    if (win && win.addEventListener) win.addEventListener('blur', letGo);
+    doc.addEventListener('visibilitychange', function () {
+      if (doc.visibilityState === 'hidden') letGo();
     });
   }
 
