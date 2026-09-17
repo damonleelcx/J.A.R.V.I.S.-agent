@@ -32,7 +32,8 @@ does), so it is written to a file and run with `< /dev/null`.
 ## One-time setup (already done)
 
 1. ECR repo `forge`.
-2. Secrets Manager `forge/prod` — `database-url`, `llm-api-key`, `session-secret`.
+2. Secrets Manager `forge/prod` — `database-url`, `llm-api-key`, `session-secret`;
+   `forge/transcriber` — `transcriber-api-key` (DashScope Beijing pay-as-you-go).
    SMTP is deliberately NOT here: see below.
 3. IAM inline policy `ForgeSecretsRead` on role `heros-vm`, scoped to `forge/*`.
    Without it the ExternalSecret never syncs **and** `bootstrap-db.sh` cannot
