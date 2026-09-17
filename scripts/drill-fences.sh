@@ -175,6 +175,9 @@ FILES=(
   # files, which were never listed, so drill() refused all ten as NOT BACKED UP.
   internal/agent/stepexport.go
   internal/httpapi/geometry_exports.go
+  # Added 2026-09-17: the new-conversation drills target these two.
+  internal/domain/conversation/repository.go
+  internal/httpapi/pages.go
 )
 
 BACKUP=""
@@ -4070,6 +4073,55 @@ drill "the limit is shared by everybody in the project" internal/agent/stepexpor
 drill "planning work needs only read access too" internal/httpapi/goals_start.go \
   's = s.replace("requirePermission(r, req.ProjectID, user.ID, access.PermGoalCreate)", "requirePermission(r, req.ProjectID, user.ID, access.PermProjectRead)", 1)' \
   ./internal/httpapi 'TestCreateGoal_RefusesAViewerOfTheProject'
+
+echo
+
+echo "New conversation at the workbench"
+# Added 2026-09-17. "New conversation" drops the conversation id the workbench
+# sends and keeps the project; the server then reads history from the new id
+# alone. The trap is a control that clears the pane while the old history still
+# goes to the model, so the client fences read the REQUEST BODY the page builds
+# (node) and the server fences read the MESSAGES the stub model received. The
+# server drills need FORGE_TEST_DATABASE_URL; the client drills need node.
+drill "a new conversation keeps sending the old conversation id" internal/httpapi/assets/workbench.js \
+  's = s.replace("    s.conversationID = null;\n    try { store.removeItem(CONV_KEY); }", "    try { store.removeItem(CONV_KEY); }", 1)' \
+  ./internal/httpapi 'TestWorkbench_ANewConversationSendsNoConversationIDAndThenUsesTheNewOne'
+
+drill "a new conversation leaves the design's project" internal/httpapi/assets/workbench.js \
+  's = s.replace("    var previous = s.conversationID;\n", "    var previous = s.conversationID;\n    s.projectID = null;\n", 1)' \
+  ./internal/httpapi 'TestWorkbench_ANewConversationSendsNoConversationIDAndThenUsesTheNewOne'
+
+drill "the id the server mints for the new conversation is not adopted" internal/httpapi/assets/workbench.js \
+  's = s.replace("    s.conversationID = id;\n    try { store.setItem(CONV_KEY, id); }", "    try { store.setItem(CONV_KEY, id); }", 1)' \
+  ./internal/httpapi 'TestWorkbench_ANewConversationSendsNoConversationIDAndThenUsesTheNewOne'
+
+drill "a new conversation starts while a reply is still streaming" internal/httpapi/assets/workbench.js \
+  's = s.replace("    if (s.busy) {\n", "    if (false) {\n", 1)' \
+  ./internal/httpapi 'TestWorkbench_ANewConversationIsRefusedWithAReasonWhileSomethingIsInFlight'
+
+drill "a running goal's card is cleared by a new conversation" internal/httpapi/assets/workbench.js \
+  's = s.replace("    if (!s.goal) {\n      s.proposal = null;", "    if (true) {\n      s.proposal = null;", 1)' \
+  ./internal/httpapi 'TestWorkbench_ANewConversationIsRefusedWithAReasonWhileSomethingIsInFlight'
+
+drill "the control clears the pane and keeps the conversation" internal/httpapi/assets/workbench.js \
+  's = s.replace("    var r = beginNewConversation(state, storage());", "    var r = { refused: newConversationRefusal(state) };", 1)' \
+  ./internal/httpapi 'TestWorkbench_TheNewConversationControlIsAButtonWiredToTheRequest'
+
+drill "a restore still loading paints the old turns into the new conversation" internal/httpapi/assets/workbench.js \
+  's = s.replace("        if (state.conversationID !== id) return false;\n", "", 1)' \
+  ./internal/httpapi 'TestWorkbench_TheNewConversationControlIsAButtonWiredToTheRequest'
+
+drill "the new-conversation control is not a button" internal/httpapi/pages.go \
+  's = s.replace("<button type=\"button\" class=\"ghost newconv\" id=\"new-conversation\"", "<span role=\"button\" class=\"ghost newconv\" id=\"new-conversation\"", 1)' \
+  ./internal/httpapi 'TestWorkbench_TheNewConversationControlIsAButtonWiredToTheRequest'
+
+drill "the history is read from the person's turns, not the conversation's" internal/domain/conversation/repository.go \
+  's = s.replace("where conversation_id = $1 and owner_id = $2`, conversationID, ownerID).Scan(&total)", "where $1 <> \x27\x27 and owner_id = $2`, conversationID, ownerID).Scan(&total)", 1); s = s.replace("where conversation_id = $1 and owner_id = $2\n\t\torder by seq desc limit $3", "where $1 <> \x27\x27 and owner_id = $2\n\t\torder by seq desc limit $3", 1)' \
+  ./internal/httpapi 'TestANewConversation_TheModelIsGivenNoneOfTheConversationThatWasLeft'
+
+drill "an empty conversation id continues the latest conversation" internal/httpapi/converse.go \
+  's = s.replace("\tconvID, err := h.talk.Resolve(ctx, req.ConversationID, user.ID)", "\tif req.ConversationID == \"\" {\n\t\tif l, _ := h.talk.List(ctx, user.ID); len(l) > 0 {\n\t\t\treq.ConversationID = l[0].ID\n\t\t}\n\t}\n\tconvID, err := h.talk.Resolve(ctx, req.ConversationID, user.ID)", 1)' \
+  ./internal/httpapi 'TestANewConversation_'
 
 echo
 

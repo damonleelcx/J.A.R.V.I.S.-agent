@@ -592,6 +592,12 @@ const pageTemplates = `
   <div class="wb-left" id="wb-talk">
     <div class="railhead">
       Conversation
+      <!-- A fresh conversation about the same design. The previous one is kept,
+           not deleted, and the project and what is on the stage stay: only the
+           conversation id is dropped, so the next turn's history is empty. See
+           startNewConversation in workbench.js. -->
+      <button type="button" class="ghost newconv" id="new-conversation"
+              title="Start a new conversation about this design. Nothing said so far is sent with it; the previous conversation is kept.">New conversation</button>
       <!-- PRD AUD-07 asks for delete-session to be reachable at all times, and
            MEM-01 asks each layer to state its retention. This layer keeps what
            was said until the person says otherwise, which is only true if
