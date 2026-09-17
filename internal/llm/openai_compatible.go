@@ -214,6 +214,16 @@ func (c *OpenAICompatible) Complete(ctx context.Context, req Request) (*Response
 			return resp, nil
 		}
 		lastErr = err
+		// ‼️ A call the caller cancelled is not an endpoint that could not be reached. The
+		// transport reports it as one (EXTERNAL_UNAVAILABLE, "cannot reach the model
+		// endpoint"), so every graceful stop of a worker inside a model call logged a
+		// retry of a healthy endpoint before the backoff noticed the cancel. Nothing is
+		// retried for a caller that has gone.
+		// docs/bugfix/2026-09-17-a-stopped-worker-logged-a-retry-of-a-model-it-had-hung-up-on.md
+		if ctx.Err() != nil {
+			return nil, errs.Wrap(op, errs.CodeInternal, ctx.Err()).
+				WithDetail("cancelled during attempt %d; not retried", attempt+1)
+		}
 		if !errs.IsRetryable(err) {
 			// A 400 will fail identically forever. Retrying it burns budget and
 			// delays the real error reaching the operator.

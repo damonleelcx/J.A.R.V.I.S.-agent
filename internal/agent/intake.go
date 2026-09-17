@@ -257,7 +257,15 @@ func (in *Intake) Plan(ctx context.Context, pool *db.Pool, goal *engine.Goal) (*
 		// deployment cannot end up with the choice wired and the answer not.
 		WithSettled(NewSettledStore(pool))
 
-	result, err := in.planner.Plan(ctx, goal, nil, "")
+	// ‼️ The planning call is charged to the goal it plans, as a build's is
+	// (planBuildGoal). It was not: an ordinary goal's tokens_spent and its ceiling
+	// never saw the planner, so a goal run on the stand-in model spent 450 tokens
+	// planning and recorded 0 of them. A copy of the planner with a charged client,
+	// so nothing about the shared planner changes for the next goal.
+	// docs/bugfix/2026-09-17-a-goals-planner-and-verifier-calls-were-never-charged.md
+	charged := *in.planner
+	charged.client = chargeTo(in.planner.client, in.applier.budget, pool, goal, in.clock, in.logger())
+	result, err := charged.Plan(ctx, goal, nil, "")
 	if err != nil {
 		return nil, err
 	}
