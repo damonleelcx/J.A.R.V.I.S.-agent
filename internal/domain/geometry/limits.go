@@ -205,6 +205,40 @@ func (d Document) DrawRefusal() string {
 		"can still show it if it places no more than %d; nothing was built.", maxDrawnParts, maxViewportParts)
 }
 
+// Occurrences is how many parts this design places, counted without placing any of
+// them (occurrences), saturating one past the storage bound in force. A stored design
+// is within that bound, so for one the count is exact; it costs a walk over the
+// document's definitions and assemblies, not over its placements, which is why a
+// listing may show it for a design of a million parts.
+func (d Document) Occurrences() int {
+	return occurrences(d, CurrentLimits().MaxOccurrences)
+}
+
+// STEPRefusal is why a STEP file of this design is not written during a REQUEST (GET
+// /v1/geometry/{id}/export?format=step, and its label), or "" when it is.
+//
+// It is DrawRefusal's ceiling, said for STEP: the count, the limit, and where the file
+// can come from instead. ‼️ Found on 2026-09-17 by the workbench check: the label for a
+// 30,023-part car answered 501 "This deployment has no CAD kernel configured" with a
+// kernel configured, because the label read the build-time format table. A refusal that
+// names the wrong cause sends somebody to fix a deployment that is not broken.
+func (d Document) STEPRefusal() string {
+	if occurrences(d, maxDrawnParts) <= maxDrawnParts {
+		return ""
+	}
+	n := d.Occurrences()
+	if n <= MaxExportJobParts {
+		return fmt.Sprintf("This design places %d parts, and a STEP file written during a request is built from "+
+			"at most %d, until building at that size has been measured. Use \"STEP via worker\" (POST "+
+			"/v1/geometry/{id}/exports): forge-worker writes up to %d parts as STEP off-node and keeps the "+
+			"file. Nothing was built.", n, maxDrawnParts, MaxExportJobParts)
+	}
+	return fmt.Sprintf("This design places %d parts, and a STEP file written during a request is built from "+
+		"at most %d, until building at that size has been measured. \"STEP via worker\" does not reach it "+
+		"either: an export job writes at most %d. Export a smaller subtree as its own design. Nothing was built.",
+		n, maxDrawnParts, MaxExportJobParts)
+}
+
 // BuildRefusal is why the CAD kernel does not build this design for a view
 // (cad.Kernel.BuildMesh), or "" when it does. Every other build and export answers
 // DrawRefusal, which is tighter: past maxDrawnParts only a view is built.

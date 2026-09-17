@@ -185,8 +185,65 @@ type Label struct {
 
 // Headline is the one sentence that must survive being skim-read.
 func (l *Label) Headline() string {
+	if l.FormatKind == KindParametric {
+		return "This is a B-Rep of an unverified proposal, built by the CAD kernel from the same " +
+			"description the viewport draws. It establishes nothing about manufacturability, strength, " +
+			"fit, or compliance."
+	}
 	return "This is a tessellated preview of an unverified proposal. " +
 		"It establishes nothing about manufacturability, strength, fit, or compliance."
+}
+
+// KernelLabelFor is the label for a STEP file a CAD kernel writes: what LabelFor says
+// for a mesh, less everything that is only true of a mesh.
+//
+// # Why this exists
+//
+// ‼️ LabelFor resolves the format from the static table, where STEP is unavailable
+// (no kernel), so in a deployment WITH a kernel GET /v1/geometry/{id}/export/label?
+// format=step answered 501 "this deployment has no CAD kernel configured" while
+// /v1/geometry/formats said STEP was available and the download itself worked. The
+// workbench fetches the label before it shows a download link, so its enabled
+// "Export STEP" button showed that refusal and never offered the file.
+// docs/bugfix/2026-09-17-the-step-label-said-there-was-no-kernel-where-there-was-one.md
+//
+// No tessellation and no triangles: the kernel writes exact surfaces. The refusals
+// are LabelFor's, because the in-request export meets the same ones.
+func KernelLabelFor(v *Variant) (*Label, error) {
+	const op = "geometry.KernelLabelFor"
+
+	if !v.Units.Known() {
+		return nil, errs.New(op, errs.CodeValidationFailed).
+			WithDetail("this variant has no unit FORGE can convert (%s), so the kernel cannot tell how long "+
+				"anything is. Ask FORGE to restate the assembly in mm, cm, m or in, then export that variant.",
+				strings.ToLower(strings.TrimSuffix(v.UnitsNote(), ".")))
+	}
+	// The in-request STEP export's ceiling, which is the mesh's. (Named differently from
+	// LabelFor's copy on purpose: the drills anchored there must match only there.)
+	if tooLarge := v.Document.DrawRefusal(); tooLarge != "" {
+		return nil, errs.New(op, errs.CodeValidationFailed).WithDetail("%s", tooLarge)
+	}
+	f, err := FormatOf("step")
+	if err != nil {
+		return nil, err
+	}
+	return &Label{
+		Format: f.Name, FormatKind: f.Kind,
+		Units: v.Units, Frame: v.Frame, Generator: v.Generator,
+		Verification: string(v.Verification), Disposition: string(v.Disposition),
+		Lossy: []string{
+			fmt.Sprintf("Lengths are written in millimetres, the kernel's unit, whatever unit the design was "+
+				"described in (this one: %s). The file records millimetres, so a reader that honours it "+
+				"does not rescale; one that ignores it reads millimetres.", v.Units),
+			"Colour and transparency are not written.",
+			"Each part keeps its name. Its note, the design's assumptions and the unverified list below " +
+				"are not in the file, so it arrives with no provenance attached.",
+			"A part the kernel cannot build is left out of the file, and the download names it in its " +
+				"X-Forge-Export-Label header.",
+		},
+		Assumptions: v.Assumptions(),
+		NotVerified: v.NotVerified(),
+	}, nil
 }
 
 // LabelFor computes what exporting this variant to this format would lose.

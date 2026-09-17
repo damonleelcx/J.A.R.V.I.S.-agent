@@ -70,7 +70,7 @@ func (d Document) Subtree(path string) (*Subtree, error) {
 		}
 	}
 	under := OccurrenceUnder(p)
-	e := d.Expanded()
+	e := d.expandedWithin(p)
 	s := &Subtree{Path: p, expanded: e}
 	in := map[string]bool{}
 	for _, part := range e.Parts {
@@ -112,6 +112,50 @@ func (d Document) Subtree(path string) (*Subtree, error) {
 			strings.ToLower(f.Op), labelOf(e, f.Of), p))
 	}
 	return s, nil
+}
+
+// expandedWithin is Expanded, placing only the part of the tree that can lead to path.
+//
+// ‼️ Found by the 2026-09-17 workbench check: asking for ONE rivet of a stored
+// 1,020,782-part design took 5.9 s, because every subtree request expanded the whole
+// design to pick out what was under the path. The parts under the path are placed
+// exactly as the whole expansion places them — a placement's frame depends only on the
+// placements above it — and Subtree keeps only those.
+//
+// Not pruned when any assembly has features of its own: an assembly's feature names parts
+// by where they were placed (tree_features.go), and a feature that straddles the path
+// must still be found and NAMED in Outside, which needs the parts outside the path placed.
+// Fence: TestSubtree_PlacesOnlyWhatLeadsToItsPathAndTheSameParts.
+func (d Document) expandedWithin(path string) Document {
+	for _, a := range d.Assemblies {
+		if len(a.Features) > 0 {
+			return d.Expanded()
+		}
+	}
+	e, _ := expandTree(d, nil, occurrencePrefix(path))
+	e, _ = expandStandards(e)
+	e, _ = expandGears(e)
+	e, _ = expandRepeats(e)
+	return e
+}
+
+// occurrencePrefix accepts a placement's path when each of its segments matches the
+// asked path's segment at that depth by OccurrenceUnder's rule (copy numbers allowed):
+// a placement that can be at, above or under the path. forge3d.js has the same.
+func occurrencePrefix(path string) func([]string) bool {
+	parts := strings.Split(path, PathSeparator)
+	segs := make([]*regexp.Regexp, len(parts))
+	for i, s := range parts {
+		segs[i] = regexp.MustCompile("^" + regexp.QuoteMeta(s) + `(-\d+)*$`)
+	}
+	return func(childPath []string) bool {
+		for i := 0; i < len(childPath) && i < len(segs); i++ {
+			if !segs[i].MatchString(childPath[i]) {
+				return false
+			}
+		}
+		return true
+	}
 }
 
 // OccurrenceUnder reports whether a placed part's id is at or beneath an occurrence

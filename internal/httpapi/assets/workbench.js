@@ -117,8 +117,14 @@
    * them. Normalised once, here, so the row cannot render differently depending
    * on how it arrived. */
   function railRow(v) {
-    var parts = (typeof v.parts === 'number')
-      ? v.parts
+    /* What the design PLACES: the listing's occurrence count, and the live event's
+     * `parts`, which the server counts the same way. ‼️ Never document.parts.length —
+     * a design written as a tree has no top-level parts, and the rail read "0 part(s)"
+     * for every one (found by the 2026-09-17 workbench check). The count comes with the
+     * listing, so the page expands nothing to show it.
+     * Fence: TestWorkbenchRailCountsWhatADesignPlaces. */
+    var parts = (typeof v.occurrences === 'number') ? v.occurrences
+      : (typeof v.parts === 'number') ? v.parts
       : ((v.document && v.document.parts) ? v.document.parts.length : 0);
     var assumptions = (typeof v.assumptions === 'number')
       ? v.assumptions
@@ -778,6 +784,22 @@
      * Geometry is parts OR a root, as geometry.Document.HasGeometry says. */
     if (!pick || !pick.document || !(pick.document.parts || pick.document.root)) return;
     loadPrototype(pick.document, pick.measured || [], pick.version_id);
+    /* A listing no longer measures (measuring places every part: 3.4-4.1 s for a
+     * project holding a million-part design, 2026-09-17), so the dimensions of the one
+     * design drawn are read from that variant, and put on the stage if it is still
+     * the one there. */
+    if (!pick.measured && pick.version_id) loadMeasured(pick.version_id, pick.document);
+  }
+
+  function loadMeasured(versionID, proto) {
+    fetch('/v1/geometry/' + encodeURIComponent(versionID))
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .then(function (b) {
+        if (!b || !b.variant || state.prototype !== proto) return;
+        state.measured = b.variant.measured || [];
+        studio.setOverlays(proto.overlays || [], state.measured);
+      })
+      .catch(function () { /* the drawing stands without derived dimensions */ });
   }
 
   /* What this deployment can write, and what it cannot.
@@ -1033,7 +1055,10 @@
         html += section('Lost in this conversion', l.lossy);
         html += section('Assumed, not specified', l.assumptions);
         html += section('This file does not establish', l.not_verified);
-        html += '<div>' + b.triangles + ' triangles · ' + esc(l.units) + '</div>' +
+        /* A STEP label is a B-Rep's: it has no triangles to count, and "0 triangles" would
+         * read as an empty file (2026-09-17, once the label answered STEP with a kernel). */
+        html += '<div>' + (l.format_kind === 'parametric' ? 'B-Rep, not tessellated'
+          : b.triangles + ' triangles') + ' · ' + esc(l.units) + '</div>' +
           '<a class="go" href="/v1/geometry/' + encodeURIComponent(versionID) +
           '/export?format=' + encodeURIComponent(format) + '">Download the ' +
           esc(String(format).toUpperCase()) + ' →</a>';
@@ -1738,6 +1763,13 @@
       studio.loadLazy(proto, function (path) { fetchSubtree(versionID, proto, path); });
     } else {
       studio.load(proto);
+      /* ‼️ Not for a design the viewport has refused to draw: the whole-design mesh of
+       * one past MAX_VIEWPORT_PARTS is refused too (400), and asking for it anyway was a
+       * request with nothing to receive (found by the 2026-09-17 workbench check, on a
+       * stored million-part design). Such a design is browsed a subtree at a time above;
+       * this branch is reached for one only with forge.viewport.eager set, or when it
+       * has no tree to browse. Fence: TestWorkbenchAsksNoWholeMeshForADesignItRefused. */
+      if (window.Forge3D.drawRefusal(proto)) versionID = null;
       /* The primitives are drawn FIRST and the built solid replaces them.
        *
        * Not "instead of": the kernel is a subsystem that can be absent, and it
@@ -3856,6 +3888,13 @@
         // rather than left to read as "nothing modelled yet".
         $('stage-empty').textContent = msg;
         $('stage-empty').classList.remove('hidden');
+      },
+      /* A design browsed past the viewport's limit: why it is not drawn whole and how to
+       * draw part of it, or why a row did not load (its name and count); cleared when a
+       * row arrives. */
+      onNotice: function (msg) {
+        $('stage-empty').textContent = msg;
+        $('stage-empty').classList.toggle('hidden', !msg);
       }
     });
     /* BEFORE anything reads the stored project or conversation, so a switch is

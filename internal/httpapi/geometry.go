@@ -90,6 +90,65 @@ type VariantDTO struct {
 	// dimension line is the most authoritative mark on a drawing. Two fields
 	// mean a client cannot show them identically by accident.
 	Measured []geometry.Overlay `json:"measured"`
+
+	// Occurrences is how many parts the design PLACES — every copy of every pattern
+	// and repeat, through the whole tree — counted without placing them
+	// (geometry.Document.Occurrences), so it is as cheap for a million as for one.
+	//
+	// ‼️ Not len(document.parts). A design written as a tree has no top-level parts,
+	// and the variants rail read "0 part(s)" for every one of them (found by the
+	// 2026-09-17 workbench check on a 30,023-part car).
+	// Fence: TestVariantsListCountsWhatADesignPlacesWithoutExpandingIt.
+	Occurrences int `json:"occurrences"`
+}
+
+// listedVariantDTO is one row of GET /v1/geometry?project_id=: the variant, WITHOUT the
+// dimensions FORGE derives from it.
+//
+// # Why a listing does not measure
+//
+// Measuring expands the whole design (geometry.Measure places every occurrence to find
+// its extent). A project holding a 1,020,782-part design took 3.4-4.1 s to list, all of
+// it in that expansion, and every workbench open of the project waited for it — the
+// 30,000-part car's first view included (docs/spikes/2026-09-17-workbench-viewport §3).
+// A listing's cost must follow how many variants it lists, not how large they are.
+//
+// The measurement is still one request away: GET /v1/geometry/{id} carries it, and the
+// workbench reads it there for the one design it draws. "measured" is ABSENT here rather
+// than [] — [] would say "this design has no derivable extents", which is a different
+// claim from "not measured in a listing" — and measured_note says where it is.
+type listedVariantDTO struct {
+	VariantDTO
+	// Shadows VariantDTO.Measured (shallower wins in encoding/json), and is never set,
+	// so the key is left out.
+	Measured     []geometry.Overlay `json:"measured,omitempty"`
+	MeasuredNote string             `json:"measured_note"`
+}
+
+// listedVariant is a listing's row. Nothing in it walks the design's placements: the
+// occurrence count multiplies pattern counts through the tree.
+func listedVariant(v geometry.Variant) listedVariantDTO {
+	if v.Document.Parts == nil {
+		v.Document.Parts = []geometry.Part{}
+	}
+	return listedVariantDTO{
+		VariantDTO: VariantDTO{
+			VersionID: v.VersionID, ProjectID: v.ProjectID, Path: v.Path, Version: v.Version,
+			Name: v.Name, Inputs: json.RawMessage(v.Inputs),
+			Units: string(v.Units), UnitsDeclared: v.UnitsDeclared, UnitsNote: v.UnitsNote(),
+			Frame:       string(v.Frame),
+			Assumptions: v.Assumptions(), NotVerified: v.NotVerified(),
+			Generator: v.Generator, Agent: string(v.Agent),
+			Verification: string(v.Verification), VerificationNote: v.VerificationNote,
+			Disposition: string(v.Disposition), DispositionedBy: v.DispositionedBy,
+			InitiatorID: v.InitiatorID,
+			CreatedAt:   v.CreatedAt.UTC().Format(time.RFC3339),
+			Document:    v.Document,
+			Occurrences: v.Document.Occurrences(),
+		},
+		MeasuredNote: "Not measured in a listing, because measuring places every part; " +
+			"GET /v1/geometry/" + v.VersionID + " carries this variant's measured dimensions.",
+	}
 }
 
 func toVariantDTO(v geometry.Variant) VariantDTO {
@@ -114,6 +173,7 @@ func toVariantDTO(v geometry.Variant) VariantDTO {
 		CreatedAt:   v.CreatedAt.UTC().Format(time.RFC3339),
 		Document:    v.Document,
 		Measured:    measuredOrEmpty(v),
+		Occurrences: v.Document.Occurrences(),
 	}
 }
 
@@ -171,9 +231,9 @@ func (h *GeometryHandlers) List(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, r, h.deps.Log, err)
 		return
 	}
-	out := make([]VariantDTO, 0, len(variants))
+	out := make([]listedVariantDTO, 0, len(variants))
 	for _, v := range variants {
-		out = append(out, toVariantDTO(v))
+		out = append(out, listedVariant(v))
 	}
 	WriteJSON(w, http.StatusOK, map[string]any{"variants": out})
 }
@@ -597,7 +657,32 @@ func (h *GeometryHandlers) ExportLabel(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, r, h.deps.Log, err)
 		return
 	}
+	/* A STEP file past the ceiling a request builds, where a kernel is configured: refused
+	 * for that reason, with the count, the limit and the export job that writes it
+	 * (geometry.Document.STEPRefusal), the refusal Export gives too. Without this the label
+	 * refused in the general build ceiling's words, which point nowhere — and before
+	 * PR 145, as "no CAD kernel configured" (the 2026-09-17 workbench check, 30,023 parts).
+	 * Fence: TestExportLabel_STEPWithAKernelSaysTheCeilingNotAMissingKernel. */
+	if refusal := v.Document.STEPRefusal(); refusal != "" && h.deps.CAD.Available() &&
+		strings.EqualFold(strings.TrimSpace(r.URL.Query().Get("format")), "step") {
+		err := errs.New("httpapi.ExportLabel", errs.CodeValidationFailed).WithDetail("%s", refusal).WithField("format", "step")
+		h.logRefusal(r, v, "step", err)
+		WriteError(w, r, h.deps.Log, err)
+		return
+	}
 	format := r.URL.Query().Get("format")
+	// STEP is written by the kernel when there is one (Export, below), so its label is
+	// the kernel's: geometry.LabelFor alone answered this deployment has no kernel.
+	if strings.EqualFold(format, "step") && h.deps.CAD.Available() {
+		label, err := geometry.KernelLabelFor(v)
+		if err != nil {
+			h.logRefusal(r, v, format, err)
+			WriteError(w, r, h.deps.Log, err)
+			return
+		}
+		WriteJSON(w, http.StatusOK, map[string]any{"label": labelDTO(label), "triangles": 0})
+		return
+	}
 	label, mesh, err := geometry.LabelFor(v, format)
 	if err != nil {
 		h.logRefusal(r, v, format, err)
@@ -684,6 +769,15 @@ func (h *GeometryHandlers) exportParametric(w http.ResponseWriter, r *http.Reque
 				"its own unit — writing one would put a guess about scale inside the file. "+
 				"Ask FORGE to restate the assembly in mm, cm, m or in, then export that variant.",
 				strings.ToLower(strings.TrimSuffix(v.UnitsNote(), "."))))
+		return
+	}
+	// The ceiling in STEP's words, before the kernel: the count, the limit, and the
+	// export job where it reaches (geometry.Document.STEPRefusal). The kernel would refuse
+	// too, with DrawRefusal's general sentence that points nowhere.
+	if refusal := v.Document.STEPRefusal(); refusal != "" {
+		err := errs.New("httpapi.exportParametric", errs.CodeValidationFailed).WithDetail("%s", refusal)
+		h.logRefusal(r, v, "step", err)
+		WriteError(w, r, h.deps.Log, err)
 		return
 	}
 

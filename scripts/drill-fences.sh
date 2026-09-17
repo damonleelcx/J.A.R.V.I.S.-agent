@@ -979,7 +979,7 @@ drill "configuration accepts a zero occurrence bound" internal/platform/config/c
   ./internal/platform/config 'TestGeometryLimitsMustBePositive'
 
 drill "the browser draws a design too large to draw" internal/httpapi/assets/forge3d.js \
-  "s = s.replace('    if (drawRefusal(spec)) return [];\n', '', 1)" \
+  "s = s.replace('    if (!under && drawRefusal(spec)) return [];\n', '', 1)" \
   ./internal/httpapi 'TestRendererFlattensATreeLikeTheExporter'
 
 drill "the browser's count forgets a pattern's copies" internal/httpapi/assets/forge3d.js \
@@ -4347,6 +4347,87 @@ drill "the section-cut picker is dark on the light theme again" internal/httpapi
 drill "the section-cut picker has no themed rule" internal/httpapi/assets/workbench.css \
   's = s.replace(".sliders select {", ".sliders .select-gone {", 1)' \
   ./internal/httpapi 'TestPagesWriteNoColourLiteralInAStyleAttribute'
+
+# Defects the workbench check found on main while loading large designs (2026-09-17).
+drill "a STEP label past the request ceiling refuses in the build ceiling's general words" internal/httpapi/geometry.go \
+  's = s.replace("if refusal := v.Document.STEPRefusal(); refusal != \"\" && h.deps.CAD.Available() &&", "if refusal := v.Document.STEPRefusal(); false &&", 1)' \
+  ./internal/httpapi 'TestExportLabel_STEPWithAKernelSaysTheCeilingNotAMissingKernel'
+
+drill "a STEP export past the request ceiling refuses in the kernel's general words" internal/httpapi/geometry.go \
+  's = s.replace("if refusal := v.Document.STEPRefusal(); refusal != \"\" {", "if refusal := \"\"; refusal != \"\" {", 1)' \
+  ./internal/httpapi 'TestExportLabel_STEPWithAKernelSaysTheCeilingNotAMissingKernel'
+
+drill "a STEP refusal within the job's ceiling no longer points to the export job" internal/domain/geometry/limits.go \
+  's = s.replace("/v1/geometry/{id}/exports): forge-worker writes up to", "nowhere): forge-worker writes up to", 1)' \
+  ./internal/httpapi 'TestExportLabel_STEPWithAKernelSaysTheCeilingNotAMissingKernel'
+
+drill "a variants listing measures every design again" internal/httpapi/geometry.go \
+  's = s.replace("out = append(out, listedVariant(v))", "out = append(out, listedVariantDTO{VariantDTO: toVariantDTO(v)})", 1)' \
+  ./internal/httpapi 'TestVariantsListCountsWhatADesignPlacesWithoutExpandingIt'
+
+drill "a listed design counts its top-level parts" internal/httpapi/geometry.go \
+  's = s.replace("\t\t\tOccurrences: v.Document.Occurrences(),", "\t\t\tOccurrences: len(v.Document.Parts),", 1)' \
+  ./internal/httpapi 'TestVariantsListCountsWhatADesignPlacesWithoutExpandingIt'
+
+drill "a kept variant's live event counts its top-level parts" internal/httpapi/converse.go \
+  's = s.replace("Parts: v.Document.Occurrences(),", "Parts: len(v.Document.Parts),", 1)' \
+  ./internal/httpapi 'TestVariantsListCountsWhatADesignPlacesWithoutExpandingIt'
+
+drill "the variants rail counts top-level parts again" internal/httpapi/assets/workbench.js \
+  's = s.replace("(typeof v.occurrences === \x27number\x27) ? v.occurrences\n      : ", "", 1)' \
+  ./internal/httpapi 'TestWorkbenchRailCountsWhatADesignPlaces'
+
+drill "the workbench asks for the whole mesh of a design it refused to draw" internal/httpapi/assets/workbench.js \
+  's = s.replace("      if (window.Forge3D.drawRefusal(proto)) versionID = null;\n", "", 1)' \
+  ./internal/httpapi 'TestWorkbenchAsksNoWholeMeshForADesignItRefused'
+
+drill "a design past the viewport limit is refused and not browsed" internal/httpapi/assets/forge3d.js \
+  's = s.replace("return !!(spec && spec.root) && occurrences(spec, MAX_VIEWPORT_PARTS) > LAZY_OCCURRENCES;", "return !!(spec && spec.root) && !drawRefusal(spec) && occurrences(spec, MAX_VIEWPORT_PARTS) > LAZY_OCCURRENCES;", 1)' \
+  ./internal/httpapi 'TestRendererBrowsesADesignPastTheViewportLimit|TestWorkbenchAsksNoWholeMeshForADesignItRefused'
+
+drill "a browsed design is searched only where it is drawn" internal/httpapi/assets/forge3d.js \
+  's = s.replace("if (this.lazy && this.lazy.browse) {\n      this.searchStats", "if (false) {\n      this.searchStats", 1)' \
+  ./internal/httpapi 'TestRendererBrowsesADesignPastTheViewportLimit'
+
+drill "a browsed row past the viewport limit is asked for anyway" internal/httpapi/assets/forge3d.js \
+  's = s.replace("if (n > MAX_VIEWPORT_PARTS) {\n        lazy.failed[path] = subtreeRefusal(path, n);", "if (false) {\n        lazy.failed[path] = subtreeRefusal(path, n);", 1)' \
+  ./internal/httpapi 'TestRendererBrowsesADesignPastTheViewportLimit'
+
+drill "a browsed design puts no row back to make room" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    while (lazy.used - replaced + n > MAX_VIEWPORT_PARTS && others.length) self._putBack(others.shift());\n", "", 1)' \
+  ./internal/httpapi 'TestRendererBrowsesADesignPastTheViewportLimit'
+
+drill "a browsed row's count forgets a pattern's copies" internal/httpapi/assets/forge3d.js \
+  's = s.replace("n += c.slots.length * all(c.sub, onPath, depth + 1);", "n += all(c.sub, onPath, depth + 1);", 1)' \
+  ./internal/httpapi 'TestRendererBrowsesADesignPastTheViewportLimit'
+
+drill "the tree search names a pattern's copies without their numbers" internal/httpapi/assets/forge3d.js \
+  's = s.replace("var childName = c.label + (slot.number ? \x27 \x27 + slot.number : \x27\x27);", "var childName = c.label;", 1)' \
+  ./internal/httpapi 'TestRendererBrowsesADesignPastTheViewportLimit'
+
+drill "a resize while hidden sizes the viewport to 640x480" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    if ((!this.canvas.clientWidth || !this.canvas.clientHeight) && this._sized) return;\n", "", 1)' \
+  ./internal/httpapi 'TestRendererRedrawsWhenItsPaneIsShownAgain'
+
+drill "a viewport shown again is not redrawn" internal/httpapi/assets/forge3d.js \
+  's = s.replace("        if (document.visibilityState === \x27hidden\x27) return;\n        self._resize();", "        return;\n        self._resize();", 1)' \
+  ./internal/httpapi 'TestRendererRedrawsWhenItsPaneIsShownAgain'
+
+drill "a STEP label is shown as 0 triangles" internal/httpapi/assets/workbench.js \
+  's = s.replace("(l.format_kind === \x27parametric\x27 ? \x27B-Rep, not tessellated\x27\n          : b.triangles + \x27 triangles\x27)", "b.triangles + \x27 triangles\x27", 1)' \
+  ./internal/httpapi 'TestWorkbenchSTEPLabelSaysBRepNotTriangles'
+
+drill "a subtree expands the whole design again" internal/domain/geometry/subtree.go \
+  's = s.replace("\te := d.expandedWithin(p)\n", "\te := d.Expanded()\n", 1)' \
+  ./internal/httpapi 'TestSubtree_PlacesOnlyWhatLeadsToItsPathAndTheSameParts'
+
+drill "a subtree prunes a design whose assemblies have features" internal/domain/geometry/subtree.go \
+  's = s.replace("\t\tif len(a.Features) > 0 {\n\t\t\treturn d.Expanded()", "\t\tif false {\n\t\t\treturn d.Expanded()", 1)' \
+  ./internal/httpapi 'TestSubtree_PlacesOnlyWhatLeadsToItsPathAndTheSameParts'
+
+drill "a subtree's pruning reads every segment against the first" internal/domain/geometry/subtree.go \
+  's = s.replace("if !segs[i].MatchString(childPath[i]) {", "if !segs[0].MatchString(childPath[i]) {", 1)' \
+  ./internal/httpapi 'TestSubtree_PlacesOnlyWhatLeadsToItsPathAndTheSameParts'
 
 echo
 echo "Model semantics: repeat counts, rounded literals, what a parameter reached, a wheel in the kernel"
