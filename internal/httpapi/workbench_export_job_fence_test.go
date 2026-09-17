@@ -130,6 +130,12 @@ func TestWorkbenchExportsSTEPThroughTheWorkerJob(t *testing.T) {
 		"removed":     {Replies: []exportReply{{202, exportJob("queued", nil)}, {403, refusal("not permitted", "")}}},
 		"neverStarts": {Replies: []exportReply{{202, exportJob("queued", nil)}, ok(exportJob("queued", nil))}, Limit: 3},
 		"closed":      {Replies: []exportReply{{202, exportJob("queued", nil)}, ok(exportJob("running", nil))}, StopAfter: 2},
+		// As forged answers a design past the job's ceiling: the general words of the code in
+		// message and remedy, the sentence about THIS refusal in details.detail.
+		"tooBig": {Replies: []exportReply{{400, map[string]any{"error": map[string]any{
+			"message": "One or more request fields failed validation.",
+			"remedy":  "Correct the fields named in the details array and resubmit.",
+			"details": map[string]any{"detail": "This design places more than 90000 parts, the most FORGE writes as STEP in an export job"}}}}}},
 	}
 	dir := t.TempDir()
 	asset, harness, input := filepath.Join(dir, "workbench.js"), filepath.Join(dir, "run.js"), filepath.Join(dir, "in.json")
@@ -149,8 +155,8 @@ func TestWorkbenchExportsSTEPThroughTheWorkerJob(t *testing.T) {
 	var got struct {
 		Missing bool
 		Results struct {
-			Viewer, Failed, Unreadable, TooMany, NoBucket, Removed, NeverStarts, Closed exportRun
-			Buttons                                                                     struct{ None, NoKernel string }
+			Viewer, Failed, Unreadable, TooMany, NoBucket, Removed, NeverStarts, Closed, TooBig exportRun
+			Buttons                                                                             struct{ None, NoKernel string }
 		}
 		Interval, Limit int
 	}
@@ -236,6 +242,13 @@ func TestWorkbenchExportsSTEPThroughTheWorkerJob(t *testing.T) {
 		t.Errorf("a refusal was asked again: %v, %v, %v, %v", r.Unreadable.Requests, r.TooMany.Requests, r.NoBucket.Requests, r.Removed.Requests)
 	}
 
+	// A refusal with a detail written for it shows that detail, not the code's general words.
+	// Seen in the browser: a million-part design read "One or more request fields failed validation".
+	if u := r.TooBig.Updates; len(u) != 1 || !strings.Contains(u[0].HTML, "more than 90000 parts") ||
+		strings.Contains(u[0].HTML, "Correct the fields named") || len(r.TooBig.Requests) != 1 {
+		t.Errorf("a design past the job's ceiling was refused and the panel reads %+v", u)
+	}
+
 	// A job that never starts is not read forever, and closing the panel stops the reading.
 	ns := r.NeverStarts
 	if len(ns.Requests) != 1+3 || ns.PendingLeft || !ns.Updates[len(ns.Updates)-1].Stopped ||
@@ -252,6 +265,9 @@ func TestWorkbenchExportsSTEPThroughTheWorkerJob(t *testing.T) {
 		}
 	}
 	js := codeOnly(string(src))
+	if !strings.Contains(js, "throw new Error(refusalText(e, r.status, 'Export refused'));") {
+		t.Error("the request-path export label does not show a refusal's own detail (refusalText)")
+	}
 	if !strings.Contains(js, "querySelectorAll('[data-export-job]')") || !strings.Contains(js, "toggleExportJob(b.getAttribute('data-export-job'))") {
 		t.Error("the rail's STEP-via-worker button is bound to nothing")
 	}

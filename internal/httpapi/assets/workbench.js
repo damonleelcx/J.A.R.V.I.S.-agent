@@ -78,6 +78,25 @@
       .replace(/"/g, '&quot;');
   }
 
+  /* What to show for a refused export request (2026-09-17).
+   *
+   * An error reply carries the code's GENERAL words in message and remedy
+   * ("One or more request fields failed validation." / "Correct the fields named
+   * in the details array and resubmit.") and the sentence written for THIS refusal
+   * in details.detail ("This design places more than 90000 parts, the most FORGE
+   * writes as STEP in an export job: …"). The export panels showed only the
+   * general words, so a viewer who asked for a STEP of a million-part design read
+   * that some field was wrong and nothing about which limit it met. Seen in the
+   * browser: docs/spikes/2026-09-17-workbench-viewport. The detail, when there is
+   * one, is the answer; the general words are the fallback.
+   * Fence: TestWorkbenchExportsSTEPThroughTheWorkerJob. */
+  function refusalText(e, status, fallback) {
+    e = e || {};
+    var detail = e.details && typeof e.details.detail === 'string' ? e.details.detail.trim() : '';
+    if (detail) return detail;
+    return (e.message || (fallback + ' (' + status + ')')) + (e.remedy ? ' — ' + e.remedy : '');
+  }
+
   /* ---- variants (PRD VIS-04) --------------------------------------------
    *
    * Every shape FORGE proposes is kept as a version of its assembly, so the
@@ -994,8 +1013,7 @@
         return r.json().catch(function () { return {}; }).then(function (b) {
           if (!r.ok) {
             var e = (b && b.error) || {};
-            throw new Error((e.message || ('Export refused (' + r.status + ')')) +
-                            (e.remedy ? ' — ' + e.remedy : ''));
+            throw new Error(refusalText(e, r.status, 'Export refused'));
           }
           return b;
         });
@@ -1146,7 +1164,7 @@
         return r.json().catch(function () { return {}; }).then(function (b) {
           if (!r.ok) {
             var e = (b && b.error) || {};
-            var err = new Error((e.message || ('Request failed (' + r.status + ')')) + (e.remedy ? ' — ' + e.remedy : ''));
+            var err = new Error(refusalText(e, r.status, 'Request failed'));
             err.status = r.status;
             throw err;
           }

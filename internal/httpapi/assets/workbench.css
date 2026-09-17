@@ -249,6 +249,17 @@
 }
 .sliders label { display: block; font-size: 11px; color: var(--ink-dim); margin: 0 0 4px; }
 .sliders input[type=range] { width: 100%; margin-bottom: 10px; accent-color: var(--core); }
+/* The section-cut picker. Its style used to be written on the element in pages.go,
+ * with the dark ground as a literal (#0f131b) beside the theme's ink — so on the light
+ * theme it was a black box with near-black "none" in it (contrast about 1.1:1), seen in
+ * the browser on 2026-09-17 (docs/spikes/2026-09-17-workbench-viewport). A literal in a
+ * style attribute is the one place TestStylesheetsDefineColoursAsTokens could not see;
+ * TestPagesWriteNoColourLiteralInAStyleAttribute now does. */
+.sliders select {
+  width: 100%; margin-bottom: 8px; padding: 4px;
+  background: var(--surface-2); color: var(--ink);
+  border: 1px solid var(--edge-solid); border-radius: 6px;
+}
 
 /* The viewport's own controls are meaningless with nothing loaded, and an
  * interface offering to section an empty scene is offering something that does
@@ -2129,8 +2140,16 @@
 /* The stage's tab strip had `flex: 0 0 auto` and no overflow, so six tabs in a
  * 44px bar simply ran off the right edge of a phone with nothing to scroll.
  * The last two panels — including the ones that explain why they are empty —
- * could not be reached at all. */
-.stagetabs { min-width: 0; overflow-x: auto; scrollbar-width: none; }
+ * could not be reached at all.
+ *
+ * ‼️ And it still ran off (2026-09-17): the strip's own rule is `flex: 0 0 auto`, and
+ * min-width: 0 lets a flex item shrink only if it MAY shrink. At 420 px the strip stayed
+ * 548 px wide, so the page's layout grew to 561 px and a phone showed the whole
+ * workbench zoomed out and sideways-scrollable (seen in the browser while checking
+ * the build goal card: docs/spikes/2026-09-17-workbench-viewport). flex-shrink: 1 is
+ * what lets the overflow above happen inside the strip instead of the page.
+ * Fence: TestWorkbenchStageTabsScrollInsideTheirStripOnAPhone. */
+.stagetabs { min-width: 0; flex-shrink: 1; overflow-x: auto; scrollbar-width: none; }
 .stagetabs::-webkit-scrollbar { display: none; }
 
 /* The header is a flex row with no wrap holding three spans that JavaScript

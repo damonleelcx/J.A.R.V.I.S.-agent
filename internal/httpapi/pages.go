@@ -678,7 +678,7 @@ const pageTemplates = `
       <label for="opacity">Transparency</label>
       <input type="range" id="opacity" min="0.15" max="1" step="0.01" value="1">
       <label for="section">Section cut</label>
-      <select id="section" style="width:100%;margin-bottom:8px;background:#0f131b;color:var(--ink);border:1px solid var(--edge-solid);border-radius:6px;padding:4px">
+      <select id="section">
         <option value="none">none</option>
         <option value="x">along X</option>
         <option value="y">along Y</option>

@@ -4327,6 +4327,27 @@ drill "the workbench asks for an export through the goals route" internal/httpap
   's = s.replace("read(\x27/v1/geometry/\x27 + encodeURIComponent(versionID) + \x27/exports?format=step\x27, { method: \x27POST\x27 })", "read(\x27/v1/goals\x27, { method: \x27POST\x27 })", 1)' \
   ./internal/httpapi 'TestWorkbenchExportsSTEPThroughTheWorkerJob'
 
+drill "an export refusal shows the code's general words instead of its detail" internal/httpapi/assets/workbench.js \
+  's = s.replace("    if (detail) return detail;\n", "", 1)' \
+  ./internal/httpapi 'TestWorkbenchExportsSTEPThroughTheWorkerJob'
+
+drill "the request-path export label drops a refusal's detail" internal/httpapi/assets/workbench.js \
+  's = s.replace("throw new Error(refusalText(e, r.status, \x27Export refused\x27));", "throw new Error((e.message || \x27Export refused\x27) + (e.remedy ? \x27 - \x27 + e.remedy : \x27\x27));", 1)' \
+  ./internal/httpapi 'TestWorkbenchExportsSTEPThroughTheWorkerJob'
+
+# Seen checking the build goal card in the browser at other widths and the light theme.
+drill "the stage tab strip may not shrink, so a phone page widens" internal/httpapi/assets/workbench.css \
+  's = s.replace("flex-shrink: 1; overflow-x: auto;", "overflow-x: auto;", 1)' \
+  ./internal/httpapi 'TestWorkbenchStageTabsScrollInsideTheirStripOnAPhone'
+
+drill "the section-cut picker is dark on the light theme again" internal/httpapi/pages.go \
+  's = s.replace("<select id=\"section\">", "<select id=\"section\" style=\"background:#0f131b;color:var(--ink)\">", 1)' \
+  ./internal/httpapi 'TestPagesWriteNoColourLiteralInAStyleAttribute'
+
+drill "the section-cut picker has no themed rule" internal/httpapi/assets/workbench.css \
+  's = s.replace(".sliders select {", ".sliders .select-gone {", 1)' \
+  ./internal/httpapi 'TestPagesWriteNoColourLiteralInAStyleAttribute'
+
 echo
 
 if [ "$MODE" = "list" ]; then
