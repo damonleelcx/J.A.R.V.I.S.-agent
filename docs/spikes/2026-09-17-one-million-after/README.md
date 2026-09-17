@@ -32,7 +32,12 @@
   **1,008,160: ×0.85 and ×0.88** (111.3 → 94.6 s, 93.1 → 81.5 s); 302,560 ×0.94 / ×0.95; 90,880 ×0.91 / ×1.00.
   The shapes phase is ×0.80–0.91 in every pair and `features` ×0.29–0.51. Same found, listed, booleans, reuses, pairs,
   box tests and volume in every pair, peak RSS within 1 MB.
-- **The full `internal/domain/cad` package** was run on the final commit; the result is in the PR body.
+- **The full `internal/domain/cad` package completed** on 93d84ce (the code commit; this README and the log are the
+  only later changes) with `-timeout 30m`, in 1,048 s: 121 PASS, 12 SKIP, **11 FAIL, all the known Windows script-runner
+  class** — every one fails before or inside `RunScript` with "Python was not found" (the Microsoft Store stub; the
+  runner looks for `.cadvenv/bin/python`) or with a scripted part missing for that reason: 8 `TestScript_*`,
+  `TestKernel_ARepeatedScriptedPartRunsItsScriptOnce`, `TestKernel_ARepeatedScriptedPartIsBuiltEveryTime`,
+  `TestKernel_AScriptedPartIsExportedAndMeshed`. `data/cad-package.log`.
 
 **No limit is changed.** Nothing here argues for raising the 4,096 build ceiling or the 100k storage door (a 1M
 build is still 80–110 s and 6 GB against the shipped 30 s view kernel timeout and 1–2 GiB pods), and STEP stays refused at 1M (by
