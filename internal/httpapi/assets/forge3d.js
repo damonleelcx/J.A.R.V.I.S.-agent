@@ -1585,7 +1585,10 @@
   /* The most the VIEWPORT draws (geometry/limits.go maxViewportParts). Until Phase 6,
    * stage W1 this was 4096 and was the kernel's ceiling too; instanced drawing moved
    * the browser's own to what storage accepts by default, and the kernel builds 8192
-   * for a view (Document.BuildRefusal in Go; docs/spikes/2026-09-15-ceiling-on-linux). */
+   * for a view (Document.BuildRefusal in Go; docs/spikes/2026-09-15-ceiling-on-linux).
+   * Kept at 100,000 by decision (limits.go says why): measured at 99,971, and a design
+   * that large first uploads at most FIRST_VIEW_OCCURRENCES.
+   * Fence: TestViewportLimitIsTheMeasuredOneAndAFirstViewStaysSmall. */
   var MAX_VIEWPORT_PARTS = 100000;
   var PATH_SEPARATOR = '/';
   // A tree part's display name: every child above it, then its own name (tree.go,
