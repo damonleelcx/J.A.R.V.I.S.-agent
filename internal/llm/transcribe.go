@@ -190,6 +190,10 @@ func (c *OpenAICompatible) Transcribe(ctx context.Context, audio []byte, mimeTyp
 		code := errs.CodeExternalUnavailable
 		if resp.StatusCode == http.StatusNotFound {
 			code = errs.CodeConnectorUnavailable
+			// The cached "served" answer is now contradicted by the endpoint
+			// itself, so the next page asks again rather than advertising a
+			// model that just answered 404 (see transcriber_served.go).
+			c.forgetTranscriberAnswer()
 		}
 		return nil, errs.New(op, code).
 			WithDetail("the transcription provider at %s returned %d: %s%s",

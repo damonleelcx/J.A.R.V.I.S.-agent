@@ -138,6 +138,7 @@ FILES=(
   internal/domain/geometry/edit.go
   internal/domain/geometry/edit_paths.go
   internal/agent/currentmodel.go
+  internal/llm/transcriber_served.go
   internal/domain/geometry/limits.go
   internal/domain/geometry/repeat.go
   internal/domain/geometry/export.go
@@ -2446,7 +2447,7 @@ drill "a typed message is cleared while a turn is in flight" internal/httpapi/as
   ./internal/httpapi 'TestWorkbench_TheMicIsWiredToTheHoldAndKeepsWhatWasSaid'
 
 drill "the workbench never learns the server transcribes" internal/httpapi/assets/workbench.js \
-  's = s.replace("      if (voice) voice.setServerTranscription(", "      if (voice) void (", 1)' \
+  's = s.replace("        voice.setServerTranscription(tr.server ? tr : null,", "        void (tr.server ? tr : null,", 1)' \
   ./internal/httpapi 'TestWorkbench_TheMicIsWiredToTheHoldAndKeepsWhatWasSaid'
 
 drill "the transcription route is not mounted" internal/httpapi/router.go \
@@ -2469,8 +2470,8 @@ drill "a model that never answered is reported as silence" internal/httpapi/tran
   's = s.replace("\tif out.Unanswered {", "\tif false {", 1)' \
   ./internal/httpapi 'TestTranscribe_AModelThatAnsweredWithoutATranscriptIsNotSilence'
 
-drill "the page is never told the server transcribes" internal/httpapi/converse.go \
-  's = s.replace("\"server\": transcriber != \"\"", "\"server\": false", 1)' \
+drill "the page is never told the server transcribes" internal/httpapi/transcribe.go \
+  's = s.replace("return map[string]any{\"server\": true, \"model\": model, \"verified\": false,", "return map[string]any{\"server\": false, \"model\": model, \"verified\": false,", 1)' \
   ./internal/httpapi 'TestTranscribe_TheWorkbenchIsToldWhetherTheServerTranscribes'
 
 drill "an unserved transcription model is reported as an outage" internal/llm/transcribe.go \
@@ -4122,6 +4123,92 @@ drill "the history is read from the person's turns, not the conversation's" inte
 drill "an empty conversation id continues the latest conversation" internal/httpapi/converse.go \
   's = s.replace("\tconvID, err := h.talk.Resolve(ctx, req.ConversationID, user.ID)", "\tif req.ConversationID == \"\" {\n\t\tif l, _ := h.talk.List(ctx, user.ID); len(l) > 0 {\n\t\t\treq.ConversationID = l[0].ID\n\t\t}\n\t}\n\tconvID, err := h.talk.Resolve(ctx, req.ConversationID, user.ID)", 1)' \
   ./internal/httpapi 'TestANewConversation_'
+
+# ---------------------------------------------------------------------------
+# Added 2026-09-17 (workbench voice: the fallback that did not work).
+#
+# Production advertised server transcription because a model NAME was
+# configured, from an endpoint that serves no speech-to-text model; the first
+# hold was lost to a 501 whose note promised a browser fallback, and the next
+# holds reached nothing — a recogniser that ended with no result and no error,
+# or with interim words only, said nothing. And push-to-talk took Space from
+# every focused button. See internal/llm/transcriber_served.go and the
+# scenarios in internal/httpapi/voice_input_test.go.
+# ---------------------------------------------------------------------------
+
+echo
+echo "The workbench microphone, 2026-09-17"
+drill "an unlisted transcriber is advertised as served" internal/llm/transcriber_served.go \
+  's = s.replace("\tcase servesModel(served, model):", "\tcase true:", 1)' \
+  ./internal/llm 'TestTranscriberAvailability_AModelTheEndpointDoesNotListIsNotAdvertised'
+
+drill "the page is told a configured model is served" internal/httpapi/transcribe.go \
+  's = s.replace("return map[string]any{\"server\": a.Served,", "return map[string]any{\"server\": true,", 1)' \
+  ./internal/httpapi 'TestTranscribe_TheServerDoesNotAdvertiseTranscriptionTheEndpointDoesNotServe'
+
+drill "the public reason names the provider host" internal/llm/transcriber_served.go \
+  's = s.replace("\"server transcription is off: the transcription endpoint does not serve \" + model", "\"server transcription is off: \" + c.transcriberURL + \" does not serve \" + model", 1)' \
+  ./internal/llm 'TestTranscriberAvailability_AModelTheEndpointDoesNotListIsNotAdvertised'
+
+drill "an unreadable model list turns transcription off" internal/llm/transcriber_served.go \
+  's = s.replace("\tcase err != nil:\n\t\tanswer.Served = true", "\tcase err != nil:\n\t\tanswer.Served = false", 1)' \
+  ./internal/llm 'TestTranscriberAvailability_AListThatCannotBeReadLeavesTranscriptionOfferedButUnverified'
+
+drill "the served-model check runs on every read" internal/llm/transcriber_served.go \
+  's = s.replace("start := !chk.running && (!known || c.clock.Now().Sub(at) >= ttlOf(answer))", "start := !chk.running", 1)' \
+  ./internal/llm 'TestTranscriberAvailability_TheAnswerIsCachedAndRefreshedInTheBackgroundOnceStale'
+
+drill "a not-served answer never goes stale" internal/llm/transcriber_served.go \
+  's = s.replace("\tdefault:\n\t\treturn notServedTTL", "\tdefault:\n\t\treturn 1 << 62", 1)' \
+  ./internal/llm 'TestTranscriberAvailability_TheAnswerIsCachedAndRefreshedInTheBackgroundOnceStale'
+
+drill "an upload refused with 404 leaves the served answer standing" internal/llm/transcribe.go \
+  's = s.replace("\t\t\tc.forgetTranscriberAnswer()", "\t\t\t_ = 0", 1)' \
+  ./internal/llm 'TestTranscriberAvailability_AnUploadRefusedWith404ForgetsTheServedAnswer'
+
+drill "the 501 note promises the browser fallback again" internal/httpapi/assets/voice.js \
+  's = s.replace("\x27 What you just said was not transcribed. \x27", "\x27 The microphone uses the browser\\\x27s own speech recognition from now on. \x27", 1)' \
+  ./internal/httpapi 'TestVoiceInput_AServerThatCannotTranscribeFallsBackAndTheNextHoldIsHeard/the_next_hold_is_heard'
+
+drill "a fallback hold that hears nothing says nothing" internal/httpapi/assets/voice.js \
+  's = s.replace("          } else if (!held.heard) {", "          } else if (false) {", 1)' \
+  ./internal/httpapi 'TestVoiceInput_AServerThatCannotTranscribeFallsBackAndTheNextHoldIsHeard/the_recogniser_returns_nothing'
+
+drill "interim words are dropped when the session ends" internal/httpapi/assets/voice.js \
+  's = s.replace("          if (partial) {\n            self.onTranscript(partial);", "          if (false) {\n            self.onTranscript(partial);", 1)' \
+  ./internal/httpapi 'TestVoiceInput_AServerThatCannotTranscribeFallsBackAndTheNextHoldIsHeard/only_interim_words_arrive'
+
+drill "a browser with no recogniser is not told the mic is off" internal/httpapi/assets/voice.js \
+  's = s.replace(": \x27This browser has no speech recognition of its own to fall back on", ": \x27\x27 && \x27This browser has no speech recognition of its own to fall back on", 1)' \
+  ./internal/httpapi 'TestVoiceInput_AServerThatCannotTranscribeFallsBackAndTheNextHoldIsHeard/no_recogniser_in_this_browser'
+
+drill "the voice layer drops the server reason" internal/httpapi/assets/voice.js \
+  's = s.replace("this._serverWhy = reason ? ", "this._serverWhy = false ? ", 1)' \
+  ./internal/httpapi 'TestVoiceInput_AServerThatCannotTranscribeFallsBackAndTheNextHoldIsHeard/the_server_said_so_before_the_press'
+
+drill "service-not-allowed is a refused microphone again" internal/httpapi/assets/voice.js \
+  's = s.replace("      if (code === \x27service-not-allowed\x27) {", "      if (false) {", 1); s = s.replace("      if (code === \x27not-allowed\x27) {", "      if (code === \x27not-allowed\x27 || code === \x27service-not-allowed\x27) {", 1)' \
+  ./internal/httpapi 'TestVoiceInput_EveryFailureReachesTheNote/service_not_allowed_is_not_a_refused_microphone'
+
+drill "Space is taken from a focused button again" internal/httpapi/assets/voice.js \
+  's = s.replace("    if (SPACE_OPERATES_TAG.test(", "    if (false && SPACE_OPERATES_TAG.test(", 1)' \
+  ./internal/httpapi 'TestVoiceInput_SpaceOperatesAFocusedControlAndTalksEverywhereElse'
+
+drill "Space never holds the microphone" internal/httpapi/assets/voice.js \
+  's = s.replace("      if (!e.repeat) hold.press(\x27space\x27);", "      void 0;", 1)' \
+  ./internal/httpapi 'TestVoiceInput_SpaceOperatesAFocusedControlAndTalksEverywhereElse'
+
+drill "a Space that pressed a button is prevented on release" internal/httpapi/assets/voice.js \
+  's = s.replace("      if (hold.release(\x27space\x27)) e.preventDefault();", "      hold.release(\x27space\x27); e.preventDefault();", 1)' \
+  ./internal/httpapi 'TestVoiceInput_SpaceOperatesAFocusedControlAndTalksEverywhereElse'
+
+drill "the workbench takes Space itself again" internal/httpapi/assets/workbench.js \
+  's = s.replace("    ForgeVoice.bindSpaceHold(document, hold, {", "    document.addEventListener(\x27keydown\x27, function (e) { if (e.code === \x27Space\x27 && !$(\x27mic\x27).disabled) { e.preventDefault(); hold.press(\x27space\x27); } }); ({", 1)' \
+  ./internal/httpapi 'TestWorkbench_SpaceAndTheServerReasonAreWiredThroughVoiceJS'
+
+drill "the workbench does not pass the server reason on" internal/httpapi/assets/workbench.js \
+  's = s.replace("tr.server ? \x27\x27 : tr.reason);", "\x27\x27);", 1)' \
+  ./internal/httpapi 'TestWorkbench_SpaceAndTheServerReasonAreWiredThroughVoiceJS'
 
 echo
 

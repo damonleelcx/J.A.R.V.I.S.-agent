@@ -437,6 +437,10 @@ const (
 	EventASRFailed        Event = "forge.asr.failed"
 	EventASREmptyResponse Event = "forge.asr.empty_response"
 	EventASRDropped       Event = "forge.asr.dropped"
+	// EventASRChecked is the answer to "does the transcription endpoint serve the
+	// transcription model", which decides whether the workbench is offered
+	// server transcription at all.
+	EventASRChecked Event = "forge.asr.checked"
 
 	// FORGE's own voice in a room (PRD AUD-01, AUD-05, AUD-07). An interruption
 	// is ordinary and is logged at INFO because "did it stop when I spoke" is the
@@ -495,7 +499,7 @@ func init() {
 		EventMediaPeerJoined, EventMediaPeerLeft,
 		EventMediaRenegotiated, EventMediaRenegotiateFailed,
 		EventMediaForwardFailed, EventMediaRefused, EventMediaSpeakerReady, EventMediaStateChanged,
-		EventASRTranscribed, EventASRFailed, EventASREmptyResponse, EventASRDropped,
+		EventASRTranscribed, EventASRFailed, EventASREmptyResponse, EventASRDropped, EventASRChecked,
 		EventTTSSpoke, EventTTSInterrupted, EventTTSFailed, EventTTSEmpty,
 		EventCharacterFallback, EventToolExceededTier, EventPlanHazardsLoaded,
 		EventChoiceUnreadable, EventWorkspaceUnreadable,

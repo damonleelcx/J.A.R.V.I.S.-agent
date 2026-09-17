@@ -131,7 +131,14 @@ func run() error {
 	// failing to load.
 	var modelClient llm.Client
 	if cfg.LLM.APIKey != "" {
-		modelClient = llm.NewOpenAICompatible(cfg.LLM, log, clk)
+		oc := llm.NewOpenAICompatible(cfg.LLM, log, clk)
+		modelClient = oc
+		// Whether the transcription endpoint really serves the transcription
+		// model, asked once now so the first workbench is told the truth about
+		// its microphone (internal/llm/transcriber_served.go). In a goroutine
+		// with its own timeout: an unreachable provider must not delay startup,
+		// and the answer is only ever read from the cache.
+		go oc.CheckTranscriber(ctx)
 	} else {
 		log.Warn(ctx, logx.EventConfigDefault,
 			"detail", "no FORGE_LLM_API_KEY: the workbench will load but cannot hold a conversation")

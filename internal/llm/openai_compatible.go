@@ -67,6 +67,11 @@ type OpenAICompatible struct {
 	// warnedThinking makes the "this endpoint deliberates and cannot be told
 	// not to" warning arrive once rather than every turn.
 	warnedThinking sync.Once
+
+	// stt caches whether the transcription endpoint serves the transcription
+	// model (see transcriber_served.go). Created on first use through sttOnce.
+	sttOnce sync.Once
+	stt     *transcriberCheck
 }
 
 // NewOpenAICompatible builds the driver from configuration.
