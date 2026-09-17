@@ -75,7 +75,10 @@ func isStandard(p Part) bool {
 // (docs/bugfix/2026-09-15-an-angles-toe-radius-was-not-half-its-root-radius.md).
 // TestStandard_EveryFamilyCarriesTheFiguresItsSourcePublishes holds several
 // figures per family to those tables. The bearings and the angles were read again
-// the same day, against ISO/R 15/1-1968 and EN 10056-1:2017, and nothing changed.
+// the same day, against ISO/R 15/1-1968 and EN 10056-1:2017, and nothing changed;
+// and on 2026-09-17 against GOST R 52598-2006 Table 4 (ISO 15:1998's series 0, with
+// r_s min) and the Blue Book's BS EN 10056-1:2017 table (with toe radii), and nothing
+// changed.
 //
 // ‼️ A row added here is read off a source, and the source is named on its
 // family. A figure from memory is the thing this catalogue exists to take away
@@ -168,6 +171,21 @@ var iso7089 = []struct {
 // SKF's bearings of these designations as Maedler North America (608, 6002-6004)
 // and bearingbasement.com (6000, 6001, 6005) list them.
 //
+// Read again 2026-09-17 against a full text of ISO 15:1998's tables: GOST R
+// 52598-2006 (ISO 15:1998, MOD), Table 4 "Серия диаметров 0", as meganorm.ru
+// publishes the text (Data2/1/4293846/4293846769.htm). Its foreword puts the Russian
+// modifications in clauses 4.1 and 4.3.5 only, not in the tables. Width series 1
+// (dimension series 10) gives all seven rows as above — 8/22/7, 10/26/8, 12/28/8,
+// 15/32/9, 17/35/10, 20/42/12, 25/47/12 — and r_s min 0,30 for 608 and 6000-6003 and
+// 0,60 for 6004 and 6005. Those agree with the 1968 table's nominal chamfers
+// (0,5 and 1) through the same standard's Annex В, Table В.1 (nominal 0,5 → r_s min 0,3,
+// nominal 1,0 → 0,6).
+// ‼️ This is still ISO 15:1998, not 2017. ISO 15:2017's own series 0 table remains
+// unread: its national identical adoption GB/T 273.3-2020 (ISO 15:2017, IDT) is not
+// offered for reading on openstd.samr.gov.cn ("涉及版权保护问题"), and no other
+// authorised full text was found. d, D, B and r_s min against ISO 15:2017 itself rest
+// on the forewords above, not on its table.
+//
 // The drawing is a plain ring, so no chamfer figure (r_s min) is used here.
 var iso15 = []struct {
 	Series             string
@@ -222,6 +240,16 @@ var en10219 = []struct {
 // note on the toe radius, so r2 = r1 / 2 is still the 1998 note's rule: what the 2017
 // edition says about the toe radius was NOT reachable. A printed area cannot stand
 // in for it, since 1,12 cm² holds whether the L20's toe is 1.75 or 2.
+//
+// Read again 2026-09-17 against a published table of the 2017 edition: the SCI /
+// Steel for Life "Blue Book" (steelforlifebluebook.co.uk, Eurocode 3 UK NA, "BS EN
+// 10056-1: 2017 Equal leg angles", Dimensions & properties) prints root r1 and toe
+// r2 as 3.50/1.75 (L20x20x3), 5.00/2.50 (L30x30x3), 6.00/3.00 (L40x40x4) and
+// 7.00/3.50 (L50x50x5), with areas 1.12, 1.74, 3.08 and 4.80 cm², and its
+// explanatory note 3.1 says BS EN 10056-1 assumes the toe radius is half the root
+// radius. All four rows match. ‼️ That is a steel handbook's reading of the 2017
+// edition, not the 2017 text: the toe radius against EN 10056-1:2017 itself is still
+// unverified.
 var en10056 = []struct {
 	A, T, RootRadius, ToeRadius float64
 }{
