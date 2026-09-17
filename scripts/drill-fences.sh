@@ -2308,7 +2308,7 @@ echo "A kernel build that runs out of time"
 # they need no build123d; the HTTP one needs FORGE_TEST_DATABASE_URL.
 # docs/bugfix/2026-09-15-a-kernel-build-that-ran-out-of-time-was-reported-as-no-kernel.md
 drill "a timed-out build is retried like a crashed one" internal/domain/cad/cad.go \
-  's = s.replace("\tif err != nil && !errors.As(err, &late) {", "\tif err != nil {", 1)' \
+  's = s.replace("\tif err != nil && !errors.As(err, &late) && !errors.As(err, &slow) {", "\tif err != nil && !errors.As(err, &slow) {", 1)' \
   ./internal/domain/cad 'TestKernel_ABuildThatRunsOutOfTimeIsNotRetriedAndSaysSo'
 
 # Re-anchored 2026-09-16 (K3): the round trip, and the kill that bounds it, moved
@@ -2334,7 +2334,7 @@ drill "the caller's deadline is reported as no working backend" internal/domain/
   ./internal/httpapi 'TestAPI_AKernelBuildThatTakesTooLongIsA504ThatSaysSo'
 
 drill "a kernel timeout is offered as retryable" internal/platform/errs/code.go \
-  's = s.replace("A kernel build is allowed 30 seconds.\", false},", "A kernel build is allowed 30 seconds.\", true},", 1)' \
+  's = s.replace("unless the deployment sets FORGE_CAD_BUILD_TIMEOUT.\", false},", "unless the deployment sets FORGE_CAD_BUILD_TIMEOUT.\", true},", 1)' \
   ./internal/httpapi 'TestAPI_AKernelBuildThatTakesTooLongIsA504ThatSaysSo'
 
 drill "a kernel timeout is a 501" internal/platform/errs/code.go \
@@ -2355,7 +2355,7 @@ drill "a timeout resets every slot in the pool" internal/domain/cad/cad.go \
   ./internal/domain/cad 'TestKernel_ATimeoutInOneSlotLeavesTheOtherSlotsServing'
 
 drill "a slot enforces a limit that is not the kernel's" internal/domain/cad/sidecar_process.go \
-  's = s.replace("slot: i, timeout: k.timeout}", "slot: i, timeout: buildTimeout}", 1)' \
+  's = s.replace("slot: i, timeout: k.timeout, ", "slot: i, timeout: buildTimeout, ", 1)' \
   ./internal/domain/cad 'TestKernel_ABuildThatRunsOutOfTimeIsNotRetriedAndSaysSo'
 
 # Added 2026-09-17 (kernel timeout race). roundTrip returned without waiting for
@@ -2373,6 +2373,48 @@ drill "a cancel after a build answered can kill its process" internal/domain/cad
 drill "a deadline that ends while the kernel starts is retried as a crash" internal/domain/cad/sidecar_process.go \
   's = s.replace("\tif err := ctx.Err(); err != nil {\n\t\treturn nil, &lateError{caller: err}\n\t}\n\tif err := s.start(ctx); err != nil {\n\t\tif cerr := ctx.Err(); cerr != nil {\n\t\t\treturn nil, &lateError{caller: cerr}\n\t\t}\n\t\treturn nil, err\n\t}\n", "\tif err := s.start(ctx); err != nil {\n\t\treturn nil, err\n\t}\n", 1)' \
   ./internal/domain/cad 'TestKernel_ACallerWhoseDeadlineEndsWhileTheKernelStartsIsNotRetried'
+
+# Added 2026-09-17 (kernel pool deadlines, the items #100 left open). A deadline
+# that ended waiting for a busy kernel was a 501 "no working backend"; a process
+# still starting at startTimeout was retried like a crash; the 30 s build limit
+# was a constant; and the first queue of subtree meshes paid for build123d's
+# import in front of every subtree (#93's 9.3 s of 17.2 s), which forged now pays
+# at boot instead (FORGE_CAD_PRESTART).
+drill "a deadline waiting for a busy kernel is reported as no working backend" internal/domain/cad/cad.go \
+  's = s.replace("\t\tif errors.Is(err, context.DeadlineExceeded) {\n\t\t\tk.log.Warn(ctx, logx.EventCADTimedOut, \"waiting\", true", "\t\tif false {\n\t\t\tk.log.Warn(ctx, logx.EventCADTimedOut, \"waiting\", true", 1)' \
+  ./internal/domain/cad 'TestKernel_ADeadlineThatEndsWaitingForABusyKernelIsATimeout'
+
+drill "a start that ran out of time is retried as a crash" internal/domain/cad/cad.go \
+  's = s.replace("if err != nil && !errors.As(err, &late) && !errors.As(err, &slow) {", "if err != nil && !errors.As(err, &late) {", 1)' \
+  ./internal/domain/cad 'TestKernel_AKernelThatDoesNotStartInTimeIsNotStartedAgain'
+
+drill "a start that ran out of time is reported as no working backend" internal/domain/cad/cad.go \
+  's = s.replace("\t\tif errors.As(err, &slow) {\n\t\t\tk.log.Warn(ctx, logx.EventCADTimedOut, \"slot\", s.slot, \"starting\", true", "\t\tif false {\n\t\t\tk.log.Warn(ctx, logx.EventCADTimedOut, \"slot\", s.slot, \"starting\", true", 1)' \
+  ./internal/domain/cad 'TestKernel_AKernelThatDoesNotStartInTimeIsNotStartedAgain'
+
+drill "a slot starts with the default start limit" internal/domain/cad/sidecar_process.go \
+  's = s.replace("startLimit: k.startLimit}", "startLimit: startTimeout}", 1)' \
+  ./internal/domain/cad 'TestKernel_AKernelThatDoesNotStartInTimeIsNotStartedAgain'
+
+drill "the kernel is built without the configured build timeout" internal/domain/cad/cad.go \
+  's = s.replace(".WithPool(c.Pool).WithBuildTimeout(c.BuildTimeout)", ".WithPool(c.Pool)", 1)' \
+  ./internal/domain/cad 'TestKernel_FromConfigCarriesTheBuildTimeout'
+
+drill "prestart starts no process" internal/domain/cad/sidecar_process.go \
+  's = s.replace("\t\tif err := s.start(ctx); err != nil && ctx.Err() == nil {", "\t\tif err := error(nil); err != nil && ctx.Err() == nil {", 1)' \
+  ./internal/domain/cad 'TestKernel_APrestartedKernelAnswersTheFirstQueueWithoutPayingForAStart'
+
+drill "a zero kernel build timeout is accepted" internal/platform/config/config.go \
+  's = s.replace("\tcase cfg.CAD.BuildTimeout <= 0:", "\tcase cfg.CAD.BuildTimeout < 0:", 1)' \
+  ./internal/platform/config 'TestCADBuildTimeoutMustBePositiveAndFitTheWriteTimeout'
+
+drill "a kernel build timeout past the write timeout is accepted" internal/platform/config/config.go \
+  's = s.replace("\tcase cfg.HTTP.WriteTimeout > 0 && cfg.CAD.BuildTimeout > cfg.HTTP.WriteTimeout:", "\tcase false:", 1)' \
+  ./internal/platform/config 'TestCADBuildTimeoutMustBePositiveAndFitTheWriteTimeout'
+
+drill "the kernel build timeout is not printed at startup" internal/platform/config/config.go \
+  's = s.replace("\"cad_build_timeout\":", "\"cad_timeout\":", 1)' \
+  ./internal/platform/config 'TestCADBuildTimeoutIsThirtySecondsByDefaultAndPrinted'
 echo "Workers in one process"
 # Added 2026-09-15 (worker lease identity). NewWorker sliced a fresh id's
 # timestamp rather than its random tail, so every worker forge-worker started

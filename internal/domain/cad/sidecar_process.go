@@ -57,6 +57,9 @@ type sidecar struct {
 	// kernel when the pool was made. Each slot holds its own so the deadline
 	// goroutine below kills this process and reads nothing shared.
 	timeout time.Duration
+	// startLimit is how long this process may take to start, copied from the
+	// kernel like timeout.
+	startLimit time.Duration
 
 	// proc guards cmd, because kill is also called by the deadline goroutine in
 	// roundTrip while the holder is blocked reading, and stop clears cmd after.
@@ -74,7 +77,7 @@ func (k *Kernel) pool() chan *sidecar {
 	k.once.Do(func() {
 		k.slots = make(chan *sidecar, k.size)
 		for i := 0; i < k.size; i++ {
-			s := &sidecar{python: k.python, log: k.log, slot: i, timeout: k.timeout}
+			s := &sidecar{python: k.python, log: k.log, slot: i, timeout: k.timeout, startLimit: k.startLimit}
 			k.all = append(k.all, s)
 			k.slots <- s
 		}
@@ -95,6 +98,47 @@ func (k *Kernel) acquire(ctx context.Context) (*sidecar, error) {
 
 // release puts a process back for the next build.
 func (k *Kernel) release(s *sidecar) { k.slots <- s }
+
+// Prestart starts every process in the pool that is not running yet, one at a
+// time, and returns when they have started or ctx has ended. forged calls it in
+// the background at boot (FORGE_CAD_PRESTART); a kernel with no interpreter
+// starts nothing. A process that fails to start is logged and left for the first
+// build to start, exactly as if Prestart had not run.
+//
+// # Why, and why not a second process (#93's open item, #125's decision)
+//
+// A design loaded a subtree at a time asks for up to a dozen subtree meshes at
+// once, and they queue for the one process forged has. #125 measured that queue
+// at forged's 1 CPU: it is a CPU limit — a second process was slower in every run
+// and two kernels want ~1,010 MiB of the pod's 1 GiB — so the queue stays. What
+// is not CPU is the first request paying build123d's import in front of the whole
+// queue: 9.3 s of #93's 17.2 s cold first view. Starting the process before
+// anybody asks takes that off the person, and costs no memory a first view would
+// not take anyway: a started process is kept for the life of forged.
+// Fence: TestKernel_APrestartedKernelAnswersTheFirstQueueWithoutPayingForAStart.
+//
+// Each slot is taken the way a build takes it, so a build that arrives while a
+// process is starting waits for that start instead of beginning a second one.
+func (k *Kernel) Prestart(ctx context.Context) error {
+	if !k.Available() {
+		return nil
+	}
+	var first error
+	for i := 0; i < k.size; i++ {
+		s, err := k.acquire(ctx)
+		if err != nil {
+			return err
+		}
+		if err := s.start(ctx); err != nil && ctx.Err() == nil {
+			k.log.Warn(ctx, logx.EventCADPrestartFailed, "slot", s.slot, "detail", err.Error())
+			if first == nil {
+				first = err
+			}
+		}
+		k.release(s)
+	}
+	return first
+}
 
 // Close stops every process in the pool. Safe on a kernel that was never started.
 //
@@ -321,9 +365,9 @@ func (s *sidecar) start(ctx context.Context) error {
 			}
 			return errors.New(detail)
 		}
-	case <-time.After(startTimeout):
+	case <-time.After(s.startLimit):
 		s.stop()
-		return fmt.Errorf("the CAD kernel did not start within %s", startTimeout)
+		return &startTimeoutError{limit: s.startLimit}
 	case <-ctx.Done():
 		s.stop()
 		return ctx.Err()

@@ -133,9 +133,11 @@ func TestKernel_ABuildThatRunsOutOfTimeIsNotRetriedAndSaysSo(t *testing.T) {
 	// The remedy a person reads is static text in the registry, so it cannot name
 	// the limit by reference. This keeps the two from drifting.
 	def, _ := errs.Lookup(errs.CodeKernelTimeout)
-	if want := fmt.Sprintf("%d seconds", int(buildTimeout.Seconds())); !strings.Contains(def.Remedy, want) {
-		t.Errorf("the registry's remedy for %s does not say %q, which is buildTimeout: %q",
-			errs.CodeKernelTimeout, want, def.Remedy)
+	for _, want := range []string{fmt.Sprintf("%d seconds", int(buildTimeout.Seconds())), "FORGE_CAD_BUILD_TIMEOUT"} {
+		if !strings.Contains(def.Remedy, want) {
+			t.Errorf("the registry's remedy for %s does not say %q (buildTimeout, and the setting that changes it): %q",
+				errs.CodeKernelTimeout, want, def.Remedy)
+		}
 	}
 }
 

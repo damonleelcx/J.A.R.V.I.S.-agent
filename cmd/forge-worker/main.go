@@ -188,7 +188,7 @@ func run() error {
 	// repairs, the same kernel. Nothing starts until a step asks for a surface,
 	// and without FORGE_CAD_PYTHON a step is built on the described render and
 	// says so, exactly as the workbench does without one.
-	cadKernel := cad.New(cfg.CAD.Python, log).WithScripts(cfg.CAD.AllowScripts).WithPool(cfg.CAD.Pool)
+	cadKernel := cad.FromConfig(cfg.CAD, log)
 	defer cadKernel.Close()
 	builder := agent.NewConversation(client, character).
 		WithScripts(cadbridge.Scripts(cadKernel)).

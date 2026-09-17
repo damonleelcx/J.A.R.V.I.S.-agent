@@ -46,6 +46,7 @@ import (
 	_ "embed"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/geometry"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/config"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/errs"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/logx"
 )
@@ -53,7 +54,8 @@ import (
 //go:embed sidecar.py
 var sidecarSource []byte
 
-// buildTimeout bounds one build.
+// buildTimeout bounds one build, unless the deployment sets FORGE_CAD_BUILD_TIMEOUT
+// (config.CADConfig.BuildTimeout, whose default is this; see FromConfig).
 //
 // The spike measured 46 ms for a part with a fillet and four holes. Thirty
 // seconds is three orders of magnitude of headroom and still short enough that a
@@ -82,13 +84,17 @@ type Kernel struct {
 	// that executes text a model produced — see script.go for what the sandbox
 	// does and does not promise.
 	scripts bool
-	// timeout is how long one build may take: buildTimeout, except in the fences
-	// that need a limit short enough to cross on purpose. Not a setting.
+	// timeout is how long one build may take: FORGE_CAD_BUILD_TIMEOUT
+	// (WithBuildTimeout), buildTimeout when nothing set it.
 	//
 	// Each slot COPIES it when the pool is made and enforces it on its own
 	// process, so a build that runs out of time kills that slot's process and
 	// nobody else's. Like size, it is read when the pool is made and not after.
 	timeout time.Duration
+	// startLimit is how long a process may take to start: startTimeout, except in
+	// the fences that need one short enough to cross on purpose. Not a setting.
+	// Copied by each slot like timeout.
+	startLimit time.Duration
 
 	// size is how many processes serve builds at once. The pool is made on
 	// first use, so a kernel nobody builds with owns nothing.
@@ -104,7 +110,26 @@ type Kernel struct {
 // not an error. Nothing starts here; the process is started on the first build,
 // so a deployment that never exports a parametric file never pays for one.
 func New(python string, log *logx.Logger) *Kernel {
-	return &Kernel{python: strings.TrimSpace(python), log: log, size: 1, timeout: buildTimeout}
+	return &Kernel{python: strings.TrimSpace(python), log: log, size: 1, timeout: buildTimeout,
+		startLimit: startTimeout}
+}
+
+// FromConfig is the kernel a process builds from its configuration: the
+// interpreter, scripts, the pool and the build limit, in one place so forged and
+// forge-worker cannot wire them differently.
+// Fence: TestKernel_FromConfigCarriesTheBuildTimeout.
+func FromConfig(c config.CADConfig, log *logx.Logger) *Kernel {
+	return New(c.Python, log).WithScripts(c.AllowScripts).WithPool(c.Pool).WithBuildTimeout(c.BuildTimeout)
+}
+
+// WithBuildTimeout sets how long one build may take (FORGE_CAD_BUILD_TIMEOUT).
+// Zero or less keeps buildTimeout. Set it before the first build: each slot copies
+// it when the pool is made.
+func (k *Kernel) WithBuildTimeout(d time.Duration) *Kernel {
+	if d > 0 {
+		k.timeout = d
+	}
+	return k
 }
 
 // WithPool sets how many kernel processes serve builds at once. Fewer than one is
@@ -672,8 +697,21 @@ func (k *Kernel) buildWith(ctx context.Context, doc geometry.Document, unit geom
 
 	// A build waits HERE for a free process, not inside one, so a caller that gives
 	// up stops waiting instead of queueing behind a lock that ignores it.
+	//
+	// ‼️ A caller whose DEADLINE ends while it waits is refused as a timeout, not
+	// as a missing kernel. Until 2026-09-17 every wait that ended was
+	// CONNECTOR_UNAVAILABLE, HTTP 501, "no working backend in this deployment" —
+	// for a kernel that was there and busy building somebody else's design.
+	// Fence: TestKernel_ADeadlineThatEndsWaitingForABusyKernelIsATimeout.
 	s, err := k.acquire(ctx)
 	if err != nil {
+		if errors.Is(err, context.DeadlineExceeded) {
+			k.log.Warn(ctx, logx.EventCADTimedOut, "waiting", true, "pool", k.size, "detail", err.Error())
+			return nil, errs.Wrap(op, errs.CodeKernelTimeout, err).
+				WithDetail("the request's own deadline ended while it waited for a free CAD kernel process: "+
+					"all %d were building other designs, so this build never started. The kernel is working; "+
+					"ask again when it is less busy", k.size)
+		}
 		return nil, errs.Wrap(op, errs.CodeConnectorUnavailable, err).
 			WithDetail("no CAD kernel process became free before the request ended")
 	}
@@ -690,7 +728,14 @@ func (k *Kernel) buildWith(ctx context.Context, doc geometry.Document, unit geom
 	}
 	res, err := s.roundTrip(ctx, req, limit)
 	var late *lateError
-	if err != nil && !errors.As(err, &late) {
+	var slow *startTimeoutError
+	// ‼️ A process that did not START within its limit is not retried either:
+	// start already stopped it, and a second start waits as long again. Until
+	// 2026-09-17 it was taken for a crash, so a kernel that could not import in 60 s
+	// cost 120 s and then read "restarting it did not help". A process that EXITED
+	// while starting is still retried — that fails in milliseconds.
+	// Fence: TestKernel_AKernelThatDoesNotStartInTimeIsNotStartedAgain.
+	if err != nil && !errors.As(err, &late) && !errors.As(err, &slow) {
 		// One retry, and exactly one. The overwhelmingly likely cause of an I/O
 		// failure is a process that died between requests — a machine asleep, an
 		// OOM, somebody's pkill — and restarting answers that. Retrying twice
@@ -721,6 +766,13 @@ func (k *Kernel) buildWith(ctx context.Context, doc geometry.Document, unit geom
 			s.stop()
 			k.log.Warn(ctx, logx.EventCADTimedOut, "slot", s.slot, "detail", late.Error())
 			return nil, lateRefusal(op, late)
+		}
+		if errors.As(err, &slow) {
+			k.log.Warn(ctx, logx.EventCADTimedOut, "slot", s.slot, "starting", true, "detail", slow.Error())
+			return nil, errs.Wrap(op, errs.CodeKernelTimeout, slow).
+				WithDetail("the CAD kernel process did not finish starting within %s, so this build never "+
+					"started and a second start was not tried: it would wait as long again. The machine may be "+
+					"short of CPU or its disk cold; the next build starts a fresh process", slow.limit)
 		}
 		return nil, errs.Wrap(op, errs.CodeConnectorUnavailable, err).
 			WithDetail("the CAD kernel did not answer, and restarting it did not help")
@@ -866,6 +918,15 @@ func (e *lateError) Error() string {
 }
 
 func (e *lateError) Unwrap() error { return e.caller }
+
+// startTimeoutError is a process that was still starting when its start limit
+// (startTimeout) ran out. Like lateError it is not retried, and for the same
+// reason: the process was not dead, it was slow, and a fresh one is as slow.
+type startTimeoutError struct{ limit time.Duration }
+
+func (e *startTimeoutError) Error() string {
+	return fmt.Sprintf("the CAD kernel did not start within %s", e.limit)
+}
 
 // lateRefusal is the error for a build stopped because time ran out.
 //
