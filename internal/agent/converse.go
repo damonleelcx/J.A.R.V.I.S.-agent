@@ -73,7 +73,11 @@ How to answer:
 // reason (Phase 2, stage A3): a designation the prompt offers and the table does
 // not have is a part every model that trusts the prompt gets refused.
 // TestTheContractTeachesEveryStandardPartFORGEHas fences it.
-var geometryContract = fmt.Sprintf(geometryContractTemplate,
+//
+// And which pattern fields may carry a parameter's name, from the table the binder and
+// the reply's repair read (2026-09-17, bound patterns).
+// TestTheContractTeachesPatternBindingsAsTheBinderReadsThem fences it.
+var geometryContract = fmt.Sprintf(geometryContractTemplate, geometry.PatternBindingGuide(),
 	geometry.StandardGuide(), strings.Join(geometry.ExpressionFunctions(), ", "))
 
 var geometryContractTemplate = `Reply with JSON only:
@@ -298,7 +302,7 @@ About "prototype":
   "align": true}, along straight segments only. The copies are named "child-1",
   "child-2" and so on. "pattern" repeats a placed child, a whole sub-assembly
   included; "repeat" is still how one part appears many times.
-  A "polar" pattern turns its copies about an axis THROUGH THE ORIGIN of the
+%s  A "polar" pattern turns its copies about an axis THROUGH THE ORIGIN of the
   frame the child is measured in: its assembly's, or its interface's when it has
   "at". So the child's "position" is where the FIRST copy sits on the circle, off
   that axis: [57, 0, 0] with "about": "y" is a ring of radius 57 round Y, and a

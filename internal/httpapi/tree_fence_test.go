@@ -134,6 +134,26 @@ func TestRendererFlattensATreeLikeTheExporter(t *testing.T) {
 			}
 			return *v
 		}()},
+		// 2026-09-17 (bound patterns): a pattern's offsets and angle are bound the same
+		// way, so forge3d.js expands a re-specified pattern from the numbers Bind wrote,
+		// exactly where Go does, with no change of its own.
+		{"pattern offsets and an angle bound to parameters, re-specified", func() geometry.Document {
+			d := corner()
+			d.Parameters = []geometry.Parameter{{Name: "pitch", Value: 30, Unit: "mm", How: geometry.Chosen},
+				{Name: "sweep", Value: 90, Unit: "deg", How: geometry.Chosen}}
+			d.Assemblies[1].Children[0].Pattern = &geometry.Pattern{Kind: "grid", Rows: 2, Columns: 3,
+				RowOffset: []float64{0, 0, 30}, RowOffsetFrom: map[string]string{"z": "pitch"},
+				ColumnOffset: []float64{15, 0, 0}, ColumnOffsetFrom: map[string]string{"x": "pitch / 2", "y": "pitch / 10"}}
+			d.Assemblies[1].Children[1].Pattern = &geometry.Pattern{Kind: "polar", Count: 4, About: "x", Angle: 90, AngleFrom: "sweep"}
+			d.Assemblies[0].Children[1].Pattern = &geometry.Pattern{Kind: "linear", Count: 3,
+				Offset: []float64{0, 30, 0}, OffsetFrom: map[string]string{"y": "pitch"}}
+			v, problems := d.WithParameters(map[string]float64{"pitch": 44, "sweep": 150})
+			if len(problems) != 0 || v.Assemblies[1].Children[0].Pattern.ColumnOffset[1] != 4.4 ||
+				v.Assemblies[1].Children[1].Pattern.Angle != 150 || v.Assemblies[0].Children[1].Pattern.Offset[1] != 44 {
+				panic("the re-specified tree did not move its bound patterns")
+			}
+			return *v
+		}()},
 		{"a named grid", func() geometry.Document {
 			d := corner()
 			d.Assemblies[1].Children[0].Name = "Bolt"
