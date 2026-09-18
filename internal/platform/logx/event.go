@@ -225,7 +225,10 @@ const (
 	// EventGeometryTooLarge is a design refused at the storage door for its size
 	// (Phase 3, stage S0): more bytes or definitions than one design may hold.
 	EventGeometryTooLarge Event = "forge.geometry.too_large"
-	EventGeometryCompared Event = "forge.geometry.compared"
+	// EventGeometryExtentNotKept is a design measured the slow way whose extent could not
+	// be kept for the next read (geometry.Service.KeepExtent). The answer was still given.
+	EventGeometryExtentNotKept Event = "forge.geometry.extent_not_kept"
+	EventGeometryCompared      Event = "forge.geometry.compared"
 	// EventGeometryUnreadable is a turn answered WITHOUT the model on screen,
 	// because the record could not be read. Not fatal and not silent: the agent
 	// then restates dimensions from the conversation instead of copying them
@@ -266,7 +269,7 @@ func init() {
 	allEvents = append(allEvents,
 		EventGeometrySaved, EventGeometryExported, EventGeometryMeshed, EventGeometryRefused, EventGeometryCompared,
 		EventGeometryUnreadable,
-		EventGeometryAdopted, EventGeometryRespecified, EventGeometryTooLarge,
+		EventGeometryAdopted, EventGeometryRespecified, EventGeometryTooLarge, EventGeometryExtentNotKept,
 		EventGeometryExportQueued, EventGeometryExportStored,
 		EventCADStarted, EventCADRestarted, EventCADRefused, EventCADTimedOut, EventCADPrestartFailed,
 	)

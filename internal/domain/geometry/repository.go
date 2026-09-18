@@ -33,7 +33,7 @@ func NewRepository() *Repository { return &Repository{} }
 // for a column to go missing without anything failing.
 const selectVariant = `
 select g.version_id, g.name, g.document, g.units, g.units_declared, g.frame,
-       g.generator, g.created_at,
+       g.generator, g.created_at, g.extent,
        v.artifact_id, v.version, v.initiator_id, v.agent, v.inputs,
        v.verification_state, v.verification_note,
        v.human_disposition, v.dispositioned_by,
@@ -47,11 +47,11 @@ func scanVariant(row pgx.Row) (*Variant, error) {
 	const op = "geometry.scanVariant"
 
 	var v Variant
-	var doc []byte
+	var doc, extent []byte
 	var units, frame, agent, verification, disposition string
 	if err := row.Scan(
 		&v.VersionID, &v.Name, &doc, &units, &v.UnitsDeclared, &frame,
-		&v.Generator, &v.CreatedAt,
+		&v.Generator, &v.CreatedAt, &extent,
 		&v.ArtifactID, &v.Version, &v.InitiatorID, &agent, &v.Inputs,
 		&verification, &v.VerificationNote,
 		&disposition, &v.DispositionedBy,
@@ -71,6 +71,14 @@ func scanVariant(row pgx.Row) (*Variant, error) {
 		return nil, errs.Wrap(op, errs.CodeStateCorrupt, err).
 			WithDetail("the geometry stored for version %s is not readable as a document", v.VersionID)
 	}
+	if len(extent) > 0 {
+		// A kept extent that will not parse is not an error worth refusing the design
+		// over: it is worked out again from the document, as for a row that has none.
+		var e Extent
+		if json.Unmarshal(extent, &e) == nil {
+			v.Extent = &e
+		}
+	}
 	v.Units = Unit(units)
 	v.Frame = Frame(frame)
 	v.Agent = workspace.Agent(agent)
@@ -89,15 +97,47 @@ func (r *Repository) Insert(ctx context.Context, q db.Querier, v *Variant) error
 		return errs.Wrap(op, errs.CodeSerializationFail, err).
 			WithDetail("the geometry for %q cannot be encoded as JSON", v.Name)
 	}
+	extent, err := extentJSON(v.Extent)
+	if err != nil {
+		return errs.Wrap(op, errs.CodeSerializationFail, err)
+	}
 	_, err = q.Exec(ctx, `
 		insert into forge_geometry
-		    (version_id, name, document, units, units_declared, frame, generator, created_at)
-		values ($1, $2, $3, $4, $5, $6, $7, $8)`,
+		    (version_id, name, document, units, units_declared, frame, generator, created_at, extent)
+		values ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
 		v.VersionID, v.Name, doc, string(v.Units), v.UnitsDeclared,
-		string(v.Frame), v.Generator, v.CreatedAt)
+		string(v.Frame), v.Generator, v.CreatedAt, extent)
 	if err != nil {
 		return errs.Wrap(op, errs.CodeDatabaseUnavail, err).
 			WithDetail("the geometry for version %s could not be written", v.VersionID)
+	}
+	return nil
+}
+
+// extentJSON is a kept extent as the column holds it: SQL null for none.
+func extentJSON(e *Extent) ([]byte, error) {
+	if e == nil {
+		return nil, nil
+	}
+	return json.Marshal(e)
+}
+
+// KeepExtent stores the extent of a version whose row has none, or one worked out
+// by an earlier ExtentRev. Only the derived column is written: the document it was
+// worked out from is immutable, which is what makes keeping it safe, and a row that
+// already holds a current extent is left exactly as it is.
+func (r *Repository) KeepExtent(ctx context.Context, q db.Querier, versionID string, e *Extent) error {
+	extent, err := extentJSON(e)
+	if err != nil || extent == nil {
+		return err
+	}
+	_, err = q.Exec(ctx, `
+		update forge_geometry set extent = $2
+		 where version_id = $1
+		   and (extent is null or coalesce((extent->>'rev')::int, 0) <> $3)`,
+		versionID, extent, ExtentRev)
+	if err != nil {
+		return errs.Wrap("geometry.Repository.KeepExtent", errs.CodeDatabaseUnavail, err)
 	}
 	return nil
 }

@@ -184,6 +184,9 @@ FILES=(
   # Added 2026-09-17: the unverified-paths drills (verifier spend, last_seen_at).
   internal/agent/verifier.go
   internal/httpapi/goals.go
+  # Added 2026-09-17 (one million browse): the kept extent's drills.
+  internal/domain/geometry/stored_extent.go
+  internal/domain/geometry/repository.go
 )
 
 BACKUP=""
@@ -2797,7 +2800,7 @@ drill "the Go tessellator's copies are left in the document's unit" internal/dom
   ./internal/httpapi 'TestMeshSubtree_TheGoInstancesAreTessellateWrittenOutOncePerShape'
 
 drill "opening a tree row asks for nothing" internal/httpapi/assets/workbench.js \
-  's = s.replace("        if (tree.open[path]) studio.requestSubtree(path);\n", "", 1)' \
+  's = s.replace("        if (tree.open[path]) studio.openRow(path);\n", "", 1)' \
   ./internal/httpapi 'TestWorkbenchLoadsALargeTreeASubtreeAtATime'
 
 drill "a subtree already covered is asked for again" internal/httpapi/assets/forge3d.js \
@@ -4468,7 +4471,7 @@ drill "a design past the viewport limit is refused and not browsed" internal/htt
   ./internal/httpapi 'TestRendererBrowsesADesignPastTheViewportLimit|TestWorkbenchAsksNoWholeMeshForADesignItRefused'
 
 drill "a browsed design is searched only where it is drawn" internal/httpapi/assets/forge3d.js \
-  's = s.replace("if (this.lazy && this.lazy.browse) {\n      this.searchStats", "if (false) {\n      this.searchStats", 1)' \
+  's = s.replace("if (this.lazy && this.lazy.browse) {\n      /* Through the index", "if (false) {\n      /* Through the index", 1)' \
   ./internal/httpapi 'TestRendererBrowsesADesignPastTheViewportLimit'
 
 drill "a browsed row past the viewport limit is asked for anyway" internal/httpapi/assets/forge3d.js \
@@ -4691,6 +4694,102 @@ drill "a paused build answers differently" internal/domain/cad/sidecar.py \
 drill "the prism yard lists its leaning pins" internal/domain/geometry/prism_yard_scale_test.go \
   's = s.replace("\t\t\tPattern: &Pattern{Kind: \"linear\", Count: 95, Offset: []float64{0, 0, 40}}},", "\t\t},\n\t\t{ID: \"leaning-extra\", Ref: \"pin\", Position: []float64{20, 1003, 1920}, Rotation: []float64{35, 0, 0}},\n\t\t{ID: \"leaning-extra-2\", Ref: \"pin\", Position: []float64{20, 1003, 1960}, Rotation: []float64{35, 0, 0}},", 1)' \
   ./internal/domain/geometry 'TestPrismYard_PlacesItsPrismsByPatternsNotByListing'
+
+echo "One million browse (2026-09-17): the kept extent, the tree search index, opening a row, last seen"
+
+drill "a read measures a design by placing every part again" internal/httpapi/geometry.go \
+  's = s.replace("out := geometry.MeasureFrom(v.Document, v.Units, v.Extent)", "out := geometry.Measure(v.Document, v.Units)", 1)' \
+  ./internal/httpapi 'TestGetMeasuresALargeDesignWithoutPlacingIt'
+
+drill "a stored design keeps no extent" internal/domain/geometry/service.go \
+  's = s.replace("\textent := ExtentOf(doc)\n", "\textent := (*Extent)(nil)\n", 1)' \
+  ./internal/httpapi 'TestGetMeasuresALargeDesignWithoutPlacingIt'
+
+drill "a design stored before its extent was kept is never given one" internal/httpapi/geometry.go \
+  's = s.replace("\th.svc.KeepExtent(r.Context(), v)\n", "", 1)' \
+  ./internal/httpapi 'TestGetMeasuresALargeDesignWithoutPlacingIt'
+
+drill "a read ignores the extent kept with the design" internal/domain/geometry/repository.go \
+  's = s.replace("\t\tif json.Unmarshal(extent, &e) == nil {\n\t\t\tv.Extent = &e", "\t\tif json.Unmarshal(extent, &e) == nil {\n\t\t\t_ = e", 1)' \
+  ./internal/httpapi 'TestGetMeasuresALargeDesignWithoutPlacingIt'
+
+drill "a kept extent from another revision is measured from" internal/domain/geometry/stored_extent.go \
+  's = s.replace("return e != nil && e.Rev == ExtentRev", "return e != nil", 1)' \
+  ./internal/domain/geometry 'TestExtent_MeasuresExactlyAsMeasureDoes'
+
+drill "a tree that places nothing keeps no extent" internal/domain/geometry/stored_extent.go \
+  's = s.replace("\t\treturn &Extent{Rev: ExtentRev, Empty: true}", "\t\treturn nil", 1)' \
+  ./internal/domain/geometry 'TestExtent_MeasuresExactlyAsMeasureDoes'
+
+drill "a kept extent measures from its low corner twice" internal/domain/geometry/stored_extent.go \
+  's = s.replace("\treturn e.Min, e.Max\n", "\treturn e.Min, e.Min\n", 1)' \
+  ./internal/domain/geometry 'TestExtent_MeasuresExactlyAsMeasureDoes'
+
+drill "a browsed design's search builds its index on every search" internal/httpapi/assets/forge3d.js \
+  's = s.replace("if (this._treeIndex === undefined) this._treeIndex = treeSearchIndex(this.spec);", "this._treeIndex = treeSearchIndex(this.spec);", 1)' \
+  ./internal/httpapi 'TestRendererSearchesABrowsedDesignThroughAnIndexLikeTheWalk'
+
+drill "a browsed design's search is not answered from its index" internal/httpapi/assets/forge3d.js \
+  's = s.replace("        if (this._treeIndex) {\n          this.searchStats", "        if (false) {\n          this.searchStats", 1)' \
+  ./internal/httpapi 'TestRendererSearchesABrowsedDesignThroughAnIndexLikeTheWalk'
+
+drill "the search index answers every path in lowercase" internal/httpapi/assets/forge3d.js \
+  's = s.replace("(id === lowID ? \x27\x27 : id)", "\x27\x27", 1)' \
+  ./internal/httpapi 'TestRendererSearchesABrowsedDesignThroughAnIndexLikeTheWalk'
+
+drill "the search index counts a line once for each match in it" internal/httpapi/assets/forge3d.js \
+  's = s.replace("      from = end + 1;\n", "      from = at + 1;\n", 1)' \
+  ./internal/httpapi 'TestRendererSearchesABrowsedDesignThroughAnIndexLikeTheWalk'
+
+drill "a second design is searched through the first one's index" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    this.isolated = null;\n    this._searchIndex = null;\n    this._treeIndex = undefined;", "    this.isolated = null;\n    this._searchIndex = null;", 1)' \
+  ./internal/httpapi 'TestRendererSearchesABrowsedDesignThroughAnIndexLikeTheWalk'
+
+drill "the tree search does not wait for typing to pause" internal/httpapi/assets/workbench.js \
+  's = s.replace("      }, TREE_SEARCH_WAIT_MS);\n", "      }, TREE_SEARCH_WAIT_MS);\n      tree.query = search.value; renderTree();\n", 1)' \
+  ./internal/httpapi 'TestWorkbenchTreeSearchWaitsForTypingToPause'
+
+drill "opening a row in the tree asks for the whole row" internal/httpapi/assets/workbench.js \
+  's = s.replace("if (tree.open[path]) studio.openRow(path);", "if (tree.open[path]) studio.requestSubtree(path);", 1)' \
+  ./internal/httpapi 'TestWorkbenchOpensARowItsFirstRowsFirstAndOffersTheRest'
+
+drill "an opened row the open did not finish offers no rest" internal/httpapi/assets/workbench.js \
+  's = s.replace("(open ? drawAllButton(path) : \x27\x27) +", "\x27\x27 +", 1)' \
+  ./internal/httpapi 'TestWorkbenchOpensARowItsFirstRowsFirstAndOffersTheRest'
+
+drill "opening a row draws all of it" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    if (total <= OPEN_OCCURRENCES) return { paths:", "    if (total) return { paths:", 1)' \
+  ./internal/httpapi 'TestRendererOpensARowItsFirstRowsFirstAndTheRestWhenAsked'
+
+drill "an opened row splits its patterns before taking the rows that fit whole" internal/httpapi/assets/forge3d.js \
+  's = s.replace("var whole = rows.map(function (row) { return take(row.path); });", "var whole = rows.map(function () { return false; });", 1)' \
+  ./internal/httpapi 'TestRendererOpensARowItsFirstRowsFirstAndTheRestWhenAsked'
+
+drill "an opened row the open did not finish is not remembered" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    if (plan.drawn < plan.total) lazy.opened[path] =", "    if (false) lazy.opened[path] =", 1)' \
+  ./internal/httpapi 'TestRendererOpensARowItsFirstRowsFirstAndTheRestWhenAsked'
+
+drill "a row arriving under one drawn meanwhile keeps its room" internal/httpapi/assets/forge3d.js \
+  's = s.replace("      if (lazy.browse) {\n        lazy.used -= lazy.counts[path] || 0;\n        delete lazy.counts[path];\n      }\n      return 0;", "      return 0;", 1)' \
+  ./internal/httpapi 'TestRendererOpensARowItsFirstRowsFirstAndTheRestWhenAsked'
+
+drill "making room forgets the rows on their way that a row replaces" internal/httpapi/assets/forge3d.js \
+  's = s.replace("Object.keys(lazy.counts).forEach(function (key) { if (under(key, \x27\x27)) replaced +=", "Object.keys(lazy.loaded).forEach(function (key) { if (under(key, \x27\x27)) replaced +=", 1)' \
+  ./internal/httpapi 'TestRendererOpensARowItsFirstRowsFirstAndTheRestWhenAsked'
+
+drill "the build card says nothing about when its worker was last seen" internal/httpapi/assets/workbench.js \
+  's = s.replace("(p.current.seenAgo !== undefined && !p.current.stale", "(false", 1)' \
+  ./internal/httpapi 'TestGoalCardSaysWhenTheWorkerWasLastSeen'
+
+drill "the build card never calls a worker stale" internal/httpapi/assets/workbench.js \
+  's = s.replace("p.current.stale = ago > WORKER_STALE_S;", "p.current.stale = false;", 1)' \
+  ./internal/httpapi 'TestGoalCardSaysWhenTheWorkerWasLastSeen'
+
+drill "the build card measures last seen against the browser's clock" internal/httpapi/assets/workbench.js \
+  's = s.replace("goalProgress(res[0].goal, res[0].tasks, res[1].events, serverNow)", "goalProgress(res[0].goal, res[0].tasks, res[1].events)", 1)' \
+  ./internal/httpapi 'TestGoalCardSaysWhenTheWorkerWasLastSeen'
+
+echo
 
 echo
 

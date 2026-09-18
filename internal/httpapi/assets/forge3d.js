@@ -2465,27 +2465,21 @@
     return total + walk(t.root, [], onPath);
   }
 
-  /* Studio.findOccurrences' answer for a design that is not placed in the browser: every
-   * occurrence the tree lists, in the exporter's order, matched on its path and name as
-   * findOccurrences matches them and labelled as occurrenceLabel labels them — without
-   * making a part. Fence: TestRendererBrowsesADesignPastTheViewportLimit. */
-  function searchTree(spec, query, limit) {
+  /* Every occurrence the tree lists, in the exporter's order, named as findOccurrences
+   * matches it and labelled as occurrenceLabel labels it, without making a part:
+   * visit(lowercased path, lowercased display path, path, label). A visit answering true
+   * stops the walk. searchTree and treeSearchIndex both read this, so the index cannot
+   * name an occurrence differently from the walk it replaced. */
+  function eachTreeOccurrence(spec, visit) {
     spec = spec || {};
-    var q = String(query || '').trim().toLowerCase(), found = [], total = 0;
-    limit = limit || 50;
-    if (!q) return { found: found, total: 0 };
-    function hit(id, label) {
-      total++;
-      if (found.length < limit) found.push({ id: id, label: label });
-    }
+    var stopped = false;
     expandRepeats(expandStandards(spec.parts || [], spec.units), []).parts.forEach(function (p) {
       var name = String(p.name || '');
-      if (String(p.id).toLowerCase().indexOf(q) >= 0 || name.toLowerCase().indexOf(q) >= 0) hit(p.id, name || p.id);
+      if (!stopped && visit(String(p.id).toLowerCase(), name.toLowerCase(), p.id, name || p.id)) stopped = true;
     });
-    if (!spec.root) return { found: found, total: total };
+    if (stopped || !spec.root) return;
     var t = preparedTree(spec);
-    if (!t.root) return { found: found, total: total };
-    var stopped = false;
+    if (!t.root) return;
     function walk(a, path, lowPath, names, depth, onPath) {
       // expandAssemblies stops the whole walk at the depth limit, so this does too.
       if (depth >= MAX_TREE_DEPTH) { stopped = true; return; }
@@ -2506,11 +2500,12 @@
             delete onPath[c.sub.id];
             continue;
           }
-          for (var j = 0; j < copies.length; j++) {
+          for (var j = 0; j < copies.length && !stopped; j++) {
             var lp = copies[j];
-            if ((lowSlot + lp.suffix.toLowerCase()).indexOf(q) < 0 &&
-                (childNames + NAME_SEPARATOR + lp.name).toLowerCase().indexOf(q) < 0) continue;
-            hit(slotName + lp.suffix, copies.length > 1 ? childName + NAME_SEPARATOR + lp.name : childName);
+            if (visit(lowSlot + lp.suffix.toLowerCase(), (childNames + NAME_SEPARATOR + lp.name).toLowerCase(),
+                      slotName + lp.suffix, copies.length > 1 ? childName + NAME_SEPARATOR + lp.name : childName)) {
+              stopped = true;
+            }
           }
         }
       }
@@ -2518,6 +2513,81 @@
     var onPath = {};
     onPath[t.root.id] = true;
     walk(t.root, '', '', '', 0, onPath);
+  }
+
+  /* Studio.findOccurrences' answer for a design that is not placed in the browser: every
+   * occurrence the tree lists (eachTreeOccurrence), matched on its path and name as
+   * findOccurrences matches them. Fence: TestRendererBrowsesADesignPastTheViewportLimit.
+   * A browsed design is searched through treeSearchIndex; this walk is what that index
+   * answers like, and what answers when it cannot. */
+  function searchTree(spec, query, limit) {
+    var q = String(query || '').trim().toLowerCase(), found = [], total = 0;
+    limit = limit || 50;
+    if (!q) return { found: found, total: 0 };
+    eachTreeOccurrence(spec, function (lowID, lowName, id, label) {
+      if (lowID.indexOf(q) < 0 && lowName.indexOf(q) < 0) return false;
+      total++;
+      if (found.length < limit) found.push({ id: id, label: label });
+      return false;
+    });
+    return { found: found, total: total };
+  }
+
+  /* ---- A browsed design's search, through an index built once (2026-09-17) --------
+   *
+   * searchTree walks the whole tree on every keystroke: 0.4-1.0 s per character typed
+   * over the 1,020,782-part fleet in the browser, most of it building each occurrence's
+   * path and name again. So the walk is done ONCE per design, on its first search (as
+   * W2 meant the drawn design's index to be built), and writes one line per occurrence
+   * into a single string, in the walk's order:
+   *
+   *     lowercased path TAB lowercased display path TAB path, if its case differs TAB label LF
+   *
+   * from exactly the strings searchTree matches and answers with (eachTreeOccurrence).
+   * A query is then a run of String.indexOf over that one string: the first place q is
+   * found in a line is in its first two fields exactly when searchTree matches that
+   * occurrence (q holds no TAB or LF, so no match straddles a field), and the next
+   * search starts at the following line, so each occurrence is counted once. Same
+   * answers, same order, same total.
+   * Fence: TestRendererSearchesABrowsedDesignThroughAnIndexLikeTheWalk.
+   *
+   * ‼️ Memory, stated: one string of about 72 characters an occurrence (71 MB of heap
+   * for the fleet, measured in node), held while the design is open and only once
+   * something was searched. A query with a TAB or LF in it, or a design whose ids or
+   * names hold one, is answered by the walk (treeSearchIndex answers null for it). */
+  function treeSearchIndex(spec) {
+    var lines = [], bad = false, separators = /[\t\n]/;
+    eachTreeOccurrence(spec, function (lowID, lowName, id, label) {
+      id = String(id);
+      label = String(label);
+      if (separators.test(id) || separators.test(lowName) || separators.test(label)) return (bad = true);
+      lines.push(lowID + '\t' + lowName + '\t' + (id === lowID ? '' : id) + '\t' + label + '\n');
+      return false;
+    });
+    return bad ? null : { text: lines.join(''), lines: lines.length };
+  }
+
+  /* searchTree's answer, read from treeSearchIndex's string. */
+  function searchTreeIndexed(index, query, limit) {
+    var q = String(query || '').trim().toLowerCase(), found = [], total = 0;
+    limit = limit || 50;
+    if (!q) return { found: found, total: 0 };
+    var s = index.text, from = 0;
+    for (;;) {
+      var at = s.indexOf(q, from);
+      if (at < 0) break;
+      var start = s.lastIndexOf('\n', at) + 1, end = s.indexOf('\n', at);
+      var t1 = s.indexOf('\t', start), t2 = s.indexOf('\t', t1 + 1);
+      from = end + 1;
+      /* The first match in a line is in its first two fields, or searchTree does not
+       * match that occurrence: the rest of the line is only what to answer with. */
+      if (at >= t2) continue;
+      total++;
+      if (found.length < limit) {
+        var t3 = s.indexOf('\t', t2 + 1);
+        found.push({ id: t3 > t2 + 1 ? s.slice(t2 + 1, t3) : s.slice(start, t1), label: s.slice(t3 + 1, end) });
+      }
+    }
     return { found: found, total: total };
   }
 
@@ -3083,6 +3153,7 @@
     this.isolated = null;
     this.lazy = null;
     this._searchIndex = null;
+    this._treeIndex = undefined;   // a browsed design's search index: built on its first search
     /* Refused whole and said out loud (Phase 3, stage S0): partsToDraw draws nothing
      * for a design over the ceiling, and an empty stage must not read as an empty design. */
     var refusal = drawRefusal(this.spec);
@@ -3347,6 +3418,15 @@
     /* A browsed design lists every occurrence of its tree, drawn or not, and is not placed
      * in the browser to be searched: the tree is walked instead (searchTree). */
     if (this.lazy && this.lazy.browse) {
+      /* Through the index treeSearchIndex writes on the first search, not a walk of the
+       * whole tree per keystroke; the walk answers what the index cannot hold. */
+      if (!/[\t\n]/.test(q)) {
+        if (this._treeIndex === undefined) this._treeIndex = treeSearchIndex(this.spec);
+        if (this._treeIndex) {
+          this.searchStats = { rows: this._treeIndex.lines, examined: 0, indexed: true, tree: true };
+          return searchTreeIndexed(this._treeIndex, q, limit || 50);
+        }
+      }
       this.searchStats = { rows: 0, examined: 0, indexed: false, tree: true };
       return searchTree(this.spec, q, limit || 50);
     }
@@ -3489,6 +3569,7 @@
     this.approximations = [];
     this.isolated = null;
     this._searchIndex = null;
+    this._treeIndex = undefined;   // a browsed design's search index: built on its first search
     var refusal = drawRefusal(this.spec);
     /* Past the limit the design is BROWSED: nothing is listed as parts up front (placing
      * a million in the browser is seconds and a gigabyte), each row is placed when it is
@@ -3525,12 +3606,121 @@
     });
     this.lazy = { request: request || function () {}, drawn: drawn, wide: wide, loaded: {}, pending: {},
                   failed: {}, requested: [], matchers: {}, slots: slots, slotOrder: order, placeholder: null,
-                  browse: browse, counts: {}, used: 0, recent: [] };
+                  browse: browse, counts: {}, used: 0, recent: [], opened: {} };
     this._placeholders();
     this._frameAll();
     firstViewPaths(this.spec).forEach(function (path) { self.requestSubtree(path); });
     this.draw();
     return this.parts.length;
+  };
+
+  /* ---- Opening a row: its first rows, and the rest when asked (2026-09-17) ---------
+   *
+   * # The problem this solves
+   *
+   * Opening a row asked for the whole row: opening one car of the fleet fetched and
+   * placed all 30,023 of its parts, and in a browsed design put back up to a third of
+   * what the person had drawn to make room for them.
+   *
+   * # The decision, and why
+   *
+   * Opening a row is how a person walks DOWN the tree — car, then seam, then rivet — as
+   * much as how they look at a thing. So opening draws what the opened row lists first,
+   * by the first view's own policy (firstViewPaths) applied beneath the row: its child
+   * rows in the order the tree lists them, each taken whole when it fits and a pattern
+   * taken a copy at a time when it does not, until OPEN_OCCURRENCES parts or
+   * OPEN_REQUESTS requests. Nearest first, because those are the rows on screen right
+   * under the one opened; bounded by count, because what a person meant by "open" is
+   * "show me what is in here", which is the first few thousand parts and not the
+   * thirty thousandth rivet. A row it did not finish says so and offers the rest
+   * ("Draw all", the row's own path, which replaces what the open drew); Select and
+   * Isolate still draw the whole row at once, since they mean "this thing".
+   *
+   * The alternative — stream every child in turn until the row is whole — was rejected:
+   * it costs the same parts and the same room in the end, and a person walking through
+   * a car to one seam would pay for the car anyway.
+   * Fence: TestRendererOpensARowItsFirstRowsFirstAndTheRestWhenAsked. */
+  var OPEN_OCCURRENCES = FIRST_VIEW_OCCURRENCES;
+  var OPEN_REQUESTS = 24;
+
+  /* The tree row a path names, found the way treeRows lists it: { row, slot } where slot
+   * is the path when it names one copy of a patterned row. Null for no such row. */
+  function treeRowAt(spec, path) {
+    var segs = String(path || '').split(PATH_SEPARATOR), ref = spec.root, parent = '';
+    for (var i = 0; i < segs.length; i++) {
+      var here = (parent ? parent + PATH_SEPARATOR : '') + segs[i], hit = null;
+      treeChildren(spec, ref, parent).forEach(function (row) {
+        if (hit) return;
+        if (row.path === here) hit = { row: row, slot: null };
+        else if (row.slots && row.slots.indexOf(here) >= 0) hit = { row: row, slot: here };
+      });
+      if (!hit) return null;
+      if (i === segs.length - 1) return hit;
+      if (!hit.row.assembly) return null;
+      ref = hit.row.ref;
+      parent = here;
+    }
+    return null;
+  }
+
+  /* What opening `path` asks for: { paths, drawn, total }. A row within OPEN_OCCURRENCES
+   * is asked for whole, as before. */
+  function openPaths(spec, path) {
+    spec = spec || {};
+    path = String(path || '');
+    var total = occurrencesUnder(spec, path);
+    if (total <= OPEN_OCCURRENCES) return { paths: total ? [path] : [], drawn: total, total: total };
+    var at = treeRowAt(spec, path), rows = [];
+    if (at && at.row.slots && !at.slot) {
+      /* A patterned row opened lists its copies. */
+      rows = at.row.slots.map(function (slot) { return { path: slot, slots: null }; });
+    } else if (at && at.row.assembly) {
+      rows = treeChildren(spec, at.row.ref, path);
+    }
+    var paths = [], drawn = 0;
+    function take(p) {
+      if (paths.length >= OPEN_REQUESTS) return false;
+      var n = occurrencesUnder(spec, p);
+      if (!n || drawn + n > OPEN_OCCURRENCES) return false;
+      paths.push(p);
+      drawn += n;
+      return true;
+    }
+    /* Every row that fits whole first, so each kind of thing the row holds is on screen;
+     * then what is left of the budget on the copies of the patterns that did not fit. */
+    var whole = rows.map(function (row) { return take(row.path); });
+    rows.forEach(function (row, i) {
+      if (whole[i] || !row.slots) return;
+      for (var s = 0; s < row.slots.length && take(row.slots[s]); s++) { /* one copy at a time */ }
+    });
+    return { paths: paths, drawn: drawn, total: total };
+  }
+
+  /* Open a row: ask for what openPaths says, and remember a row left unfinished so the
+   * tree can offer the rest. Returns the plan, or null for a design loaded whole. */
+  Studio.prototype.openRow = function (path) {
+    var lazy = this.lazy, self = this;
+    path = String(path || '');
+    if (!lazy || !path || this._covered(path)) return null;
+    var plan = openPaths(this.spec, path);
+    if (!plan.paths.length) {
+      /* Nothing beneath it fits (every child row alone is past the budget): the row is
+       * asked for whole, as before, which draws it or refuses it by name with its count. */
+      this.requestSubtree(path);
+      return plan;
+    }
+    plan.paths.forEach(function (p) { self.requestSubtree(p); });
+    if (plan.drawn < plan.total) lazy.opened[path] = { drawn: plan.drawn, total: plan.total };
+    else delete lazy.opened[path];
+    return plan;
+  };
+
+  /* { drawn, total } for an opened row not yet drawn whole, else null. */
+  Studio.prototype.openedPartly = function (path) {
+    var lazy = this.lazy, o = lazy && lazy.opened[path];
+    if (!o) return null;
+    if (this._covered(path)) { delete lazy.opened[path]; return null; }
+    return o;
   };
 
   Studio.prototype._matcher = function (key) {
@@ -3591,7 +3781,15 @@
     var lazy = this.lazy, gl = this.gl, self = this;
     if (!lazy || !lazy.pending[path]) return 0;
     delete lazy.pending[path];
-    if (this._covered(path, true)) return 0;
+    if (this._covered(path, true)) {
+      /* Arrived under a row drawn meanwhile (an open's first rows, then "Draw all"): not
+       * drawn, so the room it was counted for is given back. */
+      if (lazy.browse) {
+        lazy.used -= lazy.counts[path] || 0;
+        delete lazy.counts[path];
+      }
+      return 0;
+    }
     var under = this._matcher(path);
     Object.keys(lazy.loaded).forEach(function (key) {
       if (!under(key, '')) return;
@@ -3656,7 +3854,8 @@
   Studio.prototype._makeRoom = function (path, n) {
     var lazy = this.lazy, under = this._matcher(path), self = this;
     var replaced = 0;
-    Object.keys(lazy.loaded).forEach(function (key) { if (under(key, '')) replaced += lazy.counts[key] || 0; });
+    /* Loaded or still on its way: either is replaced by `path` (addSubtree). */
+    Object.keys(lazy.counts).forEach(function (key) { if (under(key, '')) replaced += lazy.counts[key] || 0; });
     var others = lazy.recent.filter(function (key) { return !under(key, ''); });
     while (lazy.used - replaced + n > MAX_VIEWPORT_PARTS && others.length) self._putBack(others.shift());
     return lazy.used - replaced + n <= MAX_VIEWPORT_PARTS;
@@ -4736,10 +4935,13 @@
     /* Browsing a design past the viewport's limit (2026-09-17): one path's parts, how
      * many a path places, and a search over what the tree lists — none places the whole. */
     partsUnder: partsUnder, occurrencesUnder: occurrencesUnder, searchTree: searchTree,
+    treeSearchIndex: treeSearchIndex, searchTreeIndexed: searchTreeIndexed,
     /* Whether a design is loaded a subtree at a time, and what its first view asks for
      * (W2): exported for the workbench, and for the fence that holds the policy. */
     loadsLazily: loadsLazily,
     firstViewPaths: firstViewPaths,
+    /* What opening a row asks for (2026-09-17), exported for the fence that holds it. */
+    openPaths: openPaths,
     /* A cylinder's length, reading "depth" when "height" is absent.
      *
      * Exported so the Parts panel reads it the same way the stage draws it and

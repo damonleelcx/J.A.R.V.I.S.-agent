@@ -97,6 +97,10 @@ func (s *Service) Save(ctx context.Context, n NewVariant) (*Variant, error) {
 				len(doc.Definitions), lim.MaxDefinitions)
 	}
 
+	// Worked out once, before the transaction, and kept beside the document: every
+	// read of this version then measures without placing a part (stored_extent.go).
+	extent := ExtentOf(doc)
+
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return nil, errs.Wrap(op, errs.CodeDatabaseUnavail, err)
@@ -173,6 +177,7 @@ func (s *Service) Save(ctx context.Context, n NewVariant) (*Variant, error) {
 		Disposition:      version.Disposition,
 		InitiatorID:      version.InitiatorID,
 		CreatedAt:        version.CreatedAt,
+		Extent:           extent,
 	}
 	if err := s.repo.Insert(ctx, tx, v); err != nil {
 		return nil, err
@@ -286,6 +291,25 @@ func (s *Service) Adopt(ctx context.Context, versionID, byUserID, reason string)
 // Find returns one variant.
 func (s *Service) Find(ctx context.Context, versionID string) (*Variant, error) {
 	return s.repo.Find(ctx, s.pool, versionID)
+}
+
+// KeepExtent gives a variant read from a row with no current extent — stored before
+// migration 0025, or by an earlier ExtentRev — its extent, worked out the old way
+// once and kept, so neither this read's measurement nor the next one places its
+// parts again. Failing to keep it is logged and not an error: v still carries the
+// extent, so the answer is the same; only the next read is slower.
+func (s *Service) KeepExtent(ctx context.Context, v *Variant) {
+	if v.Extent.Current() || !v.Document.HasGeometry() {
+		return
+	}
+	e := ExtentOf(v.Document)
+	if e == nil {
+		return
+	}
+	v.Extent = e
+	if err := s.repo.KeepExtent(ctx, s.pool, v.VersionID, e); err != nil {
+		s.log.Warn(ctx, logx.EventGeometryExtentNotKept, "version_id", v.VersionID, "error", err.Error())
+	}
 }
 
 // List returns a project's variants, newest first.

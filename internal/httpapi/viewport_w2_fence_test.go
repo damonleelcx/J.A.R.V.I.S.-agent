@@ -676,14 +676,16 @@ func TestWorkbenchLoadsALargeTreeASubtreeAtATime(t *testing.T) {
 	if end := strings.Index(body[1:], "\n  function "); end > 0 {
 		body = body[:end+1]
 	}
-	for _, branch := range []struct{ from, to, what string }{
-		{"getAttribute('data-toggle')", "getAttribute('data-select')", "opening"},
-		{"getAttribute('data-select')", "getAttribute('data-isolate')", "selecting"},
-		{"getAttribute('data-isolate')", "renderTree();", "isolating"},
+	// Opening asks through studio.openRow, which asks for the row's first rows (2026-09-17,
+	// "Opening a row" in forge3d.js); selecting and isolating ask for the row itself.
+	for _, branch := range []struct{ from, to, what, call string }{
+		{"getAttribute('data-toggle')", "getAttribute('data-drawall')", "opening", "studio.openRow("},
+		{"getAttribute('data-select')", "getAttribute('data-isolate')", "selecting", "studio.requestSubtree("},
+		{"getAttribute('data-isolate')", "renderTree();", "isolating", "studio.requestSubtree("},
 	} {
 		i := strings.Index(body, branch.from)
 		j := strings.Index(body[i+1:], branch.to)
-		if i < 0 || j < 0 || !strings.Contains(body[i:i+1+j], "studio.requestSubtree(") {
+		if i < 0 || j < 0 || !strings.Contains(body[i:i+1+j], branch.call) {
 			t.Errorf("%s a tree row does not ask the studio for that row's subtree", branch.what)
 		}
 	}

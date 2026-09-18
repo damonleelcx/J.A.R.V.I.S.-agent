@@ -303,7 +303,12 @@ func Measure(doc Document, unit Unit) []Overlay {
 		return nil
 	}
 	min, max := bounds(doc)
+	return measureCorners(doc, unit, min, max)
+}
 
+// measureCorners is Measure's overlays over corners already found, by bounds now or
+// kept from when the design was stored (stored_extent.go).
+func measureCorners(doc Document, unit Unit, min, max [3]float64) []Overlay {
 	// Overall extents, one per axis. Three marks rather than one, because a
 	// single "size" on an assembly answers no question anybody asks.
 	axes := []struct {
