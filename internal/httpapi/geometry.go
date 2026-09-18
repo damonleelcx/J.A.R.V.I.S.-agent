@@ -182,7 +182,11 @@ func toVariantDTO(v geometry.Variant) VariantDTO {
 // Never null. "This model has no derivable extents" and "nobody computed any"
 // must not arrive looking the same — the same rule Assumptions follows above.
 func measuredOrEmpty(v geometry.Variant) []geometry.Overlay {
-	out := geometry.Measure(v.Document, v.Units)
+	// From the extent kept when the variant was stored: measuring without it places
+	// every part (2.1-3.1 s for a 1,020,782-part design). MeasureFrom answers exactly as
+	// Measure does, and measures the old way when the variant has no current extent.
+	// Fence: TestGetMeasuresALargeDesignWithoutPlacingIt.
+	out := geometry.MeasureFrom(v.Document, v.Units, v.Extent)
 	if out == nil {
 		return []geometry.Overlay{}
 	}
@@ -245,6 +249,8 @@ func (h *GeometryHandlers) Get(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, r, h.deps.Log, err)
 		return
 	}
+	// A row stored before its extent was kept gets one now, once (migration 0025).
+	h.svc.KeepExtent(r.Context(), v)
 	WriteJSON(w, http.StatusOK, map[string]any{"variant": toVariantDTO(*v)})
 }
 

@@ -2111,20 +2111,39 @@
       '<span class="nm" data-select="' + esc(path) + '" title="' + esc(path) + '">' + esc(label) + '</span>' +
       (where ? '<span class="dim where" title="' + esc(where) + '">' + esc(where) + '</span>' : '') +
       (count ? '<span class="dim">' + esc(count) + '</span>' : '') +
+      (open ? drawAllButton(path) : '') +
       '<button type="button" class="ghost iso" data-isolate="' + esc(path) + '" aria-pressed="' +
       (tree.isolated === path) + '">Isolate</button></div>';
   }
+
+  /* An opened row that drew only its first rows (studio.openRow, "Opening a row" in
+   * forge3d.js) offers the rest: its whole path, asked for as Select or Isolate asks.
+   * Fence: TestWorkbenchOpensARowItsFirstRowsFirstAndOffersTheRest. */
+  function drawAllButton(path) {
+    var rest = studio.openedPartly ? studio.openedPartly(path) : null;
+    if (!rest) return '';
+    return '<button type="button" class="ghost" data-drawall="' + esc(path) + '" title="Opening drew the first ' +
+      rest.drawn + ' of its ' + rest.total + ' parts">Draw all ' + rest.total + '</button>';
+  }
+
+  /* How long the tree's search waits for typing to pause before it searches. A browsed
+   * design's search reads an index over every occurrence the tree lists (a million, for
+   * the fleet); searching on every character typed answered queries nobody finished. */
+  var TREE_SEARCH_WAIT_MS = 150;
 
   function initTree() {
     var el = $('tree'), search = $('tree-search'), all = $('tree-showall');
     if (!el || !search || !all) return;
     el.addEventListener('click', function (e) {
-      var t = e.target && e.target.closest ? e.target.closest('[data-toggle],[data-select],[data-isolate]') : null;
+      var t = e.target && e.target.closest ? e.target.closest('[data-toggle],[data-select],[data-isolate],[data-drawall]') : null;
       if (!t) return;
       var path;
       if ((path = t.getAttribute('data-toggle'))) {
         tree.open[path] = !tree.open[path];
-        if (tree.open[path]) studio.requestSubtree(path);
+        /* Its first rows, not the whole row: see drawAllButton. */
+        if (tree.open[path]) studio.openRow(path);
+      } else if ((path = t.getAttribute('data-drawall'))) {
+        studio.requestSubtree(path);
       } else if ((path = t.getAttribute('data-select'))) {
         state.selectedPart = state.selectedPart === path ? null : path;
         studio.select(state.selectedPart ? window.Forge3D.occurrenceMatcher(state.selectedPart) : null);
@@ -2137,7 +2156,15 @@
       }
       renderTree();
     });
-    search.addEventListener('input', function () { tree.query = search.value; renderTree(); });
+    var searchWait = null;
+    search.addEventListener('input', function () {
+      if (searchWait !== null) clearTimeout(searchWait);
+      searchWait = setTimeout(function () {
+        searchWait = null;
+        tree.query = search.value;
+        renderTree();
+      }, TREE_SEARCH_WAIT_MS);
+    });
     all.addEventListener('click', function () { tree.isolated = ''; studio.isolate(null); renderTree(); });
   }
 
@@ -3113,8 +3140,16 @@
     return s.replace(/^[A-Za-z][\w.]*\.[A-Za-z]\w*:\s+/, '').trim();
   }
 
-  /* goalProgress reads what a person watching needs out of the two replies. */
-  function goalProgress(goal, tasks, events) {
+  /* A worker stamps the task it holds at least every 5 s (agent.AliveEvery), so a
+   * stamp six beats old says the worker has most likely stopped: the step will be
+   * handed to another worker when its lease runs out, and until then nothing moves. */
+  var WORKER_STALE_S = 30;
+
+  /* goalProgress reads what a person watching needs out of the two replies. `now` is
+   * the server's clock when the goal was read (its reply's Date), in ms; the browser's
+   * when there is none. Measured against the server's clock because last_seen_at is,
+   * and a laptop's clock a minute off would call every live worker stale. */
+  function goalProgress(goal, tasks, events, now) {
     goal = goal || {};
     tasks = tasks || [];
     events = events || [];
@@ -3138,8 +3173,19 @@
       if (!held && (t.status === 'running' || t.status === 'claimed')) held = t;
       if (!next && !TASK_ENDED[t.status]) next = t;
     });
-    var now = held || next;
-    if (!p.settled && now) p.current = { title: now.title, status: now.status };
+    var step = held || next;
+    if (!p.settled && step) {
+      p.current = { title: step.title, status: step.status };
+      /* PR 145: last_seen_at is present while a worker holds the step (claimed, running,
+       * verifying): the progress a person can see during a step a minute long.
+       * Fence: TestGoalCardSaysWhenTheWorkerWasLastSeen. */
+      var seen = step.last_seen_at ? Date.parse(step.last_seen_at) : NaN;
+      if (!isNaN(seen)) {
+        var ago = Math.max(0, Math.round(((typeof now === 'number' && !isNaN(now) ? now : Date.now()) - seen) / 1000));
+        p.current.seenAgo = ago;
+        p.current.stale = ago > WORKER_STALE_S;
+      }
+    }
     /* The versions kept, oldest first. The timeline arrives newest first, and a
      * finished build step names the version it kept (agent.stepOutcome). */
     for (var i = events.length - 1; i >= 0; i--) {
@@ -3176,7 +3222,13 @@
       (p.total === 1 ? '' : 's') + ' done</b> · ' + Number(p.tokens).toLocaleString('en-US') +
       (p.maxTokens ? ' of ' + Number(p.maxTokens).toLocaleString('en-US') : '') + ' tokens</div>';
     if (p.current) {
-      html += '<div class="foot">Now: ' + esc(p.current.title) + ' — ' + esc(p.current.status) + '</div>';
+      html += '<div class="foot">Now: ' + esc(p.current.title) + ' — ' + esc(p.current.status) +
+        (p.current.seenAgo !== undefined && !p.current.stale
+          ? ' · worker last seen ' + p.current.seenAgo + ' s ago' : '') + '</div>';
+      if (p.current.stale) {
+        html += '<div class="note bad">Worker last seen ' + p.current.seenAgo + ' s ago: it may have stopped. ' +
+          'The step goes to another worker when its lease runs out.</div>';
+      }
     }
     if (p.kept.length) {
       html += '<div class="foot">' + p.kept.length + ' version' + (p.kept.length === 1 ? '' : 's') +
@@ -3209,8 +3261,13 @@
     var stopped = false;
     var timer = null;
 
+    var serverNow = NaN;
     function read(path) {
       return get(path).then(function (r) {
+        if (path === base) {
+          var date = r.headers && r.headers.get ? r.headers.get('Date') : null;
+          serverNow = date ? Date.parse(date) : NaN;
+        }
         return r.json().catch(function () { return {}; }).then(function (b) {
           if (!r.ok) {
             var e = new Error((b && b.error && b.error.message) || ('Request failed (' + r.status + ')'));
@@ -3225,7 +3282,7 @@
       timer = null;
       Promise.all([read(base), read(base + '/timeline')]).then(function (res) {
         if (stopped) return;
-        var p = goalProgress(res[0].goal, res[0].tasks, res[1].events);
+        var p = goalProgress(res[0].goal, res[0].tasks, res[1].events, serverNow);
         onProgress(p);
         if (!p.settled && !stopped) timer = later(tick, interval);
       }, function (err) {

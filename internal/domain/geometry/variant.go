@@ -84,6 +84,11 @@ type Variant struct {
 	// carried through so a variant list can say whose proposal it was.
 	InitiatorID string
 	CreatedAt   time.Time
+
+	// Extent is the design's corners as bounds found them when it was stored, so a
+	// read measures without placing every part (stored_extent.go). Nil for a row
+	// stored before migration 0025 until its first read keeps one.
+	Extent *Extent
 }
 
 // Assumptions is what FORGE chose rather than was told, never nil.

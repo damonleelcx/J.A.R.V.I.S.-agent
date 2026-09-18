@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -639,5 +640,92 @@ func TestSubtree_PlacesOnlyWhatLeadsToItsPathAndTheSameParts(t *testing.T) {
 	if a, b := allocs(small), allocs(big); b > a*3 {
 		t.Errorf("one row of a 400-block site (400,000 parts) allocated %.0f times, of a 2-block site %.0f: a subtree "+
 			"expands the whole design", b, a)
+	}
+}
+
+// Opening one design costs the same whatever size it is, and measures it exactly as
+// measuring it again would. GET /v1/geometry/{id} placed every part to find the
+// design's overall dimensions: 2.1-3.1 s for the 1,020,782-part fleet, on every open.
+// The corners are now kept when a version is stored (migration 0025). Counted, not
+// timed: reading a design of 100,000 placed parts allocates within about twice what
+// reading one of 400 does, where measuring allocated per part. A row stored before
+// the column existed is measured the old way ONCE, answers the same, and is kept.
+func TestGetMeasuresALargeDesignWithoutPlacingIt(t *testing.T) {
+	x := newExportsHarness(t, nil)
+	tree := lazyCar()
+	tree.Assumptions = []string{"the wheelbase"}
+	tree.NotVerified = []string{"a fence fixture"}
+	small, big, car := x.save(t, exportRows(200, 2)), x.save(t, exportRows(200, 500)), x.save(t, tree)
+
+	get := func(v *geometry.Variant) (json.RawMessage, uint64) {
+		rec := httptest.NewRecorder()
+		r := getAs(x.owner, "/v1/geometry/"+v.VersionID)
+		r.SetPathValue("id", v.VersionID)
+		var before, after runtime.MemStats
+		runtime.GC()
+		runtime.ReadMemStats(&before)
+		x.h.Get(rec, r)
+		runtime.ReadMemStats(&after)
+		var body struct {
+			Variant struct {
+				Measured json.RawMessage `json:"measured"`
+			} `json:"variant"`
+		}
+		if rec.Code != http.StatusOK || json.Unmarshal(rec.Body.Bytes(), &body) != nil {
+			t.Fatalf("GET /v1/geometry/%s answered %d %.300s", v.VersionID, rec.Code, rec.Body.String())
+		}
+		return body.Variant.Measured, after.Mallocs - before.Mallocs
+	}
+	fewest := func(v *geometry.Variant) uint64 {
+		n := uint64(1 << 62)
+		for i := 0; i < 3; i++ {
+			_, a := get(v)
+			n = min(n, a)
+		}
+		return n
+	}
+	same := func(name string, v *geometry.Variant) {
+		t.Helper()
+		got, _ := get(v)
+		want, _ := json.Marshal(geometry.Measure(v.Document, v.Units))
+		if string(got) != string(want) {
+			t.Errorf("%s: GET measured %s\nmeasuring it again finds %s", name, got, want)
+		}
+	}
+	// Kept when stored, before anything reads it.
+	ctx := context.Background()
+	kept := func() (n int) {
+		t.Helper()
+		if err := x.pool.QueryRow(ctx, `select count(*) from forge_geometry where version_id = any($1) and extent is not null`,
+			[]string{small.VersionID, big.VersionID, car.VersionID}).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		return n
+	}
+	if n := kept(); n != 3 {
+		t.Errorf("%d of 3 designs keep their extent when stored: the first open of the others places every part", n)
+	}
+	get(small) // warm the pool and the handler
+	get(big)
+	if s, b := fewest(small), fewest(big); b > s*2+2000 {
+		t.Errorf("reading a design of 100,000 placed parts allocated %d times, one of 400 %d: opening a design "+
+			"grows with the parts it places", b, s)
+	}
+	for name, v := range map[string]*geometry.Variant{"400 boxes": small, "100,000 boxes": big, "a car tree": car} {
+		same(name, v)
+	}
+
+	// Stored before migration 0025: no extent kept.
+	if _, err := x.pool.Exec(ctx, `update forge_geometry set extent = null where version_id = any($1)`,
+		[]string{big.VersionID, car.VersionID}); err != nil {
+		t.Fatal(err)
+	}
+	same("100,000 boxes stored before 0025", big)
+	same("a car tree stored before 0025", car)
+	if n := kept(); n != 3 {
+		t.Errorf("after one read, %d of 3 rows keep an extent (2 were stored before 0025): every open places them again", n)
+	}
+	if s, b := fewest(small), fewest(big); b > s*2+2000 {
+		t.Errorf("a design stored before 0025, read once, still allocates %d times against %d", b, s)
 	}
 }
