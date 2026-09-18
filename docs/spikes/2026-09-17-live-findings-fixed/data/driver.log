@@ -1,0 +1,14 @@
+start 23:05:15
+forged winpid=23120 worker winpid=22012
+23:05:19 created gol_01M2S7KENTQVYTTT90GK4DD8X1 tasks 3 tokens 506 in 2.7s
+23:05:19 start 200
+23:05:19 t=0 active tokens 506 ['ready', 'pending', 'pending']
+23:05:20 t=1 active tokens 506 ['running', 'pending', 'pending']
+23:05:33 t=14 active tokens 14267 ['succeeded', 'running', 'pending']
+23:06:00 t=41 active tokens 29180 ['succeeded', 'succeeded', 'running']
+23:06:23 t=64 active tokens 43717 ['succeeded', 'succeeded', 'running']
+23:06:27 t=68 failed tokens 43717 ['succeeded', 'succeeded', 'failed']
+23:06:27 done failed tokens 43717 longest unchanged 5.27s
+driver exit=0
+end 23:06:28
+exit=0

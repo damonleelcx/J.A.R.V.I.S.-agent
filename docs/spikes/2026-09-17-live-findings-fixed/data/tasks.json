@@ -1,0 +1,43 @@
+[
+ {
+  "title": "Step 1 of 3 — Hub Assembly",
+  "status": "succeeded",
+  "attempt_count": 1,
+  "error_code": null,
+  "error_detail": null,
+  "result": {
+   "result": {
+    "note": "Step 1 (Hub Assembly) came back unreadable: its JSON does not parse: \"prototype.parameters.value\" is a JSON string where a float64 was expected, at character 719: …\"name\": \"lug_nut_standard\", \"value\": \"ISO 4032 M12\", \"unit\": \"\"….",
+    "parts": 0,
+    "refused": true
+   },
+   "summary": "Step 1 of 3 (Hub Assembly): refused, kept nothing, and nothing is kept yet. Step 1 (Hub Assembly) came back unreadable: its JSON does not parse: \"prototype.parameters.value\" is a JSON string where a float64 was expected, at character 719: …\"name\": \"lug_nut_standard\", \"value\": \"ISO 4032 M12\", \"unit\": \"\"…."
+  },
+  "created_at": "2026-09-18T03:05:19.769749+00:00"
+ },
+ {
+  "title": "Step 2 of 3 — Rim and Tyre",
+  "status": "succeeded",
+  "attempt_count": 1,
+  "error_code": null,
+  "error_detail": null,
+  "result": {
+   "result": {
+    "note": "Step 2 (Rim and Tyre) came back unreadable: its JSON does not parse: \"prototype.definitions.size\" is a JSON string where a float64 was expected, at character 4649: …\"size\": { \"radius_from\": \"hub_center_diameter / 2\", \"height\"….",
+    "parts": 0,
+    "refused": true
+   },
+   "summary": "Step 2 of 3 (Rim and Tyre): refused, kept nothing, and nothing is kept yet. Step 2 (Rim and Tyre) came back unreadable: its JSON does not parse: \"prototype.definitions.size\" is a JSON string where a float64 was expected, at character 4649: …\"size\": { \"radius_from\": \"hub_center_diameter / 2\", \"height\"…."
+  },
+  "created_at": "2026-09-18T03:05:19.76975+00:00"
+ },
+ {
+  "title": "Step 3 of 3 — Final Assembly",
+  "status": "failed",
+  "attempt_count": 1,
+  "error_code": "FORBIDDEN",
+  "error_detail": "engine.Budget: FORBIDDEN: The authenticated principal is not permitted to perform this action on this resource. (goal budget exhausted on tokens: used 43717 tokens of 60000. 16283 tokens were left, and the next model call was not placed because it may cost 18641 (the largest call this goal has made, 14913 tokens, and a quarter more), which would pass the ceiling. The goal stops here rather than spend past it. Raise FORGE_MAX_TOKENS_PER_GOAL or the goal's own ceiling, or narrow the goal so it needs less context.)",
+  "result": null,
+  "created_at": "2026-09-18T03:05:19.769751+00:00"
+ }
+]
