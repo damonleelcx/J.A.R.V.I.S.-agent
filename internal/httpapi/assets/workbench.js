@@ -3163,6 +3163,7 @@
       outcome: goal.outcome_summary || '',
       current: null,
       kept: [],
+      refused: [],
       stop: null,
       tasks: tasks
     };
@@ -3191,6 +3192,11 @@
       if (events[i].kind !== 'task.succeeded') continue;
       var m = /kept as version ([^\s.]+)/.exec(events[i].summary || '');
       if (m && p.kept.indexOf(m[1]) < 0) p.kept.push(m[1]);
+      /* A step a gate refused succeeds and keeps nothing of its own (agent
+       * buildStepResult.Refused): said on the card, never counted as kept.
+       * Live run 3 of 2026-09-17 read "3 succeeded" with step 3 refused. */
+      var r = /^(Step \d+ of \d+ \([^)]*\)): refused, kept nothing/.exec(events[i].summary || '');
+      if (r && p.refused.indexOf(r[1]) < 0) p.refused.push(r[1]);
     }
     /* Why it stopped. The budget first: it is the one a person can act on, by
      * raising a ceiling, and its step fails too, so it would otherwise read as
@@ -3227,6 +3233,10 @@
     if (p.kept.length) {
       html += '<div class="foot">' + p.kept.length + ' version' + (p.kept.length === 1 ? '' : 's') +
         ' kept, the latest <code>' + esc(p.kept[p.kept.length - 1]) + '</code></div>';
+    }
+    if (p.refused.length) {
+      html += '<div class="note bad">' + p.refused.length + ' step' + (p.refused.length === 1 ? ' was' : 's were') +
+        ' refused and kept nothing: ' + esc(p.refused.join('; ')) + '</div>';
     }
     if (p.stop) {
       html += '<div class="note bad">' + (p.stop.kind === 'budget' ? 'Stopped by its budget: ' : 'Stopped: ') +

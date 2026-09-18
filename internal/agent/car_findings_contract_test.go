@@ -38,7 +38,7 @@ func extentsOf(d geometry.Document) [3]float64 {
 func TestTheContractSaysACylinderStandsOnItsOwnY(t *testing.T) {
 	words := contractWords()
 	for _, want := range []string{`A "cylinder" or "cone" STANDS UPRIGHT: its "height" runs along the part's own Y`,
-		`along X, is turned "rotation": [0, 0, 90]`} {
+		`has its axles along X, and a wheel is turned "rotation": [0, 0, 90]`} {
 		if !strings.Contains(words, want) {
 			t.Errorf("the contract does not say %q", want)
 		}

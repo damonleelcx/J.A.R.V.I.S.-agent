@@ -1,0 +1,74 @@
+{
+  "goal": {
+    "id": "gol_01M2S45Y74QN44X36YN9T0Q1JW",
+    "title": "Live verification: wheel build goal",
+    "statement": "a road-car wheel: a rim, a tyre, a hub, and five lug nuts on a polar pattern around the hub's axis. Build it in at most three steps.",
+    "status": "succeeded",
+    "autonomy": "sandbox_execute",
+    "risk_tier": "r1",
+    "avatar_state": "done",
+    "state_label": "Done",
+    "tokens_spent": 65294,
+    "max_tokens": 70000,
+    "tasks_total": 3,
+    "tasks_done": 3,
+    "tasks_failed": 0,
+    "outstanding": 0,
+    "pending_approvals": 0,
+    "created_at": "2026-09-18T02:05:28Z",
+    "started_at": "2026-09-18T02:05:31Z",
+    "ended_at": "2026-09-18T02:08:05Z",
+    "outcome_summary": "All 3 task(s) finished: 3 succeeded, 0 skipped."
+  },
+  "tasks": [
+    {
+      "id": "tsk_01M2S4611CJ11J7BG988YYWXQ4",
+      "title": "Step 1 of 3 \u2014 Hub Assembly",
+      "instruction": "Mount the five lug nuts in a polar pattern around the central hub.",
+      "status": "succeeded",
+      "risk_tier": "r1",
+      "verified": false,
+      "verification_required": false,
+      "requires_approval": false,
+      "attempts": 1,
+      "max_attempts": 5,
+      "depends_on": [],
+      "started_at": "2026-09-18T02:05:32Z",
+      "ended_at": "2026-09-18T02:06:02Z"
+    },
+    {
+      "id": "tsk_01M2S4611E38Z5HEE3WAH81D9A",
+      "title": "Step 2 of 3 \u2014 Rim and Tyre Assembly",
+      "instruction": "Fit the tyre onto the rim to create the wheel outer structure.",
+      "status": "succeeded",
+      "risk_tier": "r1",
+      "verified": false,
+      "verification_required": false,
+      "requires_approval": false,
+      "attempts": 1,
+      "max_attempts": 5,
+      "depends_on": [
+        "tsk_01M2S4611CJ11J7BG988YYWXQ4"
+      ],
+      "started_at": "2026-09-18T02:06:02Z",
+      "ended_at": "2026-09-18T02:06:35Z"
+    },
+    {
+      "id": "tsk_01M2S4611FM5K36N90NQEA7QR5",
+      "title": "Step 3 of 3 \u2014 Final Wheel Assembly",
+      "instruction": "Attach the rim and tyre assembly to the hub assembly.",
+      "status": "succeeded",
+      "risk_tier": "r1",
+      "verified": false,
+      "verification_required": false,
+      "requires_approval": false,
+      "attempts": 1,
+      "max_attempts": 5,
+      "depends_on": [
+        "tsk_01M2S4611E38Z5HEE3WAH81D9A"
+      ],
+      "started_at": "2026-09-18T02:06:35Z",
+      "ended_at": "2026-09-18T02:08:05Z"
+    }
+  ]
+}

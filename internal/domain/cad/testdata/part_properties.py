@@ -67,7 +67,93 @@ def main():
     extra = sorted(set(got) - set(want))
     if extra:
         mismatches.append("measured per shape and not directly: %s" % ", ".join(extra))
-    json.dump({"parts": len(want), "compared": compared, "worst_mm": worst, "mismatches": mismatches}, sys.stdout)
+    today = as_today(sidecar, fixture)
+    json.dump({"parts": len(want), "compared": compared, "worst_mm": worst, "mismatches": mismatches,
+               "today": today}, sys.stdout)
+
+
+def moved_point_as_it_was(point, location):
+    """_moved_point as it was before 2026-09-17 (kernel last walls): a generator over
+    rows. The shipped one must give these bits, not only a point within 1e-6."""
+    if point is None:
+        return None
+    t = location.wrapped.Transformation()
+    x, y, z = point
+    return tuple(t.Value(r, 1) * x + t.Value(r, 2) * y + t.Value(r, 3) * z + t.Value(r, 4) for r in (1, 2, 3))
+
+
+def as_today(sidecar, fixture):
+    """The shipped part properties against the path they replaced, to the BIT.
+
+    # Added 2026-09-17 (kernel last walls)
+
+    The comparison above is against measuring every solid from scratch, and centres
+    can only agree with that to ~1e-9 mm (a moved centre is not a measured one). This
+    one is against the per-definition path as it stood before this change — every
+    box read through build123d's bounding_box (_PROPERTIES_BOX_DIRECT off) and every
+    centre moved by the old _moved_point — and requires the whole part_properties
+    list to be EQUAL: every id, volume, centre and box, bit for bit. On this file's
+    fixture, and on placed_copies.py's (every placed shape kind at quarter turns, -0.0
+    beside 0 and random turns, and a part a feature changed) at one and at eight
+    copies of each placement.
+
+    It also counts, in the shipped run, the boxes read through build123d's
+    _box_of and the BRepTools.Clean calls: a direct read that was quietly not
+    taken would still be equal, so the counts are what shows it is the path taken.
+    Only a part a feature changed (no placement) should go through _box_of, and
+    Clean should run once per definition.
+    """
+    placed_copies = load("placed_copies", os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                                                        "placed_copies.py"))
+    requests = [("mesh_per_definition", fixture.fixture())]
+    requests += [("placed_copies x%d" % n, placed_copies.fixture(n)) for n in (1, 8)]
+    shipped_direct, shipped_moved = sidecar._PROPERTIES_BOX_DIRECT, sidecar._moved_point
+    out = {"runs": [], "differences": []}
+    for name, request in requests:
+        request = dict(request, format="", properties=True, skip_interferences=True)
+        sidecar._PROPERTIES_BOX_DIRECT = False
+        sidecar._moved_point = moved_point_as_it_was
+        try:
+            before = sidecar._build(request)
+        finally:
+            sidecar._PROPERTIES_BOX_DIRECT = shipped_direct
+            sidecar._moved_point = shipped_moved
+        tally = {"box_of": 0, "clean": 0}
+        box_of, clean = sidecar._box_of, sidecar.BRepTools
+
+        def counting_box_of(solid):
+            tally["box_of"] += 1
+            return box_of(solid)
+
+        class CountingClean:
+            @staticmethod
+            def Clean_s(*a, **k):
+                tally["clean"] += 1
+                return clean.Clean_s(*a, **k)
+
+        sidecar._box_of, sidecar.BRepTools = counting_box_of, CountingClean
+        try:
+            after = sidecar._build(request)
+        finally:
+            sidecar._box_of, sidecar.BRepTools = box_of, clean
+        for reply, which in ((before, "before"), (after, "shipped")):
+            if not reply.get("ok") or reply.get("skipped") or reply.get("features_failed"):
+                out["differences"].append("%s %s build failed: %s %s" % (
+                    name, which, reply.get("error"), reply.get("skipped")))
+        run = {"name": name, "parts": after.get("parts", 0), "box_of": tally["box_of"],
+               "clean": tally["clean"], "shape_builds": after.get("shape_builds", 0),
+               "changed_by_a_feature": len(request.get("operations") or []),
+               "equal": before.get("part_properties") == after.get("part_properties")}
+        out["runs"].append(run)
+        a, b = before.get("part_properties") or [], after.get("part_properties") or []
+        if len(a) != len(b):
+            out["differences"].append("%s: %d parts measured before, %d shipped" % (name, len(a), len(b)))
+        for x, y in zip(a, b):
+            if x != y:
+                out["differences"].append("%s: %s is %s shipped, %s before" % (name, x["id"], y, x))
+                if len(out["differences"]) > 20:
+                    break
+    return out
 
 
 if __name__ == "__main__":

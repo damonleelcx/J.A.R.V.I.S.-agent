@@ -1,0 +1,112 @@
+[
+ {
+  "seq": 1,
+  "kind": "plan.created",
+  "actor": "planner",
+  "summary": "Plan v1: 3 task(s), 3 new. Build it in 3 steps, each adding to the model the step before it kept.",
+  "payload": {
+   "model": "qwen3.7-plus",
+   "plan_id": "pln_01M2S7KH51RJGTPC74CVDYXTQV",
+   "version": 1,
+   "tasks_new": 3,
+   "tasks_total": 3
+  }
+ },
+ {
+  "seq": 2,
+  "kind": "goal.activated",
+  "actor": "human",
+  "summary": "Goal activated. Its tasks are claimable by any running worker.",
+  "payload": {
+   "to": "active",
+   "from": "draft"
+  }
+ },
+ {
+  "seq": 3,
+  "kind": "task.started",
+  "actor": "executor",
+  "summary": "Started work.",
+  "payload": {
+   "worker": "MSI/22012/R679GNT9",
+   "attempt": 1
+  }
+ },
+ {
+  "seq": 4,
+  "kind": "task.succeeded",
+  "actor": "executor",
+  "summary": "Step 1 of 3 (Hub Assembly): refused, kept nothing, and nothing is kept yet. Step 1 (Hub Assembly) came back unreadable: its JSON does not parse: \"prototype.parameters.value\" is a JSON string where a float64 was expected, at character 719: …\"name\": \"lug_nut_standard\", \"value\": \"ISO 4032 M12\", \"unit\": \"\"….",
+  "payload": {
+   "reason": "a build step is checked by the repairs and the kernel inside the step",
+   "verified": false
+  }
+ },
+ {
+  "seq": 5,
+  "kind": "task.started",
+  "actor": "executor",
+  "summary": "Started work.",
+  "payload": {
+   "worker": "MSI/22012/R679GNT9",
+   "attempt": 1
+  }
+ },
+ {
+  "seq": 6,
+  "kind": "task.succeeded",
+  "actor": "executor",
+  "summary": "Step 2 of 3 (Rim and Tyre): refused, kept nothing, and nothing is kept yet. Step 2 (Rim and Tyre) came back unreadable: its JSON does not parse: \"prototype.definitions.size\" is a JSON string where a float64 was expected, at character 4649: …\"size\": { \"radius_from\": \"hub_center_diameter / 2\", \"height\"….",
+  "payload": {
+   "reason": "a build step is checked by the repairs and the kernel inside the step",
+   "verified": false
+  }
+ },
+ {
+  "seq": 7,
+  "kind": "task.started",
+  "actor": "executor",
+  "summary": "Started work.",
+  "payload": {
+   "worker": "MSI/22012/R679GNT9",
+   "attempt": 1
+  }
+ },
+ {
+  "seq": 8,
+  "kind": "budget.exceeded",
+  "actor": "system",
+  "summary": "Budget exhausted on tokens: used 43717 tokens of 60000. 16283 tokens were left, and the next model call was not placed because it may cost 18641 (the largest call this goal has made, 14913 tokens, and a quarter more), which would pass the ceiling. The goal stops here rather than spend past it.",
+  "payload": {
+   "during": "build step",
+   "limit_kind": "tokens"
+  }
+ },
+ {
+  "seq": 9,
+  "kind": "task.failed",
+  "actor": "executor",
+  "summary": "engine.Budget: FORBIDDEN: The authenticated principal is not permitted to perform this action on this resource. (goal budget exhausted on tokens: used 43717 tokens of 60000. 16283 tokens were left, and the next model call was not placed because it may cost 18641 (the largest call this goal has made, 14913 tokens, and a quarter more), which would pass the ceiling. The goal stops here rather than spend past it. Raise FORGE_MAX_TOKENS_PER_GOAL or the goal's own ceiling, or narrow the goal so it needs less context.)",
+  "payload": {
+   "detail": "engine.Budget: FORBIDDEN: The authenticated principal is not permitted to perform this action on this resource. (goal budget exhausted on tokens: used 43717 tokens of 60000. 16283 tokens were left, and the next model call was not placed because it may cost 18641 (the largest call this goal has made, 14913 tokens, and a quarter more), which would pass the ceiling. The goal stops here rather than spend past it. Raise FORGE_MAX_TOKENS_PER_GOAL or the goal's own ceiling, or narrow the goal so it needs less context.)",
+   "reason": "the failure is not retryable",
+   "attempt": 1,
+   "error_code": "FORBIDDEN"
+  }
+ },
+ {
+  "seq": 10,
+  "kind": "goal.ended",
+  "actor": "system",
+  "summary": "1 of 3 task(s) failed or were cancelled; 2 succeeded, 0 were skipped as unreachable. 2 build step(s) were refused, kept nothing: Step 1 of 3 — Hub Assembly; Step 2 of 3 — Rim and Tyre.",
+  "payload": {
+   "failed": 1,
+   "outcome": "failed",
+   "skipped": 0,
+   "cancelled": 0,
+   "succeeded": 2,
+   "tasks_total": 3,
+   "refused_steps": 2
+  }
+ }
+]

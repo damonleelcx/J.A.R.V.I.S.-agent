@@ -444,7 +444,9 @@ func TestBuildGoal_AStepKeptBeforeItsWorkerStoppedIsNotBuiltAgain(t *testing.T) 
 // Past its ceiling, a build stops between steps, keeps what it built, and ends failed.
 func TestBuildGoal_ABudgetRefusalStopsTheGoalCleanly(t *testing.T) {
 	h := newBuildHarness(t)
-	ceiling := int64(150)
+	// 250, not 150, since calls reserve before they are placed (2026-09-17): after the
+	// plan's 100, step 1's call may cost 125 and fits; after step 1, step 2's does not.
+	ceiling := int64(250)
 	goal := h.goal(t, &ceiling)
 	stub := &goalStub{tokens: 100, replies: []string{threeSteps,
 		wholeDoc("chassis", "Chassis"), addPart("wheels", "Wheels"), addPart("body", "Body")}}

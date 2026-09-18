@@ -26,6 +26,15 @@ DB_PORT      ?= 55840
 # The CAD kernel's interpreter. Not committed: it is 60+ MB of OpenCASCADE, and
 # a deployment without it refuses parametric export rather than faking it.
 CAD_VENV     ?= .cadvenv
+# The venv's interpreter. A Windows venv keeps it in Scripts\python.exe and has no
+# bin/ at all, so `make measure-car` defaulted to a path that does not exist there
+# (docs/spikes/2026-09-17-live-verification, follow-up). FORGE_CAD_PYTHON, when set,
+# is used before either. Fence: TestMeasureCar_PicksTheVenvPythonForThisOS.
+ifeq ($(OS),Windows_NT)
+CAD_PYTHON   ?= $(abspath $(CAD_VENV))/Scripts/python.exe
+else
+CAD_PYTHON   ?= $(abspath $(CAD_VENV))/bin/python
+endif
 # Every package in it, pinned. The same file the image and CI install from.
 CAD_REQUIREMENTS := internal/domain/cad/requirements.txt
 DB_USER      ?= forge
@@ -184,10 +193,12 @@ measure-car: ## Measure how far a live car build actually gets (SPENDS REAL TOKE
 	@# measured is a partial car. Raise it deliberately, never by habit.
 	@# 300k is the ceiling damon approved for the Phase 2 live milestone (A4,
 	@# decided 2026-09-15); it was 400k.
+	@# The kernel is FORGE_CAD_PYTHON when it is set, else $(CAD_PYTHON): the venv's
+	@# Scripts/python.exe on Windows and bin/python elsewhere.
 	@test -n "$$FORGE_LLM_API_KEY" || { echo "FORGE_LLM_API_KEY is not set — source .env first"; exit 1; }
 	FORGE_LIVE_LLM_TESTS=1 \
 	FORGE_MEASURE_TOKEN_BUDGET="$${FORGE_MEASURE_TOKEN_BUDGET:-300000}" \
-	FORGE_CAD_PYTHON="$${FORGE_CAD_PYTHON:-$(abspath $(CAD_VENV))/bin/python}" \
+	FORGE_CAD_PYTHON="$${FORGE_CAD_PYTHON:-$(CAD_PYTHON)}" \
 	go test -count=1 -v -timeout 60m -run TestLiveCarCeiling ./internal/agent/
 
 .PHONY: drill
