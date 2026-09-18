@@ -38,22 +38,31 @@ import (
 //
 // A path point with a corner radius, an arc through a point, or an expression. A
 // pattern follows straight segments at literal coordinates, and silently ignoring a
-// radius would put copies somewhere nobody drew them.
+// radius would put copies somewhere nobody drew them. (A pattern's offsets and a
+// polar pattern's angle may be bound to parameters: pattern_binding.go. Its path's
+// points may not.)
 type Pattern struct {
 	Kind string `json:"kind"`
 	// Count is how many copies exist in total, the first included (linear, polar, path).
 	Count int `json:"count,omitempty"`
-	// Offset is the step between copies of a linear pattern.
-	Offset []float64 `json:"offset,omitempty"`
+	// Offset is the step between copies of a linear pattern. OffsetFrom binds its
+	// axes ("x", "y", "z") to expressions, as position_from binds a position.
+	Offset     []float64         `json:"offset,omitempty"`
+	OffsetFrom map[string]string `json:"offset_from,omitempty"`
 	// About and Angle turn a polar pattern: the axis through the parent's origin,
-	// and the total sweep in DEGREES — zero means a full turn.
-	About string  `json:"about,omitempty"`
-	Angle float64 `json:"angle,omitempty"`
-	// Rows, Columns, RowOffset and ColumnOffset lay out a grid.
-	Rows         int       `json:"rows,omitempty"`
-	Columns      int       `json:"columns,omitempty"`
-	RowOffset    []float64 `json:"row_offset,omitempty"`
-	ColumnOffset []float64 `json:"column_offset,omitempty"`
+	// and the total sweep in DEGREES — zero means a full turn. AngleFrom binds the
+	// sweep to an expression.
+	About     string  `json:"about,omitempty"`
+	Angle     float64 `json:"angle,omitempty"`
+	AngleFrom string  `json:"angle_from,omitempty"`
+	// Rows, Columns, RowOffset and ColumnOffset lay out a grid; the _from maps bind
+	// the offsets' axes as OffsetFrom does.
+	Rows             int               `json:"rows,omitempty"`
+	Columns          int               `json:"columns,omitempty"`
+	RowOffset        []float64         `json:"row_offset,omitempty"`
+	RowOffsetFrom    map[string]string `json:"row_offset_from,omitempty"`
+	ColumnOffset     []float64         `json:"column_offset,omitempty"`
+	ColumnOffsetFrom map[string]string `json:"column_offset_from,omitempty"`
 	// Path is the open polyline a path pattern follows, in the parent's frame, and
 	// Align turns each copy to follow it.
 	Path  []Point `json:"path,omitempty"`

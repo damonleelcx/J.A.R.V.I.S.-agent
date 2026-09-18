@@ -154,10 +154,34 @@ func repairDimensionsNoted(raw []byte) ([]byte, bool, bool) {
 }
 
 // childPositionNote tells the reader a placement's expression was read at its value
-// and kept as its binding.
-const childPositionNote = `A position on a placed child or an interface arrived as an expression. It was ` +
-	`placed at what the expression works out to from the parameters now, and the expression was kept as ` +
-	`its "position_from", so it follows those parameters when they change.`
+// and kept as its binding. It names a pattern's bindings from geometry's own table
+// since 2026-09-17 (bound patterns): repairPattern reads the same fields.
+var childPositionNote = `A position on a placed child or an interface, or a child's pattern step or angle, ` +
+	`arrived as an expression. It was placed at what the expression works out to from the parameters now, and ` +
+	`the expression was kept as its "position_from" (a pattern's ` + patternFroms() + `), so it follows ` +
+	`those parameters when they change.`
+
+// patternFroms is every pattern binding's key, quoted, from geometry's table.
+func patternFroms() string {
+	var froms []string
+	for _, b := range geometry.PatternBindings() {
+		froms = append(froms, strconv.Quote(b.From))
+	}
+	return strings.Join(froms, ", ")
+}
+
+// stepPatternFields is every pattern field that may carry a parameter's name, quoted,
+// from geometry's table: what a build step is told (stepSystem).
+func stepPatternFields() string {
+	var fields []string
+	for _, b := range geometry.PatternBindings() {
+		fields = append(fields, strconv.Quote(b.Field))
+	}
+	if len(fields) < 2 {
+		return strings.Join(fields, "")
+	}
+	return strings.Join(fields[:len(fields)-1], ", ") + " or " + fields[len(fields)-1]
+}
 
 // repairPlacements reads the positions of a tree's children and interfaces.
 //
@@ -207,6 +231,11 @@ func repairPlacements(container map[string]any) bool {
 				if !ok {
 					continue
 				}
+				// A child's pattern step and angle, by the same reading (2026-09-17, bound
+				// patterns). Fence: TestAssemble_AStepsPatternWrittenWithAParameterFollowsIt.
+				if pattern, isPattern := obj["pattern"].(map[string]any); isPattern && key == "children" {
+					moved = repairPattern(container, pattern, units) || moved
+				}
 				pos, ok := obj["position"].([]any)
 				if !ok {
 					continue
@@ -234,17 +263,66 @@ func repairPlacements(container map[string]any) bool {
 // bindPlacementAxis keeps a placement's expression for axis i as its position_from,
 // unless the placement already binds that axis.
 func bindPlacementAxis(obj map[string]any, i int, expr string) {
+	bindAxisAs(obj, "position_from", i, expr)
+}
+
+// bindAxisAs keeps expr for axis i under obj[fromKey], unless that axis is bound already.
+func bindAxisAs(obj map[string]any, fromKey string, i int, expr string) {
 	if i >= len(positionAxes) {
 		return
 	}
-	from, _ := obj["position_from"].(map[string]any)
+	from, _ := obj[fromKey].(map[string]any)
 	if from == nil {
 		from = map[string]any{}
-		obj["position_from"] = from
+		obj[fromKey] = from
 	}
 	if _, taken := from[positionAxes[i]]; !taken {
 		from[positionAxes[i]] = expr
 	}
+}
+
+// repairPattern reads a child's pattern fields that geometry.PatternBindings names, the
+// way repairPlacements reads a position: a quoted number is its number, and an
+// expression that evaluates over the reply's parameters is placed at its value and
+// kept as the field's binding ("offset_from" per axis, "angle_from"), unless the model
+// bound it itself. One that does not evaluate is left to fail as before.
+func repairPattern(container, pattern map[string]any, units string) bool {
+	moved := false
+	for _, b := range geometry.PatternBindings() {
+		if b.Vector {
+			vec, _ := pattern[b.Field].([]any)
+			for i, v := range vec {
+				expr, isString := v.(string)
+				if !isString {
+					continue
+				}
+				if f, isNum := asNumber(v); isNum {
+					vec[i], moved = f, true
+					continue
+				}
+				if f, ok := evaluateOver(container, expr, units); ok {
+					vec[i], moved = f, true
+					bindAxisAs(pattern, b.From, i, expr)
+				}
+			}
+			continue
+		}
+		expr, isString := pattern[b.Field].(string)
+		if !isString {
+			continue
+		}
+		if f, isNum := asNumber(expr); isNum {
+			pattern[b.Field], moved = f, true
+			continue
+		}
+		if f, ok := evaluateOver(container, expr, units); ok {
+			pattern[b.Field], moved = f, true
+			if _, taken := pattern[b.From]; !taken {
+				pattern[b.From] = expr
+			}
+		}
+	}
+	return moved
 }
 
 // evaluateOver works out one expression over a reply's parameters and derived

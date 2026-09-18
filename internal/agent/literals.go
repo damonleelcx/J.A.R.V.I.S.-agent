@@ -137,6 +137,7 @@ func literalPositionNote(before, after *Prototype) string {
 	uses := map[string][]literalUse{}
 	total := 0
 	anyRounded := false
+	inPatterns := false
 	scan := func(place string, pos []float64, from map[string]string) {
 		for i, lit := range pos {
 			if i > 2 || lit == 0 || from[positionAxes[i]] != "" {
@@ -175,6 +176,9 @@ func literalPositionNote(before, after *Prototype) string {
 		for _, a := range before.Assemblies {
 			for _, c := range a.Children {
 				oldPlacements[a.ID+"/"+c.ID] = c.Position
+				for _, step := range c.Pattern.Steps() {
+					oldPlacements[a.ID+"/"+c.ID+" "+step.Field] = step.Values
+				}
 			}
 			for _, f := range a.Interfaces {
 				oldPlacements[a.ID+" interface "+f.ID] = f.Position
@@ -187,6 +191,15 @@ func literalPositionNote(before, after *Prototype) string {
 		for _, c := range a.Children {
 			if key := a.ID + "/" + c.ID; !samePosition(oldPlacements, key, c.Position) {
 				scan(key, c.Position, c.PositionFrom)
+			}
+			// And a pattern's step typed as a parameter's value, unless bound (2026-09-17,
+			// bound patterns). Fence: TestAssemble_AStepThatRetypesAParameterInAPatternIsTold.
+			for _, step := range c.Pattern.Steps() {
+				if key := a.ID + "/" + c.ID + " " + step.Field; !samePosition(oldPlacements, key, step.Values) {
+					counted := total
+					scan(key, step.Values, step.From)
+					inPatterns = inPatterns || total > counted
+				}
 			}
 		}
 		for _, f := range a.Interfaces {
@@ -232,10 +245,14 @@ func literalPositionNote(before, after *Prototype) string {
 	if anyRounded {
 		holds += " to the digits written"
 	}
-	return fmt.Sprintf("This step typed %d position(s) as %s: %s. Write the "+
+	note := fmt.Sprintf("This step typed %d position(s) as %s: %s. Write the "+
 		"parameter's name so the position follows it: \"position_from\": {%q: %q} on a part or a definition, and "+
 		"%q in a child's or an interface's \"position\", which FORGE keeps bound to the parameters.",
 		total, holds, strings.Join(groups, "; "), axis, name, name)
+	if inPatterns {
+		note += " A pattern's step takes the name the same way, in its " + stepPatternFields() + "."
+	}
+	return note
 }
 
 // maxLiteralMultiple is the largest k for which a coordinate is read as k times one

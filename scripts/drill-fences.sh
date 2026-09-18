@@ -128,6 +128,7 @@ FILES=(
   internal/agent/turned.go
   internal/domain/geometry/tree.go
   internal/domain/geometry/binding.go
+  internal/domain/geometry/pattern_binding.go
   internal/domain/geometry/variant.go
   internal/domain/geometry/frame.go
   internal/domain/geometry/standard.go
@@ -722,7 +723,7 @@ drill "the storage door checks ids before repeats are written out" internal/doma
   ./internal/domain/geometry 'TestNewVariant_AnIdPlacedTwiceIsRefusedHoweverItWasMade'
 
 drill "a clone shares its pattern with the original" internal/domain/geometry/binding.go \
-  's = s.replace("c.Pattern = &p", "_ = p", 1)' \
+  's = s.replace("c.Pattern = c.Pattern.clone()", "_ = c.Pattern", 1)' \
   ./internal/domain/geometry 'TestPattern_ACloneDoesNotShareAPattern'
 
 drill "the kernel is sent one copy of a patterned child" internal/domain/geometry/tree.go \
@@ -4691,6 +4692,89 @@ drill "a paused build answers differently" internal/domain/cad/sidecar.py \
 drill "the prism yard lists its leaning pins" internal/domain/geometry/prism_yard_scale_test.go \
   's = s.replace("\t\t\tPattern: &Pattern{Kind: \"linear\", Count: 95, Offset: []float64{0, 0, 40}}},", "\t\t},\n\t\t{ID: \"leaning-extra\", Ref: \"pin\", Position: []float64{20, 1003, 1920}, Rotation: []float64{35, 0, 0}},\n\t\t{ID: \"leaning-extra-2\", Ref: \"pin\", Position: []float64{20, 1003, 1960}, Rotation: []float64{35, 0, 0}},", 1)' \
   ./internal/domain/geometry 'TestPrismYard_PlacesItsPrismsByPatternsNotByListing'
+
+
+echo "Bound patterns: a pattern's offsets and a polar angle written with a parameter follow it, 2026-09-17"
+# Added 2026-09-17 (bound patterns, geometry/pattern_binding.go).
+drill "a bound pattern is never bound" internal/domain/geometry/binding.go \
+  's = s.replace("\t\tif c.Pattern.bound() {\n", "\t\tif false {\n", 1)' \
+  ./internal/domain/geometry 'TestBind_APatternsStepAndAngleFollowTheirParameters'
+
+drill "a tree whose only binding is a pattern is not bound" internal/domain/geometry/binding.go \
+  's = s.replace("if len(c.PositionFrom) > 0 || c.Pattern.bound() {", "if len(c.PositionFrom) > 0 {", 1)' \
+  ./internal/domain/geometry 'TestBind_APatternsStepAndAngleFollowTheirParameters|TestPatternBinding_TheTableIsWhatTheBinderReads'
+
+drill "a pattern's bound angle is never written" internal/domain/geometry/pattern_binding.go \
+  's = s.replace("\t\t*value = v\n", "\t\t_ = v\n", 1)' \
+  ./internal/domain/geometry 'TestBind_APatternsStepAndAngleFollowTheirParameters'
+
+drill "a grid's column offset is bound from its row binding" internal/domain/geometry/pattern_binding.go \
+  's = s.replace("return &p.ColumnOffset, &p.ColumnOffsetFrom", "return &p.ColumnOffset, &p.RowOffsetFrom", 1)' \
+  ./internal/domain/geometry 'TestPatternBinding_TheTableIsWhatTheBinderReads|TestBind_APatternsStepAndAngleFollowTheirParameters'
+
+drill "the table teaches row_offset on a linear pattern" internal/domain/geometry/pattern_binding.go \
+  's = s.replace("Field: \"row_offset\", From: \"row_offset_from\", Kind: \"grid\"", "Field: \"row_offset\", From: \"row_offset_from\", Kind: \"linear\"", 1)' \
+  ./internal/domain/geometry 'TestPatternBinding_TheTableIsWhatTheBinderReads'
+
+drill "a pattern's clone shares its binding map" internal/domain/geometry/pattern_binding.go \
+  's = s.replace("\tq.OffsetFrom = copyStringMap(p.OffsetFrom)\n", "", 1)' \
+  ./internal/domain/geometry 'TestBind_APatternsBindingIsNotSharedWithItsSource'
+
+drill "a pattern's clone shares its offset" internal/domain/geometry/pattern_binding.go \
+  's = s.replace("\tq.Offset = append([]float64(nil), p.Offset...)\n", "", 1)' \
+  ./internal/domain/geometry 'TestBind_APatternsBindingIsNotSharedWithItsSource'
+
+drill "binding writes into the pattern the base shares" internal/domain/geometry/binding.go \
+  's = s.replace("\t\t\tp := c.Pattern.clone()\n", "\t\t\tp := c.Pattern\n", 1)' \
+  ./internal/domain/geometry 'TestBind_APatternsBindingIsNotSharedWithItsSource'
+
+drill "a respec's copy shares its pattern with its source" internal/domain/geometry/binding.go \
+  's = s.replace("c.Pattern = c.Pattern.clone()", "_ = c.Pattern", 1)' \
+  ./internal/domain/geometry 'TestBind_APatternsBindingIsNotSharedWithItsSource'
+
+drill "a broken pattern binding is named as a position" internal/domain/geometry/binding.go \
+  's = s.replace("fmt.Sprintf(\"binds %s %q, which is not an axis; use x, y or z\", what, axis)", "fmt.Sprintf(\"binds position %q, which is not an axis; use x, y or z\", axis)", 1)' \
+  ./internal/domain/geometry 'TestBind_APatternBindingThatCannotBeBoundKeepsItsNumberAndSaysWhich'
+
+drill "a stored pattern's binding is dropped by a respec" internal/domain/geometry/pattern_binding.go \
+  's = s.replace("\tq.OffsetFrom = copyStringMap(p.OffsetFrom)\n", "\tq.OffsetFrom = nil\n", 1)' \
+  ./internal/domain/geometry 'TestRespec_ABoundPatternMovesAndItsBindingSurvivesStorage'
+
+drill "the browser is drawn a re-specified pattern at its old numbers" internal/domain/geometry/binding.go \
+  's = s.replace("\t\tif c.Pattern.bound() {\n", "\t\tif compareToAuthored && c.Pattern.bound() {\n", 1)' \
+  ./internal/httpapi 'TestRendererFlattensATreeLikeTheExporter'
+
+drill "a pattern's expression is read and its binding dropped" internal/agent/dimensionrepair.go \
+  's = s.replace("\t\t\t\t\tbindAxisAs(pattern, b.From, i, expr)\n", "", 1)' \
+  ./internal/agent 'TestAssemble_AStepsPatternWrittenWithAParameterFollowsIt|TestTheContractTeachesPatternBindingsAsTheBinderReadsThem'
+
+drill "a pattern's angle expression is read and its binding dropped" internal/agent/dimensionrepair.go \
+  's = s.replace("\t\t\t\tpattern[b.From] = expr\n", "", 1)' \
+  ./internal/agent 'TestAssemble_AStepsPatternWrittenWithAParameterFollowsIt|TestTheContractTeachesPatternBindingsAsTheBinderReadsThem'
+
+drill "a child's pattern is never read for expressions" internal/agent/dimensionrepair.go \
+  's = s.replace("moved = repairPattern(container, pattern, units) || moved", "_ = pattern", 1)' \
+  ./internal/agent 'TestAssemble_AStepsPatternWrittenWithAParameterFollowsIt|TestTheContractTeachesPatternBindingsAsTheBinderReadsThem'
+
+drill "the contract does not teach a pattern's binding" internal/agent/converse.go \
+  's = s.replace("fmt.Sprintf(geometryContractTemplate, geometry.PatternBindingGuide(),", "fmt.Sprintf(geometryContractTemplate, \"\",", 1)' \
+  ./internal/agent 'TestTheContractTeachesPatternBindingsAsTheBinderReadsThem|TestAssemble_AStepIsTaughtToBindAPatternsStep'
+
+drill "a build step is not told which pattern fields take a name" internal/agent/dimensionrepair.go \
+  's = s.replace("\t\tfields = append(fields, strconv.Quote(b.Field))\n", "", 1)' \
+  ./internal/agent 'TestAssemble_AStepIsTaughtToBindAPatternsStep'
+
+drill "a pattern's retyped step is not read" internal/agent/literals.go \
+  's = s.replace("\t\t\t\t\tscan(key, step.Values, step.From)\n", "", 1)' \
+  ./internal/agent 'TestAssemble_AStepThatRetypesAParameterInAPatternIsTold'
+
+drill "a bound pattern step is counted as a literal" internal/agent/literals.go \
+  's = s.replace("scan(key, step.Values, step.From)", "scan(key, step.Values, nil)", 1)' \
+  ./internal/agent 'TestAssemble_AStepThatRetypesAParameterInAPatternIsTold|TestAssemble_AStepsPatternWrittenWithAParameterFollowsIt'
+
+drill "the note does not say a pattern takes the name" internal/agent/literals.go \
+  's = s.replace("\tif inPatterns {\n", "\tif false {\n", 1)' \
+  ./internal/agent 'TestAssemble_AStepThatRetypesAParameterInAPatternIsTold'
 
 echo
 
