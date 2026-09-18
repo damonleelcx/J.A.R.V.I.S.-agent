@@ -26,6 +26,38 @@ type placedCopies struct {
 	Problems     []string                         `json:"problems"`
 	ProblemCount int                              `json:"problem_count"`
 	Counts       map[string]map[string]placeTally `json:"counts"`
+	// Deep is _located's `deep` fallback, exercised on a definition carrying an
+	// attribute the plan does not recognize (added 2026-09-17, kernel last walls;
+	// see deep_fallback() in the script).
+	Deep struct {
+		Fallbacks    int      `json:"fallbacks"`
+		Located      int      `json:"located"`
+		Checked      int      `json:"checked"`
+		Problems     []string `json:"problems"`
+		ProblemCount int      `json:"problem_count"`
+	} `json:"deep"`
+}
+
+// A definition attribute _located's plan does not recognize is deepcopied per
+// copy, exactly as build123d's `location * shape` does: equal values, a fresh
+// object per copy (never the definition's or another copy's), and deepcopy's memo
+// kept, so an attribute that refers to the shape refers to the COPY. The fence gap
+// #134 named: no shape the sidecar builds carries such an attribute, so the fixture
+// gives every definition one (a non-empty list holding a dict and the shape) and
+// requires the fallback to run once per located occurrence.
+func TestKernel_ALocatedCopyDeepcopiesAnAttributeThePlanDoesNotKnow(t *testing.T) {
+	got := placedCopiesOf(t).Deep
+	t.Logf("deep fallback: %d run(s) for %d located occurrence(s), %d copies checked, %d difference(s)",
+		got.Fallbacks, got.Located, got.Checked, got.ProblemCount)
+	if got.Located < 50 || got.Checked < 50 {
+		t.Fatalf("%d located, %d checked: the fixture did not build", got.Located, got.Checked)
+	}
+	for _, p := range got.Problems {
+		t.Error(p)
+	}
+	if got.ProblemCount > len(got.Problems) {
+		t.Errorf("and %d more difference(s)", got.ProblemCount-len(got.Problems))
+	}
 }
 
 type placeTally struct {

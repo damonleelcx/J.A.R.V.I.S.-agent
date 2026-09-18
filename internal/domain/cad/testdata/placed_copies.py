@@ -272,6 +272,12 @@ def compare(sidecar, problems):
                         what, key, attribute(b.__dict__.get(key)), attribute(a.__dict__[key])))
             if a.wrapped.ShapeType() != b.wrapped.ShapeType() or a.wrapped.Orientation() != b.wrapped.Orientation():
                 problems.append("%s: shape type or orientation differs" % what)
+            # Added 2026-09-17 (kernel last walls): the moved shape is cast once per
+            # definition instead of by downcast() per copy, so the Python CLASS of the
+            # TopoDS object is compared too, not only the ShapeType it reports.
+            if type(a.wrapped) is not type(b.wrapped):
+                problems.append("%s: its B-rep is a %s, build123d's a %s" % (
+                    what, type(b.wrapped).__name__, type(a.wrapped).__name__))
             if transformation(a) != transformation(b):
                 problems.append("%s: placed at %s, build123d at %s" % (what, transformation(b), transformation(a)))
             p, q = ref_solids["placed"][i], new_solids["placed"][i]
@@ -329,6 +335,87 @@ def compare(sidecar, problems):
         if fmt == "step" and step_body(ref) != step_body(new):
             problems.append("step: the file differs below its header (instance ids blanked, lines joined)")
     return checked
+
+
+def deep_fallback(sidecar, problems):
+    """_located's `deep` fallback, on a definition carrying an attribute it does not
+    recognize.
+
+    # Why (fence gap named in #134)
+
+    ‼️ Added 2026-09-17 (kernel last walls). No shape the sidecar builds carries an
+    attribute _attribute_plan classifies as "deep" — build123d's own are atomics,
+    Locations, empty dicts and lists, and `align` (which deepcopy returns as itself) —
+    so the fallback `copy.deepcopy(value, memo)` never ran in any fixture and a drill
+    that broke it stayed green. It is the branch that keeps _located correct for the
+    NEXT attribute build123d adds, so it is exercised here on purpose: every
+    definition's _shape is given `forge_trace = ["kept", {"n": 1}, <the shape>]`,
+    which is a non-empty list, so it is neither "same", "dict" nor "list", and the
+    fixture is built build123d's way (`location * shape`) and the sidecar's way.
+
+    Each copy's forge_trace must be what build123d's deepcopy made: equal values; a
+    fresh list and a fresh dict, never the definition's or another copy's; and its
+    last element the COPY ITSELF — deepcopy's memo maps the definition to the copy
+    being made, so a fallback that dropped the memo would put a stray deep copy of
+    the definition there instead. And the fallback must be the path taken: once per
+    located occurrence.
+    """
+    real_shape = sidecar._shape
+
+    def traced(solid):
+        shape = real_shape(solid)
+        shape.forge_trace = ["kept", {"n": 1}, shape]
+        return shape
+
+    request = fixture(1)
+    sidecar._shape = traced
+    try:
+        ref, ref_solids = run(sidecar, False, "", request)
+        before = sidecar._located_fallbacks
+        new, new_solids = run(sidecar, True, "", request)
+        fallbacks = sidecar._located_fallbacks - before
+    finally:
+        sidecar._shape = real_shape
+    located = len(request["solids"])
+    if fallbacks != located:
+        problems.append("the deep fallback ran %d time(s) for %d located occurrence(s); once each"
+                        % (fallbacks, located))
+    seen = {}
+    checked = 0
+    for i, (a, b) in enumerate(zip(ref_solids["solids"], new_solids["solids"])):
+        what = "deep fallback, %s" % ref_solids["ids"][i]
+        q = new_solids["placed"][i]
+        ta, tb = a.__dict__.get("forge_trace"), b.__dict__.get("forge_trace")
+        if q is None:
+            # A part a feature changed is a new solid, not a copy: neither run gives
+            # it the attribute, and both must agree on that.
+            if (ta is None) != (tb is None):
+                problems.append("%s: carries forge_trace in one run and not the other" % what)
+            continue
+        if ta is None or tb is None:
+            problems.append("%s: forge_trace missing (build123d's %r, the sidecar's %r)" % (what, ta, tb))
+            continue
+        checked += 1
+        if ta[2] is not a:
+            problems.append("%s: build123d's own copy does not point at itself; the fixture is wrong" % what)
+        if type(tb) is not list or len(tb) != 3 or tb[0] != ta[0] or tb[1] != ta[1]:
+            problems.append("%s: forge_trace is %r, build123d's %r" % (what, tb, ta))
+            continue
+        definition = q[2].__dict__.get("forge_trace")
+        if tb is definition or tb[1] is definition[1]:
+            problems.append("%s: forge_trace is its definition's own object, not a copy" % what)
+        if tb[2] is not b:
+            problems.append("%s: forge_trace's shape is %s, not the copy itself (build123d's is its copy)"
+                            % (what, "the definition" if tb[2] is q[2] else "another object"))
+        for part, obj in (("list", tb), ("dict", tb[1])):
+            owner = seen.get(id(obj))
+            if owner is not None and owner[1] is obj:
+                problems.append("%s: its forge_trace %s is the same object as %s's" % (what, part, owner[0]))
+            seen[id(obj)] = (what, obj)
+    if checked < 50:
+        problems.append("deep fallback: %d placed copies checked; the fixture has 57" % checked)
+    return {"fallbacks": fallbacks, "located": located, "checked": checked, "problems": problems[:40],
+            "problem_count": len(problems)}
 
 
 def counts(sidecar, fast, copies):
@@ -412,7 +499,8 @@ def main():
     problems = []
     distinct_keys = shape_keys(sidecar, problems)
     checked = compare(sidecar, problems)
-    out = {"checked": checked, "distinct_keys": distinct_keys,
+    deep = deep_fallback(sidecar, [])
+    out = {"checked": checked, "distinct_keys": distinct_keys, "deep": deep,
            "problems": problems[:40], "problem_count": len(problems),
            "counts": {"reference": {"1": counts(sidecar, False, 1), "8": counts(sidecar, False, 8)},
                       "shipped": {"1": counts(sidecar, True, 1), "8": counts(sidecar, True, 8)}}}

@@ -49,8 +49,12 @@ try:
         import_step,
     )
     # A located copy without the B-rep copy Shape.moved makes and discards; see _located.
-    from build123d.topology.shape_core import downcast
-    from OCP.gp import gp_Ax3, gp_Trsf
+    from build123d.topology.shape_core import Shape, downcast, shapetype
+    from OCP.gp import gp_Ax3, gp_Pnt, gp_Trsf
+    # A placed copy's box read with the one OCCT call build123d makes; see _properties.
+    from OCP.Bnd import Bnd_Box
+    from OCP.BRepBndLib import BRepBndLib
+    from OCP.BRepTools import BRepTools
     # The STEP writer's own pieces, used directly rather than through build123d's
     # export_step, which only accepts a Compound(children=...) — see _step_document.
     from OCP.APIHeaderSection import APIHeaderSection_MakeHeader
@@ -219,6 +223,29 @@ def _fused(solids):
 _PLACE_WITHOUT_COPYING = True
 
 
+# # An occurrence's origin as a gp_Pnt, without a build123d Vector (kernel last walls)
+#
+# Priced by #146 (docs/spikes/2026-09-17-one-million-after, micro_placement.py):
+# `Vector(*position).to_pnt()` is 4.3 us, `gp_Pnt(*position)` 0.8 us, same bits. Read
+# from build123d 0.11.1 (geometry.py): given three ints or floats, Vector.__init__
+# builds `gp_Vec(x, y, z)` from them unchanged and to_pnt() is `gp_Pnt(vec.XYZ())`, so
+# the three doubles in the point are the three the caller passed, either way. Taken
+# only for exactly three ints or floats — Vector pads a shorter list with zeros and
+# accepts other things, and anything else still goes through it.
+# _PLACE_POINT_DIRECT = False restores the Vector; testdata/placed_copies.py compares
+# every placement against build123d's own, bit for bit.
+_PLACE_POINT_DIRECT = True
+
+
+def _origin_point(position):
+    """`Vector(*position).to_pnt()`."""
+    if _PLACE_POINT_DIRECT and len(position) == 3:
+        x, y, z = position
+        if type(x) in (float, int) and type(y) in (float, int) and type(z) in (float, int):
+            return gp_Pnt(x, y, z)
+    return Vector(*position).to_pnt()
+
+
 def _placement(solid, frames=None):
     """The part's frame, from the matrix the caller computed.
 
@@ -235,16 +262,17 @@ def _placement(solid, frames=None):
     Plane would give, to the bit. Keyed by repr, which tells -0.0 from 0.
     """
     m = solid["matrix"]
-    origin = Vector(*solid["position"])
+    position = solid["position"]
     if frames is None or not _PLACE_WITHOUT_COPYING:
+        origin = Vector(*position)
         return Location(Plane(origin=origin, x_dir=Vector(m[0], m[3], m[6]), z_dir=Vector(m[2], m[5], m[8])))
     key = repr(m)
     axes = frames.get(key)
     if axes is None:
-        plane = Plane(origin=origin, x_dir=Vector(m[0], m[3], m[6]), z_dir=Vector(m[2], m[5], m[8]))
+        plane = Plane(origin=Vector(*position), x_dir=Vector(m[0], m[3], m[6]), z_dir=Vector(m[2], m[5], m[8]))
         axes = frames[key] = (plane.z_dir.to_dir(), plane.x_dir.to_dir())
     trsf = gp_Trsf()
-    trsf.SetTransformation(gp_Ax3(origin.to_pnt(), axes[0], axes[1]))
+    trsf.SetTransformation(gp_Ax3(_origin_point(position), axes[0], axes[1]))
     trsf.Invert()
     return _location_of(TopLoc_Location(trsf))
 
@@ -324,6 +352,17 @@ _ATOMIC = (int, float, bool, str, bytes, complex, type(None))
 # breaks the classification shows up as this rising).
 _located_fallbacks = 0
 
+# # The moved shape's cast chosen once per definition (kernel last walls)
+#
+# Priced by #146 (micro_placement.py): downcast(Moved) 4.6 us, the definition's own
+# cast 1.7 us. downcast() looks up Shape.downcast_LUT[shapetype(obj)] per call, and a
+# moved shape's ShapeType is its definition's — Moved changes the location, never the
+# type — so the cast is looked up once per definition and kept in the build's `plans`
+# dict (under ("cast", id(shape)), beside the attribute plans and for the same reason:
+# never module-level). The same function is applied to the same TopoDS_Shape, so the
+# result is the object downcast() returns. _LOCATED_OWN_CAST = False restores downcast().
+_LOCATED_OWN_CAST = True
+
 
 def _attribute_plan(shape):
     """What deepcopy does to each of a definition's attributes, worked out once.
@@ -385,7 +424,13 @@ def _located(shape, location, plans=None):
         return location * shape
     cls = shape.__class__
     out = cls.__new__(cls)
-    moved = downcast(shape.wrapped.Moved(location.wrapped))
+    if _LOCATED_OWN_CAST and plans is not None:
+        cast = plans.get(("cast", id(shape)))
+        if cast is None:
+            cast = plans[("cast", id(shape))] = Shape.downcast_LUT[shapetype(shape.wrapped)]
+        moved = cast(shape.wrapped.Moved(location.wrapped))
+    else:
+        moved = downcast(shape.wrapped.Moved(location.wrapped))
     memo = {id(shape): out, id(shape.wrapped): moved}
     if not _PLACE_WITHOUT_DEEPCOPY:
         for key, value in shape.__dict__.items():
@@ -1172,9 +1217,60 @@ def _moved_point(point, location):
     """A point moved by a placement."""
     if point is None:
         return None
-    t = location.wrapped.Transformation()
+    # The same twelve reads and the same sums in the same order as a loop over rows,
+    # without a generator per call (kernel last walls: 7 us an occurrence).
+    v = location.wrapped.Transformation().Value
     x, y, z = point
-    return tuple(t.Value(r, 1) * x + t.Value(r, 2) * y + t.Value(r, 3) * z + t.Value(r, 4) for r in (1, 2, 3))
+    return (v(1, 1) * x + v(1, 2) * y + v(1, 3) * z + v(1, 4),
+            v(2, 1) * x + v(2, 2) * y + v(2, 3) * z + v(2, 4),
+            v(3, 1) * x + v(3, 2) * y + v(3, 3) * z + v(3, 4))
+
+
+# # A placed copy's box read directly, not through build123d (kernel last walls)
+#
+# Measured 2026-09-17 (docs/spikes/2026-09-17-kernel-last-walls): part properties
+# were the mesh path's largest phase at 1M occurrences (50 s), and _box_of was
+# 22-24 us of each occurrence's ~30 — of which the OCCT box itself
+# (BRepBndLib.AddOptimal) is 6.3 us and BRepTools.Clean 3 us. The rest is
+# build123d's BoundBox: keyword parsing, a Clean per call, three Vectors built and
+# read back.
+#
+# The box is still read from the PLACED solid, never computed from the definition's
+# box: a turned solid's envelope is not its definition's box moved (V3 above), and
+# even a copy that is only translated, or turned by a quarter, does not get the same
+# BITS that way — measured on boxes, cylinders, cones, spheres and extrusions at all
+# 24 quarter-turns: 1,478 of 3,600 differ by up to 9.1e-13 mm, because the primitive
+# carries its own location and OCCT composes the two translations before it moves a
+# vertex. So what is skipped is only the wrapper around the same call:
+#
+#   - BRepBndLib.AddOptimal_s(shape, box) with build123d's arguments (defaults:
+#     triangulation used if present, shape tolerance not), on the same TopoDS_Shape;
+#   - the Clean before it, once per DEFINITION instead of once per copy: a copy's
+#     faces and edges are its definition's (the same TShapes, placed), and Clean
+#     empties those shared representations, so every later copy's Clean found
+#     nothing to remove;
+#   - a void box as zeros and any exception as None, as _box_of answers.
+#
+# _PROPERTIES_BOX_DIRECT = False restores _box_of per solid; the fence
+# (testdata/part_properties.py) compares the shipped path against measuring every
+# solid through build123d, bounds bit for bit.
+_PROPERTIES_BOX_DIRECT = True
+_ZERO_BOX = ((0.0, 0.0, 0.0), (0.0, 0.0, 0.0))
+
+
+def _placed_box(solid):
+    """_box_of for a copy whose definition has been Cleaned: the same OCCT call."""
+    try:
+        if solid._wrapped is None:
+            return _ZERO_BOX
+        b = Bnd_Box()
+        BRepBndLib.AddOptimal_s(solid._wrapped, b)
+        if b.IsVoid():
+            return _ZERO_BOX
+        x0, y0, z0, x1, y1, z1 = b.Get()
+        return ((x0, y0, z0), (x1, y1, z1))
+    except Exception:
+        return None
 
 
 def _properties(solids, ids, placed=None):
@@ -1184,13 +1280,19 @@ def _properties(solids, ids, placed=None):
         p = placed[i] if (_PROPERTIES_PER_DEFINITION and placed) else None
         if p is None:
             volume, centre = _volume_of(solid), _centre_of(solid)
+            box = _box_of(solid)
         else:
             key, location, shape = p
             if key not in local:
+                if _PROPERTIES_BOX_DIRECT:
+                    try:
+                        BRepTools.Clean_s(shape.wrapped)
+                    except Exception:
+                        pass
                 local[key] = (_volume_of(shape), _centre_of(shape))
             volume, centre = local[key]
             centre = _moved_point(centre, location)
-        box = _box_of(solid)
+            box = _placed_box(solid) if _PROPERTIES_BOX_DIRECT else _box_of(solid)
         out.append({"id": ids[i], "volume": volume,
                     "centroid": list(centre) if centre is not None else None,
                     "bounds": list(box[0]) + list(box[1]) if box is not None else None})
@@ -2416,7 +2518,17 @@ def _step_document(built, names):
     """
     doc = TDocStd_Document(TCollection_ExtendedString("XmlOcaf"))
     application = XCAFApp_Application.GetApplication_s()
-    application.NewDocument(TCollection_ExtendedString("MDTV-XCAF"), doc)
+    # ‼️ No application.NewDocument(format, doc) here any more (kernel last walls,
+    # 2026-09-17). Through OCP that call cannot hand its document back: the C++
+    # out-parameter is a Handle the binding does not write through, so it opened a
+    # SECOND, empty document inside the application and left `doc` — the one this
+    # function fills and the writer writes — unopened (doc.IsOpened() is False either
+    # way). The application kept every one of them: NbDocuments() was 1, 2, 3 ... after
+    # each export, for the life of the process, and none could be closed (Close needs
+    # the handle, and GetDocument has the same out-parameter). InitDocument(doc) is
+    # what makes `doc` an XDE document, and it still runs. Measured in the worker's
+    # image: six 90,880-occurrence exports each wrote the same STEP body with and
+    # without the call, and the application held 0 documents after them instead of 6.
     application.InitDocument(doc)
     # Millimetres: the kernel's numbers always are (see the unit note in the request).
     XCAFDoc_DocumentTool.SetLengthUnit_s(doc, 0.001)
@@ -2760,6 +2872,58 @@ def _build_collected(request):
     return out
 
 
+# # Memory handed back after a reply (kernel last walls)
+#
+# Measured 2026-09-17 on Linux (docs/spikes/2026-09-17-kernel-last-walls, the worker's
+# forge-linux-test image, glibc 2.36): after a 90,880-occurrence STEP export the kernel
+# held 1,185 MiB with the request and reply released, of which glibc's heap had only
+# 127 MiB IN USE and 681 MiB FREE — freed by OCCT and Python, kept by the allocator
+# because a few live chunks sit above it in the heap. That is #145's "memory does not
+# come back after an export" (733 -> 1,385 -> 1,280 MiB). gc.collect() found 0 objects
+# and returned nothing; malloc_trim(0) returned the free pages in 23-29 ms and the
+# process fell to 506-543 MiB, export after export.
+#
+# So after each reply is written, the loop drops its request and reply and asks glibc
+# for malloc_trim(0). It never touches memory in use: it gives back pages that are
+# already free, and the next build takes them from the kernel again as it would have
+# the first time. Only glibc has it: on musl, macOS or Windows _malloc_trim is None and
+# _release_memory does nothing. It runs after the reply is flushed, so no caller waits
+# on it; the next request is read at most a few tens of ms later.
+#
+# _RELEASE_AFTER_REPLY = False keeps the allocator's pages, as before.
+_RELEASE_AFTER_REPLY = True
+_malloc_trim_fn = False  # not looked up yet
+
+
+def _malloc_trim():
+    """glibc's malloc_trim, or None where there is none."""
+    global _malloc_trim_fn
+    if _malloc_trim_fn is False:
+        _malloc_trim_fn = None
+        if sys.platform.startswith("linux"):
+            try:
+                import ctypes
+
+                fn = ctypes.CDLL("libc.so.6").malloc_trim
+                fn.argtypes = [ctypes.c_size_t]
+                fn.restype = ctypes.c_int
+                _malloc_trim_fn = fn
+            except (OSError, AttributeError):
+                _malloc_trim_fn = None
+    return _malloc_trim_fn
+
+
+def _release_memory():
+    """Hand the allocator's free pages back to the OS. True when it ran."""
+    if not _RELEASE_AFTER_REPLY:
+        return False
+    trim = _malloc_trim()
+    if trim is None:
+        return False
+    trim(0)
+    return True
+
+
 def main():
     sys.stdout.write(json.dumps({"ready": True, "protocol": PROTOCOL}) + "\n")
     sys.stdout.flush()
@@ -2783,6 +2947,9 @@ def main():
                          "trace": traceback.format_exc()[-2000:]}
         sys.stdout.write(json.dumps(reply) + "\n")
         sys.stdout.flush()
+        # Nothing of this request is needed any more; see _release_memory.
+        line = request = reply = None
+        _release_memory()
 
 
 if __name__ == "__main__":
