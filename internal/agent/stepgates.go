@@ -101,6 +101,12 @@ func unreadableDetail(resp *llm.Response) string {
 		return ""
 	}
 	why := "its JSON does not parse: " + jsonProblem(body, err)
+	// A designation written as a parameter's value that no part carries is said with
+	// the field it belongs in (designationrepair.go), not only as a type error.
+	// Fence: TestParseReply_ADesignationAsAParametersValue.
+	if _, read := repairReply(body); len(read.refused) > 0 {
+		why += ". " + strings.Join(read.refused, " ")
+	}
 	if resp.Truncated() {
 		why = fmt.Sprintf("it was cut off at the reply limit after %d characters, so %s", len(resp.Content), why)
 	}

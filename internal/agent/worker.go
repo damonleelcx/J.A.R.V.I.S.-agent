@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"math/rand"
@@ -511,6 +512,7 @@ func (w *Worker) runTask(ctx context.Context, task *engine.Task) {
 
 	outcome, err := w.executor.Execute(ctx, tc, workspace)
 	if err != nil {
+		w.sayBudgetStop(ctx, goal, task, err, "task")
 		w.retryOrFail(ctx, goal, task, err)
 		return
 	}
@@ -906,6 +908,19 @@ func (w *Worker) appendEvent(ctx context.Context, goalID string, taskID *string,
 			"goal_id", goalID, "kind", kind,
 			"detail", "a timeline event was lost; the execution history has a gap here")
 	}
+}
+
+// sayBudgetStop writes budget.exceeded when err is a budget breach met part-way through
+// a task, as runTask does for one met before it: with how much was left and why the
+// next call was not placed (LimitBreach.Summary), which is what the card shows.
+func (w *Worker) sayBudgetStop(ctx context.Context, goal *engine.Goal, task *engine.Task, err error, during string) {
+	var stop *errs.Error
+	if !errors.As(err, &stop) || stop.Fields["limit_kind"] == nil {
+		return
+	}
+	summary, _ := stop.Fields["summary"].(string)
+	w.appendEvent(ctx, goal.ID, &task.ID, engine.EventBudgetExceeded, engine.ActorSystem, summary,
+		map[string]any{"limit_kind": stop.Fields["limit_kind"], "during": during})
 }
 
 func (w *Worker) loadGoal(ctx context.Context, goalID string) (*engine.Goal, error) {

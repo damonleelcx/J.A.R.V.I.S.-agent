@@ -1035,9 +1035,13 @@ func parseReply(resp *llm.Response) (Reply, error) {
 	//
 	// Only after the strict parse has already failed, so a reply that parses is
 	// never rewritten.
-	if repaired, relocated, evaluated := repairDimensionsNoted(body); relocated || evaluated {
+	if repaired, read := repairReply(body); read.changed() {
+		relocated, evaluated := read.relocated, read.evaluated
 		var second Reply
 		if json.Unmarshal(repaired, &second) == nil {
+			for _, line := range read.dropped {
+				second.noteRepair(line)
+			}
 			if relocated {
 				second.noteRepair("One or more dimensions arrived as expressions written in the " +
 					"place of a number. They were read as the expressions they are — the " +

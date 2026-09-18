@@ -321,7 +321,7 @@ func (g *BudgetGuard) RecordSpend(ctx context.Context, ex db.Querier, goalID str
 	if tokens == 0 && costCents == 0 {
 		return nil
 	}
-	// The largest call rides in the same statement (migration 0025): the reservation
+	// The largest call rides in the same statement (migration 0026): the reservation
 	// a goal's next call must fit reads it, and it must never disagree with the spend.
 	tag, err := ex.Exec(ctx, `
 		update forge_goals

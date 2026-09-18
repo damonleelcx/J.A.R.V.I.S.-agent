@@ -408,12 +408,7 @@ func (w *Worker) runBuildStep(ctx context.Context, goal *engine.Goal, task *engi
 		// A step the budget stopped part-way says so on the timeline, as a step the
 		// budget stopped before it began does (runTask): with how much was left and
 		// why the next call was not placed, which is what the card shows.
-		var stop *errs.Error
-		if errors.As(err, &stop) && stop.Fields["limit_kind"] != nil {
-			summary, _ := stop.Fields["summary"].(string)
-			w.appendEvent(ctx, goal.ID, &task.ID, engine.EventBudgetExceeded, engine.ActorSystem, summary,
-				map[string]any{"limit_kind": stop.Fields["limit_kind"], "during": "build step"})
-		}
+		w.sayBudgetStop(ctx, goal, task, err, "build step")
 		w.retryOrFail(ctx, goal, task, err)
 		return
 	}

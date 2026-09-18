@@ -7,7 +7,7 @@ PR 148's run 3 build goal was made, with a goal ceiling of 60,000 tokens.
 ## The re-check
 
 - **Setup.** Local `forged` and `forge-worker` built from this branch, talking over HTTP. Postgres `forge-pg`
-  :55840 on a fresh schema `forge_livefix` (migrations 0001–0025). MinIO :55841. The real kernel (build123d
+  :55840 on a fresh schema `forge_livefix` (migrations 0001–0025, the largest-call one then numbered 0025; it is 0026 since PR 150 took 0025). MinIO :55841. The real kernel (build123d
   0.11.1). Endpoint `token-plan.cn-beijing.maas.aliyuncs.com` (converse `qwen3.7-plus`).
 - **The goal.** PR 148's run 3 statement, word for word: *a road-car wheel: a rim, a tyre, a hub, and five lug
   nuts on a polar pattern around the hub's axis. Build it in at most three steps.* It was created with
@@ -73,7 +73,7 @@ are left. No retry was made:
      and the next turn's prompt carry it too. Nothing is rewritten.
    - **The contract** now says a placement goes in one place, using that example.
 2. **A goal does not spend past its ceiling** (`engine.BudgetGuard.CheckCall`, `agent/spend.go`, migration
-   0025).
+   0026).
    - **The reservation.** Every build call reserves the largest call the goal has made, plus a quarter, for itself
      and for each call in flight. This is PR 148's meter rule, applied to the product.
    - **Stored, not held in memory.** The largest call is kept on the goal and written in the same statement as
@@ -128,15 +128,44 @@ Both were seen red again.
 150 would refuse step 1 before its call, which is exactly what the change is for. The test still asserts what it
 did: the plan and step 1 fit, and nothing after them is asked.
 
-## Found, not fixed
+## Follow-ups done on the same branch (no live calls)
 
-- **Two new ways a live step came back unreadable:** a string as a parameter's value, and `"<dim>_from"` inside
-  `"size"`. Both are shapes `dimensionrepair.go` could read rather than refuse, as it already does for an
-  expression in a numeric slot.
-- **An ordinary (non-build) goal's executor does not reserve.** `executor.go` calls its model directly and
-  records the spend after the call. The worker checks the ceiling only before a task, so an executor task can
-  still pass the ceiling by a task's worth of calls. This branch covers build goals, the path named in the
-  finding.
+1. **Migration renumbered to 0026.** PR 150 (`viewport/one-million-browse`) adds `0025_geometry_extent.sql`, so
+   this branch's migration is now `0026_goal_largest_call.sql`. It still uses `add column if not exists`.
+   - Nothing else pins the number. The two code comments that named it now say 0026.
+   - The live run above applied it as 0025, before the rename.
+2. **The two unreadable step shapes are read** (`designationrepair.go`, `dimensionrepair.go`). The fences are built
+   around the exact fragments the live refusals quoted.
+   - **`"size": {"radius_from": "hub_center_diameter / 2", ...}`** is lifted to the binding the contract teaches:
+     `"size_from": {"radius": ...}`. The expression is no longer kept as a dimension named `radius_from`.
+   - **A parameter holding a designation (`"value": "ISO 4032 M12"`).** The contract teaches one place for a
+     designation: a part's `"standard"`. A parameter's value is always a number, and no number is guessed.
+     - When a part in the reply already carries that designation, the parameter only restated it. It is left
+       out, and the turn says so.
+     - When no part carries it, nothing can say which part it belongs to. The reply stays refused, and the
+       step's note names the field: `"shape": "standard", "standard": "ISO 4032 M12"`.
+     - Any other text in a parameter's value fails exactly as before.
+   - **Fences:** `TestParseReply_ADesignationAsAParametersValue`, `TestParseReply_ReadsABindingWrittenInsideSize` and
+     `TestAssemble_TheLiveRecheckStepsAreReadNotRefused`. The last runs both live step shapes through
+     `buildOneStep`: both are kept, and the bound radius works out to 35.
+3. **Ordinary goals reserve too.**
+   - Before each executor call, `executor.go` now runs the same `CheckCall`: the stored largest call, raised by
+     each call in the task, plus a quarter. It uses the same stop text.
+   - Before, that loop checked nothing between calls: a task could spend until its iteration limit. The fence's
+     task would have spent 1,200 of a 300 ceiling. It now stops at 200 with 100 left.
+   - A task stopped part-way writes `budget.exceeded` on the timeline (`Worker.sayBudgetStop`, shared with build
+     steps).
+   - **Fence:** `TestExecutor_AnOrdinaryGoalStopsBeforeACallThatWouldPassItsCeiling` (Postgres).
+
+**Drills.** Six new ones, plus "a step the budget stopped part-way says nothing on the timeline" re-anchored onto
+the shared helper. All 7 were seen red:
+
+- "a designation parameter a part carries is still refused"
+- "a designation refusal does not name the field"
+- "a binding inside size is kept as a dimension of its own name"
+- "an executor call reserves nothing"
+- "an executor task does not raise the largest call"
+- "a task the budget stopped part-way says nothing on the timeline"
 
 ## Files
 

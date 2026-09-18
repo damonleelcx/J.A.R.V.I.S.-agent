@@ -1,4 +1,4 @@
--- 0025_goal_largest_call: the largest single model call a goal has paid for.
+-- 0026_goal_largest_call: the largest single model call a goal has paid for.
 --
 -- docs/spikes/2026-09-17-live-verification, follow-up 4; decided 2026-09-17 by the
 -- coordinator under damon's delegation: a goal must not spend past its ceiling.

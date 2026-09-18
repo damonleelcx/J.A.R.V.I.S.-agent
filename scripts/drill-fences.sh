@@ -187,6 +187,7 @@ FILES=(
   # Added 2026-09-17 (live findings fixed): the doubled-offset, goal-reservation and
   # measure-car drills target these three.
   internal/agent/doubled.go
+  internal/agent/designationrepair.go
   internal/domain/engine/budget.go
   Makefile
 )
@@ -4792,12 +4793,37 @@ drill "a goal's largest call is not stored" internal/domain/engine/budget.go \
   ./internal/agent 'TestBuildGoal_AGoalStopsBeforeACallThatWouldPassItsCeiling'
 
 drill "a step the budget stopped part-way says nothing on the timeline" internal/agent/buildgoal.go \
-  's = s.replace("if errors.As(err, &stop) && stop.Fields[\"limit_kind\"] != nil {", "if false {", 1)' \
+  's = s.replace("\t\tw.sayBudgetStop(ctx, goal, task, err, \"build step\")\n", "", 1)' \
   ./internal/agent 'TestBuildGoal_AStepDoesNotPlaceARepairItsCeilingCannotPay'
 
 drill "the card shows a budget stop with its plumbing" internal/httpapi/assets/workbench.js \
   's = s.replace("if (withCode) return withCode[1].trim();", "if (withCode) return s;", 1)' \
   ./internal/httpapi 'TestWorkbench_TheCardSaysWhyABuildStoppedWithTokensLeft'
+
+echo "Live re-check follow-ups (2026-09-17): unreadable step shapes, executor reservation"
+drill "a designation parameter a part carries is still refused" internal/agent/designationrepair.go \
+  's = s.replace("if id, ok := carried[normalisedDesignation(value)]; ok {", "if id, ok := carried[normalisedDesignation(value)]; ok && false {", 1)' \
+  ./internal/agent 'TestParseReply_ADesignationAsAParametersValue'
+
+drill "a designation refusal does not name the field" internal/agent/stepgates.go \
+  's = s.replace("why += \". \" + strings.Join(read.refused, \" \")", "why += \"\"", 1)' \
+  ./internal/agent 'TestParseReply_ADesignationAsAParametersValue'
+
+drill "a binding inside size is kept as a dimension of its own name" internal/agent/dimensionrepair.go \
+  's = s.replace("if dim := strings.TrimSuffix(k, \"_from\"); dim != k && dim != \"\" {", "if dim := strings.TrimSuffix(k, \"_from\"); false && dim != k {", 1)' \
+  ./internal/agent 'TestParseReply_ReadsABindingWrittenInsideSize|TestAssemble_TheLiveRecheckStepsAreReadNotRefused'
+
+drill "an executor call reserves nothing" internal/agent/executor.go \
+  's = s.replace("if breach := e.budget.CheckCall(&g, e.clock.Now(), 0); breach != nil &&", "if breach := e.budget.CheckGoal(&g, e.clock.Now()); breach != nil &&", 1)' \
+  ./internal/agent 'TestExecutor_AnOrdinaryGoalStopsBeforeACallThatWouldPassItsCeiling'
+
+drill "an executor task does not raise the largest call" internal/agent/executor.go \
+  's = s.replace("largest = max(largest, resp.Usage.TotalTokens)", "largest = max(largest, 0)", 1)' \
+  ./internal/agent 'TestExecutor_AnOrdinaryGoalStopsBeforeACallThatWouldPassItsCeiling'
+
+drill "a task the budget stopped part-way says nothing on the timeline" internal/agent/worker.go \
+  's = s.replace("\t\tw.sayBudgetStop(ctx, goal, task, err, \"task\")\n", "", 1)' \
+  ./internal/agent 'TestExecutor_AnOrdinaryGoalStopsBeforeACallThatWouldPassItsCeiling'
 
 echo
 

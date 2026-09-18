@@ -80,7 +80,7 @@ type Spend struct {
 	CostCents    int64
 	TasksCreated int
 	// LargestCall is the most tokens one model call of this goal has cost
-	// (migration 0025): what the next call is assumed to cost when deciding
+	// (migration 0026): what the next call is assumed to cost when deciding
 	// whether it still fits under the ceiling (agent/spend.go).
 	LargestCall int64
 }

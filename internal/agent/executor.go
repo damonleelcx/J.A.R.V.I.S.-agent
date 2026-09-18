@@ -156,9 +156,27 @@ func (e *Executor) Execute(ctx context.Context, tc *TaskContext, workspace strin
 
 	out := &Outcome{}
 	totalCalls := 0
+	// The costliest call of this goal so far: what the goal had recorded when the
+	// task started, raised by every call this task makes.
+	largest := tc.Goal.Spend.LargestCall
 
 	for iteration := 0; ; iteration++ {
 		if breach := e.budget.CheckIteration(iteration); breach != nil {
+			return nil, breach.Error()
+		}
+		// ‼️ Every call is placed only if the goal's ceiling can still pay for it: the
+		// spend so far plus the largest call the goal has made and a quarter more
+		// (engine.BudgetGuard.CheckCall), the reservation a build's calls make
+		// (spend.go). The worker checks the ceiling only before a task starts, and this
+		// loop used to check nothing, so one task could spend past the ceiling by as
+		// many calls as its iterations allow (2026-09-17, decided under damon's
+		// delegation: a goal must not spend past its ceiling).
+		// Fence: TestExecutor_AnOrdinaryGoalStopsBeforeACallThatWouldPassItsCeiling.
+		g := *tc.Goal
+		g.Spend.Tokens += out.Usage.TotalTokens
+		g.Spend.LargestCall = largest
+		if breach := e.budget.CheckCall(&g, e.clock.Now(), 0); breach != nil &&
+			(breach.Kind == engine.LimitTokens || breach.Kind == engine.LimitCost) {
 			return nil, breach.Error()
 		}
 
@@ -175,6 +193,7 @@ func (e *Executor) Execute(ctx context.Context, tc *TaskContext, workspace strin
 		out.Usage.CompletionTokens += resp.Usage.CompletionTokens
 		out.Usage.TotalTokens += resp.Usage.TotalTokens
 		out.Iterations = iteration + 1
+		largest = max(largest, resp.Usage.TotalTokens)
 
 		// Record spend immediately, not at the end. A task that is killed
 		// mid-loop has still spent the tokens, and a budget that only counts
