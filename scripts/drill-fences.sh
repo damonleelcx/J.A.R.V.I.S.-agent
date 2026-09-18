@@ -75,6 +75,7 @@ esac
 # refuses rather than trusting this list to be kept up to date by hand.
 FILES=(
   internal/domain/geometry/curve.go
+  internal/domain/geometry/curve_guide.go
   internal/domain/geometry/triangulate.go
   internal/domain/geometry/sweep.go
   internal/domain/geometry/mesh.go
@@ -353,8 +354,10 @@ drill "the kernel is sent chords instead of arcs" internal/domain/geometry/curve
   's = s.replace("return CurveEdge{To: corners[i].to, Via: &via}", "_ = via\n\t\treturn CurveEdge{To: corners[i].to}", 1)' \
   ./internal/domain/cad 'TestKernel_ARoundedCornerIsARealArc'
 
+# Re-anchored by B3 (2026-09-18): profileExtent measures the exact curve (lines and
+# true arcs) now, not the flattened one, so the drawn vertices are added back in.
 drill "the measurement path measures the drawn vertex" internal/domain/geometry/overlay.go \
-  's = s.replace("flat, _, err := partOutline(p).flatten(\"outline\", Millimetre)\n\tif err != nil {\n\t\treturn min, max, false\n\t}", "flat := partOutline(p).Points\n\tif false {\n\t\treturn min, max, false\n\t}", 1)' \
+  's = s.replace("\treturn min, max, true\n}", "\tfor _, v := range partOutline(p).Points {\n\t\tgrow(v)\n\t}\n\treturn min, max, true\n}", 1)' \
   ./internal/domain/geometry 'TestMeasureFindsTheMaterialAndNotTheRoundedOffCorner'
 
 drill "the renderer steps its arcs at a different fineness" internal/httpapi/assets/forge3d.js \
@@ -5084,6 +5087,41 @@ drill "grouped containment takes a box's whole length for its reach" internal/do
 drill "grouped containment takes a quarter of a box for its reach" internal/domain/cad/sidecar.py \
   's = s.replace("            p.append(v * (lo[c] + hi[c]) / 2)\n            reach += abs(v) * (hi[c] - lo[c]) / 2\n", "            p.append(v * (lo[c] + hi[c]) / 2)\n            reach += abs(v) * (hi[c] - lo[c]) / 4\n", 1)' \
   ./internal/domain/cad 'TestKernel_APairKeyWithoutLocationsIsTheKeyBuild123dGave'
+
+
+echo
+echo "Bowed outlines taught and measured (B3, 2026-09-18)"
+drill "the contract drops the bowed-edge guide" internal/agent/converse.go \
+  's = s.replace("\tgeometry.CurveGuide())", "\tgeometry.StandardGuide()[:0])", 1)' \
+  ./internal/agent 'TestContract_TeachesBowedEdgesFromTheValidatorsTable'
+
+drill "a via rule is refused in words the contract does not teach" internal/domain/geometry/profile.go \
+  's = s.replace("errors.New(ruleViaZ.refusal)", "errors.New(ruleViaZ.teach)", 1)' \
+  ./internal/domain/geometry 'TestCurveGuide_TeachesEveryRuleTheValidatorEnforces'
+
+drill "a bowed-edge rule is enforced but no longer taught" internal/domain/geometry/curve_guide.go \
+  's = s.replace("ruleViaOfVia, ruleViaRadius, ruleViaZ, ruleViaNoArc,", "ruleViaOfVia, ruleViaRadius, ruleViaZ,", 1)' \
+  ./internal/domain/geometry 'TestCurveGuide_TeachesEveryRuleTheValidatorEnforces'
+
+drill "the guide shows a crescent the validator refuses" internal/domain/geometry/curve_guide.go \
+  's = s.replace("viaPt(-20, 0, 0, 6), viaPt(20, 0, 0, 14)", "viaPt(-20, 0, 0, 6), viaPt(20, 0, 0, 6)", 1)' \
+  ./internal/domain/geometry 'TestCurveGuide_EveryExampleBuildsAsPrinted'
+
+drill "Go measures a bowed outline by its chords" internal/domain/geometry/overlay.go \
+  's = s.replace("range arcExtremes(at, *e.Via, e.To) {", "range arcExtremes(at, *e.Via, e.To)[:0] {", 1)' \
+  ./internal/domain/geometry 'TestMeasure_ABowedEdgeReachesItsArcNotItsChords'
+
+drill "an arc is measured past the ends of its sweep" internal/domain/geometry/overlay.go \
+  's = s.replace("\t\tif t <= angle {\n\t\t\tout = append(out, pt)", "\t\tif true {\n\t\t\tout = append(out, pt)", 1)' \
+  ./internal/domain/geometry 'TestMeasure_ABowedEdgeReachesItsArcNotItsChords'
+
+drill "Go measures a bowed outline short of where OCCT builds it" internal/domain/geometry/overlay.go \
+  's = s.replace("range arcExtremes(at, *e.Via, e.To) {", "range arcExtremes(at, *e.Via, e.To)[:0] {", 1)' \
+  ./internal/domain/cad 'TestKernel_GoMeasuresABowedOutlineWhereTheKernelDoes'
+
+drill "a lens and a bulged loft station are built from chords" internal/domain/cad/sidecar.py \
+  "s = s.replace('edges.append(ThreePointArc(at, Vector(*via), to))', 'edges.append(Line(at, Vector(*via)))\n            edges.append(Line(Vector(*via), to))', 1)" \
+  ./internal/domain/cad 'TestKernel_ALensExtrusionIsTwoExactArcs|TestKernel_ALoftIntoABulgedStationBlendsExactly'
 
 echo
 
