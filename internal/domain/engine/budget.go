@@ -49,13 +49,30 @@ type LimitBreach struct {
 	// Remedy is specific to the axis rather than generic, because the right
 	// action differs per axis.
 	Remedy string
+	// Why is set when the goal stopped with budget left: how much, and why the next
+	// call was not placed (CheckCall). Empty when the ceiling was simply reached.
+	Why string
+}
+
+// Summary is the breach as the timeline says it.
+func (b LimitBreach) Summary() string {
+	s := fmt.Sprintf("Budget exhausted on %s: used %s of %s.", b.Kind, b.Used, b.Limit)
+	if b.Why != "" {
+		s += " " + b.Why
+	}
+	return s
 }
 
 // Error renders a breach as a typed error.
 func (b LimitBreach) Error() *errs.Error {
+	remedy := b.Remedy
+	if b.Why != "" {
+		remedy = b.Why + " " + remedy
+	}
 	return errs.New("engine.Budget", errs.CodeForbidden).
-		WithDetail("goal budget exhausted on %s: used %s of %s. %s", b.Kind, b.Used, b.Limit, b.Remedy).
-		WithField("limit_kind", string(b.Kind))
+		WithDetail("goal budget exhausted on %s: used %s of %s. %s", b.Kind, b.Used, b.Limit, remedy).
+		WithField("limit_kind", string(b.Kind)).
+		WithField("summary", b.Summary())
 }
 
 // BudgetGuard decides whether a goal may keep spending.
@@ -155,6 +172,67 @@ func (g *BudgetGuard) CheckGoal(goal *Goal, now time.Time) *LimitBreach {
 	return nil
 }
 
+// TokenCeiling is the goal's effective token ceiling, or 0 for none.
+func (g *BudgetGuard) TokenCeiling(goal *Goal) int64 {
+	return effectiveInt64(goal.Budget.MaxTokens, g.defaults.MaxTokensPerGoal)
+}
+
+// CallReserve is what the next model call of a goal is assumed to cost: the largest
+// call it has made so far with a quarter on top, because a build's calls grow with
+// the model they carry. Zero before the goal has made any call. The same rule the
+// live harness's meter uses (agent/car_ceiling_live_test.go, PR 148).
+func CallReserve(largest int64) int64 {
+	if largest <= 0 {
+		return 0
+	}
+	return largest + largest/4
+}
+
+// CheckCall reports whether a goal may place one more model call with inFlight
+// others already placed and unanswered, or the breach that stops it.
+//
+// # Why it reserves rather than compares
+//
+// CheckGoal refuses once the spend has REACHED the ceiling, so the last call placed
+// under it lands past it: one build step's call is up to ~16,000 tokens. A call is
+// placed here only if the spend so far, plus the reserve for it and for every call
+// in flight, still fits — so a goal stops with tokens left rather than overshoot,
+// and says how many were left and why the next call was not placed.
+// Fence: TestCheckCall_AGoalNeverPlacesACallItsCeilingCannotPay (engine) and
+// TestBuildGoal_AGoalStopsBeforeACallThatWouldPassItsCeiling (agent).
+func (g *BudgetGuard) CheckCall(goal *Goal, now time.Time, inFlight int) *LimitBreach {
+	// A spend ceiling already reached is said as it always was; any other breach
+	// (the clock, the task count) is returned after the reservation is checked, so
+	// a caller that acts only on spend never skips it.
+	reached := g.CheckGoal(goal, now)
+	if reached != nil && (reached.Kind == LimitTokens || reached.Kind == LimitCost) {
+		return reached
+	}
+	ceiling := g.TokenCeiling(goal)
+	reserve := CallReserve(goal.Spend.LargestCall)
+	if ceiling <= 0 || reserve <= 0 {
+		return reached
+	}
+	need := goal.Spend.Tokens + int64(inFlight+1)*reserve
+	if need <= ceiling {
+		return reached
+	}
+	left := ceiling - goal.Spend.Tokens
+	inFlightNote := ""
+	if inFlight > 0 {
+		inFlightNote = fmt.Sprintf(", with %d call(s) already in flight reserving the same", inFlight)
+	}
+	return &LimitBreach{
+		Kind:  LimitTokens,
+		Used:  fmt.Sprintf("%d tokens", goal.Spend.Tokens),
+		Limit: fmt.Sprintf("%d", ceiling),
+		Why: fmt.Sprintf("%d tokens were left, and the next model call was not placed because it may cost %d "+
+			"(the largest call this goal has made, %d tokens, and a quarter more%s), which would pass the ceiling. "+
+			"The goal stops here rather than spend past it.", left, reserve, goal.Spend.LargestCall, inFlightNote),
+		Remedy: "Raise FORGE_MAX_TOKENS_PER_GOAL or the goal's own ceiling, or narrow the goal so it needs less context.",
+	}
+}
+
 // CheckTaskCreation reports whether a new task may be created at the given depth.
 //
 // Depth and count are checked separately because they catch different runaways:
@@ -243,10 +321,13 @@ func (g *BudgetGuard) RecordSpend(ctx context.Context, ex db.Querier, goalID str
 	if tokens == 0 && costCents == 0 {
 		return nil
 	}
+	// The largest call rides in the same statement (migration 0025): the reservation
+	// a goal's next call must fit reads it, and it must never disagree with the spend.
 	tag, err := ex.Exec(ctx, `
 		update forge_goals
 		   set tokens_spent = tokens_spent + $2,
-		       cost_cents_spent = cost_cents_spent + $3
+		       cost_cents_spent = cost_cents_spent + $3,
+		       largest_call_tokens = greatest(largest_call_tokens, $2)
 		 where id = $1`, goalID, tokens, costCents)
 	if err != nil {
 		return errs.Wrap(op, errs.CodeDatabaseUnavail, err)

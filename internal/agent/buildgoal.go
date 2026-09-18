@@ -95,7 +95,17 @@ type buildStepResult struct {
 	VersionID string `json:"version_id,omitempty"`
 	Parts     int    `json:"parts"`
 	Note      string `json:"note,omitempty"`
+	// Refused is a step that kept nothing of its own: a gate refused what the model
+	// sent, and the model is still the version the step before kept. The task still
+	// succeeds — what was kept is a valid model — but the step, the goal's outcome
+	// and the card say so (live run 3, 2026-09-17: step 3 kept nothing and the goal
+	// read "3 succeeded"). Fence: TestBuildGoal_ARefusedStepIsSaidOnTheStepAndTheGoal.
+	Refused bool `json:"refused,omitempty"`
 }
+
+// refusedStepMarker is how a refused step's summary reads, on the task, the timeline
+// and the card (workbench.js goalProgress reads the same words).
+const refusedStepMarker = "refused, kept nothing"
 
 func buildStepOf(t *engine.Task) (buildStepInputs, bool) {
 	var in buildStepInputs
@@ -236,8 +246,9 @@ func (b *BuildSteps) run(ctx context.Context, goal *engine.Goal, task *engine.Ta
 		}
 	}
 
-	kept := buildStepResult{VersionID: prev.VersionID, Parts: partsPlaced(doc), Note: note}
-	if next != nil && next.HasGeometry() {
+	kept := buildStepResult{VersionID: prev.VersionID, Parts: partsPlaced(doc), Note: note,
+		Refused: next == nil || !next.HasGeometry()}
+	if !kept.Refused {
 		call, err := b.recordStep(ctx, task, in, started)
 		if err != nil {
 			return nil, err
@@ -353,7 +364,15 @@ func (b *BuildSteps) modelSoFar(ctx context.Context, task *engine.Task, in build
 func stepOutcome(in buildStepInputs, kept buildStepResult, resumed bool) *Outcome {
 	summary := fmt.Sprintf("Step %d of %d (%s): %d part(s), kept as version %s.",
 		in.N, in.Of, in.Step.Name, kept.Parts, kept.VersionID)
-	if kept.VersionID == "" {
+	switch {
+	case kept.Refused && kept.VersionID != "":
+		// Not "kept as version": the version is the step before's, and the card counts
+		// the versions kept by reading exactly those words.
+		summary = fmt.Sprintf("Step %d of %d (%s): %s; the model stays at version %s (%d part(s)).",
+			in.N, in.Of, in.Step.Name, refusedStepMarker, kept.VersionID, kept.Parts)
+	case kept.Refused:
+		summary = fmt.Sprintf("Step %d of %d (%s): %s, and nothing is kept yet.", in.N, in.Of, in.Step.Name, refusedStepMarker)
+	case kept.VersionID == "":
 		summary = fmt.Sprintf("Step %d of %d (%s): nothing kept yet.", in.N, in.Of, in.Step.Name)
 	}
 	if kept.Note != "" {
@@ -385,6 +404,15 @@ func (w *Worker) runBuildStep(ctx context.Context, goal *engine.Goal, task *engi
 			// handBack swallows by design, so a stopped build step was handed back
 			// without the event that says so.
 			return
+		}
+		// A step the budget stopped part-way says so on the timeline, as a step the
+		// budget stopped before it began does (runTask): with how much was left and
+		// why the next call was not placed, which is what the card shows.
+		var stop *errs.Error
+		if errors.As(err, &stop) && stop.Fields["limit_kind"] != nil {
+			summary, _ := stop.Fields["summary"].(string)
+			w.appendEvent(ctx, goal.ID, &task.ID, engine.EventBudgetExceeded, engine.ActorSystem, summary,
+				map[string]any{"limit_kind": stop.Fields["limit_kind"], "during": "build step"})
 		}
 		w.retryOrFail(ctx, goal, task, err)
 		return

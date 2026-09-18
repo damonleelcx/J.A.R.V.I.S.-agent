@@ -392,12 +392,13 @@ func (w *Worker) runTask(ctx context.Context, task *engine.Task) {
 	}
 
 	// Budget is checked BEFORE any work, against persisted counters. A worker
-	// restarting must not get a fresh allowance.
+	// restarting must not get a fresh allowance. A call that would pass the ceiling is
+	// refused by the step's own client before it is placed (spend.go, CheckCall).
 	if breach := w.budget.CheckGoal(goal, w.clock.Now()); breach != nil {
 		w.log.Warn(ctx, logx.EventBudgetExceededLog,
 			"goal_id", goal.ID, "task_id", task.ID, "limit", string(breach.Kind))
 		w.appendEvent(ctx, goal.ID, &task.ID, engine.EventBudgetExceeded, engine.ActorSystem,
-			fmt.Sprintf("Budget exhausted on %s: used %s of %s.", breach.Kind, breach.Used, breach.Limit),
+			breach.Summary(),
 			map[string]any{"limit_kind": string(breach.Kind), "used": breach.Used, "limit": breach.Limit})
 		// ‼️ Through running, because the task is still only claimed and claimed
 		// cannot move to failed. Failing it straight from claimed was refused, the
@@ -914,11 +915,11 @@ func (w *Worker) loadGoal(ctx context.Context, goalID string) (*engine.Goal, err
 	err := w.pool.QueryRow(ctx, `
 		select id, project_id, created_by, title, statement, status, autonomy, risk_tier,
 		       completion_criteria, max_tokens, max_cost_cents, max_wallclock_ms, max_tasks,
-		       tokens_spent, cost_cents_spent, tasks_created, started_at, created_at
+		       tokens_spent, cost_cents_spent, tasks_created, largest_call_tokens, started_at, created_at
 		  from forge_goals where id = $1`, goalID).
 		Scan(&g.ID, &g.ProjectID, &g.CreatedBy, &g.Title, &g.Statement, &status, &autonomy, &risk,
 			&criteria, &g.Budget.MaxTokens, &g.Budget.MaxCostCents, &wallMillis{&g.Budget.MaxWallClock},
-			&g.Budget.MaxTasks, &g.Spend.Tokens, &g.Spend.CostCents, &g.Spend.TasksCreated,
+			&g.Budget.MaxTasks, &g.Spend.Tokens, &g.Spend.CostCents, &g.Spend.TasksCreated, &g.Spend.LargestCall,
 			&g.StartedAt, &g.CreatedAt)
 	if err != nil {
 		return nil, errs.Wrap("agent.Worker.loadGoal", errs.CodeNotFound, err)
