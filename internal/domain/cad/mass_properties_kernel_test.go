@@ -78,6 +78,82 @@ type propertiesComparison struct {
 	Compared   int      `json:"compared"`
 	WorstMM    float64  `json:"worst_mm"`
 	Mismatches []string `json:"mismatches"`
+	// Today is the shipped path against the one it replaced on 2026-09-17 (kernel
+	// last walls), bit for bit; see as_today() in the script.
+	Today struct {
+		Runs []struct {
+			Name              string `json:"name"`
+			Parts             int    `json:"parts"`
+			BoxOf             int    `json:"box_of"`
+			Clean             int    `json:"clean"`
+			ShapeBuilds       int    `json:"shape_builds"`
+			ChangedByAFeature int    `json:"changed_by_a_feature"`
+			Equal             bool   `json:"equal"`
+		} `json:"runs"`
+		Differences []string `json:"differences"`
+	} `json:"today"`
+}
+
+func partPropertiesComparison(t *testing.T) propertiesComparison {
+	t.Helper()
+	python := os.Getenv("FORGE_CAD_PYTHON")
+	if python == "" {
+		t.Skip("FORGE_CAD_PYTHON is unset; skipping the CAD kernel tests")
+	}
+	out, err := exec.Command(python, filepath.Join("testdata", "part_properties.py"), "sidecar.py").Output()
+	if err != nil {
+		var exit *exec.ExitError
+		if errors.As(err, &exit) {
+			t.Fatalf("comparing part properties: %v\n%s", err, exit.Stderr)
+		}
+		t.Fatalf("comparing part properties: %v", err)
+	}
+	var got propertiesComparison
+	if err := json.Unmarshal(out, &got); err != nil {
+		t.Fatalf("reading the comparison: %v\n%s", err, out)
+	}
+	return got
+}
+
+// The part-properties step at scale (kernel last walls): a placed copy's box is
+// read with the one OCCT call build123d's bounding_box makes, without its wrapper,
+// and its definition is Cleaned once instead of once per copy; its centre is moved
+// without a generator. Neither may change a bit of the answer: the whole
+// part_properties list equals the one the path before this change gave, on every
+// placed shape kind, at one and at eight copies of each placement. And the direct
+// read must be the path TAKEN — only a part a feature changed is read through
+// _box_of, and Clean runs no more than once per definition — so that a switch
+// quietly left off cannot pass as equal. docs/spikes/2026-09-17-kernel-last-walls.
+func TestKernel_PartPropertiesReadDirectlyAreTheSameBitsAsBefore(t *testing.T) {
+	got := partPropertiesComparison(t).Today
+	if len(got.Runs) != 3 {
+		t.Fatalf("%d fixture run(s); want the three (mesh_per_definition, placed_copies x1 and x8)", len(got.Runs))
+	}
+	for _, d := range got.Differences {
+		t.Error(d)
+	}
+	for _, r := range got.Runs {
+		t.Logf("%s: %d parts, %d shape builds, %d read through _box_of, %d Clean call(s), equal %v",
+			r.Name, r.Parts, r.ShapeBuilds, r.BoxOf, r.Clean, r.Equal)
+		if !r.Equal {
+			t.Errorf("%s: part properties differ from the path before this change", r.Name)
+		}
+		if r.Parts < 10 {
+			t.Errorf("%s: %d parts; the fixture did not build", r.Name, r.Parts)
+		}
+		if r.BoxOf != r.ChangedByAFeature {
+			t.Errorf("%s: %d box(es) read through build123d's _box_of; only the %d part(s) a feature changed should be",
+				r.Name, r.BoxOf, r.ChangedByAFeature)
+		}
+		if r.Clean < 1 || r.Clean > r.ShapeBuilds {
+			t.Errorf("%s: %d Clean call(s) for %d definition(s) and %d parts: Clean is once per definition",
+				r.Name, r.Clean, r.ShapeBuilds, r.Parts)
+		}
+	}
+	if x1, x8 := got.Runs[1], got.Runs[2]; x8.Parts <= 4*x1.Parts || x8.Clean != x1.Clean {
+		t.Errorf("placed copies x1 → x8: %d → %d parts, %d → %d Clean calls; eight times the copies must not Clean more",
+			x1.Parts, x8.Parts, x1.Clean, x8.Clean)
+	}
 }
 
 // A copy's volume and centre measured once per shape are what measuring the

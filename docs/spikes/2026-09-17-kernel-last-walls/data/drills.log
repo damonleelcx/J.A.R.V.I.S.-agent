@@ -1,0 +1,59 @@
+Selected drills
+  ✅ went red      — a placed copy's box is read from its definition
+           mass_properties_kernel_test.go:133: mesh_per_definition: block-1 is {'id': 'block-1', 'volume': 1800.0, 'centroid': [1.4802973661668754e-17, 10.0, -5.0], 'bounds': [-6.0, -2.5, -15.0, 6.0, 2.5, 15.0]} shipped, {'id': 'block-1', 'volume': 1800.0, 'centroid': [1.4802973661668754e-17, 10.0, -5.0], 'bounds': [-6.0, 7.5, -20.0, 6.0, 12.5, 10.0]} before
+           mass_properties_kernel_test.go:133: mesh_per_definition: block-2 is {'id': 'block-2', 'volume': 1800.0, 'centroid': [40.0, 10.000000000000002, -5.0], 'bounds': [-6.0, -2.5, -15.0, 6.0, 2.5, 15.0]} shipped, {'id': 'block-2', 'volume': 1800.0, 'centroid': [40.0, 10.000000000000002, -5.0], 'bounds': [33.55384757729337, 4.834936490538905, -20.0, 46.44615242270663, 15.165063509461099, 10.0]} before
+  ✅ went red      — a placed copy's box goes through build123d again
+           mass_properties_kernel_test.go:136: mesh_per_definition: 13 parts, 6 shape builds, 13 read through _box_of, 0 Clean call(s), equal true
+           mass_properties_kernel_test.go:145: mesh_per_definition: 13 box(es) read through build123d's _box_of; only the 1 part(s) a feature changed should be
+  ✅ went red      — every placed copy is Cleaned again
+           mass_properties_kernel_test.go:136: mesh_per_definition: 13 parts, 6 shape builds, 1 read through _box_of, 12 Clean call(s), equal true
+           mass_properties_kernel_test.go:149: mesh_per_definition: 12 Clean call(s) for 6 definition(s) and 13 parts: Clean is once per definition
+  ✅ went red      — a moved centre adds its translation first
+           mass_properties_kernel_test.go:133: mesh_per_definition: ell-1 is {'id': 'ell-1', 'volume': 749.9999999999999, 'centroid': [-54.662406060734035, 7.263614178872058, -7.579122514774403e-17], 'bounds': [-65.13030214988503, 0.0, -2.5, -41.20614758428183, 15.80549002841697, 2.5]} shipped, {'id': 'ell-1', 'volume': 749.9999999999999, 'centroid': [-54.66240606073403, 7.263614178872058, -7.579122514774403e-17], 'bounds': [-65.13030214988503, 0.0, -2.5, -41.20614758428183, 15.80549002841697, 2.5]} before
+           mass_properties_kernel_test.go:133: mesh_per_definition: ell-2 is {'id': 'ell-2', 'volume': 749.9999999999999, 'centroid': [-54.662406060734035, 37.26361417887206, -7.579122514774403e-17], 'bounds': [-65.13030214988503, 30.000000000000004, -2.5, -41.20614758428183, 45.80549002841697, 2.5]} shipped, {'id': 'ell-2', 'volume': 749.9999999999999, 'centroid': [-54.66240606073403, 37.26361417887206, -7.579122514774403e-17], 'bounds': [-65.13030214988503, 30.000000000000004, -2.5, -41.20614758428183, 45.80549002841697, 2.5]} before
+  ✅ went red      — a placement's origin loses its last digits
+           placed_copies_kernel_test.go:123: 174 solid(s) compared across the three formats, 9 shape key(s), 346 difference(s)
+           placed_copies_kernel_test.go:135: format '': bounds [-859.151036354307, -30.0, -765.8616300993494, 2104.0, 1931.350279284634, 965.3756721008439], build123d's [-859.1510363544983, -30.0, -765.8616300993494, 2104.0, 1931.350279284634, 965.3756721008439]
+  ✅ went red      — a moved copy is not cast
+           placed_copies_kernel_test.go:123: 174 solid(s) compared across the three formats, 9 shape key(s), 171 difference(s)
+           placed_copies_kernel_test.go:135: format '', box-0-0: its B-rep is a TopoDS_Shape, build123d's a TopoDS_Compound
+  ✅ went red      — the kernel keeps its free memory after a reply
+           release_memory_kernel_test.go:36: win32 (glibc false): 4 replies [true false true true], release calls []; malloc_trim found false, ran false
+           release_memory_kernel_test.go:43: memory released 0 time(s) for 4 replies; once after each
+  ✅ went red      — the loop holds its reply while memory is released
+           release_memory_kernel_test.go:36: win32 (glibc false): 4 replies [true false true true], release calls [{RepliesWritten:1 LastReplyStillHeld:true Ran:false} {RepliesWritten:2 LastReplyStillHeld:false Ran:false} {RepliesWritten:3 LastReplyStillHeld:true Ran:false} {RepliesWritten:4 LastReplyStillHeld:true Ran:false}]; malloc_trim found false, ran false
+           release_memory_kernel_test.go:50: release 1 ran while the loop still held its reply: that memory cannot be handed back
+  ✅ went red      — an export leaves a document open in the application
+           release_memory_kernel_test.go:36: win32 (glibc false): 4 replies [true false true true], release calls [{RepliesWritten:1 LastReplyStillHeld:false Ran:false} {RepliesWritten:2 LastReplyStillHeld:false Ran:false} {RepliesWritten:3 LastReplyStillHeld:false Ran:false} {RepliesWritten:4 LastReplyStillHeld:false Ran:false}]; malloc_trim found false, ran false
+           release_memory_kernel_test.go:62: the XDE application held 0 document(s) before two exports and 2 after: an export leaves its document open
+  ✅ went red      — the deep fallback shares its definition's attribute
+           placed_copies_kernel_test.go:50: deep fallback: 59 run(s) for 59 located occurrence(s), 57 copies checked, 212 difference(s)
+           placed_copies_kernel_test.go:56: deep fallback, box-0-0: forge_trace is its definition's own object, not a copy
+  ✅ went red      — the deep fallback forgets the copy it is making
+           placed_copies_kernel_test.go:50: deep fallback: 59 run(s) for 59 located occurrence(s), 57 copies checked, 57 difference(s)
+           placed_copies_kernel_test.go:56: deep fallback, box-0-0: forge_trace's shape is another object, not the copy itself (build123d's is its copy)
+  ✅ went red      — the plan assigns an attribute deepcopy would copy
+           placed_copies_kernel_test.go:50: deep fallback: 0 run(s) for 59 located occurrence(s), 57 copies checked, 213 difference(s)
+           placed_copies_kernel_test.go:56: the deep fallback ran 0 time(s) for 59 located occurrence(s); once each
+  ✅ went red      — grouped containment takes a box's whole length for its reach
+           interference_pair_keys_kernel_test.go:89: prisms seed 1: 275 parts, 37675 pairs keyed, 7139 slid, 3862 carried, 334 pairs of rotations memoized
+           interference_pair_keys_kernel_test.go:96: prisms seed 1: 6158 key(s) differ with the memo and the slide, 0 without the slide, 0 without the memo, 0 with containment per pair; first: 0 and 1: (0, 1, (1.0, 0.0, 0.0, -inf, 0.0, 1.0, 0.0, inf, 0.0, 0.0, 1.0, -inf)) against (0, 1, (1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 0.0, inf, 0.0, 0.0, 1.0, 0.0))
+  ✅ went red      — grouped containment takes a quarter of a box for its reach
+           interference_pair_keys_kernel_test.go:89: prisms seed 1: 275 parts, 37675 pairs keyed, 7139 slid, 3862 carried, 334 pairs of rotations memoized
+           interference_pair_keys_kernel_test.go:96: prisms seed 1: 9822 key(s) differ with the memo and the slide, 0 without the slide, 0 without the memo, 0 with containment per pair; first: 0 and 7: (0, 1, (1.0, 0.0, 0.0, -inf, 0.0, 1.0, 0.0, 195.0, 0.0, 0.0, 1.0, -inf)) against (0, 1, (1.0, 0.0, 0.0, -inf, 0.0, 1.0, 0.0, inf, 0.0, 0.0, 1.0, -inf))
+
+
+The tree is byte-identical to how the drill found it.
+14 went red, 0 stayed green, 0 unproven, 0 anchor(s) moved.
+Covered: the sweep fences. NOT covered: the extrusion and revolve fences,
+which have no drills — see the note in this script.
+Selected drills
+  ✅ went red      — a copy's centre stays where its shape was built
+           mass_properties_kernel_test.go:179: 13 parts compared, centres at most 128 mm apart
+           mass_properties_kernel_test.go:181: block-1: centre [0.0, 0.0, 0.0] per shape, [0.0, 10.0, -5.0] directly (11.2 mm apart)
+
+
+The tree is byte-identical to how the drill found it.
+1 went red, 0 stayed green, 0 unproven, 0 anchor(s) moved.
+Covered: the sweep fences. NOT covered: the extrusion and revolve fences,
+which have no drills — see the note in this script.

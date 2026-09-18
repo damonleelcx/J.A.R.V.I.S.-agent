@@ -1219,8 +1219,10 @@ echo "Mass, centre of gravity and envelope roll up through the tree"
 # Added 2026-09-15 (Phase 5, stage V3). The kernel measures each part's volume and centre
 # once per shape (moved by each copy's placement) and its box from the placed solid; Go
 # weighs them by density, or by volume and says so, for the model and every assembly.
+# Re-anchored 2026-09-17 (kernel last walls): _moved_point reads the same twelve entries
+# without a generator now. Same mutation: the centre is not moved.
 drill "a copy's centre stays where its shape was built" internal/domain/cad/sidecar.py \
-  "s = s.replace('    return tuple(t.Value(r, 1) * x + t.Value(r, 2) * y + t.Value(r, 3) * z + t.Value(r, 4) for r in (1, 2, 3))', '    return point', 1)" \
+  "s = s.replace('    return (v(1, 1) * x + v(1, 2) * y + v(1, 3) * z + v(1, 4),\n            v(2, 1) * x + v(2, 2) * y + v(2, 3) * z + v(2, 4),\n            v(3, 1) * x + v(3, 2) * y + v(3, 3) * z + v(3, 4))\n', '    return point\n', 1)" \
   ./internal/domain/cad 'TestKernel_APartsCentreMeasuredPerShapeIsItsSolidsCentre'
 
 drill "every part is weighed by volume however dense it is" internal/domain/geometry/mass.go \
@@ -4824,6 +4826,81 @@ drill "an executor task does not raise the largest call" internal/agent/executor
 drill "a task the budget stopped part-way says nothing on the timeline" internal/agent/worker.go \
   's = s.replace("\t\tw.sayBudgetStop(ctx, goal, task, err, \"task\")\n", "", 1)' \
   ./internal/agent 'TestExecutor_AnOrdinaryGoalStopsBeforeACallThatWouldPassItsCeiling'
+
+echo
+echo "The kernel's last walls, 2026-09-17: part properties, placement, and two fence gaps from #134"
+# Added 2026-09-17 (kernel last walls, docs/spikes/2026-09-17-kernel-last-walls). A
+# placed copy's box is read with the OCCT call build123d makes, without its wrapper,
+# and its definition Cleaned once; its centre moved without a generator; its origin a
+# gp_Pnt and its cast chosen once per definition. Each must give build123d's bits.
+drill "a placed copy's box is read from its definition" internal/domain/cad/sidecar.py \
+  's = s.replace("            box = _placed_box(solid) if _PROPERTIES_BOX_DIRECT else _box_of(solid)", "            box = _placed_box(shape) if _PROPERTIES_BOX_DIRECT else _box_of(solid)", 1)' \
+  ./internal/domain/cad 'TestKernel_PartPropertiesReadDirectlyAreTheSameBitsAsBefore'
+
+drill "a placed copy's box goes through build123d again" internal/domain/cad/sidecar.py \
+  's = s.replace("_PROPERTIES_BOX_DIRECT = True\n", "_PROPERTIES_BOX_DIRECT = False\n", 1)' \
+  ./internal/domain/cad 'TestKernel_PartPropertiesReadDirectlyAreTheSameBitsAsBefore'
+
+drill "every placed copy is Cleaned again" internal/domain/cad/sidecar.py \
+  's = s.replace("            if key not in local:\n                if _PROPERTIES_BOX_DIRECT:\n", "            if True:\n                if _PROPERTIES_BOX_DIRECT:\n", 1)' \
+  ./internal/domain/cad 'TestKernel_PartPropertiesReadDirectlyAreTheSameBitsAsBefore'
+
+drill "a moved centre adds its translation first" internal/domain/cad/sidecar.py \
+  's = s.replace("    return (v(1, 1) * x + v(1, 2) * y + v(1, 3) * z + v(1, 4),", "    return (v(1, 4) + v(1, 1) * x + v(1, 2) * y + v(1, 3) * z,", 1)' \
+  ./internal/domain/cad 'TestKernel_PartPropertiesReadDirectlyAreTheSameBitsAsBefore'
+
+drill "a placement's origin loses its last digits" internal/domain/cad/sidecar.py \
+  's = s.replace("            return gp_Pnt(x, y, z)\n", "            return gp_Pnt(float(\"%.12g\" % x), y, z)\n", 1)' \
+  ./internal/domain/cad 'TestKernel_APlacedCopyIsTheCopyBuild123dMade'
+
+drill "a moved copy is not cast" internal/domain/cad/sidecar.py \
+  's = s.replace("        moved = cast(shape.wrapped.Moved(location.wrapped))\n", "        moved = shape.wrapped.Moved(location.wrapped)\n", 1)' \
+  ./internal/domain/cad 'TestKernel_APlacedCopyIsTheCopyBuild123dMade'
+
+# Memory after a reply: glibc's free pages handed back, and no document left open in
+# the XDE application per export. On Windows malloc_trim does not exist, so the first
+# drill goes red on the call COUNT, not on memory; the memory itself was measured on
+# Linux (docs/spikes/2026-09-17-kernel-last-walls).
+drill "the kernel keeps its free memory after a reply" internal/domain/cad/sidecar.py \
+  's = s.replace("        line = request = reply = None\n        _release_memory()\n", "        line = request = reply = None\n", 1)' \
+  ./internal/domain/cad 'TestKernel_TheKernelHandsFreeMemoryBackAfterEachReply'
+
+drill "the loop holds its reply while memory is released" internal/domain/cad/sidecar.py \
+  's = s.replace("        line = request = reply = None\n        _release_memory()\n", "        _release_memory()\n", 1)' \
+  ./internal/domain/cad 'TestKernel_TheKernelHandsFreeMemoryBackAfterEachReply'
+
+drill "an export leaves a document open in the application" internal/domain/cad/sidecar.py \
+  's = s.replace("    application.InitDocument(doc)\n", "    application.NewDocument(TCollection_ExtendedString(\"MDTV-XCAF\"), doc)\n    application.InitDocument(doc)\n", 1)' \
+  ./internal/domain/cad 'TestKernel_TheKernelHandsFreeMemoryBackAfterEachReply'
+
+# #134's first gap: _located's `deep` fallback ran in no fixture. placed_copies.py now
+# gives every definition an attribute the plan does not recognize.
+drill "the deep fallback shares its definition's attribute" internal/domain/cad/sidecar.py \
+  's = s.replace("            _located_fallbacks += 1\n            setattr(out, key, copy.deepcopy(value, memo))\n", "            _located_fallbacks += 1\n            setattr(out, key, value)\n", 1)' \
+  ./internal/domain/cad 'TestKernel_ALocatedCopyDeepcopiesAnAttributeThePlanDoesNotKnow'
+
+drill "the deep fallback forgets the copy it is making" internal/domain/cad/sidecar.py \
+  's = s.replace("            _located_fallbacks += 1\n            setattr(out, key, copy.deepcopy(value, memo))\n", "            _located_fallbacks += 1\n            setattr(out, key, copy.deepcopy(value, {}))\n", 1)' \
+  ./internal/domain/cad 'TestKernel_ALocatedCopyDeepcopiesAnAttributeThePlanDoesNotKnow'
+
+drill "the plan assigns an attribute deepcopy would copy" internal/domain/cad/sidecar.py \
+  's = s.replace("        elif copy.deepcopy(value, {}) is value:\n", "        elif True:\n", 1)' \
+  ./internal/domain/cad 'TestKernel_ALocatedCopyDeepcopiesAnAttributeThePlanDoesNotKnow'
+
+# #134's second gap: _containment_plan's reach had no drill of its own (the one on
+# _inside_split's reach breaks the per-pair copy). ‼️ It was a missing DRILL, not a
+# missing fence: both mutations below, run 2026-09-17, redden the pair-key fence
+# ("6158 key(s) differ with the memo and the slide ... 0 with containment per pair" —
+# the fence already compares the grouped path against containment per pair). The
+# rail fence stays green on both (its pins sit well inside the rail either way), so it
+# is not named here.
+drill "grouped containment takes a box's whole length for its reach" internal/domain/cad/sidecar.py \
+  's = s.replace("            p.append(v * (lo[c] + hi[c]) / 2)\n            reach += abs(v) * (hi[c] - lo[c]) / 2\n", "            p.append(v * (lo[c] + hi[c]) / 2)\n            reach += abs(v) * (hi[c] - lo[c])\n", 1)' \
+  ./internal/domain/cad 'TestKernel_APairKeyWithoutLocationsIsTheKeyBuild123dGave'
+
+drill "grouped containment takes a quarter of a box for its reach" internal/domain/cad/sidecar.py \
+  's = s.replace("            p.append(v * (lo[c] + hi[c]) / 2)\n            reach += abs(v) * (hi[c] - lo[c]) / 2\n", "            p.append(v * (lo[c] + hi[c]) / 2)\n            reach += abs(v) * (hi[c] - lo[c]) / 4\n", 1)' \
+  ./internal/domain/cad 'TestKernel_APairKeyWithoutLocationsIsTheKeyBuild123dGave'
 
 echo
 
