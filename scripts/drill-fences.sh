@@ -4692,6 +4692,26 @@ drill "the prism yard lists its leaning pins" internal/domain/geometry/prism_yar
   's = s.replace("\t\t\tPattern: &Pattern{Kind: \"linear\", Count: 95, Offset: []float64{0, 0, 40}}},", "\t\t},\n\t\t{ID: \"leaning-extra\", Ref: \"pin\", Position: []float64{20, 1003, 1920}, Rotation: []float64{35, 0, 0}},\n\t\t{ID: \"leaning-extra-2\", Ref: \"pin\", Position: []float64{20, 1003, 1960}, Rotation: []float64{35, 0, 0}},", 1)' \
   ./internal/domain/geometry 'TestPrismYard_PlacesItsPrismsByPatternsNotByListing'
 
+echo "Live car meter: a call is placed only if it can be paid for"
+# Added 2026-09-17 (live verification): the verified run spent 301,142 of a 300,000 cap.
+drill "the car meter places a call whenever anything is left" internal/agent/car_ceiling_live_test.go \
+  's = s.replace("if need := m.spent + int64(m.inflight+1)*m.reserve(); need > m.budget {", "if need := m.spent; need >= m.budget {", 1)' \
+  ./internal/agent 'TestCarMeter_NeverSpendsPastItsBudget'
+
+drill "calls in flight reserve nothing" internal/agent/car_ceiling_live_test.go \
+  's = s.replace("int64(m.inflight+1)*m.reserve()", "int64(1)*m.reserve()", 1)' \
+  ./internal/agent 'TestCarMeter_CallsInFlightReserveTheirShare'
+
+echo "A build step reports the parts a tree places"
+# Added 2026-09-17 (live verification): every step of the live car reported parts=0.
+drill "a build step counts a tree's top-level parts" internal/agent/assemble.go \
+  's = s.replace("\treturn d.Occurrences()\n}", "\treturn len(d.Parts)\n}", 1)' \
+  ./internal/agent 'TestAssemble_AStepOfATreeReportsThePartsItPlaces'
+
+drill "a build goal's step counts a tree's top-level parts" internal/agent/buildgoal.go \
+  's = s.replace("kept.VersionID, kept.Parts = v.VersionID, partsPlaced(&v.Document)", "kept.VersionID, kept.Parts = v.VersionID, len(v.Document.Parts)", 1)' \
+  ./internal/agent 'TestBuildGoal_AStepOfATreeSaysThePartsItPlaces'
+
 echo
 
 if [ "$MODE" = "list" ]; then

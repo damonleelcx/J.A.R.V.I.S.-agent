@@ -236,7 +236,7 @@ func (b *BuildSteps) run(ctx context.Context, goal *engine.Goal, task *engine.Ta
 		}
 	}
 
-	kept := buildStepResult{VersionID: prev.VersionID, Parts: len(doc.Parts), Note: note}
+	kept := buildStepResult{VersionID: prev.VersionID, Parts: partsPlaced(doc), Note: note}
 	if next != nil && next.HasGeometry() {
 		call, err := b.recordStep(ctx, task, in, started)
 		if err != nil {
@@ -263,7 +263,7 @@ func (b *BuildSteps) run(ctx context.Context, goal *engine.Goal, task *engine.Ta
 		if err != nil {
 			return nil, err
 		}
-		kept.VersionID, kept.Parts = v.VersionID, len(v.Document.Parts)
+		kept.VersionID, kept.Parts = v.VersionID, partsPlaced(&v.Document)
 		state, _ := json.Marshal(kept)
 		if _, err := b.repo.SaveCheckpoint(ctx, b.pool, task.ID, checkpointBuildStepSaved, state, b.clock.Now()); err != nil {
 			b.log.WarnWith(ctx, logx.EventCheckpointFailed, err, "task_id", task.ID,

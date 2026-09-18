@@ -1,0 +1,46 @@
+PARAMETER front_track 1550 -> 1650
+PARAMETER wheelbase 2600 -> 2800
+MOVED left-rail [0 260 465] -> [0 260 495]
+MOVED right-rail [0 260 -465] -> [0 260 -495]
+MOVED front-cross [-1100 260 0] -> [-1200 260 0]
+MOVED rear-cross [1100 260 0] -> [1200 260 0]
+RESIZED mid-cross
+MOVED diag-fl [-1100 260 465] -> [-1200 260 495]
+MOVED diag-fr [-1100 260 -465] -> [-1200 260 -495]
+MOVED diag-rl [1100 260 465] -> [1200 260 495]
+MOVED diag-rr [1100 260 -465] -> [1200 260 -495]
+MOVED suspension-left/knuckle [-1300 0 775] -> [-1400 0 825]
+MOVED suspension-left/upper-arm-a [-1270.096189432334 225 875] -> [-1370.096189432334 225 925]
+MOVED suspension-left/upper-arm-b [-1270.096189432334 75.00000000000001 675] -> [-1370.096189432334 75.00000000000001 725]
+MOVED suspension-left/lower-arm-a [-1255.1111260566397 -61.17714323462189 925] -> [-1355.1111260566397 -61.17714323462189 975]
+MOVED suspension-left/lower-arm-b [-1255.1111260566397 -138.8228567653781 625] -> [-1355.1111260566397 -138.8228567653781 675]
+MOVED suspension-right/knuckle [-1300 0 -775] -> [-1400 0 -825]
+MOVED suspension-right/upper-arm-a [-1270.096189432334 225 -875] -> [-1370.096189432334 225 -925]
+MOVED suspension-right/upper-arm-b [-1270.096189432334 75.00000000000001 -675] -> [-1370.096189432334 75.00000000000001 -725]
+MOVED suspension-right/lower-arm-a [-1255.1111260566397 -61.17714323462189 -925] -> [-1355.1111260566397 -61.17714323462189 -975]
+MOVED suspension-right/lower-arm-b [-1255.1111260566397 -138.8228567653781 -625] -> [-1355.1111260566397 -138.8228567653781 -675]
+MOVED suspension-rear-left/subframe-lower [1300 -50 790] -> [1400 -50 790]
+MOVED suspension-rear-left/subframe-upper [1300 50 790] -> [1400 50 790]
+MOVED suspension-rear-left/upper-arm [1344.8888739433603 41.17714323462189 890] -> [1444.8888739433603 41.17714323462189 890]
+MOVED suspension-rear-left/lower-arm-a [1347.7211629518313 6.047226650039551 1010] -> [1447.7211629518313 6.047226650039551 1010]
+MOVED suspension-rear-left/lower-arm-b [1347.7211629518313 -46.04722665003955 870] -> [1447.7211629518313 -46.04722665003955 870]
+MOVED suspension-rear-left/toe-link [1350 0 840] -> [1450 0 840]
+MOVED suspension-rear-left/hub [1300 0 990] -> [1400 0 990]
+MOVED suspension-rear-left/joint-upper [1200 80 890] -> [1300 80 890]
+MOVED suspension-rear-left/joint-lower-a [1200 -20 1010] -> [1300 -20 1010]
+MOVED suspension-rear-left/joint-lower-b [1200 -20 870] -> [1300 -20 870]
+MOVED suspension-rear-right/subframe-lower [1300 -50 -790] -> [1400 -50 -790]
+MOVED suspension-rear-right/subframe-upper [1300 50 -790] -> [1400 50 -790]
+MOVED suspension-rear-right/upper-arm [1344.8888739433603 41.17714323462189 -890] -> [1444.8888739433603 41.17714323462189 -890]
+MOVED suspension-rear-right/lower-arm-a [1347.7211629518313 6.047226650039551 -1010] -> [1447.7211629518313 6.047226650039551 -1010]
+MOVED suspension-rear-right/lower-arm-b [1347.7211629518313 -46.04722665003955 -870] -> [1447.7211629518313 -46.04722665003955 -870]
+MOVED suspension-rear-right/toe-link [1350 0 -840] -> [1450 0 -840]
+MOVED suspension-rear-right/hub [1300 0 -990] -> [1400 0 -990]
+MOVED suspension-rear-right/joint-upper [1200 80 -890] -> [1300 80 -890]
+MOVED suspension-rear-right/joint-lower-a [1200 -20 -1010] -> [1300 -20 -1010]
+MOVED suspension-rear-right/joint-lower-b [1200 -20 -870] -> [1300 -20 -870]
+RESPEC placed_before=45 placed_after=45 moved=38 resized=5 unchanged=6 not_in_before=0
+FAULTS before=0 after=0
+KERNEL before builds=yes volume=294974318 skipped=0 interference_pairs=15 buried=4
+KERNEL after builds=yes volume=295703168 skipped=0 interference_pairs=15 buried=4
+exit=0

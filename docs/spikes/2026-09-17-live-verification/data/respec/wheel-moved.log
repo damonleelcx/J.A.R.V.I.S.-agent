@@ -1,0 +1,15 @@
+PARAMETER bolt_circle_diameter 100 -> 120
+PARAMETER hub_height 40 -> 50
+RESIZED body
+MOVED nut-1 [100 20 20] -> [120 25 25]
+MOVED nut-2 [49.922829763397814 20 -88.92531174201639] -> [60.85845223237253 25 -106.40135709604473]
+MOVED nut-3 [-69.14599439164527 20 -74.95886511674627] -> [-82.38740801768188 25 -90.75965513447048]
+MOVED nut-4 [-92.65740448334421 20 42.59818534174835] -> [-111.77667063230552 25 50.30880541572307]
+MOVED nut-5 [11.880569111591651 20 101.28599151701431] -> [13.305626417614825 25 121.85220681479211]
+MOVED wheel-outer/rim [0 20 0] -> [0 25 0]
+MOVED wheel-outer/tyre [0 20 0] -> [0 25 0]
+RESPEC placed_before=8 placed_after=8 moved=7 resized=1 unchanged=0 not_in_before=0
+FAULTS before=0 after=0
+KERNEL before builds=yes volume=1155365 skipped=0 interference_pairs=6 buried=5
+KERNEL after builds=yes volume=1193850 skipped=0 interference_pairs=1 buried=0
+exit=0

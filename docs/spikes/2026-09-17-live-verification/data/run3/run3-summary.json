@@ -1,0 +1,79 @@
+{
+  "statement": "a road-car wheel: a rim, a tyre, a hub, and five lug nuts on a polar pattern around the hub's axis. Build it in at most three steps.",
+  "ceiling": 70000,
+  "hard_stop": 85000,
+  "create_status": 201,
+  "create_s": 2.99,
+  "goal": "gol_01M2S45Y74QN44X36YN9T0Q1JW",
+  "planned_tasks": [
+    "Step 1 of 3 \u2014 Hub Assembly",
+    "Step 2 of 3 \u2014 Rim and Tyre Assembly",
+    "Step 3 of 3 \u2014 Final Wheel Assembly"
+  ],
+  "tokens_after_plan": 508,
+  "max_tokens": 70000,
+  "start_status": 200,
+  "final_status": "succeeded",
+  "tokens_spent": 65294,
+  "outcome": "All 3 task(s) finished: 3 succeeded, 0 skipped.",
+  "seconds": 154.3,
+  "tasks": [
+    {
+      "title": "Step 1 of 3 \u2014 Hub Assembly",
+      "status": "succeeded",
+      "attempts": 1,
+      "error_code": null,
+      "error_detail": null,
+      "started_at": "2026-09-18T02:05:32Z",
+      "ended_at": "2026-09-18T02:06:02Z"
+    },
+    {
+      "title": "Step 2 of 3 \u2014 Rim and Tyre Assembly",
+      "status": "succeeded",
+      "attempts": 1,
+      "error_code": null,
+      "error_detail": null,
+      "started_at": "2026-09-18T02:06:02Z",
+      "ended_at": "2026-09-18T02:06:35Z"
+    },
+    {
+      "title": "Step 3 of 3 \u2014 Final Wheel Assembly",
+      "status": "succeeded",
+      "attempts": 1,
+      "error_code": null,
+      "error_detail": null,
+      "started_at": "2026-09-18T02:06:35Z",
+      "ended_at": "2026-09-18T02:08:05Z"
+    }
+  ],
+  "longest_unchanged_s": 5.15,
+  "gaps_over_10s": 0,
+  "changes": 45,
+  "watchdog": false,
+  "event_kinds": [
+    "artifact.changed",
+    "goal.activated",
+    "goal.ended",
+    "plan.created",
+    "task.started",
+    "task.succeeded"
+  ],
+  "versions": [
+    {
+      "seq": 7,
+      "kind": "artifact.changed",
+      "actor": "executor",
+      "summary": "proposed Road Car Wheel - Hub Assembly",
+      "task_id": "tsk_01M2S4611E38Z5HEE3WAH81D9A",
+      "created_at": "2026-09-18T02:06:35Z"
+    },
+    {
+      "seq": 4,
+      "kind": "artifact.changed",
+      "actor": "executor",
+      "summary": "proposed Road Car Wheel - Hub Assembly",
+      "task_id": "tsk_01M2S4611CJ11J7BG988YYWXQ4",
+      "created_at": "2026-09-18T02:06:02Z"
+    }
+  ]
+}

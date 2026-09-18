@@ -51,6 +51,21 @@ import (
 // person is waiting through.
 const assemblyBudget = 12
 
+// partsPlaced is how many parts a model places, which is what a step reports.
+//
+// ‼️ Not len(d.Parts): a model written as a tree has no top-level parts, and every
+// step of the 2026-09-17 live car reported "parts=0" while the car grew
+// (docs/spikes/2026-09-17-live-verification). The workbench rail had the same
+// defect and was fixed the same day (TestWorkbenchRailCountsWhatADesignPlaces).
+// Occurrences walks definitions and assemblies, not placements, so it is cheap
+// for a design of any size.
+func partsPlaced(d *Prototype) int {
+	if d == nil {
+		return 0
+	}
+	return d.Occurrences()
+}
+
 // BuildStep is one pass, reported as it happens so a person watching sees
 // progress rather than a spinner.
 type BuildStep struct {
@@ -379,7 +394,7 @@ func (c *Conversation) assemble(ctx context.Context, asked string, base *Prototy
 		}
 		if emit != nil {
 			if err := emit(BuildStep{N: i + 1, Of: len(steps), Name: step.Name,
-				Note: note, Parts: len(doc.Parts)}); err != nil {
+				Note: note, Parts: partsPlaced(doc)}); err != nil {
 				// The caller went away — the connection closed, the reader left.
 				// The work so far is still worth returning.
 				return doc, notes, nil
