@@ -1,0 +1,1120 @@
+{
+  "name": "Sports Car Chassis",
+  "units": "mm",
+  "parts": null,
+  "parameters": [
+    {
+      "name": "wheelbase",
+      "value": 2600,
+      "unit": "mm",
+      "how": "chosen"
+    },
+    {
+      "name": "front_track",
+      "value": 1550,
+      "unit": "mm",
+      "how": "chosen"
+    },
+    {
+      "name": "rear_track",
+      "value": 1580,
+      "unit": "mm",
+      "how": "chosen"
+    },
+    {
+      "name": "ride_height",
+      "value": 110,
+      "unit": "mm",
+      "how": "chosen"
+    },
+    {
+      "name": "tube_diameter",
+      "value": 40,
+      "unit": "mm",
+      "how": "chosen"
+    },
+    {
+      "name": "tube_wall_thickness",
+      "value": 2.5,
+      "unit": "mm",
+      "how": "chosen"
+    },
+    {
+      "name": "arm_length",
+      "value": 300,
+      "unit": "mm",
+      "how": "chosen"
+    }
+  ],
+  "derived": [
+    {
+      "name": "half_wheelbase",
+      "expression": "wheelbase / 2",
+      "why": "Symmetry about the center"
+    },
+    {
+      "name": "half_front_track",
+      "expression": "front_track / 2",
+      "why": "Symmetry about the centerline"
+    },
+    {
+      "name": "half_rear_track",
+      "expression": "rear_track / 2",
+      "why": "Symmetry about the centerline"
+    },
+    {
+      "name": "frame_width",
+      "expression": "front_track * 0.6",
+      "why": "Approximate width of the main longitudinal rails relative to track"
+    },
+    {
+      "name": "half_frame_width",
+      "expression": "frame_width / 2",
+      "why": "Symmetry for rail placement"
+    },
+    {
+      "name": "rail_height",
+      "expression": "ride_height + 150",
+      "why": "Main rails sit above the ground plane"
+    }
+  ],
+  "assumptions": [
+    "Tubular space frame construction using 40mm diameter steel tubing",
+    "Main rails are parallel and define the primary structural width",
+    "Suspension mounts are located at the extreme ends of the wheelbase on the outer edges of the track width"
+  ],
+  "not_verified": [
+    "Structural integrity under load",
+    "Crashworthiness",
+    "Exact mounting bolt patterns for suspension components"
+  ],
+  "definitions": [
+    {
+      "id": "main-rail",
+      "name": "Main Longitudinal Rail",
+      "shape": "cylinder",
+      "size": {
+        "height": 2600,
+        "radius": 20
+      },
+      "position": null,
+      "size_from": {
+        "height": "wheelbase",
+        "radius": "tube_diameter / 2"
+      },
+      "rotation": [
+        0,
+        0,
+        90
+      ],
+      "color": "#333333",
+      "opacity": 0,
+      "note": "",
+      "material": {
+        "name": "steel 4130",
+        "finish": "metal",
+        "how": "assumed",
+        "density": 7850
+      }
+    },
+    {
+      "id": "cross-member",
+      "name": "Cross Member",
+      "shape": "cylinder",
+      "size": {
+        "height": 930,
+        "radius": 20
+      },
+      "position": null,
+      "size_from": {
+        "height": "frame_width",
+        "radius": "tube_diameter / 2"
+      },
+      "rotation": [
+        0,
+        0,
+        90
+      ],
+      "color": "#333333",
+      "opacity": 0,
+      "note": "",
+      "material": {
+        "name": "steel 4130",
+        "finish": "metal",
+        "how": "assumed",
+        "density": 7850
+      }
+    },
+    {
+      "id": "diagonal-brace",
+      "name": "Diagonal Brace",
+      "shape": "cylinder",
+      "size": {
+        "height": 1000,
+        "radius": 20
+      },
+      "position": null,
+      "size_from": {
+        "radius": "tube_diameter / 2"
+      },
+      "rotation": [
+        0,
+        0,
+        90
+      ],
+      "color": "#333333",
+      "opacity": 0,
+      "note": "",
+      "material": {
+        "name": "steel 4130",
+        "finish": "metal",
+        "how": "assumed",
+        "density": 7850
+      }
+    },
+    {
+      "id": "control-arm",
+      "name": "Control Arm",
+      "shape": "box",
+      "size": {
+        "depth": 30,
+        "height": 40,
+        "width": 300
+      },
+      "position": [
+        150,
+        0,
+        0
+      ],
+      "size_from": {
+        "width": "arm_length"
+      },
+      "rotation": null,
+      "color": "#b8bcc4",
+      "opacity": 0,
+      "note": "",
+      "material": {
+        "name": "aluminium 6061-T6",
+        "finish": "metal",
+        "how": "assumed",
+        "density": 2700
+      }
+    },
+    {
+      "id": "upright",
+      "name": "Steering Knuckle",
+      "shape": "extrusion",
+      "size": {
+        "depth": 25
+      },
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "profile": [
+        {
+          "x": 0,
+          "y": -80,
+          "radius": 10
+        },
+        {
+          "x": 40,
+          "y": -80,
+          "radius": 10
+        },
+        {
+          "x": 60,
+          "y": -40,
+          "radius": 5
+        },
+        {
+          "x": 60,
+          "y": 40,
+          "radius": 5
+        },
+        {
+          "x": 40,
+          "y": 80,
+          "radius": 10
+        },
+        {
+          "x": 0,
+          "y": 80,
+          "radius": 10
+        },
+        {
+          "x": -20,
+          "y": 40,
+          "radius": 5
+        },
+        {
+          "x": -20,
+          "y": -40,
+          "radius": 5
+        }
+      ],
+      "rotation": null,
+      "color": "#cccccc",
+      "opacity": 0,
+      "note": "",
+      "material": {
+        "name": "steel 4140",
+        "finish": "metal",
+        "how": "assumed",
+        "density": 7850
+      }
+    },
+    {
+      "id": "subframe-tube",
+      "name": "Subframe Tube",
+      "shape": "cylinder",
+      "size": {
+        "height": 400,
+        "radius": 20
+      },
+      "position": null,
+      "size_from": {
+        "radius": "tube_diameter / 2"
+      },
+      "rotation": null,
+      "color": "#555555",
+      "opacity": 0,
+      "note": "",
+      "material": {
+        "name": "steel",
+        "finish": "metal",
+        "how": "assumed",
+        "density": 7850
+      }
+    },
+    {
+      "id": "hub-carrier",
+      "name": "Hub Carrier",
+      "shape": "cylinder",
+      "size": {
+        "height": 40,
+        "radius": 60
+      },
+      "position": null,
+      "rotation": [
+        0,
+        0,
+        90
+      ],
+      "color": "#b8bcc4",
+      "opacity": 0,
+      "note": "",
+      "material": {
+        "name": "aluminium 6061-T6",
+        "finish": "metal",
+        "how": "assumed",
+        "density": 2700
+      }
+    },
+    {
+      "id": "ball-joint",
+      "name": "Ball Joint",
+      "shape": "sphere",
+      "size": {
+        "radius": 15
+      },
+      "position": null,
+      "rotation": null,
+      "color": "#333333",
+      "opacity": 0,
+      "note": "",
+      "material": {
+        "name": "steel",
+        "finish": "metal",
+        "how": "assumed",
+        "density": 7850
+      }
+    },
+    {
+      "id": "engine-block",
+      "name": "Engine Block",
+      "shape": "box",
+      "size": {
+        "depth": 700,
+        "height": 500,
+        "width": 600
+      },
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "rotation": null,
+      "color": "#a0a0a0",
+      "opacity": 0,
+      "note": "V8 engine block",
+      "material": {
+        "name": "cast iron",
+        "finish": "metal",
+        "how": "assumed",
+        "density": 7200
+      }
+    },
+    {
+      "id": "transmission-case",
+      "name": "Transmission Case",
+      "shape": "box",
+      "size": {
+        "depth": 500,
+        "height": 400,
+        "width": 300
+      },
+      "position": [
+        450,
+        -50,
+        0
+      ],
+      "rotation": null,
+      "color": "#b0b0b0",
+      "opacity": 0,
+      "note": "Manual transmission casing",
+      "material": {
+        "name": "aluminium alloy",
+        "finish": "metal",
+        "how": "assumed",
+        "density": 2700
+      }
+    },
+    {
+      "id": "engine-mount-bracket",
+      "name": "Engine Mount Bracket",
+      "shape": "cylinder",
+      "size": {
+        "height": 100,
+        "radius": 25
+      },
+      "position": null,
+      "rotation": [
+        90,
+        0,
+        0
+      ],
+      "color": "#505050",
+      "opacity": 0,
+      "note": "Rubber-isolated mount point",
+      "material": {
+        "name": "steel",
+        "finish": "metal",
+        "how": "assumed",
+        "density": 7850
+      }
+    }
+  ],
+  "assemblies": [
+    {
+      "id": "chassis",
+      "name": "Chassis Frame",
+      "interfaces": [
+        {
+          "id": "front-suspension-left",
+          "position": [
+            -1300,
+            0,
+            775
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "position_from": {
+            "x": "-half_wheelbase",
+            "z": "half_front_track"
+          }
+        },
+        {
+          "id": "front-suspension-right",
+          "position": [
+            -1300,
+            0,
+            -775
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "position_from": {
+            "x": "-half_wheelbase",
+            "z": "-half_front_track"
+          }
+        },
+        {
+          "id": "rear-suspension-left",
+          "position": [
+            1300,
+            0,
+            790
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "position_from": {
+            "x": "half_wheelbase",
+            "z": "half_rear_track"
+          }
+        },
+        {
+          "id": "rear-suspension-right",
+          "position": [
+            1300,
+            0,
+            -790
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "position_from": {
+            "x": "half_wheelbase",
+            "z": "-half_rear_track"
+          }
+        },
+        {
+          "id": "engine-mount-front",
+          "position": [
+            -300,
+            50,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "engine-mount-rear",
+          "position": [
+            300,
+            50,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ]
+        }
+      ],
+      "features": [
+        {
+          "id": "weld-all",
+          "op": "fuse",
+          "of": "left-rail",
+          "with": [
+            "right-rail",
+            "front-cross",
+            "rear-cross",
+            "mid-cross",
+            "diag-fl",
+            "diag-fr",
+            "diag-rl",
+            "diag-rr"
+          ],
+          "note": "Weld all tubes into a single rigid space frame"
+        }
+      ],
+      "children": [
+        {
+          "id": "left-rail",
+          "ref": "main-rail",
+          "position": [
+            0,
+            260,
+            465
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "position_from": {
+            "y": "rail_height",
+            "z": "half_frame_width"
+          }
+        },
+        {
+          "id": "right-rail",
+          "ref": "main-rail",
+          "position": [
+            0,
+            260,
+            -465
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "position_from": {
+            "y": "rail_height",
+            "z": "-half_frame_width"
+          }
+        },
+        {
+          "id": "front-cross",
+          "ref": "cross-member",
+          "position": [
+            -1100,
+            260,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "position_from": {
+            "x": "-half_wheelbase + 200",
+            "y": "rail_height"
+          }
+        },
+        {
+          "id": "rear-cross",
+          "ref": "cross-member",
+          "position": [
+            1100,
+            260,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "position_from": {
+            "x": "half_wheelbase - 200",
+            "y": "rail_height"
+          }
+        },
+        {
+          "id": "mid-cross",
+          "ref": "cross-member",
+          "position": [
+            0,
+            260,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "position_from": {
+            "y": "rail_height"
+          }
+        },
+        {
+          "id": "diag-fl",
+          "ref": "diagonal-brace",
+          "position": [
+            -1100,
+            260,
+            465
+          ],
+          "rotation": [
+            0,
+            45,
+            45
+          ],
+          "position_from": {
+            "x": "-half_wheelbase + 200",
+            "y": "rail_height",
+            "z": "half_frame_width"
+          }
+        },
+        {
+          "id": "diag-fr",
+          "ref": "diagonal-brace",
+          "position": [
+            -1100,
+            260,
+            -465
+          ],
+          "rotation": [
+            0,
+            45,
+            -45
+          ],
+          "position_from": {
+            "x": "-half_wheelbase + 200",
+            "y": "rail_height",
+            "z": "-half_frame_width"
+          }
+        },
+        {
+          "id": "diag-rl",
+          "ref": "diagonal-brace",
+          "position": [
+            1100,
+            260,
+            465
+          ],
+          "rotation": [
+            0,
+            -45,
+            45
+          ],
+          "position_from": {
+            "x": "half_wheelbase - 200",
+            "y": "rail_height",
+            "z": "half_frame_width"
+          }
+        },
+        {
+          "id": "diag-rr",
+          "ref": "diagonal-brace",
+          "position": [
+            1100,
+            260,
+            -465
+          ],
+          "rotation": [
+            0,
+            -45,
+            -45
+          ],
+          "position_from": {
+            "x": "half_wheelbase - 200",
+            "y": "rail_height",
+            "z": "-half_frame_width"
+          }
+        },
+        {
+          "id": "suspension-left",
+          "ref": "front-suspension",
+          "at": "chassis/front-suspension-left"
+        },
+        {
+          "id": "suspension-right",
+          "ref": "front-suspension",
+          "mirror": "z",
+          "at": "chassis/front-suspension-right"
+        },
+        {
+          "id": "suspension-rear-left",
+          "ref": "rear-suspension",
+          "at": "chassis/rear-suspension-left"
+        },
+        {
+          "id": "suspension-rear-right",
+          "ref": "rear-suspension",
+          "mirror": "z",
+          "at": "chassis/rear-suspension-right"
+        },
+        {
+          "id": "powertrain-unit",
+          "ref": "powertrain",
+          "rotation": [
+            0,
+            0,
+            0
+          ],
+          "at": "chassis/engine-mount-front"
+        }
+      ]
+    },
+    {
+      "id": "front-suspension",
+      "name": "Front Suspension",
+      "interfaces": [
+        {
+          "id": "hub",
+          "position": [
+            0,
+            0,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            90
+          ]
+        },
+        {
+          "id": "upper-mount-a",
+          "position": [
+            -100,
+            150,
+            100
+          ]
+        },
+        {
+          "id": "upper-mount-b",
+          "position": [
+            -100,
+            150,
+            -100
+          ]
+        },
+        {
+          "id": "lower-mount-a",
+          "position": [
+            -100,
+            -100,
+            150
+          ]
+        },
+        {
+          "id": "lower-mount-b",
+          "position": [
+            -100,
+            -100,
+            -150
+          ]
+        }
+      ],
+      "children": [
+        {
+          "id": "knuckle",
+          "ref": "upright",
+          "position": [
+            0,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "upper-arm-a",
+          "ref": "control-arm",
+          "position": [
+            -100,
+            150,
+            100
+          ],
+          "rotation": [
+            0,
+            0,
+            30
+          ]
+        },
+        {
+          "id": "upper-arm-b",
+          "ref": "control-arm",
+          "position": [
+            -100,
+            150,
+            -100
+          ],
+          "rotation": [
+            0,
+            0,
+            -30
+          ]
+        },
+        {
+          "id": "lower-arm-a",
+          "ref": "control-arm",
+          "position": [
+            -100,
+            -100,
+            150
+          ],
+          "rotation": [
+            0,
+            0,
+            15
+          ]
+        },
+        {
+          "id": "lower-arm-b",
+          "ref": "control-arm",
+          "position": [
+            -100,
+            -100,
+            -150
+          ],
+          "rotation": [
+            0,
+            0,
+            -15
+          ]
+        }
+      ]
+    },
+    {
+      "id": "rear-suspension",
+      "name": "Rear Suspension",
+      "interfaces": [
+        {
+          "id": "mount-front-left",
+          "position": [
+            -100,
+            0,
+            100
+          ]
+        },
+        {
+          "id": "mount-front-right",
+          "position": [
+            -100,
+            0,
+            -100
+          ]
+        },
+        {
+          "id": "mount-rear-left",
+          "position": [
+            100,
+            0,
+            100
+          ]
+        },
+        {
+          "id": "mount-rear-right",
+          "position": [
+            100,
+            0,
+            -100
+          ]
+        },
+        {
+          "id": "hub",
+          "position": [
+            0,
+            0,
+            200
+          ],
+          "rotation": [
+            0,
+            0,
+            90
+          ]
+        }
+      ],
+      "children": [
+        {
+          "id": "subframe-lower",
+          "ref": "subframe-tube",
+          "position": [
+            0,
+            -50,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            90
+          ]
+        },
+        {
+          "id": "subframe-upper",
+          "ref": "subframe-tube",
+          "position": [
+            0,
+            50,
+            0
+          ],
+          "rotation": [
+            0,
+            0,
+            90
+          ]
+        },
+        {
+          "id": "upper-arm",
+          "ref": "control-arm",
+          "position": [
+            -100,
+            80,
+            100
+          ],
+          "rotation": [
+            0,
+            0,
+            -15
+          ]
+        },
+        {
+          "id": "lower-arm-a",
+          "ref": "control-arm",
+          "position": [
+            -100,
+            -20,
+            220
+          ],
+          "rotation": [
+            0,
+            0,
+            10
+          ]
+        },
+        {
+          "id": "lower-arm-b",
+          "ref": "control-arm",
+          "position": [
+            -100,
+            -20,
+            80
+          ],
+          "rotation": [
+            0,
+            0,
+            -10
+          ]
+        },
+        {
+          "id": "toe-link",
+          "ref": "control-arm",
+          "position": [
+            50,
+            0,
+            200
+          ],
+          "rotation": [
+            0,
+            90,
+            0
+          ]
+        },
+        {
+          "id": "hub",
+          "ref": "hub-carrier",
+          "at": "hub"
+        },
+        {
+          "id": "joint-upper",
+          "ref": "ball-joint",
+          "position": [
+            -100,
+            80,
+            100
+          ]
+        },
+        {
+          "id": "joint-lower-a",
+          "ref": "ball-joint",
+          "position": [
+            -100,
+            -20,
+            220
+          ]
+        },
+        {
+          "id": "joint-lower-b",
+          "ref": "ball-joint",
+          "position": [
+            -100,
+            -20,
+            80
+          ]
+        }
+      ]
+    },
+    {
+      "id": "powertrain",
+      "name": "Powertrain Assembly",
+      "interfaces": [
+        {
+          "id": "mount-front-left",
+          "position": [
+            -250,
+            0,
+            200
+          ]
+        },
+        {
+          "id": "mount-front-right",
+          "position": [
+            -250,
+            0,
+            -200
+          ]
+        },
+        {
+          "id": "mount-rear-left",
+          "position": [
+            250,
+            0,
+            200
+          ]
+        },
+        {
+          "id": "mount-rear-right",
+          "position": [
+            250,
+            0,
+            -200
+          ]
+        }
+      ],
+      "features": [
+        {
+          "id": "fuse-engine-trans",
+          "op": "fuse",
+          "of": "engine",
+          "with": [
+            "transmission"
+          ]
+        }
+      ],
+      "children": [
+        {
+          "id": "engine",
+          "ref": "engine-block",
+          "position": [
+            -100,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "transmission",
+          "ref": "transmission-case",
+          "position": [
+            350,
+            0,
+            0
+          ]
+        },
+        {
+          "id": "mount-fl",
+          "ref": "engine-mount-bracket",
+          "position": [
+            -250,
+            0,
+            200
+          ]
+        },
+        {
+          "id": "mount-fr",
+          "ref": "engine-mount-bracket",
+          "position": [
+            -250,
+            0,
+            -200
+          ]
+        },
+        {
+          "id": "mount-rl",
+          "ref": "engine-mount-bracket",
+          "position": [
+            250,
+            0,
+            200
+          ]
+        },
+        {
+          "id": "mount-rr",
+          "ref": "engine-mount-bracket",
+          "position": [
+            250,
+            0,
+            -200
+          ]
+        }
+      ]
+    }
+  ],
+  "root": "chassis"
+}

@@ -350,6 +350,10 @@ type meteredClient struct {
 	spent   int64
 	calls   int
 	refused int
+	// largest is the costliest call so far, and inflight the calls placed and not
+	// yet answered: together what the next call must leave room for (reserve).
+	largest  int64
+	inflight int
 	// step is the build step the next call belongs to; the plan's call is step 0.
 	step int
 	// dir keeps every call's prompt and reply when set (see callRecord).
@@ -389,15 +393,36 @@ func (m *meteredClient) setStep(n int) {
 	m.mu.Unlock()
 }
 
+// firstCallReserve is what a call is assumed to cost before any call of the run
+// has been seen. The largest call of the 2026-09-15 verified run was 19,648 tokens.
+const firstCallReserve = 12_000
+
+// reserve is what the next call is assumed to cost: the largest call this run has
+// seen, with a quarter on top, because a build's calls grow with the model it
+// carries (6,692 a call on average in the verified run, 19,648 at the largest).
+func (m *meteredClient) reserve() int64 {
+	if m.largest == 0 {
+		return firstCallReserve
+	}
+	return m.largest + m.largest/4
+}
+
 func (m *meteredClient) Complete(ctx context.Context, req llm.Request) (*llm.Response, error) {
 	m.mu.Lock()
-	if m.spent >= m.budget {
+	// ‼️ A call is placed only if it can be paid for: what is spent, plus what every
+	// call already in flight and this one may cost, must fit. The check used to be
+	// "spent < budget", which let the last call land past the ceiling: the
+	// 2026-09-15 verified run spent 301,142 of a 300,000 cap
+	// (docs/spikes/2026-09-17-live-verification).
+	if need := m.spent + int64(m.inflight+1)*m.reserve(); need > m.budget {
 		m.refused++
-		spent, budget := m.spent, m.budget
+		spent, budget, reserve := m.spent, m.budget, m.reserve()
 		m.mu.Unlock()
-		return nil, fmt.Errorf("the measurement's token budget is spent: %d of %d tokens used, "+
-			"so no further model call was placed (FORGE_MEASURE_TOKEN_BUDGET)", spent, budget)
+		return nil, fmt.Errorf("the measurement's token budget cannot pay for another call: %d of %d "+
+			"tokens used and a call may cost %d, so no further model call was placed "+
+			"(FORGE_MEASURE_TOKEN_BUDGET)", spent, budget, reserve)
 	}
+	m.inflight++
 	m.mu.Unlock()
 
 	began := time.Now()
@@ -406,6 +431,7 @@ func (m *meteredClient) Complete(ctx context.Context, req llm.Request) (*llm.Res
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.inflight--
 	m.calls++
 	rec := callRecord{N: m.calls, Step: m.step, Role: string(req.Role), Model: m.inner.ModelFor(req.Role),
 		Seconds: took.Seconds()}
@@ -430,6 +456,9 @@ func (m *meteredClient) Complete(ctx context.Context, req llm.Request) (*llm.Res
 			total = resp.Usage.PromptTokens + resp.Usage.CompletionTokens
 		}
 		m.spent += total
+		if total > m.largest {
+			m.largest = total
+		}
 		rec.Reply, rec.FinishReason = resp.Content, resp.FinishReason
 		rec.PromptTokens, rec.CompletionTokens = resp.Usage.PromptTokens, resp.Usage.CompletionTokens
 	}
