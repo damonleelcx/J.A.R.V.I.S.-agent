@@ -78,7 +78,10 @@ How to answer:
 // the reply's repair read (2026-09-17, bound patterns).
 // TestTheContractTeachesPatternBindingsAsTheBinderReadsThem fences it.
 var geometryContract = fmt.Sprintf(geometryContractTemplate, geometry.PatternBindingGuide(),
-	geometry.StandardGuide(), strings.Join(geometry.ExpressionFunctions(), ", "))
+	geometry.StandardGuide(), strings.Join(geometry.ExpressionFunctions(), ", "),
+	// The bowed-edge paragraph, printed from the table its refusals are written
+	// from (B3, 2026-09-18). Fence: TestContract_TeachesBowedEdgesFromTheValidatorsTable.
+	geometry.CurveGuide())
 
 var geometryContractTemplate = `Reply with JSON only:
 
@@ -580,25 +583,7 @@ About "prototype":
   like the post in an annular slot, the bar of a letter A, or a lug in the bottom
   of a pocket. It keeps going — a hole inside an island is a bore through the
   post — so draw exactly the loops the shape has and the nesting says the rest.
-- "via" on a point BENDS THE EDGE ARRIVING AT IT into a circular arc that passes
-  through the via on the way. Use it for an edge that BOWS: a crescent, a lens, a
-  cam lobe, a hook, a D-shaped shaft, the belly of a bracket that clears
-  something. It works on an outline point, a hole point and a path point, and on
-  a path it curves the run itself rather than only its corner.
-  It is a POINT ON THE ARC, not a centre and not a direction. Three points fix a
-  circle completely, so put the via roughly where the middle of the bulge should
-  be and the arc follows.
-  A "via" and a "radius" are different things and are not alternatives. A radius
-  ROUNDS A CORNER between two straight edges; a via CURVES AN EDGE. A corner
-  where an arc meets is left sharp — the radius there is ignored and reported —
-  so do not put one on either end of a bowed edge.
-  Two arcs between the same two points is a crescent, and that is a legitimate
-  outline of TWO points: an outline needs three points only when every edge is
-  straight.
-  A via must not be in line with the two ends of its edge, or on top of one of
-  them — there is no arc through three points in a row, and the edge is simply
-  drawn straight and reported. It must not carry a radius, a z (except on a
-  path), or a via of its own.
+%s
 - "radius" on a point ROUNDS THAT CORNER: an arc of that radius, tangent to both
   edges meeting there. It works the same way on an outline point and on a path
   point, and on a path it is the BEND RADIUS — the number a tube bender is set
@@ -620,8 +605,8 @@ About "prototype":
   DRAWING, so it follows the section round every bend of a sweep and all the way
   round a revolve; a fillet is an operation on the finished solid, chosen by
   rule. Prefer the radius when the shape simply has it.
-  What it cannot say is an arc that does NOT meet its neighbours smoothly — a
-  crescent, a lens, a bulged edge. There is no vocabulary for those here.
+  An arc that does NOT meet its neighbours smoothly — a crescent, a lens, a
+  bulged edge — is not a radius at all: it is a "via", above.
 - "section" is a drawing with NO thickness, and it exists for one purpose: to be
   a station of a "loft". Give it a "profile" like an extrusion's; give it no
   depth. On its own it encloses nothing.
