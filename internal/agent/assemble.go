@@ -443,6 +443,9 @@ func (c *Conversation) buildOneStep(ctx context.Context, doc *Prototype, asked s
 	// one place a warning about the model so far reaches the model extending it.
 	// Fence: TestAssemble_AStepIsToldWhatCouldBeOnePattern.
 	sofar += repetitionForStep(doc)
+	// And a placement the model so far writes twice (doubled.go): the notices above
+	// never reach this model, so a doubled offset kept by an earlier step is said here.
+	sofar += doubledForStep(doc)
 	// And the parameters it can place and size by, with what each works out to now
 	// (2026-09-15, attach and bind): every live car placed every part by literal
 	// arithmetic beside parameters that held the same numbers. See literals.go.
@@ -589,6 +592,10 @@ func (c *Conversation) buildOneStep(ctx context.Context, doc *Prototype, asked s
 	if literals := literalPositionNote(doc, reply.Prototype); literals != "" {
 		reply.noteRepair(literals)
 	}
+	// And a placement it wrote twice, on a definition and on the child placing it,
+	// is named with where the part lands and the fix, never rewritten (doubled.go).
+	// Fence: TestAssemble_AStepThatDoublesAnOffsetIsToldWhereThePartLands.
+	noteDoubledOffsets(&reply, doc)
 	// And a pass that DROPPED something is reported, never silently accepted.
 	if gone := vanishedParts(doc, reply.Prototype); len(gone) > 0 {
 		return reply.Prototype, fmt.Sprintf("Step %d (%s) removed %s.",

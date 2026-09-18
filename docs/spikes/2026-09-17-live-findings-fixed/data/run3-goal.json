@@ -1,0 +1,76 @@
+{
+  "goal": {
+    "id": "gol_01M2S7KENTQVYTTT90GK4DD8X1",
+    "title": "Live verification: wheel build goal",
+    "statement": "a road-car wheel: a rim, a tyre, a hub, and five lug nuts on a polar pattern around the hub's axis. Build it in at most three steps.",
+    "status": "failed",
+    "autonomy": "sandbox_execute",
+    "risk_tier": "r1",
+    "avatar_state": "failed",
+    "state_label": "Stopped",
+    "tokens_spent": 43717,
+    "max_tokens": 60000,
+    "tasks_total": 3,
+    "tasks_done": 2,
+    "tasks_failed": 1,
+    "outstanding": 0,
+    "pending_approvals": 0,
+    "created_at": "2026-09-18T03:05:17Z",
+    "started_at": "2026-09-18T03:05:19Z",
+    "ended_at": "2026-09-18T03:06:27Z",
+    "outcome_summary": "1 of 3 task(s) failed or were cancelled; 2 succeeded, 0 were skipped as unreachable. 2 build step(s) were refused, kept nothing: Step 1 of 3 \u2014 Hub Assembly; Step 2 of 3 \u2014 Rim and Tyre."
+  },
+  "tasks": [
+    {
+      "id": "tsk_01M2S7KH5EQY34YK74V586XZN1",
+      "title": "Step 1 of 3 \u2014 Hub Assembly",
+      "instruction": "Attach the five lug nuts in a polar pattern around the center of the hub.",
+      "status": "succeeded",
+      "risk_tier": "r1",
+      "verified": false,
+      "verification_required": false,
+      "requires_approval": false,
+      "attempts": 1,
+      "max_attempts": 5,
+      "depends_on": [],
+      "started_at": "2026-09-18T03:05:20Z",
+      "ended_at": "2026-09-18T03:05:33Z"
+    },
+    {
+      "id": "tsk_01M2S7KH5K53FFHDXNY5Q3R835",
+      "title": "Step 2 of 3 \u2014 Rim and Tyre",
+      "instruction": "Mount the tyre onto the rim to form the wheel assembly.",
+      "status": "succeeded",
+      "risk_tier": "r1",
+      "verified": false,
+      "verification_required": false,
+      "requires_approval": false,
+      "attempts": 1,
+      "max_attempts": 5,
+      "depends_on": [
+        "tsk_01M2S7KH5EQY34YK74V586XZN1"
+      ],
+      "started_at": "2026-09-18T03:05:33Z",
+      "ended_at": "2026-09-18T03:05:59Z"
+    },
+    {
+      "id": "tsk_01M2S7KH5NCA33S6FFAZQ3XKM7",
+      "title": "Step 3 of 3 \u2014 Final Assembly",
+      "instruction": "Attach the completed wheel assembly to the face of the hub.",
+      "status": "failed",
+      "risk_tier": "r1",
+      "verified": false,
+      "verification_required": false,
+      "requires_approval": false,
+      "attempts": 1,
+      "max_attempts": 5,
+      "depends_on": [
+        "tsk_01M2S7KH5K53FFHDXNY5Q3R835"
+      ],
+      "error_code": "FORBIDDEN",
+      "error_detail": "engine.Budget: FORBIDDEN: The authenticated principal is not permitted to perform this action on this resource. (goal budget exhausted on tokens: used 43717 tokens of 60000. 16283 tokens were left, and the next model call was not placed because it may cost 18641 (the largest call this goal has made, 14913 tokens, and a quarter more), which would pass the ceiling. The goal stops here rather than spend past it. Raise FORGE_MAX_TOKENS_PER_GOAL or the goal's own ceiling, or narrow the goal so it needs less context.)",
+      "started_at": "2026-09-18T03:05:59Z",
+      "ended_at": "2026-09-18T03:06:27Z"
+    }
+  ]
+}

@@ -346,3 +346,61 @@ func TestWorkbench_TheCardStartsAGoalInTheConversationsProject(t *testing.T) {
 		t.Error("the industry is no longer conditional on the project id; sent together, the server refuses both")
 	}
 }
+
+// ‼️ A step refused by a gate succeeds and keeps nothing; the card says so, by step, and
+// does not count the version it left behind as one it kept. Live run 3 of 2026-09-17
+// read "3 succeeded" with step 3 refused (docs/spikes/2026-09-17-live-verification).
+func TestWorkbench_TheCardSaysAStepWasRefusedAndKeptNothing(t *testing.T) {
+	outcome := "All 3 task(s) finished: 3 succeeded, 0 skipped. 1 build step(s) were refused, kept nothing: Step 3 of 3 — Shade."
+	run := runProgress(t, []progressPoll{{
+		Goal: map[string]any{"id": "gol_1", "status": "succeeded", "tasks_total": 3, "tasks_done": 3,
+			"outcome_summary": outcome},
+		Tasks: []map[string]any{step("t1", "Step 1 of 3 — Base", "succeeded"),
+			step("t2", "Step 2 of 3 — Arm", "succeeded"), step("t3", "Step 3 of 3 — Shade", "succeeded")},
+		Events: []map[string]any{event("goal.ended", outcome),
+			event("task.succeeded", "Step 3 of 3 (Shade): refused, kept nothing; the model stays at version ver_02B (2 part(s)). "+
+				"Step 3 (Shade) was refused: it named a root that is not the model's."),
+			event("task.succeeded", "Step 2 of 3 (Arm): 2 part(s), kept as version ver_02B."),
+			event("task.succeeded", "Step 1 of 3 (Base): 1 part(s), kept as version ver_01A.")},
+	}})
+	if len(run.Seen) != 1 || !run.Seen[0].Settled {
+		t.Fatalf("the card read %+v", run.Seen)
+	}
+	seen := run.Seen[0]
+	if strings.Join(seen.Kept, ",") != "ver_01A,ver_02B" {
+		t.Errorf("the card counts versions %v; the refused step kept none", seen.Kept)
+	}
+	if !strings.Contains(seen.HTML, `<div class="note bad">1 step was refused and kept nothing: Step 3 of 3 (Shade)</div>`) {
+		t.Errorf("the card does not say step 3 was refused and kept nothing:\n%s", seen.HTML)
+	}
+	if !strings.Contains(seen.HTML, "Finished.") {
+		t.Errorf("a goal whose kept model is valid still finished; the card must say that too:\n%s", seen.HTML)
+	}
+}
+
+// ‼️ A goal stopped with tokens left, because its next call could not fit (engine
+// BudgetGuard.CheckCall, 2026-09-17), reads as a budget stop that says how much was
+// left and why — from the step's own error when no budget event is on the timeline,
+// through plainStopText, which keeps the whole reason and drops the error's plumbing.
+func TestWorkbench_TheCardSaysWhyABuildStoppedWithTokensLeft(t *testing.T) {
+	why := "50 tokens were left, and the next model call was not placed because it may cost 125 " +
+		"(the largest call this goal has made, 100 tokens, and a quarter more), which would pass the ceiling. " +
+		"The goal stops here rather than spend past it."
+	detail := "engine.Budget: FORBIDDEN: the action is not permitted (goal budget exhausted on tokens: used 300 tokens of 350. " +
+		why + " Raise FORGE_MAX_TOKENS_PER_GOAL or the goal's own ceiling, or narrow the goal so it needs less context.)"
+	run := runProgress(t, []progressPoll{{
+		Goal: map[string]any{"id": "gol_1", "status": "failed", "tasks_total": 3, "tasks_done": 2, "tasks_failed": 1,
+			"tokens_spent": 300, "max_tokens": 350},
+		Tasks: []map[string]any{step("t1", "Step 1 of 3 — Base", "succeeded"), step("t2", "Step 2 of 3 — Arm", "succeeded"),
+			{"id": "t3", "title": "Step 3 of 3 — Shade", "status": "failed", "error_code": "FORBIDDEN", "error_detail": detail}},
+	}})
+	if len(run.Seen) != 1 || run.Seen[0].Stop == nil || run.Seen[0].Stop.Kind != "budget" {
+		t.Fatalf("a stop with tokens left reads %+v", run.Seen)
+	}
+	if !strings.Contains(run.Seen[0].Stop.Text, "used 300 tokens of 350. "+why) || strings.Contains(run.Seen[0].Stop.Text, "FORBIDDEN") {
+		t.Errorf("the card's stop reads %q", run.Seen[0].Stop.Text)
+	}
+	if !strings.Contains(run.Seen[0].HTML, "Stopped by its budget") || !strings.Contains(run.Seen[0].HTML, "300 of 350 tokens") {
+		t.Errorf("the card does not show the budget stop with the goal under its ceiling:\n%s", run.Seen[0].HTML)
+	}
+}

@@ -184,6 +184,12 @@ FILES=(
   # Added 2026-09-17: the unverified-paths drills (verifier spend, last_seen_at).
   internal/agent/verifier.go
   internal/httpapi/goals.go
+  # Added 2026-09-17 (live findings fixed): the doubled-offset, goal-reservation and
+  # measure-car drills target these three.
+  internal/agent/doubled.go
+  internal/agent/designationrepair.go
+  internal/domain/engine/budget.go
+  Makefile
 )
 
 BACKUP=""
@@ -2254,8 +2260,9 @@ drill "groups are read in map order" internal/domain/geometry/repetition.go \
   's = s.replace("\tfor _, g := range groups {\n\t\tfor _, run := range groupRuns(g) {\n\t\t\tout = append(out, Repetition{Assembly: a.ID,", "\tfor _, g := range byKey {\n\t\tfor _, run := range groupRuns(g) {\n\t\t\tout = append(out, Repetition{Assembly: a.ID,", 1)' \
   ./internal/domain/geometry 'TestRepetition_IsDeterministic'
 
+# Re-anchored 2026-09-17 (live findings fixed): the doubled-offset note now follows it.
 drill "the turn does not say what could be one pattern" internal/agent/converse.go \
-  's = s.replace("\tnoteRepetition(&reply)\n\treturn &reply, nil", "\treturn &reply, nil", 1)' \
+  's = s.replace("\tnoteRepetition(&reply)\n\t// And a placement written twice", "\t// And a placement written twice", 1)' \
   ./internal/agent 'TestRepetition_TheTurnSaysWhatCouldBeOnePattern'
 
 drill "the streaming turn does not say what could be one pattern" internal/agent/converse_stream.go \
@@ -2882,8 +2889,9 @@ drill "an outline is sent to the kernel in the document's unit" internal/domain/
   's = s.replace("c, err := section.Outer.scaled(toMM).exact(\"outline\")", "c, err := section.Outer.exact(\"outline\")", 1)' \
   ./internal/domain/cad 'TestKernel_EveryStandardFamilyBuildsTheSolidItsFiguresDescribe'
 
+# Re-anchored 2026-09-17 (live findings fixed): doubledForTurn now follows it.
 drill "an ordinary turn is not told what could be one pattern" internal/agent/converse_stream.go \
-  's = s.replace("\"]\" + repetitionForTurn(current) + \"\\n\\n\" + message", "\"]\" + \"\\n\\n\" + message", 1)' \
+  's = s.replace("\"]\" + repetitionForTurn(current) + doubledForTurn(current)", "\"]\" + doubledForTurn(current)", 1)' \
   ./internal/agent 'TestBuildMessages_ATurnIsToldWhatCouldBeOnePattern'
 
 drill "a turn is told every run, however many" internal/agent/repetition.go \
@@ -4711,6 +4719,111 @@ drill "a build step counts a tree's top-level parts" internal/agent/assemble.go 
 drill "a build goal's step counts a tree's top-level parts" internal/agent/buildgoal.go \
   's = s.replace("kept.VersionID, kept.Parts = v.VersionID, partsPlaced(&v.Document)", "kept.VersionID, kept.Parts = v.VersionID, len(v.Document.Parts)", 1)' \
   ./internal/agent 'TestBuildGoal_AStepOfATreeSaysThePartsItPlaces'
+
+echo "Live findings fixed (2026-09-17, stacked on the live verification)"
+# Added 2026-09-17 (live findings fixed): run 3's doubled lug-nut offset, the goal
+# ceiling's overshoot, the one-layout wheel turn, the step refused and read as
+# succeeded, and measure-car's Windows interpreter. docs/spikes/2026-09-17-live-verification.
+drill "a doubled offset is not named" internal/agent/doubled.go \
+  's = s.replace("if len(axes) == 0 && !turned {", "if true {", 1)' \
+  ./internal/agent 'TestDoubledOffsets_ADefinitionAndItsChildCarryingTheSamePositionAreNamed'
+
+drill "a step does not say what it doubled" internal/agent/assemble.go \
+  's = s.replace("\tnoteDoubledOffsets(&reply, doc)\n", "", 1)' \
+  ./internal/agent 'TestAssemble_AStepThatDoublesAnOffsetIsToldWhereThePartLands'
+
+drill "the next step is not told what the model so far doubles" internal/agent/assemble.go \
+  's = s.replace("sofar += doubledForStep(doc)", "sofar += \"\"", 1)' \
+  ./internal/agent 'TestAssemble_AStepThatDoublesAnOffsetIsToldWhereThePartLands'
+
+drill "a turn does not say what it doubled" internal/agent/converse.go \
+  's = s.replace("\tnoteDoubledOffsets(&reply, current)\n\treturn &reply, nil", "\treturn &reply, nil", 1)' \
+  ./internal/agent 'TestConverse_ATurnThatDoublesAnOffsetSaysWhereThePartLands'
+
+drill "a streamed turn does not say what it doubled" internal/agent/converse_stream.go \
+  's = s.replace("\t\tnoteDoubledOffsets(&reply, current)\n", "", 1)' \
+  ./internal/agent 'TestConverse_ATurnThatDoublesAnOffsetSaysWhereThePartLands'
+
+drill "the next turn is not told what the model on screen doubles" internal/agent/converse_stream.go \
+  's = s.replace(" + doubledForTurn(current)", "", 1)' \
+  ./internal/agent 'TestConverse_ATurnThatDoublesAnOffsetSaysWhereThePartLands'
+
+drill "the contract no longer says a placement goes in one place" internal/agent/converse.go \
+  's = s.replace("A placement\n  goes in ONE of the two places", "A placement\n  goes in either place", 1)' \
+  ./internal/agent 'TestTheContractSaysAPlacementGoesInOnePlace'
+
+drill "the contract teaches one layout's wheel turn" internal/agent/converse.go \
+  's = s.replace("  a car whose forward axis is X has its axles along Z, and a wheel is turned\n  \"rotation\": [90, 0, 0].\n", "", 1)' \
+  ./internal/agent 'TestTheContractTeachesAWheelsTurnFromTheCarsForwardAxis'
+
+drill "measure-car looks for bin/python on Windows" Makefile \
+  's = s.replace("CAD_PYTHON   ?= $(abspath $(CAD_VENV))/Scripts/python.exe", "CAD_PYTHON   ?= $(abspath $(CAD_VENV))/bin/python", 1)' \
+  ./internal/agent 'TestMeasureCar_PicksTheVenvPythonForThisOS'
+
+drill "a refused step reads as kept" internal/agent/buildgoal.go \
+  's = s.replace("case kept.Refused && kept.VersionID != \"\":", "case false:", 1)' \
+  ./internal/agent 'TestBuildGoal_ARefusedStepIsSaidOnTheStepAndTheGoal'
+
+drill "a goal does not say a step was refused" internal/agent/settle.go \
+  's = s.replace("\tif len(refused) > 0 {\n\t\tsaid", "\tif false {\n\t\tsaid", 1)' \
+  ./internal/agent 'TestBuildGoal_ARefusedStepIsSaidOnTheStepAndTheGoal'
+
+drill "the card does not say a step was refused" internal/httpapi/assets/workbench.js \
+  's = s.replace("if (p.refused.length) {", "if (false) {", 1)' \
+  ./internal/httpapi 'TestWorkbench_TheCardSaysAStepWasRefusedAndKeptNothing'
+
+drill "a goal call reserves nothing" internal/domain/engine/budget.go \
+  's = s.replace("\treturn largest + largest/4\n", "\treturn 0\n", 1)' \
+  ./internal/domain/engine 'TestCheckCall_AGoalNeverPlacesACallItsCeilingCannotPay'
+
+drill "goal calls in flight reserve nothing" internal/domain/engine/budget.go \
+  's = s.replace("int64(inFlight+1)*reserve", "reserve", 1)' \
+  ./internal/domain/engine 'TestCheckCall_AGoalNeverPlacesACallItsCeilingCannotPay'
+
+drill "a goal stop does not say what was left" internal/domain/engine/budget.go \
+  's = s.replace("tokens were left, and the next model call was not placed because it may cost", "tokens were left; a call may cost", 1)' \
+  ./internal/domain/engine 'TestCheckCall_AGoalNeverPlacesACallItsCeilingCannotPay'
+
+drill "the build client refuses only once the ceiling is reached" internal/agent/spend.go \
+  's = s.replace("c.budget.CheckCall(&g, c.clock.Now(), c.inflight)", "c.budget.CheckGoal(&g, c.clock.Now())", 1)' \
+  ./internal/agent 'TestBuildGoal_AStepDoesNotPlaceARepairItsCeilingCannotPay'
+
+drill "a goal's largest call is not stored" internal/domain/engine/budget.go \
+  's = s.replace(",\n\t\t       largest_call_tokens = greatest(largest_call_tokens, $2)", "", 1)' \
+  ./internal/agent 'TestBuildGoal_AGoalStopsBeforeACallThatWouldPassItsCeiling'
+
+drill "a step the budget stopped part-way says nothing on the timeline" internal/agent/buildgoal.go \
+  's = s.replace("\t\tw.sayBudgetStop(ctx, goal, task, err, \"build step\")\n", "", 1)' \
+  ./internal/agent 'TestBuildGoal_AStepDoesNotPlaceARepairItsCeilingCannotPay'
+
+drill "the card shows a budget stop with its plumbing" internal/httpapi/assets/workbench.js \
+  's = s.replace("if (withCode) return withCode[1].trim();", "if (withCode) return s;", 1)' \
+  ./internal/httpapi 'TestWorkbench_TheCardSaysWhyABuildStoppedWithTokensLeft'
+
+echo "Live re-check follow-ups (2026-09-17): unreadable step shapes, executor reservation"
+drill "a designation parameter a part carries is still refused" internal/agent/designationrepair.go \
+  's = s.replace("if id, ok := carried[normalisedDesignation(value)]; ok {", "if id, ok := carried[normalisedDesignation(value)]; ok && false {", 1)' \
+  ./internal/agent 'TestParseReply_ADesignationAsAParametersValue'
+
+drill "a designation refusal does not name the field" internal/agent/stepgates.go \
+  's = s.replace("why += \". \" + strings.Join(read.refused, \" \")", "why += \"\"", 1)' \
+  ./internal/agent 'TestParseReply_ADesignationAsAParametersValue'
+
+drill "a binding inside size is kept as a dimension of its own name" internal/agent/dimensionrepair.go \
+  's = s.replace("if dim := strings.TrimSuffix(k, \"_from\"); dim != k && dim != \"\" {", "if dim := strings.TrimSuffix(k, \"_from\"); false && dim != k {", 1)' \
+  ./internal/agent 'TestParseReply_ReadsABindingWrittenInsideSize|TestAssemble_TheLiveRecheckStepsAreReadNotRefused'
+
+drill "an executor call reserves nothing" internal/agent/executor.go \
+  's = s.replace("if breach := e.budget.CheckCall(&g, e.clock.Now(), 0); breach != nil &&", "if breach := e.budget.CheckGoal(&g, e.clock.Now()); breach != nil &&", 1)' \
+  ./internal/agent 'TestExecutor_AnOrdinaryGoalStopsBeforeACallThatWouldPassItsCeiling'
+
+drill "an executor task does not raise the largest call" internal/agent/executor.go \
+  's = s.replace("largest = max(largest, resp.Usage.TotalTokens)", "largest = max(largest, 0)", 1)' \
+  ./internal/agent 'TestExecutor_AnOrdinaryGoalStopsBeforeACallThatWouldPassItsCeiling'
+
+drill "a task the budget stopped part-way says nothing on the timeline" internal/agent/worker.go \
+  's = s.replace("\t\tw.sayBudgetStop(ctx, goal, task, err, \"task\")\n", "", 1)' \
+  ./internal/agent 'TestExecutor_AnOrdinaryGoalStopsBeforeACallThatWouldPassItsCeiling'
 
 echo
 

@@ -29,9 +29,17 @@ import (
 //
 // The worker checks the budget before a task starts, and a step makes several
 // calls after that. A client that only recorded would let the last step of a
-// spent goal make all of them. It refuses a call once what the goal had spent
-// when it was read, plus what this client has recorded since, reaches the goal's
-// ceiling — and says which ceiling.
+// spent goal make all of them.
+//
+// ‼️ And it refuses BEFORE the ceiling, not at it (2026-09-17, decided by the
+// coordinator under damon's delegation: a goal must not spend past its ceiling).
+// It used to refuse once the spend REACHED the ceiling, so the last call placed
+// under it — up to ~16,000 tokens for a build step — landed past it. A call is now
+// placed only if what the goal has spent, plus the reserve for it and for every
+// call still in flight (the largest call the goal has made, and a quarter more;
+// engine.BudgetGuard.CheckCall), still fits. When it does not, the goal stops with
+// the budget-stop text, saying how much was left and why the call was not placed.
+// Fence: TestBuildGoal_AGoalStopsBeforeACallThatWouldPassItsCeiling.
 //
 // Tokens and cost only. The wall clock and the task count are the worker's to
 // check between tasks: a step abandoned half-built because the clock ticked over
@@ -48,6 +56,11 @@ type chargedClient struct {
 	spent  int64
 	failed error
 	breach *engine.LimitBreach
+	// largest is the costliest call of this goal so far, read from the goal and
+	// raised by every call this client makes; inflight is the calls placed and not
+	// yet answered. Together they are what the next call must leave room for.
+	largest  int64
+	inflight int
 }
 
 // chargeTo wraps a client so every call it makes is charged to goal.
@@ -56,7 +69,8 @@ func chargeTo(inner llm.Client, budget *engine.BudgetGuard, pool db.Querier, goa
 	if log == nil {
 		log = logx.Discard()
 	}
-	return &chargedClient{inner: inner, budget: budget, pool: pool, goal: *goal, clock: clk, log: log}
+	return &chargedClient{inner: inner, budget: budget, pool: pool, goal: *goal, clock: clk, log: log,
+		largest: goal.Spend.LargestCall}
 }
 
 func (c *chargedClient) Complete(ctx context.Context, req llm.Request) (*llm.Response, error) {
@@ -64,18 +78,25 @@ func (c *chargedClient) Complete(ctx context.Context, req llm.Request) (*llm.Res
 	if c.breach == nil {
 		g := c.goal
 		g.Spend.Tokens += c.spent
-		if b := c.budget.CheckGoal(&g, c.clock.Now()); b != nil &&
+		g.Spend.LargestCall = c.largest
+		if b := c.budget.CheckCall(&g, c.clock.Now(), c.inflight); b != nil &&
 			(b.Kind == engine.LimitTokens || b.Kind == engine.LimitCost) {
 			c.breach = b
 		}
 	}
 	breach := c.breach
+	if breach == nil {
+		c.inflight++
+	}
 	c.mu.Unlock()
 	if breach != nil {
 		return nil, breach.Error()
 	}
 
 	resp, err := c.inner.Complete(ctx, req)
+	c.mu.Lock()
+	c.inflight--
+	c.mu.Unlock()
 	if err != nil {
 		c.mu.Lock()
 		c.failed = err
@@ -84,6 +105,7 @@ func (c *chargedClient) Complete(ctx context.Context, req llm.Request) (*llm.Res
 	}
 	c.mu.Lock()
 	c.spent += resp.Usage.TotalTokens
+	c.largest = max(c.largest, resp.Usage.TotalTokens)
 	c.mu.Unlock()
 	// Recorded even when the caller is going away: the tokens were spent the
 	// moment the answer came back, whether or not anybody reads it.

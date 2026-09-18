@@ -228,10 +228,18 @@ About "prototype":
 - Positions are in the stated units, Y is up, and the origin is the assembly's
   centre. Parts are centred on their own position.
 - A "cylinder" or "cone" STANDS UPRIGHT: its "height" runs along the part's own
-  Y, with its round faces at the top and bottom. So a wheel, a brake disc or a
-  pulley on an axle that runs across the model, along X, is turned
-  "rotation": [0, 0, 90]. Left unturned it lies flat like a plate, and turned
-  [90, 0, 0] it faces forward and would roll sideways.
+  Y, with its round faces at the top and bottom. A wheel, a brake disc, a hub
+  or a pulley turns on an axle that runs ACROSS the car, square to the car's own
+  forward axis (the way it drives), so turn it until its height lies along that
+  axle — which rotation that is depends on which way this car is laid out:
+  a car whose forward axis is Z has its axles along X, and a wheel is turned
+  "rotation": [0, 0, 90];
+  a car whose forward axis is X has its axles along Z, and a wheel is turned
+  "rotation": [90, 0, 0].
+  Left unturned it lies flat like a plate. Turned the other car's way, its axis
+  runs along the forward axis and it would roll sideways. Decide the forward
+  axis first, then write every wheel, hub, disc and axle turn from it. The
+  examples below drive along Z; a car along X turns each of them the X way.
 - Part ids are STABLE ACROSS TURNS. When you revise an assembly, the part that
   was "base-plate" stays "base-plate" — that is what lets somebody put the two
   versions side by side and see what changed rather than two unrelated designs.
@@ -269,7 +277,12 @@ About "prototype":
   A DEFINITION is a part written once, with no place of its own: its position is
   where it sits inside whatever places it. An ASSEMBLY is a group of CHILDREN;
   each child places one definition or one other assembly by "ref", at its own
-  "position" and "rotation", measured in that assembly's frame. "root" names
+  "position" and "rotation", measured in that assembly's frame. A placement
+  goes in ONE of the two places, because they add up: a lug nut written at
+  [50, 20, 0] turned [90, 0, 0] on its definition AND on the child that places
+  it lands at [100, 20, 20], off its bolt circle. Write an offset on the
+  definition or on the child, never the same one on both; a part placed by a
+  pattern is drawn at [0, 0, 0] and placed by its child. "root" names
   the assembly that holds everything, and top-level "parts" may sit beside it.
   A placed part's id is the path of child ids down to it: the hub of the wheel
   placed as "front-left" is "front-left/hub". Change a definition and every
@@ -1022,9 +1035,13 @@ func parseReply(resp *llm.Response) (Reply, error) {
 	//
 	// Only after the strict parse has already failed, so a reply that parses is
 	// never rewritten.
-	if repaired, relocated, evaluated := repairDimensionsNoted(body); relocated || evaluated {
+	if repaired, read := repairReply(body); read.changed() {
+		relocated, evaluated := read.relocated, read.evaluated
 		var second Reply
 		if json.Unmarshal(repaired, &second) == nil {
+			for _, line := range read.dropped {
+				second.noteRepair(line)
+			}
 			if relocated {
 				second.noteRepair("One or more dimensions arrived as expressions written in the " +
 					"place of a number. They were read as the expressions they are — the " +
@@ -1433,6 +1450,8 @@ func (c *Conversation) Respond(ctx context.Context, projectID string, history []
 	// And what is written out one child at a time where one pattern would do, at the
 	// same point the streamed path says it (repetition.go).
 	noteRepetition(&reply)
+	// And a placement written twice, on a definition and the child placing it (doubled.go).
+	noteDoubledOffsets(&reply, current)
 	return &reply, nil
 }
 
