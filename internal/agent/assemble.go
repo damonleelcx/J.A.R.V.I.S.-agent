@@ -271,7 +271,10 @@ const maxStepContextBytes = 64 << 10
 
 var errNotWorthPlanning = fmt.Errorf("this does not need building in passes")
 
-const stepSystem = `You are adding ONE subsystem to a model that already exists.
+// stepSystem is a var since 2026-09-17 (bound patterns): which pattern fields may carry a
+// parameter's name is rendered from geometry's table (stepPatternFields).
+// Fence: TestAssemble_AStepIsTaughtToBindAPatternsStep.
+var stepSystem = `You are adding ONE subsystem to a model that already exists.
 
 You are given the model so far and the step to do. Return a "prototype_edit"
 that ADDS what this step asks for, and nothing else.
@@ -297,7 +300,8 @@ that ADDS what this step asks for, and nothing else.
 - Bind what follows a parameter you were shown to that parameter: "size_from"
   and "position_from" on a part or a definition ({"depth": "wheelbase"}), and
   the parameter's name in a child's or an interface's "position"
-  (["-half_wheelbase", 0, 0]), which FORGE keeps bound to the parameters. Never
+  (["-half_wheelbase", 0, 0]) and in a child's pattern's ` + stepPatternFields() + `,
+  which FORGE keeps bound to the parameters. Never
   retype a parameter's value as a number. Read the dimensions you were given; do
   not assume them.
 - Do this step only. The later steps are somebody else's, including yours in a
@@ -314,8 +318,8 @@ that ADDS what this step asks for, and nothing else.
   "placements" is placed from the root at the root's origin, attached to nothing.
 - Send "prototype_edit" only: not "prototype", and not "build_in_passes", because
   this pass IS the build. It is read as strict JSON: no comments, every number a
-  number, and an expression only in a "_from" field or in a child's or an
-  interface's "position".
+  number, and an expression only in a "_from" field, in a child's or an
+  interface's "position", or in a child's pattern's ` + stepPatternFields() + `.
 
 Return JSON: {"speech": "one sentence on what you added", "prototype_edit": {"patch": {"definitions": [...], "assemblies": [...], "parts": [...], "features": [...]}, "placements": [...]}}`
 
@@ -335,7 +339,7 @@ Return JSON: {"speech": "one sentence on what you added", "prototype_edit": {"pa
 // the contract never showed it could, and a later step had nothing to attach "at".
 // docs/bugfix/2026-09-15-a-failed-build-step-said-no-geometry-whatever-refused-it.md
 // Fence: TestAssemble_TheFirstStepIsAskedForATreeWithInterfaces.
-const firstStepSystem = `You are building the FIRST part of a model that will be added to in later passes.
+var firstStepSystem = `You are building the FIRST part of a model that will be added to in later passes.
 
 Return the whole prototype for this step only. Do not build the later steps: they
 are somebody else's, including yours in a moment. Build the part everything else
@@ -354,8 +358,8 @@ will attach to, at a size the rest can be positioned against.
   height) as "parameters", and write positions and sizes with their names, not
   their values, so a later step reads them and a change moves everything.
 - It is read as strict JSON: no comments, every number a number, and an
-  expression only in a "_from" field or in a child's or an interface's
-  "position".
+  expression only in a "_from" field, in a child's or an interface's
+  "position", or in a child's pattern's ` + stepPatternFields() + `.
 
 Return JSON: {"speech": "one sentence on what you built", "prototype": {"name": "...", "units": "mm", "parameters": [...], "definitions": [...], "assemblies": [...], "root": "...", "parts": [...]}}`
 

@@ -194,8 +194,8 @@ func TestAssemble_AStepIsTaughtToAttachFromTheRootAndToBindPositions(t *testing.
 	}
 	first, later := stub.systems[0], stub.systems[1]
 	for _, want := range []string{`as "parameters", and write positions and sizes with their names, not
-  their values`, `expression only in a "_from" field or in a child's or an interface's
-  "position"`} {
+  their values`, `expression only in a "_from" field, in a child's or an interface's
+  "position", or in a child's pattern's "offset"`} {
 		if !strings.Contains(first, want) {
 			t.Errorf("the first step is not told %q", want)
 		}

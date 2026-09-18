@@ -171,7 +171,7 @@ func partsBound(parts []Part, profiles map[string]outline, paths map[string]poly
 func placementsBound(asms []Assembly) bool {
 	for _, a := range asms {
 		for _, c := range a.Children {
-			if len(c.PositionFrom) > 0 {
+			if len(c.PositionFrom) > 0 || c.Pattern.bound() {
 				return true
 			}
 		}
@@ -199,6 +199,14 @@ func bindPlacements(a *Assembly, lookup func(string) (float64, bool), compareToA
 	for j := range a.Children {
 		c := &a.Children[j]
 		onPlacement(bindPosition(&c.Position, c.PositionFrom, a.ID+PathSeparator+c.ID, lookup, compareToAuthored))
+		// And its pattern's step, into a copy of the pattern: an edit shares the pattern
+		// with the model it was made from (2026-09-17, bound patterns, pattern_binding.go).
+		// Fence: TestBind_APatternsStepAndAngleFollowTheirParameters.
+		if c.Pattern.bound() {
+			p := c.Pattern.clone()
+			onPlacement(bindPattern(p, a.ID+PathSeparator+c.ID, lookup, compareToAuthored))
+			c.Pattern = p
+		}
 	}
 	if a.Interfaces != nil {
 		a.Interfaces = append([]Interface(nil), a.Interfaces...)
@@ -275,6 +283,13 @@ func bindPart(p *Part, profiles map[string]outline, paths map[string]polyline,
 // stated number and refused in exactly the words a part is.
 func bindPosition(position *[]float64, from map[string]string, label string,
 	lookup func(string) (float64, bool), compareToAuthored bool) []Problem {
+	return bindVector(position, from, label, "position", lookup, compareToAuthored)
+}
+
+// bindVector is bindPosition for any [x, y, z] a binding names by axis: a position, or
+// a pattern's offset ("pattern offset"). what names it in every problem.
+func bindVector(position *[]float64, from map[string]string, label, what string,
+	lookup func(string) (float64, bool), compareToAuthored bool) []Problem {
 	if len(from) == 0 {
 		return nil
 	}
@@ -289,11 +304,11 @@ func bindPosition(position *[]float64, from map[string]string, label string,
 		if !ok {
 			problems = append(problems, Problem{
 				Severity: Error, Name: label,
-				Detail: fmt.Sprintf("binds position %q, which is not an axis; use x, y or z", axis),
+				Detail: fmt.Sprintf("binds %s %q, which is not an axis; use x, y or z", what, axis),
 			})
 			continue
 		}
-		value, prob := evalBinding(expr, label, "position "+axis, lookup)
+		value, prob := evalBinding(expr, label, what+" "+axis, lookup)
 		if prob != nil {
 			problems = append(problems, *prob)
 			continue
@@ -304,8 +319,8 @@ func bindPosition(position *[]float64, from map[string]string, label string,
 		if was := pos[index]; compareToAuthored && !nearlyEqual(was, value) && was != 0 {
 			problems = append(problems, Problem{
 				Severity: Warning, Name: label,
-				Detail: fmt.Sprintf("states position %s = %g but its own expression %q works out "+
-					"to %g; the expression was used", axis, was, expr, value),
+				Detail: fmt.Sprintf("states %s %s = %g but its own expression %q works out "+
+					"to %g; the expression was used", what, axis, was, expr, value),
 			})
 		}
 		pos[index] = value
@@ -520,14 +535,10 @@ func cloneAssemblies(in []Assembly) []Assembly {
 			c.Position = append([]float64(nil), c.Position...)
 			c.Rotation = append([]float64(nil), c.Rotation...)
 			c.PositionFrom = copyStringMap(c.PositionFrom)
-			if c.Pattern != nil {
-				p := *c.Pattern
-				p.Offset = append([]float64(nil), p.Offset...)
-				p.RowOffset = append([]float64(nil), p.RowOffset...)
-				p.ColumnOffset = append([]float64(nil), p.ColumnOffset...)
-				p.Path = append([]Point(nil), p.Path...)
-				c.Pattern = &p
-			}
+			// With its bindings' maps: a respec's copy sharing them would rebind its
+			// SOURCE's pattern the day anything wrote into one (PR 112's bug class).
+			// Fence: TestBind_APatternsBindingIsNotSharedWithItsSource.
+			c.Pattern = c.Pattern.clone()
 			b.Children[j] = c
 		}
 		out[i] = b
