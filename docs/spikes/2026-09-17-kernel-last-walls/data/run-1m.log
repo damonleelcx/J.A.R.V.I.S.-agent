@@ -1,0 +1,13 @@
+== bays 100 rep 1 before (sidecar-main.py)
+bays=100 full run 1: ok=True build 92.7s [shapes 37.5 assembly 10.5 interf 39.4 props 0.0 mesh 0.0] peak 5.90 GB host cpu 60% (max 75%) host mem peak 51%  answer 0d33c14f5e9d props -
+bays=100 mesh run 1: ok=True build 141.3s [shapes 37.9 assembly 10.4 interf 20.5 props 46.9 mesh 19.7] peak 6.12 GB host cpu 58% (max 77%) host mem peak 51%  answer 245cb12e896b props 740cbddbdfb8
+== bays 100 rep 1 after (sidecar-after.py)
+bays=100 full run 1: ok=True build 86.4s [shapes 26.4 assembly 10.4 interf 43.9 props 0.0 mesh 0.0] peak 5.90 GB host cpu 63% (max 85%) host mem peak 52%  answer 0d33c14f5e9d props -
+bays=100 mesh run 1: ok=True build 109.3s [shapes 29.1 assembly 11.7 interf 22.0 props 20.4 mesh 20.1] peak 6.12 GB host cpu 62% (max 73%) host mem peak 51%  answer 245cb12e896b props 740cbddbdfb8
+== bays 100 rep 2 before (sidecar-main.py)
+bays=100 full run 1: ok=True build 90.3s [shapes 34.2 assembly 10.2 interf 40.0 props 0.0 mesh 0.0] peak 5.90 GB host cpu 57% (max 66%) host mem peak 50%  answer 0d33c14f5e9d props -
+bays=100 mesh run 1: ok=True build 135.0s [shapes 34.4 assembly 10.1 interf 20.7 props 45.4 mesh 19.5] peak 6.12 GB host cpu 53% (max 66%) host mem peak 50%  answer 245cb12e896b props 740cbddbdfb8
+== bays 100 rep 2 after (sidecar-after.py)
+bays=100 full run 1: ok=True build 74.4s [shapes 23.9 assembly 8.6 interf 36.7 props 0.0 mesh 0.0] peak 5.90 GB host cpu 50% (max 59%) host mem peak 49%  answer 0d33c14f5e9d props -
+bays=100 mesh run 1: ok=True build 104.7s [shapes 25.1 assembly 10.2 interf 19.5 props 22.0 mesh 21.6] peak 6.12 GB host cpu 58% (max 82%) host mem peak 51%  answer 245cb12e896b props 740cbddbdfb8
+== interleave done

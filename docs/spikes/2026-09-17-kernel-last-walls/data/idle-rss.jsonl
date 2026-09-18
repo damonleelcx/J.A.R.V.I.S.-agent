@@ -1,0 +1,10 @@
+{"vmhwm_mib": 441.8, "vmrss_mib": 441.8, "step": "ready", "sidecar": "/d/sidecar-main.py", "banner": "{\"ready\": true, \"protocol\": 1}"}
+{"vmhwm_mib": 1375.3, "vmrss_mib": 1266.3, "step": "export 1 idle", "ok": true, "reply_mb": 88.1, "round_trip_s": 10.8}
+{"vmhwm_mib": 1544.8, "vmrss_mib": 1351.7, "step": "export 2 idle", "ok": true, "reply_mb": 88.2, "round_trip_s": 9.6}
+{"vmhwm_mib": 1544.8, "vmrss_mib": 1363.9, "step": "export 3 idle", "ok": true, "reply_mb": 88.3, "round_trip_s": 9.8}
+{"vmhwm_mib": 1551.0, "vmrss_mib": 1364.0, "step": "export 4 idle", "ok": true, "reply_mb": 88.3, "round_trip_s": 11.6}
+{"vmhwm_mib": 440.1, "vmrss_mib": 440.1, "step": "ready", "sidecar": "/d/sidecar-mem.py", "banner": "{\"ready\": true, \"protocol\": 1}"}
+{"vmhwm_mib": 1373.1, "vmrss_mib": 478.5, "step": "export 1 idle", "ok": true, "reply_mb": 88.1, "round_trip_s": 11.6}
+{"vmhwm_mib": 1374.2, "vmrss_mib": 496.3, "step": "export 2 idle", "ok": true, "reply_mb": 88.2, "round_trip_s": 13.3}
+{"vmhwm_mib": 1374.2, "vmrss_mib": 513.1, "step": "export 3 idle", "ok": true, "reply_mb": 88.3, "round_trip_s": 12.1}
+{"vmhwm_mib": 1434.5, "vmrss_mib": 527.9, "step": "export 4 idle", "ok": true, "reply_mb": 88.3, "round_trip_s": 12.1}

@@ -1,0 +1,33 @@
+start 22:11:48
+=== RUN   TestLiveLookAtKeptCars
+    look_kept_car_live_test.go:73: LOOK-KEPT doc=C:\Users\damon\AppData\Local\Temp\claude\C--Users-damon-Downloads-agents\9c73bcba-7500-4641-9433-f7c8efd05843\scratchpad\lv\car-run1.json occurrences=45 from_kernel=true looked_closely=3 of=3 problems=6 tokens=5447 calls=4 refused=0 seconds=20.3 err=<nil>
+    look_kept_car_live_test.go:84:   problem: suspension-rear-left / hub / Hub Carrier — in suspension-rear-left: suspension-rear-left / hub / Hub Carrier: The hub carrier is oriented with its axis vertical (lying flat like a plate) in the top and isometric views, whereas a wheel hub should be horizontal to align with the axle.
+    look_kept_car_live_test.go:84:   problem: powertrain-unit / mount-fl / Engine Mount Bracket — in powertrain-unit: powertrain-unit / mount-fl / Engine Mount Bracket: The mount bracket is floating clear of the engine block in the isometric view, touching nothing.
+    look_kept_car_live_test.go:84:   problem: powertrain-unit / mount-fr / Engine Mount Bracket — in powertrain-unit: powertrain-unit / mount-fr / Engine Mount Bracket: The mount bracket is floating clear of the engine block in the isometric view, touching nothing.
+    look_kept_car_live_test.go:84:   problem: powertrain-unit / mount-rl / Engine Mount Bracket — in powertrain-unit: powertrain-unit / mount-rl / Engine Mount Bracket: The mount bracket is floating clear of the engine block in the isometric view, touching nothing.
+    look_kept_car_live_test.go:84:   problem: powertrain-unit / mount-rr / Engine Mount Bracket — in powertrain-unit: powertrain-unit / mount-rr / Engine Mount Bracket: The mount bracket is floating clear of the engine block in the isometric view, touching nothing.
+    look_kept_car_live_test.go:84:   problem: suspension-left / lower-arm-b / Control Arm — in suspension-left: suspension-left / lower-arm-b / Control Arm: The part is floating clear of the knuckle and other arms in the isometric view, touching nothing.
+    look_kept_car_live_test.go:86: LOOK-KEPT problems_naming_a_sub_assembly=6 of 6
+    look_kept_car_live_test.go:73: LOOK-KEPT doc=C:\Users\damon\AppData\Local\Temp\claude\C--Users-damon-Downloads-agents\9c73bcba-7500-4641-9433-f7c8efd05843\scratchpad\lv\car-merged.json occurrences=75 from_kernel=true looked_closely=4 of=7 problems=12 tokens=7490 calls=5 refused=0 seconds=20.6 err=<nil>
+    look_kept_car_live_test.go:77: LOOK-KEPT note would read: FORGE looked closely at 4 of 7 sub-assemblies
+    look_kept_car_live_test.go:84:   problem: powertrain / engine / V8 Engine Block — powertrain / engine / V8 Engine Block: The engine block and transmission housing are floating in the air below and to the side of the chassis frame, completely detached from the structure.
+    look_kept_car_live_test.go:84:   problem: bodywork-assembly / panel-left / Carbon Fiber Body Panel — bodywork-assembly / panel-left / Carbon Fiber Body Panel: The body panels are floating high above the chassis frame rather than being attached to it.
+    look_kept_car_live_test.go:84:   problem: r1-front-suspension-beside / knuckle / Steering Knuckle — r1-front-suspension-beside / knuckle / Steering Knuckle: Several suspension components listed as 'beside' are floating disconnected from the main assembly in the isometric view.
+    look_kept_car_live_test.go:84:   problem: suspension-linkage — in suspension-linkage: suspension-linkage: All constituent parts (control arms, pushrods, dampers) are floating in space, widely separated from each other rather than being assembled into connected suspension units.
+    look_kept_car_live_test.go:84:   problem: brakes / mc / Master Cylinder — in brakes: brakes / mc / Master Cylinder: The master cylinder is a small floating cube in the center of the assembly, touching nothing and disconnected from the hydraulic lines.
+    look_kept_car_live_test.go:84:   problem: brakes / line-fl / Hydraulic Brake Line — in brakes: brakes / line-fl / Hydraulic Brake Line: The hydraulic brake lines are floating segments that do not connect the master cylinder to the calipers.
+    look_kept_car_live_test.go:84:   problem: brakes / line-fr / Hydraulic Brake Line — in brakes: brakes / line-fr / Hydraulic Brake Line: The hydraulic brake lines are floating segments that do not connect the master cylinder to the calipers.
+    look_kept_car_live_test.go:84:   problem: brakes / line-rl / Hydraulic Brake Line — in brakes: brakes / line-rl / Hydraulic Brake Line: The hydraulic brake lines are floating segments that do not connect the master cylinder to the calipers.
+    look_kept_car_live_test.go:84:   problem: brakes / line-rr / Hydraulic Brake Line — in brakes: brakes / line-rr / Hydraulic Brake Line: The hydraulic brake lines are floating segments that do not connect the master cylinder to the calipers.
+    look_kept_car_live_test.go:84:   problem: r1-rear-suspension-beside / joint-upper — in r1-rear-suspension-beside: r1-rear-suspension-beside / joint-upper: The ball joint is floating in space, disconnected from the upper control arm and the hub carrier.
+    look_kept_car_live_test.go:84:   problem: r1-rear-suspension-beside / joint-lower-a — in r1-rear-suspension-beside: r1-rear-suspension-beside / joint-lower-a: The ball joint is floating in space, disconnected from the lower control arm and the hub carrier.
+    look_kept_car_live_test.go:84:   problem: r1-rear-suspension-beside / joint-lower-b — in r1-rear-suspension-beside: r1-rear-suspension-beside / joint-lower-b: The ball joint is floating in space, disconnected from the lower control arm and the hub carrier.
+    look_kept_car_live_test.go:86: LOOK-KEPT problems_naming_a_sub_assembly=9 of 12
+    look_kept_car_live_test.go:89: CAR-LOOKS step=0 whole=2 sub_assemblies=7 findings=18 tokens=12937 seconds_per_call=2.4,2.4,4.7,2.6,4.3,3.1,5.8,3.5,2.3 looked_at=suspension-rear-left,powertrain-unit,suspension-left,suspension-linkage,brakes,r1-rear-suspension-beside,powertrain
+    look_kept_car_live_test.go:89: CAR-LOOKS-TOTAL calls=9 whole=2 sub_assemblies=7 findings=18 tokens=12937 mean_seconds=3.5 max_seconds=5.8
+    look_kept_car_live_test.go:92: LOOK-SPEND tokens=12937 of 25000 calls=9 refused=0
+--- PASS: TestLiveLookAtKeptCars (40.93s)
+PASS
+ok  	github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/agent	41.581s
+exit=0
+end 22:12:33

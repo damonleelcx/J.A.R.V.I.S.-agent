@@ -621,3 +621,10 @@ func StandardPartForTest(p Part, units string) (Part, bool) {
 	}
 	return e.Parts[0], true
 }
+
+// IsStandardDesignation reports whether s names a part in the catalogue, compared the
+// way a part's "standard" is (normaliseDesignation).
+func IsStandardDesignation(s string) bool {
+	_, ok := standardIndex[normaliseDesignation(s)]
+	return ok
+}

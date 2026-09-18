@@ -1,0 +1,58 @@
+[
+  {
+    "n": 1,
+    "of": 8,
+    "name": "Chassis Frame",
+    "note": "One or more dimensions arrived as expressions written in the place of a number. They were read as the expressions they are — the contract has a field for each — rather than the reply being discarded. A position on a placed child or an interface arrived as an expression. It was placed at what the expression works out to from the parameters now, and the expression was kept as its \"position_from\", so it follows those parameters when they change. Looking at the model it had just built, FORGE saw something it could not correct: diag-fl / Diagonal Brace: The diagonal braces appear as floating, disconnected lines in the side and isometric views, not clearly attached to the main rails or cross members.",
+    "parts": 0
+  },
+  {
+    "n": 2,
+    "of": 8,
+    "name": "Front Suspension Uprights",
+    "note": "This edit reached every placement of what it changed: changed definition control-arm: no occurrences, since nothing places it; changed definition upright: no occurrences, since nothing places it; changed assembly front-suspension: no occurrences, since nothing places it. FORGE placed the assembly \"front-suspension\" from the root \"chassis\" where this step declared it: \"suspension-left\" at \"chassis/front-suspension-left\"; \"suspension-right\" at \"chassis/front-suspension-right\", mirrored across z. Looking at the model it had just built, FORGE saw something it could not correct: suspension-left / knuckle / Steering Knuckle: The left steering knuckle and its associated control arms are floating in space, completely detached from the left chassis rail. Some parts share material: suspension-left / lower-arm-b / Control Arm is 10% inside left-rail / Main Longitudinal Rail: they occupy the same material (48476 mm³). Move one of them, or make the part that contains the other hollow. That can be deliberate at this stage, so nothing was moved.",
+    "parts": 0
+  },
+  {
+    "n": 3,
+    "of": 8,
+    "name": "Rear Suspension Assembly",
+    "note": "This edit reached every placement of what it changed: changed definition subframe-tube: no occurrences, since nothing places it; changed definition control-arm: 8 occurrences (suspension-left/upper-arm-a, suspension-left/upper-arm-b, suspension-left/lower-arm-a, suspension-left/lower-arm-b, suspension-right/upper-arm-a, suspension-right/upper-arm-b, suspension-right/lower-arm-a, suspension-right/lower-arm-b); changed definition hub-carrier: no occurrences, since nothing places it; changed definition ball-joint: no occurrences, since nothing places it; changed assembly rear-suspension: no occurrences, since nothing places it. FORGE placed the assembly \"rear-suspension\" from the root \"chassis\" where this step declared it: \"suspension-rear-left\" at \"chassis/rear-suspension-left\"; \"suspension-rear-right\" at \"chassis/rear-suspension-right\", mirrored across z. Looking at the model it had just built, FORGE found problems and corrected it: suspension-rear-left / hub / Hub Carrier: The rear hub carriers and suspension arms are floating in space, detached from the main chassis rails and subframe structure. Parts are inside each other and FORGE could not correct it: suspension-rear-left / joint-lower-b / Ball Joint is 63% inside suspension-rear-left / lower-arm-b / Control Arm: they occupy the same material (8912 mm³). Move one of them, or make the part that contains the other hollow. suspension-rear-right / joint-lower-a / Ball Joint is 63% inside suspension-rear-right / lower-arm-a / Control Arm: they occupy the same material (8912 mm³). Move one of them, or make the part that contains the other hollow. suspension-rear-left / joint-lower-a / Ball Joint is 63% inside suspension-rear-left / lower-arm-a / Control Arm: they occupy the same material (8912 mm³). Move one of them, or make the part that contains the other hollow. and 9 more. A repair was tried and not kept: before the repair the kernel found 6 buried clash(es) among 12 pair(s) sharing material; after it, 6 buried clash(es) among 12 pair(s) sharing material: no fewer.",
+    "parts": 0
+  },
+  {
+    "n": 4,
+    "of": 8,
+    "name": "Powertrain Block",
+    "note": "This edit reached every placement of what it changed: changed definition engine-block: no occurrences, since nothing places it; changed definition transmission-case: no occurrences, since nothing places it; changed definition engine-mount-bracket: no occurrences, since nothing places it; changed assembly powertrain: no occurrences, since nothing places it. FORGE placed the assembly \"powertrain\" from the root \"chassis\" where this step declared it: \"powertrain-unit\" at \"chassis/engine-mount-front\". Looking at the model it had just built, FORGE found problems and corrected it: powertrain-unit / engine / Engine Block: The engine block is floating in the center of the chassis rails with no visible connection to the engine mount brackets or the chassis structure. Parts are inside each other and FORGE could not correct it: powertrain-unit / mount-fl / Engine Mount Bracket is 100% inside powertrain-unit / engine / Engine Block: they occupy the same material (196350 mm³). Move one of them, or make the part that contains the other hollow. powertrain-unit / mount-fr / Engine Mount Bracket is 100% inside powertrain-unit / engine / Engine Block: they occupy the same material (196350 mm³). Move one of them, or make the part that contains the other hollow. suspension-rear-left / joint-lower-a / Ball Joint is 50% inside suspension-rear-left / lower-arm-a / Control Arm: they occupy the same material (7069 mm³). Move one of them, or make the part that contains the other hollow. and 12 more. A repair was tried and not kept: before the repair the kernel found 4 buried clash(es) among 15 pair(s) sharing material; after it, 4 buried clash(es) among 15 pair(s) sharing material: no fewer.",
+    "parts": 0
+  },
+  {
+    "n": 5,
+    "of": 8,
+    "name": "Drivetrain Connections",
+    "note": "Step 5 (Drivetrain Connections) was left out: it would have broken the model: it had 1 fault(s) where the model before it had 0, and these are new: drivetrain-assembly is attached at \"powertrain-unit/transmission-output\", but assembly \"powertrain\" declares no interface \"transmission-output\" (it declares mount-front-left, mount-front-right, mount-… [truncated; 462 characters in the original].",
+    "parts": 0
+  },
+  {
+    "n": 6,
+    "of": 8,
+    "name": "Braking Hardware",
+    "note": "Step 6 (Braking Hardware) could not be built: the measurement's token budget cannot pay for another call: 145259 of 165000 tokens used and a call may cost 20045, so no further model call was placed (FORGE_MEASURE_TOKEN_BUDGET).",
+    "parts": 0
+  },
+  {
+    "n": 7,
+    "of": 8,
+    "name": "Wheels and Tires",
+    "note": "Step 7 (Wheels and Tires) could not be built: the measurement's token budget cannot pay for another call: 145259 of 165000 tokens used and a call may cost 20045, so no further model call was placed (FORGE_MEASURE_TOKEN_BUDGET).",
+    "parts": 0
+  },
+  {
+    "n": 8,
+    "of": 8,
+    "name": "Body Panels",
+    "note": "Step 8 (Body Panels) could not be built: the measurement's token budget cannot pay for another call: 145259 of 165000 tokens used and a call may cost 20045, so no further model call was placed (FORGE_MEASURE_TOKEN_BUDGET).",
+    "parts": 0
+  }
+]

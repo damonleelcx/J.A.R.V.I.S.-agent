@@ -1,0 +1,13 @@
+build {'shapes': 2.160798099997919, 'features': 0.04123280000203522, 'assembly': 0.4087937000003876, 'properties': 1.9894940999947721}
+_box_of                      91.42 us
+Clean_s only                 10.35 us
+AddOptimal_s                 16.83 us
+AddOptimal_s no tri          16.36 us
+_centre_of (def)             0.05 us
+no-tri identical to _box_of: True
+_box_of                      55.44 us
+Clean_s only                 7.21 us
+AddOptimal_s                 16.03 us
+AddOptimal_s no tri          17.18 us
+_centre_of (def)             0.05 us
+no-tri identical to _box_of: True

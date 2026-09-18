@@ -185,6 +185,12 @@ FILES=(
   # Added 2026-09-17: the unverified-paths drills (verifier spend, last_seen_at).
   internal/agent/verifier.go
   internal/httpapi/goals.go
+  # Added 2026-09-17 (live findings fixed): the doubled-offset, goal-reservation and
+  # measure-car drills target these three.
+  internal/agent/doubled.go
+  internal/agent/designationrepair.go
+  internal/domain/engine/budget.go
+  Makefile
 )
 
 BACKUP=""
@@ -1214,8 +1220,10 @@ echo "Mass, centre of gravity and envelope roll up through the tree"
 # Added 2026-09-15 (Phase 5, stage V3). The kernel measures each part's volume and centre
 # once per shape (moved by each copy's placement) and its box from the placed solid; Go
 # weighs them by density, or by volume and says so, for the model and every assembly.
+# Re-anchored 2026-09-17 (kernel last walls): _moved_point reads the same twelve entries
+# without a generator now. Same mutation: the centre is not moved.
 drill "a copy's centre stays where its shape was built" internal/domain/cad/sidecar.py \
-  "s = s.replace('    return tuple(t.Value(r, 1) * x + t.Value(r, 2) * y + t.Value(r, 3) * z + t.Value(r, 4) for r in (1, 2, 3))', '    return point', 1)" \
+  "s = s.replace('    return (v(1, 1) * x + v(1, 2) * y + v(1, 3) * z + v(1, 4),\n            v(2, 1) * x + v(2, 2) * y + v(2, 3) * z + v(2, 4),\n            v(3, 1) * x + v(3, 2) * y + v(3, 3) * z + v(3, 4))\n', '    return point\n', 1)" \
   ./internal/domain/cad 'TestKernel_APartsCentreMeasuredPerShapeIsItsSolidsCentre'
 
 drill "every part is weighed by volume however dense it is" internal/domain/geometry/mass.go \
@@ -2255,8 +2263,9 @@ drill "groups are read in map order" internal/domain/geometry/repetition.go \
   's = s.replace("\tfor _, g := range groups {\n\t\tfor _, run := range groupRuns(g) {\n\t\t\tout = append(out, Repetition{Assembly: a.ID,", "\tfor _, g := range byKey {\n\t\tfor _, run := range groupRuns(g) {\n\t\t\tout = append(out, Repetition{Assembly: a.ID,", 1)' \
   ./internal/domain/geometry 'TestRepetition_IsDeterministic'
 
+# Re-anchored 2026-09-17 (live findings fixed): the doubled-offset note now follows it.
 drill "the turn does not say what could be one pattern" internal/agent/converse.go \
-  's = s.replace("\tnoteRepetition(&reply)\n\treturn &reply, nil", "\treturn &reply, nil", 1)' \
+  's = s.replace("\tnoteRepetition(&reply)\n\t// And a placement written twice", "\t// And a placement written twice", 1)' \
   ./internal/agent 'TestRepetition_TheTurnSaysWhatCouldBeOnePattern'
 
 drill "the streaming turn does not say what could be one pattern" internal/agent/converse_stream.go \
@@ -2883,8 +2892,9 @@ drill "an outline is sent to the kernel in the document's unit" internal/domain/
   's = s.replace("c, err := section.Outer.scaled(toMM).exact(\"outline\")", "c, err := section.Outer.exact(\"outline\")", 1)' \
   ./internal/domain/cad 'TestKernel_EveryStandardFamilyBuildsTheSolidItsFiguresDescribe'
 
+# Re-anchored 2026-09-17 (live findings fixed): doubledForTurn now follows it.
 drill "an ordinary turn is not told what could be one pattern" internal/agent/converse_stream.go \
-  's = s.replace("\"]\" + repetitionForTurn(current) + \"\\n\\n\" + message", "\"]\" + \"\\n\\n\" + message", 1)' \
+  's = s.replace("\"]\" + repetitionForTurn(current) + doubledForTurn(current)", "\"]\" + doubledForTurn(current)", 1)' \
   ./internal/agent 'TestBuildMessages_ATurnIsToldWhatCouldBeOnePattern'
 
 drill "a turn is told every run, however many" internal/agent/repetition.go \
@@ -4775,6 +4785,206 @@ drill "a bound pattern step is counted as a literal" internal/agent/literals.go 
 drill "the note does not say a pattern takes the name" internal/agent/literals.go \
   's = s.replace("\tif inPatterns {\n", "\tif false {\n", 1)' \
   ./internal/agent 'TestAssemble_AStepThatRetypesAParameterInAPatternIsTold'
+
+echo "Live car meter: a call is placed only if it can be paid for"
+# Added 2026-09-17 (live verification): the verified run spent 301,142 of a 300,000 cap.
+drill "the car meter places a call whenever anything is left" internal/agent/car_ceiling_live_test.go \
+  's = s.replace("if need := m.spent + int64(m.inflight+1)*m.reserve(); need > m.budget {", "if need := m.spent; need >= m.budget {", 1)' \
+  ./internal/agent 'TestCarMeter_NeverSpendsPastItsBudget'
+
+drill "calls in flight reserve nothing" internal/agent/car_ceiling_live_test.go \
+  's = s.replace("int64(m.inflight+1)*m.reserve()", "int64(1)*m.reserve()", 1)' \
+  ./internal/agent 'TestCarMeter_CallsInFlightReserveTheirShare'
+
+echo "A build step reports the parts a tree places"
+# Added 2026-09-17 (live verification): every step of the live car reported parts=0.
+drill "a build step counts a tree's top-level parts" internal/agent/assemble.go \
+  's = s.replace("\treturn d.Occurrences()\n}", "\treturn len(d.Parts)\n}", 1)' \
+  ./internal/agent 'TestAssemble_AStepOfATreeReportsThePartsItPlaces'
+
+drill "a build goal's step counts a tree's top-level parts" internal/agent/buildgoal.go \
+  's = s.replace("kept.VersionID, kept.Parts = v.VersionID, partsPlaced(&v.Document)", "kept.VersionID, kept.Parts = v.VersionID, len(v.Document.Parts)", 1)' \
+  ./internal/agent 'TestBuildGoal_AStepOfATreeSaysThePartsItPlaces'
+
+echo "Live findings fixed (2026-09-17, stacked on the live verification)"
+# Added 2026-09-17 (live findings fixed): run 3's doubled lug-nut offset, the goal
+# ceiling's overshoot, the one-layout wheel turn, the step refused and read as
+# succeeded, and measure-car's Windows interpreter. docs/spikes/2026-09-17-live-verification.
+drill "a doubled offset is not named" internal/agent/doubled.go \
+  's = s.replace("if len(axes) == 0 && !turned {", "if true {", 1)' \
+  ./internal/agent 'TestDoubledOffsets_ADefinitionAndItsChildCarryingTheSamePositionAreNamed'
+
+drill "a step does not say what it doubled" internal/agent/assemble.go \
+  's = s.replace("\tnoteDoubledOffsets(&reply, doc)\n", "", 1)' \
+  ./internal/agent 'TestAssemble_AStepThatDoublesAnOffsetIsToldWhereThePartLands'
+
+drill "the next step is not told what the model so far doubles" internal/agent/assemble.go \
+  's = s.replace("sofar += doubledForStep(doc)", "sofar += \"\"", 1)' \
+  ./internal/agent 'TestAssemble_AStepThatDoublesAnOffsetIsToldWhereThePartLands'
+
+drill "a turn does not say what it doubled" internal/agent/converse.go \
+  's = s.replace("\tnoteDoubledOffsets(&reply, current)\n\treturn &reply, nil", "\treturn &reply, nil", 1)' \
+  ./internal/agent 'TestConverse_ATurnThatDoublesAnOffsetSaysWhereThePartLands'
+
+drill "a streamed turn does not say what it doubled" internal/agent/converse_stream.go \
+  's = s.replace("\t\tnoteDoubledOffsets(&reply, current)\n", "", 1)' \
+  ./internal/agent 'TestConverse_ATurnThatDoublesAnOffsetSaysWhereThePartLands'
+
+drill "the next turn is not told what the model on screen doubles" internal/agent/converse_stream.go \
+  's = s.replace(" + doubledForTurn(current)", "", 1)' \
+  ./internal/agent 'TestConverse_ATurnThatDoublesAnOffsetSaysWhereThePartLands'
+
+drill "the contract no longer says a placement goes in one place" internal/agent/converse.go \
+  's = s.replace("A placement\n  goes in ONE of the two places", "A placement\n  goes in either place", 1)' \
+  ./internal/agent 'TestTheContractSaysAPlacementGoesInOnePlace'
+
+drill "the contract teaches one layout's wheel turn" internal/agent/converse.go \
+  's = s.replace("  a car whose forward axis is X has its axles along Z, and a wheel is turned\n  \"rotation\": [90, 0, 0].\n", "", 1)' \
+  ./internal/agent 'TestTheContractTeachesAWheelsTurnFromTheCarsForwardAxis'
+
+drill "measure-car looks for bin/python on Windows" Makefile \
+  's = s.replace("CAD_PYTHON   ?= $(abspath $(CAD_VENV))/Scripts/python.exe", "CAD_PYTHON   ?= $(abspath $(CAD_VENV))/bin/python", 1)' \
+  ./internal/agent 'TestMeasureCar_PicksTheVenvPythonForThisOS'
+
+drill "a refused step reads as kept" internal/agent/buildgoal.go \
+  's = s.replace("case kept.Refused && kept.VersionID != \"\":", "case false:", 1)' \
+  ./internal/agent 'TestBuildGoal_ARefusedStepIsSaidOnTheStepAndTheGoal'
+
+drill "a goal does not say a step was refused" internal/agent/settle.go \
+  's = s.replace("\tif len(refused) > 0 {\n\t\tsaid", "\tif false {\n\t\tsaid", 1)' \
+  ./internal/agent 'TestBuildGoal_ARefusedStepIsSaidOnTheStepAndTheGoal'
+
+drill "the card does not say a step was refused" internal/httpapi/assets/workbench.js \
+  's = s.replace("if (p.refused.length) {", "if (false) {", 1)' \
+  ./internal/httpapi 'TestWorkbench_TheCardSaysAStepWasRefusedAndKeptNothing'
+
+drill "a goal call reserves nothing" internal/domain/engine/budget.go \
+  's = s.replace("\treturn largest + largest/4\n", "\treturn 0\n", 1)' \
+  ./internal/domain/engine 'TestCheckCall_AGoalNeverPlacesACallItsCeilingCannotPay'
+
+drill "goal calls in flight reserve nothing" internal/domain/engine/budget.go \
+  's = s.replace("int64(inFlight+1)*reserve", "reserve", 1)' \
+  ./internal/domain/engine 'TestCheckCall_AGoalNeverPlacesACallItsCeilingCannotPay'
+
+drill "a goal stop does not say what was left" internal/domain/engine/budget.go \
+  's = s.replace("tokens were left, and the next model call was not placed because it may cost", "tokens were left; a call may cost", 1)' \
+  ./internal/domain/engine 'TestCheckCall_AGoalNeverPlacesACallItsCeilingCannotPay'
+
+drill "the build client refuses only once the ceiling is reached" internal/agent/spend.go \
+  's = s.replace("c.budget.CheckCall(&g, c.clock.Now(), c.inflight)", "c.budget.CheckGoal(&g, c.clock.Now())", 1)' \
+  ./internal/agent 'TestBuildGoal_AStepDoesNotPlaceARepairItsCeilingCannotPay'
+
+drill "a goal's largest call is not stored" internal/domain/engine/budget.go \
+  's = s.replace(",\n\t\t       largest_call_tokens = greatest(largest_call_tokens, $2)", "", 1)' \
+  ./internal/agent 'TestBuildGoal_AGoalStopsBeforeACallThatWouldPassItsCeiling'
+
+drill "a step the budget stopped part-way says nothing on the timeline" internal/agent/buildgoal.go \
+  's = s.replace("\t\tw.sayBudgetStop(ctx, goal, task, err, \"build step\")\n", "", 1)' \
+  ./internal/agent 'TestBuildGoal_AStepDoesNotPlaceARepairItsCeilingCannotPay'
+
+drill "the card shows a budget stop with its plumbing" internal/httpapi/assets/workbench.js \
+  's = s.replace("if (withCode) return withCode[1].trim();", "if (withCode) return s;", 1)' \
+  ./internal/httpapi 'TestWorkbench_TheCardSaysWhyABuildStoppedWithTokensLeft'
+
+echo "Live re-check follow-ups (2026-09-17): unreadable step shapes, executor reservation"
+drill "a designation parameter a part carries is still refused" internal/agent/designationrepair.go \
+  's = s.replace("if id, ok := carried[normalisedDesignation(value)]; ok {", "if id, ok := carried[normalisedDesignation(value)]; ok && false {", 1)' \
+  ./internal/agent 'TestParseReply_ADesignationAsAParametersValue'
+
+drill "a designation refusal does not name the field" internal/agent/stepgates.go \
+  's = s.replace("why += \". \" + strings.Join(read.refused, \" \")", "why += \"\"", 1)' \
+  ./internal/agent 'TestParseReply_ADesignationAsAParametersValue'
+
+drill "a binding inside size is kept as a dimension of its own name" internal/agent/dimensionrepair.go \
+  's = s.replace("if dim := strings.TrimSuffix(k, \"_from\"); dim != k && dim != \"\" {", "if dim := strings.TrimSuffix(k, \"_from\"); false && dim != k {", 1)' \
+  ./internal/agent 'TestParseReply_ReadsABindingWrittenInsideSize|TestAssemble_TheLiveRecheckStepsAreReadNotRefused'
+
+drill "an executor call reserves nothing" internal/agent/executor.go \
+  's = s.replace("if breach := e.budget.CheckCall(&g, e.clock.Now(), 0); breach != nil &&", "if breach := e.budget.CheckGoal(&g, e.clock.Now()); breach != nil &&", 1)' \
+  ./internal/agent 'TestExecutor_AnOrdinaryGoalStopsBeforeACallThatWouldPassItsCeiling'
+
+drill "an executor task does not raise the largest call" internal/agent/executor.go \
+  's = s.replace("largest = max(largest, resp.Usage.TotalTokens)", "largest = max(largest, 0)", 1)' \
+  ./internal/agent 'TestExecutor_AnOrdinaryGoalStopsBeforeACallThatWouldPassItsCeiling'
+
+drill "a task the budget stopped part-way says nothing on the timeline" internal/agent/worker.go \
+  's = s.replace("\t\tw.sayBudgetStop(ctx, goal, task, err, \"task\")\n", "", 1)' \
+  ./internal/agent 'TestExecutor_AnOrdinaryGoalStopsBeforeACallThatWouldPassItsCeiling'
+
+echo
+echo "The kernel's last walls, 2026-09-17: part properties, placement, and two fence gaps from #134"
+# Added 2026-09-17 (kernel last walls, docs/spikes/2026-09-17-kernel-last-walls). A
+# placed copy's box is read with the OCCT call build123d makes, without its wrapper,
+# and its definition Cleaned once; its centre moved without a generator; its origin a
+# gp_Pnt and its cast chosen once per definition. Each must give build123d's bits.
+drill "a placed copy's box is read from its definition" internal/domain/cad/sidecar.py \
+  's = s.replace("            box = _placed_box(solid) if _PROPERTIES_BOX_DIRECT else _box_of(solid)", "            box = _placed_box(shape) if _PROPERTIES_BOX_DIRECT else _box_of(solid)", 1)' \
+  ./internal/domain/cad 'TestKernel_PartPropertiesReadDirectlyAreTheSameBitsAsBefore'
+
+drill "a placed copy's box goes through build123d again" internal/domain/cad/sidecar.py \
+  's = s.replace("_PROPERTIES_BOX_DIRECT = True\n", "_PROPERTIES_BOX_DIRECT = False\n", 1)' \
+  ./internal/domain/cad 'TestKernel_PartPropertiesReadDirectlyAreTheSameBitsAsBefore'
+
+drill "every placed copy is Cleaned again" internal/domain/cad/sidecar.py \
+  's = s.replace("            if key not in local:\n                if _PROPERTIES_BOX_DIRECT:\n", "            if True:\n                if _PROPERTIES_BOX_DIRECT:\n", 1)' \
+  ./internal/domain/cad 'TestKernel_PartPropertiesReadDirectlyAreTheSameBitsAsBefore'
+
+drill "a moved centre adds its translation first" internal/domain/cad/sidecar.py \
+  's = s.replace("    return (v(1, 1) * x + v(1, 2) * y + v(1, 3) * z + v(1, 4),", "    return (v(1, 4) + v(1, 1) * x + v(1, 2) * y + v(1, 3) * z,", 1)' \
+  ./internal/domain/cad 'TestKernel_PartPropertiesReadDirectlyAreTheSameBitsAsBefore'
+
+drill "a placement's origin loses its last digits" internal/domain/cad/sidecar.py \
+  's = s.replace("            return gp_Pnt(x, y, z)\n", "            return gp_Pnt(float(\"%.12g\" % x), y, z)\n", 1)' \
+  ./internal/domain/cad 'TestKernel_APlacedCopyIsTheCopyBuild123dMade'
+
+drill "a moved copy is not cast" internal/domain/cad/sidecar.py \
+  's = s.replace("        moved = cast(shape.wrapped.Moved(location.wrapped))\n", "        moved = shape.wrapped.Moved(location.wrapped)\n", 1)' \
+  ./internal/domain/cad 'TestKernel_APlacedCopyIsTheCopyBuild123dMade'
+
+# Memory after a reply: glibc's free pages handed back, and no document left open in
+# the XDE application per export. On Windows malloc_trim does not exist, so the first
+# drill goes red on the call COUNT, not on memory; the memory itself was measured on
+# Linux (docs/spikes/2026-09-17-kernel-last-walls).
+drill "the kernel keeps its free memory after a reply" internal/domain/cad/sidecar.py \
+  's = s.replace("        line = request = reply = None\n        _release_memory()\n", "        line = request = reply = None\n", 1)' \
+  ./internal/domain/cad 'TestKernel_TheKernelHandsFreeMemoryBackAfterEachReply'
+
+drill "the loop holds its reply while memory is released" internal/domain/cad/sidecar.py \
+  's = s.replace("        line = request = reply = None\n        _release_memory()\n", "        _release_memory()\n", 1)' \
+  ./internal/domain/cad 'TestKernel_TheKernelHandsFreeMemoryBackAfterEachReply'
+
+drill "an export leaves a document open in the application" internal/domain/cad/sidecar.py \
+  's = s.replace("    application.InitDocument(doc)\n", "    application.NewDocument(TCollection_ExtendedString(\"MDTV-XCAF\"), doc)\n    application.InitDocument(doc)\n", 1)' \
+  ./internal/domain/cad 'TestKernel_TheKernelHandsFreeMemoryBackAfterEachReply'
+
+# #134's first gap: _located's `deep` fallback ran in no fixture. placed_copies.py now
+# gives every definition an attribute the plan does not recognize.
+drill "the deep fallback shares its definition's attribute" internal/domain/cad/sidecar.py \
+  's = s.replace("            _located_fallbacks += 1\n            setattr(out, key, copy.deepcopy(value, memo))\n", "            _located_fallbacks += 1\n            setattr(out, key, value)\n", 1)' \
+  ./internal/domain/cad 'TestKernel_ALocatedCopyDeepcopiesAnAttributeThePlanDoesNotKnow'
+
+drill "the deep fallback forgets the copy it is making" internal/domain/cad/sidecar.py \
+  's = s.replace("            _located_fallbacks += 1\n            setattr(out, key, copy.deepcopy(value, memo))\n", "            _located_fallbacks += 1\n            setattr(out, key, copy.deepcopy(value, {}))\n", 1)' \
+  ./internal/domain/cad 'TestKernel_ALocatedCopyDeepcopiesAnAttributeThePlanDoesNotKnow'
+
+drill "the plan assigns an attribute deepcopy would copy" internal/domain/cad/sidecar.py \
+  's = s.replace("        elif copy.deepcopy(value, {}) is value:\n", "        elif True:\n", 1)' \
+  ./internal/domain/cad 'TestKernel_ALocatedCopyDeepcopiesAnAttributeThePlanDoesNotKnow'
+
+# #134's second gap: _containment_plan's reach had no drill of its own (the one on
+# _inside_split's reach breaks the per-pair copy). ‼️ It was a missing DRILL, not a
+# missing fence: both mutations below, run 2026-09-17, redden the pair-key fence
+# ("6158 key(s) differ with the memo and the slide ... 0 with containment per pair" —
+# the fence already compares the grouped path against containment per pair). The
+# rail fence stays green on both (its pins sit well inside the rail either way), so it
+# is not named here.
+drill "grouped containment takes a box's whole length for its reach" internal/domain/cad/sidecar.py \
+  's = s.replace("            p.append(v * (lo[c] + hi[c]) / 2)\n            reach += abs(v) * (hi[c] - lo[c]) / 2\n", "            p.append(v * (lo[c] + hi[c]) / 2)\n            reach += abs(v) * (hi[c] - lo[c])\n", 1)' \
+  ./internal/domain/cad 'TestKernel_APairKeyWithoutLocationsIsTheKeyBuild123dGave'
+
+drill "grouped containment takes a quarter of a box for its reach" internal/domain/cad/sidecar.py \
+  's = s.replace("            p.append(v * (lo[c] + hi[c]) / 2)\n            reach += abs(v) * (hi[c] - lo[c]) / 2\n", "            p.append(v * (lo[c] + hi[c]) / 2)\n            reach += abs(v) * (hi[c] - lo[c]) / 4\n", 1)' \
+  ./internal/domain/cad 'TestKernel_APairKeyWithoutLocationsIsTheKeyBuild123dGave'
 
 echo
 

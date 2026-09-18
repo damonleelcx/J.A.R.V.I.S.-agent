@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/engine"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/db"
@@ -80,6 +81,31 @@ func (w *Worker) settleGoal(ctx context.Context, goalID string) {
 			"as unreachable.", failed+cancelled, total, succeeded, skipped)
 	}
 
+	// ‼️ A build step that was refused and kept nothing still succeeds as a task —
+	// the model it leaves is the valid one the step before kept — but the goal says
+	// it, by step. Live run 3 (2026-09-17): step 3 kept nothing and the goal read
+	// "3 succeeded, 0 skipped". A build in which EVERY step was refused kept nothing
+	// at all, and that is not a success.
+	// Fence: TestBuildGoal_ARefusedStepIsSaidOnTheStepAndTheGoal.
+	refused, steps, err := w.refusedBuildSteps(ctx, goalID)
+	if err != nil {
+		if ctx.Err() == nil {
+			w.log.WarnWith(ctx, logx.EventGoalSettleFailed, err, "goal_id", goalID)
+		}
+		return
+	}
+	if len(refused) > 0 {
+		said := fmt.Sprintf(" %d build step(s) were %s: %s.", len(refused), refusedStepMarker, strings.Join(refused, "; "))
+		if final == engine.GoalSucceeded && len(refused) == steps {
+			final = engine.GoalFailed
+			failureCode = "BUILD_KEPT_NOTHING"
+			summary = fmt.Sprintf("All %d build step(s) were %s, so the build kept no model: %s.",
+				steps, refusedStepMarker, strings.Join(refused, "; "))
+		} else {
+			summary += said
+		}
+	}
+
 	now := w.clock.Now()
 	// Conditional on the goal still being active. Another worker settling the
 	// same goal at the same instant must lose rather than overwrite, and a goal
@@ -105,6 +131,7 @@ func (w *Worker) settleGoal(ctx context.Context, goalID string) {
 		"outcome": string(final), "tasks_total": total,
 		"succeeded": succeeded, "failed": failed,
 		"cancelled": cancelled, "skipped": skipped,
+		"refused_steps": len(refused),
 	})
 	if err := w.repo.AppendEvent(ctx, w.pool, &engine.Event{
 		GoalID: goalID, Kind: engine.EventGoalEnded, Actor: engine.ActorSystem,
@@ -303,4 +330,36 @@ func (w *Worker) releaseWaitingGoals(ctx context.Context) {
 		}
 		w.releaseWaiting(ctx, gid)
 	}
+}
+
+// refusedBuildSteps is the titles of a goal's build steps that succeeded having kept
+// nothing of their own (buildStepResult.Refused), in plan order, and how many build
+// steps the goal has. Both are zero for a goal that is not a build.
+func (w *Worker) refusedBuildSteps(ctx context.Context, goalID string) ([]string, int, error) {
+	rows, err := w.pool.Query(ctx, `
+		select title, status = 'succeeded' and coalesce((result->'result'->>'refused')::boolean, false)
+		  from forge_tasks
+		 where goal_id = $1 and inputs->>'kind' = $2
+		 order by priority, created_at, idempotency_key`, goalID, TaskKindBuildStep)
+	if err != nil {
+		return nil, 0, errs.Wrap("agent.Worker.refusedBuildSteps", errs.CodeDatabaseUnavail, err)
+	}
+	defer rows.Close()
+	var refused []string
+	steps := 0
+	for rows.Next() {
+		var title string
+		var wasRefused bool
+		if err := rows.Scan(&title, &wasRefused); err != nil {
+			return nil, 0, errs.Wrap("agent.Worker.refusedBuildSteps", errs.CodeDatabaseUnavail, err)
+		}
+		steps++
+		if wasRefused {
+			refused = append(refused, title)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, 0, errs.Wrap("agent.Worker.refusedBuildSteps", errs.CodeDatabaseUnavail, err)
+	}
+	return refused, steps, nil
 }

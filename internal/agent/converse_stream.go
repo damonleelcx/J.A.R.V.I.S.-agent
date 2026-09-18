@@ -364,6 +364,9 @@ func (c *Conversation) RespondStream(
 		/* And what is written out one child at a time where one pattern would place
 		 * it: a warning, never a refusal — see repetition.go. */
 		noteRepetition(&reply)
+		/* And a placement written twice, on a definition and on the child that
+		 * places it, so the part sits at their sum — see doubled.go. */
+		noteDoubledOffsets(&reply, current)
 
 		if !speechSent && reply.Speech != "" {
 			if err := emit(StreamEvent{Kind: "speech", Text: reply.Speech, FirstTokenMS: firstTokenMS}); err != nil {
@@ -449,7 +452,7 @@ func (c *Conversation) buildMessages(char persona.Character, domain domainpack.D
 		// forty children again. Fence: TestBuildMessages_ATurnIsToldWhatCouldBeOnePattern.
 		user = "[The model on screen right now, which you are revising. Reuse these part " +
 			"ids; change only what was asked for and copy every other dimension EXACTLY " +
-			"as it appears here:\n" + model + "]" + repetitionForTurn(current) + "\n\n" + message
+			"as it appears here:\n" + model + "]" + repetitionForTurn(current) + doubledForTurn(current) + "\n\n" + message
 	} else if workspaceNote != "" {
 		user = "[What is on screen right now: " + workspaceNote + "]\n\n" + message
 	}

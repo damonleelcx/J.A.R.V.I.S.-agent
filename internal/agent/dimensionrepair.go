@@ -88,20 +88,36 @@ var positionAxes = []string{"x", "y", "z"}
 // mentions is a document silently different from the one the model sent, which
 // is the same class of thing as a render that does not match its file.
 func repairDimensions(raw []byte) ([]byte, bool) {
-	out, relocated, evaluated := repairDimensionsNoted(raw)
-	return out, relocated || evaluated
+	out, r := repairReply(raw)
+	return out, r.changed()
 }
 
-// repairDimensionsNoted is repairDimensions saying which reading it made: an
+// replyReading is what repairReply read differently from how it was written: an
 // expression moved to its "_from" twin (relocated), or a placement's expression
 // worked out to its number because a placement has no twin (evaluated).
-func repairDimensionsNoted(raw []byte) ([]byte, bool, bool) {
+type replyReading struct {
+	relocated, evaluated bool
+	// dropped is one sentence per parameter that held a designation a part already
+	// carries, and was left out (designationrepair.go).
+	dropped []string
+	// refused is one remedy per parameter that held a designation no part carries:
+	// nothing here can say which part it belongs to, so the reply stays unreadable,
+	// and the step says which field the designation goes in.
+	refused []string
+}
+
+func (r replyReading) changed() bool { return r.relocated || r.evaluated || len(r.dropped) > 0 }
+
+// repairReply is every reading this file and designationrepair.go make, in one walk.
+func repairReply(raw []byte) ([]byte, replyReading) {
 	var doc map[string]any
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		// Not JSON at all. Nothing here can help, and pretending otherwise
 		// would replace one failure with a more confusing one.
-		return raw, false, false
+		return raw, replyReading{}
 	}
+	var r replyReading
+	r.dropped, r.refused = repairDesignationParameters(doc)
 	// ‼️ Every list of parts a reply can carry, not only a whole prototype's "parts".
 	// A tree's parts are its DEFINITIONS, and every step of a build after the first
 	// arrives as an edit's patch. Measured live 2026-09-15 (car-quality run 1): a
@@ -143,14 +159,15 @@ func repairDimensionsNoted(raw []byte) ([]byte, bool, bool) {
 			}
 		}
 	}
-	if !moved && !evaluated {
-		return raw, false, false
+	r.relocated, r.evaluated = moved, evaluated
+	if !r.changed() {
+		return raw, r
 	}
 	out, err := json.Marshal(doc)
 	if err != nil {
-		return raw, false, false
+		return raw, replyReading{refused: r.refused}
 	}
-	return out, moved, evaluated
+	return out, r
 }
 
 // childPositionNote tells the reader a placement's expression was read at its value
@@ -399,6 +416,23 @@ func repairSize(part map[string]any) bool {
 	for k, v := range size {
 		s, isString := v.(string)
 		if !isString {
+			continue
+		}
+		// ‼️ The binding written INSIDE "size", under its own name: live re-check
+		// 2026-09-17, "size": {"radius_from": "hub_center_diameter / 2", ...}. The
+		// contract's binding is "size_from": {"radius": ...}, so it is lifted there
+		// under the dimension's name — never kept as a dimension called "radius_from".
+		// Fence: TestParseReply_ReadsABindingWrittenInsideSize.
+		if dim := strings.TrimSuffix(k, "_from"); dim != k && dim != "" {
+			if from == nil {
+				from = map[string]any{}
+				part["size_from"] = from
+			}
+			if _, taken := from[dim]; !taken {
+				from[dim] = s
+			}
+			delete(size, k)
+			moved = true
 			continue
 		}
 		if f, isNum := asNumber(v); isNum {

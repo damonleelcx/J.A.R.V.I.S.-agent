@@ -1,0 +1,63 @@
+{
+  "statement": "a road-car wheel: a rim, a tyre, a hub, and five lug nuts on a polar pattern around the hub's axis. Build it in at most three steps.",
+  "ceiling": 60000,
+  "hard_stop": 60001,
+  "create_status": 201,
+  "create_s": 2.66,
+  "goal": "gol_01M2S7KENTQVYTTT90GK4DD8X1",
+  "planned_tasks": [
+    "Step 1 of 3 \u2014 Hub Assembly",
+    "Step 2 of 3 \u2014 Rim and Tyre",
+    "Step 3 of 3 \u2014 Final Assembly"
+  ],
+  "tokens_after_plan": 506,
+  "max_tokens": 60000,
+  "start_status": 200,
+  "final_status": "failed",
+  "tokens_spent": 43717,
+  "outcome": "1 of 3 task(s) failed or were cancelled; 2 succeeded, 0 were skipped as unreachable. 2 build step(s) were refused, kept nothing: Step 1 of 3 \u2014 Hub Assembly; Step 2 of 3 \u2014 Rim and Tyre.",
+  "seconds": 68.1,
+  "tasks": [
+    {
+      "title": "Step 1 of 3 \u2014 Hub Assembly",
+      "status": "succeeded",
+      "attempts": 1,
+      "error_code": null,
+      "error_detail": null,
+      "started_at": "2026-09-18T03:05:20Z",
+      "ended_at": "2026-09-18T03:05:33Z"
+    },
+    {
+      "title": "Step 2 of 3 \u2014 Rim and Tyre",
+      "status": "succeeded",
+      "attempts": 1,
+      "error_code": null,
+      "error_detail": null,
+      "started_at": "2026-09-18T03:05:33Z",
+      "ended_at": "2026-09-18T03:05:59Z"
+    },
+    {
+      "title": "Step 3 of 3 \u2014 Final Assembly",
+      "status": "failed",
+      "attempts": 1,
+      "error_code": "FORBIDDEN",
+      "error_detail": "engine.Budget: FORBIDDEN: The authenticated principal is not permitted to perform this action on this resource. (goal budget exhausted on tokens: used 43717 tokens of 60000. 16283 tokens were left, and the next model call was not placed because it may cost 18641 (the largest call this goal has made, 14913 tokens, and a quarter more), which would pass the ceiling. The goal stops here rather than spend past it. Raise FORGE_MAX_TOKENS_PER_GOAL or the goal's own ceiling, or narrow the goal so it needs less context.)",
+      "started_at": "2026-09-18T03:05:59Z",
+      "ended_at": "2026-09-18T03:06:27Z"
+    }
+  ],
+  "longest_unchanged_s": 5.27,
+  "gaps_over_10s": 0,
+  "changes": 18,
+  "watchdog": false,
+  "event_kinds": [
+    "budget.exceeded",
+    "goal.activated",
+    "goal.ended",
+    "plan.created",
+    "task.failed",
+    "task.started",
+    "task.succeeded"
+  ],
+  "versions": []
+}
