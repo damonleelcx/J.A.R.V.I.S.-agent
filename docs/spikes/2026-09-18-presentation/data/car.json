@@ -1,0 +1,40 @@
+{
+  "name": "Presentation car (fixed fixture)",
+  "units": "mm",
+  "not_verified": ["a fixed fixture for before/after screenshots; not a design"],
+  "parts": [
+    {"id": "body", "name": "Body", "shape": "extrusion", "size": {"depth": 1760},
+     "profile": [{"x": -2250, "y": 200, "radius": 150}, {"x": 2250, "y": 200, "radius": 150},
+                 {"x": 2300, "y": 620, "radius": 250}, {"x": 1300, "y": 820, "radius": 300},
+                 {"x": 350, "y": 1250, "radius": 350}, {"x": -1100, "y": 1250, "radius": 400},
+                 {"x": -2200, "y": 880, "radius": 250}],
+     "position": [0, 0, 0], "rotation": [0, -90, 0], "color": "#b3122e", "opacity": 1,
+     "material": {"name": "steel, painted", "finish": "painted"}},
+    {"id": "glasshouse", "name": "Glasshouse", "shape": "extrusion", "size": {"depth": 1560},
+     "profile": [{"x": -1050, "y": 1150, "radius": 80}, {"x": 320, "y": 1150, "radius": 80},
+                 {"x": -80, "y": 1480, "radius": 220}, {"x": -850, "y": 1480, "radius": 200}],
+     "position": [0, 0, 0], "rotation": [0, -90, 0], "color": "#9fc3d6", "opacity": 0.45,
+     "material": {"name": "laminated glass", "finish": "glass"}},
+    {"id": "splitter", "name": "Splitter", "shape": "box", "size": {"width": 1700, "height": 24, "depth": 260},
+     "position": [0, 190, 2200], "color": "#1c1c1e", "opacity": 1, "material": {"name": "carbon", "finish": "plastic"}},
+    {"id": "light-l", "name": "Headlight left", "shape": "sphere", "size": {"radius": 70},
+     "position": [-620, 610, 2250], "color": "#e8eef2", "opacity": 1, "material": {"name": "polycarbonate", "finish": "glass"}},
+    {"id": "light-r", "name": "Headlight right", "shape": "sphere", "size": {"radius": 70},
+     "position": [620, 610, 2250], "color": "#e8eef2", "opacity": 1, "material": {"name": "polycarbonate", "finish": "glass"}},
+
+    {"id": "tyre-fl", "name": "Tyre FL", "shape": "cylinder", "size": {"radius": 340, "height": 245}, "position": [-870, 340, -1450], "rotation": [0, 0, 90], "color": "#1c1c1e", "opacity": 1, "material": {"name": "rubber", "finish": "rubber"}},
+    {"id": "tyre-fr", "name": "Tyre FR", "shape": "cylinder", "size": {"radius": 340, "height": 245}, "position": [870, 340, -1450], "rotation": [0, 0, 90], "color": "#1c1c1e", "opacity": 1, "material": {"name": "rubber", "finish": "rubber"}},
+    {"id": "tyre-rl", "name": "Tyre RL", "shape": "cylinder", "size": {"radius": 340, "height": 245}, "position": [-870, 340, 1450], "rotation": [0, 0, 90], "color": "#1c1c1e", "opacity": 1, "material": {"name": "rubber", "finish": "rubber"}},
+    {"id": "tyre-rr", "name": "Tyre RR", "shape": "cylinder", "size": {"radius": 340, "height": 245}, "position": [870, 340, 1450], "rotation": [0, 0, 90], "color": "#1c1c1e", "opacity": 1, "material": {"name": "rubber", "finish": "rubber"}},
+
+    {"id": "rim-fl", "name": "Rim FL", "shape": "cylinder", "size": {"radius": 235, "height": 250}, "position": [-870, 340, -1450], "rotation": [0, 0, 90], "color": "#c9ccd1", "opacity": 1, "material": {"name": "aluminium 6061", "finish": "metal"}},
+    {"id": "rim-fr", "name": "Rim FR", "shape": "cylinder", "size": {"radius": 235, "height": 250}, "position": [870, 340, -1450], "rotation": [0, 0, 90], "color": "#c9ccd1", "opacity": 1, "material": {"name": "aluminium 6061", "finish": "metal"}},
+    {"id": "rim-rl", "name": "Rim RL", "shape": "cylinder", "size": {"radius": 235, "height": 250}, "position": [-870, 340, 1450], "rotation": [0, 0, 90], "color": "#c9ccd1", "opacity": 1, "material": {"name": "aluminium 6061", "finish": "metal"}},
+    {"id": "rim-rr", "name": "Rim RR", "shape": "cylinder", "size": {"radius": 235, "height": 250}, "position": [870, 340, 1450], "rotation": [0, 0, 90], "color": "#c9ccd1", "opacity": 1, "material": {"name": "aluminium 6061", "finish": "metal"}},
+
+    {"id": "hub-fl", "name": "Hub FL", "shape": "cylinder", "size": {"radius": 70, "height": 262}, "position": [-870, 340, -1450], "rotation": [0, 0, 90], "color": "#6f747c", "opacity": 1, "material": {"name": "steel", "finish": "metal"}},
+    {"id": "hub-fr", "name": "Hub FR", "shape": "cylinder", "size": {"radius": 70, "height": 262}, "position": [870, 340, -1450], "rotation": [0, 0, 90], "color": "#6f747c", "opacity": 1, "material": {"name": "steel", "finish": "metal"}},
+    {"id": "hub-rl", "name": "Hub RL", "shape": "cylinder", "size": {"radius": 70, "height": 262}, "position": [-870, 340, 1450], "rotation": [0, 0, 90], "color": "#6f747c", "opacity": 1, "material": {"name": "steel", "finish": "metal"}},
+    {"id": "hub-rr", "name": "Hub RR", "shape": "cylinder", "size": {"radius": 70, "height": 262}, "position": [870, 340, 1450], "rotation": [0, 0, 90], "color": "#6f747c", "opacity": 1, "material": {"name": "steel", "finish": "metal"}}
+  ]
+}

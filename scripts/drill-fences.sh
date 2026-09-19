@@ -358,7 +358,7 @@ drill "the measurement path measures the drawn vertex" internal/domain/geometry/
   ./internal/domain/geometry 'TestMeasureFindsTheMaterialAndNotTheRoundedOffCorner'
 
 drill "the renderer steps its arcs at a different fineness" internal/httpapi/assets/forge3d.js \
-  "s = s.replace('Math.ceil(TESSELLATION.radial * c.angle / (2 * Math.PI))', 'Math.ceil(TESSELLATION.radial * c.angle / (3 * Math.PI))', 1)" \
+  "s = s.replace('Math.ceil(radialSegments() * c.angle / (2 * Math.PI))', 'Math.ceil(radialSegments() * c.angle / (3 * Math.PI))', 1)" \
   ./internal/httpapi 'TestRendererSweepsTheSameSolidAsTheExporter'
 
 drill "the kernel builds a straight line where an arc was sent" internal/domain/cad/sidecar.py \
@@ -396,7 +396,7 @@ drill "an arc that crosses another edge is not noticed" internal/domain/geometry
   ./internal/domain/geometry 'TestAnArcThatCrossesAnotherEdgeIsRefused'
 
 drill "the renderer steps its bows at a different fineness" internal/httpapi/assets/forge3d.js \
-  "s = s.replace('var steps2 = Math.max(1, Math.ceil(TESSELLATION.radial * a2.angle / (2 * Math.PI)));', 'var steps2 = Math.max(1, Math.ceil(TESSELLATION.radial * a2.angle / (3 * Math.PI)));', 1)" \
+  "s = s.replace('var steps2 = Math.max(1, Math.ceil(radialSegments() * a2.angle / (2 * Math.PI)));', 'var steps2 = Math.max(1, Math.ceil(radialSegments() * a2.angle / (3 * Math.PI)));', 1)" \
   ./internal/httpapi 'TestRendererBowsTheSameOutlineAsTheExporter'
 
 drill "the renderer bows the other way round" internal/httpapi/assets/forge3d.js \
@@ -5084,6 +5084,127 @@ drill "grouped containment takes a box's whole length for its reach" internal/do
 drill "grouped containment takes a quarter of a box for its reach" internal/domain/cad/sidecar.py \
   's = s.replace("            p.append(v * (lo[c] + hi[c]) / 2)\n            reach += abs(v) * (hi[c] - lo[c]) / 2\n", "            p.append(v * (lo[c] + hi[c]) / 2)\n            reach += abs(v) * (hi[c] - lo[c]) / 4\n", 1)' \
   ./internal/domain/cad 'TestKernel_APairKeyWithoutLocationsIsTheKeyBuild123dGave'
+
+# Added 2026-09-18 (looks: presentation, stage A). forge3d.js lights from a studio
+# environment with a material per finish, tone maps to sRGB, lays a contact shadow, adds
+# occlusion on WebGL2, sizes its clip planes and zoom to the model, draws curves as finely
+# as the screen needs and faces every primitive outward. viewport_looks_fence_test.go and
+# viewport_shader_compile_test.go.
+drill "a finish is shaded without its material" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    return [m.metallic, m.roughness, m.coat];", "    return [0, 0.5, 0];", 1)' \
+  ./internal/httpapi 'TestRendererHasAMaterialForEveryFinishGoAccepts'
+
+drill "paint is rougher than plastic" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    painted:    { metallic: 0.0, roughness: 0.45, coat: 0.8 },", "    painted:    { metallic: 0.0, roughness: 0.60, coat: 0.8 },", 1)' \
+  ./internal/httpapi 'TestRendererHasAMaterialForEveryFinishGoAccepts'
+
+drill "the part shader asks for a uniform it does not declare" internal/httpapi/assets/forge3d.js \
+  's = s.replace("      material: gl.getUniformLocation(P, \x27uMaterial\x27),", "      material: gl.getUniformLocation(P, \x27uSpecPower\x27),", 1)' \
+  ./internal/httpapi 'TestRendererHasAMaterialForEveryFinishGoAccepts'
+
+drill "the part shader writes linear light to the screen" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    \x27  col = toSrgb(aces(col * uExposure));\x27,", "    \x27  col = col * uExposure;\x27,", 1)' \
+  ./internal/httpapi 'TestRendererToneMapsWithTheCurveItsShaderIsWrittenFrom'
+
+drill "the tone curve drifts from the table the shader is written from" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    var v = (x * (ACES.a * x + ACES.b)) / (x * (ACES.c * x + ACES.d) + ACES.e);", "    var v = (x * (ACES.a * x + 0.3)) / (x * (ACES.c * x + ACES.d) + ACES.e);", 1)' \
+  ./internal/httpapi 'TestRendererToneMapsWithTheCurveItsShaderIsWrittenFrom'
+
+drill "sRGB is written as a 2.2 power" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    return c <= 0.0031308 ? 12.92 * c : 1.055 * Math.pow(c, 1 / 2.4) - 0.055;", "    return Math.pow(c, 1 / 2.2);", 1)' \
+  ./internal/httpapi 'TestRendererToneMapsWithTheCurveItsShaderIsWrittenFrom'
+
+drill "the near plane is 0.05 whatever the model" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    var near = Math.max(toCentre - reach, toTarget * 0.01);", "    var near = 0.05;", 1)' \
+  ./internal/httpapi 'TestRendererDepthResolvesTheModelAtAnyScale'
+
+drill "the far plane stops at what the camera looks at" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    var far = Math.max(toCentre + reach, grid, near * 2);", "    var far = Math.max(toTarget, near * 2);", 1)' \
+  ./internal/httpapi 'TestRendererDepthResolvesTheModelAtAnyScale'
+
+drill "the frame projects with a fixed near plane" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    var proj = perspective(FOV_DEGREES, w / Math.max(1, h), clip.near, clip.far);", "    var proj = perspective(FOV_DEGREES, w / Math.max(1, h), 0.05, clip.far);", 1)' \
+  ./internal/httpapi 'TestRendererDepthResolvesTheModelAtAnyScale'
+
+drill "zoom stops at 0.4 and 400 units" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    return { min: s * 0.02, max: s * 100 };", "    return { min: 0.4, max: 400 };", 1)' \
+  ./internal/httpapi 'TestRendererZoomsInTheModelsOwnUnits'
+
+drill "a curve is never drawn finer than the export" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    if (!(radiusPx > DETAIL_TOLERANCE_PX) || !(baseSegments > 0)) return 1;", "    return 1;", 1)' \
+  ./internal/httpapi 'TestRendererDrawsCurvesAsFineAsTheScreenNeeds'
+
+drill "the finer level is chosen from the copy's centre inside it" internal/httpapi/assets/forge3d.js \
+  's = s.replace("      var px = r * f.pixels / Math.max(dist, r * 0.02);", "      var px = dist > r ? r * f.pixels / dist : f.pixels;", 1)' \
+  ./internal/httpapi 'TestRendererDrawsCurvesAsFineAsTheScreenNeeds'
+
+drill "a cylinder is wound inside out" internal/httpapi/assets/forge3d.js \
+  's = s.replace("      idx.push(a, d, b, a, c, d);", "      idx.push(a, b, d, a, d, c);", 1)' \
+  ./internal/httpapi 'TestRendererPrimitivesFaceOutward'
+
+drill "a sphere is wound inside out" internal/httpapi/assets/forge3d.js \
+  's = s.replace("        idx.push(a, a+1, b, b, a+1, b+1);", "        idx.push(a, b, a+1, b, b+1, a+1);", 1)' \
+  ./internal/httpapi 'TestRendererPrimitivesFaceOutward'
+
+drill "a revolve is shaded facet by facet" internal/httpapi/assets/forge3d.js \
+  's = s.replace("  var SMOOTHED_SHAPES = { extrusion: true, revolve: true,", "  var SMOOTHED_SHAPES = { extrusion: true, revolve: false,", 1)' \
+  ./internal/httpapi 'TestRendererShadesCurvedPrimitivesSmooth'
+
+drill "smoothing rounds every edge" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    var limit = Math.cos(creaseDeg * Math.PI / 180);\n    var raw", "    var limit = -1;\n    var raw", 1)' \
+  ./internal/httpapi 'TestRendererShadesCurvedPrimitivesSmooth'
+
+drill "the contact shadow is drawn every frame" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    this._shadowDirty = false;\n    if (!r ||", "    if (!r ||", 1)' \
+  ./internal/httpapi 'TestRendererCastsAContactShadowOnlyWhenTheModelChanges'
+
+drill "an exploded view keeps the assembled model's shadow" internal/httpapi/assets/forge3d.js \
+  's = s.replace("this.explode = v; this._shadowDirty = true; this.draw();", "this.explode = v; this.draw();", 1)' \
+  ./internal/httpapi 'TestRendererCastsAContactShadowOnlyWhenTheModelChanges'
+
+drill "the floor carries no shadow" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    this._drawGround(view, proj);\n", "", 1)' \
+  ./internal/httpapi 'TestRendererCastsAContactShadowOnlyWhenTheModelChanges'
+
+drill "occlusion darkens the glass laid over it" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    /* Occlusion darkens what is opaque, before anything see-through is laid over it. */\n    if (post) {", "    if (translucent.length) { this._drawTranslucent(translucent, stats); translucent = []; }\n    if (post) {", 1)' \
+  ./internal/httpapi 'TestRendererDrawsItsPassesInOrderOnEveryPath'
+
+drill "WebGL1 asks for WebGL2's occlusion targets" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    this.ambientOcclusion = webgl2;", "    this.ambientOcclusion = true;", 1).replace("    if (!this.webgl2 || !this.ambientOcclusion) return null;", "    if (!this.ambientOcclusion) return null;", 1)' \
+  ./internal/httpapi 'TestRendererDrawsItsPassesInOrderOnEveryPath'
+
+drill "the studio backdrop is not drawn" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    this._drawBackdrop(view, proj);\n", "", 1)' \
+  ./internal/httpapi 'TestRendererDrawsItsPassesInOrderOnEveryPath'
+
+drill "the default view is the old high iso view" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    this.camera = { yaw: HERO.yaw, pitch: HERO.pitch,", "    this.camera = { yaw: 0.7, pitch: 0.5,", 1)' \
+  ./internal/httpapi 'TestRendererDrawsItsPassesInOrderOnEveryPath'
+
+drill "feature lines are drawn without being asked for" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    this.featureLines = false;", "    this.featureLines = true;", 1)' \
+  ./internal/httpapi 'TestRendererDrawsItsPassesInOrderOnEveryPath'
+
+drill "a WebGL1 shader uses GLSL ES 3.00" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    \x27  float s = texture2D(uTex, vUV).r * 0.2270270;\x27,", "    \x27  float s = texture(uTex, vUV).r * 0.2270270;\x27,", 1)' \
+  ./internal/httpapi 'TestRendererDrawsItsPassesInOrderOnEveryPath|TestShadersCompileInARealBrowser'
+
+drill "every edge of a sphere is a feature line" internal/httpapi/assets/forge3d.js \
+  's = s.replace("      for (var i = 1; i < ns.length && !sharp; i++) if (dot(ns[0], ns[i]) < limit) sharp = true;", "      sharp = true;", 1)' \
+  ./internal/httpapi 'TestRendererFindsTheFeatureEdgesOfAShape'
+
+drill "the part shader does not compile" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    \x27  float NoV = max(dot(N, V), 1e-4);\x27,", "    \x27  float NoV = max(dot(N, V), 1e-4)\x27,", 1)' \
+  ./internal/httpapi 'TestShadersCompileInARealBrowser'
+
+drill "the occlusion shader does not compile" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    \x27  float occ = 0.0;\x27,", "    \x27  float occ = 0;\x27,", 1)' \
+  ./internal/httpapi 'TestShadersCompileInARealBrowser'
+
+drill "a live turn keeps its primitives when its variant is saved" internal/httpapi/assets/workbench.js \
+  's = s.replace("            refineWithBuiltSolid(ev.variant.version_id, state.prototype);", "            void 0;", 1)' \
+  ./internal/httpapi 'TestWorkbenchRefinesALiveTurnWithTheKernelMesh'
 
 echo
 
