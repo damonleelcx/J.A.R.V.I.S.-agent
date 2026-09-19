@@ -308,6 +308,17 @@ func featureNote(p geometry.Problem) string {
 		"the shape — %s %s.", p.Name, p.Detail)
 }
 
+// templateNote renders what the car template said about a car (geometry/car.go):
+// an Error is a car that is NOT in the shape, a Warning a car built as asked with
+// something worth a look — usually a proportion outside its class's published cars.
+func templateNote(p geometry.Problem) string {
+	if p.Severity == geometry.Error {
+		return fmt.Sprintf("FORGE could not build the car from its numbers, so it is not in the "+
+			"shape — %s %s.", p.Name, p.Detail)
+	}
+	return fmt.Sprintf("The car was built as asked, with a caveat — %s %s.", p.Name, p.Detail)
+}
+
 // profileNote renders one unreadable outline for the reader.
 //
 // Its own voice again: a parameter problem means a number is missing, a feature

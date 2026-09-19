@@ -1,0 +1,71 @@
+{
+  "status_note": "What a design word means as an operation on the \"car\" template. Rendered into the prompt by DesignWordGuide (car.go); this file is the only place the table is written. A row may move a style knob or a proportion toward one end of its class range; it may NEVER set a count (lug_count, diffuser_fins) - a count comes from the request, never from a word or a picture (sketch.go). Stage C3 of the looks-designed work, 2026-09-18.",
+  "rows": [
+    {
+      "words": ["flowing fender", "flowing", "sculpted", "organic"],
+      "operation": "loft",
+      "meaning": "the body is a SMOOTH loft through its stations (never ruled), with softer section corners",
+      "set": [{"key": "edge_radius", "band": [0.035, 0.05]}],
+      "later": "bulged stations over the wheels once curved outline segments land (looks/spline-outlines): the station builder's bulge slot"
+    },
+    {
+      "words": ["aggressive stance", "planted", "wide stance", "muscular"],
+      "operation": "stance",
+      "meaning": "wider track and lower ride height, bigger wheels",
+      "set": [
+        {"key": "track_front", "toward": "high"},
+        {"key": "track_rear", "toward": "high"},
+        {"key": "ride_height", "toward": "low"},
+        {"key": "wheel_diameter", "toward": "high"}
+      ]
+    },
+    {
+      "words": ["soft edges", "rounded", "friendly", "pebble"],
+      "operation": "fillet",
+      "meaning": "round every body edge more: a larger section corner radius",
+      "set": [{"key": "edge_radius", "band": [0.04, 0.06]}]
+    },
+    {
+      "words": ["crisp", "sharp edges", "angular", "faceted"],
+      "operation": "fillet",
+      "meaning": "tighter body edges: a small section corner radius",
+      "set": [{"key": "edge_radius", "band": [0.005, 0.015]}]
+    },
+    {
+      "words": ["wedge", "wedge-shaped", "doorstop"],
+      "operation": "loft",
+      "meaning": "a low nose rising to a high tail",
+      "set": [{"key": "nose_height", "band": [0.25, 0.35]}, {"key": "tail_height", "band": [0.8, 0.9]}]
+    },
+    {
+      "words": ["long hood", "long bonnet", "front-engined GT"],
+      "operation": "cabin",
+      "meaning": "the cabin set well back",
+      "set": [{"key": "cabin_start", "band": [0.4, 0.48]}, {"key": "front_overhang", "toward": "low"}]
+    },
+    {
+      "words": ["cab-forward", "mid-engined", "canopy"],
+      "operation": "cabin",
+      "meaning": "the cabin pushed forward",
+      "set": [{"key": "cabin_start", "band": [0.22, 0.3]}]
+    },
+    {
+      "words": ["fastback", "sloping roof", "coupe roofline"],
+      "operation": "loft",
+      "meaning": "a long cabin whose roof runs down into a low tail",
+      "set": [{"key": "cabin_length", "band": [0.45, 0.52]}, {"key": "tail_height", "band": [0.6, 0.7]}]
+    },
+    {
+      "words": ["boxy", "upright", "utilitarian", "rugged"],
+      "operation": "loft",
+      "meaning": "a wide roof and a tall tail",
+      "set": [{"key": "roof_width", "band": [0.85, 0.92]}, {"key": "tail_height", "band": [0.88, 0.96]}, {"key": "edge_radius", "band": [0.01, 0.02]}]
+    },
+    {
+      "words": ["low-slung", "ground-hugging", "sleek"],
+      "operation": "stance",
+      "meaning": "a low body close to the road",
+      "set": [{"key": "height", "toward": "low"}, {"key": "ride_height", "toward": "low"}]
+    }
+  ]
+}

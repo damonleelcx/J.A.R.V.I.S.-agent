@@ -1,0 +1,60 @@
+Selected drills
+  ✅ went red      — a car is not written out at the settle door
+           car_contract_test.go:108: settling left the car as a car part
+       --- FAIL: TestSettle_WritesACarOutAsItsTreeAndSaysWhatIsOutsideItsClass (0.00s)
+  ✅ went red      — Faults does not see a car it could not build
+           car_test.go:155: Faults did not report the car: []
+       --- FAIL: TestCar_AnImpossibleCarIsNamedAndLeftForTheRepairLoop (0.00s)
+  ✅ went red      — a car's placements are written as numbers, not bindings
+           car_test.go:96: gt/front-left/tyre moved 0 along the car when the wheelbase grew by 200; it should move 100
+           car_test.go:96: gt/body/arch-front-left moved 0 along the car when the wheelbase grew by 200; it should move 100
+  ✅ went red      — a car a tree places is not written out
+           car_test.go:186: [{error GT is a car that was never written out as its body, wheels and trim, so nothing of it is in the model}]
+       --- FAIL: TestCar_ACarDefinitionPlacedByATreeIsWrittenOutInPlace (0.00s)
+  ✅ went red      — a corner radius the sections cannot carry is written out anyway
+  ✅ went red      — the wheel nuts are not fused to the rim
+           car_test.go:67: operations map[cut:1 fillet:1 loft:1]; a car is one loft, one cut of four arches, one fillet and a fuse of the nuts to each wheel's rim
+           car_test.go:67: operations map[cut:1 fillet:1 loft:1]; a car is one loft, one cut of four arches, one fillet and a fuse of the nuts to each wheel's rim
+  ✅ went red      — the wheel arches are too small for the tyres
+           car_kernel_test.go:58: buried: gt / front-left / tyre / Tyre is 78% inside gt / body / station-0 / Body station 0: they occupy the same material (29137014 mm³). Move one of them, or make the part that contains the other hollow.
+           car_kernel_test.go:58: buried: gt / front-right / tyre / Tyre is 78% inside gt / body / station-0 / Body station 0: they occupy the same material (29137013 mm³). Move one of them, or make the part that contains the other hollow.
+  ✅ went red      — the roof is built above the height asked
+           car_kernel_test.go:69: the car is 1322 high; it was asked to be 1250
+           car_kernel_test.go:77: default: 14 solids, 0 interference(s) none buried, bounds [-2169.508368300844 -5.684341886080802e-14 -949.744640069815 2330.4916318991627 1321.7076171197466 949.7446400698065] phases {Shapes:232.228699ms Features:2.2617694s Assembly:1.1788644s Interferences:5.383049299s Export:1.261080299s Mesh:0s}
+  ✅ went red      — a proportion outside its class is not warned
+           car_test.go:130: no warning for a wheelbase 0.74 of the length: []
+       --- FAIL: TestCar_ProportionsOutsideTheClassAreWarnedNeverRefused (0.04s)
+  ✅ went red      — a proportion outside its class refuses the car
+           car_test.go:123: a proportion refused the car: has a wheelbase as a share of length of 0.756, outside 0.485 to 0.647 for a sports — the span of Porsche 911 Carrera (992.2) and Chevrolet Corvette Stingray coupe (C8, 2020), widened by 10%. The table is UNVALIDATED, so this is a prompt to look, not a fault; it was built as given
+       --- FAIL: TestCar_ProportionsOutsideTheClassAreWarnedNeverRefused (0.01s)
+  ✅ went red      — the proportion table stops saying UNVALIDATED
+           car_test.go:203: the table's status is "validated"
+       --- FAIL: TestCarProportions_EveryFigureNamesItsSourceAndTheTableIsUnvalidated (0.00s)
+  ✅ went red      — a figure in the proportion table loses its source
+           car_test.go:221: Land Rover Defender 110 (L663, 2020MY) width: {MM:1996 AsWritten:Overall width (body, no mirrors) (mm) 1996 Source: Retrieved:fetched} has no source, no figure as written, or no retrieval
+       --- FAIL: TestCarProportions_EveryFigureNamesItsSourceAndTheTableIsUnvalidated (0.00s)
+  ✅ went red      — a design word sets a count
+           designwords_test.go:37: [soft edges rounded friendly pebble] sets the count "lug_count"; a count comes from the request, never a word
+       --- FAIL: TestDesignWords_NeverSetACountAndStayInsideTheTemplate (0.00s)
+  ✅ went red      — a design word the sketch filter rewrites
+           car_contract_test.go:85: the design word "two-tone" reads as "several" after the sketch's number filter, so a drawing described with it could never reach its row
+       --- FAIL: TestDesignWordsSurviveTheSketchReadingsNumberFilter (0.00s)
+  ✅ went red      — the design-word guide drops a row
+           designwords_test.go:57: the guide does not carry "flowing fender"
+           designwords_test.go:57: the guide does not carry "flowing"
+  ✅ went red      — the prompt drops the design-word table
+           car_contract_test.go:41: the car paragraph does not carry the design-word table (geometry.DesignWordGuide)
+           car_contract_test.go:50: the rendered prompt does not carry the design word "flowing fender"
+  ✅ went red      — the prompt does not offer the car shape
+           car_contract_test.go:27: the contract does not offer the car shape:
+       --- FAIL: TestTheContractCarriesTheCarTemplateAndEveryDesignWord (0.18s)
+
+
+The tree is byte-identical to how the drill found it.
+17 went red, 0 stayed green, 0 unproven, 0 anchor(s) moved.
+Covered: the sweep fences. NOT covered: the extrusion and revolve fences,
+which have no drills — see the note in this script.
+
+# Re-run after the anchor checker: the reworded source anchor, and an existing drill whose anchor this PR moved
+  went red — the contract's catalogue is typed rather than rendered (TestTheContractTeachesEveryStandardPartFORGEHas)
+  went red — a figure in the proportion table loses its source (TestCarProportions_EveryFigureNamesItsSourceAndTheTableIsUnvalidated)
