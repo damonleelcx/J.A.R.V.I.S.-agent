@@ -333,6 +333,13 @@ type Build struct {
 	// Properties is each surviving part's volume, centre of volume and box, in
 	// millimetres. Empty unless asked for with BuildProperties (Phase 5, stage V3).
 	Properties []geometry.SolidMeasure
+	// MeshOnly names every mesh-only part the kernel took out before it built
+	// anything (geometry/lattice.go): none of them is in Parts, Volume, Bounds,
+	// Properties, the interference check or the STEP file, whatever was asked. On a
+	// mesh request each one that built is in Mesh, marked MeshOnly, and
+	// MeshOnlyTriangles counts them (they are in Triangles too).
+	MeshOnly          []string
+	MeshOnlyTriangles int
 }
 
 // MeshPart is one built solid's surface, attributed to the part it came from.
@@ -348,6 +355,9 @@ type MeshPart struct {
 	Label     string
 	Vertices  []float64
 	Triangles []int32
+	// MeshOnly says this surface is a declared mesh-only part: decorative, never a
+	// solid, and to be shown labelled geometry.MeshOnlyLabel.
+	MeshOnly bool
 }
 
 // MeshDefinition is one shape's surface in its own frame, in millimetres, drawn
@@ -454,6 +464,9 @@ type reply struct {
 	MeshError       string           `json:"mesh_error,omitempty"`
 
 	PartProperties []partProperties `json:"part_properties,omitempty"`
+
+	MeshOnly          []string `json:"mesh_only,omitempty"`
+	MeshOnlyTriangles int      `json:"mesh_only_triangles,omitempty"`
 }
 
 // phaseSeconds is the reply's "phases": seconds per phase of a build, written by
@@ -478,6 +491,7 @@ type meshPart struct {
 	Label     string    `json:"label"`
 	Vertices  []float64 `json:"vertices"`
 	Triangles []int32   `json:"triangles"`
+	MeshOnly  bool      `json:"mesh_only,omitempty"`
 }
 
 type meshDefinition struct {
@@ -859,10 +873,11 @@ func buildOf(res *reply, inferred []string, scriptRuns int) (*Build, error) {
 		out.Mesh = make([]MeshPart, 0, len(res.Mesh))
 		for _, m := range res.Mesh {
 			out.Mesh = append(out.Mesh, MeshPart{
-				ID: m.ID, Label: m.Label, Vertices: m.Vertices, Triangles: m.Triangles,
+				ID: m.ID, Label: m.Label, Vertices: m.Vertices, Triangles: m.Triangles, MeshOnly: m.MeshOnly,
 			})
 		}
 	}
+	out.MeshOnly, out.MeshOnlyTriangles = res.MeshOnly, res.MeshOnlyTriangles
 	for _, d := range res.MeshDefinitions {
 		out.MeshDefinitions = append(out.MeshDefinitions, MeshDefinition{Vertices: d.Vertices, Triangles: d.Triangles})
 	}

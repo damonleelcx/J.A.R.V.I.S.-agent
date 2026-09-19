@@ -320,7 +320,7 @@ func TessellateInstances(doc Document, unit Unit) *InstanceMesh {
 // shapeKey is every field partTriangles reads, and the reflection: two parts with one
 // key are the same triangles in their own frames.
 func shapeKey(p Part) string {
-	b, _ := json.Marshal([]any{p.Shape, p.Standard, p.Size, p.Profile, p.Holes, p.Path, p.PathClosed, p.Axis, p.Mirrored})
+	b, _ := json.Marshal([]any{p.Shape, p.Standard, p.Lattice, p.Size, p.Profile, p.Holes, p.Path, p.PathClosed, p.Axis, p.Mirrored})
 	return string(b)
 }
 

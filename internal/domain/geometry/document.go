@@ -94,7 +94,11 @@ type Part struct {
 	// is written out as the revolve or extrusion it is before anything reads the
 	// part, and kept on it so a reader can still say what it is (standard.go).
 	// Phase 2, stage A3 of docs/plan-2026-09-13-millions-of-parts.md.
-	Standard string             `json:"standard,omitempty"`
+	Standard string `json:"standard,omitempty"`
+	// Lattice names the pattern of a "lattice" part — "gyroid", "diamond",
+	// "primitive" — and is read for no other shape. A lattice is MESH-ONLY and
+	// decorative, never structural (lattice.go; damon's decision, 2026-09-18).
+	Lattice  string             `json:"lattice,omitempty"`
 	Size     map[string]float64 `json:"size"`
 	Position []float64          `json:"position"`
 	// SizeFrom and PositionFrom bind a dimension to an EXPRESSION over the

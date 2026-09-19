@@ -37,6 +37,11 @@ ipython==9.17.1
 ipython_pygments_lexers==1.1.1
 jedi==0.20.0
 joblib==1.6.0
+# manifold3d builds the MESH-ONLY decorative parts (geometry/lattice.go) and nothing
+# else; it never touches an OCCT solid. Apache-2.0, depends only on numpy. Wheels
+# checked 2026-09-18 for manylinux aarch64 and x86_64 (glibc 2.26/2.27+) and macOS
+# arm64, CPython 3.13 and 3.14.
+manifold3d==3.5.3
 matplotlib-inline==0.2.2
 mpmath==1.3.0
 narwhals==2.25.0

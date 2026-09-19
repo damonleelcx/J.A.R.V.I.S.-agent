@@ -194,6 +194,11 @@ FILES=(
   internal/agent/designationrepair.go
   internal/domain/engine/budget.go
   Makefile
+  # Added 2026-09-18 (looks designed, stage E1): the mesh-only lattice drills.
+  internal/domain/geometry/lattice.go
+  internal/domain/geometry/feature.go
+  internal/domain/geometry/units.go
+  internal/agent/cadbridge/cadbridge.go
 )
 
 BACKUP=""
@@ -2247,7 +2252,7 @@ drill "measurement reads a standard part as a unit box" internal/domain/geometry
   ./internal/domain/geometry 'TestStandard_TheKernelAndTheMeasurementSeeTheDrawnPart'
 
 drill "the contract's catalogue is typed rather than rendered" internal/agent/converse.go \
-  's = s.replace("geometry.StandardGuide(), strings.Join(", "\"    \\\"ISO 4762 M8x30\\\"\", strings.Join(", 1)' \
+  's = s.replace("geometry.StandardGuide(), geometry.LatticeGuide(), strings.Join(", "\"    \\\"ISO 4762 M8x30\\\"\", geometry.LatticeGuide(), strings.Join(", 1)' \
   ./internal/agent 'TestTheContractTeachesEveryStandardPartFORGEHas'
 
 drill "irregular spacing counts as a row" internal/domain/geometry/repetition.go \
@@ -5084,6 +5089,149 @@ drill "grouped containment takes a box's whole length for its reach" internal/do
 drill "grouped containment takes a quarter of a box for its reach" internal/domain/cad/sidecar.py \
   's = s.replace("            p.append(v * (lo[c] + hi[c]) / 2)\n            reach += abs(v) * (hi[c] - lo[c]) / 2\n", "            p.append(v * (lo[c] + hi[c]) / 2)\n            reach += abs(v) * (hi[c] - lo[c]) / 4\n", 1)' \
   ./internal/domain/cad 'TestKernel_APairKeyWithoutLocationsIsTheKeyBuild123dGave'
+
+echo
+echo "Mesh-only decorative parts (looks designed, stage E1; damon 2026-09-18)"
+
+drill "a lattice past its triangle budget is accepted" internal/domain/geometry/lattice.go \
+  's = s.replace("if n := l.triangles(); n > MaxLatticeTriangles {", "if n := l.triangles(); n > MaxLatticeTriangles*100 {", 1)' \
+  ./internal/domain/geometry 'TestLattice_RefusesByNameWhatItCannotBuild'
+
+drill "a lattice wall of any thickness is accepted" internal/domain/geometry/lattice.go \
+  's = s.replace("if l.Thickness < l.Cell*minWallPerCell || l.Thickness > l.Cell*maxWallPerCell {", "if false {", 1)' \
+  ./internal/domain/geometry 'TestLattice_RefusesByNameWhatItCannotBuild'
+
+drill "the cell a lattice refusal names does not fit" internal/domain/geometry/lattice.go \
+  's = s.replace("fits := l.Cell * math.Cbrt(float64(n)/float64(MaxLatticeTriangles)) * 1.01", "fits := l.Cell * math.Cbrt(float64(n)/float64(MaxLatticeTriangles)) * 0.9", 1)' \
+  ./internal/domain/geometry 'TestLattice_TheCellARefusalNamesFits'
+
+drill "mesh-only copies do not share one budget" internal/domain/geometry/lattice.go \
+  's = s.replace("if n := l.triangles(); total+n > maxMeshOnlyTriangles {", "if n := l.triangles(); n > maxMeshOnlyTriangles {", 1)' \
+  ./internal/domain/geometry 'TestLattice_CopiesShareOneBudget'
+
+drill "a refused lattice is not a fault" internal/domain/geometry/faults.go \
+  's = s.replace("profileProblems = append(profileProblems, allLatticeProblems(d.Parts)...)", "", 1)' \
+  ./internal/domain/geometry 'TestLattice_RefusesByNameWhatItCannotBuild'
+
+drill "a lattice is sent to the kernel as an exact solid" internal/domain/geometry/solid.go \
+  's = s.replace("meshOnly, lattice = true, l.Pattern.Name", "meshOnly, lattice = false, l.Pattern.Name", 1)' \
+  ./internal/domain/geometry 'TestLattice_IsSentToTheKernelMarkedMeshOnlyInMillimetres'
+
+drill "a feature may operate on a lattice" internal/domain/geometry/feature.go \
+  's = s.replace("\t\tif meshOnly[f.Of] {", "\t\tif false && meshOnly[f.Of] {", 1)' \
+  ./internal/domain/geometry 'TestLattice_NoFeatureMayCutOrUseIt'
+
+drill "a feature may use a lattice as its tool" internal/domain/geometry/feature.go \
+  's = s.replace("\t\t\tcase meshOnly[t]:", "\t\t\tcase false && meshOnly[t]:", 1)' \
+  ./internal/domain/geometry 'TestLattice_NoFeatureMayCutOrUseIt'
+
+drill "the Go mesh draws a lattice as its box" internal/domain/geometry/mesh.go \
+  's = s.replace("\tcase latticeShape:\n\t\t// Mesh-only, and built only by the CAD kernel", "\tcase \"lattice-was-here\":\n\t\t// Mesh-only, and built only by the CAD kernel", 1)' \
+  ./internal/domain/geometry 'TestLattice_ExportsLeaveItOutAndSaySo'
+
+drill "the STEP label says nothing of mesh-only parts" internal/domain/geometry/export.go \
+  's = s.replace("if note := MeshOnlyNote(v.Document.MeshOnlyParts(), \"this STEP file\"); note != \"\" {", "if note := \"\"; note != \"\" {", 1)' \
+  ./internal/domain/geometry 'TestLattice_ExportsLeaveItOutAndSaySo'
+
+drill "the panel summary of a lattice hides that it is mesh-only" internal/domain/geometry/units.go \
+  's = s.replace("q(l.Width), q(l.Height), q(l.Depth), q(l.Cell), q(l.Thickness), MeshOnlyLabel)", "q(l.Width), q(l.Height), q(l.Depth), q(l.Cell), q(l.Thickness), \"\")", 1)' \
+  ./internal/domain/geometry 'TestLattice_ThePanelSummarySaysMeshOnly'
+
+drill "mass weighs a lattice it was handed a measure of" internal/domain/geometry/mass.go \
+  's = s.replace("\t\tif meshOnly[m.ID] {\n\t\t\tcontinue\n\t\t}\n", "", 1)' \
+  ./internal/domain/geometry 'TestLattice_MassLeavesItOutAndNamesIt'
+
+drill "the contract does not teach lattices" internal/agent/converse.go \
+  's = s.replace("geometry.StandardGuide(), geometry.LatticeGuide(), strings.Join", "geometry.StandardGuide(), \"\", strings.Join", 1)' \
+  ./internal/agent 'TestTheContractTeachesLatticesFromTheTable'
+
+drill "the contract does not offer lattice as a shape" internal/agent/converse.go \
+  's = s.replace("\"lattice\" | \"script\",", "\"script\",", 1)' \
+  ./internal/agent 'TestTheContractTeachesLatticesFromTheTable'
+
+drill "the coverage note says nothing of mesh-only parts" internal/agent/interference.go \
+  's = s.replace("if note := geometry.MeshOnlyNote(sheet.MeshOnly, \"the check for shared material\"); note != \"\" {", "if note := \"\"; note != \"\" {", 1)' \
+  ./internal/agent 'TestCoverageNoteSaysMeshOnlyPartsWereNotChecked'
+
+drill "the render drops the mesh-only parts" internal/agent/render.go \
+  's = s.replace("MeshOnly: built.MeshOnly, Parts: built.Parts}", "Parts: built.Parts}", 1)' \
+  ./internal/agent 'TestRender_CarriesTheMeshOnlyParts'
+
+drill "the turn surface drops the mesh-only parts" internal/agent/cadbridge/cadbridge.go \
+  's = s.replace("\t\tMeshOnly: built.MeshOnly}, nil", "\t}, nil", 1)' \
+  ./internal/agent/cadbridge 'TestKernel_TheTurnsSurfaceNamesItsMeshOnlyParts'
+
+drill "the mesh reply drops the mesh-only flag" internal/httpapi/geometry.go \
+  's = s.replace("Triangles: m.Triangles, MeshOnly: m.MeshOnly,", "Triangles: m.Triangles,", 1)' \
+  ./internal/httpapi 'TestTheMeshReplyMarksAMeshOnlyPart'
+
+drill "the STEP download header says nothing of mesh-only parts" internal/httpapi/geometry.go \
+  's = s.replace("if n := len(built.MeshOnly); n > 0 {", "if n := 0; n > 0 {", 1)' \
+  ./internal/httpapi 'TestSTEPAndMassRepliesSayMeshOnlyPartsAreLeftOut'
+
+drill "the mass note says nothing of mesh-only parts" internal/httpapi/geometry.go \
+  's = s.replace("if meshOnly := geometry.MeshOnlyNote(report.MeshOnly, \"the mass, volume and centre\"); meshOnly != \"\" {", "if meshOnly := \"\"; meshOnly != \"\" {", 1)' \
+  ./internal/httpapi 'TestSTEPAndMassRepliesSayMeshOnlyPartsAreLeftOut'
+
+drill "the banner does not label mesh-only parts" internal/httpapi/assets/workbench.js \
+  's = s.replace("(meshOnly.length ? \x27 <span class=\"prov-mesh-only\"", "(false ? \x27 <span class=\"prov-mesh-only\"", 1)' \
+  ./internal/httpapi 'TestWorkbenchLabelsMeshOnlyPartsOutsideTheFold'
+
+drill "the banner reads mesh-only parts only from the kernel" internal/httpapi/assets/workbench.js \
+  's = s.replace("      if (MESH_ONLY_SHAPES.indexOf(String(p.shape || \x27\x27).trim().toLowerCase()) >= 0) add(p.name || p.id);\n", "", 1)' \
+  ./internal/httpapi 'TestWorkbenchLabelsMeshOnlyPartsOutsideTheFold'
+
+drill "the workbench forgets the kernel mesh-only parts" internal/httpapi/assets/workbench.js \
+  's = s.replace("meshOnly: b.mesh_only || []", "meshOnly: []", 1)' \
+  ./internal/httpapi 'TestWorkbenchLabelsMeshOnlyPartsOutsideTheFold'
+
+drill "the workbench spells the mesh-only label its own way" internal/httpapi/assets/workbench.js \
+  's = s.replace("function meshOnlyLabel() { return \x27mesh-only - not manufacturable\x27; }", "function meshOnlyLabel() { return \x27decorative\x27; }", 1)' \
+  ./internal/httpapi 'TestTheWorkbenchSpellsMeshOnlyAsGeometryDoes'
+
+drill "the kernel builds a mesh-only part with OCCT" internal/domain/cad/sidecar.py \
+  's = s.replace("    solids, mesh_only = _split_mesh_only(request.get(\"solids\") or [])", "    solids, mesh_only = request.get(\"solids\") or [], []", 1)' \
+  ./internal/domain/cad 'TestKernel_AGyroidInABoxBuildsAsAMeshOnlyPartWithinBudget'
+
+drill "the kernel reply names no mesh-only parts" internal/domain/cad/sidecar.py \
+  's = s.replace("        out[\"mesh_only\"] = _mesh_only_names(mesh_only)", "        pass", 1)' \
+  ./internal/domain/cad 'TestKernel_AGyroidInABoxBuildsAsAMeshOnlyPartWithinBudget'
+
+drill "a mesh-only surface is not marked mesh_only" internal/domain/cad/sidecar.py \
+  's = s.replace("out.append({\"id\": part.get(\"id\"), \"label\": name, \"mesh_only\": True,", "out.append({\"id\": part.get(\"id\"), \"label\": name, \"mesh_only\": False,", 1)' \
+  ./internal/domain/cad 'TestKernel_AGyroidInABoxBuildsAsAMeshOnlyPartWithinBudget'
+
+drill "the Go reply drops the mesh-only flag" internal/domain/cad/cad.go \
+  's = s.replace("Triangles: m.Triangles, MeshOnly: m.MeshOnly,", "Triangles: m.Triangles,", 1)' \
+  ./internal/domain/cad 'TestKernel_AGyroidInABoxBuildsAsAMeshOnlyPartWithinBudget'
+
+drill "the STEP file does not say what it left out" internal/domain/cad/sidecar.py \
+  's = s.replace("    if note:\n        # Appended to FILE_DESCRIPTION", "    if False:\n        # Appended to FILE_DESCRIPTION", 1)' \
+  ./internal/domain/cad 'TestKernel_STEPLeavesOutAMeshOnlyPartAndSaysSoInTheFile'
+
+drill "the kernel sends a lattice past its own budget" internal/domain/cad/sidecar.py \
+  's = s.replace("    if tris > _LATTICE_BUDGET:", "    if tris > _LATTICE_BUDGET * 100:", 1)' \
+  ./internal/domain/cad 'TestKernel_ALatticePastTheKernelsOwnBudgetIsRefusedByName'
+
+drill "a lattice is drawn where it was built, not where it was placed" internal/domain/cad/sidecar.py \
+  's = s.replace("placed = verts @ m.T + _np.asarray(part[\"position\"], dtype=float)", "placed = verts + 0.0", 1)' \
+  ./internal/domain/cad 'TestKernel_ALatticeSitsInItsBoxWithTheWallItAskedFor'
+
+drill "a gyroid wall is cut at the level with no gradient factor" internal/domain/cad/sidecar.py \
+  's = s.replace("+ math.sin(z) * math.cos(x)), 1.51),", "+ math.sin(z) * math.cos(x)), 1.0),", 1)' \
+  ./internal/domain/cad 'TestKernel_ALatticeSitsInItsBoxWithTheWallItAskedFor'
+
+drill "a mirrored lattice is not reflected" internal/domain/cad/sidecar.py \
+  's = s.replace("        if part.get(\"mirrored\"):\n", "        if False:\n", 1)' \
+  ./internal/domain/cad 'TestKernel_AMirroredLatticeIsItsReflection'
+
+drill "a mirrored lattice faces inward" internal/domain/cad/sidecar.py \
+  's = s.replace("            tris = tris[:, ::-1]\n", "", 1)' \
+  ./internal/domain/cad 'TestKernel_AMirroredLatticeIsItsReflection'
+
+drill "a lone lattice is refused a mesh too" internal/domain/cad/sidecar.py \
+  's = s.replace("    if request.get(\"format\") != \"mesh\" or request.get(\"properties\"):", "    if True:", 1)' \
+  ./internal/domain/cad 'TestKernel_OnlyMeshOnlyPartsDrawButHaveNoSTEP'
 
 echo
 

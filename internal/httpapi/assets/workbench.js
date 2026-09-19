@@ -1706,7 +1706,11 @@
           /* Why a part of this document is not in the solid on screen. Kept
            * because the count alone cannot say it: eight parts and seven bodies
            * looks like a rendering choice until something names the eighth. */
-          notes: (b.inferred || []).concat(b.skipped || [], b.feature_failures || [])
+          notes: (b.inferred || []).concat(b.skipped || [], b.feature_failures || []),
+          /* The mesh-only parts the kernel named (geometry/lattice.go), shown under
+           * meshOnlyLabel() by renderProvenance. Each one's surface is in b.parts
+           * with mesh_only set, for the renderer to label on the stage. */
+          meshOnly: b.mesh_only || []
         };
         studio.load(proto, b);
         studio.setOverlays(proto.overlays || [], state.measured);
@@ -2239,6 +2243,31 @@
    * PRD VIS-06: a render must not imply manufacturability, structural adequacy,
    * or compliance — and it is persuasive in inverse proportion to how much has
    * actually been checked. */
+  /* Mesh-only parts (stage E1 of the "looks designed" work; damon, 2026-09-18).
+   *
+   * A part declared mesh-only — shape "lattice" — is a decorative mesh, never a
+   * solid: not in STEP, not weighed, not checked for interference. PRD VIS-06: a
+   * render must never imply manufacturability, so whenever one is in the design the
+   * banner's HEADLINE (outside the fold) says so with these words, spelled as
+   * geometry.MeshOnlyLabel and geometry.MeshOnlyShapes spell them. Fence:
+   * TestWorkbenchLabelsMeshOnlyPartsOutsideTheFold. Functions rather than constants
+   * so a harness lifts them with renderProvenance. */
+  function meshOnlyLabel() { return 'mesh-only - not manufacturable'; }
+
+  /* meshOnlyNames is every mesh-only part the design declares, by name — from the
+   * document itself, so it is said before (and without) a kernel — plus any the
+   * kernel's mesh reply named. */
+  function meshOnlyNames(proto, built) {
+    var MESH_ONLY_SHAPES = ['lattice'];
+    var names = [];
+    var add = function (n) { if (n && names.indexOf(n) < 0) names.push(n); };
+    (proto ? (proto.parts || []).concat(proto.definitions || []) : []).forEach(function (p) {
+      if (MESH_ONLY_SHAPES.indexOf(String(p.shape || '').trim().toLowerCase()) >= 0) add(p.name || p.id);
+    });
+    ((built && built.meshOnly) || []).forEach(add);
+    return names;
+  }
+
   function renderProvenance() {
     var el = $('provenance');
     if (!state.prototype) { el.classList.add('hidden'); return; }
@@ -2335,7 +2364,10 @@
      * thing VIS-06 forbids. Fence: TestWorkbenchProvenanceBannerFoldsItsDetailsOffTheStage. */
     var notes = (html.match(/<li>/g) || []).length;
     var open = !!state.provenanceOpen;
+    var meshOnly = meshOnlyNames(p, state.builtSolid);
     el.innerHTML = '<div class="prov-head"><b>This is a proposal, not a verified design.</b>' +
+      (meshOnly.length ? ' <span class="prov-mesh-only" data-mesh-only>' + esc(meshOnlyLabel()) + ': ' +
+        esc(meshOnly.join(', ')) + '</span>' : '') +
       '<button type="button" class="ghost prov-toggle" data-prov-toggle aria-controls="provenance-details" ' +
       'aria-expanded="' + open + '">' + (open ? 'Hide details' : 'Details (' + notes + ')') + '</button></div>' +
       '<div class="prov-details' + (open ? '' : ' hidden') + '" id="provenance-details">' + html + '</div>';

@@ -59,6 +59,9 @@ func (d *Document) Faults() []Problem {
 	profileProblems = append(profileProblems, treeProblems...)
 	profileProblems = append(profileProblems, gearProblems...)
 	profileProblems = append(profileProblems, standardProblems...)
+	// A mesh-only lattice whose numbers the kernel cannot build, or past the
+	// triangle budget, is a part NOT in the model (lattice.go).
+	profileProblems = append(profileProblems, allLatticeProblems(d.Parts)...)
 	for _, p := range append(profileProblems, featureProblems...) {
 		if p.Severity == Error {
 			out = append(out, p)
