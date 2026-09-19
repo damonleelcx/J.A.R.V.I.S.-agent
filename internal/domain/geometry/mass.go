@@ -65,6 +65,10 @@ type MassReport struct {
 	// Unmeasured names parts the kernel built but could not measure, or that have
 	// no volume (a surface): they are in no group.
 	Unmeasured []string `json:"unmeasured,omitempty"`
+	// MeshOnly names the mesh-only parts (lattice.go), which are in no group: a
+	// decoration has no solid to weigh, and weighing its sheet would make a claim
+	// about a part that is never made.
+	MeshOnly []string `json:"mesh_only,omitempty"`
 }
 
 // MassProperties rolls the kernel's measurements up through the document's tree.
@@ -74,15 +78,25 @@ type MassReport struct {
 // adds to "", "left-wheel" and "left-wheel/hub".
 func MassProperties(doc Document, measures []SolidMeasure) MassReport {
 	density := map[string]float64{}
+	meshOnly := map[string]bool{}
+	report := MassReport{Basis: MassByDensity}
 	for _, p := range doc.Expanded().Parts {
 		if p.Material != nil && p.Material.Density > 0 {
 			density[p.ID] = p.Material.Density
 		}
+		if p.IsMeshOnly() {
+			meshOnly[p.ID] = true
+			report.MeshOnly = append(report.MeshOnly, p.Label())
+		}
 	}
 
-	report := MassReport{Basis: MassByDensity}
 	usable := make([]SolidMeasure, 0, len(measures))
 	for _, m := range measures {
+		// The kernel never measures one (sidecar.py takes them out first); a
+		// measure that claimed to is still not weighed.
+		if meshOnly[m.ID] {
+			continue
+		}
 		if !m.Measured || m.Volume <= 0 {
 			report.Unmeasured = append(report.Unmeasured, m.ID)
 			continue

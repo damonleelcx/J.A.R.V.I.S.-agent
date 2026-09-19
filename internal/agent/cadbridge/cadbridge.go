@@ -109,7 +109,10 @@ func (r kernelSolids) BuildSurface(ctx context.Context, doc *geometry.Document) 
 		// left behind, because a builder that does not pass it reads as "not counted"
 		// and no repair past the list's bound could ever be kept (repairVerdict).
 		Buried: built.InterferencesBuried, BuriedCounted: built.InterferencesBuriedCounted,
-		Skipped: built.Skipped}, nil
+		Skipped: built.Skipped,
+		// Mesh-only parts were never in the check (geometry/lattice.go), and the turn
+		// says so beside what else it did not cover.
+		MeshOnly: built.MeshOnly}, nil
 }
 
 // Solids returns the thing that builds a surface, or nil when this

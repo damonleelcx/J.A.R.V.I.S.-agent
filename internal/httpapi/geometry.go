@@ -297,12 +297,17 @@ func massBody(versionID string, report geometry.MassReport, skipped []string) ma
 			"of volume, which is the centre of gravity only if the model is one material",
 			len(report.WithoutDensity))
 	}
+	// Mesh-only parts are in no group, and the note says so (geometry/lattice.go).
+	if meshOnly := geometry.MeshOnlyNote(report.MeshOnly, "the mass, volume and centre"); meshOnly != "" {
+		note = strings.TrimSpace(note + " " + meshOnly)
+	}
 	return map[string]any{
 		"version_id":      versionID,
 		"basis":           report.Basis,
 		"groups":          report.Groups,
 		"without_density": report.WithoutDensity,
 		"unmeasured":      report.Unmeasured,
+		"mesh_only":       report.MeshOnly,
 		// A part the kernel could not build is in no group, and is named here.
 		"skipped": skipped,
 		"note":    note,
@@ -403,6 +408,11 @@ func (h *GeometryHandlers) Mesh(w http.ResponseWriter, r *http.Request) {
 		// KERNEL refused, and a part dropped before the kernel never reaches it.
 		// Observed while adding a spoiler to the sports car on 2026-09-09.
 		"inferred": built.Inferred,
+		// Every mesh-only part, by label, and the words the viewport shows on each
+		// one (PRD VIS-06: a render must never imply manufacturability). The parts
+		// themselves are in "parts" with mesh_only set.
+		"mesh_only":       built.MeshOnly,
+		"mesh_only_label": geometry.MeshOnlyLabel,
 	})
 }
 
@@ -416,6 +426,9 @@ type meshPartDTO struct {
 	Label     string    `json:"label"`
 	Vertices  []float64 `json:"vertices"`
 	Triangles []int32   `json:"triangles"`
+	// MeshOnly marks a declared mesh-only part (geometry/lattice.go): the viewport
+	// draws it with the reply's mesh_only_label on it, never as a solid.
+	MeshOnly bool `json:"mesh_only,omitempty"`
 }
 
 // meshDefinitionDTO is one shape's surface in its own frame, in millimetres.
@@ -439,7 +452,7 @@ func meshPayload(built *cad.Build) ([]meshPartDTO, []meshDefinitionDTO, []meshIn
 	parts := make([]meshPartDTO, 0, len(built.Mesh))
 	for _, m := range built.Mesh {
 		parts = append(parts, meshPartDTO{
-			ID: m.ID, Label: m.Label, Vertices: m.Vertices, Triangles: m.Triangles,
+			ID: m.ID, Label: m.Label, Vertices: m.Vertices, Triangles: m.Triangles, MeshOnly: m.MeshOnly,
 		})
 	}
 	definitions := make([]meshDefinitionDTO, 0, len(built.MeshDefinitions))
@@ -805,9 +818,16 @@ func (h *GeometryHandlers) exportParametric(w http.ResponseWriter, r *http.Reque
 	w.Header().Set("Content-Disposition",
 		fmt.Sprintf("attachment; filename=%q", geometry.Filename(v, f)))
 	w.Header().Set("Content-Length", strconv.Itoa(len(built.STEP)))
+	w.Header().Set("X-Forge-Export-Label", stepExportLabel(v.VersionID, built))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(built.STEP)
+}
+
+// stepExportLabel is the one-line X-Forge-Export-Label of a STEP file the kernel wrote.
+func stepExportLabel(versionID string, built *cad.Build) string {
 	label := fmt.Sprintf("unverified proposal; B-Rep, not tessellated; nothing about this shape "+
 		"has been analysed or checked; full label at /v1/geometry/%s/export/label?format=step",
-		v.VersionID)
+		versionID)
 	// What is NOT in the file goes FIRST, because a header is read left to right
 	// and this is the half that changes what somebody does with it.
 	//
@@ -822,9 +842,12 @@ func (h *GeometryHandlers) exportParametric(w http.ResponseWriter, r *http.Reque
 	if len(built.Skipped) > 0 {
 		label = fmt.Sprintf("%d part(s) could not be built and are NOT in this file; ", len(built.Skipped)) + label
 	}
-	w.Header().Set("X-Forge-Export-Label", label)
-	w.WriteHeader(http.StatusOK)
-	_, _ = w.Write(built.STEP)
+	// A mesh-only part is never in a STEP file (geometry/lattice.go), and the file's
+	// own FILE_DESCRIPTION says so too.
+	if n := len(built.MeshOnly); n > 0 {
+		label = fmt.Sprintf("%d mesh-only part(s) are NOT in this file (%s); ", n, geometry.MeshOnlyLabel) + label
+	}
+	return label
 }
 
 func labelDTO(l *geometry.Label) map[string]any {

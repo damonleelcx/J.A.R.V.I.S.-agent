@@ -77,8 +77,13 @@ How to answer:
 // And which pattern fields may carry a parameter's name, from the table the binder and
 // the reply's repair read (2026-09-17, bound patterns).
 // TestTheContractTeachesPatternBindingsAsTheBinderReadsThem fences it.
+//
+// And the mesh-only lattice, from geometry's one table of patterns and its budget
+// (stage E1 of the "looks designed" work, damon's decision 2026-09-18): the rule
+// that a lattice is decorative and never structural is taught with it.
+// TestTheContractTeachesLatticesFromTheTable fences it.
 var geometryContract = fmt.Sprintf(geometryContractTemplate, geometry.PatternBindingGuide(),
-	geometry.StandardGuide(), strings.Join(geometry.ExpressionFunctions(), ", "))
+	geometry.StandardGuide(), geometry.LatticeGuide(), strings.Join(geometry.ExpressionFunctions(), ", "))
 
 var geometryContractTemplate = `Reply with JSON only:
 
@@ -102,9 +107,11 @@ var geometryContractTemplate = `Reply with JSON only:
         "id": "stable-kebab-id",
         "name": "human name",
         "shape": "box" | "cylinder" | "cone" | "sphere" | "plane" |
-                 "extrusion" | "revolve" | "sweep" | "section" | "gear" | "standard" | "script",
+                 "extrusion" | "revolve" | "sweep" | "section" | "gear" | "standard" |
+                 "lattice" | "script",
         "shape_note": "for \"extrusion\", size only needs \"depth\"",
         "standard": "only for shape \"standard\": a designation from the catalogue below",
+        "lattice": "only for shape \"lattice\": its pattern, from the list below",
         "size": {"width":1,"height":1,"depth":1,"radius":0.5,"radius_top":0.5},
         "profile": [{"x": 0, "y": 0, "radius": 0, "x_from": "", "y_from": "plate_height",
                      "via": null or {"x": 0, "y": 0}}],
@@ -379,6 +386,7 @@ About "prototype":
   section is centred on its axis, and an angle has its heel at the origin and its
   legs along +X and +Y. Threads, sockets and a bearing's balls are not drawn. A
   designation that is not listed here is refused, and the nearest are named:
+%s
 %s
 - WRITE A DESIGN ONCE AND PLACE IT MANY TIMES. The same screw, bracket or seat
   appearing again is its definition placed again, never its geometry written a

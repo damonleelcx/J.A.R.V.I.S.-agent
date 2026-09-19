@@ -217,6 +217,8 @@
 .provenance .prov-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 2px 10px; }
 .provenance .prov-toggle { margin-left: auto; font-size: 11px; padding: 1px 8px; }
 .provenance .prov-details.hidden { display: none; }
+/* A mesh-only part's label (geometry.MeshOnlyLabel): on the headline, never folded. */
+.provenance .prov-mesh-only { font-weight: 600; color: var(--warn-ink-strong); }
 
 .viewctl {
   position: absolute; top: 12px; left: 12px;

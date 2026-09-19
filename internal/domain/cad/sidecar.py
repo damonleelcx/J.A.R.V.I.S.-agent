@@ -59,7 +59,7 @@ try:
     # export_step, which only accepts a Compound(children=...) — see _step_document.
     from OCP.APIHeaderSection import APIHeaderSection_MakeHeader
     from OCP.IFSelect import IFSelect_ReturnStatus
-    from OCP.Interface import Interface_Static
+    from OCP.Interface import Interface_HArray1OfHAsciiString, Interface_Static
     from OCP.Message import Message, Message_Gravity
     from OCP.STEPCAFControl import STEPCAFControl_Controller, STEPCAFControl_Writer
     from OCP.STEPControl import STEPControl_Controller, STEPControl_StepModelType
@@ -88,6 +88,14 @@ try:
     import numpy as _np
 except Exception:  # pragma: no cover - the per-pair path answers exactly the same
     _np = None
+
+# manifold3d builds the MESH-ONLY parts (see _lattice_mesh) and nothing else: it
+# never touches a solid OCCT built. Guarded, so a kernel without it still builds
+# every exact part and refuses each mesh-only part by name.
+try:
+    import manifold3d as _m3
+except Exception:  # pragma: no cover - reported per part, never fatal
+    _m3 = None
 
 
 def _wire(curve):
@@ -957,6 +965,151 @@ def _tessellate(solids, ids, names, request, placed=None):
                                   "matrix": _column_major(location)}
                                  for i, d, location in instances]
     return out
+
+
+# --- mesh-only parts (stage E1 of the "looks designed" work) ----------------
+#
+# damon's decision, 2026-09-18: a part DECLARED mesh-only (shape "lattice") may
+# break the rule that every part is an exact solid. It is decorative: labelled
+# mesh-only, never in a STEP file, never weighed, never checked for interference,
+# and never a feature's target or tool (PRD VIS-06: a render must never imply
+# manufacturability). Every other part is still an OCCT solid.
+#
+# So such a part never reaches _shape or any OCCT boolean. It is taken out of the
+# request before anything is built (_split_mesh_only), and on a mesh request it is
+# built here, with manifold3d (Apache-2.0; wheels for linux aarch64 and x86_64,
+# macOS arm64, CPython 3.13 and 3.14): a triply periodic minimal surface sampled
+# as a level set, thickened to a sheet, and clipped to its box by manifold's own
+# boolean. Every other reply names it in "mesh_only" and says what it left out.
+#
+# The level function of each pattern. k = 2 pi / cell. The sheet is where |g| is
+# under `w`, and w is chosen so the wall comes out about `thickness` thick:
+# |g| / |grad g| is the distance to the surface near it, and |grad g| on the
+# surface averages about k * G for the pattern's G (measured, see
+# docs/spikes/2026-09-18-mesh-only-parts). The names are Go's table
+# (geometry/lattice.go, latticePatterns); a name missing here is refused by name.
+_LATTICE_PATTERNS = {
+    "gyroid": (lambda x, y, z: (math.sin(x) * math.cos(y) + math.sin(y) * math.cos(z)
+                                + math.sin(z) * math.cos(x)), 1.51),
+    "diamond": (lambda x, y, z: (math.sin(x) * math.sin(y) * math.sin(z)
+                                 + math.sin(x) * math.cos(y) * math.cos(z)
+                                 + math.cos(x) * math.sin(y) * math.cos(z)
+                                 + math.cos(x) * math.cos(y) * math.sin(z)), 1.43),
+    "primitive": (lambda x, y, z: math.cos(x) + math.cos(y) + math.cos(z), 1.31),
+}
+
+# The most triangles one mesh-only part may have. Go refuses past its own estimate
+# first (geometry.MaxLatticeTriangles, the same number); this is the kernel's own
+# count of what it actually built, so an estimate that ran low still cannot send
+# more than this.
+_LATTICE_BUDGET = 200000
+
+
+def _is_mesh_only(solid):
+    return bool(solid.get("mesh_only"))
+
+
+def _split_mesh_only(solids):
+    """(exact solids, mesh-only solids), each in the request's order."""
+    exact, mesh_only = [], []
+    for s in solids:
+        (mesh_only if _is_mesh_only(s) else exact).append(s)
+    return exact, mesh_only
+
+
+def _lattice_mesh(solid):
+    """A mesh-only lattice in its own frame, centred on the origin: (vertices, triangles)
+    as flat lists. Raises with a sentence when it cannot be built."""
+    if _m3 is None:
+        raise RuntimeError("this kernel has no manifold3d, which builds mesh-only parts")
+    pattern = solid.get("lattice") or ""
+    if pattern not in _LATTICE_PATTERNS:
+        raise RuntimeError("%r is not a lattice pattern this kernel knows" % pattern)
+    level, gradient = _LATTICE_PATTERNS[pattern]
+    d = solid["dims"]
+    w, h, dp = d["width"], d["height"], d["depth"]
+    cell, thickness, edge = d["cell"], d["thickness"], d["edge"]
+    k = 2.0 * math.pi / cell
+    half = gradient * k * thickness / 2.0
+
+    def sheet(x, y, z):
+        return half - abs(level(k * x, k * y, k * z))
+
+    # Sampled a little past the box, so the sheet is cut by the box and not by the
+    # sampling grid, which would leave it open.
+    pad = edge
+    bounds = [-w / 2 - pad, -h / 2 - pad, -dp / 2 - pad, w / 2 + pad, h / 2 + pad, dp / 2 + pad]
+    surface = _m3.Manifold.level_set(sheet, bounds, edge, 0.0)
+    region = _m3.Manifold.cube([w, h, dp], True)
+    built = surface ^ region
+    tris = built.num_tri()
+    if tris == 0:
+        raise RuntimeError("the lattice came out empty: its walls are thinner than the sampling can see")
+    if tris > _LATTICE_BUDGET:
+        raise RuntimeError("the lattice is %d triangles, past the %d a mesh-only part may have"
+                           % (tris, _LATTICE_BUDGET))
+    mesh = built.to_mesh()
+    return (_np.asarray(mesh.vert_properties, dtype=float)[:, :3],
+            _np.asarray(mesh.tri_verts, dtype=_np.int64))
+
+
+def _mesh_only_parts(mesh_only):
+    """Build every mesh-only part as a placed mesh: (mesh entries, triangles, refused).
+
+    Each distinct lattice is sampled once; a copy is its vertices moved. Placed the
+    way _placement places a solid: mirror the part's own x, rotate by the matrix
+    (row-major), translate to the position."""
+    out, total, refused, cache = [], 0, [], {}
+    for part in mesh_only:
+        name = part.get("label") or part.get("id")
+        key = (part.get("lattice"), tuple(sorted((part.get("dims") or {}).items())))
+        if key not in cache:
+            try:
+                cache[key] = (_lattice_mesh(part), None)
+            except Exception as exc:
+                cache[key] = (None, str(exc).strip() or type(exc).__name__)
+        built, reason = cache[key]
+        if built is None:
+            refused.append("%s: %s" % (name, reason))
+            continue
+        verts, tris = built
+        if part.get("mirrored"):
+            verts = verts * _np.array([-1.0, 1.0, 1.0])
+            tris = tris[:, ::-1]
+        m = _np.asarray(part["matrix"], dtype=float).reshape(3, 3)
+        placed = verts @ m.T + _np.asarray(part["position"], dtype=float)
+        out.append({"id": part.get("id"), "label": name, "mesh_only": True,
+                    "vertices": placed.ravel().tolist(),
+                    "triangles": tris.ravel().astype(int).tolist()})
+        total += len(tris)
+    return out, total, refused
+
+
+def _mesh_only_names(mesh_only):
+    return [s.get("label") or s.get("id") for s in mesh_only]
+
+
+def _only_mesh_only(request, mesh_only):
+    """The reply for a request whose every part is mesh-only: a mesh when one was
+    asked for, and a refusal by name for anything exact — there is no solid to
+    write, weigh or check."""
+    names = _mesh_only_names(mesh_only)
+    if request.get("format") != "mesh" or request.get("properties"):
+        return {"ok": False, "error": "every part is mesh-only (%s), so there is no exact solid to "
+                                      "build, export or measure" % ", ".join(names[:3]),
+                "mesh_only": names}
+    start = time.perf_counter()
+    meshes, triangles, refused = _mesh_only_parts(mesh_only)
+    if not meshes:
+        return {"ok": False, "error": "no mesh-only part could be built", "skipped": refused,
+                "mesh_only": names}
+    return {"ok": True, "parts": 0, "volume": 0.0, "bounds": [0.0] * 6, "shape_builds": 0,
+            "interferences": [], "interferences_found": 0, "interferences_buried": 0,
+            "interference_box_tests": 0, "interference_pairs": 0, "interference_booleans": 0,
+            "interference_reused": 0, "skipped": refused, "features_failed": [],
+            "phases": {"mesh": time.perf_counter() - start}, "mesh_only": names,
+            "mesh": meshes, "mesh_triangles": triangles, "mesh_only_triangles": triangles,
+            "mesh_deflection": 0.0, "mesh_simplified": False}
 
 
 # --- interference ----------------------------------------------------------
@@ -2570,7 +2723,20 @@ def _label_name(label, name):
 _STEP_WRITE_PROPS = False
 
 
-def _write_step(doc, path, phases=None):
+def _step_mesh_only_note(mesh_only):
+    """The FILE_DESCRIPTION line that says which mesh-only parts this file does not
+    hold, or None. Geometry/lattice.go's MeshOnlyNote says the same to a person."""
+    if not mesh_only:
+        return None
+    names = _mesh_only_names(mesh_only)
+    shown = ", ".join(names[:3]) + (" and %d more" % (len(names) - 3) if len(names) > 3 else "")
+    # STEP header strings are ISO 10303-21 text: plain ASCII, no apostrophes.
+    text = ("FORGE: %d mesh-only part(s) are NOT in this file: %s. Mesh-only parts are "
+            "decorative, not manufacturable and never structural." % (len(names), shown))
+    return text.encode("ascii", "replace").decode("ascii").replace("'", " ")
+
+
+def _write_step(doc, path, phases=None, note=None):
     """Write an XDE document as STEP with the settings export_step used, so the
     file's header, curves and precision do not change with K2.
 
@@ -2594,6 +2760,15 @@ def _write_step(doc, path, phases=None):
         header = APIHeaderSection_MakeHeader(0)
         header.Apply(writer.Writer().Model())
     header.SetOriginatingSystem(TCollection_HAsciiString("build123d"))
+    if note:
+        # Appended to FILE_DESCRIPTION, keeping what the writer put there, so a
+        # file with no mesh-only part is the file it always was.
+        lines = [header.DescriptionValue(i).ToCString() for i in range(1, header.NbDescription() + 1)]
+        lines.append(note)
+        described = Interface_HArray1OfHAsciiString(1, len(lines))
+        for i, line in enumerate(lines, 1):
+            described.SetValue(i, TCollection_HAsciiString(line))
+        header.SetDescription(described)
     STEPCAFControl_Controller.Init_s()
     STEPControl_Controller.Init_s()
     Interface_Static.SetIVal_s("write.surfacecurve.mode", 1)
@@ -2644,7 +2819,12 @@ def _build(request):
 
 
 def _build_collected(request):
-    solids = request.get("solids") or []
+    # Mesh-only parts leave here, before anything is built: nothing below — OCCT,
+    # the features, the volume, the properties, the interference check, the STEP
+    # file — ever sees one (see _lattice_mesh).
+    solids, mesh_only = _split_mesh_only(request.get("solids") or [])
+    if not solids and mesh_only:
+        return _only_mesh_only(request, mesh_only)
     if not solids:
         return {"ok": False, "error": "no parts to build"}
 
@@ -2847,10 +3027,19 @@ def _build_collected(request):
     }
     if properties is not None:
         out["part_properties"] = properties
+    if mesh_only:
+        # Named in every reply, so each reader can say what it left out.
+        out["mesh_only"] = _mesh_only_names(mesh_only)
 
     fmt = request.get("format")
     if fmt == "mesh":
         out.update(_tessellate(built, ids, names, request, kept_placed))
+        if mesh_only and "mesh" in out:
+            meshes, triangles, refused = _mesh_only_parts(mesh_only)
+            out["mesh"].extend(meshes)
+            out["mesh_triangles"] += triangles
+            out["mesh_only_triangles"] = triangles
+            skipped.extend(refused)
         mark = _lap(phases, "mesh", mark)
     if fmt == "step":
         # The writer writes a file; its stream form is not used here.
@@ -2859,7 +3048,8 @@ def _build_collected(request):
         fd, path = tempfile.mkstemp(suffix=".step")
         os.close(fd)
         try:
-            _write_step(_step_document(built, names), path, phases)
+            _write_step(_step_document(built, names), path, phases,
+                        _step_mesh_only_note(mesh_only))
             with open(path, "rb") as fh:
                 out["step"] = base64.b64encode(fh.read()).decode("ascii")
         finally:

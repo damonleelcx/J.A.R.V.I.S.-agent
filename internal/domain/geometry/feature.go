@@ -172,8 +172,12 @@ func (d *Document) Operations() ([]Operation, []Problem) {
 	}
 
 	parts := map[string]bool{}
+	meshOnly := map[string]bool{}
 	for _, p := range d.Parts {
 		parts[p.ID] = true
+		if p.IsMeshOnly() {
+			meshOnly[p.ID] = true
+		}
 	}
 
 	var problems []Problem
@@ -211,6 +215,13 @@ func (d *Document) Operations() ([]Operation, []Problem) {
 			add(name, "applies to %q, which is not a part of this assembly", f.Of)
 			continue
 		}
+		// A mesh-only part has no exact solid to operate on, and a lattice is
+		// decorative, never structural (lattice.go): refused by name, target or tool.
+		if meshOnly[f.Of] {
+			add(name, "applies to %q, which is mesh-only (%s): it is decorative, never structural, "+
+				"and has no exact solid to %s", f.Of, MeshOnlyLabel, op)
+			continue
+		}
 		if who, gone := consumed[f.Of]; gone {
 			add(name, "applies to %q, which %s already consumed as a tool; a part cannot be "+
 				"both the material removed and the thing it was removed from", f.Of, who)
@@ -226,6 +237,10 @@ func (d *Document) Operations() ([]Operation, []Problem) {
 				bad = true
 			case !parts[t]:
 				add(name, "uses %q as a tool, which is not a part of this assembly", t)
+				bad = true
+			case meshOnly[t]:
+				add(name, "uses %q as a tool, which is mesh-only (%s): it is decorative, never "+
+					"structural, and has no exact solid to %s with", t, MeshOnlyLabel, op)
 				bad = true
 			case consumed[t] != "":
 				add(name, "uses %q, which %s already consumed; a tool is used once or the "+

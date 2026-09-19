@@ -65,6 +65,7 @@ type builtSheet struct {
 	Buried        int
 	BuriedCounted bool
 	Skipped       []string
+	MeshOnly      []string
 	// Parts is what was drawn, part by part, so a sub-assembly can be drawn on
 	// its own from the same build instead of a second one (Phase 5, stage V4).
 	Parts []geometry.RenderPart
@@ -136,6 +137,11 @@ type Built struct {
 	// built was never checked for shared material either, and saying nothing about
 	// it would let "no overlaps" cover a part nobody looked at.
 	Skipped []string
+	// MeshOnly names the declared mesh-only parts (geometry/lattice.go). The kernel
+	// never checks one for shared material, by decision: a decoration is skipped
+	// with a coverage note, not boxed — a conservative box would call every part
+	// the infill surrounds "inside" it and drive repairs that move correct parts.
+	MeshOnly []string
 }
 
 // render draws the built solid, falling back to the described one.
@@ -156,7 +162,7 @@ func (c *Conversation) render(ctx context.Context, doc *Prototype) builtSheet {
 					Interferences: built.Interferences, Truncated: built.Truncated,
 					Checked: built.Checked, Pairs: built.Pairs, Found: built.Found,
 					Buried: built.Buried, BuriedCounted: built.BuriedCounted, Skipped: built.Skipped,
-					Parts: built.Parts}
+					MeshOnly: built.MeshOnly, Parts: built.Parts}
 			}
 		}
 	}
