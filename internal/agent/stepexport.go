@@ -163,6 +163,9 @@ type Export struct {
 	// travel with the download for the reason exportParametric's label does.
 	Skipped         []string
 	FeatureFailures []string
+	// FeatureReductions are rounds the kernel applied smaller than asked, or on
+	// only some of their edges (cad.Build.FeatureReductions).
+	FeatureReductions []string
 
 	Attempts    int
 	MaxAttempts int
@@ -175,10 +178,12 @@ func (e *Export) SHA256() string { return e.BlobKey.Hex() }
 
 // exportReport is what the kernel said about a stored file.
 type exportReport struct {
-	Skipped         []string         `json:"skipped,omitempty"`
-	FeatureFailures []string         `json:"feature_failures,omitempty"`
-	Inferred        []string         `json:"inferred,omitempty"`
-	PhasesMS        map[string]int64 `json:"phases_ms,omitempty"`
+	Skipped         []string `json:"skipped,omitempty"`
+	FeatureFailures []string `json:"feature_failures,omitempty"`
+	// Absent from a report stored before stage B1, which reads as none.
+	FeatureReductions []string         `json:"feature_reductions,omitempty"`
+	Inferred          []string         `json:"inferred,omitempty"`
+	PhasesMS          map[string]int64 `json:"phases_ms,omitempty"`
 }
 
 // StepExports is where export jobs are asked for and read back. forged holds one.
@@ -439,7 +444,7 @@ func (s *StepExports) find(ctx context.Context, q db.Querier, where string, args
 	}
 	var r exportReport
 	_ = json.Unmarshal(report, &r)
-	e.Skipped, e.FeatureFailures = r.Skipped, r.FeatureFailures
+	e.Skipped, e.FeatureFailures, e.FeatureReductions = r.Skipped, r.FeatureFailures, r.FeatureReductions
 	e.Attempts, e.MaxAttempts = attempts, maxTries
 	e.Status, e.Reason = exportStatus(engine.TaskStatus(taskStatus), e.BlobKey, detail, attempts)
 	return &e, nil
@@ -588,7 +593,8 @@ func (x *StepExporter) run(ctx context.Context, task *engine.Task, in exportStep
 	}
 	got := &storedExport{ExportID: in.ExportID, BlobKey: key, Bytes: int64(len(built.STEP)), SHA256: key.Hex(),
 		Parts: built.Parts, report: exportReport{Skipped: built.Skipped, FeatureFailures: built.FeatureFailures,
-			Inferred: built.Inferred, PhasesMS: phases}}
+			FeatureReductions: built.FeatureReductions,
+			Inferred:          built.Inferred, PhasesMS: phases}}
 	x.log.Info(ctx, logx.EventGeometryExportStored, append([]any{
 		"export_id", in.ExportID, "task_id", task.ID, "version_id", v.VersionID, "project_id", v.ProjectID,
 		"parts", built.Parts, "bytes", got.Bytes, "blob_key", string(key)}, fields...)...)

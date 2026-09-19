@@ -1,0 +1,4 @@
+{"round": 0, "n": 1000, "method": "sequential", "seconds": 288.383, "volume": 2858628.3, "want": 2858628.3, "r": 3.0, "cpu_percent_before": 26.4}
+{"round": 0, "n": 1000, "method": "multi", "seconds": 1.951, "volume": 2858628.3, "want": 2858628.3, "r": 3.0, "cpu_percent_before": 19.0}
+{"round": 1, "n": 1000, "method": "multi", "seconds": 1.614, "volume": 2858628.3, "want": 2858628.3, "r": 3.0, "cpu_percent_before": 18.7}
+{"round": 1, "n": 1000, "method": "sequential", "seconds": 482.948, "volume": 2858628.3, "want": 2858628.3, "r": 3.0, "cpu_percent_before": 28.2}

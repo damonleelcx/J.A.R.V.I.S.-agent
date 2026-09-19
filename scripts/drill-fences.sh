@@ -74,6 +74,9 @@ esac
 # it truthfully was about everything it knew about. The guard in drill() now
 # refuses rather than trusting this list to be kept up to date by hand.
 FILES=(
+  internal/domain/geometry/feature.go
+  internal/agent/cadbridge/cadbridge.go
+  internal/httpapi/geometry_exports.go
   internal/domain/geometry/curve.go
   internal/domain/geometry/curve_guide.go
   internal/domain/geometry/triangulate.go
@@ -1201,7 +1204,7 @@ echo "A check that covered part of the model says how much"
 # when it found nothing, and a check the pair budget stopped found nothing too; parts
 # the kernel could not build were never in the check and never mentioned.
 drill "a truncated check reads as a clean one" internal/agent/interference.go \
-  's = s.replace("\tdefer func() {\n\t\tif note := coverageNote(sheet); note != \"\" {\n\t\t\treply.noteRepair(note)\n\t\t}\n\t}()\n", "", 1)' \
+  's = s.replace("\tdefer func() {\n\t\tif note := coverageNote(sheet); note != \"\" {\n\t\t\treply.noteRepair(note)\n\t\t}\n", "\tdefer func() {\n", 1)' \
   ./internal/agent 'TestInterference_ATruncatedCheckSaysSoInTheTurn'
 
 drill "truncation is not what the note is about" internal/agent/interference.go \
@@ -5122,6 +5125,147 @@ drill "Go measures a bowed outline short of where OCCT builds it" internal/domai
 drill "a lens and a bulged loft station are built from chords" internal/domain/cad/sidecar.py \
   "s = s.replace('edges.append(ThreePointArc(at, Vector(*via), to))', 'edges.append(Line(at, Vector(*via)))\n            edges.append(Line(Vector(*via), to))', 1)" \
   ./internal/domain/cad 'TestKernel_ALensExtrusionIsTwoExactArcs|TestKernel_ALoftIntoABulgedStationBlendsExactly'
+
+echo
+echo "Looks designed, kernel half (2026-09-18): safe fillets, edge rules, shells, perforation, smooth normals"
+# damon's decision of 2026-09-18 made "looks designed" a FORGE goal. B1: a fillet OCCT
+# refuses is retried at 0.5x and 0.25x, one connected edge group at a time, and every
+# reduced or dropped group is REPORTED (reply, turn, export label). B2: edge rules from
+# one table read by the validator, the kernel and the contract. B4: shell and thicken.
+# B6: a perforation cut as one boolean, with a budget. A5: the mesh budget really
+# coarsens (build123d's mesh() kept a finer triangulation) and carries smooth normals.
+# docs/spikes/2026-09-18-kernel-vocabulary.
+drill "a refused fillet is not retried smaller" internal/domain/cad/sidecar.py \
+  's = s.replace("_ROUND_RETRY = (1.0, 0.5, 0.25)", "_ROUND_RETRY = (1.0,)", 1)' \
+  ./internal/domain/cad 'TestKernel_ARefusedFilletIsBuiltSmallerAndSaysSo'
+
+drill "one bad edge group drops every group" internal/domain/cad/sidecar.py \
+  's = s.replace("    groups = _edge_groups(list(selected))\n", "    groups = [list(selected)]\n", 1)' \
+  ./internal/domain/cad 'TestKernel_OneEdgeGroupThatTakesNoFilletDoesNotDropTheRest'
+
+drill "a round built smaller is not reported" internal/domain/cad/sidecar.py \
+  's = s.replace("    if (reduced or square) and report is not None:\n", "    if False:\n", 1)' \
+  ./internal/domain/cad 'TestKernel_ARefusedFilletIsBuiltSmallerAndSaysSo'
+
+drill "the build drops the kernel's reductions" internal/domain/cad/cad.go \
+  's = s.replace("FeatureReductions: res.FeaturesReduced,", "", 1)' \
+  ./internal/domain/cad 'TestKernel_ARefusedFilletIsBuiltSmallerAndSaysSo'
+
+drill "the bridge drops the kernel's feature failures" internal/agent/cadbridge/cadbridge.go \
+  's = s.replace("Skipped: built.Skipped, FeatureFailures: built.FeatureFailures,", "Skipped: built.Skipped,", 1)' \
+  ./internal/agent/cadbridge 'TestBuildSurface_CarriesWhatTheKernelSaidAboutTheFeatures'
+
+drill "the bridge drops the kernel's reductions" internal/agent/cadbridge/cadbridge.go \
+  's = s.replace("FeatureReductions: built.FeatureReductions}, nil", "}, nil", 1)' \
+  ./internal/agent/cadbridge 'TestBuildSurface_CarriesWhatTheKernelSaidAboutTheFeatures'
+
+drill "the render drops the reductions" internal/agent/render.go \
+  's = s.replace("FeatureFailures: built.FeatureFailures, FeatureReductions: built.FeatureReductions,", "", 1)' \
+  ./internal/agent 'TestTurn_SaysWhichRoundsTheKernelBuiltSmaller'
+
+drill "the turn never says a round was built smaller" internal/agent/interference.go \
+  's = s.replace("if note := builtFeaturesNote(sheet); note != \"\" {", "if note := \"\"; note != \"\" {", 1)' \
+  ./internal/agent 'TestTurn_SaysWhichRoundsTheKernelBuiltSmaller'
+
+drill "an export job's label hides the reductions" internal/httpapi/geometry_exports.go \
+  's = s.replace("\tlabel = reducedLabel(e.FeatureReductions) + label\n", "", 1)' \
+  ./internal/httpapi 'TestExportLabel_SaysWhichRoundsWereBuiltSmaller'
+
+drill "convex edges are taken for concave ones" internal/domain/cad/sidecar.py \
+  's = s.replace("\"convex\": _by_connection(ChFiDS_TypeOfConcavity.ChFiDS_Convex)", "\"convex\": _by_connection(ChFiDS_TypeOfConcavity.ChFiDS_Concave)", 1)' \
+  ./internal/domain/cad 'TestKernel_EveryEdgeRuleSelectsExactlyTheEdgesItNames'
+
+drill "outer edges include a cylinder's seams" internal/domain/cad/sidecar.py \
+  's = s.replace("if not inner.Contains(e.wrapped) and _two_faces(faces, e) is not None]", "if not inner.Contains(e.wrapped)]", 1)' \
+  ./internal/domain/cad 'TestKernel_EveryEdgeRuleSelectsExactlyTheEdgesItNames'
+
+drill "longer takes an edge exactly as long" internal/domain/cad/sidecar.py \
+  's = s.replace("if float(e.length) > limit * (1 + 1e-9)]", "if float(e.length) >= limit]", 1)' \
+  ./internal/domain/cad 'TestKernel_EveryEdgeRuleSelectsExactlyTheEdgesItNames'
+
+drill "joins takes every edge on the part" internal/domain/cad/sidecar.py \
+  's = s.replace("if _on_surface(target, points, tol) and any(_on_surface(t, points, tol) for t in tools):", "if _on_surface(target, points, tol):", 1)' \
+  ./internal/domain/cad 'TestKernel_EveryEdgeRuleSelectsExactlyTheEdgesItNames'
+
+drill "the kernel forgets an edge rule Go validates" internal/domain/cad/sidecar.py \
+  's = s.replace("    \"holes\": _holes,\n", "", 1)' \
+  ./internal/domain/cad 'TestTheKernelSelectsEdgesByExactlyTheRulesGoValidates'
+
+drill "joins is accepted with nothing fused" internal/domain/geometry/feature.go \
+  's = s.replace("if rule.Name == \"joins\" && !fusedInto[f.Of] {", "if false {", 1)' \
+  ./internal/domain/geometry 'TestOperations_JoinsNeedsAnEarlierFuse'
+
+drill "longer is read without its edge_length" internal/domain/geometry/feature.go \
+  's = s.replace("\t\t\tcase rule.Needs == \"length\":\n", "\t\t\tcase false:\n", 1)' \
+  ./internal/domain/geometry 'TestOperations_LongerNeedsAnEdgeLengthAndNothingElseTakesOne'
+
+drill "a shell with no open face is accepted" internal/domain/geometry/feature.go \
+  's = s.replace("\t\t\t\tif len(f.Open) == 0 {\n", "\t\t\t\tif false {\n", 1)' \
+  ./internal/domain/geometry 'TestOperations_AShellIsValidated'
+
+drill "a solid is accepted for thickening" internal/domain/geometry/feature.go \
+  's = s.replace("if op == \"thicken\" && !surface {", "if false {", 1)' \
+  ./internal/domain/geometry 'TestOperations_AShellIsValidated'
+
+drill "a shell wall reaches the kernel in the document's units" internal/domain/geometry/solid.go \
+  's = s.replace("\t\toperations[i].Thickness *= toMM\n", "", 1)' \
+  ./internal/domain/geometry 'TestSolids_ConvertsEveryFeatureLengthToMillimetres'
+
+drill "an edge_length reaches the kernel in the document's units" internal/domain/geometry/solid.go \
+  's = s.replace("\t\toperations[i].EdgeLength *= toMM\n", "", 1)' \
+  ./internal/domain/geometry 'TestSolids_ConvertsEveryFeatureLengthToMillimetres'
+
+drill "a shell grows outward" internal/domain/cad/sidecar.py \
+  's = s.replace("result = offset(target, amount=-float(op[\"thickness\"]), openings=faces)", "result = offset(target, amount=float(op[\"thickness\"]), openings=faces)", 1)' \
+  ./internal/domain/cad 'TestKernel_AShellAndASkinHaveTheVolumeTheFormulaSays'
+
+drill "a shell asked open at the top opens at the bottom" internal/domain/cad/sidecar.py \
+  's = s.replace("    \"top\": (Axis.Y, -1),\n", "    \"top\": (Axis.Y, 0),\n", 1)' \
+  ./internal/domain/cad 'TestKernel_AShellAndASkinHaveTheVolumeTheFormulaSays'
+
+drill "a skin grows on one side of its surface" internal/domain/cad/sidecar.py \
+  's = s.replace("thicken(faces[0], amount=float(op[\"thickness\"]) / 2.0, both=True)", "thicken(faces[0], amount=float(op[\"thickness\"]) / 2.0, both=False)", 1)' \
+  ./internal/domain/cad 'TestKernel_AShellAndASkinHaveTheVolumeTheFormulaSays'
+
+drill "a perforation past the budget is accepted" internal/domain/geometry/feature.go \
+  's = s.replace("if op == \"cut\" && len(tools) > MaxCutTools {", "if false {", 1)' \
+  ./internal/domain/geometry 'TestOperations_APerforationPastTheBudgetIsRefused'
+
+drill "a perforation is cut one hole at a time" internal/domain/cad/sidecar.py \
+  's = s.replace("    if kind == \"cut\" and len(op.get(\"with\") or []) > 1:\n", "    if False:\n", 1)' \
+  ./internal/domain/cad 'TestKernel_APerforationIsCutAsOneBoolean'
+
+drill "a mesh is never re-meshed coarser" internal/domain/cad/sidecar.py \
+  's = s.replace("    BRepTools.Clean_s(solid.wrapped)\n    BRepMesh_IncrementalMesh(", "    BRepMesh_IncrementalMesh(", 1)' \
+  ./internal/domain/cad 'TestKernel_AMeshOverTheBudgetIsReallyCoarsened'
+
+drill "the angular limit is never coarsened" internal/domain/cad/sidecar.py \
+  's = s.replace("        angle = min(angle * _MESH_COARSEN, _MESH_ANGLE_MAX)\n", "", 1)' \
+  ./internal/domain/cad 'TestKernel_AMeshOverTheBudgetIsReallyCoarsened'
+
+drill "the mesh carries no normals" internal/domain/cad/sidecar.py \
+  's = s.replace("            mesh[\"normals\"] = normals\n", "            pass\n", 1)' \
+  ./internal/domain/cad 'TestKernel_AMeshCarriesSmoothNormalsAndKeepsHardEdges'
+
+drill "a reversed face keeps its surface's normal" internal/domain/cad/sidecar.py \
+  's = s.replace("            s = -1.0 if reverse else 1.0\n", "            s = 1.0\n", 1)' \
+  ./internal/domain/cad 'TestKernel_AMeshCarriesSmoothNormalsAndKeepsHardEdges'
+
+drill "a placed copy's normals do not turn with it" internal/domain/cad/cad.go \
+  's = s.replace("n[i] = m[0]*x + m[4]*y + m[8]*z", "n[i] = x", 1)' \
+  ./internal/domain/cad 'TestKernel_AMeshCarriesSmoothNormalsAndKeepsHardEdges'
+
+drill "the wire drops a part's normals" internal/httpapi/geometry.go \
+  's = s.replace("ID: m.ID, Label: m.Label, Vertices: m.Vertices, Triangles: m.Triangles, Normals: m.Normals,", "ID: m.ID, Label: m.Label, Vertices: m.Vertices, Triangles: m.Triangles,", 1)' \
+  ./internal/httpapi 'TestMeshPayload_CarriesNormalsAdditively'
+
+drill "the contract does not teach the open faces" internal/agent/converse.go \
+  's = s.replace("\tgeometry.OpenFaceGuide())", "\t\"\")", 1)' \
+  ./internal/agent 'TestTheContractTeachesEveryFeatureRuleFORGEHas'
+
+drill "the contract offers operations where it means edge rules" internal/agent/converse.go \
+  's = s.replace("geometry.FeatureOpChoices(), geometry.EdgeRuleChoices(),", "geometry.FeatureOpChoices(), geometry.FeatureOpChoices(),", 1)' \
+  ./internal/agent 'TestTheContractTeachesEveryFeatureRuleFORGEHas'
 
 echo
 

@@ -77,8 +77,14 @@ How to answer:
 // And which pattern fields may carry a parameter's name, from the table the binder and
 // the reply's repair read (2026-09-17, bound patterns).
 // TestTheContractTeachesPatternBindingsAsTheBinderReadsThem fences it.
+//
+// And the feature operations, the edge rules and the faces a shell may leave open,
+// from the tables the validator and the kernel read (looks designed, stages B2 and
+// B4). TestTheContractTeachesEveryFeatureRuleFORGEHas fences it.
 var geometryContract = fmt.Sprintf(geometryContractTemplate, geometry.PatternBindingGuide(),
 	geometry.StandardGuide(), strings.Join(geometry.ExpressionFunctions(), ", "),
+	geometry.FeatureOpChoices(), geometry.EdgeRuleChoices(), geometry.EdgeRuleGuide(),
+	geometry.OpenFaceGuide(),
 	// The bowed-edge paragraph, printed from the table its refusals are written
 	// from (B3, 2026-09-18). Fence: TestContract_TeachesBowedEdgesFromTheValidatorsTable.
 	geometry.CurveGuide())
@@ -139,11 +145,13 @@ var geometryContractTemplate = `Reply with JSON only:
       }
     ],
     "features": [
-      {"id": "stable-kebab-id", "op": "cut" | "fuse" | "fillet" | "chamfer" | "loft",
+      {"id": "stable-kebab-id", "op": %[4]s,
        "of": "part-id this applies to; for loft, the FIRST station",
        "with": ["part-ids used as the tool for cut and fuse, or the remaining stations for loft"],
        "radius": 3.0, "radius_from": "fillet_radius",
-       "edges": "all" | "vertical" | "horizontal" | "top" | "bottom",
+       "edges": %[5]s,
+       "edge_length": 20.0,
+       "thickness": 2.0, "thickness_from": "wall", "open": ["top"],
        "note": "what this is for"}
     ],
     "definitions": [ ...parts written ONCE and placed by the assemblies below... ],
@@ -305,7 +313,7 @@ About "prototype":
   "align": true}, along straight segments only. The copies are named "child-1",
   "child-2" and so on. "pattern" repeats a placed child, a whole sub-assembly
   included; "repeat" is still how one part appears many times.
-%s  A "polar" pattern turns its copies about an axis THROUGH THE ORIGIN of the
+%[1]s  A "polar" pattern turns its copies about an axis THROUGH THE ORIGIN of the
   frame the child is measured in: its assembly's, or its interface's when it has
   "at". So the child's "position" is where the FIRST copy sits on the circle, off
   that axis: [57, 0, 0] with "about": "y" is a ring of radius 57 round Y, and a
@@ -382,7 +390,7 @@ About "prototype":
   section is centred on its axis, and an angle has its heel at the origin and its
   legs along +X and +Y. Threads, sockets and a bearing's balls are not drawn. A
   designation that is not listed here is refused, and the nearest are named:
-%s
+%[2]s
 - WRITE A DESIGN ONCE AND PLACE IT MANY TIMES. The same screw, bracket or seat
   appearing again is its definition placed again, never its geometry written a
   second time; and many of them in a row, a grid or a ring are ONE child with a
@@ -466,7 +474,7 @@ About "prototype":
   when your number and your own expression disagree — so a rib bound to
   plate_size - 2 * fillet_radius on a 60 mm plate should say 54, not 52.
   An expression may use + - * / ^, brackets, the other parameter names, the
-  constant pi, and these functions: %s.
+  constant pi, and these functions: %[3]s.
   The trigonometric ones are in DEGREES and say so in their name — there is no
   bare "sin" or "cos", because a document that does not state the convention gets
   a plausible wrong number rather than an error. Inside a script you have
@@ -583,7 +591,7 @@ About "prototype":
   like the post in an annular slot, the bar of a letter A, or a lug in the bottom
   of a pocket. It keeps going — a hole inside an island is a bore through the
   post — so draw exactly the loops the shape has and the nesting says the rest.
-%s
+%[8]s
 - "radius" on a point ROUNDS THAT CORNER: an arc of that radius, tangent to both
   edges meeting there. It works the same way on an outline point and on a path
   point, and on a path it is the BEND RADIUS — the number a tube bender is set
@@ -660,10 +668,19 @@ About "prototype":
   thing is made.
   "fillet" rounds edges and "chamfer" cuts them off. Both take a size — prefer
   "radius_from" with an expression, for the same reason every other dimension
-  does — and choose edges by RULE: "vertical" is the up axis, "top" and "bottom"
-  are the highest and lowest edges, "all" is everything. There is deliberately no
-  way to name an edge by number, because an index picks a different edge as soon
-  as a parameter changes.
+  does — and choose edges by RULE: %[6]s. "longer" needs "edge_length", in the
+  model's units. There is deliberately no way to name an edge by number, because
+  an index picks a different edge as soon as a parameter changes. A radius the
+  geometry cannot take is tried again at half and a quarter, one connected group
+  of edges at a time, and the reader is told every edge built smaller or left
+  square — so ask for the radius the design wants, not a timid one.
+  "shell" hollows a solid part to walls "thickness" thick, measured inward so the
+  outside keeps its size, and leaves open the faces "open" names: %[7]s. A shell
+  needs at least one open face — a housing open at the bottom, a cup open at the
+  top, a duct open at both ends. "thicken" grows a surface part (a "plane" or a
+  "section") into a skin "thickness" thick, centred on the surface. Both are real
+  walls in the exported solid: reach for them for a casing, a fairing or a body
+  panel instead of a solid block.
   Features apply IN ORDER, so cutting the holes and then rounding what is left is
   a different part from rounding first.
   Only the CAD kernel performs these. The viewport draws solid primitives, so a
