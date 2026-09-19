@@ -96,7 +96,11 @@ var geometryContract = fmt.Sprintf(geometryContractTemplate, geometry.PatternBin
 	// The bowed-edge paragraph, printed from the table its refusals are written
 	// from (B3, 2026-09-18). Fence: TestContract_TeachesBowedEdgesFromTheValidatorsTable.
 	geometry.CurveGuide(),
-	geometry.CarGuide(), geometry.DesignWordGuide())
+	geometry.CarGuide(), geometry.DesignWordGuide(),
+	// The mesh-only lattice, from geometry's one table of patterns and its budget
+	// (stage E1, damon's decision 2026-09-18): a lattice is decorative and never
+	// structural. TestTheContractTeachesLatticesFromTheTable fences it.
+	geometry.LatticeGuide())
 
 var geometryContractTemplate = `Reply with JSON only:
 
@@ -120,10 +124,12 @@ var geometryContractTemplate = `Reply with JSON only:
         "id": "stable-kebab-id",
         "name": "human name",
         "shape": "box" | "cylinder" | "cone" | "sphere" | "plane" |
-                 "extrusion" | "revolve" | "sweep" | "section" | "gear" | "standard" | "car" | "script",
+                 "extrusion" | "revolve" | "sweep" | "section" | "gear" | "standard" | "car" |
+                 "lattice" | "script",
         "shape_note": "for \"extrusion\", size only needs \"depth\"",
         "standard": "only for shape \"standard\": a designation from the catalogue below",
         "class": "only for shape \"car\": the kind of car, listed below",
+        "lattice": "only for shape \"lattice\": its pattern, from the list below",
         "size": {"width":1,"height":1,"depth":1,"radius":0.5,"radius_top":0.5},
         "profile": [{"x": 0, "y": 0, "radius": 0, "x_from": "", "y_from": "plate_height",
                      "via": null or {"x": 0, "y": 0}}],
@@ -416,6 +422,7 @@ About "prototype":
   move the knob it names and nothing more; a word never sets a count:
 %[10]s
   A wing, mirrors or an interior are ordinary parts placed beside the car.
+%[11]s
 - WRITE A DESIGN ONCE AND PLACE IT MANY TIMES. The same screw, bracket or seat
   appearing again is its definition placed again, never its geometry written a
   second time; and many of them in a row, a grid or a ring are ONE child with a

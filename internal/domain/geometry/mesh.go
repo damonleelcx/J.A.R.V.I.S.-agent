@@ -356,6 +356,15 @@ func partTriangles(p Part, unit Unit, infer func(string, ...any)) ([]Triangle, *
 			"The solid its loft blends is in the parametric export.", p.Label())
 		return nil, nil
 
+	case latticeShape:
+		// Mesh-only, and built only by the CAD kernel's mesh (lattice.go): this
+		// tessellator has no level sets. Named and left out rather than drawn as its
+		// box, which would put a solid block in the file where the design has an
+		// open, decorative sheet.
+		infer("%s: a lattice is mesh-only (%s) and drawn only from the CAD kernel's mesh, "+
+			"so it is not in this file.", p.Label(), MeshOnlyLabel)
+		return nil, nil
+
 	case "extrusion":
 		return extrusion(p, sizeOr(p, "depth", 1, unit, infer), unit, infer)
 

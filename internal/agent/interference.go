@@ -307,6 +307,11 @@ func coverageNote(sheet *builtSheet) string {
 		notes = append(notes, fmt.Sprintf("%d part(s) could not be built, so they were not checked for "+
 			"shared material: %s%s.", n, strings.Join(named, "; "), more))
 	}
+	// A mesh-only part is never checked (geometry/lattice.go): said, so "no parts
+	// share material" never covers a lattice nobody looked at.
+	if note := geometry.MeshOnlyNote(sheet.MeshOnly, "the check for shared material"); note != "" {
+		notes = append(notes, note)
+	}
 	return strings.Join(notes, " ")
 }
 

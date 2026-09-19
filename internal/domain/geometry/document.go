@@ -100,6 +100,10 @@ type Part struct {
 	// shape. A car is written out as the tree it is before anything stores it, so a
 	// stored part never carries one (car.go; stage C1 of the looks-designed work).
 	Class    string             `json:"class,omitempty"`
+	// Lattice names the pattern of a "lattice" part — "gyroid", "diamond",
+	// "primitive" — and is read for no other shape. A lattice is MESH-ONLY and
+	// decorative, never structural (lattice.go; damon's decision, 2026-09-18).
+	Lattice  string             `json:"lattice,omitempty"`
 	Size     map[string]float64 `json:"size"`
 	Position []float64          `json:"position"`
 	// SizeFrom and PositionFrom bind a dimension to an EXPRESSION over the

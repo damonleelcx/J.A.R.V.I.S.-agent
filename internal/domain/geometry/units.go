@@ -252,6 +252,15 @@ func Dimensions(p Part, unit Unit) string {
 			return p.Standard + " · " + q(l) + " long"
 		}
 		return p.Standard
+	case latticeShape:
+		// Says mesh-only on the panel too, so the summary a person reads first can
+		// never present the lattice as a sized solid (lattice.go).
+		l, problems := readLattice(p)
+		if anyError(problems) {
+			return ""
+		}
+		return fmt.Sprintf("%s lattice · %s × %s × %s · cell %s · wall %s · %s", l.Pattern.Name,
+			q(l.Width), q(l.Height), q(l.Depth), q(l.Cell), q(l.Thickness), MeshOnlyLabel)
 	case gearShape:
 		// The numbers a gear is specified by, and the outside diameter it works
 		// out to — read through gear.go, so a face width written as "thickness"
