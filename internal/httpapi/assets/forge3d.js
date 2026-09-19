@@ -2637,7 +2637,10 @@
   var CREASE_DEGREES = 35;
 
   /* Normals averaged over the facets that meet at a point within the crease angle,
-   * weighted by area. Vertices are matched by POSITION, because these builders give each
+   * weighted by the angle each facet makes at that point — so a quad counts the same
+   * however it was split into triangles, and a smooth surface's normal points where the
+   * surface does (an area weighting leans towards whichever side has more triangles
+   * there: 1.5° on a revolved tube). Vertices are matched by POSITION, because these builders give each
    * facet its own corners; a facet's own corners keep their own answer, so a vertex
    * shared by facets on both sides of a crease is split the way the facets are. */
   function smoothNormals(geo, creaseDeg) {
@@ -2659,22 +2662,28 @@
       if (l > 0) { unit[t * 3] = nx / l; unit[t * 3 + 1] = ny / l; unit[t * 3 + 2] = nz / l; }
     }
     var bd = geometryBounds(pos), q = Math.max(bd.half[0], bd.half[1], bd.half[2], 1e-9) * 1e-7;
-    var byPoint = {}, keyOf = new Array(idx.length);
+    var byPoint = {}, keyOf = new Array(idx.length), corner = new Float64Array(idx.length);
     for (k = 0; k < idx.length; k++) {
       var v = idx[k] * 3;
       var key = Math.round(pos[v] / q) + ',' + Math.round(pos[v + 1] / q) + ',' + Math.round(pos[v + 2] / q);
       keyOf[k] = key;
-      (byPoint[key] || (byPoint[key] = [])).push(Math.floor(k / 3));
+      (byPoint[key] || (byPoint[key] = [])).push(k);
+      /* The facet's angle at this corner. */
+      var base = k - k % 3, p1 = idx[base + (k % 3 + 1) % 3] * 3, p2 = idx[base + (k % 3 + 2) % 3] * 3;
+      var e1 = [pos[p1] - pos[v], pos[p1 + 1] - pos[v + 1], pos[p1 + 2] - pos[v + 2]];
+      var e2 = [pos[p2] - pos[v], pos[p2 + 1] - pos[v + 1], pos[p2 + 2] - pos[v + 2]];
+      var l12 = length3(e1) * length3(e2);
+      corner[k] = l12 > 0 ? Math.acos(Math.max(-1, Math.min(1, dot(e1, e2) / l12))) : 0;
     }
     var normals = geo.normals.slice();
     for (k = 0; k < idx.length; k++) {
       var own = Math.floor(k / 3), sx = 0, sy = 0, sz = 0, around = byPoint[keyOf[k]];
       if (!(unit[own * 3] || unit[own * 3 + 1] || unit[own * 3 + 2])) continue;
       for (var j = 0; j < around.length; j++) {
-        var o = around[j];
+        var o = Math.floor(around[j] / 3), w = corner[around[j]];
         if (unit[own * 3] * unit[o * 3] + unit[own * 3 + 1] * unit[o * 3 + 1] +
             unit[own * 3 + 2] * unit[o * 3 + 2] < limit) continue;
-        sx += raw[o * 3]; sy += raw[o * 3 + 1]; sz += raw[o * 3 + 2];
+        sx += unit[o * 3] * w; sy += unit[o * 3 + 1] * w; sz += unit[o * 3 + 2] * w;
       }
       var len = Math.sqrt(sx * sx + sy * sy + sz * sz);
       if (!(len > 0)) continue;
@@ -3534,10 +3543,9 @@
       case 'cylinder': return { radius: Math.max(num(s.radius, 0.5), num(s.radius_top, 0)), segments: TESSELLATION.radial };
       case 'cone': return { radius: num(s.radius, 0.5), segments: TESSELLATION.radial };
       case 'sphere': return { radius: num(s.radius, 0.5), segments: TESSELLATION.sphereRadial };
-      case 'revolve': case 'extrusion': case 'sweep': case 'section': case 'gear':
-        return { radius: 0, segments: TESSELLATION.radial };
     }
-    return null;
+    /* The outline shapes curve wherever their outline or path does: refined by their box. */
+    return SMOOTHED_SHAPES[shape.shape] ? { radius: 0, segments: TESSELLATION.radial } : null;
   }
 
   /* ---- Feature lines (A6, 2026-09-18) ---------------------------------------------

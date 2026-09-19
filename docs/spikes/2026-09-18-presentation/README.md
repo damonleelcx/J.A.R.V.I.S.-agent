@@ -89,6 +89,8 @@ Studio's load was ~0.4–0.6 s longer than main's. The contact shadow's capture 
 - `preview.html` — one document, one theme, one renderer (`?doc=car&theme=light&src=…`), label on the page.
 - `shoot-all.html` — every shot above in one run; POSTs PNGs to a local harness server (a 30-line node static server
   with `POST /save?name=` writing into `shots/`; not committed — python's `http.server` serves the pages but cannot save).
-- `measure.html` — the frame-cost table. `before-main-forge3d.js` — `git show origin/main:internal/httpapi/assets/forge3d.js`,
-  the "before" renderer both pages load.
+- `measure.html` — the frame-cost table. Both it and `shoot-all.html` load the "before" renderer from
+  `before-main-forge3d.js` beside them, NOT committed (it is 5,000 lines of main): make it with
+  `git show 82c9e55:internal/httpapi/assets/forge3d.js > docs/spikes/2026-09-18-presentation/before-main-forge3d.js`
+  (82c9e55 is the origin/main this branch started from).
 - `data/` — the fixed car, gear and bracket.

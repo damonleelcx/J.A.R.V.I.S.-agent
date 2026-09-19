@@ -1596,7 +1596,7 @@ drill "the renderer lights its facets from the wrong side" internal/httpapi/asse
   ./internal/httpapi 'TestRendererSweepsTheSameSolidAsTheExporter'
 
 drill "the renderer has no sweep case" internal/httpapi/assets/forge3d.js \
-  "s = s.replace(\"case 'sweep':     return\", \"case 'sweep-disabled':     return\", 1)" \
+  "s = s.replace(\"case 'sweep':\", \"case 'sweep-disabled':\", 1)" \
   ./internal/httpapi 'TestRendererDrawsOutlineShapes'
 
 echo

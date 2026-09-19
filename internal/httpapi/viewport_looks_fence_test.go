@@ -566,28 +566,25 @@ func TestRendererShadesCurvedPrimitivesSmooth(t *testing.T) {
 	tube := got.Shapes["tube"]
 	worst := 0.0
 	caps := 0
+	// Every vertex of this profile is on an end ring (y 0 or 20): it belongs either to a
+	// flat end (normal along the axis) or to a wall (normal straight out from the axis at
+	// that vertex's angle — a flat facet's normal is 4.5° off it). A normal between the two
+	// is the 90° edge smoothed away.
 	for i := 0; i < len(tube.Positions)/3; i++ {
 		p, n := tube.vertex(i), tube.normal(i)
 		r := math.Hypot(p[0], p[2])
-		switch {
-		case math.Abs(p[1]) < 1e-9 || math.Abs(p[1]-20) < 1e-9:
-			// On an end ring: either the flat end (normal along the axis) or the wall at the
-			// ring (radial). Both are allowed; a normal between them is a smoothed crease.
-			radial := math.Abs(math.Abs(n[1])) < 1e-9
-			axial := math.Abs(math.Abs(n[1])-1) < 1e-9
-			if axial {
-				caps++
-			}
-			if !radial && !axial {
-				t.Fatalf("a vertex on the tube's end ring has normal %v: the 90° edge was smoothed", n)
-			}
-		default:
-			want := [3]float64{p[0] / r, 0, p[2] / r}
-			if r < 7.5 {
-				want = [3]float64{-want[0], 0, -want[2]}
-			}
-			worst = math.Max(worst, math.Acos(math.Min(1, n[0]*want[0]+n[1]*want[1]+n[2]*want[2]))*180/math.Pi)
+		if math.Abs(math.Abs(n[1])-1) < 1e-9 {
+			caps++
+			continue
 		}
+		if math.Abs(n[1]) > 1e-9 {
+			t.Fatalf("a vertex on the tube's end ring has normal %v: the 90° edge was smoothed", n)
+		}
+		want := [3]float64{p[0] / r, 0, p[2] / r}
+		if r < 7.5 {
+			want = [3]float64{-want[0], 0, -want[2]}
+		}
+		worst = math.Max(worst, math.Acos(math.Min(1, n[0]*want[0]+n[1]*want[1]+n[2]*want[2]))*180/math.Pi)
 	}
 	if worst > 0.5 || caps == 0 {
 		t.Errorf("the tube's wall normals are up to %.2f° off radial (flat facets are 4.5°), %d end-face normals", worst, caps)
