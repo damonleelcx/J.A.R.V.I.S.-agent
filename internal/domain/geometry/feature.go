@@ -151,8 +151,9 @@ var featureOps = map[string]struct {
 // panel that already has every earlier hole. Cut as ONE boolean with every tool
 // (sidecar.py, _apply), as it does now: 100 in 0.25-0.28 s, 1,000 in 1.6-8.1 s,
 // 5,000 in 40.5-45.7 s, volumes exact in every run. So 5,000 is past the kernel's
-// 30 s build limit even in one boolean, and 2,000 — about 10 s under the same
-// load (the same spike) — leaves a turn room for everything else it builds.
+// 30 s build limit even in one boolean, and 2,000 — 4.0-4.2 s in three runs
+// (1,000 took 1.5-1.6 s interleaved with them) — leaves a turn room for
+// everything else it builds on a slower or busier machine.
 const MaxCutTools = 2000
 
 // knownOps names the operations, in a stable order, for the refusal above.

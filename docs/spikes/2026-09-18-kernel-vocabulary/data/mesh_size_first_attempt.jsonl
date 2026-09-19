@@ -1,0 +1,10 @@
+{"round": 0, "case": "4096 copies of 16 shapes", "normals": false, "ok": true, "reply_bytes": 2715179, "triangles": 43070, "mesh_s": 1.016, "build_and_encode_s": 1.407, "cpu_percent_before": 76.8}
+{"round": 0, "case": "4096 copies of 16 shapes", "normals": true, "ok": true, "reply_bytes": 3279958, "triangles": 43070, "mesh_s": 1.266, "build_and_encode_s": 1.682, "cpu_percent_before": 100.0}
+{"round": 0, "case": "4096 distinct cylinders", "normals": false, "ok": true, "reply_bytes": 20633915, "triangles": 327680, "mesh_s": 310.474, "build_and_encode_s": 321.218, "cpu_percent_before": 57.2}
+{"round": 0, "case": "4096 distinct cylinders", "normals": true, "ok": true, "reply_bytes": 27326780, "triangles": 327680, "mesh_s": 407.31, "build_and_encode_s": 439.568, "cpu_percent_before": 83.1}
+{"round": 1, "case": "4096 distinct cylinders", "normals": true, "ok": true, "reply_bytes": 27326780, "triangles": 327680, "mesh_s": 125433.222, "build_and_encode_s": 125454.892, "cpu_percent_before": 53.7}
+{"round": 1, "case": "4096 distinct cylinders", "normals": false, "ok": true, "reply_bytes": 20633917, "triangles": 327680, "mesh_s": 73.806, "build_and_encode_s": 77.645, "cpu_percent_before": 2.7}
+{"round": 1, "case": "4096 copies of 16 shapes", "normals": true, "ok": true, "reply_bytes": 3279958, "triangles": 43070, "mesh_s": 0.631, "build_and_encode_s": 0.857, "cpu_percent_before": 41.7}
+{"round": 1, "case": "4096 copies of 16 shapes", "normals": false, "ok": true, "reply_bytes": 2715180, "triangles": 43070, "mesh_s": 0.584, "build_and_encode_s": 0.78, "cpu_percent_before": 56.1}
+{"round": 2, "case": "4096 copies of 16 shapes", "normals": false, "ok": true, "reply_bytes": 2715180, "triangles": 43070, "mesh_s": 0.579, "build_and_encode_s": 0.749, "cpu_percent_before": 45.4}
+{"round": 2, "case": "4096 copies of 16 shapes", "normals": true, "ok": true, "reply_bytes": 3279960, "triangles": 43070, "mesh_s": 0.643, "build_and_encode_s": 0.847, "cpu_percent_before": 40.0}
