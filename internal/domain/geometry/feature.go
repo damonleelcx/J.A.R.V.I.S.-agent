@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"math"
 	"sort"
+	"strconv"
 	"strings"
 )
 
@@ -70,6 +71,16 @@ type Feature struct {
 	// Edges names which edges a fillet or chamfer touches, from the closed table
 	// below. Empty means every edge.
 	Edges string `json:"edges,omitempty"`
+	// EdgeLength is the length a "longer" edge rule measures against, in the
+	// document's units: only edges longer than it are rounded.
+	EdgeLength float64 `json:"edge_length,omitempty"`
+	// Thickness is a "shell" wall or a "thicken" skin, in the document's units.
+	// ThicknessFrom is the same number as an expression and wins, as radius_from
+	// does.
+	Thickness     float64 `json:"thickness,omitempty"`
+	ThicknessFrom string  `json:"thickness_from,omitempty"`
+	// Open names the faces a "shell" leaves open, from OpenFaceRules.
+	Open []string `json:"open,omitempty"`
 	// Ruled makes a loft blend between its stations with STRAIGHT sides instead
 	// of a smooth surface. False — smooth — is the default and is what a
 	// sculpted body wants: the surface passes through every station with
@@ -86,11 +97,27 @@ type Feature struct {
 // to do is a question people ask directly, and adding an operation should be one
 // row plus one branch in the sidecar.
 var featureOps = map[string]struct {
-	NeedsTools  bool
-	NeedsRadius bool
+	NeedsTools     bool
+	NeedsRadius    bool
+	NeedsThickness bool
 }{
-	"cut":  {NeedsTools: true},
-	"fuse": {NeedsTools: true},
+	// A shell hollows a solid to walls of "thickness", measured INWARD so the
+	// outside stays the size the document says, and leaves the faces "open"
+	// names open. A thicken grows a surface (a "plane" or a "section") into a
+	// solid skin of "thickness", centred on the surface as an extrusion is
+	// centred on its outline.
+	//
+	// # Why (looks designed, 2026-09-18)
+	//
+	// damon's decision of 2026-09-18 made "looks designed" a FORGE goal: a
+	// designed product is mostly thin walls — a housing, a fairing, a shell
+	// body — and this vocabulary could only make them solid or by subtracting a
+	// hand-sized inner copy, which drifts the day the outer one changes. Both
+	// stay EXACT solids built by OCCT and exported to STEP.
+	"shell":   {NeedsThickness: true},
+	"thicken": {NeedsThickness: true},
+	"cut":     {NeedsTools: true},
+	"fuse":    {NeedsTools: true},
 	// A loft blends the target section into the ones it names, in the order it
 	// names them, and consumes them exactly as a cut consumes its tool.
 	//
@@ -112,6 +139,23 @@ var featureOps = map[string]struct {
 	"chamfer": {NeedsRadius: true},
 }
 
+// MaxCutTools is how many tools one "cut" may consume: a perforation's budget
+// (looks designed, stage B6).
+//
+// # Measured (docs/spikes/2026-09-18-kernel-vocabulary)
+//
+// A 1000×5×600 mm panel with N holes of R3 on a grid, build123d 0.11.1 on this
+// Windows laptop under other agents' load (33-37% CPU before each run),
+// interleaved. Cut one tool at a time, as the kernel did until this stage: 100
+// holes 1.96 / 2.02 s, 1,000 holes 288 s — quadratic, each cut re-splitting a
+// panel that already has every earlier hole. Cut as ONE boolean with every tool
+// (sidecar.py, _apply), as it does now: 100 in 0.25-0.28 s, 1,000 in 1.6-8.1 s,
+// 5,000 in 40.5-45.7 s, volumes exact in every run. So 5,000 is past the kernel's
+// 30 s build limit even in one boolean, and 2,000 — 4.0-4.2 s in three runs
+// (1,000 took 1.5-1.6 s interleaved with them) — leaves a turn room for
+// everything else it builds on a slower or busier machine.
+const MaxCutTools = 2000
+
 // knownOps names the operations, in a stable order, for the refusal above.
 //
 // Derived from featureOps rather than written out. A hand-written list is a
@@ -131,18 +175,160 @@ func knownOps() string {
 	return strings.Join(names[:len(names)-1], ", ") + " or " + names[len(names)-1]
 }
 
-// edgeRules is how a fillet says WHICH edges, without ever naming an index.
+// EdgeRule is one way a fillet or chamfer says WHICH edges, without ever naming
+// an index.
 //
 // Y is up in this system, so "vertical" is the Y axis. The names are the ones a
 // person would use looking at the thing on screen, because that is who writes
 // them.
-var edgeRules = map[string]string{
-	"":           "all",
-	"all":        "all",
-	"vertical":   "vertical",
-	"horizontal": "horizontal",
-	"top":        "top",
-	"bottom":     "bottom",
+//
+// # One table, three readers (looks designed, stage B2)
+//
+// The validator below, the kernel (sidecar.py's _EDGE_RULES, which must have
+// exactly these names — TestTheKernelSelectsEdgesByExactlyTheRulesGoValidates)
+// and the contract (EdgeRuleGuide) all read THIS list. The first edge rules were
+// written three times — a Go map, a Python if-chain and a sentence in the
+// prompt — and a rule added to one of them is a rule the others refuse, build
+// as "all", or never offer.
+//
+// Every rule is decided by OCCT on the solid as it stands when the feature is
+// applied — after the cuts and fuses before it — and never by a number a
+// person could not see.
+type EdgeRule struct {
+	Name string
+	// Needs is "length" when the rule measures against Feature.EdgeLength.
+	Needs string
+	// Says is the rule in the contract's words.
+	Says string
+}
+
+// EdgeRules is the closed set, in the order the contract offers them.
+var EdgeRules = []EdgeRule{
+	{Name: "all", Says: "every edge"},
+	{Name: "vertical", Says: "edges along the up (Y) axis"},
+	{Name: "horizontal", Says: "edges along X or Z"},
+	{Name: "top", Says: "the highest edges"},
+	{Name: "bottom", Says: "the lowest edges"},
+	// Decided by OCCT's own ChFi3d::DefineConnectType on the two faces an edge
+	// joins — the question its fillet builder asks — so "convex" and "concave"
+	// mean what the kernel means by them. A seam (a cylinder's own join) and a
+	// tangent join are neither.
+	{Name: "convex", Says: "outside corners, where material turns away (a box's edges, a hole's rim)"},
+	{Name: "concave", Says: "inside corners, where material turns toward itself (where a rib meets a plate)"},
+	// The rim of a hole is an edge on a face's INNER boundary; every other real
+	// edge is on an outer one.
+	{Name: "outer", Says: "every edge except the rims of holes through a face"},
+	{Name: "holes", Says: "only the rims of holes through a face"},
+	{Name: "longer", Needs: "length", Says: "edges longer than \"edge_length\""},
+	// The seam a fuse leaves: edges that lie on the surface of the part as it was
+	// placed AND on the surface of a part an earlier "fuse" welded into it.
+	{Name: "joins", Says: "where a part an earlier \"fuse\" welded into this one meets it"},
+}
+
+// edgeRule finds a rule by name, with "" meaning "all" as it always has.
+func edgeRule(name string) (EdgeRule, bool) {
+	name = strings.ToLower(strings.TrimSpace(name))
+	if name == "" {
+		name = "all"
+	}
+	for _, r := range EdgeRules {
+		if r.Name == name {
+			return r, true
+		}
+	}
+	return EdgeRule{}, false
+}
+
+// EdgeRuleNames is every rule's name, in the table's order.
+func EdgeRuleNames() []string {
+	out := make([]string, 0, len(EdgeRules))
+	for _, r := range EdgeRules {
+		out = append(out, r.Name)
+	}
+	return out
+}
+
+// OpenFaceRules names the faces a shell may leave open, by where they face in
+// the assembly's frame (Y up). The kernel (sidecar.py's _OPEN_FACES) must have
+// exactly these, for the reason EdgeRules says.
+var OpenFaceRules = []EdgeRule{
+	{Name: "top", Says: "the highest face (+Y)"},
+	{Name: "bottom", Says: "the lowest face (-Y)"},
+	{Name: "right", Says: "the face furthest along +X"},
+	{Name: "left", Says: "the face furthest along -X"},
+	{Name: "front", Says: "the face furthest along +Z"},
+	{Name: "back", Says: "the face furthest along -Z"},
+}
+
+func openFaceNames() []string {
+	out := make([]string, 0, len(OpenFaceRules))
+	for _, r := range OpenFaceRules {
+		out = append(out, r.Name)
+	}
+	return out
+}
+
+func openFace(name string) (string, bool) {
+	name = strings.ToLower(strings.TrimSpace(name))
+	for _, r := range OpenFaceRules {
+		if r.Name == name {
+			return name, true
+		}
+	}
+	return "", false
+}
+
+// choiceList is `"a", "b" or "c"`.
+func choiceList(names []string) string {
+	q := make([]string, len(names))
+	for i, n := range names {
+		q[i] = strconv.Quote(n)
+	}
+	if len(q) < 2 {
+		return strings.Join(q, "")
+	}
+	return strings.Join(q[:len(q)-1], ", ") + " or " + q[len(q)-1]
+}
+
+// EdgeRuleGuide is the contract's sentence on edge rules, from EdgeRules.
+func EdgeRuleGuide() string {
+	parts := make([]string, 0, len(EdgeRules))
+	for _, r := range EdgeRules {
+		parts = append(parts, fmt.Sprintf("%q is %s", r.Name, r.Says))
+	}
+	return strings.Join(parts, "; ")
+}
+
+// EdgeRuleChoices is the rule names as the contract's schema line offers them.
+func EdgeRuleChoices() string {
+	q := make([]string, 0, len(EdgeRules))
+	for _, r := range EdgeRules {
+		q = append(q, strconv.Quote(r.Name))
+	}
+	return strings.Join(q, " | ")
+}
+
+// OpenFaceGuide is the contract's sentence on the faces a shell may leave open.
+func OpenFaceGuide() string {
+	parts := make([]string, 0, len(OpenFaceRules))
+	for _, r := range OpenFaceRules {
+		parts = append(parts, fmt.Sprintf("%q is %s", r.Name, r.Says))
+	}
+	return strings.Join(parts, "; ")
+}
+
+// FeatureOpChoices is the operations as the contract's schema line offers them.
+func FeatureOpChoices() string {
+	names := make([]string, 0, len(featureOps))
+	for op := range featureOps {
+		names = append(names, op)
+	}
+	sort.Strings(names)
+	q := make([]string, len(names))
+	for i, n := range names {
+		q[i] = strconv.Quote(n)
+	}
+	return strings.Join(q, " | ")
 }
 
 // Operation is a feature with its numbers resolved and its names checked.
@@ -154,6 +340,11 @@ type Operation struct {
 	Radius float64  `json:"radius,omitempty"`
 	Edges  string   `json:"edges"`
 	Ruled  bool     `json:"ruled,omitempty"`
+	// EdgeLength and Thickness are in millimetres once they reach the kernel
+	// (SolidsAndOperations converts them with Radius); Open names shell faces.
+	EdgeLength float64  `json:"edge_length,omitempty"`
+	Thickness  float64  `json:"thickness,omitempty"`
+	Open       []string `json:"open,omitempty"`
 }
 
 // Operations resolves the document's features, and reports everything wrong.
@@ -172,9 +363,14 @@ func (d *Document) Operations() ([]Operation, []Problem) {
 	}
 
 	parts := map[string]bool{}
+	shapeOf := map[string]string{}
 	for _, p := range d.Parts {
 		parts[p.ID] = true
+		shapeOf[p.ID] = strings.ToLower(strings.TrimSpace(p.Shape))
 	}
+	// part id -> an earlier fuse welded something into it, which is what the
+	// "joins" edge rule selects the seam of.
+	fusedInto := map[string]bool{}
 
 	var problems []Problem
 	add := func(name, format string, args ...any) {
@@ -246,6 +442,15 @@ func (d *Document) Operations() ([]Operation, []Problem) {
 			add(name, "is a %s and names nothing to %s with", op, op)
 			continue
 		}
+		// ‼️ Counted on the EXPANDED document: a pattern of 60×60 holes is 3,600
+		// tools here, whatever the authored document looks like.
+		if op == "cut" && len(tools) > MaxCutTools {
+			add(name, "cuts %d tools out of %q at once, and FORGE cuts at most %d in one feature: a "+
+				"perforation of 5,000 holes took 40-46 s in the kernel, past its 30 s build limit. "+
+				"Perforate a smaller area, use fewer and larger holes, or split the cut into features "+
+				"on separate parts", len(tools), f.Of, MaxCutTools)
+			continue
+		}
 		if !spec.NeedsTools && len(tools) > 0 {
 			add(name, "is a %s and does not take tools; remove \"with\"", op)
 			continue
@@ -272,20 +477,109 @@ func (d *Document) Operations() ([]Operation, []Problem) {
 			}
 		}
 
-		rule, ok := edgeRules[strings.ToLower(strings.TrimSpace(f.Edges))]
+		rule, ok := edgeRule(f.Edges)
 		if !ok {
-			add(name, "selects edges by %q, which is not a rule FORGE knows; use all, vertical, "+
-				"horizontal, top or bottom. There is deliberately no way to name an edge by "+
-				"number: an index selects a different edge the moment a parameter changes", f.Edges)
+			add(name, "selects edges by %q, which is not a rule FORGE knows; use %s. There is "+
+				"deliberately no way to name an edge by number: an index selects a different edge "+
+				"the moment a parameter changes", f.Edges, choiceList(EdgeRuleNames()))
 			continue
+		}
+		edgeLength := 0.0
+		if spec.NeedsRadius {
+			switch {
+			case rule.Needs == "length":
+				if math.IsNaN(f.EdgeLength) || math.IsInf(f.EdgeLength, 0) || f.EdgeLength <= 0 {
+					add(name, "selects edges %q and needs \"edge_length\" greater than zero, the "+
+						"length an edge has to exceed; got %g", rule.Name, f.EdgeLength)
+					continue
+				}
+				edgeLength = f.EdgeLength
+			case f.EdgeLength != 0:
+				add(name, "gives \"edge_length\" but selects edges %q, which does not measure one; "+
+					"use \"longer\" or remove it", rule.Name)
+				continue
+			}
+			// ‼️ Refused here rather than built as nothing: "joins" on a part nothing
+			// was fused into selects no edge, and the kernel would report an empty
+			// selection a reader has to decode into "you never fused anything".
+			if rule.Name == "joins" && !fusedInto[f.Of] {
+				add(name, "selects the edges where parts join %q, but no earlier \"fuse\" welds "+
+					"anything into it; fuse first, then round the seam", f.Of)
+				continue
+			}
+		}
+
+		thickness := f.Thickness
+		var open []string
+		if spec.NeedsThickness {
+			if expr := strings.TrimSpace(f.ThicknessFrom); expr != "" {
+				node, err := parseExpression(expr)
+				if err != nil {
+					add(name, "thickness %q cannot be read: %v", expr, err)
+					continue
+				}
+				value, err := node.Eval(lookup)
+				if err != nil {
+					add(name, "thickness %q does not evaluate: %v", expr, err)
+					continue
+				}
+				thickness = value
+			}
+			if math.IsNaN(thickness) || math.IsInf(thickness, 0) || thickness <= 0 {
+				add(name, "is a %s and needs a thickness greater than zero; got %g", op, thickness)
+				continue
+			}
+			surface := shapeOf[f.Of] == "plane" || shapeOf[f.Of] == "section"
+			if op == "thicken" && !surface {
+				add(name, "thickens %q, which is a %s; only a surface (a \"plane\" or a \"section\") "+
+					"has a skin to thicken — hollow a solid with \"shell\"", f.Of, shapeOf[f.Of])
+				continue
+			}
+			if op == "shell" && surface {
+				add(name, "shells %q, which is a surface with no inside to hollow; thicken it instead", f.Of)
+				continue
+			}
+			if op == "shell" {
+				// ‼️ At least one open face. Measured 2026-09-18 (build123d 0.11.1): a
+				// box shelled with none comes back as ONE solid whose volume is the
+				// CAVITY's (135,000 mm³ for a 100×60×40 box shelled 5 mm, whose walls
+				// are 105,000), so every number read from it would be wrong.
+				if len(f.Open) == 0 {
+					add(name, "is a shell and names no face to leave \"open\"; a shell needs at least "+
+						"one of %s", choiceList(openFaceNames()))
+					continue
+				}
+				bad := false
+				seenFace := map[string]bool{}
+				for _, o := range f.Open {
+					face, ok := openFace(o)
+					if !ok {
+						add(name, "leaves %q open, which is not a face FORGE can name; use %s", o,
+							choiceList(openFaceNames()))
+						bad = true
+						break
+					}
+					if !seenFace[face] {
+						seenFace[face] = true
+						open = append(open, face)
+					}
+				}
+				if bad {
+					continue
+				}
+			}
 		}
 
 		for _, t := range tools {
 			consumed[t] = name
 		}
 		produced[f.Of] = true
+		if op == "fuse" {
+			fusedInto[f.Of] = true
+		}
 		out = append(out, Operation{ID: name, Op: op, Of: f.Of, With: tools,
-			Radius: radius, Edges: rule, Ruled: f.Ruled})
+			Radius: radius, Edges: rule.Name, Ruled: f.Ruled,
+			EdgeLength: edgeLength, Thickness: thickness, Open: open})
 	}
 	sortProblems(problems)
 	return out, problems
@@ -333,7 +627,7 @@ func (d *Document) FeatureNotes() []string {
 	for _, p := range d.Parts {
 		label[p.ID] = p.Label()
 	}
-	var cuts, fuses, rounds, lofts []string
+	var cuts, fuses, rounds, lofts, hollows []string
 	for _, op := range ops {
 		names := make([]string, 0, len(op.With))
 		for _, t := range op.With {
@@ -349,6 +643,11 @@ func (d *Document) FeatureNotes() []string {
 		case "loft":
 			lofts = append(lofts, fmt.Sprintf("%s through %s",
 				label[op.Of], strings.Join(names, ", ")))
+		case "shell":
+			hollows = append(hollows, fmt.Sprintf("%s (shelled to %g, open at %s)",
+				label[op.Of], op.Thickness, strings.Join(op.Open, ", ")))
+		case "thicken":
+			hollows = append(hollows, fmt.Sprintf("%s (thickened to %g)", label[op.Of], op.Thickness))
 		}
 	}
 	var out []string
@@ -379,6 +678,12 @@ func (d *Document) FeatureNotes() []string {
 		out = append(out, "The viewport cannot blend one section into another, so a loft is "+
 			"drawn as its flat stations and the body between them is not shown: "+
 			strings.Join(lofts, "; ")+". The exported file is the blended solid.")
+	}
+	if len(hollows) > 0 {
+		sort.Strings(hollows)
+		out = append(out, "The viewport draws a shelled part as the solid it was hollowed from, and a "+
+			"thickened surface as the bare surface: "+strings.Join(hollows, "; ")+
+			". The exported file has the walls.")
 	}
 	return out
 }

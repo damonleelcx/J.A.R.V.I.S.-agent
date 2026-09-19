@@ -386,13 +386,18 @@ func (h *GeometryHandlers) Mesh(w http.ResponseWriter, r *http.Request) {
 		// as an exact one is the same class of claim this endpoint exists to
 		// stop the renderer making.
 		"deflection": built.Deflection,
+		// The angular limit in radians, searched with the deflection (stage A5).
+		"angular":    built.Angular,
 		"simplified": built.Simplified,
 		// Named, not dropped. A part the kernel could not build has no surface,
 		// and a viewport that silently drew nothing for it would be back to
 		// showing something other than what was built.
 		"skipped":          built.Skipped,
 		"feature_failures": built.FeatureFailures,
-		"mesh_error":       built.MeshError,
+		// Rounds applied smaller than asked, or on only some of their edges, and
+		// where (looks designed, stage B1). Always an array.
+		"feature_reductions": orEmptyStrings(built.FeatureReductions),
+		"mesh_error":         built.MeshError,
 		// ‼️ Why a part is NOT in the solid, which this reply used to drop.
 		//
 		// A part whose outline cannot be read is left out by the BUILDER, with
@@ -416,12 +421,18 @@ type meshPartDTO struct {
 	Label     string    `json:"label"`
 	Vertices  []float64 `json:"vertices"`
 	Triangles []int32   `json:"triangles"`
+	// Normals is one unit normal per vertex, flat like vertices, from the kernel's
+	// surface (looks designed, stage A5). Additive and omitted when absent, so a
+	// reader that does not know it draws what it drew before.
+	Normals []float64 `json:"normals,omitempty"`
 }
 
 // meshDefinitionDTO is one shape's surface in its own frame, in millimetres.
+// Normals are in the same frame: a copy turns them by its matrix's rotation.
 type meshDefinitionDTO struct {
 	Vertices  []float64 `json:"vertices"`
 	Triangles []int32   `json:"triangles"`
+	Normals   []float64 `json:"normals,omitempty"`
 }
 
 // meshInstanceDTO is one placed copy of a definition. Matrix is 4×4 and
@@ -439,12 +450,13 @@ func meshPayload(built *cad.Build) ([]meshPartDTO, []meshDefinitionDTO, []meshIn
 	parts := make([]meshPartDTO, 0, len(built.Mesh))
 	for _, m := range built.Mesh {
 		parts = append(parts, meshPartDTO{
-			ID: m.ID, Label: m.Label, Vertices: m.Vertices, Triangles: m.Triangles,
+			ID: m.ID, Label: m.Label, Vertices: m.Vertices, Triangles: m.Triangles, Normals: m.Normals,
 		})
 	}
 	definitions := make([]meshDefinitionDTO, 0, len(built.MeshDefinitions))
 	for _, d := range built.MeshDefinitions {
-		definitions = append(definitions, meshDefinitionDTO{Vertices: d.Vertices, Triangles: d.Triangles})
+		definitions = append(definitions, meshDefinitionDTO{Vertices: d.Vertices, Triangles: d.Triangles,
+			Normals: d.Normals})
 	}
 	instances := make([]meshInstanceDTO, 0, len(built.MeshInstances))
 	for _, in := range built.MeshInstances {
@@ -815,6 +827,7 @@ func (h *GeometryHandlers) exportParametric(w http.ResponseWriter, r *http.Reque
 	// refused looks like a bracket, downloads like a bracket, and has square
 	// corners where the design said rounded. Observed live on 2026-09-05, where
 	// a model asked for a 5 mm fillet on a 6 mm plate and the kernel said no.
+	label = reducedLabel(built.FeatureReductions) + label
 	if n := len(built.FeatureFailures); n > 0 {
 		label = fmt.Sprintf("%d feature(s) could NOT be applied, so this shape is not what the "+
 			"design describes (%s); ", n, strings.Join(built.FeatureFailures, "; ")) + label
@@ -825,6 +838,17 @@ func (h *GeometryHandlers) exportParametric(w http.ResponseWriter, r *http.Reque
 	w.Header().Set("X-Forge-Export-Label", label)
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(built.STEP)
+}
+
+// reducedLabel is the export label's clause for rounds the kernel built smaller
+// than asked or on only some of their edges (looks designed, stage B1): applied,
+// and still not the design as written, so the file says so. Empty when none.
+func reducedLabel(reduced []string) string {
+	if len(reduced) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d fillet(s) or chamfer(s) were built SMALLER than the design says or on only "+
+		"some of their edges (%s); ", len(reduced), strings.Join(reduced, "; "))
 }
 
 func labelDTO(l *geometry.Label) map[string]any {

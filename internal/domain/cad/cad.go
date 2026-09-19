@@ -198,6 +198,14 @@ type Build struct {
 	// an assembly quietly missing a hole is wrong in a way nobody notices.
 	Skipped         []string
 	FeatureFailures []string
+	// FeatureReductions names every fillet or chamfer the kernel APPLIED at a
+	// smaller size than asked, or on only some of its edges, and where (looks
+	// designed, stage B1). A reduced round is still a claim about the part that
+	// differs from the design, so it travels with every build like a failure.
+	FeatureReductions []string
+	// FeatureEdges is how many edges each fillet or chamfer's rule selected, by
+	// feature id (stage B2).
+	FeatureEdges map[string]int
 	// Volume is the assembly's, in CUBIC MILLIMETRES whatever the document
 	// declared — the kernel works in millimetres because that is what a STEP
 	// file states. Zero for an assembly of faces, which have none.
@@ -326,6 +334,9 @@ type Build struct {
 	Triangles  int
 	Deflection float64
 	Simplified bool
+	// Angular is the largest angle in radians one facet turns through on a curved
+	// face (looks designed, stage A5): searched with Deflection to fit the budget.
+	Angular float64
 	// MeshError is why there is no mesh, when one was asked for and the solid
 	// built. Reported rather than returned as an error: the build succeeded and
 	// its volume, bounds and STEP are all still true.
@@ -348,6 +359,11 @@ type MeshPart struct {
 	Label     string
 	Vertices  []float64
 	Triangles []int32
+	// Normals is one unit normal per vertex, flat like Vertices, taken from the
+	// surface itself (stage A5): smooth across a curved face, split at a hard
+	// edge because every face has vertices of its own. Empty from a kernel that
+	// does not send them.
+	Normals []float64
 }
 
 // MeshDefinition is one shape's surface in its own frame, in millimetres, drawn
@@ -355,6 +371,7 @@ type MeshPart struct {
 type MeshDefinition struct {
 	Vertices  []float64
 	Triangles []int32
+	Normals   []float64
 }
 
 // MeshInstance is one placed copy of a MeshDefinition.
@@ -390,7 +407,18 @@ func (b *Build) WorldMeshes() []MeshPart {
 			v[i+1] = m[1]*x + m[5]*y + m[9]*z + m[13]
 			v[i+2] = m[2]*x + m[6]*y + m[10]*z + m[14]
 		}
-		out = append(out, MeshPart{ID: in.ID, Label: in.Label, Vertices: v, Triangles: d.Triangles})
+		// A normal turns with the part and does not move: the matrix's rotation only.
+		var n []float64
+		if len(d.Normals) == len(d.Vertices) {
+			n = make([]float64, len(d.Normals))
+			for i := 0; i+2 < len(d.Normals); i += 3 {
+				x, y, z := d.Normals[i], d.Normals[i+1], d.Normals[i+2]
+				n[i] = m[0]*x + m[4]*y + m[8]*z
+				n[i+1] = m[1]*x + m[5]*y + m[9]*z
+				n[i+2] = m[2]*x + m[6]*y + m[10]*z
+			}
+		}
+		out = append(out, MeshPart{ID: in.ID, Label: in.Label, Vertices: v, Triangles: d.Triangles, Normals: n})
 	}
 	return out
 }
@@ -419,17 +447,19 @@ type partProperties struct {
 }
 
 type reply struct {
-	OK             bool         `json:"ok"`
-	Ready          bool         `json:"ready"`
-	Error          string       `json:"error,omitempty"`
-	Trace          string       `json:"trace,omitempty"`
-	Parts          int          `json:"parts"`
-	Volume         float64      `json:"volume"`
-	Bounds         [6]float64   `json:"bounds"`
-	Skipped        []string     `json:"skipped,omitempty"`
-	FeaturesFailed []string     `json:"features_failed,omitempty"`
-	ShapeBuilds    int          `json:"shape_builds"`
-	Phases         phaseSeconds `json:"phases"`
+	OK              bool           `json:"ok"`
+	Ready           bool           `json:"ready"`
+	Error           string         `json:"error,omitempty"`
+	Trace           string         `json:"trace,omitempty"`
+	Parts           int            `json:"parts"`
+	Volume          float64        `json:"volume"`
+	Bounds          [6]float64     `json:"bounds"`
+	Skipped         []string       `json:"skipped,omitempty"`
+	FeaturesFailed  []string       `json:"features_failed,omitempty"`
+	FeaturesReduced []string       `json:"features_reduced,omitempty"`
+	FeatureEdges    map[string]int `json:"feature_edges,omitempty"`
+	ShapeBuilds     int            `json:"shape_builds"`
+	Phases          phaseSeconds   `json:"phases"`
 
 	Interferences          []geometry.Interference `json:"interferences,omitempty"`
 	InterferencesTruncated bool                    `json:"interferences_truncated,omitempty"`
@@ -450,6 +480,7 @@ type reply struct {
 	MeshInstances   []meshInstance   `json:"mesh_instances,omitempty"`
 	MeshTriangles   int              `json:"mesh_triangles,omitempty"`
 	MeshDeflection  float64          `json:"mesh_deflection,omitempty"`
+	MeshAngular     float64          `json:"mesh_angular,omitempty"`
 	MeshSimplified  bool             `json:"mesh_simplified,omitempty"`
 	MeshError       string           `json:"mesh_error,omitempty"`
 
@@ -478,11 +509,13 @@ type meshPart struct {
 	Label     string    `json:"label"`
 	Vertices  []float64 `json:"vertices"`
 	Triangles []int32   `json:"triangles"`
+	Normals   []float64 `json:"normals,omitempty"`
 }
 
 type meshDefinition struct {
 	Vertices  []float64 `json:"vertices"`
 	Triangles []int32   `json:"triangles"`
+	Normals   []float64 `json:"normals,omitempty"`
 }
 
 type meshInstance struct {
@@ -822,7 +855,8 @@ func (k *Kernel) buildWith(ctx context.Context, doc geometry.Document, unit geom
 func buildOf(res *reply, inferred []string, scriptRuns int) (*Build, error) {
 	const op = "cad.Kernel.BuildDocument"
 	out := &Build{Parts: res.Parts, Volume: res.Volume, Bounds: res.Bounds,
-		Skipped: res.Skipped, FeatureFailures: res.FeaturesFailed, Inferred: inferred,
+		Skipped: res.Skipped, FeatureFailures: res.FeaturesFailed, FeatureReductions: res.FeaturesReduced,
+		FeatureEdges: res.FeatureEdges, Inferred: inferred,
 		Interferences: res.Interferences, InterferencesTruncated: res.InterferencesTruncated, InterferenceBoxTests: res.InterferenceBoxTests,
 		InterferencePairs: res.InterferencePairs, InterferenceBooleans: res.InterferenceBooleans, InterferenceReused: res.InterferenceReused,
 		ShapeBuilds: res.ShapeBuilds, ScriptRuns: scriptRuns, Phases: res.Phases.durations()}
@@ -859,12 +893,13 @@ func buildOf(res *reply, inferred []string, scriptRuns int) (*Build, error) {
 		out.Mesh = make([]MeshPart, 0, len(res.Mesh))
 		for _, m := range res.Mesh {
 			out.Mesh = append(out.Mesh, MeshPart{
-				ID: m.ID, Label: m.Label, Vertices: m.Vertices, Triangles: m.Triangles,
+				ID: m.ID, Label: m.Label, Vertices: m.Vertices, Triangles: m.Triangles, Normals: m.Normals,
 			})
 		}
 	}
 	for _, d := range res.MeshDefinitions {
-		out.MeshDefinitions = append(out.MeshDefinitions, MeshDefinition{Vertices: d.Vertices, Triangles: d.Triangles})
+		out.MeshDefinitions = append(out.MeshDefinitions, MeshDefinition{Vertices: d.Vertices, Triangles: d.Triangles,
+			Normals: d.Normals})
 	}
 	for _, in := range res.MeshInstances {
 		out.MeshInstances = append(out.MeshInstances, MeshInstance{
@@ -873,6 +908,7 @@ func buildOf(res *reply, inferred []string, scriptRuns int) (*Build, error) {
 	}
 	out.Triangles = res.MeshTriangles
 	out.Deflection = res.MeshDeflection
+	out.Angular = res.MeshAngular
 	out.Simplified = res.MeshSimplified
 	out.MeshError = res.MeshError
 	for _, p := range res.PartProperties {

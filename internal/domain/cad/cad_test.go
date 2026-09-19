@@ -1659,9 +1659,16 @@ func TestKernel_ARefusedFilletNamesTheLargestThatFits(t *testing.T) {
 	// A 60×6×60 plate. Rounding its four vertical corners can go as far as
 	// R30 — half the plate — and no further: at R45 the arcs would have to
 	// overlap each other, and OCCT refuses.
+	//
+	// ‼️ R400, not R45, since 2026-09-18 (looks designed, stage B1): a refused
+	// round is now retried at half and a quarter, so R45 BUILDS, at 22.5 on the
+	// corners that cannot take 45, and is reported as reduced
+	// (TestKernel_ARefusedFilletIsBuiltSmallerAndSaysSo). A feature still fails —
+	// and still names the largest that fits — when no retry fits: 400, 200 and
+	// 100 are all past 60.
 	doc := bracket()
 	doc.Features = []geometry.Feature{{
-		ID: "too-big", Op: "fillet", Of: "plate", Radius: 45, Edges: "vertical"}}
+		ID: "too-big", Op: "fillet", Of: "plate", Radius: 400, Edges: "vertical"}}
 
 	got, err := k.BuildDocument(ctx, doc, geometry.Millimetre, "")
 	if err != nil {
@@ -1680,7 +1687,7 @@ func TestKernel_ARefusedFilletNamesTheLargestThatFits(t *testing.T) {
 	// And the number it names has to be true. A suggestion that then fails is
 	// worse than no suggestion, so the suggestion is BUILT here.
 	suggested := largestFromMessage(t, msg)
-	if suggested <= 0 || suggested >= 45 {
+	if suggested <= 0 || suggested >= 400 {
 		t.Fatalf("suggested radius %g is not a smaller, usable radius (from %q)", suggested, msg)
 	}
 	doc.Features[0].Radius = suggested

@@ -1,0 +1,9 @@
+{"round": 0, "n": 100, "method": "multi", "seconds": 0.26, "volume": 2985862.8, "want": 2985862.8, "r": 3.0, "cpu_percent_before": 31.1}
+{"round": 0, "n": 1000, "method": "multi", "seconds": 6.759, "volume": 2858628.3, "want": 2858628.3, "r": 3.0, "cpu_percent_before": 37.2}
+{"round": 0, "n": 5000, "method": "multi", "seconds": 41.064, "volume": 2293141.7, "want": 2293141.7, "r": 3.0, "cpu_percent_before": 36.8}
+{"round": 1, "n": 5000, "method": "multi", "seconds": 45.656, "volume": 2293141.7, "want": 2293141.7, "r": 3.0, "cpu_percent_before": 33.5}
+{"round": 1, "n": 1000, "method": "multi", "seconds": 8.131, "volume": 2858628.3, "want": 2858628.3, "r": 3.0, "cpu_percent_before": 37.7}
+{"round": 1, "n": 100, "method": "multi", "seconds": 0.278, "volume": 2985862.8, "want": 2985862.8, "r": 3.0, "cpu_percent_before": 34.8}
+{"round": 2, "n": 100, "method": "multi", "seconds": 0.251, "volume": 2985862.8, "want": 2985862.8, "r": 3.0, "cpu_percent_before": 33.5}
+{"round": 2, "n": 1000, "method": "multi", "seconds": 4.49, "volume": 2858628.3, "want": 2858628.3, "r": 3.0, "cpu_percent_before": 32.9}
+{"round": 2, "n": 5000, "method": "multi", "seconds": 40.539, "volume": 2293141.7, "want": 2293141.7, "r": 3.0, "cpu_percent_before": 34.4}
