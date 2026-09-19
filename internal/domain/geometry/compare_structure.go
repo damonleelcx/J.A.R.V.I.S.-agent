@@ -461,6 +461,16 @@ var featureFields = []field[Feature]{
 		return (a.Radius == 0 && b.Radius == 0) || l.same(a.Radius, b.Radius)
 	}},
 	{"edges", func(a, b Feature, _ *lengths) bool { return a.Edges == b.Edges }},
+	{"edge_length", func(a, b Feature, l *lengths) bool {
+		return (a.EdgeLength == 0 && b.EdgeLength == 0) || l.same(a.EdgeLength, b.EdgeLength)
+	}},
+	{"thickness", func(a, b Feature, l *lengths) bool {
+		if a.ThicknessFrom != b.ThicknessFrom {
+			return false
+		}
+		return (a.Thickness == 0 && b.Thickness == 0) || l.same(a.Thickness, b.Thickness)
+	}},
+	{"open", func(a, b Feature, _ *lengths) bool { return slices.Equal(a.Open, b.Open) }},
 	{"ruled", func(a, b Feature, _ *lengths) bool { return a.Ruled == b.Ruled }},
 }
 

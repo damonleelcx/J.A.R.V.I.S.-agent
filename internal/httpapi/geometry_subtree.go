@@ -120,10 +120,11 @@ func subtreeMesh(ctx context.Context, kernel *cad.Kernel, doc geometry.Document,
 		"skipped":     orEmptyStrings(built.Skipped),
 		// A feature that reaches outside the path is not in this reply's surface, and
 		// is named rather than dropped.
-		"features_outside": orEmptyStrings(sub.Outside),
-		"feature_failures": orEmptyStrings(built.FeatureFailures),
-		"mesh_error":       built.MeshError,
-		"inferred":         orEmptyStrings(built.Inferred),
+		"features_outside":   orEmptyStrings(sub.Outside),
+		"feature_failures":   orEmptyStrings(built.FeatureFailures),
+		"feature_reductions": orEmptyStrings(built.FeatureReductions),
+		"mesh_error":         built.MeshError,
+		"inferred":           orEmptyStrings(built.Inferred),
 	}, nil
 }
 

@@ -452,8 +452,12 @@ func solidsAndOperations(d Document, unit Unit) ([]Solid, []Operation, []Problem
 	// docs/bugfix/2026-09-13-feature-radii-were-sent-in-the-documents-units.md
 	// Fences: TestSolids_ConvertsAFeatureRadiusToMillimetres,
 	// TestKernel_AFilletIsTheSameSizeInEveryUnit.
+	// An edge_length and a shell or skin thickness are lengths for the same reason
+	// (looks designed, stages B2 and B4). Fence: TestSolids_ConvertsEveryFeatureLengthToMillimetres.
 	for i := range operations {
 		operations[i].Radius *= toMM
+		operations[i].EdgeLength *= toMM
+		operations[i].Thickness *= toMM
 	}
 	sort.SliceStable(inferred, func(i, j int) bool { return inferred[i] < inferred[j] })
 	return out, operations, featureProblems, inferred

@@ -85,7 +85,7 @@ func TestOperations_APartCannotBeItsOwnTool(t *testing.T) {
 // on their second run." There is nowhere in this vocabulary to write one, and
 // anything that is not a known rule is refused rather than guessed at.
 func TestOperations_ThereIsNoWayToNameAnEdgeByNumber(t *testing.T) {
-	for _, edges := range []string{"3", "edge-2", "0", "first", "outer"} {
+	for _, edges := range []string{"3", "edge-2", "0", "first", "outermost"} {
 		d := plated()
 		d.Features = []geometry.Feature{
 			{ID: "round", Op: "fillet", Of: "plate", Radius: 2, Edges: edges},

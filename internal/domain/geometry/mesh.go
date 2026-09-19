@@ -223,6 +223,9 @@ func Tessellate(doc Document, unit Unit) *Mesh {
 			infer("%s: its %s is not in this file — a mesh has no edges to round. The rounded "+
 				"solid is what the STEP export contains.", labelOf(doc, f.Of),
 				strings.ToLower(f.Op))
+		case "shell", "thicken":
+			infer("%s: its %s is not in this file — this mesh is the part before it. The walls "+
+				"are in the STEP export.", labelOf(doc, f.Of), strings.ToLower(f.Op))
 		}
 	}
 

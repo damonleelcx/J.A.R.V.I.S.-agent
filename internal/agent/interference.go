@@ -64,6 +64,12 @@ func (c *Conversation) repairIfPartsOverlap(ctx context.Context, reply *Reply, s
 		if note := coverageNote(sheet); note != "" {
 			reply.noteRepair(note)
 		}
+		// And what the kernel did not build as described, from the same build
+		// (looks designed, stage B1). Here because this is the one place every
+		// turn path reads the kernel's final sheet.
+		if note := builtFeaturesNote(sheet); note != "" {
+			reply.noteRepair(note)
+		}
 	}()
 	found := sheet.Interferences
 	if len(found) == 0 {
@@ -300,6 +306,40 @@ func coverageNote(sheet *builtSheet) string {
 		}
 		notes = append(notes, fmt.Sprintf("%d part(s) could not be built, so they were not checked for "+
 			"shared material: %s%s.", n, strings.Join(named, "; "), more))
+	}
+	return strings.Join(notes, " ")
+}
+
+// builtFeaturesNote says which features the kernel did not build as the design says.
+//
+// # Why the turn says it (looks designed, stage B1)
+//
+// Since 2026-09-18 a fillet OCCT refuses is retried at half and a quarter of its
+// size, one edge group at a time, instead of being dropped whole. That keeps a
+// rounded part rounded — and makes the part differ from its document in a way
+// nobody can see on screen: R1.25 and R5 look alike at a glance. So every
+// reduced round, and every failed feature, is said in the turn, with where. A
+// round built smaller than asked is not an error to repair — the model asked
+// for more than the geometry takes — so this only reports.
+func builtFeaturesNote(sheet *builtSheet) string {
+	if sheet == nil {
+		return ""
+	}
+	const most = 3
+	named := func(all []string) string {
+		if len(all) <= most {
+			return strings.Join(all, "; ")
+		}
+		return strings.Join(all[:most], "; ") + fmt.Sprintf("; and %d more", len(all)-most)
+	}
+	var notes []string
+	if n := len(sheet.FeatureReductions); n > 0 {
+		notes = append(notes, fmt.Sprintf("%d fillet(s) or chamfer(s) did not fit as written, so the kernel "+
+			"built them smaller or on fewer edges: %s.", n, named(sheet.FeatureReductions)))
+	}
+	if n := len(sheet.FeatureFailures); n > 0 {
+		notes = append(notes, fmt.Sprintf("%d feature(s) could not be applied at all: %s.", n,
+			named(sheet.FeatureFailures)))
 	}
 	return strings.Join(notes, " ")
 }
