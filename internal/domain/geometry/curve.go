@@ -36,8 +36,9 @@ import (
 // rather than two that drift.
 //
 // What it cannot say is an arc that is NOT tangent to its neighbours: a crescent,
-// a lens, an arc meeting a straight edge at an angle. Those need a vocabulary
-// with a plane in it, and no model has been asked for one yet.
+// a lens, an arc meeting a straight edge at an angle. That was the limit when this
+// was written; wave 29 added the "via" (the foot of this file) and B3 (2026-09-18,
+// curve_guide.go) made the contract teach it from the validator's own rules.
 //
 // # What a corner radius CAN say, which is more than it sounds
 //
@@ -919,7 +920,7 @@ func resolveArcs(pts [][3]float64, vias []*[3]float64, closed bool, what string)
 		from := pts[(i-1+n)%n]
 		centre, axis, radius, angle, ok := arcThrough(from, *via, pts[i])
 		if !ok {
-			inert(i, "which names no arc — it is in line with the two ends, or on top of one of them")
+			inert(i, ruleViaNoArc.refusal) // a row of curveRules (curve_guide.go)
 			continue
 		}
 		out[i] = &arcEdge{centre: centre, axis: axis, radius: radius, angle: angle,
