@@ -1,0 +1,109 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Presentation: every shot</title>
+<!--
+  Every before/after screenshot of this spike in one run, so they are taken from the same
+  page, at the same size, with the same camera rule. Needs the harness server that accepts
+  POST /save (see README): it writes each PNG into shots/.
+
+    before  origin/main's forge3d.js (?before=URL, default before-main-forge3d.js beside
+            this page — a copy of `git show origin/main:internal/httpapi/assets/forge3d.js`)
+    after   this branch's internal/httpapi/assets/forge3d.js
+
+  Each renderer is evaluated into its own `window` with its own ForgeTheme, whose callback
+  is called to switch between the dark and light ground, as the workbench's theme switch
+  does. Every picture carries its label: the documents are drawn from PRIMITIVES only (no
+  CAD kernel on a static page); the workbench draws the kernel-built mesh when one exists.
+-->
+<style>
+  body { font: 13px/1.45 system-ui, sans-serif; margin: 16px; background: #222; color: #ddd; }
+  canvas.stage { width: 960px; height: 600px; display: block; }
+</style>
+<pre id="out">loading…</pre>
+<canvas class="stage" id="c-before"></canvas>
+<canvas class="stage" id="c-after"></canvas>
+<script>
+(async function () {
+  const q = new URLSearchParams(location.search);
+  const out = document.getElementById('out');
+  const log = (s) => { out.textContent += '\n' + s; };
+  async function renderer(url) {
+    const src = await fetch(url, { cache: 'no-store' }).then((r) => r.text());
+    const theme = { cb: null };
+    const win = { addEventListener() {}, devicePixelRatio: 1,
+      ForgeTheme: { onChange(cb) { theme.cb = cb; cb(false); }, isLight() { return false; } } };
+    new Function('window', src)(win);
+    return { F: win.Forge3D, setLight: (l) => theme.cb && theme.cb(l) };
+  }
+  const versions = {
+    before: await renderer(q.get('before') || 'before-main-forge3d.js'),
+    after: await renderer('../../../internal/httpapi/assets/forge3d.js'),
+  };
+  const docs = {};
+  for (const d of (q.get('docs') || 'car,gear,bracket,finished-car').split(',')) {
+    docs[d] = await fetch(d === 'finished-car' ? '../../../internal/agent/testdata/finished-car.json' : 'data/' + d + '.json',
+      { cache: 'no-store' }).then((r) => r.json());
+  }
+  const studios = {};
+  for (const v of Object.keys(versions)) {
+    studios[v] = new versions[v].F.Studio(document.getElementById('c-' + v), { onError(e) { log(v + ' error: ' + e); } });
+  }
+  async function save(name, v, light, label, meta) {
+    const img = new Image();
+    await new Promise((res) => { img.onload = res; img.src = studios[v].snapshot(); });
+    const c2 = document.createElement('canvas');
+    c2.width = img.width; c2.height = img.height;
+    const x = c2.getContext('2d');
+    x.drawImage(img, 0, 0);
+    x.font = '600 13px system-ui, sans-serif';
+    x.fillStyle = light ? 'rgba(242,243,246,.85)' : 'rgba(11,15,24,.75)';
+    x.fillRect(8, 6, x.measureText(label).width + 16, 22);
+    x.fillStyle = light ? '#8a6520' : '#e6cd8f';
+    x.fillText(label, 16, 22);
+    x.font = '12px system-ui, sans-serif';
+    x.fillStyle = light ? 'rgba(34,38,46,.8)' : 'rgba(216,221,230,.8)';
+    x.fillText(meta, 16, c2.height - 12);
+    const r = await fetch('/save?name=' + encodeURIComponent(name), { method: 'POST', body: c2.toDataURL('image/png') });
+    log(name + ' ' + (await r.text()));
+  }
+  /* shots: name, doc, theme, and an optional camera (yaw, pitch, distance ÷ framed, target). */
+  const plan = [];
+  for (const d of ['car', 'gear', 'bracket']) {
+    if (!docs[d]) continue;
+    for (const theme of ['dark', 'light']) plan.push({ name: d + '-' + theme, doc: d, light: theme === 'light' });
+  }
+  if (docs['finished-car']) {
+    plan.push({ name: 'a4-finished-car-wheel', doc: 'finished-car', light: false, cam: [-1.25, 0.15, 1 / 2.5, [-1075, 350, 1600]] });
+  }
+  if (docs.car) {
+    plan.push({ name: 'a4-car-wheel', doc: 'car', light: false, cam: [-1.2, 0.12, 1 / 3, [-1000, 340, -1450]] });
+    plan.push({ name: 'car-lines-light', doc: 'car', light: true, lines: true, only: 'after' });
+  }
+  for (const shot of plan) {
+    for (const v of ['before', 'after']) {
+      if (shot.only && shot.only !== v) continue;
+      const s = studios[v], ver = versions[v];
+      ver.setLight(shot.light);
+      if (v === 'after') s.setFeatureLines(!!shot.lines);
+      s.load(docs[shot.doc]);
+      /* Each renderer's own default view (load keeps the last angle, as the workbench does). */
+      s.resetView();
+      /* The before renderer frames at span × 2.4 and the after one fits the model; a close-up
+       * is placed at the SAME distance in both, from the before renderer's framing. */
+      if (shot.cam) {
+        const framed = docs[shot.doc].__framed || (docs[shot.doc].__framed = studios.before.bounds.span * 2.4);
+        s.camera.yaw = shot.cam[0]; s.camera.pitch = shot.cam[1];
+        s.camera.distance = framed * shot.cam[2];
+        s.camera.target = shot.cam[3].slice();
+      }
+      s.draw();
+      const meta = docs[shot.doc].name + ' - ' + (s.renderPath || '') + ' - ' +
+        (v === 'before' ? 'BEFORE: origin/main forge3d.js' : 'AFTER: looks/presentation forge3d.js');
+      await save(v + '-' + shot.name + '.png', v, shot.light,
+        'PRIMITIVES ONLY - no CAD kernel on this page (the workbench draws the kernel mesh when one exists)', meta);
+    }
+  }
+  log('done');
+  window.__done = true;
+})().catch((e) => { document.getElementById('out').textContent += '\nfailed: ' + e.stack; window.__done = 'error'; });
+</script>

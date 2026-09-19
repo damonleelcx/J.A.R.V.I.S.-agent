@@ -1,0 +1,88 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Presentation: frame cost at 30k occurrences</title>
+<!--
+  The W1 measurement (docs/spikes/2026-09-15-instanced-viewport/measure.html) repeated for
+  the presentation stage, BEFORE and AFTER in the same page, interleaved.
+
+  Serve the repository root and a directory holding origin/main's forge3d.js as
+  "before.js" (?before=URL), then open this page. Both renderers are evaluated into their
+  own `window` so they coexist; each gets its own canvas of the same size and the same
+  30,023-occurrence car (scripts/viewport-car.js). A round draws N synced frames on each
+  configuration in turn — studio.draw() then a one-pixel readPixels, which returns only
+  when the GPU has finished — turning the camera 0.05 rad a frame, and the rounds repeat so
+  every configuration is measured under the same load. Configurations:
+
+    before          origin/main
+    after           this branch, everything on (WebGL2: MSAA target + SSAO, contact shadow)
+    after-no-ao     this branch, occlusion off (drawn straight to the canvas)
+    after-no-extras this branch, occlusion and contact shadow off
+
+  Results in the page and window.__result.
+-->
+<style>
+  body { font: 13px/1.45 system-ui, sans-serif; margin: 16px; background: #111; color: #ddd; }
+  canvas { width: 940px; height: 560px; display: block; margin: 4px 0; }
+  pre { white-space: pre-wrap; }
+</style>
+<pre id="out">loading…</pre>
+<script src="../../../scripts/viewport-car.js"></script>
+<script>
+(async function () {
+  const q = new URLSearchParams(location.search);
+  const occurrences = +(q.get('n') || 30000), frames = +(q.get('frames') || 40), rounds = +(q.get('rounds') || 4);
+  const out = document.getElementById('out');
+  async function renderer(url) {
+    const src = await fetch(url, { cache: 'no-store' }).then((r) => r.text());
+    const win = { addEventListener() {}, devicePixelRatio: 1 };
+    new Function('window', src)(win);
+    return win.Forge3D;
+  }
+  const before = await renderer(q.get('before') || 'http://127.0.0.1:8766/forge3d.js');
+  const after = await renderer('../../../internal/httpapi/assets/forge3d.js');
+  const doc = window.ForgeViewportCar.carDocument(occurrences);
+  function make(F, setup) {
+    const c = document.createElement('canvas');
+    document.body.appendChild(c);
+    const t0 = performance.now();
+    const s = new F.Studio(c, { onError(e) { out.textContent += '\nerror: ' + e; } });
+    s.load(doc);
+    const load = performance.now() - t0;
+    if (setup) setup(s);
+    return { s, load };
+  }
+  const configs = {
+    before: make(before),
+    after: make(after),
+    'after-no-ao': make(after, (s) => s.setAmbientOcclusion(false)),
+    'after-no-extras': make(after, (s) => { s.setAmbientOcclusion(false); s.setContactShadow(false); }),
+  };
+  const times = {}, px = new Uint8Array(4);
+  Object.keys(configs).forEach((k) => (times[k] = []));
+  for (let r = 0; r < rounds; r++) {
+    for (const k of Object.keys(configs)) {
+      const s = configs[k].s, gl = s.gl;
+      for (let i = 0; i < 3; i++) { s.draw(); gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px); }
+      for (let i = 0; i < frames; i++) {
+        s.camera.yaw += 0.05;
+        const t0 = performance.now();
+        s.draw();
+        gl.readPixels(0, 0, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+        times[k].push(performance.now() - t0);
+      }
+    }
+    await new Promise((res) => setTimeout(res, 50));
+  }
+  const q50 = (a, p) => { const b = a.slice().sort((x, y) => x - y); return b[Math.min(b.length - 1, Math.floor(b.length * p))]; };
+  const result = { occurrences: configs.after.s.parts.length, frames, rounds, canvas: [configs.after.s.canvas.width, configs.after.s.canvas.height],
+    renderer: (() => { const gl = configs.after.s.gl, e = gl.getExtension('WEBGL_debug_renderer_info'); return e ? gl.getParameter(e.UNMASKED_RENDERER_WEBGL) : ''; })(),
+    userAgent: navigator.userAgent, configs: {} };
+  for (const k of Object.keys(configs)) {
+    const s = configs[k].s;
+    result.configs[k] = { load: +configs[k].load.toFixed(1), median: +q50(times[k], 0.5).toFixed(2), p95: +q50(times[k], 0.95).toFixed(2),
+      drawCalls: s.stats.drawCalls, proxied: s.stats.proxied, post: s.stats.post || '-', glError: s.gl.getError() };
+  }
+  window.__result = result;
+  out.textContent = JSON.stringify(result, null, 1);
+})().catch((e) => { document.getElementById('out').textContent = 'failed: ' + e.stack; window.__result = { error: String(e) }; });
+</script>
