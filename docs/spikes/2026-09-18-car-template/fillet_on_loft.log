@@ -1,0 +1,6 @@
+loft vol 6490781246.664509 0.018329143524169922
+cut vol 6117095790.612676 1 0.8857600688934326
+before fillet 5 FAIL ValueError Failed creating a fillet with radius of 5, try a smaller value or use max_fillet
+after fillet 5 FAIL ValueError Failed creating a fillet with radius of 5, try a smaller value or use max_fillet
+before fillet 15 FAIL ValueError Failed creating a fillet with radius of 15, try a smaller value or use max_fille
+after fillet 15 FAIL ValueError Failed creating a fillet with radius of 15, try a smaller value or use max_fille

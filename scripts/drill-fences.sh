@@ -194,6 +194,13 @@ FILES=(
   internal/agent/designationrepair.go
   internal/domain/engine/budget.go
   Makefile
+  # Added 2026-09-18 (looks-designed stage C: the car template, its proportion
+  # table and its design words).
+  internal/domain/geometry/car.go
+  internal/domain/geometry/carproportions.go
+  internal/domain/geometry/designwords.go
+  internal/domain/geometry/templates/car_proportions.json
+  internal/domain/geometry/templates/design_words.json
 )
 
 BACKUP=""
@@ -2247,7 +2254,7 @@ drill "measurement reads a standard part as a unit box" internal/domain/geometry
   ./internal/domain/geometry 'TestStandard_TheKernelAndTheMeasurementSeeTheDrawnPart'
 
 drill "the contract's catalogue is typed rather than rendered" internal/agent/converse.go \
-  's = s.replace("geometry.StandardGuide(), strings.Join(", "\"    \\\"ISO 4762 M8x30\\\"\", strings.Join(", 1)' \
+  's = s.replace("geometry.StandardGuide(), geometry.CarGuide(),", "\"    \\\"ISO 4762 M8x30\\\"\", geometry.CarGuide(),", 1)' \
   ./internal/agent 'TestTheContractTeachesEveryStandardPartFORGEHas'
 
 drill "irregular spacing counts as a row" internal/domain/geometry/repetition.go \
@@ -5086,6 +5093,80 @@ drill "grouped containment takes a quarter of a box for its reach" internal/doma
   ./internal/domain/cad 'TestKernel_APairKeyWithoutLocationsIsTheKeyBuild123dGave'
 
 echo
+
+echo "The car template, 2026-09-18 (looks-designed stage C): template, proportions, design words"
+# Added 2026-09-18 (docs/spikes/2026-09-18-car-template). A "car" part is written out
+# at the settle door as a bound tree; it builds through the kernel with nothing
+# missing or buried and at the height asked; proportions outside its class warn and
+# never refuse; the proportion table cites every figure and says UNVALIDATED; the
+# design-word table reaches the prompt whole and never sets a count.
+drill "a car is not written out at the settle door" internal/agent/settledoc.go \
+  's = s.replace("\tfor _, problem := range geometry.ExpandTemplates(d) {\n", "\tfor _, problem := range []geometry.Problem(nil) {\n", 1)' \
+  ./internal/agent 'TestSettle_WritesACarOutAsItsTreeAndSaysWhatIsOutsideItsClass'
+
+drill "Faults does not see a car it could not build" internal/domain/geometry/faults.go \
+  's = s.replace("\tout := carFaults(*d)\n", "\tvar out []Problem\n", 1)' \
+  ./internal/domain/geometry 'TestCar_AnImpossibleCarIsNamedAndLeftForTheRepairLoop'
+
+drill "a car's placements are written as numbers, not bindings" internal/domain/geometry/car.go \
+  's = s.replace("return []float64{x.v, y.v, z.v}, map[string]string{\"x\": x.s, \"y\": y.s, \"z\": z.s}", "return []float64{x.v, y.v, z.v}, map[string]string{}", 1)' \
+  ./internal/domain/geometry 'TestCar_ARespecMovesTheWheelsTheArchesAndTheBodyTogether'
+
+drill "a car a tree places is not written out" internal/domain/geometry/car.go \
+  's = s.replace("\tif hasCar(d.Definitions) {\n", "\tif false {\n", 1)' \
+  ./internal/domain/geometry 'TestCar_ACarDefinitionPlacedByATreeIsWrittenOutInPlace'
+
+drill "a corner radius the sections cannot carry is written out anyway" internal/domain/geometry/car.go \
+  's = s.replace("for _, sp := range sections.ProfileProblems() {", "for _, sp := range []Problem(nil) {", 1)' \
+  ./internal/domain/geometry 'TestCar_AnEdgeRadiusTheSectionsCannotCarryIsRefusedByName'
+
+drill "the wheel nuts are not fused to the rim" internal/domain/geometry/car.go \
+  's = s.replace("\twheel.Features = []Feature{{ID: \"nuts\"", "\t_ = []Feature{{ID: \"nuts\"", 1)' \
+  ./internal/domain/geometry 'TestCar_IsWrittenOutAsATreeWithNoFaults'
+
+drill "the wheel arches are too small for the tyres" internal/domain/geometry/car.go \
+  's = s.replace("\tarchR := D.over(2).plus(AC)\n", "\tarchR := D.over(4).plus(AC)\n", 1)' \
+  ./internal/domain/cad 'TestKernel_BuildsTheCarTemplateWithNothingMissingOrBuried'
+
+drill "the roof is built above the height asked" internal/domain/geometry/car.go \
+  's = s.replace("deck.plus(lit(1).minus(deck).times(cab)).times(H),", "deck.plus(lit(1).minus(deck).times(cab)).times(H).scale(1.05),", 1)' \
+  ./internal/domain/cad 'TestKernel_BuildsTheCarTemplateWithNothingMissingOrBuried'
+
+drill "a proportion outside its class is not warned" internal/domain/geometry/carproportions.go \
+  's = s.replace("\t\tif v >= r.Low && v <= r.High {\n", "\t\tif true {\n", 1)' \
+  ./internal/domain/geometry 'TestCar_ProportionsOutsideTheClassAreWarnedNeverRefused'
+
+drill "a proportion outside its class refuses the car" internal/domain/geometry/carproportions.go \
+  's = s.replace("\twarn := func(format string, args ...any) {\n\t\tout = append(out, Problem{Severity: Warning,", "\twarn := func(format string, args ...any) {\n\t\tout = append(out, Problem{Severity: Error,", 1)' \
+  ./internal/domain/geometry 'TestCar_ProportionsOutsideTheClassAreWarnedNeverRefused'
+
+drill "the proportion table stops saying UNVALIDATED" internal/domain/geometry/templates/car_proportions.json \
+  's = s.replace("\"status\": \"UNVALIDATED\",", "\"status\": \"validated\",", 1)' \
+  ./internal/domain/geometry 'TestCarProportions_EveryFigureNamesItsSourceAndTheTableIsUnvalidated'
+
+drill "a figure in the proportion table loses its source" internal/domain/geometry/templates/car_proportions.json \
+  's = s.replace("(mm) 1996\", \"source\": \"Defender 110 Technical Specifications, as above\"", "(mm) 1996\", \"source\": \"\"", 1)' \
+  ./internal/domain/geometry 'TestCarProportions_EveryFigureNamesItsSourceAndTheTableIsUnvalidated'
+
+drill "a design word sets a count" internal/domain/geometry/templates/design_words.json \
+  's = s.replace("\"set\": [{\"key\": \"edge_radius\", \"band\": [0.04, 0.06]}]", "\"set\": [{\"key\": \"edge_radius\", \"band\": [0.04, 0.06]}, {\"key\": \"lug_count\", \"band\": [4, 6]}]", 1)' \
+  ./internal/domain/geometry 'TestDesignWords_NeverSetACountAndStayInsideTheTemplate'
+
+drill "a design word the sketch filter rewrites" internal/domain/geometry/templates/design_words.json \
+  's = s.replace("\"words\": [\"crisp\",", "\"words\": [\"two-tone\", \"crisp\",", 1)' \
+  ./internal/agent 'TestDesignWordsSurviveTheSketchReadingsNumberFilter'
+
+drill "the design-word guide drops a row" internal/domain/geometry/designwords.go \
+  's = s.replace("\tfor _, r := range designWords {\n\t\tquoted", "\tfor _, r := range designWords[1:] {\n\t\tquoted", 1)' \
+  ./internal/domain/geometry 'TestDesignWords_TheGuideIsTheTable'
+
+drill "the prompt drops the design-word table" internal/agent/converse.go \
+  's = s.replace("geometry.CarGuide(), geometry.DesignWordGuide(),", "geometry.CarGuide(), \"\",", 1)' \
+  ./internal/agent 'TestTheContractCarriesTheCarTemplateAndEveryDesignWord'
+
+drill "the prompt does not offer the car shape" internal/agent/converse.go \
+  's = s.replace("| \"standard\" | \"car\" | \"script\",", "| \"standard\" | \"script\",", 1)' \
+  ./internal/agent 'TestTheContractCarriesTheCarTemplateAndEveryDesignWord'
 
 if [ "$MODE" = "list" ]; then
   exit 0
