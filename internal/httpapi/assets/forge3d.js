@@ -2700,9 +2700,12 @@
   function buildResolved(shape, part) {
     var s = part.size || {};
     switch (shape) {
+      /* A cylinder's length is read by cylinderLength, the one reading Go's exporter
+       * shares (TestCylinderDepthIsReadTheSameWayInBothPlaces); the segments are the
+       * export's count times DETAIL, which is radialSegments() written out. */
       case 'box':      return { geo: boxGeometry(num(s.width,1), num(s.height,1), num(s.depth,1)) };
-      case 'cylinder': return { geo: cylinderGeometry(num(s.radius,0.5), cylinderLength(s), radialSegments(), num(s.radius_top, num(s.radius,0.5))) };
-      case 'cone':     return { geo: cylinderGeometry(num(s.radius,0.5), cylinderLength(s), radialSegments(), 0) };
+      case 'cylinder': return { geo: cylinderGeometry(num(s.radius,0.5), cylinderLength(s), TESSELLATION.radial * DETAIL, num(s.radius_top, num(s.radius,0.5))) };
+      case 'cone':     return { geo: cylinderGeometry(num(s.radius,0.5), cylinderLength(s), TESSELLATION.radial * DETAIL, 0) };
       case 'sphere':   return { geo: sphereGeometry(num(s.radius,0.5), TESSELLATION.sphereRadial * DETAIL) };
       case 'plane':    return { geo: planeGeometry(num(s.width,1), num(s.depth,1)) };
       case 'extrusion': return extrusionGeometry(part.profile || [], num(s.depth, 1), part.holes);
