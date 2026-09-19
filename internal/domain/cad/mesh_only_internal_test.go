@@ -31,7 +31,7 @@ func TestKernel_ALatticePastTheKernelsOwnBudgetIsRefusedByName(t *testing.T) {
 	defer k.release(s)
 
 	lattice := geometry.Solid{ID: "infill", Label: "Infill", Shape: "lattice", MeshOnly: true, Lattice: "gyroid",
-		Dims: map[string]float64{"width": 60, "height": 40, "depth": 30, "cell": 10, "thickness": 1, "edge": 1 / 1.5},
+		Dims:   map[string]float64{"width": 60, "height": 40, "depth": 30, "cell": 10, "thickness": 1, "edge": 1 / 1.5},
 		Matrix: [9]float64{1, 0, 0, 0, 1, 0, 0, 0, 1}}
 	plate := geometry.Solid{ID: "plate", Label: "Plate", Shape: "box",
 		Dims:   map[string]float64{"width": 10, "height": 10, "depth": 10},
