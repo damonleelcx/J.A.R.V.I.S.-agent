@@ -1,0 +1,2298 @@
+{
+ "default": {
+  "positions": [
+   [
+    2330.491631799163,
+    0,
+    0
+   ],
+   [
+    1880.4916317991629,
+    0,
+    0
+   ],
+   [
+    845.4916317991629,
+    0,
+    0
+   ],
+   [
+    372.99163179916286,
+    0,
+    0
+   ],
+   [
+    -572.0083682008371,
+    0,
+    0
+   ],
+   [
+    -1044.5083682008371,
+    0,
+    0
+   ],
+   [
+    -1809.5083682008371,
+    0,
+    0
+   ],
+   [
+    -2169.508368200837,
+    0,
+    0
+   ]
+  ],
+  "profiles": [
+   [
+    {
+     "x": -646,
+     "y": 81,
+     "radius": 31.25,
+     "x_from": "-(0.85 * (0.4 * gt_width))",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 646,
+     "y": 81,
+     "radius": 31.25,
+     "x_from": "0.85 * (0.4 * gt_width)",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 760,
+     "y": 228.62999999999997,
+     "radius": 31.25,
+     "x_from": "0.4 * gt_width",
+     "y_from": "(gt_ride_height + 0.35 * ((gt_ride_height + 0.95 * (gt_nose_height * gt_height - gt_ride_height)) - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 737.1999999999999,
+     "y": 502.79999999999995,
+     "radius": 31.25,
+     "x_from": "0.97 * (0.4 * gt_width)",
+     "y_from": "(gt_ride_height + 0.95 * (gt_nose_height * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 456,
+     "y": 525,
+     "radius": 31.25,
+     "x_from": "0.6 * (0.4 * gt_width)",
+     "y_from": "gt_nose_height * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -456,
+     "y": 525,
+     "radius": 31.25,
+     "x_from": "-(0.6 * (0.4 * gt_width))",
+     "y_from": "gt_nose_height * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -737.1999999999999,
+     "y": 502.79999999999995,
+     "radius": 31.25,
+     "x_from": "-(0.97 * (0.4 * gt_width))",
+     "y_from": "(gt_ride_height + 0.95 * (gt_nose_height * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -760,
+     "y": 228.62999999999997,
+     "radius": 31.25,
+     "x_from": "-(0.4 * gt_width)",
+     "y_from": "(gt_ride_height + 0.35 * ((gt_ride_height + 0.95 * (gt_nose_height * gt_height - gt_ride_height)) - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    }
+   ],
+   [
+    {
+     "x": -775.1999999999999,
+     "y": 81,
+     "radius": 31.25,
+     "x_from": "-(0.85 * (0.48 * gt_width))",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 775.1999999999999,
+     "y": 81,
+     "radius": 31.25,
+     "x_from": "0.85 * (0.48 * gt_width)",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 912,
+     "y": 278.505,
+     "radius": 31.25,
+     "x_from": "0.48 * gt_width",
+     "y_from": "(gt_ride_height + 0.35 * ((gt_ride_height + 0.95 * ((gt_nose_height + 0.6 * (gt_belt_height - gt_nose_height)) * gt_height - gt_ride_height)) - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 884.64,
+     "y": 645.3,
+     "radius": 31.25,
+     "x_from": "0.97 * (0.48 * gt_width)",
+     "y_from": "(gt_ride_height + 0.95 * ((gt_nose_height + 0.6 * (gt_belt_height - gt_nose_height)) * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 547.1999999999999,
+     "y": 675,
+     "radius": 31.25,
+     "x_from": "0.6 * (0.48 * gt_width)",
+     "y_from": "(gt_nose_height + 0.6 * (gt_belt_height - gt_nose_height)) * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -547.1999999999999,
+     "y": 675,
+     "radius": 31.25,
+     "x_from": "-(0.6 * (0.48 * gt_width))",
+     "y_from": "(gt_nose_height + 0.6 * (gt_belt_height - gt_nose_height)) * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -884.64,
+     "y": 645.3,
+     "radius": 31.25,
+     "x_from": "-(0.97 * (0.48 * gt_width))",
+     "y_from": "(gt_ride_height + 0.95 * ((gt_nose_height + 0.6 * (gt_belt_height - gt_nose_height)) * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -912,
+     "y": 278.505,
+     "radius": 31.25,
+     "x_from": "-(0.48 * gt_width)",
+     "y_from": "(gt_ride_height + 0.35 * ((gt_ride_height + 0.95 * ((gt_nose_height + 0.6 * (gt_belt_height - gt_nose_height)) * gt_height - gt_ride_height)) - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    }
+   ],
+   [
+    {
+     "x": -807.5,
+     "y": 81,
+     "radius": 31.25,
+     "x_from": "-(0.85 * (0.5 * gt_width))",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 807.5,
+     "y": 81,
+     "radius": 31.25,
+     "x_from": "0.85 * (0.5 * gt_width)",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 950,
+     "y": 311.755,
+     "radius": 31.25,
+     "x_from": "0.5 * gt_width",
+     "y_from": "(gt_ride_height + 0.35 * ((gt_ride_height + 0.95 * (gt_belt_height * gt_height - gt_ride_height)) - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 921.5,
+     "y": 740.3,
+     "radius": 31.25,
+     "x_from": "0.97 * (0.5 * gt_width)",
+     "y_from": "(gt_ride_height + 0.95 * (gt_belt_height * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 570,
+     "y": 775,
+     "radius": 31.25,
+     "x_from": "0.6 * (0.5 * gt_width)",
+     "y_from": "gt_belt_height * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -570,
+     "y": 775,
+     "radius": 31.25,
+     "x_from": "-(0.6 * (0.5 * gt_width))",
+     "y_from": "gt_belt_height * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -921.5,
+     "y": 740.3,
+     "radius": 31.25,
+     "x_from": "-(0.97 * (0.5 * gt_width))",
+     "y_from": "(gt_ride_height + 0.95 * (gt_belt_height * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -950,
+     "y": 311.755,
+     "radius": 31.25,
+     "x_from": "-(0.5 * gt_width)",
+     "y_from": "(gt_ride_height + 0.35 * ((gt_ride_height + 0.95 * (gt_belt_height * gt_height - gt_ride_height)) - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    }
+   ],
+   [
+    {
+     "x": -807.5,
+     "y": 81,
+     "radius": 31.25,
+     "x_from": "-(0.85 * (0.5 * gt_width))",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 807.5,
+     "y": 81,
+     "radius": 31.25,
+     "x_from": "0.85 * (0.5 * gt_width)",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 950,
+     "y": 323.9,
+     "radius": 31.25,
+     "x_from": "0.5 * gt_width",
+     "y_from": "(gt_ride_height + 0.35 * (gt_belt_height * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 921.5,
+     "y": 775,
+     "radius": 31.25,
+     "x_from": "0.97 * (0.5 * gt_width)",
+     "y_from": "gt_belt_height * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 703,
+     "y": 1250,
+     "radius": 31.25,
+     "x_from": "gt_roof_width * 0.5 * gt_width",
+     "y_from": "1 * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -703,
+     "y": 1250,
+     "radius": 31.25,
+     "x_from": "-(gt_roof_width * 0.5 * gt_width)",
+     "y_from": "1 * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -921.5,
+     "y": 775,
+     "radius": 31.25,
+     "x_from": "-(0.97 * (0.5 * gt_width))",
+     "y_from": "gt_belt_height * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -950,
+     "y": 323.9,
+     "radius": 31.25,
+     "x_from": "-(0.5 * gt_width)",
+     "y_from": "(gt_ride_height + 0.35 * (gt_belt_height * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    }
+   ],
+   [
+    {
+     "x": -807.5,
+     "y": 81,
+     "radius": 31.25,
+     "x_from": "-(0.85 * (0.5 * gt_width))",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 807.5,
+     "y": 81,
+     "radius": 31.25,
+     "x_from": "0.85 * (0.5 * gt_width)",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 950,
+     "y": 323.9,
+     "radius": 31.25,
+     "x_from": "0.5 * gt_width",
+     "y_from": "(gt_ride_height + 0.35 * (gt_belt_height * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 921.5,
+     "y": 775,
+     "radius": 31.25,
+     "x_from": "0.97 * (0.5 * gt_width)",
+     "y_from": "gt_belt_height * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 703,
+     "y": 1250,
+     "radius": 31.25,
+     "x_from": "gt_roof_width * 0.5 * gt_width",
+     "y_from": "1 * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -703,
+     "y": 1250,
+     "radius": 31.25,
+     "x_from": "-(gt_roof_width * 0.5 * gt_width)",
+     "y_from": "1 * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -921.5,
+     "y": 775,
+     "radius": 31.25,
+     "x_from": "-(0.97 * (0.5 * gt_width))",
+     "y_from": "gt_belt_height * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -950,
+     "y": 323.9,
+     "radius": 31.25,
+     "x_from": "-(0.5 * gt_width)",
+     "y_from": "(gt_ride_height + 0.35 * (gt_belt_height * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    }
+   ],
+   [
+    {
+     "x": -807.5,
+     "y": 81,
+     "radius": 31.25,
+     "x_from": "-(0.85 * (0.5 * gt_width))",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 807.5,
+     "y": 81,
+     "radius": 31.25,
+     "x_from": "0.85 * (0.5 * gt_width)",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 950,
+     "y": 378.25499999999994,
+     "radius": 31.25,
+     "x_from": "0.5 * gt_width",
+     "y_from": "(gt_ride_height + 0.35 * ((gt_ride_height + 0.95 * (min(max(gt_belt_height, gt_tail_height), 0.97) * gt_height - gt_ride_height)) - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 921.5,
+     "y": 930.3,
+     "radius": 31.25,
+     "x_from": "0.97 * (0.5 * gt_width)",
+     "y_from": "(gt_ride_height + 0.95 * (min(max(gt_belt_height, gt_tail_height), 0.97) * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 570,
+     "y": 975,
+     "radius": 31.25,
+     "x_from": "0.6 * (0.5 * gt_width)",
+     "y_from": "min(max(gt_belt_height, gt_tail_height), 0.97) * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -570,
+     "y": 975,
+     "radius": 31.25,
+     "x_from": "-(0.6 * (0.5 * gt_width))",
+     "y_from": "min(max(gt_belt_height, gt_tail_height), 0.97) * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -921.5,
+     "y": 930.3,
+     "radius": 31.25,
+     "x_from": "-(0.97 * (0.5 * gt_width))",
+     "y_from": "(gt_ride_height + 0.95 * (min(max(gt_belt_height, gt_tail_height), 0.97) * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -950,
+     "y": 378.25499999999994,
+     "radius": 31.25,
+     "x_from": "-(0.5 * gt_width)",
+     "y_from": "(gt_ride_height + 0.35 * ((gt_ride_height + 0.95 * (min(max(gt_belt_height, gt_tail_height), 0.97) * gt_height - gt_ride_height)) - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    }
+   ],
+   [
+    {
+     "x": -791.35,
+     "y": 81,
+     "radius": 31.25,
+     "x_from": "-(0.85 * (0.49 * gt_width))",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 791.35,
+     "y": 81,
+     "radius": 31.25,
+     "x_from": "0.85 * (0.49 * gt_width)",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 931,
+     "y": 378.25499999999994,
+     "radius": 31.25,
+     "x_from": "0.49 * gt_width",
+     "y_from": "(gt_ride_height + 0.35 * ((gt_ride_height + 0.95 * (gt_tail_height * gt_height - gt_ride_height)) - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 903.0699999999999,
+     "y": 930.3,
+     "radius": 31.25,
+     "x_from": "0.97 * (0.49 * gt_width)",
+     "y_from": "(gt_ride_height + 0.95 * (gt_tail_height * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 558.6,
+     "y": 975,
+     "radius": 31.25,
+     "x_from": "0.6 * (0.49 * gt_width)",
+     "y_from": "gt_tail_height * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -558.6,
+     "y": 975,
+     "radius": 31.25,
+     "x_from": "-(0.6 * (0.49 * gt_width))",
+     "y_from": "gt_tail_height * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -903.0699999999999,
+     "y": 930.3,
+     "radius": 31.25,
+     "x_from": "-(0.97 * (0.49 * gt_width))",
+     "y_from": "(gt_ride_height + 0.95 * (gt_tail_height * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -931,
+     "y": 378.25499999999994,
+     "radius": 31.25,
+     "x_from": "-(0.49 * gt_width)",
+     "y_from": "(gt_ride_height + 0.35 * ((gt_ride_height + 0.95 * (gt_tail_height * gt_height - gt_ride_height)) - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    }
+   ],
+   [
+    {
+     "x": -726.75,
+     "y": 81,
+     "radius": 31.25,
+     "x_from": "-(0.85 * (0.45 * gt_width))",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 726.75,
+     "y": 81,
+     "radius": 31.25,
+     "x_from": "0.85 * (0.45 * gt_width)",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 855,
+     "y": 358.8037499999999,
+     "radius": 31.25,
+     "x_from": "0.45 * gt_width",
+     "y_from": "(gt_ride_height + 0.35 * ((gt_ride_height + 0.95 * (0.94 * gt_tail_height * gt_height - gt_ride_height)) - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 829.35,
+     "y": 874.7249999999999,
+     "radius": 31.25,
+     "x_from": "0.97 * (0.45 * gt_width)",
+     "y_from": "(gt_ride_height + 0.95 * (0.94 * gt_tail_height * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 513,
+     "y": 916.5,
+     "radius": 31.25,
+     "x_from": "0.6 * (0.45 * gt_width)",
+     "y_from": "0.94 * gt_tail_height * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -513,
+     "y": 916.5,
+     "radius": 31.25,
+     "x_from": "-(0.6 * (0.45 * gt_width))",
+     "y_from": "0.94 * gt_tail_height * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -829.35,
+     "y": 874.7249999999999,
+     "radius": 31.25,
+     "x_from": "-(0.97 * (0.45 * gt_width))",
+     "y_from": "(gt_ride_height + 0.95 * (0.94 * gt_tail_height * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -855,
+     "y": 358.8037499999999,
+     "radius": 31.25,
+     "x_from": "-(0.45 * gt_width)",
+     "y_from": "(gt_ride_height + 0.35 * ((gt_ride_height + 0.95 * (0.94 * gt_tail_height * gt_height - gt_ride_height)) - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    }
+   ]
+  ]
+ },
+ "long-hood-gt": {
+  "positions": [
+   [
+    2536.8462343096235,
+    0,
+    0
+   ],
+   [
+    2046.8462343096235,
+    0,
+    0
+   ],
+   [
+    86.84623430962347,
+    0,
+    0
+   ],
+   [
+    -354.15376569037653,
+    0,
+    0
+   ],
+   [
+    -1236.1537656903765,
+    0,
+    0
+   ],
+   [
+    -1677.1537656903765,
+    0,
+    0
+   ],
+   [
+    -1971.1537656903765,
+    0,
+    0
+   ],
+   [
+    -2363.1537656903765,
+    0,
+    0
+   ]
+  ],
+  "profiles": [
+   [
+    {
+     "x": -663,
+     "y": 81,
+     "radius": 32.5,
+     "x_from": "-(0.85 * (0.4 * gt_width))",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 663,
+     "y": 81,
+     "radius": 32.5,
+     "x_from": "0.85 * (0.4 * gt_width)",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 780,
+     "y": 235.61249999999998,
+     "radius": 32.5,
+     "x_from": "0.4 * gt_width",
+     "y_from": "(gt_ride_height + 0.35 * ((gt_ride_height + 0.95 * (gt_nose_height * gt_height - gt_ride_height)) - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 756.6,
+     "y": 522.75,
+     "radius": 32.5,
+     "x_from": "0.97 * (0.4 * gt_width)",
+     "y_from": "(gt_ride_height + 0.95 * (gt_nose_height * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 468,
+     "y": 546,
+     "radius": 32.5,
+     "x_from": "0.6 * (0.4 * gt_width)",
+     "y_from": "gt_nose_height * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -468,
+     "y": 546,
+     "radius": 32.5,
+     "x_from": "-(0.6 * (0.4 * gt_width))",
+     "y_from": "gt_nose_height * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -756.6,
+     "y": 522.75,
+     "radius": 32.5,
+     "x_from": "-(0.97 * (0.4 * gt_width))",
+     "y_from": "(gt_ride_height + 0.95 * (gt_nose_height * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -780,
+     "y": 235.61249999999998,
+     "radius": 32.5,
+     "x_from": "-(0.4 * gt_width)",
+     "y_from": "(gt_ride_height + 0.35 * ((gt_ride_height + 0.95 * (gt_nose_height * gt_height - gt_ride_height)) - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    }
+   ],
+   [
+    {
+     "x": -795.6,
+     "y": 81,
+     "radius": 32.5,
+     "x_from": "-(0.85 * (0.48 * gt_width))",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 795.6,
+     "y": 81,
+     "radius": 32.5,
+     "x_from": "0.85 * (0.48 * gt_width)",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 936,
+     "y": 287.48249999999996,
+     "radius": 32.5,
+     "x_from": "0.48 * gt_width",
+     "y_from": "(gt_ride_height + 0.35 * ((gt_ride_height + 0.95 * ((gt_nose_height + 0.6 * (gt_belt_height - gt_nose_height)) * gt_height - gt_ride_height)) - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 907.92,
+     "y": 670.9499999999999,
+     "radius": 32.5,
+     "x_from": "0.97 * (0.48 * gt_width)",
+     "y_from": "(gt_ride_height + 0.95 * ((gt_nose_height + 0.6 * (gt_belt_height - gt_nose_height)) * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 561.6,
+     "y": 702,
+     "radius": 32.5,
+     "x_from": "0.6 * (0.48 * gt_width)",
+     "y_from": "(gt_nose_height + 0.6 * (gt_belt_height - gt_nose_height)) * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -561.6,
+     "y": 702,
+     "radius": 32.5,
+     "x_from": "-(0.6 * (0.48 * gt_width))",
+     "y_from": "(gt_nose_height + 0.6 * (gt_belt_height - gt_nose_height)) * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -907.92,
+     "y": 670.9499999999999,
+     "radius": 32.5,
+     "x_from": "-(0.97 * (0.48 * gt_width))",
+     "y_from": "(gt_ride_height + 0.95 * ((gt_nose_height + 0.6 * (gt_belt_height - gt_nose_height)) * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -936,
+     "y": 287.48249999999996,
+     "radius": 32.5,
+     "x_from": "-(0.48 * gt_width)",
+     "y_from": "(gt_ride_height + 0.35 * ((gt_ride_height + 0.95 * ((gt_nose_height + 0.6 * (gt_belt_height - gt_nose_height)) * gt_height - gt_ride_height)) - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    }
+   ],
+   [
+    {
+     "x": -828.75,
+     "y": 81,
+     "radius": 32.5,
+     "x_from": "-(0.85 * (0.5 * gt_width))",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 828.75,
+     "y": 81,
+     "radius": 32.5,
+     "x_from": "0.85 * (0.5 * gt_width)",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 975,
+     "y": 322.0625,
+     "radius": 32.5,
+     "x_from": "0.5 * gt_width",
+     "y_from": "(gt_ride_height + 0.35 * ((gt_ride_height + 0.95 * (gt_belt_height * gt_height - gt_ride_height)) - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 945.75,
+     "y": 769.75,
+     "radius": 32.5,
+     "x_from": "0.97 * (0.5 * gt_width)",
+     "y_from": "(gt_ride_height + 0.95 * (gt_belt_height * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 585,
+     "y": 806,
+     "radius": 32.5,
+     "x_from": "0.6 * (0.5 * gt_width)",
+     "y_from": "gt_belt_height * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -585,
+     "y": 806,
+     "radius": 32.5,
+     "x_from": "-(0.6 * (0.5 * gt_width))",
+     "y_from": "gt_belt_height * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -945.75,
+     "y": 769.75,
+     "radius": 32.5,
+     "x_from": "-(0.97 * (0.5 * gt_width))",
+     "y_from": "(gt_ride_height + 0.95 * (gt_belt_height * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -975,
+     "y": 322.0625,
+     "radius": 32.5,
+     "x_from": "-(0.5 * gt_width)",
+     "y_from": "(gt_ride_height + 0.35 * ((gt_ride_height + 0.95 * (gt_belt_height * gt_height - gt_ride_height)) - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    }
+   ],
+   [
+    {
+     "x": -828.75,
+     "y": 81,
+     "radius": 32.5,
+     "x_from": "-(0.85 * (0.5 * gt_width))",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 828.75,
+     "y": 81,
+     "radius": 32.5,
+     "x_from": "0.85 * (0.5 * gt_width)",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 975,
+     "y": 334.75,
+     "radius": 32.5,
+     "x_from": "0.5 * gt_width",
+     "y_from": "(gt_ride_height + 0.35 * (gt_belt_height * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 945.75,
+     "y": 806,
+     "radius": 32.5,
+     "x_from": "0.97 * (0.5 * gt_width)",
+     "y_from": "gt_belt_height * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 438.75,
+     "y": 1300,
+     "radius": 32.5,
+     "x_from": "gt_roof_width * 0.5 * gt_width",
+     "y_from": "1 * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -438.75,
+     "y": 1300,
+     "radius": 32.5,
+     "x_from": "-(gt_roof_width * 0.5 * gt_width)",
+     "y_from": "1 * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -945.75,
+     "y": 806,
+     "radius": 32.5,
+     "x_from": "-(0.97 * (0.5 * gt_width))",
+     "y_from": "gt_belt_height * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -975,
+     "y": 334.75,
+     "radius": 32.5,
+     "x_from": "-(0.5 * gt_width)",
+     "y_from": "(gt_ride_height + 0.35 * (gt_belt_height * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    }
+   ],
+   [
+    {
+     "x": -828.75,
+     "y": 81,
+     "radius": 32.5,
+     "x_from": "-(0.85 * (0.5 * gt_width))",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 828.75,
+     "y": 81,
+     "radius": 32.5,
+     "x_from": "0.85 * (0.5 * gt_width)",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 975,
+     "y": 334.75,
+     "radius": 32.5,
+     "x_from": "0.5 * gt_width",
+     "y_from": "(gt_ride_height + 0.35 * (gt_belt_height * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 945.75,
+     "y": 806,
+     "radius": 32.5,
+     "x_from": "0.97 * (0.5 * gt_width)",
+     "y_from": "gt_belt_height * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 438.75,
+     "y": 1300,
+     "radius": 32.5,
+     "x_from": "gt_roof_width * 0.5 * gt_width",
+     "y_from": "1 * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -438.75,
+     "y": 1300,
+     "radius": 32.5,
+     "x_from": "-(gt_roof_width * 0.5 * gt_width)",
+     "y_from": "1 * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -945.75,
+     "y": 806,
+     "radius": 32.5,
+     "x_from": "-(0.97 * (0.5 * gt_width))",
+     "y_from": "gt_belt_height * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -975,
+     "y": 334.75,
+     "radius": 32.5,
+     "x_from": "-(0.5 * gt_width)",
+     "y_from": "(gt_ride_height + 0.35 * (gt_belt_height * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    }
+   ],
+   [
+    {
+     "x": -828.75,
+     "y": 81,
+     "radius": 32.5,
+     "x_from": "-(0.85 * (0.5 * gt_width))",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 828.75,
+     "y": 81,
+     "radius": 32.5,
+     "x_from": "0.85 * (0.5 * gt_width)",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 975,
+     "y": 322.0625,
+     "radius": 32.5,
+     "x_from": "0.5 * gt_width",
+     "y_from": "(gt_ride_height + 0.35 * ((gt_ride_height + 0.95 * (min(max(gt_belt_height, gt_tail_height), 0.97) * gt_height - gt_ride_height)) - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 945.75,
+     "y": 769.75,
+     "radius": 32.5,
+     "x_from": "0.97 * (0.5 * gt_width)",
+     "y_from": "(gt_ride_height + 0.95 * (min(max(gt_belt_height, gt_tail_height), 0.97) * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 585,
+     "y": 806,
+     "radius": 32.5,
+     "x_from": "0.6 * (0.5 * gt_width)",
+     "y_from": "min(max(gt_belt_height, gt_tail_height), 0.97) * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -585,
+     "y": 806,
+     "radius": 32.5,
+     "x_from": "-(0.6 * (0.5 * gt_width))",
+     "y_from": "min(max(gt_belt_height, gt_tail_height), 0.97) * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -945.75,
+     "y": 769.75,
+     "radius": 32.5,
+     "x_from": "-(0.97 * (0.5 * gt_width))",
+     "y_from": "(gt_ride_height + 0.95 * (min(max(gt_belt_height, gt_tail_height), 0.97) * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -975,
+     "y": 322.0625,
+     "radius": 32.5,
+     "x_from": "-(0.5 * gt_width)",
+     "y_from": "(gt_ride_height + 0.35 * ((gt_ride_height + 0.95 * (min(max(gt_belt_height, gt_tail_height), 0.97) * gt_height - gt_ride_height)) - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    }
+   ],
+   [
+    {
+     "x": -812.175,
+     "y": 81,
+     "radius": 32.5,
+     "x_from": "-(0.85 * (0.49 * gt_width))",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 812.175,
+     "y": 81,
+     "radius": 32.5,
+     "x_from": "0.85 * (0.49 * gt_width)",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 955.5,
+     "y": 313.41749999999996,
+     "radius": 32.5,
+     "x_from": "0.49 * gt_width",
+     "y_from": "(gt_ride_height + 0.35 * ((gt_ride_height + 0.95 * (gt_tail_height * gt_height - gt_ride_height)) - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 926.8349999999999,
+     "y": 745.05,
+     "radius": 32.5,
+     "x_from": "0.97 * (0.49 * gt_width)",
+     "y_from": "(gt_ride_height + 0.95 * (gt_tail_height * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 573.3,
+     "y": 780,
+     "radius": 32.5,
+     "x_from": "0.6 * (0.49 * gt_width)",
+     "y_from": "gt_tail_height * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -573.3,
+     "y": 780,
+     "radius": 32.5,
+     "x_from": "-(0.6 * (0.49 * gt_width))",
+     "y_from": "gt_tail_height * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -926.8349999999999,
+     "y": 745.05,
+     "radius": 32.5,
+     "x_from": "-(0.97 * (0.49 * gt_width))",
+     "y_from": "(gt_ride_height + 0.95 * (gt_tail_height * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -955.5,
+     "y": 313.41749999999996,
+     "radius": 32.5,
+     "x_from": "-(0.49 * gt_width)",
+     "y_from": "(gt_ride_height + 0.35 * ((gt_ride_height + 0.95 * (gt_tail_height * gt_height - gt_ride_height)) - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    }
+   ],
+   [
+    {
+     "x": -745.875,
+     "y": 81,
+     "radius": 32.5,
+     "x_from": "-(0.85 * (0.45 * gt_width))",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 745.875,
+     "y": 81,
+     "radius": 32.5,
+     "x_from": "0.85 * (0.45 * gt_width)",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 877.5,
+     "y": 297.8565,
+     "radius": 32.5,
+     "x_from": "0.45 * gt_width",
+     "y_from": "(gt_ride_height + 0.35 * ((gt_ride_height + 0.95 * (0.94 * gt_tail_height * gt_height - gt_ride_height)) - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 851.175,
+     "y": 700.5899999999999,
+     "radius": 32.5,
+     "x_from": "0.97 * (0.45 * gt_width)",
+     "y_from": "(gt_ride_height + 0.95 * (0.94 * gt_tail_height * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 526.5,
+     "y": 733.1999999999999,
+     "radius": 32.5,
+     "x_from": "0.6 * (0.45 * gt_width)",
+     "y_from": "0.94 * gt_tail_height * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -526.5,
+     "y": 733.1999999999999,
+     "radius": 32.5,
+     "x_from": "-(0.6 * (0.45 * gt_width))",
+     "y_from": "0.94 * gt_tail_height * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -851.175,
+     "y": 700.5899999999999,
+     "radius": 32.5,
+     "x_from": "-(0.97 * (0.45 * gt_width))",
+     "y_from": "(gt_ride_height + 0.95 * (0.94 * gt_tail_height * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -877.5,
+     "y": 297.8565,
+     "radius": 32.5,
+     "x_from": "-(0.45 * gt_width)",
+     "y_from": "(gt_ride_height + 0.35 * ((gt_ride_height + 0.95 * (0.94 * gt_tail_height * gt_height - gt_ride_height)) - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    }
+   ]
+  ]
+ },
+ "long-low-hypercar": {
+  "positions": [
+   [
+    2695.3190376569037,
+    0,
+    0
+   ],
+   [
+    2175.3190376569037,
+    0,
+    0
+   ],
+   [
+    1551.3190376569037,
+    0,
+    0
+   ],
+   [
+    1083.3190376569037,
+    0,
+    0
+   ],
+   [
+    147.31903765690367,
+    0,
+    0
+   ],
+   [
+    -320.6809623430963,
+    0,
+    0
+   ],
+   [
+    -2088.6809623430963,
+    0,
+    0
+   ],
+   [
+    -2504.6809623430963,
+    0,
+    0
+   ]
+  ],
+  "profiles": [
+   [
+    {
+     "x": -731,
+     "y": 60,
+     "radius": 60,
+     "x_from": "-(0.85 * (0.4 * gt_width))",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 731,
+     "y": 60,
+     "radius": 60,
+     "x_from": "0.85 * (0.4 * gt_width)",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 860,
+     "y": 139.8,
+     "radius": 60,
+     "x_from": "0.4 * gt_width",
+     "y_from": "(gt_ride_height + 0.35 * ((gt_ride_height + 0.95 * (gt_nose_height * gt_height - gt_ride_height)) - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 834.1999999999999,
+     "y": 288,
+     "radius": 60,
+     "x_from": "0.97 * (0.4 * gt_width)",
+     "y_from": "(gt_ride_height + 0.95 * (gt_nose_height * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 516,
+     "y": 300,
+     "radius": 60,
+     "x_from": "0.6 * (0.4 * gt_width)",
+     "y_from": "gt_nose_height * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -516,
+     "y": 300,
+     "radius": 60,
+     "x_from": "-(0.6 * (0.4 * gt_width))",
+     "y_from": "gt_nose_height * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -834.1999999999999,
+     "y": 288,
+     "radius": 60,
+     "x_from": "-(0.97 * (0.4 * gt_width))",
+     "y_from": "(gt_ride_height + 0.95 * (gt_nose_height * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -860,
+     "y": 139.8,
+     "radius": 60,
+     "x_from": "-(0.4 * gt_width)",
+     "y_from": "(gt_ride_height + 0.35 * ((gt_ride_height + 0.95 * (gt_nose_height * gt_height - gt_ride_height)) - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    }
+   ],
+   [
+    {
+     "x": -877.1999999999999,
+     "y": 60,
+     "radius": 60,
+     "x_from": "-(0.85 * (0.48 * gt_width))",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 877.1999999999999,
+     "y": 60,
+     "radius": 60,
+     "x_from": "0.85 * (0.48 * gt_width)",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 1032,
+     "y": 203.64,
+     "radius": 60,
+     "x_from": "0.48 * gt_width",
+     "y_from": "(gt_ride_height + 0.35 * ((gt_ride_height + 0.95 * ((gt_nose_height + 0.6 * (gt_belt_height - gt_nose_height)) * gt_height - gt_ride_height)) - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 1001.04,
+     "y": 470.4,
+     "radius": 60,
+     "x_from": "0.97 * (0.48 * gt_width)",
+     "y_from": "(gt_ride_height + 0.95 * ((gt_nose_height + 0.6 * (gt_belt_height - gt_nose_height)) * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 619.1999999999999,
+     "y": 492,
+     "radius": 60,
+     "x_from": "0.6 * (0.48 * gt_width)",
+     "y_from": "(gt_nose_height + 0.6 * (gt_belt_height - gt_nose_height)) * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -619.1999999999999,
+     "y": 492,
+     "radius": 60,
+     "x_from": "-(0.6 * (0.48 * gt_width))",
+     "y_from": "(gt_nose_height + 0.6 * (gt_belt_height - gt_nose_height)) * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -1001.04,
+     "y": 470.4,
+     "radius": 60,
+     "x_from": "-(0.97 * (0.48 * gt_width))",
+     "y_from": "(gt_ride_height + 0.95 * ((gt_nose_height + 0.6 * (gt_belt_height - gt_nose_height)) * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -1032,
+     "y": 203.64,
+     "radius": 60,
+     "x_from": "-(0.48 * gt_width)",
+     "y_from": "(gt_ride_height + 0.35 * ((gt_ride_height + 0.95 * ((gt_nose_height + 0.6 * (gt_belt_height - gt_nose_height)) * gt_height - gt_ride_height)) - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    }
+   ],
+   [
+    {
+     "x": -913.75,
+     "y": 60,
+     "radius": 60,
+     "x_from": "-(0.85 * (0.5 * gt_width))",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 913.75,
+     "y": 60,
+     "radius": 60,
+     "x_from": "0.85 * (0.5 * gt_width)",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 1075,
+     "y": 246.2,
+     "radius": 60,
+     "x_from": "0.5 * gt_width",
+     "y_from": "(gt_ride_height + 0.35 * ((gt_ride_height + 0.95 * (gt_belt_height * gt_height - gt_ride_height)) - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 1042.75,
+     "y": 592,
+     "radius": 60,
+     "x_from": "0.97 * (0.5 * gt_width)",
+     "y_from": "(gt_ride_height + 0.95 * (gt_belt_height * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 645,
+     "y": 620,
+     "radius": 60,
+     "x_from": "0.6 * (0.5 * gt_width)",
+     "y_from": "gt_belt_height * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -645,
+     "y": 620,
+     "radius": 60,
+     "x_from": "-(0.6 * (0.5 * gt_width))",
+     "y_from": "gt_belt_height * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -1042.75,
+     "y": 592,
+     "radius": 60,
+     "x_from": "-(0.97 * (0.5 * gt_width))",
+     "y_from": "(gt_ride_height + 0.95 * (gt_belt_height * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -1075,
+     "y": 246.2,
+     "radius": 60,
+     "x_from": "-(0.5 * gt_width)",
+     "y_from": "(gt_ride_height + 0.35 * ((gt_ride_height + 0.95 * (gt_belt_height * gt_height - gt_ride_height)) - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    }
+   ],
+   [
+    {
+     "x": -913.75,
+     "y": 60,
+     "radius": 60,
+     "x_from": "-(0.85 * (0.5 * gt_width))",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 913.75,
+     "y": 60,
+     "radius": 60,
+     "x_from": "0.85 * (0.5 * gt_width)",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 1075,
+     "y": 256,
+     "radius": 60,
+     "x_from": "0.5 * gt_width",
+     "y_from": "(gt_ride_height + 0.35 * (gt_belt_height * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 1042.75,
+     "y": 620,
+     "radius": 60,
+     "x_from": "0.97 * (0.5 * gt_width)",
+     "y_from": "gt_belt_height * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 795.5,
+     "y": 1000,
+     "radius": 60,
+     "x_from": "gt_roof_width * 0.5 * gt_width",
+     "y_from": "1 * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -795.5,
+     "y": 1000,
+     "radius": 60,
+     "x_from": "-(gt_roof_width * 0.5 * gt_width)",
+     "y_from": "1 * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -1042.75,
+     "y": 620,
+     "radius": 60,
+     "x_from": "-(0.97 * (0.5 * gt_width))",
+     "y_from": "gt_belt_height * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -1075,
+     "y": 256,
+     "radius": 60,
+     "x_from": "-(0.5 * gt_width)",
+     "y_from": "(gt_ride_height + 0.35 * (gt_belt_height * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    }
+   ],
+   [
+    {
+     "x": -913.75,
+     "y": 60,
+     "radius": 60,
+     "x_from": "-(0.85 * (0.5 * gt_width))",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 913.75,
+     "y": 60,
+     "radius": 60,
+     "x_from": "0.85 * (0.5 * gt_width)",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 1075,
+     "y": 256,
+     "radius": 60,
+     "x_from": "0.5 * gt_width",
+     "y_from": "(gt_ride_height + 0.35 * (gt_belt_height * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 1042.75,
+     "y": 620,
+     "radius": 60,
+     "x_from": "0.97 * (0.5 * gt_width)",
+     "y_from": "gt_belt_height * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 795.5,
+     "y": 1000,
+     "radius": 60,
+     "x_from": "gt_roof_width * 0.5 * gt_width",
+     "y_from": "1 * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -795.5,
+     "y": 1000,
+     "radius": 60,
+     "x_from": "-(gt_roof_width * 0.5 * gt_width)",
+     "y_from": "1 * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -1042.75,
+     "y": 620,
+     "radius": 60,
+     "x_from": "-(0.97 * (0.5 * gt_width))",
+     "y_from": "gt_belt_height * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -1075,
+     "y": 256,
+     "radius": 60,
+     "x_from": "-(0.5 * gt_width)",
+     "y_from": "(gt_ride_height + 0.35 * (gt_belt_height * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    }
+   ],
+   [
+    {
+     "x": -913.75,
+     "y": 60,
+     "radius": 60,
+     "x_from": "-(0.85 * (0.5 * gt_width))",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 913.75,
+     "y": 60,
+     "radius": 60,
+     "x_from": "0.85 * (0.5 * gt_width)",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 1075,
+     "y": 322.675,
+     "radius": 60,
+     "x_from": "0.5 * gt_width",
+     "y_from": "(gt_ride_height + 0.35 * ((gt_ride_height + 0.95 * (min(max(gt_belt_height, gt_tail_height), 0.97) * gt_height - gt_ride_height)) - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 1042.75,
+     "y": 810.5,
+     "radius": 60,
+     "x_from": "0.97 * (0.5 * gt_width)",
+     "y_from": "(gt_ride_height + 0.95 * (min(max(gt_belt_height, gt_tail_height), 0.97) * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 645,
+     "y": 850,
+     "radius": 60,
+     "x_from": "0.6 * (0.5 * gt_width)",
+     "y_from": "min(max(gt_belt_height, gt_tail_height), 0.97) * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -645,
+     "y": 850,
+     "radius": 60,
+     "x_from": "-(0.6 * (0.5 * gt_width))",
+     "y_from": "min(max(gt_belt_height, gt_tail_height), 0.97) * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -1042.75,
+     "y": 810.5,
+     "radius": 60,
+     "x_from": "-(0.97 * (0.5 * gt_width))",
+     "y_from": "(gt_ride_height + 0.95 * (min(max(gt_belt_height, gt_tail_height), 0.97) * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -1075,
+     "y": 322.675,
+     "radius": 60,
+     "x_from": "-(0.5 * gt_width)",
+     "y_from": "(gt_ride_height + 0.35 * ((gt_ride_height + 0.95 * (min(max(gt_belt_height, gt_tail_height), 0.97) * gt_height - gt_ride_height)) - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    }
+   ],
+   [
+    {
+     "x": -895.475,
+     "y": 60,
+     "radius": 60,
+     "x_from": "-(0.85 * (0.49 * gt_width))",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 895.475,
+     "y": 60,
+     "radius": 60,
+     "x_from": "0.85 * (0.49 * gt_width)",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 1053.5,
+     "y": 322.675,
+     "radius": 60,
+     "x_from": "0.49 * gt_width",
+     "y_from": "(gt_ride_height + 0.35 * ((gt_ride_height + 0.95 * (gt_tail_height * gt_height - gt_ride_height)) - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 1021.895,
+     "y": 810.5,
+     "radius": 60,
+     "x_from": "0.97 * (0.49 * gt_width)",
+     "y_from": "(gt_ride_height + 0.95 * (gt_tail_height * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 632.1,
+     "y": 850,
+     "radius": 60,
+     "x_from": "0.6 * (0.49 * gt_width)",
+     "y_from": "gt_tail_height * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -632.1,
+     "y": 850,
+     "radius": 60,
+     "x_from": "-(0.6 * (0.49 * gt_width))",
+     "y_from": "gt_tail_height * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -1021.895,
+     "y": 810.5,
+     "radius": 60,
+     "x_from": "-(0.97 * (0.49 * gt_width))",
+     "y_from": "(gt_ride_height + 0.95 * (gt_tail_height * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -1053.5,
+     "y": 322.675,
+     "radius": 60,
+     "x_from": "-(0.49 * gt_width)",
+     "y_from": "(gt_ride_height + 0.35 * ((gt_ride_height + 0.95 * (gt_tail_height * gt_height - gt_ride_height)) - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    }
+   ],
+   [
+    {
+     "x": -822.375,
+     "y": 60,
+     "radius": 60,
+     "x_from": "-(0.85 * (0.45 * gt_width))",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 822.375,
+     "y": 60,
+     "radius": 60,
+     "x_from": "0.85 * (0.45 * gt_width)",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 967.5,
+     "y": 305.7174999999999,
+     "radius": 60,
+     "x_from": "0.45 * gt_width",
+     "y_from": "(gt_ride_height + 0.35 * ((gt_ride_height + 0.95 * (0.94 * gt_tail_height * gt_height - gt_ride_height)) - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 938.475,
+     "y": 762.0499999999998,
+     "radius": 60,
+     "x_from": "0.97 * (0.45 * gt_width)",
+     "y_from": "(gt_ride_height + 0.95 * (0.94 * gt_tail_height * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 580.5,
+     "y": 798.9999999999999,
+     "radius": 60,
+     "x_from": "0.6 * (0.45 * gt_width)",
+     "y_from": "0.94 * gt_tail_height * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -580.5,
+     "y": 798.9999999999999,
+     "radius": 60,
+     "x_from": "-(0.6 * (0.45 * gt_width))",
+     "y_from": "0.94 * gt_tail_height * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -938.475,
+     "y": 762.0499999999998,
+     "radius": 60,
+     "x_from": "-(0.97 * (0.45 * gt_width))",
+     "y_from": "(gt_ride_height + 0.95 * (0.94 * gt_tail_height * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -967.5,
+     "y": 305.7174999999999,
+     "radius": 60,
+     "x_from": "-(0.45 * gt_width)",
+     "y_from": "(gt_ride_height + 0.35 * ((gt_ride_height + 0.95 * (0.94 * gt_tail_height * gt_height - gt_ride_height)) - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    }
+   ]
+  ]
+ },
+ "short-tall-suv": {
+  "positions": [
+   [
+    1955,
+    0,
+    0
+   ],
+   [
+    1565,
+    0,
+    0
+   ],
+   [
+    1175,
+    0,
+    0
+   ],
+   [
+    590,
+    0,
+    0
+   ],
+   [
+    -579.9999999999995,
+    0,
+    0
+   ],
+   [
+    -1165,
+    0,
+    0
+   ],
+   [
+    -1633,
+    0,
+    0
+   ],
+   [
+    -1945,
+    0,
+    0
+   ]
+  ],
+  "profiles": [
+   [
+    {
+     "x": -629,
+     "y": 260,
+     "radius": 9.75,
+     "x_from": "-(0.85 * (0.4 * gt_width))",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 629,
+     "y": 260,
+     "radius": 9.75,
+     "x_from": "0.85 * (0.4 * gt_width)",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 740,
+     "y": 530.15625,
+     "radius": 9.75,
+     "x_from": "0.4 * gt_width",
+     "y_from": "(gt_ride_height + 0.35 * ((gt_ride_height + 0.95 * (gt_nose_height * gt_height - gt_ride_height)) - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 717.8,
+     "y": 1031.875,
+     "radius": 9.75,
+     "x_from": "0.97 * (0.4 * gt_width)",
+     "y_from": "(gt_ride_height + 0.95 * (gt_nose_height * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 444,
+     "y": 1072.5,
+     "radius": 9.75,
+     "x_from": "0.6 * (0.4 * gt_width)",
+     "y_from": "gt_nose_height * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -444,
+     "y": 1072.5,
+     "radius": 9.75,
+     "x_from": "-(0.6 * (0.4 * gt_width))",
+     "y_from": "gt_nose_height * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -717.8,
+     "y": 1031.875,
+     "radius": 9.75,
+     "x_from": "-(0.97 * (0.4 * gt_width))",
+     "y_from": "(gt_ride_height + 0.95 * (gt_nose_height * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -740,
+     "y": 530.15625,
+     "radius": 9.75,
+     "x_from": "-(0.4 * gt_width)",
+     "y_from": "(gt_ride_height + 0.35 * ((gt_ride_height + 0.95 * (gt_nose_height * gt_height - gt_ride_height)) - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    }
+   ],
+   [
+    {
+     "x": -754.8,
+     "y": 260,
+     "radius": 9.75,
+     "x_from": "-(0.85 * (0.48 * gt_width))",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 754.8,
+     "y": 260,
+     "radius": 9.75,
+     "x_from": "0.85 * (0.48 * gt_width)",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 888,
+     "y": 530.15625,
+     "radius": 9.75,
+     "x_from": "0.48 * gt_width",
+     "y_from": "(gt_ride_height + 0.35 * ((gt_ride_height + 0.95 * ((gt_nose_height + 0.6 * (gt_belt_height - gt_nose_height)) * gt_height - gt_ride_height)) - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 861.36,
+     "y": 1031.875,
+     "radius": 9.75,
+     "x_from": "0.97 * (0.48 * gt_width)",
+     "y_from": "(gt_ride_height + 0.95 * ((gt_nose_height + 0.6 * (gt_belt_height - gt_nose_height)) * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 532.8,
+     "y": 1072.5,
+     "radius": 9.75,
+     "x_from": "0.6 * (0.48 * gt_width)",
+     "y_from": "(gt_nose_height + 0.6 * (gt_belt_height - gt_nose_height)) * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -532.8,
+     "y": 1072.5,
+     "radius": 9.75,
+     "x_from": "-(0.6 * (0.48 * gt_width))",
+     "y_from": "(gt_nose_height + 0.6 * (gt_belt_height - gt_nose_height)) * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -861.36,
+     "y": 1031.875,
+     "radius": 9.75,
+     "x_from": "-(0.97 * (0.48 * gt_width))",
+     "y_from": "(gt_ride_height + 0.95 * ((gt_nose_height + 0.6 * (gt_belt_height - gt_nose_height)) * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -888,
+     "y": 530.15625,
+     "radius": 9.75,
+     "x_from": "-(0.48 * gt_width)",
+     "y_from": "(gt_ride_height + 0.35 * ((gt_ride_height + 0.95 * ((gt_nose_height + 0.6 * (gt_belt_height - gt_nose_height)) * gt_height - gt_ride_height)) - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    }
+   ],
+   [
+    {
+     "x": -786.25,
+     "y": 260,
+     "radius": 9.75,
+     "x_from": "-(0.85 * (0.5 * gt_width))",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 786.25,
+     "y": 260,
+     "radius": 9.75,
+     "x_from": "0.85 * (0.5 * gt_width)",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 925,
+     "y": 530.15625,
+     "radius": 9.75,
+     "x_from": "0.5 * gt_width",
+     "y_from": "(gt_ride_height + 0.35 * ((gt_ride_height + 0.95 * (gt_belt_height * gt_height - gt_ride_height)) - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 897.25,
+     "y": 1031.875,
+     "radius": 9.75,
+     "x_from": "0.97 * (0.5 * gt_width)",
+     "y_from": "(gt_ride_height + 0.95 * (gt_belt_height * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 555,
+     "y": 1072.5,
+     "radius": 9.75,
+     "x_from": "0.6 * (0.5 * gt_width)",
+     "y_from": "gt_belt_height * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -555,
+     "y": 1072.5,
+     "radius": 9.75,
+     "x_from": "-(0.6 * (0.5 * gt_width))",
+     "y_from": "gt_belt_height * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -897.25,
+     "y": 1031.875,
+     "radius": 9.75,
+     "x_from": "-(0.97 * (0.5 * gt_width))",
+     "y_from": "(gt_ride_height + 0.95 * (gt_belt_height * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -925,
+     "y": 530.15625,
+     "radius": 9.75,
+     "x_from": "-(0.5 * gt_width)",
+     "y_from": "(gt_ride_height + 0.35 * ((gt_ride_height + 0.95 * (gt_belt_height * gt_height - gt_ride_height)) - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    }
+   ],
+   [
+    {
+     "x": -786.25,
+     "y": 260,
+     "radius": 9.75,
+     "x_from": "-(0.85 * (0.5 * gt_width))",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 786.25,
+     "y": 260,
+     "radius": 9.75,
+     "x_from": "0.85 * (0.5 * gt_width)",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 925,
+     "y": 544.375,
+     "radius": 9.75,
+     "x_from": "0.5 * gt_width",
+     "y_from": "(gt_ride_height + 0.35 * (gt_belt_height * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 897.25,
+     "y": 1072.5,
+     "radius": 9.75,
+     "x_from": "0.97 * (0.5 * gt_width)",
+     "y_from": "gt_belt_height * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 851,
+     "y": 1950,
+     "radius": 9.75,
+     "x_from": "gt_roof_width * 0.5 * gt_width",
+     "y_from": "1 * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -851,
+     "y": 1950,
+     "radius": 9.75,
+     "x_from": "-(gt_roof_width * 0.5 * gt_width)",
+     "y_from": "1 * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -897.25,
+     "y": 1072.5,
+     "radius": 9.75,
+     "x_from": "-(0.97 * (0.5 * gt_width))",
+     "y_from": "gt_belt_height * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -925,
+     "y": 544.375,
+     "radius": 9.75,
+     "x_from": "-(0.5 * gt_width)",
+     "y_from": "(gt_ride_height + 0.35 * (gt_belt_height * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    }
+   ],
+   [
+    {
+     "x": -786.25,
+     "y": 260,
+     "radius": 9.75,
+     "x_from": "-(0.85 * (0.5 * gt_width))",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 786.25,
+     "y": 260,
+     "radius": 9.75,
+     "x_from": "0.85 * (0.5 * gt_width)",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 925,
+     "y": 544.375,
+     "radius": 9.75,
+     "x_from": "0.5 * gt_width",
+     "y_from": "(gt_ride_height + 0.35 * (gt_belt_height * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 897.25,
+     "y": 1072.5,
+     "radius": 9.75,
+     "x_from": "0.97 * (0.5 * gt_width)",
+     "y_from": "gt_belt_height * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 851,
+     "y": 1950,
+     "radius": 9.75,
+     "x_from": "gt_roof_width * 0.5 * gt_width",
+     "y_from": "1 * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -851,
+     "y": 1950,
+     "radius": 9.75,
+     "x_from": "-(gt_roof_width * 0.5 * gt_width)",
+     "y_from": "1 * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -897.25,
+     "y": 1072.5,
+     "radius": 9.75,
+     "x_from": "-(0.97 * (0.5 * gt_width))",
+     "y_from": "gt_belt_height * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -925,
+     "y": 544.375,
+     "radius": 9.75,
+     "x_from": "-(0.5 * gt_width)",
+     "y_from": "(gt_ride_height + 0.35 * (gt_belt_height * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    }
+   ],
+   [
+    {
+     "x": -786.25,
+     "y": 260,
+     "radius": 9.75,
+     "x_from": "-(0.85 * (0.5 * gt_width))",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 786.25,
+     "y": 260,
+     "radius": 9.75,
+     "x_from": "0.85 * (0.5 * gt_width)",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 925,
+     "y": 795.9899999999999,
+     "radius": 9.75,
+     "x_from": "0.5 * gt_width",
+     "y_from": "(gt_ride_height + 0.35 * ((gt_ride_height + 0.95 * (min(max(gt_belt_height, gt_tail_height), 0.97) * gt_height - gt_ride_height)) - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 897.25,
+     "y": 1791.3999999999999,
+     "radius": 9.75,
+     "x_from": "0.97 * (0.5 * gt_width)",
+     "y_from": "(gt_ride_height + 0.95 * (min(max(gt_belt_height, gt_tail_height), 0.97) * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 555,
+     "y": 1872,
+     "radius": 9.75,
+     "x_from": "0.6 * (0.5 * gt_width)",
+     "y_from": "min(max(gt_belt_height, gt_tail_height), 0.97) * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -555,
+     "y": 1872,
+     "radius": 9.75,
+     "x_from": "-(0.6 * (0.5 * gt_width))",
+     "y_from": "min(max(gt_belt_height, gt_tail_height), 0.97) * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -897.25,
+     "y": 1791.3999999999999,
+     "radius": 9.75,
+     "x_from": "-(0.97 * (0.5 * gt_width))",
+     "y_from": "(gt_ride_height + 0.95 * (min(max(gt_belt_height, gt_tail_height), 0.97) * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -925,
+     "y": 795.9899999999999,
+     "radius": 9.75,
+     "x_from": "-(0.5 * gt_width)",
+     "y_from": "(gt_ride_height + 0.35 * ((gt_ride_height + 0.95 * (min(max(gt_belt_height, gt_tail_height), 0.97) * gt_height - gt_ride_height)) - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    }
+   ],
+   [
+    {
+     "x": -770.525,
+     "y": 260,
+     "radius": 9.75,
+     "x_from": "-(0.85 * (0.49 * gt_width))",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 770.525,
+     "y": 260,
+     "radius": 9.75,
+     "x_from": "0.85 * (0.49 * gt_width)",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 906.5,
+     "y": 795.9899999999999,
+     "radius": 9.75,
+     "x_from": "0.49 * gt_width",
+     "y_from": "(gt_ride_height + 0.35 * ((gt_ride_height + 0.95 * (gt_tail_height * gt_height - gt_ride_height)) - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 879.305,
+     "y": 1791.3999999999999,
+     "radius": 9.75,
+     "x_from": "0.97 * (0.49 * gt_width)",
+     "y_from": "(gt_ride_height + 0.95 * (gt_tail_height * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 543.9,
+     "y": 1872,
+     "radius": 9.75,
+     "x_from": "0.6 * (0.49 * gt_width)",
+     "y_from": "gt_tail_height * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -543.9,
+     "y": 1872,
+     "radius": 9.75,
+     "x_from": "-(0.6 * (0.49 * gt_width))",
+     "y_from": "gt_tail_height * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -879.305,
+     "y": 1791.3999999999999,
+     "radius": 9.75,
+     "x_from": "-(0.97 * (0.49 * gt_width))",
+     "y_from": "(gt_ride_height + 0.95 * (gt_tail_height * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -906.5,
+     "y": 795.9899999999999,
+     "radius": 9.75,
+     "x_from": "-(0.49 * gt_width)",
+     "y_from": "(gt_ride_height + 0.35 * ((gt_ride_height + 0.95 * (gt_tail_height * gt_height - gt_ride_height)) - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    }
+   ],
+   [
+    {
+     "x": -707.625,
+     "y": 260,
+     "radius": 9.75,
+     "x_from": "-(0.85 * (0.45 * gt_width))",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 707.625,
+     "y": 260,
+     "radius": 9.75,
+     "x_from": "0.85 * (0.45 * gt_width)",
+     "y_from": "gt_ride_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 832.5,
+     "y": 758.6435999999999,
+     "radius": 9.75,
+     "x_from": "0.45 * gt_width",
+     "y_from": "(gt_ride_height + 0.35 * ((gt_ride_height + 0.95 * (0.94 * gt_tail_height * gt_height - gt_ride_height)) - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 807.525,
+     "y": 1684.6959999999997,
+     "radius": 9.75,
+     "x_from": "0.97 * (0.45 * gt_width)",
+     "y_from": "(gt_ride_height + 0.95 * (0.94 * gt_tail_height * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": 499.5,
+     "y": 1759.6799999999998,
+     "radius": 9.75,
+     "x_from": "0.6 * (0.45 * gt_width)",
+     "y_from": "0.94 * gt_tail_height * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -499.5,
+     "y": 1759.6799999999998,
+     "radius": 9.75,
+     "x_from": "-(0.6 * (0.45 * gt_width))",
+     "y_from": "0.94 * gt_tail_height * gt_height",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -807.525,
+     "y": 1684.6959999999997,
+     "radius": 9.75,
+     "x_from": "-(0.97 * (0.45 * gt_width))",
+     "y_from": "(gt_ride_height + 0.95 * (0.94 * gt_tail_height * gt_height - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    },
+    {
+     "x": -832.5,
+     "y": 758.6435999999999,
+     "radius": 9.75,
+     "x_from": "-(0.45 * gt_width)",
+     "y_from": "(gt_ride_height + 0.35 * ((gt_ride_height + 0.95 * (0.94 * gt_tail_height * gt_height - gt_ride_height)) - gt_ride_height))",
+     "radius_from": "gt_edge_radius * gt_height"
+    }
+   ]
+  ]
+ }
+}

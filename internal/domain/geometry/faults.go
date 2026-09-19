@@ -31,7 +31,9 @@ func (d *Document) Faults() []Problem {
 	if d == nil {
 		return nil
 	}
-	var out []Problem
+	// A car still a "car" part is a car NOT in the model: the door that writes one out
+	// (ExpandTemplates, car.go) could not build it, or it never went through the door.
+	out := carFaults(*d)
 	// Patterns are written out first, or a feature naming a repeated part reads
 	// as naming something that does not exist and this reports a fault in a
 	// document that builds perfectly well.

@@ -94,7 +94,12 @@ type Part struct {
 	// is written out as the revolve or extrusion it is before anything reads the
 	// part, and kept on it so a reader can still say what it is (standard.go).
 	// Phase 2, stage A3 of docs/plan-2026-09-13-millions-of-parts.md.
-	Standard string             `json:"standard,omitempty"`
+	Standard string `json:"standard,omitempty"`
+	// Class is the kind of car a "car" part is ("hypercar", "sports", "sedan",
+	// "suv"), which its proportions are checked against, and is read for no other
+	// shape. A car is written out as the tree it is before anything stores it, so a
+	// stored part never carries one (car.go; stage C1 of the looks-designed work).
+	Class    string             `json:"class,omitempty"`
 	Size     map[string]float64 `json:"size"`
 	Position []float64          `json:"position"`
 	// SizeFrom and PositionFrom bind a dimension to an EXPRESSION over the

@@ -81,13 +81,22 @@ How to answer:
 // And the feature operations, the edge rules and the faces a shell may leave open,
 // from the tables the validator and the kernel read (looks designed, stages B2 and
 // B4). TestTheContractTeachesEveryFeatureRuleFORGEHas fences it.
+//
+// And the car template's numbers and the design-word table, from the tables the
+// template reads (car.go, designwords.go; stage C1 and C3 of the looks-designed
+// work, 2026-09-18): one source each, fenced on the rendered prompt by
+// TestTheContractCarriesTheCarTemplateAndEveryDesignWord.
+//
+// Every verb in the template is indexed (%[n]s), so the order of these arguments is
+// the index and a guide added later is appended at the end.
 var geometryContract = fmt.Sprintf(geometryContractTemplate, geometry.PatternBindingGuide(),
 	geometry.StandardGuide(), strings.Join(geometry.ExpressionFunctions(), ", "),
 	geometry.FeatureOpChoices(), geometry.EdgeRuleChoices(), geometry.EdgeRuleGuide(),
 	geometry.OpenFaceGuide(),
 	// The bowed-edge paragraph, printed from the table its refusals are written
 	// from (B3, 2026-09-18). Fence: TestContract_TeachesBowedEdgesFromTheValidatorsTable.
-	geometry.CurveGuide())
+	geometry.CurveGuide(),
+	geometry.CarGuide(), geometry.DesignWordGuide())
 
 var geometryContractTemplate = `Reply with JSON only:
 
@@ -111,9 +120,10 @@ var geometryContractTemplate = `Reply with JSON only:
         "id": "stable-kebab-id",
         "name": "human name",
         "shape": "box" | "cylinder" | "cone" | "sphere" | "plane" |
-                 "extrusion" | "revolve" | "sweep" | "section" | "gear" | "standard" | "script",
+                 "extrusion" | "revolve" | "sweep" | "section" | "gear" | "standard" | "car" | "script",
         "shape_note": "for \"extrusion\", size only needs \"depth\"",
         "standard": "only for shape \"standard\": a designation from the catalogue below",
+        "class": "only for shape \"car\": the kind of car, listed below",
         "size": {"width":1,"height":1,"depth":1,"radius":0.5,"radius_top":0.5},
         "profile": [{"x": 0, "y": 0, "radius": 0, "x_from": "", "y_from": "plate_height",
                      "via": null or {"x": 0, "y": 0}}],
@@ -391,6 +401,21 @@ About "prototype":
   legs along +X and +Y. Threads, sockets and a bearing's balls are not drawn. A
   designation that is not listed here is refused, and the nearest are named:
 %[2]s
+- "car" is a whole road car — a lofted body with its wheel arches cut, four
+  wheels with their nuts, a splitter and a diffuser — and it is how every car
+  body is made: never build a car's body from boxes and never script one. Give
+  only its numbers, in the assembly's units, and its "class" —
+    {"id": "car", "name": "GT coupe", "shape": "car", "class": "sports",
+     "size": {"length": 4500, "width": 1900, "height": 1250, "wheelbase": 2600}}
+  FORGE builds it with the ground at y = 0, the nose toward +X and the middle of
+  the wheelbase at the part's position, and writes every number out as a
+  parameter so it can be changed later. The numbers it reads, any it is not
+  given chosen from published cars of the class:
+%[9]s
+  Design words are these numbers, never anything else. When somebody says one,
+  move the knob it names and nothing more; a word never sets a count:
+%[10]s
+  A wing, mirrors or an interior are ordinary parts placed beside the car.
 - WRITE A DESIGN ONCE AND PLACE IT MANY TIMES. The same screw, bracket or seat
   appearing again is its definition placed again, never its geometry written a
   second time; and many of them in a row, a grid or a ring are ONE child with a
@@ -419,7 +444,9 @@ About "prototype":
   and the maths functions and nothing else: no imports, no files, no network. It
   gets a few seconds of processor time and is stopped if it takes more.
 - "build_in_passes": true when what they asked for is too big for ONE document —
-  a car, an engine, a machine with subsystems. Do not return six boxes and call
+  an engine, a machine with subsystems, a car down to its suspension and
+  powertrain (a car's body, wheels and stance alone are the one "car" part
+  above). Do not return six boxes and call
   it a concept: say what you are about to build in "speech", set this, and leave
   "prototype" out. It is then built a subsystem at a time, each one checked
   before the next, and you will be asked for each in turn. It takes minutes, so
