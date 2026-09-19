@@ -2263,7 +2263,7 @@ drill "measurement reads a standard part as a unit box" internal/domain/geometry
   ./internal/domain/geometry 'TestStandard_TheKernelAndTheMeasurementSeeTheDrawnPart'
 
 drill "the contract's catalogue is typed rather than rendered" internal/agent/converse.go \
-  's = s.replace("geometry.StandardGuide(), geometry.CarGuide(),", "\"    \\\"ISO 4762 M8x30\\\"\", geometry.CarGuide(),", 1)' \
+  's = s.replace("geometry.StandardGuide(), strings.Join(", "\"    \\\"ISO 4762 M8x30\\\"\", strings.Join(", 1)' \
   ./internal/agent 'TestTheContractTeachesEveryStandardPartFORGEHas'
 
 drill "irregular spacing counts as a row" internal/domain/geometry/repetition.go \
@@ -5105,7 +5105,7 @@ drill "grouped containment takes a quarter of a box for its reach" internal/doma
 echo
 echo "Bowed outlines taught and measured (B3, 2026-09-18)"
 drill "the contract drops the bowed-edge guide" internal/agent/converse.go \
-  's = s.replace("\tgeometry.CurveGuide())", "\tgeometry.StandardGuide()[:0])", 1)' \
+  's = s.replace("\tgeometry.CurveGuide(),", "\tgeometry.StandardGuide()[:0],", 1)' \
   ./internal/agent 'TestContract_TeachesBowedEdgesFromTheValidatorsTable'
 
 drill "a via rule is refused in words the contract does not teach" internal/domain/geometry/profile.go \
@@ -5270,7 +5270,7 @@ drill "the wire drops a part's normals" internal/httpapi/geometry.go \
   ./internal/httpapi 'TestMeshPayload_CarriesNormalsAdditively'
 
 drill "the contract does not teach the open faces" internal/agent/converse.go \
-  's = s.replace("\tgeometry.OpenFaceGuide())", "\t\"\")", 1)' \
+  's = s.replace("\tgeometry.OpenFaceGuide(),", "\t\"\",", 1)' \
   ./internal/agent 'TestTheContractTeachesEveryFeatureRuleFORGEHas'
 
 drill "the contract offers operations where it means edge rules" internal/agent/converse.go \
@@ -5350,7 +5350,7 @@ drill "the prompt drops the design-word table" internal/agent/converse.go \
   ./internal/agent 'TestTheContractCarriesTheCarTemplateAndEveryDesignWord'
 
 drill "the prompt does not offer the car shape" internal/agent/converse.go \
-  's = s.replace("| \"standard\" | \"car\" | \"script\",", "| \"standard\" | \"script\",", 1)' \
+  's = s.replace("| \"standard\" | \"car\" |", "| \"standard\" |", 1)' \
   ./internal/agent 'TestTheContractCarriesTheCarTemplateAndEveryDesignWord'
 
 echo "Mesh-only decorative parts (looks designed, stage E1; damon 2026-09-18)"
@@ -5404,7 +5404,7 @@ drill "mass weighs a lattice it was handed a measure of" internal/domain/geometr
   ./internal/domain/geometry 'TestLattice_MassLeavesItOutAndNamesIt'
 
 drill "the contract does not teach lattices" internal/agent/converse.go \
-  's = s.replace("geometry.StandardGuide(), geometry.LatticeGuide(), strings.Join", "geometry.StandardGuide(), \"\", strings.Join", 1)' \
+  's = s.replace("\tgeometry.LatticeGuide())", "\t\"\")", 1)' \
   ./internal/agent 'TestTheContractTeachesLatticesFromTheTable'
 
 drill "the contract does not offer lattice as a shape" internal/agent/converse.go \
@@ -5420,11 +5420,11 @@ drill "the render drops the mesh-only parts" internal/agent/render.go \
   ./internal/agent 'TestRender_CarriesTheMeshOnlyParts'
 
 drill "the turn surface drops the mesh-only parts" internal/agent/cadbridge/cadbridge.go \
-  's = s.replace("\t\tMeshOnly: built.MeshOnly}, nil", "\t}, nil", 1)' \
+  's = s.replace("\t\tMeshOnly: built.MeshOnly,\n", "", 1)' \
   ./internal/agent/cadbridge 'TestKernel_TheTurnsSurfaceNamesItsMeshOnlyParts'
 
 drill "the mesh reply drops the mesh-only flag" internal/httpapi/geometry.go \
-  's = s.replace("Triangles: m.Triangles, MeshOnly: m.MeshOnly,", "Triangles: m.Triangles,", 1)' \
+  's = s.replace("\t\t\tMeshOnly: m.MeshOnly,\n", "", 1)' \
   ./internal/httpapi 'TestTheMeshReplyMarksAMeshOnlyPart'
 
 drill "the STEP download header says nothing of mesh-only parts" internal/httpapi/geometry.go \
