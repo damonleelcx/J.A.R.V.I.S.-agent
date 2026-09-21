@@ -1441,6 +1441,24 @@
      * is the factor between them (drawBatches), and 1 or absent for a design in mm. */
     if (scale && scale !== 1) positions = Array.prototype.map.call(positions, function (v) { return v * scale; });
     var indices = mesh.triangles || [];
+    /* The kernel's own normals when the reply carries them (looks designed, A5; PR 158):
+     * one per vertex, from OCCT's surface evaluation, so a curved face is smooth and a
+     * hard edge stays split (every face has vertices of its own). A definition's are in
+     * its own frame like its vertices; the part shader turns them per copy by the
+     * cofactor of the copy's matrix — its rotation, since the kernel's matrices carry
+     * no scale — and renormalises. They are rounded to 4 decimals on the wire, so they
+     * are renormalised here too. A reply without them, or with the wrong count, is
+     * shaded from its triangles as before. Fence: TestRendererShadesAKernelMeshWithItsOwnNormals. */
+    var given = mesh.normals;
+    if (given && given.length === positions.length && positions.length > 0) {
+      var own = new Array(given.length);
+      for (var g = 0; g < given.length; g += 3) {
+        var gl0 = Math.sqrt(given[g] * given[g] + given[g + 1] * given[g + 1] + given[g + 2] * given[g + 2]);
+        if (gl0 > 0) { own[g] = given[g] / gl0; own[g + 1] = given[g + 1] / gl0; own[g + 2] = given[g + 2] / gl0; }
+        else { own[g] = 0; own[g + 1] = 1; own[g + 2] = 0; }
+      }
+      return { geo: { positions: positions, normals: own, indices: indices }, fromKernel: true, kernelNormals: true };
+    }
     var normals = new Array(positions.length);
     for (var n = 0; n < normals.length; n++) normals[n] = 0;
 
@@ -2217,6 +2235,56 @@
    * load and addSubtree read it.
    * docs/bugfix/2026-09-15-mesh-replies-were-drawn-in-millimetres-on-a-stage-in-the-documents-units.md
    * Fence: TestMeshSubtree_ADesignInInchesOrMetresIsDrawnWhereItsPrimitivesAre. */
+
+  /* ---- Mesh-only parts (looks designed, stage E1 follow-up, 2026-09-19) ---------
+   *
+   * damon's decision of 2026-09-18: a part DECLARED mesh-only (today only a "lattice")
+   * may break "every part is an exact solid", and is labelled mesh-only, left out of
+   * STEP and flagged not manufacturable — PRD VIS-06: a render must never imply
+   * manufacturability. The provenance banner already says so outside the fold; the
+   * stage says it too, on the part:
+   *   - a kernel surface marked mesh_only (GET /v1/geometry/{id}/mesh, PR 156) is drawn
+   *     translucent, in MESH_ONLY_TINT, with its own flat material — never a solid
+   *     part's colour, finish or opacity;
+   *   - with no kernel surface (a deployment without one, or before it answers) the
+   *     part's box is drawn as a GHOST, never a solid box: the old fallback drew an
+   *     unknown shape as a solid bounding box, which is the one picture VIS-06 forbids;
+   *   - every such part carries a screen-space tag reading the reply's mesh_only_label,
+   *     anchored at its centre and always on top (Studio.meshOnlyTags, _placeLabels).
+   * MESH_ONLY_SHAPES and MESH_ONLY_LABEL are spelled as geometry spells them
+   * (latticeShape, MeshOnlyLabel); TestRendererSpellsMeshOnlyAsGeometryDoes holds that.
+   * Fence: TestRendererDrawsMeshOnlyPartsAsMeshOnly. */
+  var MESH_ONLY_SHAPES = ['lattice'];
+  var MESH_ONLY_LABEL = 'mesh-only - not manufacturable';
+  var MESH_ONLY_TINT = '#39c6c0';
+  var MESH_ONLY_SHADING = [0, 0.8, 0];
+  var MESH_ONLY_ALPHA = 0.6;
+  var MESH_ONLY_GHOST_ALPHA = 0.16;
+
+  function isMeshOnly(part, mesh) {
+    if (mesh && mesh.mesh_only) return true;
+    return MESH_ONLY_SHAPES.indexOf(String((part && part.shape) || '').trim().toLowerCase()) >= 0;
+  }
+
+  /* The batch a mesh-only part is drawn in: its kernel surface (one batch per part, the
+   * vertices already where it is) or its ghost box (one batch per size). */
+  function meshOnlyBatch(part, mesh, fromMM, byKey, batches) {
+    var s = part.size || {};
+    var key = mesh ? 'mesh-only:' + part.id
+      : 'mesh-only-ghost:' + [num(s.width, 1), num(s.height, 1), num(s.depth, 1)].join('x');
+    var b = byKey[key];
+    if (b) return b;
+    var geo = mesh ? kernelGeometry(mesh, fromMM)
+      : { geo: boxGeometry(num(s.width, 1), num(s.height, 1), num(s.depth, 1)) };
+    b = byKey[key] = {
+      key: key, fromKernel: !!mesh, definition: -1, shading: MESH_ONLY_SHADING.slice(),
+      geo: geo.geo, approximated: '', bounds: geometryBounds(geo.geo.positions), instances: [],
+      shape: null, curve: null, meshOnly: true, ghost: !mesh
+    };
+    batches.push(b);
+    return b;
+  }
+
   function drawBatches(drawn, built, opts) {
     opts = opts || {};
     var wide = opts.wide !== false;
@@ -2237,6 +2305,17 @@
       var part = d.spec, shading = shadingFor(part.material);
       var inst = instanceOf[part.id];
       var mesh = inst ? definitions[inst.definition] : (placedMesh[part.id] || (d.fromKernel ? d.mesh : null));
+      /* A declared mesh-only part (see "Mesh-only parts" above MESH_ONLY_SHAPES) is
+       * drawn with its own tint, material and translucency — never the solid-part
+       * look — and with no kernel surface as a ghost of its box, never a solid one. */
+      var meshOnly = isMeshOnly(part, mesh);
+      if (meshOnly) {
+        var ghost = !(mesh && mesh.triangles && mesh.triangles.length);
+        var mo = meshOnlyBatch(part, ghost ? null : mesh, fromMM, byKey, batches);
+        mo.instances.push({ id: part.id, matrix: mo.ghost ? placementMatrix(part) : IDENTITY.slice(), spec: part,
+                            removed: !!d.removed, repeatOf: d.repeatOf || '' });
+        return;
+      }
       /* A tessellation this browser cannot index is drawn as its primitive instead,
        * and named — truncating to 65,535 vertices would draw a shape nobody built,
        * which is worse than the approximation everybody has been looking at. */
@@ -4271,6 +4350,7 @@
     var wide = this.webgl2 || !!gl.getExtension('OES_element_index_uint');
     this._wide = wide;
     var plan = drawBatches(partsToDraw(this.spec), built || null, { wide: wide, toMM: unitToMM(this.spec.units) });
+    this._meshOnlyLabel = (built && built.mesh_only_label) || MESH_ONLY_LABEL;
     this.approximations = plan.approximations;
     this.batches = plan.batches.map(function (b) { return self._upload(b, wide); });
 
@@ -4322,6 +4402,7 @@
        * frame; and this frame's drawn copies with their run, in the order they were found. */
       seen: new Uint32Array(n), drawn: new Int32Array(n), drawnGroup: new Uint8Array(n),
       placeholder: !!plan.placeholder, simple: null, tree: null,
+      meshOnly: !!plan.meshOnly, ghost: !!plan.ghost,
       shape: plan.shape || null, curve: plan.shape ? plan.curve || null : null, details: {}, draw: null, detail: 1,
       scratch: new Float32Array(n * INSTANCE_FLOATS), instanceBuffer: gl.createBuffer()
     };
@@ -4332,7 +4413,9 @@
       b.repeatOf[i] = inst.repeatOf;
       b.specs[i] = s;
       b.removed[i] = inst.removed ? 1 : 0;
-      b.opacity[i] = num(s.opacity, 1);
+      /* A mesh-only part is never drawn opaque like a solid (see MESH_ONLY_SHAPES). */
+      b.opacity[i] = plan.meshOnly ? Math.min(num(s.opacity, 1), plan.ghost ? MESH_ONLY_GHOST_ALPHA : MESH_ONLY_ALPHA)
+        : num(s.opacity, 1);
       for (var k = 0; k < 16; k++) b.model[i * 16 + k] = m[k];
       b.centre[o]     = m[0] * c[0] + m[4] * c[1] + m[8] * c[2] + m[12];
       b.centre[o + 1] = m[1] * c[0] + m[5] * c[1] + m[9] * c[2] + m[13];
@@ -5628,7 +5711,7 @@
     out[o + 12] += b.disp[i * 3];
     out[o + 13] += b.disp[i * 3 + 1];
     out[o + 14] += b.disp[i * 3 + 2];
-    var rgb = this._colour(b.removed[i] ? g.removed : (b.specs[i].color || g.part));
+    var rgb = this._colour(b.removed[i] ? g.removed : (b.meshOnly ? MESH_ONLY_TINT : (b.specs[i].color || g.part)));
     out[o + 16] = rgb[0]; out[o + 17] = rgb[1]; out[o + 18] = rgb[2]; out[o + 19] = alpha;
     out[o + 20] = this._highlighted(b.ids[i], b.repeatOf[i]) ? 1 : 0;
   };
@@ -6003,13 +6086,24 @@
   Studio.prototype._placeLabels = function (view, proj) {
     var layer = this.labelLayer;
     if (!layer) return;
-    if (!this.showOverlays || !this.overlays.length) { layer.innerHTML = ''; return; }
+    var tags = this.meshOnlyTags();
+    if (!tags.length && (!this.showOverlays || !this.overlays.length)) { layer.innerHTML = ''; return; }
 
     var rect = this.canvas.getBoundingClientRect();
     var w = rect.width, h = rect.height;
     var html = [];
 
-    this.overlays.forEach(function (o) {
+    /* A mesh-only part's tag is not an overlay and is not switched off with them:
+     * VIS-06 says a render never implies manufacturability, so while the part is on
+     * the stage its tag is (see MESH_ONLY_SHAPES). */
+    tags.forEach(function (tag) {
+      var at = project(tag.at, view, proj, w, h);
+      if (!at) return;
+      html.push('<div class="mesh-only-tag" style="left:' + at.x.toFixed(1) + 'px;top:' + at.y.toFixed(1) +
+        'px" title="' + esc(tag.name) + '">' + esc(tag.text) + '</div>');
+    });
+
+    (this.showOverlays ? this.overlays : []).forEach(function (o) {
       var anchor = o.kind !== 'dimension'
         ? o.from
         : (o.from && o.to ? [(o.from[0]+o.to[0])/2, (o.from[1]+o.to[1])/2, (o.from[2]+o.to[2])/2] : null);
@@ -6055,6 +6149,23 @@
 
     layer.innerHTML = html.join('');
     this._spreadLabels(layer);
+  };
+
+  /* meshOnlyTags is one tag per mesh-only part on the stage: its id and name, the
+   * words (the mesh reply's mesh_only_label, else MESH_ONLY_LABEL) and where it is
+   * anchored — the centre of its box as drawn. A removed copy has none. */
+  Studio.prototype.meshOnlyTags = function () {
+    var text = this._meshOnlyLabel || MESH_ONLY_LABEL, out = [];
+    (this.batches || []).forEach(function (b) {
+      if (!b.meshOnly) return;
+      for (var i = 0; i < b.n; i++) {
+        if (b.removed[i]) continue;
+        var s = b.specs[i] || {};
+        out.push({ id: b.ids[i], name: s.name || b.ids[i], text: text, ghost: !!b.ghost,
+                   at: [b.centre[i * 3], b.centre[i * 3 + 1], b.centre[i * 3 + 2]] });
+      }
+    });
+    return out;
   };
 
   /* _spreadLabels pushes overlapping labels apart, downward.

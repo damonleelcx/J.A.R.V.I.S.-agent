@@ -68,7 +68,7 @@ type builtSheet struct {
 	// FeatureFailures and FeatureReductions: see Built.
 	FeatureFailures   []string
 	FeatureReductions []string
-	MeshOnly      []string
+	MeshOnly          []string
 	// Parts is what was drawn, part by part, so a sub-assembly can be drawn on
 	// its own from the same build instead of a second one (Phase 5, stage V4).
 	Parts []geometry.RenderPart

@@ -42,9 +42,9 @@ import (
 //
 // # What it deliberately does not do
 //
-// Stations are straight-sided polygons with rounded corners. Curved outline
-// segments are being added on branch looks/spline-outlines; see stationCorner for the
-// one place a bulged station drops in. A fillet FEATURE on the lofted body was
+// Stations are polygons with rounded roof corners and flanks bowed as exact circular
+// arcs (a "via" on the outline, looks/spline-outlines), flaring over the wheels; see
+// stationCorner and carFlankBulge. They are not splines. A fillet FEATURE on the lofted body was
 // measured failing in OCCT (build123d 0.11.1) at 5 mm and at 15 mm, before and
 // after the arches were cut, on this body (the 30 mm attempt did not finish within
 // the spike's 900 s; docs/spikes/2026-09-18-car-template) — so the body's edges are
@@ -470,18 +470,21 @@ func balanced(s string) bool {
 // stationCorner is one corner of a station's section, and the edge that ARRIVES
 // at it from the corner before.
 //
-// # Where a bulged station drops in
+// # Bulged stations (looks integration, 2026-09-19)
 //
-// Bulge is how far that arriving edge bows outward, as a share of its chord. It is
-// zero everywhere today and carStationProfile refuses anything else, because the
-// outline vocabulary has only straight edges and circular arcs through a point,
-// and the curved segments a flowing fender wants are being added on branch
-// looks/spline-outlines. When they land, carStationProfile is the ONE function
-// that changes: a non-zero Bulge becomes that branch's curved segment on the
-// Point it writes (with its control point bound to the same parameters as the
-// corners), and the station list below sets Bulge on the edges over the wheels.
-// Nothing else — the loft, the cuts, the fences — learns anything, because a
-// station is still a "section" part with a profile.
+// Bulge is how far that arriving edge bows OUTWARD, as a share of its chord: the
+// edge becomes the exact circular arc through its two ends and a through-point (a
+// "via", the outline vocabulary of looks/spline-outlines) that sits Bulge chords out
+// from the chord's middle, square to it. The outline runs counter-clockwise, so
+// "outward" is the chord turned a quarter clockwise. The via is written as an
+// expression over the same parameters as the corners, so a respec moves it with
+// them; Bulge itself is a number, like a station's WidthFrac. An arc, not a spline,
+// because an arc is exact in OCCT, in STEP, in Go's measurement and in the browser
+// (curve_guide.go says why).
+//
+// Where an arc meets a corner the corner is left sharp — the outline vocabulary
+// ignores a radius there and reports it — so carStationProfile writes no radius on
+// either end of a bowed edge rather than one that would be ignored.
 type stationCorner struct {
 	X, Y  ex
 	Bulge float64
@@ -532,20 +535,126 @@ func sideView(at float64, cs, cl, nose, belt, tail ex) carStationShape {
 	return carStationShape{Deck: deck, Cabin: in.times(out), WidthFrac: width}
 }
 
-// carStationProfile writes a station's corners as the outline a "section" part
-// carries, every coordinate and corner radius bound to its expression.
-func carStationProfile(corners []stationCorner, radius ex) ([]Point, error) {
-	out := make([]Point, 0, len(corners))
-	for i, c := range corners {
-		if c.Bulge != 0 {
-			return nil, fmt.Errorf("station corner %d has a bulge, which needs the curved outline segments "+
-				"of looks/spline-outlines; until they land a station is straight-sided", i+1)
+// carFenderFlare is how far past its station's half width a flank reaches at the
+// middle of a wheel, as a share of that half width; it falls off as a Gaussian
+// carFenderReach of the car's length either side of each axle. FORGE's own numbers
+// (not from the cited cars): enough to read as a fender, and never past the width
+// the car was asked to be.
+const (
+	carFenderFlare = 0.025
+	carFenderReach = 0.07
+)
+
+// carFlankBulge is the Bulge (share of chord) that bows the flank from (x0, y0) to
+// (x1, y1) — a chord running up the car's right side — so that the ARC's outermost
+// point reaches x = target. Found by bisection on the arc itself, sampled between its
+// ends through its via: a tilted chord's arc reaches past its via, and the circle's
+// own outermost point may lie off the arc. Rounded to 1e-4, so the expression it is
+// written into reads as a plain decimal.
+func carFlankBulge(x0, y0, x1, y1, target float64) float64 {
+	lo, hi := 0.0, 1.0
+	if arcReachX(x0, y0, x1, y1, hi) < target {
+		return hi
+	}
+	for i := 0; i < 50; i++ {
+		mid := (lo + hi) / 2
+		if arcReachX(x0, y0, x1, y1, mid) < target {
+			lo = mid
+		} else {
+			hi = mid
 		}
+	}
+	return math.Round(hi*1e4) / 1e4
+}
+
+// arcReachX is the largest x on the arc from (x0, y0) to (x1, y1) bowed by b chords
+// to the right of its direction of travel.
+func arcReachX(x0, y0, x1, y1, b float64) float64 {
+	dx, dy := x1-x0, y1-y0
+	return arcThroughReachX(x0, y0, (x0+x1)/2+b*dy, (y0+y1)/2-b*dx, x1, y1)
+}
+
+// arcThroughReachX is the largest x on the arc from (x0, y0) through (mx, my) to
+// (x1, y1): what a station's bowed flank reaches, read off its outline.
+func arcThroughReachX(x0, y0, mx, my, x1, y1 float64) float64 {
+	cx, cy, r, ok := circleThrough(x0, y0, mx, my, x1, y1)
+	if !ok {
+		return math.Max(x0, x1)
+	}
+	a0, am, a1 := math.Atan2(y0-cy, x0-cx), math.Atan2(my-cy, mx-cx), math.Atan2(y1-cy, x1-cx)
+	// The sweep from a0 to a1 that passes through am.
+	norm := func(a float64) float64 {
+		for a < 0 {
+			a += 2 * math.Pi
+		}
+		for a >= 2*math.Pi {
+			a -= 2 * math.Pi
+		}
+		return a
+	}
+	sweep, toMid := norm(a1-a0), norm(am-a0)
+	if toMid > sweep {
+		sweep -= 2 * math.Pi
+	}
+	best := math.Max(x0, x1)
+	for i := 0; i <= 256; i++ {
+		best = math.Max(best, cx+r*math.Cos(a0+sweep*float64(i)/256))
+	}
+	return best
+}
+
+// circleThrough is the circle through three points, or ok=false when they are in a
+// line.
+func circleThrough(ax, ay, bx, by, cx, cy float64) (x, y, r float64, ok bool) {
+	d := 2 * (ax*(by-cy) + bx*(cy-ay) + cx*(ay-by))
+	if math.Abs(d) < 1e-12 {
+		return 0, 0, 0, false
+	}
+	a2, b2, c2 := ax*ax+ay*ay, bx*bx+by*by, cx*cx+cy*cy
+	x = (a2*(by-cy) + b2*(cy-ay) + c2*(ay-by)) / d
+	y = (a2*(cx-bx) + b2*(ax-cx) + c2*(bx-ax)) / d
+	return x, y, math.Hypot(ax-x, ay-y), true
+}
+
+// carStationProfile writes a station's corners as the outline a "section" part
+// carries, every coordinate and corner radius bound to its expression, and every
+// bulged edge as the via that bows it (see stationCorner).
+func carStationProfile(corners []stationCorner, radius ex) ([]Point, error) {
+	n := len(corners)
+	out := make([]Point, 0, n)
+	for _, c := range corners {
 		out = append(out, Point{X: c.X.v, Y: c.Y.v, XFrom: c.X.s, YFrom: c.Y.s,
 			Radius: radius.v, RadiusFrom: radius.s})
 	}
+	for i, c := range corners {
+		if c.Bulge == 0 {
+			continue
+		}
+		if c.Bulge < 0 || n < 3 {
+			return nil, fmt.Errorf("station corner %d has a bulge of %g; a flank bows outward, by a "+
+				"positive share of its chord", i+1, c.Bulge)
+		}
+		prev := (i + n - 1) % n
+		a := corners[prev]
+		// The middle of the chord, then Bulge chords out: the chord (dx, dy) turned a
+		// quarter clockwise is (dy, -dx), outward for a counter-clockwise outline.
+		dx, dy := c.X.minus(a.X), c.Y.minus(a.Y)
+		k := ex{c.Bulge, strconv.FormatFloat(c.Bulge, 'f', -1, 64)}
+		vx := a.X.plus(c.X).over(2).plus(dy.times(k))
+		vy := a.Y.plus(c.Y).over(2).minus(dx.times(k))
+		out[i].Via = &Point{X: vx.v, Y: vy.v, XFrom: vx.s, YFrom: vy.s}
+		for _, k := range []int{i, prev} {
+			out[k].Radius, out[k].RadiusFrom = 0, ""
+		}
+	}
 	return out, nil
 }
+
+// carSectionProblems holds a car's station outlines to every outline rule. A
+// variable only so a test can stand in a section the rules refuse: no car inside the
+// template's ranges produces one any more (TestCar_AnEdgeRadiusTheSectionsCannotCarry-
+// IsRefusedByName says both).
+var carSectionProblems = func(sections Document) []Problem { return sections.ProfileProblems() }
 
 // carTree is a car written out: what it adds to the document.
 type carTree struct {
@@ -616,6 +725,8 @@ func buildCar(p Part, r carReading, unit string) (carTree, error) {
 	rear := WB.over(2).plus(RO).neg()
 	archR := D.over(2).plus(AC)
 	radius := P("edge_radius").times(H)
+	// The axles as shares of the length from the nose, for the fender flare.
+	axles := []float64{FO.v / L.v, (FO.v + WB.v) / L.v}
 
 	id := func(suffix string) string { return base + "-" + suffix }
 	pos := func(x, y, z ex) ([]float64, map[string]string) {
@@ -659,12 +770,25 @@ func buildCar(p Part, r carReading, unit string) (carTree, error) {
 			"the height of this station's shoulder: just under the deck, or the beltline in the cabin")
 		rw := derive(st+"roof", hw.times(lit(0.6).plus(P("roof_width").minus(lit(0.6)).times(cab))),
 			"half this station's top: a crowned deck, widening to the roof in the cabin")
-		ys := derive(st+"side", RH.plus(yb.minus(RH).scale(0.35)), "the height of this station's widest point")
+		// Each flank is ONE exact arc from the sill to the shoulder (looks integration,
+		// 2026-09-19). It replaces the corner the station had at its widest point, so
+		// the sides are round rather than creased, and it bows out to
+		// (1 - carFenderFlare) of the station's half width between the wheels and to
+		// the whole half width over them: a fender, and never wider than the car was
+		// asked to be (the arch cutters reach W/2 + arch_clearance, so the arches still
+		// cut clean through it).
+		flare := 0.0
+		for _, ax := range axles {
+			u := (at - ax) / carFenderReach
+			flare = math.Max(flare, carFenderFlare*math.Exp(-u*u))
+		}
+		reach := hw.v * (1 - carFenderFlare + flare)
+		bulge := carFlankBulge(hw.v*0.85, RH.v, hw.v*0.955, yb.v, reach)
 		corners := []stationCorner{
-			{X: hw.scale(0.85).neg(), Y: RH}, {X: hw.scale(0.85), Y: RH},
-			{X: hw, Y: ys}, {X: hw.scale(0.97), Y: yb},
+			{X: hw.scale(0.85).neg(), Y: RH, Bulge: bulge}, {X: hw.scale(0.85), Y: RH},
+			{X: hw.scale(0.955), Y: yb, Bulge: bulge},
 			{X: rw, Y: top}, {X: rw.neg(), Y: top},
-			{X: hw.scale(0.97).neg(), Y: yb}, {X: hw.neg(), Y: ys},
+			{X: hw.scale(0.955).neg(), Y: yb},
 		}
 		profile, err := carStationProfile(corners, radius)
 		if err != nil {
@@ -868,16 +992,20 @@ func ExpandTemplates(d *Document) []Problem {
 			return carTree{}, false
 		}
 		// The sections' outlines are held to every outline rule before they are
-		// written — a corner radius that does not fit a station is refused here by
-		// the number that controls it, not left as a body missing from the model.
+		// written — a corner radius or a bowed flank that does not fit a station is
+		// refused here, by the number that controls the rounding, not left as a body
+		// missing from the model. Since the flanks became arcs (2026-09-19) no car
+		// inside the template's ranges trips this (the roof corners are the only
+		// rounded ones, and they turn little); it stays as the net under both.
 		sections := Document{Units: d.Units, Parts: tree.Definitions,
 			Parameters: append(append([]Parameter(nil), d.Parameters...), tree.Parameters...),
 			Derived:    append(append([]Derived(nil), d.Derived...), tree.Derived...)}
-		for _, sp := range sections.ProfileProblems() {
+		for _, sp := range carSectionProblems(sections) {
 			if sp.Severity == Error {
 				problems = append(problems, Problem{Severity: Error, Name: p.Label(), Detail: fmt.Sprintf(
-					"has an edge_radius of %g (a share of its height), and its body sections cannot carry "+
-						"corners that round: %s %s. Use a smaller edge_radius", r.Spec.EdgeRadius, sp.Name, sp.Detail)})
+					"has an edge_radius of %g (a share of its height), and its body sections cannot be drawn "+
+						"with corners that round and flanks that bow: %s %s. Use a smaller edge_radius",
+					r.Spec.EdgeRadius, sp.Name, sp.Detail)})
 				return carTree{}, false
 			}
 		}

@@ -5302,7 +5302,7 @@ drill "a car a tree places is not written out" internal/domain/geometry/car.go \
   ./internal/domain/geometry 'TestCar_ACarDefinitionPlacedByATreeIsWrittenOutInPlace'
 
 drill "a corner radius the sections cannot carry is written out anyway" internal/domain/geometry/car.go \
-  's = s.replace("for _, sp := range sections.ProfileProblems() {", "for _, sp := range []Problem(nil) {", 1)' \
+  's = s.replace("for _, sp := range carSectionProblems(sections) {", "for _, sp := range []Problem(nil) {", 1)' \
   ./internal/domain/geometry 'TestCar_AnEdgeRadiusTheSectionsCannotCarryIsRefusedByName'
 
 drill "the wheel nuts are not fused to the rim" internal/domain/geometry/car.go \
@@ -5616,6 +5616,79 @@ drill "the occlusion shader does not compile" internal/httpapi/assets/forge3d.js
 drill "a live turn keeps its primitives when its variant is saved" internal/httpapi/assets/workbench.js \
   's = s.replace("            refineWithBuiltSolid(ev.variant.version_id, state.prototype);", "            void 0;", 1)' \
   ./internal/httpapi 'TestWorkbenchRefinesALiveTurnWithTheKernelMesh'
+
+echo
+
+echo "Looks integration, 2026-09-19: mesh-only parts and kernel normals on the stage, bowed car stations, exporter winding"
+# Follow-ups on looks/integration (PRs 154-158 merged). forge3d.js draws a declared
+# mesh-only part translucent in its own tint and material with an in-scene tag, and a
+# ghost box when no kernel answered; it shades a kernel mesh with the kernel's own
+# normals; the workbench says which rounds the kernel built smaller; the car's stations
+# bow each flank as one exact via arc, flaring over the wheels inside the car's width;
+# and the Go exporter's files are wound outward (checked, not changed).
+drill "the exporter keeps a facet wound against its normal" internal/domain/geometry/mesh.go \
+  's = s.replace("return append(out, orient(t))", "return append(out, t)", 1)' \
+  ./internal/domain/geometry 'TestExport_EveryPrimitiveIsWoundOutwardInTheFile'
+
+drill "a car station is straight-sided again" internal/domain/geometry/car.go \
+  's = s.replace("out[i].Via = &Point{X: vx.v, Y: vy.v, XFrom: vx.s, YFrom: vy.s}", "_, _ = vx, vy", 1)' \
+  ./internal/domain/geometry 'TestCar_TheFlanksAreExactArcsThatFlareOverTheWheels'
+
+drill "the fender does not flare over the wheels" internal/domain/geometry/car.go \
+  's = s.replace("flare = math.Max(flare, carFenderFlare*math.Exp(-u*u))", "flare = math.Max(flare, 0*u)", 1)' \
+  ./internal/domain/geometry 'TestCar_TheFlanksAreExactArcsThatFlareOverTheWheels'
+
+drill "a flank bows past the car's width" internal/domain/geometry/car.go \
+  's = s.replace("reach := hw.v * (1 - carFenderFlare + flare)", "reach := hw.v * (1 + flare)", 1)' \
+  ./internal/domain/geometry 'TestCar_TheFlanksAreExactArcsThatFlareOverTheWheels'
+
+drill "the renderer ignores the kernel's normals" internal/httpapi/assets/forge3d.js \
+  's = s.replace("if (given && given.length === positions.length && positions.length > 0) {", "if (false) {", 1)' \
+  ./internal/httpapi 'TestRendererShadesAKernelMeshWithItsOwnNormals'
+
+drill "the renderer trusts normals of the wrong count" internal/httpapi/assets/forge3d.js \
+  's = s.replace("if (given && given.length === positions.length && positions.length > 0) {", "if (given && given.length > 0) {", 1)' \
+  ./internal/httpapi 'TestRendererShadesAKernelMeshWithItsOwnNormals'
+
+drill "the kernel's normals are not renormalised" internal/httpapi/assets/forge3d.js \
+  's = s.replace("own[g] = given[g] / gl0; own[g + 1] = given[g + 1] / gl0; own[g + 2] = given[g + 2] / gl0;", "own[g] = given[g]; own[g + 1] = given[g + 1]; own[g + 2] = given[g + 2];", 1)' \
+  ./internal/httpapi 'TestRendererShadesAKernelMeshWithItsOwnNormals'
+
+drill "a mesh-only part is drawn as a solid" internal/httpapi/assets/forge3d.js \
+  's = s.replace("var meshOnly = isMeshOnly(part, mesh);", "var meshOnly = false;", 1)' \
+  ./internal/httpapi 'TestRendererDrawsMeshOnlyPartsAsMeshOnly'
+
+drill "a mesh-only surface is drawn opaque" internal/httpapi/assets/forge3d.js \
+  's = s.replace("b.opacity[i] = plan.meshOnly ? Math.min(", "b.opacity[i] = false ? Math.min(", 1)' \
+  ./internal/httpapi 'TestRendererDrawsMeshOnlyPartsAsMeshOnly'
+
+drill "a mesh-only part keeps the solid's colour" internal/httpapi/assets/forge3d.js \
+  's = s.replace("(b.meshOnly ? MESH_ONLY_TINT : (b.specs[i].color || g.part))", "(b.specs[i].color || g.part)", 1)' \
+  ./internal/httpapi 'TestRendererDrawsMeshOnlyPartsAsMeshOnly'
+
+drill "a lattice with no kernel is drawn as a solid box" internal/httpapi/assets/forge3d.js \
+  "s = s.replace(\"return MESH_ONLY_SHAPES.indexOf(String((part && part.shape) || '').trim().toLowerCase()) >= 0;\", \"return false;\", 1)" \
+  ./internal/httpapi 'TestRendererDrawsMeshOnlyPartsAsMeshOnly'
+
+drill "the mesh-only tag is switched off with the overlays" internal/httpapi/assets/forge3d.js \
+  's = s.replace("var tags = this.meshOnlyTags();", "var tags = this.showOverlays ? this.meshOnlyTags() : [];", 1)' \
+  ./internal/httpapi 'TestRendererDrawsMeshOnlyPartsAsMeshOnly'
+
+drill "the renderer spells the mesh-only label its own way" internal/httpapi/assets/forge3d.js \
+  "s = s.replace(\"var MESH_ONLY_LABEL = 'mesh-only - not manufacturable';\", \"var MESH_ONLY_LABEL = 'decorative';\", 1)" \
+  ./internal/httpapi 'TestRendererSpellsMeshOnlyAsGeometryDoes'
+
+drill "the banner does not count the rounds built smaller" internal/httpapi/assets/workbench.js \
+  "s = s.replace(\"(reduced.length ? ' <span class=\\\"prov-reduced\\\" data-reduced>'\", \"(false ? ' <span class=\\\"prov-reduced\\\" data-reduced>'\", 1)" \
+  ./internal/httpapi 'TestWorkbenchSaysWhichRoundsTheKernelBuiltSmaller'
+
+drill "the workbench drops the kernel's reductions" internal/httpapi/assets/workbench.js \
+  's = s.replace("          reductions: b.feature_reductions || []\n        };", "          reductions: []\n        };", 1)' \
+  ./internal/httpapi 'TestWorkbenchSaysWhichRoundsTheKernelBuiltSmaller'
+
+drill "the export panel forgets the rounds built smaller" internal/httpapi/assets/workbench.js \
+  's = s.replace("var reductions = exp.feature_reductions || [];", "var reductions = [];", 1)' \
+  ./internal/httpapi 'TestWorkbenchSaysWhichRoundsTheKernelBuiltSmaller'
 
 echo
 

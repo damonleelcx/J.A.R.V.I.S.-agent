@@ -37,3 +37,15 @@ enclose a positive volume and no triangle is wound against its normal. Drills: "
 "counter-clockwise from outside" — found by reading, not measured: it is the order proven inward in the browser. An exported STL carries explicit outward normals, so most viewers are unaffected, but
 a tool that trusts winding (a slicer computing volume, a mesh repair) sees it inside out. That package is outside this
 stage; it is reported, not changed.
+
+## Checked 2026-09-19: the Go exporter was NOT inside out (looks/integration)
+
+Measured on the files, not read off `cylinder()`. The order above is written, but every facet
+goes through `appendNonDegenerate`, which calls `orient()`: a facet whose winding disagrees with
+its stated outward normal has two corners swapped before it is kept. So every STL and OBJ facet is
+wound outward. `TestExport_EveryPrimitiveIsWoundOutwardInTheFile` (geometry) parses both files for a
+cylinder (turned), a tapered cylinder, a cone, a sphere, a turned box and a mirrored cylinder, and
+requires every facet's `(B-A)x(C-A)` to point away from its part's centre and to agree with the
+normal the file states. It passes on main's code; with `orient()` bypassed it fails (drill "the
+exporter keeps a facet wound against its normal"). Nothing in `mesh.go` was changed. The misleading
+order in `cylinder()` is left as it is, because `orient()` is the one place winding is decided.

@@ -4,9 +4,8 @@
     {
       "words": ["flowing fender", "flowing", "sculpted", "organic"],
       "operation": "loft",
-      "meaning": "the body is a SMOOTH loft through its stations (never ruled), with softer section corners",
-      "set": [{"key": "edge_radius", "band": [0.035, 0.05]}],
-      "later": "bulged stations over the wheels once curved outline segments land (looks/spline-outlines): the station builder's bulge slot"
+      "meaning": "the body is a SMOOTH loft through its stations (never ruled), with softer section corners; its flanks are exact arcs that already flare over the wheels",
+      "set": [{"key": "edge_radius", "band": [0.035, 0.05]}]
     },
     {
       "words": ["aggressive stance", "planted", "wide stance", "muscular"],

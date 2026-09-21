@@ -241,6 +241,13 @@ func TestCarProportions_ATyreDesignationReadsAsItsDiameter(t *testing.T) {
 
 // A corner radius the body's sections cannot carry is refused by the number that
 // controls it, before a body with no outline is written.
+//
+// Changed 2026-09-19 (looks integration, follow-up 3): this SUV — edge_radius 0.08 on
+// a 0.2 nose — was the fixture that tripped the refusal while every station corner was
+// rounded. The flanks are exact arcs now and only the roof corners round, so it builds;
+// no car inside the template's ranges trips the check (probed over every fixture,
+// nose, roof width, beltline and edge_radius at the ends of their ranges). The
+// refusal stays as a net, so it is driven here by a section the outline rules refuse.
 func TestCar_AnEdgeRadiusTheSectionsCannotCarryIsRefusedByName(t *testing.T) {
 	size := map[string]float64{}
 	for k, v := range CarFixturesForTest()["short-tall-suv"] {
@@ -250,8 +257,20 @@ func TestCar_AnEdgeRadiusTheSectionsCannotCarryIsRefusedByName(t *testing.T) {
 	size["nose_height"] = 0.2
 	size["ride_height"] = 150
 	d := Document{Name: "car", Units: "mm", Parts: []Part{carPart(size)}}
+	if problems := ExpandTemplates(&d); anyError(problems) || hasCar(d.Parts) {
+		t.Fatalf("the car the arcs now carry was refused: %v", problems)
+	}
+
+	saved := carSectionProblems
+	defer func() { carSectionProblems = saved }()
+	carSectionProblems = func(sections Document) []Problem {
+		return append(sections.ProfileProblems(), Problem{Severity: Error, Name: "Body station 0",
+			Detail: "corner 4's radius does not fit between its edges"})
+	}
+	d = Document{Name: "car", Units: "mm", Parts: []Part{carPart(size)}}
 	problems := ExpandTemplates(&d)
-	if !anyError(problems) || !strings.Contains(problems[len(problems)-1].Detail, "edge_radius") {
+	if !anyError(problems) || !strings.Contains(problems[len(problems)-1].Detail, "edge_radius") ||
+		!strings.Contains(problems[len(problems)-1].Detail, "Body station 0") {
 		t.Fatalf("problems %v", problems)
 	}
 	if !hasCar(d.Parts) || len(d.Definitions) != 0 {

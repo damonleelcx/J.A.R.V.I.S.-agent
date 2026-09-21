@@ -1141,12 +1141,19 @@
         /* The label BEFORE the link: the same words the download carries in
          * X-Forge-Export-Label (geometry_exports.go exportJobLabel). */
         var skipped = exp.skipped || [], failures = exp.feature_failures || [];
+        var reductions = exp.feature_reductions || [];
         html += '<b>This STEP file is an unverified proposal.</b>';
         if (skipped.length) {
           html += section(skipped.length + ' part(s) could not be built and are NOT in this file', skipped);
         }
         if (failures.length) {
           html += section(failures.length + ' feature(s) could NOT be applied, so this shape is not what the design describes', failures);
+        }
+        /* A round the kernel built smaller than asked, or on only some of its edges
+         * (looks designed B1, PR 158): applied, and still not the design as written —
+         * the same clause the download's X-Forge-Export-Label carries (reducedLabel). */
+        if (reductions.length) {
+          html += section(reductions.length + ' fillet(s) or chamfer(s) were built SMALLER than the design says or on only some of their edges', reductions);
         }
         html += '<div>B-Rep, not tessellated. Nothing about this shape has been analysed or checked, and ' +
           '<b>no interference check ran for this file</b>.</div>' +
@@ -1710,7 +1717,12 @@
           /* The mesh-only parts the kernel named (geometry/lattice.go), shown under
            * meshOnlyLabel() by renderProvenance. Each one's surface is in b.parts
            * with mesh_only set, for the renderer to label on the stage. */
-          meshOnly: b.mesh_only || []
+          meshOnly: b.mesh_only || [],
+          /* Rounds the kernel built smaller than asked or on only some of their edges
+           * (PR 158's feature_reductions), shown by renderProvenance in the headline
+           * and in the details: a round quietly built at a quarter of its radius is a
+           * part that is not the one described. */
+          reductions: b.feature_reductions || []
         };
         studio.load(proto, b);
         studio.setOverlays(proto.overlays || [], state.measured);
@@ -1734,7 +1746,8 @@
       .then(function (b) {
         if (state.prototype !== proto) return;
         state.subtrees[path] = { source: b.source, note: b.source_note, occurrences: b.occurrences,
-          outside: (b.features_outside || []).concat(b.skipped || [], b.feature_failures || []) };
+          outside: (b.features_outside || []).concat(b.skipped || [], b.feature_failures || []),
+          reductions: b.feature_reductions || [] };
         studio.addSubtree(path, b);
         renderProvenance();
       })
@@ -2311,6 +2324,20 @@
             '</li>';
         }).join('') + '</ul></div>';
     }
+    /* Every round the kernel built smaller than asked, or on only some of its edges,
+     * in what is on the stage: the whole design's mesh reply and each subtree's
+     * (feature_reductions, PR 158), named once each. On the headline as a count and
+     * here by name: a round built at a quarter of its radius is not the part described. */
+    var reduced = [];
+    var addReduced = function (n) { if (n && reduced.indexOf(n) < 0) reduced.push(n); };
+    ((state.builtSolid && state.builtSolid.reductions) || []).forEach(addReduced);
+    Object.keys(state.subtrees || {}).forEach(function (path) {
+      ((state.subtrees[path] && state.subtrees[path].reductions) || []).forEach(addReduced);
+    });
+    if (reduced.length) {
+      html += '<div style="margin-top:7px"><b>Built smaller than the design says:</b><ul>' +
+        reduced.map(function (n) { return '<li>' + esc(n) + '</li>'; }).join('') + '</ul></div>';
+    }
     if (state.builtSolid && state.builtSolid.notes && state.builtSolid.notes.length) {
       html += '<div style="margin-top:7px"><b>Not in the built solid:</b><ul>' +
         state.builtSolid.notes.map(function (n) { return '<li>' + esc(n) + '</li>'; }).join('') +
@@ -2368,6 +2395,8 @@
     el.innerHTML = '<div class="prov-head"><b>This is a proposal, not a verified design.</b>' +
       (meshOnly.length ? ' <span class="prov-mesh-only" data-mesh-only>' + esc(meshOnlyLabel()) + ': ' +
         esc(meshOnly.join(', ')) + '</span>' : '') +
+      (reduced.length ? ' <span class="prov-reduced" data-reduced>' + reduced.length +
+        ' round(s) built smaller than asked</span>' : '') +
       '<button type="button" class="ghost prov-toggle" data-prov-toggle aria-controls="provenance-details" ' +
       'aria-expanded="' + open + '">' + (open ? 'Hide details' : 'Details (' + notes + ')') + '</button></div>' +
       '<div class="prov-details' + (open ? '' : ' hidden') + '" id="provenance-details">' + html + '</div>';
