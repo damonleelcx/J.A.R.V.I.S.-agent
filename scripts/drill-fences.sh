@@ -5702,7 +5702,7 @@ drill "the job label drops the mesh-only parts" internal/httpapi/geometry_export
   ./internal/httpapi 'TestExportLabel_BothDownloadsSayTheSameThingWasLeftOut'
 
 drill "the export label does not name the mesh-only parts" internal/httpapi/geometry.go \
-  's = s.replace("len(meshOnly), strings.Join(shown, \", \"), more, geometry.MeshOnlyLabel)", "len(meshOnly), \"\", more, geometry.MeshOnlyLabel)", 1)' \
+  's = s.replace("len(meshOnly), namedFew(meshOnly, \", \"), geometry.MeshOnlyLabel)", "len(meshOnly), \"\", geometry.MeshOnlyLabel)", 1)' \
   ./internal/httpapi 'TestExportLabel_BothDownloadsSayTheSameThingWasLeftOut'
 
 drill "the export status forgets the mesh-only parts" internal/httpapi/geometry_exports.go \
@@ -5712,6 +5712,25 @@ drill "the export status forgets the mesh-only parts" internal/httpapi/geometry_
 drill "the export panel forgets the mesh-only parts" internal/httpapi/assets/workbench.js \
   's = s.replace("var jobMeshOnly = exp.mesh_only || [];", "var jobMeshOnly = [];", 1)' \
   ./internal/httpapi 'TestExportLabel_BothDownloadsSayTheSameThingWasLeftOut'
+
+echo
+
+echo "Both downloads name the parts FORGE could not build, 2026-09-21"
+# geometry/export.go promises the reader that a part the kernel cannot build is
+# named in the X-Forge-Export-Label header. Both labels gave a count and nothing
+# else, so nobody could tell which part to look for. The clause names them now,
+# capped the way the mesh-only clause is.
+drill "the export label counts the parts it could not build instead of naming them" internal/httpapi/geometry.go \
+  's = s.replace("could not be built and are NOT in this file: %s; \",\n\t\t\tlen(skipped), namedFew(skipped, \"; \")) + clauses", "could not be built and are NOT in this file; \",\n\t\t\tlen(skipped)) + clauses", 1)' \
+  ./internal/httpapi 'TestExportLabel_BothDownloadsNameThePartsTheyCouldNotBuild'
+
+drill "the export label names every part it could not build, with no cap" internal/httpapi/geometry.go \
+  's = s.replace("\tconst most = 3", "\tconst most = 99", 1)' \
+  ./internal/httpapi 'TestExportLabel_BothDownloadsNameThePartsTheyCouldNotBuild'
+
+drill "the job label drops the parts it could not build" internal/httpapi/geometry_exports.go \
+  's = s.replace("exportLabelClauses(e.MeshOnly, e.Skipped,", "exportLabelClauses(e.MeshOnly, nil,", 1)' \
+  ./internal/httpapi 'TestExportLabel_BothDownloadsNameThePartsTheyCouldNotBuild'
 
 echo
 
