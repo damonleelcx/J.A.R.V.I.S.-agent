@@ -64,6 +64,23 @@ func (d *Document) Faults() []Problem {
 	// A mesh-only lattice whose numbers the kernel cannot build, or past the
 	// triangle budget, is a part NOT in the model (lattice.go).
 	profileProblems = append(profileProblems, allLatticeProblems(d.Parts)...)
+	// A part whose own dimensions collapse it to no volume is a part NOT in the
+	// model, for the same reason an unreadable outline is: the builder refuses it
+	// rather than sending a solid the kernel would agree was empty (degenerate.go,
+	// issue 7). This is the check that hands it to the repair loop.
+	//
+	// BOUND first, into a copy. A radius that follows an expression is whatever
+	// the expression works out to, and "a parameter that failed to resolve, an
+	// expression that evaluated to zero, a unit conversion that collapsed" is
+	// precisely the list of upstream mistakes the issue names. Reading the typed
+	// number instead would miss every one of them. The copy is not optional:
+	// Resolve is pure and Bind is not, and Faults must not rewrite the document
+	// its caller is holding.
+	// Fences: TestFaults_AZeroRadiusPartIsAFault,
+	// TestSolids_ACollapsedDimensionNamesTheExpressionItResolvedFrom.
+	bound := d.clone()
+	bound.bind(false)
+	profileProblems = append(profileProblems, degenerateProblems(bound.Parts)...)
 	for _, p := range append(profileProblems, featureProblems...) {
 		if p.Severity == Error {
 			out = append(out, p)

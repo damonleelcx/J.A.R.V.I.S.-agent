@@ -266,6 +266,17 @@ func solidsAndOperations(d Document, unit Unit) ([]Solid, []Operation, []Problem
 		if retiredNote != "" {
 			inferred = append(inferred, retiredNote)
 		}
+		// A dimension that collapses the solid is refused here, by name, rather
+		// than sent (degenerate.go). OCCT builds a zero-radius cylinder happily
+		// and hands back volume 0, and the file carries it: this is the last
+		// point at which the parameter that collapsed is still in view.
+		// Fence: TestSolids_AZeroRadiusPartIsRefusedByTheNameOfTheDimension.
+		if degenerate := degenerateProblemsFor(p); len(degenerate) > 0 {
+			for _, problem := range degenerate {
+				infer("%s %s, so it is not in this file.", problem.Name, problem.Detail)
+			}
+			continue
+		}
 		switch shape {
 		case "extrusion":
 			pts, ok := profiles[p.ID]

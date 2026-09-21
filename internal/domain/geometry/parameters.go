@@ -294,7 +294,7 @@ func (d *Document) Resolve() Resolution {
 				free = append(free, r)
 			}
 		}
-		if len(free) == 0 {
+		if constantExpression(node) {
 			// The single most important check in this file. A derived value
 			// that reads nothing is a FIXED NUMBER in a field whose entire
 			// purpose is to hold a relationship — which is precisely what broke
@@ -389,6 +389,72 @@ func (d *Document) Resolve() Resolution {
 
 	sortProblems(res.Problems)
 	return res
+}
+
+// constantExpression reports whether an expression names no parameter at all:
+// a FIXED NUMBER in a field whose entire purpose is to hold a relationship.
+//
+// One rule, read twice. Resolve warns from it, and ConstantDerived hands the
+// same entries to the provenance check, so "this is a bare constant" cannot mean
+// one thing in the problems list and another in the banner.
+func constantExpression(node *exprNode) bool {
+	if node == nil {
+		return false
+	}
+	for _, r := range node.References() {
+		if _, isConst := exprConsts[r]; !isConst {
+			return false
+		}
+	}
+	return true
+}
+
+// ConstantDerived is every derived figure written as a bare constant.
+//
+// # Why the provenance check needs this and could not see it
+//
+// The provenance check answers "where did this number come from". It travels
+// along the dependency edges Resolve computes: a derived figure is attributable
+// to whatever its parameters claimed, which is how bolt_pitch = bolt_diagonal /
+// sqrt(2) becomes a NEMA 17 claim. A figure written as a bare constant has NO
+// edges. It depends on nothing, so nothing propagates to it, so the check says
+// nothing about it — and a reader takes the clean result to mean the figures
+// were traced. In the live run of issue 8 that was 2 of 3 derived figures.
+//
+// Silence is indistinguishable from a number the model invented. That is worse
+// than not having the check, because it converts an unknown into a false
+// assurance, so these are now REPORTED as figures with no source.
+//
+// # Why zero is left out
+//
+// A zero is not a recalled figure; it is an origin. parameters.go already
+// records what happened when the adjacent warning did not make that distinction:
+// on a live run it fired twice on `motor_centre_x = 0`, a centre that is
+// CORRECT not to follow anything. A warning that fires on correct input is a
+// warning people stop reading, and this one is in the banner that exists to make
+// one real finding visible.
+//
+// Ordinary arithmetic over the parameters is not touched: `plate_size / 2` names
+// a parameter and is traced, which is the whole point of the edges.
+func (d *Document) ConstantDerived() []Value {
+	if d == nil || len(d.Derived) == 0 {
+		return nil
+	}
+	res := d.Resolve()
+	var out []Value
+	for _, dv := range d.Derived {
+		name := strings.ToLower(strings.TrimSpace(dv.Name))
+		v, ok := res.Values[name]
+		if !ok || v.Number == 0 {
+			continue
+		}
+		node, err := parseExpression(dv.Expression)
+		if err != nil || !constantExpression(node) {
+			continue
+		}
+		out = append(out, v)
+	}
+	return out
 }
 
 func plural(n int) string {
