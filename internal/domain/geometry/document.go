@@ -82,6 +82,11 @@ type Document struct {
 	Definitions []Part     `json:"definitions,omitempty"`
 	Assemblies  []Assembly `json:"assemblies,omitempty"`
 	Root        string     `json:"root,omitempty"`
+	// Sections are plane cuts somebody named, for the section properties the
+	// kernel measures on them (section.go). Optional, and they are the closest
+	// thing to a strength number FORGE will produce: area, centroid and second
+	// moments of area, which are geometry, never a stress. addresses issue 6.
+	Sections []Section `json:"sections,omitempty"`
 }
 
 // Part is one solid.
@@ -200,6 +205,15 @@ type Part struct {
 	// which is different from "unspecified material" and is left as nothing
 	// rather than filled in.
 	Material *Material `json:"material,omitempty"`
+	// Process is HOW this part is made — "milling-3-axis", "injection-moulding",
+	// "printing-fdm", "printing-slm" — and the only thing that turns the
+	// manufacturability check on for it (manufacturability.go). Optional, and
+	// empty means nobody said: the part is then checked against nothing and named
+	// as unchecked, because the same 0.9 mm wall is fine milled, marginal moulded
+	// and impossible in metal powder. Checked against geometry.Profiles, the same
+	// table the contract is written from and the findings are judged by.
+	// addresses issue 6.
+	Process string `json:"process,omitempty"`
 }
 
 // Label returns the part's human name, falling back to its id.
