@@ -1,0 +1,241 @@
+{
+  "name": "L-mounting bracket",
+  "units": "mm",
+  "parts": [
+    {
+      "id": "bracket-body",
+      "name": "Bracket body",
+      "shape": "extrusion",
+      "size": {
+        "depth": 6
+      },
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "profile": [
+        {
+          "x": 0,
+          "y": 0
+        },
+        {
+          "x": 80,
+          "y": 0
+        },
+        {
+          "x": 80,
+          "y": 6
+        },
+        {
+          "x": 6,
+          "y": 6
+        },
+        {
+          "x": 6,
+          "y": 120
+        },
+        {
+          "x": 0,
+          "y": 120
+        }
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "color": "#b8bcc4",
+      "opacity": 1,
+      "note": "Main L-shaped structural element",
+      "material": {
+        "name": "steel",
+        "finish": "metal",
+        "how": "assumed",
+        "density": 7850
+      }
+    },
+    {
+      "id": "hole-v1",
+      "name": "Vertical hole 1",
+      "shape": "cylinder",
+      "size": {
+        "height": 6,
+        "radius": 3.2
+      },
+      "position": [
+        3,
+        110,
+        3
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "color": "#333333",
+      "opacity": 1,
+      "note": "Upper vertical mounting hole"
+    },
+    {
+      "id": "hole-v2",
+      "name": "Vertical hole 2",
+      "shape": "cylinder",
+      "size": {
+        "height": 6,
+        "radius": 3.2
+      },
+      "position": [
+        3,
+        10,
+        3
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "color": "#333333",
+      "opacity": 1,
+      "note": "Lower vertical mounting hole"
+    },
+    {
+      "id": "hole-h1",
+      "name": "Horizontal hole 1",
+      "shape": "cylinder",
+      "size": {
+        "height": 6,
+        "radius": 3.2
+      },
+      "position": [
+        70,
+        3,
+        3
+      ],
+      "rotation": [
+        90,
+        0,
+        0
+      ],
+      "color": "#333333",
+      "opacity": 1,
+      "note": "Outer horizontal mounting hole"
+    },
+    {
+      "id": "hole-h2",
+      "name": "Horizontal hole 2",
+      "shape": "cylinder",
+      "size": {
+        "height": 6,
+        "radius": 3.2
+      },
+      "position": [
+        10,
+        3,
+        3
+      ],
+      "rotation": [
+        90,
+        0,
+        0
+      ],
+      "color": "#333333",
+      "opacity": 1,
+      "note": "Inner horizontal mounting hole"
+    }
+  ],
+  "parameters": [
+    {
+      "name": "vertical_height",
+      "value": 120,
+      "unit": "mm",
+      "how": "chosen"
+    },
+    {
+      "name": "horizontal_depth",
+      "value": 80,
+      "unit": "mm",
+      "how": "chosen"
+    },
+    {
+      "name": "plate_thickness",
+      "value": 6,
+      "unit": "mm",
+      "how": "chosen"
+    },
+    {
+      "name": "hole_diameter",
+      "value": 6.4,
+      "unit": "mm",
+      "how": "standard",
+      "source": "ISO 273 medium fit for M6"
+    },
+    {
+      "name": "edge_margin",
+      "value": 10,
+      "unit": "mm",
+      "how": "chosen"
+    }
+  ],
+  "derived": [
+    {
+      "name": "vertical_hole_y",
+      "expression": "vertical_height - edge_margin",
+      "why": "positions top holes relative to height"
+    },
+    {
+      "name": "horizontal_hole_x",
+      "expression": "horizontal_depth - edge_margin",
+      "why": "positions outer holes relative to depth"
+    }
+  ],
+  "features": [
+    {
+      "id": "cut-v1",
+      "op": "cut",
+      "of": "bracket-body",
+      "with": [
+        "hole-v1"
+      ],
+      "note": "Drills upper vertical hole"
+    },
+    {
+      "id": "cut-v2",
+      "op": "cut",
+      "of": "bracket-body",
+      "with": [
+        "hole-v2"
+      ],
+      "note": "Drills lower vertical hole"
+    },
+    {
+      "id": "cut-h1",
+      "op": "cut",
+      "of": "bracket-body",
+      "with": [
+        "hole-h1"
+      ],
+      "note": "Drills outer horizontal hole"
+    },
+    {
+      "id": "cut-h2",
+      "op": "cut",
+      "of": "bracket-body",
+      "with": [
+        "hole-h2"
+      ],
+      "note": "Drills inner horizontal hole"
+    }
+  ],
+  "assumptions": [
+    "Plate thickness is 6 mm",
+    "Holes are for M6 bolts with 6.4 mm clearance",
+    "Holes are spaced 10 mm from the nearest edges"
+  ],
+  "not_verified": [
+    "No stress analysis performed",
+    "No interference check run",
+    "Material grade is assumed generic steel",
+    "The viewport cannot cut a hole, so material being removed is drawn as a faint gold ghost rather than as a void: Horizontal hole 1 from Bracket body; Horizontal hole 2 from Bracket body; Vertical hole 1 from Bracket body; Vertical hole 2 from Bracket body. The exported file is the one with the hole in it."
+  ]
+}

@@ -1,0 +1,43 @@
+{
+  "id": "bracket",
+  "what": "the same document drawn by the earlier renderer and by this branch's",
+  "verdict": "no difference",
+  "accepted": false,
+  "both_ways_agreed": false,
+  "reason": "the judge answered differently when the two images were swapped, so it read the positions rather than the pictures; that is not a verdict",
+  "tokens": 1619,
+  "check": {
+    "passes": true,
+    "faults": "0→0",
+    "buried_pairs": "0→0",
+    "skipped_parts": "0→0"
+  },
+  "rounds": [
+    {
+      "n": 1,
+      "view": "shaded",
+      "order": "image 1 is the NEW render, image 2 is the OLD one",
+      "images": [
+        "round1-shaded-image1.png",
+        "round1-shaded-image2.png"
+      ],
+      "answer_verbatim": "{\"verdict\": \"image2\", \"why\": \"Image 2 presents a cleaner, unified geometry without the distracting, semi-transparent artifacts visible at the joints in Image 1, making it look more like a coherent object.\"}",
+      "why": "Image 2 presents a cleaner, unified geometry without the distracting, semi-transparent artifacts visible at the joints in Image 1, making it look more like a coherent object.",
+      "said_about_the_new_one": "worse",
+      "tokens": 812
+    },
+    {
+      "n": 2,
+      "view": "shaded",
+      "order": "image 1 is the OLD render, image 2 is the NEW one",
+      "images": [
+        "round2-shaded-image1.png",
+        "round2-shaded-image2.png"
+      ],
+      "answer_verbatim": "{\"verdict\": \"same\", \"why\": \"Both images show the same raw, blocky geometry with sharp square corners and flat shading, lacking the eased edges or unified surfaces of a finished product.\"}",
+      "why": "Both images show the same raw, blocky geometry with sharp square corners and flat shading, lacking the eased edges or unified surfaces of a finished product.",
+      "said_about_the_new_one": "no difference",
+      "tokens": 807
+    }
+  ]
+}

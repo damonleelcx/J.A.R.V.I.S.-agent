@@ -201,6 +201,29 @@ measure-car: ## Measure how far a live car build actually gets (SPENDS REAL TOKE
 	FORGE_CAD_PYTHON="$${FORGE_CAD_PYTHON:-$(CAD_PYTHON)}" \
 	go test -count=1 -v -timeout 60m -run TestLiveCarCeiling ./internal/agent/
 
+.PHONY: looks-benchmark
+looks-benchmark: ## Build, render and judge the fixed looks prompts (SPENDS REAL TOKENS — read the budget note)
+	@# Five fixed prompts, one build each, rendered by this branch's forge3d.js and
+	@# by an earlier one, and scored by the looks judge (internal/looks). The record
+	@# and every picture land in docs/spikes/2026-09-20-looks-benchmark/.
+	@# See internal/agent/looks_benchmark_live_test.go.
+	@#
+	@# ‼️ TWO hard ceilings, both enforced by refusing the call: the run's total and
+	@# one per prompt, so a car that will not settle cannot eat the lever's budget.
+	@# 100k is what damon approved for the whole of stage D (2026-09-20); the default
+	@# below leaves headroom under it. Raise either deliberately, never by habit.
+	@#
+	@# FORGE_LOOKS_BEFORE_RENDERER names the forge3d.js today's pictures are compared
+	@# AGAINST. Without it the prompts are built and rendered but nothing is judged,
+	@# and the record says so. Get one with:
+	@#   git show origin/main:internal/httpapi/assets/forge3d.js > /tmp/before-forge3d.js
+	@test -n "$$FORGE_LLM_API_KEY" || { echo "FORGE_LLM_API_KEY is not set — source .env first"; exit 1; }
+	FORGE_LIVE_LLM_TESTS=1 \
+	FORGE_LOOKS_BENCH_BUDGET="$${FORGE_LOOKS_BENCH_BUDGET:-88000}" \
+	FORGE_LOOKS_BENCH_PER_PROMPT="$${FORGE_LOOKS_BENCH_PER_PROMPT:-17000}" \
+	FORGE_CAD_PYTHON="$${FORGE_CAD_PYTHON:-$(CAD_PYTHON)}" \
+	go test -count=1 -v -timeout 55m -run 'TestLiveLooksBenchmark$$' ./internal/agent/
+
 .PHONY: drill
 test-asr: ## Speech fences against the REAL provider, both directions (costs a fraction of a cent)
 	@# These cannot be faked. The defect they guard — a model dropping decimal

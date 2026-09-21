@@ -1,0 +1,141 @@
+{
+  "started": "2026-09-21T13:36:14Z",
+  "finished": "2026-09-21T13:39:35Z",
+  "total_ceiling": 100000,
+  "per_prompt_ceiling": 24000,
+  "tokens_spent": 4867,
+  "tokens_spent_by_earlier_runs": 91860,
+  "tokens_spent_all_time": 96727,
+  "calls": 6,
+  "calls_refused": 2,
+  "before_renderer": "C:/Users/damon/AppData/Local/Temp/claude/C--Users-damon-Downloads-agents/9c73bcba-7500-4641-9433-f7c8efd05843/scratchpad/d-before-forge3d.js",
+  "vision_model": "qwen3.8-max",
+  "converse_model": "qwen3.7-plus",
+  "prompts": [
+    {
+      "id": "bracket",
+      "asked": "an L-shaped steel mounting bracket about 120 mm by 80 mm with four bolt holes",
+      "built_by_an_earlier_run": true,
+      "parts": 5,
+      "shapes": "cylinder=4 extrusion=1",
+      "faults": 0,
+      "buried_pairs": 0,
+      "buried_counted": true,
+      "skipped_parts": 0,
+      "verdict": "no difference",
+      "accepted": false,
+      "both_ways_agreed": false,
+      "reason": "the judge answered differently when the two images were swapped, so it read the positions rather than the pictures; that is not a verdict",
+      "rounds": 2,
+      "rounds_said": [
+        "shaded/new-first:worse",
+        "shaded/old-first:no difference"
+      ],
+      "why": [
+        "shaded: Image 2 presents a cleaner, unified geometry without the distracting, semi-transparent artifacts visible at the joints in Image 1, making it look more like a coherent object.",
+        "shaded: Both images show the same raw, blocky geometry with sharp square corners and flat shading, lacking the eased edges or unified surfaces of a finished product."
+      ],
+      "build_tokens": 0,
+      "judge_tokens": 1619,
+      "tokens": 1619,
+      "seconds": 72.608944,
+      "note": "the earlier renderer has no surface-normals view, so the judge could ask the shaded pair only; the normals confirmation was not available on this pair"
+    },
+    {
+      "id": "gear",
+      "asked": "a spur gear with 24 teeth, 3 mm module, 12 mm thick, on a hub with a keyed bore",
+      "built_by_an_earlier_run": true,
+      "parts": 3,
+      "shapes": "box=1 cylinder=1 extrusion=1",
+      "faults": 1,
+      "buried_pairs": 1,
+      "buried_counted": true,
+      "skipped_parts": 0,
+      "verdict": "better",
+      "accepted": true,
+      "both_ways_agreed": true,
+      "reason": "the judge preferred the new render both ways round, and no fault, buried pair or skipped part was added",
+      "rounds": 2,
+      "rounds_said": [
+        "shaded/new-first:better",
+        "shaded/old-first:better"
+      ],
+      "why": [
+        "shaded: The first image features softer lighting and smoother shading that gives the object a more solid, manufactured appearance, whereas the second image looks like a raw viewport preview with a prominent grid and flatter lighting.",
+        "shaded: The second image features smoother shading, softer lighting, and a cleaner presentation without the distracting grid, making the object appear more like a polished, finished product."
+      ],
+      "build_tokens": 0,
+      "judge_tokens": 1626,
+      "tokens": 1626,
+      "seconds": 59.3165428,
+      "note": "the earlier renderer has no surface-normals view, so the judge could ask the shaded pair only; the normals confirmation was not available on this pair"
+    },
+    {
+      "id": "car",
+      "asked": "a sports car: a flowing body, a glasshouse and four wheels",
+      "built_by_an_earlier_run": true,
+      "parts": 58,
+      "shapes": "box=1 cylinder=28 extrusion=12 section=17",
+      "faults": 0,
+      "buried_pairs": 0,
+      "buried_counted": true,
+      "skipped_parts": 0,
+      "verdict": "no difference",
+      "accepted": false,
+      "both_ways_agreed": false,
+      "reason": "the judge answered differently when the two images were swapped, so it read the positions rather than the pictures; that is not a verdict",
+      "rounds": 2,
+      "rounds_said": [
+        "shaded/new-first:no difference",
+        "shaded/old-first:better"
+      ],
+      "why": [
+        "shaded: Both images display the exact same blocky, low-fidelity geometry with identical motion blur artifacts and raw edges, differing only in camera distance and lighting color.",
+        "shaded: The second image displays clearer geometry with more distinct lighting and material definition on the wheels and body, making it look less like a raw wireframe preview and more like a rendered object."
+      ],
+      "build_tokens": 0,
+      "judge_tokens": 1622,
+      "tokens": 1622,
+      "seconds": 69.0850826,
+      "note": "the earlier renderer has no surface-normals view, so the judge could ask the shaded pair only; the normals confirmation was not available on this pair"
+    },
+    {
+      "id": "enclosure",
+      "asked": "a sealed aluminium electronics enclosure 160 by 100 by 60 mm with a lid",
+      "built_by_an_earlier_run": false,
+      "parts": 0,
+      "shapes": "",
+      "faults": 0,
+      "buried_pairs": 0,
+      "buried_counted": false,
+      "skipped_parts": 0,
+      "accepted": false,
+      "both_ways_agreed": false,
+      "rounds": 0,
+      "build_tokens": 0,
+      "judge_tokens": 0,
+      "tokens": 0,
+      "seconds": 0.0006834,
+      "note": "the build did not answer: the looks benchmark cannot pay for another call: 96727 of 100000 tokens used all time and 0 of 24000 on \"enclosure\", and a converse call may cost 20000, so no further model call was placed (FORGE_LOOKS_BENCH_BUDGET, FORGE_LOOKS_BENCH_PER_PROMPT)"
+    },
+    {
+      "id": "lever",
+      "asked": "a hand lever with a rounded grip at one end and a forked clevis at the other",
+      "built_by_an_earlier_run": false,
+      "parts": 0,
+      "shapes": "",
+      "faults": 0,
+      "buried_pairs": 0,
+      "buried_counted": false,
+      "skipped_parts": 0,
+      "accepted": false,
+      "both_ways_agreed": false,
+      "rounds": 0,
+      "build_tokens": 0,
+      "judge_tokens": 0,
+      "tokens": 0,
+      "seconds": 0,
+      "note": "the build did not answer: the looks benchmark cannot pay for another call: 96727 of 100000 tokens used all time and 0 of 24000 on \"lever\", and a converse call may cost 20000, so no further model call was placed (FORGE_LOOKS_BENCH_BUDGET, FORGE_LOOKS_BENCH_PER_PROMPT)"
+    }
+  ]
+}
