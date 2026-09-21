@@ -1142,7 +1142,13 @@
          * X-Forge-Export-Label (geometry_exports.go exportJobLabel). */
         var skipped = exp.skipped || [], failures = exp.feature_failures || [];
         var reductions = exp.feature_reductions || [];
+        var jobMeshOnly = exp.mesh_only || [];
         html += '<b>This STEP file is an unverified proposal.</b>';
+        /* A declared mesh-only part is never in a STEP file (E1, PR 156). First,
+         * as in the download's header, and named there too. */
+        if (jobMeshOnly.length) {
+          html += section(jobMeshOnly.length + ' mesh-only part(s) are NOT in this file (' + meshOnlyLabel() + ')', jobMeshOnly);
+        }
         if (skipped.length) {
           html += section(skipped.length + ' part(s) could not be built and are NOT in this file', skipped);
         }
