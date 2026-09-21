@@ -250,6 +250,29 @@ func audioPolicy(transcribing, mediaEnabled bool) string {
 //
 // Enforced at the server (media.SFU.forward drops the packets), not merely
 // reported. A mute that only stops the browser sending is a picture of a mute.
+//
+// # NFR-01, and the ruling on the conflict it creates
+//
+// NFR-01 asks that "mute/stop/end remain available during cloud degradation",
+// and server enforcement is in direct tension with that: if this handler cannot
+// be reached, this mute cannot be applied. The tension is real and the decision
+// taken (docs/spikes/2026-09-20-nfr01-availability/README.md) is to SCOPE
+// rather than to fix. NFR-01's guarantee is met by the single-user controls in
+// assets/voice.js, which contain no request and are fenced as network-free in
+// internal/httpapi/nfr01_degradation_test.go. The multi-party controls — this
+// one and SetTranscribing below — cannot meet it without lying to the other
+// people in the room, so they do not claim to.
+//
+// Keeping the enforcement here is still the right call, because the failure
+// modes are not symmetric. A mute that needs the server is UNAVAILABLE during
+// an outage, which is visible and recoverable. A mute the client applied by
+// itself would be UNRELIABLE, and would look identical whether it worked or
+// not. And during a real outage the SFU is not forwarding the audio either, so
+// the unavailable mute is protecting a conversation nobody is receiving.
+//
+// What NFR-01 does still require of this path is honesty about the refusal:
+// room.js setState reports a rejected change as NOT in force rather than
+// showing it as applied. That is the fenced invariant, not the mute itself.
 func (h *RoomHandlers) SetMediaState(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		StreamID string `json:"stream_id"`

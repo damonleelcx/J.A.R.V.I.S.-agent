@@ -215,6 +215,19 @@ FILES=(
   # Added 2026-09-20 (looks designed, stage D2): the looks benchmark's two token
   # ceilings and its ledger, both of which were wrong in its first live run.
   internal/agent/looks_benchmark_live_test.go
+  # Added 2026-09-20 (engine requirements: issues 12, 13, 14, 16, 17, 18).
+  internal/httpapi/telemetry.go
+  internal/httpapi/assets/stage.js
+  internal/httpapi/assets/room.js
+  internal/httpapi/health.go
+  internal/agent/progress.go
+  internal/agent/plandeps.go
+  internal/agent/planner.go
+  internal/agent/intake.go
+  internal/llm/openai_compatible.go
+  internal/domain/workspace/repository.go
+  internal/domain/memory/decision.go
+  internal/eval/eval.go
 )
 
 BACKUP=""
@@ -5696,6 +5709,212 @@ drill "the workbench drops the kernel's reductions" internal/httpapi/assets/work
 drill "the export panel forgets the rounds built smaller" internal/httpapi/assets/workbench.js \
   's = s.replace("var reductions = exp.feature_reductions || [];", "var reductions = [];", 1)' \
   ./internal/httpapi 'TestWorkbenchSaysWhichRoundsTheKernelBuiltSmaller'
+
+echo
+echo "A plan that is a chain because the planner wrote it in order (issue 12)"
+drill "a task that says it needs nothing still depends on what the model wrote" internal/agent/plandeps.go \
+  's = s.replace("if t.Needs == nil {\n\t\t\t// Declared nothing.", "if true {\n\t\t\t// Declared nothing.", 1)' \
+  ./internal/agent 'TestDerive_ATaskThatDeclaresItNeedsNothingLosesTheEdgeTheModelWroteAnyway'
+
+drill "an artifact key produces no edge, so a join never waits" internal/agent/plandeps.go \
+  's = s.replace("producers[a] = append(producers[a], t.Key)", "_ = a", 1)' \
+  ./internal/agent 'TestDerive_ATaskThatNeedsAnothersOutputDependsOnItWhateverTheModelWrote'
+
+drill "a task that never mentioned needs has its edges recomputed anyway" internal/agent/plandeps.go \
+  's = s.replace("derived[i] = t.DependsOn", "derived[i] = nil", 1)' \
+  ./internal/agent 'TestDerive_ATaskThatDeclaredNoNeedsKeepsExactlyWhatTheModelWrote'
+
+drill "a derived cycle is inserted instead of discarded" internal/agent/plandeps.go \
+  's = s.replace("if cycle := findCycle(out); cycle != nil {", "if cycle := findCycle(out); false {", 1)' \
+  ./internal/agent 'TestDerive_ADerivationThatWouldCycleIsDiscardedForWhatTheModelDeclared'
+
+drill "the planner is never told that independent tasks run at the same time" internal/agent/planner.go \
+  's = s.replace("Tasks with no path between them RUN AT THE SAME TIME on a pool of workers, so", "Order the tasks sensibly, so", 1)' \
+  ./internal/agent 'TestThePlannerContractSaysIndependentTasksRunAtTheSameTime'
+
+drill "the planner is never told its needs list decides its edges" internal/agent/planner.go \
+  's = s.replace("has its \"depends_on\" RECOMPUTED as exactly the tasks producing what it needs,", "has its \"depends_on\" left alone,", 1)' \
+  ./internal/agent 'TestThePlannerContractSaysIndependentTasksRunAtTheSameTime'
+
+drill "the derivation is never on the path a plan takes" internal/agent/planner.go \
+  's = s.replace("out.Tasks, derivation = deriveDependencies(out.Tasks)", "derivation = Derivation{}", 1)' \
+  ./internal/agent 'TestThePlannerContractSaysIndependentTasksRunAtTheSameTime'
+
+drill "a plan does not record the edges the derivation dropped" internal/agent/planner.go \
+  's = s.replace("out.Rationale = strings.TrimSpace(out.Rationale + \"\\n\\n\" + derivation.Summary())", "out.Rationale = strings.TrimSpace(out.Rationale)", 1)' \
+  ./internal/agent 'TestThePlannerContractSaysIndependentTasksRunAtTheSameTime'
+
+drill "promotion offers one task at a time" internal/domain/engine/queue.go \
+  "s = s.replace(\"and t.status  = 'pending'\", \"and t.status  = 'pending' and t.id = (select min(x.id) from forge_tasks x where x.goal_id = \$1 and x.status = 'pending')\", 1)" \
+  ./internal/domain/engine 'TestQueue_TwoTasksWithNoPathBetweenThemAreHeldAtOnceAndAChainIsNot'
+
+drill "the queue allows only one task in flight per goal" internal/domain/engine/queue.go \
+  "s = s.replace('and t.lease_owner is null', \"and t.lease_owner is null and not exists (select 1 from forge_tasks c where c.goal_id = t.goal_id and c.status = 'claimed')\", 1)" \
+  ./internal/domain/engine 'TestQueue_TwoTasksWithNoPathBetweenThemAreHeldAtOnceAndAChainIsNot'
+
+drill "a dependency no longer has to have succeeded" internal/domain/engine/queue.go \
+  "s = s.replace(\"dep.status = 'succeeded'\", 'true', 1)" \
+  ./internal/domain/engine 'TestQueue_TwoTasksWithNoPathBetweenThemAreHeldAtOnceAndAChainIsNot'
+
+echo
+echo "One timeout shared with every other call (issue 13)"
+drill "an unset planner timeout is no bound at all" internal/platform/config/config.go \
+  's = s.replace("== \"\" {\n\t\tcfg.LLM.PlannerRequestTimeout = cfg.LLM.RequestTimeout", "== \"\" {\n\t\tcfg.LLM.PlannerRequestTimeout = 0", 1)' \
+  ./internal/platform/config 'TestConfig_AnUnsetPlannerTimeoutIsTheGeneralRequestTimeout'
+
+drill "the planner timeout is always the general one" internal/platform/config/config.go \
+  's = s.replace("if strings.TrimSpace(os.Getenv(\"FORGE_PLANNER_REQUEST_TIMEOUT\")) == \"\" {", "if true {", 1)' \
+  ./internal/platform/config 'TestConfig_APlannerTimeoutSetSmallerThanTheGeneralOneIsStillWhatThePlannerGets'
+
+drill "a planner timeout that is not positive is accepted" internal/platform/config/config.go \
+  's = s.replace("} else if cfg.LLM.PlannerRequestTimeout <= 0 {", "} else if false {", 1)' \
+  ./internal/platform/config 'TestConfig_APlannerTimeoutThatIsNotPositiveIsRefusedByName'
+
+drill "start-up never prints the planner's own timeout" internal/platform/config/config.go \
+  's = s.replace("\"planner_request_timeout\": c.LLM.PlannerRequestTimeout.String(),", "", 1)' \
+  ./internal/platform/config 'TestConfig_APlannerTimeoutSetSmallerThanTheGeneralOneIsStillWhatThePlannerGets'
+
+echo
+echo "Long jobs on the server path (NFR-02, issue 14)"
+drill "held work reports only when it finishes" internal/agent/progress.go \
+  's = s.replace("ticker := time.NewTicker(every)", "ticker := time.NewTicker(time.Hour)", 1)' \
+  ./internal/agent 'TestProgress_AJobHeldLongerThanNFR02sTenSecondsReportsInsideIt'
+
+drill "a plan running past ten seconds reports nothing" internal/httpapi/goals_start.go \
+  's = s.replace("\tstopProgress := h.planProgress(ctx, goal.ID)\n\toutcome, err := plan(ctx, h.deps.Pool, goal)", "\tstopProgress := func() {}\n\toutcome, err := plan(ctx, h.deps.Pool, goal)", 1)' \
+  ./internal/httpapi 'TestCreateGoal_AGoalWaitingOnThePlannerReportsProgressInsideNFR02sTenSeconds'
+
+drill "a progress report invents how far along the plan is" internal/agent/progress.go \
+  's = s.replace("\tSummary string\n}", "\tSummary string\n\tPercentComplete int\n}", 1)' \
+  ./internal/agent 'TestProgress_AProgressReportSaysOnlyHowLongItHasBeenRunning'
+
+drill "elapsed time is read off the wall clock, not the caller's" internal/agent/progress.go \
+  's = s.replace("started := clk.Now()", "started := time.Now()", 1).replace("elapsed := clk.Now().Sub(started)", "elapsed := time.Since(started)", 1)' \
+  ./internal/agent 'TestProgress_AProgressReportSaysOnlyHowLongItHasBeenRunning'
+
+drill "the ticker goes on reporting after the work has finished" internal/agent/progress.go \
+  's = s.replace("\t\t\tcase <-done:\n\t\t\t\treturn\n", "", 1).replace("\t\t<-finished\n", "", 1)' \
+  ./internal/agent 'TestProgress_TheTickerStopsWhenTheWorkDoes'
+
+drill "a cancelled plan goes on reporting progress" internal/agent/progress.go \
+  's = s.replace("\t\t\tcase <-ctx.Done():\n\t\t\t\treturn\n", "", 1)' \
+  ./internal/agent 'TestProgress_TheTickerStopsWhenTheWorkDoes'
+
+drill "a progress report that could not be written is lost silently" internal/agent/progress.go \
+  's = s.replace("if err := p.Emit(ctx, rep); err != nil && p.Log != nil {", "if err := p.Emit(ctx, rep); err != nil && false {", 1)' \
+  ./internal/agent 'TestProgress_AProgressReportThatCannotBeWrittenIsLoggedAndDoesNotStopTheWork'
+
+drill "every short plan writes a progress event too" internal/agent/progress.go \
+  's = s.replace("\tevery := p.Every\n", "\tevery := 10 * time.Millisecond\n\t_ = p.Every\n", 1)' \
+  ./internal/httpapi 'TestCreateGoal_APlanThatAnswersAtOnceDoesNotSpamTheTimelineWithProgress'
+
+echo
+echo "Mute, stop and end under degradation (NFR-01, issue 16)"
+drill "mute is routed through the server" internal/httpapi/assets/voice.js \
+  's = s.replace("this.muted = !this.muted;", "this.muted = !this.muted;\n    global.fetch(\"/v1/mute\", { method: \"POST\" });", 1)' \
+  ./internal/httpapi 'TestNFR01_MuteAndStop'
+
+drill "stopping her voice asks the server to stop" internal/httpapi/assets/voice.js \
+  's = s.replace("if (this.synthAvailable) global.speechSynthesis.cancel();", "global.fetch(\"/v1/speech/stop\", { method: \"POST\" });", 1)' \
+  ./internal/httpapi 'TestNFR01_MuteAndStop'
+
+drill "an interrupted reply is left in flight and still arrives" internal/httpapi/assets/voice.js \
+  's = s.replace("try { this._remoteAbort.abort(); } catch (e) { /* already settled */ }", "/* left in flight */", 1)' \
+  ./internal/httpapi 'TestNFR01_MuteAndStopStillWorkWhileTheEndpointIsSlowErroringOrDisconnecting'
+
+drill "a cancelled hold is uploaded anyway" internal/httpapi/assets/voice.js \
+  's = s.replace("if (this._session) { this._finishRecording(true); return; }", "if (this._session) { this._finishRecording(false); return; }", 1)' \
+  ./internal/httpapi 'TestNFR01_MuteAndStopTakeEffectWithNoNetworkAtAll'
+
+drill "a refused room mute is shown as applied" internal/httpapi/assets/room.js \
+  "s = s.replace(\"self.on('error', { message: 'the server did not accept that change: ' + err.message });\", \"/* swallowed */\", 1)" \
+  ./internal/httpapi 'TestNFR01_ARefusedRoomMuteSaysItIsNotInForceRatherThanShowingItApplied'
+
+drill "end-recording resolves whether or not the server took it" internal/httpapi/assets/room.js \
+  's = s.replace("body: JSON.stringify({ on: !!on })\n    }).then(readOrThrow);", "body: JSON.stringify({ on: !!on })\n    }).then(readOrThrow).catch(function () { return {}; });", 1)' \
+  ./internal/httpapi 'TestNFR01_ARefusedRoomMuteSaysItIsNotInForceRatherThanShowingItApplied'
+
+drill "liveness reads the database too" internal/httpapi/health.go \
+  's = s.replace("func (h *HealthHandlers) Live(w http.ResponseWriter, r *http.Request) {", "func (h *HealthHandlers) Live(w http.ResponseWriter, r *http.Request) {\n\tif _, err := db.HealthCheck(r.Context(), h.d.Pool, 3*time.Second); err != nil {\n\t\tWriteJSON(w, http.StatusServiceUnavailable, map[string]any{\"status\": \"unavailable\"})\n\t\treturn\n\t}", 1)' \
+  ./internal/httpapi 'TestNFR01_LivenessAnswersWithoutTouchingTheDatabase'
+
+drill "readiness answers 200 when the database is gone" internal/httpapi/health.go \
+  's = s.replace("WriteJSON(w, http.StatusServiceUnavailable, body)", "WriteJSON(w, http.StatusOK, body)", 1)' \
+  ./internal/httpapi 'TestNFR01_ReadinessReportsTheDatabaseAndRefusesTrafficWhenItIsUnreachable'
+
+echo
+echo "Nothing acknowledged is lost (NFR-03, issue 17)"
+drill "a checkpoint is acknowledged with state it does not store" internal/domain/engine/repository.go \
+  's = s.replace("cp.ID, taskID, kind, state, now)", "cp.ID, taskID, kind, json.RawMessage(\"{}\"), now)", 1)' \
+  ./internal/domain/engine 'TestNFR03_AnAcknowledgedCheckpointSurvivesThePoolThatWroteIt'
+
+drill "a plan is acknowledged with a rationale it does not store" internal/agent/apply.go \
+  's = s.replace("created.ID, created.GoalID, created.Version, created.Rationale, created.Author, created.CreatedAt", "created.ID, created.GoalID, created.Version, \"\", created.Author, created.CreatedAt", 1)' \
+  ./internal/domain/engine 'TestNFR03_AnApprovedPlanSurvivesThePoolThatWroteIt'
+
+drill "the acknowledged-approval statement the durability fence stands in has moved" internal/httpapi/goals.go \
+  "s = s.replace(\"where id = \$1 and decision = 'pending'\", \"where id = \$1 and decision in ('pending')\", 1)" \
+  ./internal/domain/engine 'TestNFR03_TheSubstitutedWritesAreStillTheStatementsProductionRuns'
+
+drill "a version is acknowledged with a diff it does not store" internal/domain/workspace/repository.go \
+  's = s.replace("v.Inputs, v.Diff, string(v.Verification), v.VerificationNote,", "v.Inputs, \"\", string(v.Verification), v.VerificationNote,", 1)' \
+  ./internal/domain/engine 'TestNFR03_AnArtifactVersionSurvivesThePoolThatWroteIt'
+
+drill "the tool-result ledger statement the durability fence stands in has moved" internal/agent/executor.go \
+  's = s.replace("on conflict (idempotency_key) do nothing", "on conflict do nothing", 1)' \
+  ./internal/domain/engine 'TestNFR03_TheSubstitutedWritesAreStillTheStatementsProductionRuns'
+
+drill "a decision is acknowledged before it is committed" internal/domain/memory/decision.go \
+  's = s.replace("\tif err := tx.Commit(ctx); err != nil {\n\t\treturn nil, errs.Wrap(op, errs.CodeDatabaseUnavail, err)\n\t}\n", "", 1)' \
+  ./internal/domain/engine 'TestNFR03_ADecisionSurvivesThePoolThatWroteIt'
+
+drill "the checkpoint write path no longer says what would break its durability" internal/domain/engine/repository.go \
+  's = s.replace("acknowledging earlier than the row", "acknowledging before the row", 1)' \
+  ./internal/domain/engine 'TestNFR03_EveryWritePathStillSaysWhatItPromises'
+
+echo
+echo "Whose timeout wins (issue 13, the wiring)"
+drill "the general timeout outranks a caller that asked for longer" internal/llm/openai_compatible.go \
+  's = s.replace("client:         &http.Client{},", "client:         &http.Client{Timeout: cfg.RequestTimeout},", 1)' \
+  ./internal/llm 'TestClient_ACallerWithALongerDeadlineOfItsOwnKeepsItRatherThanTheGeneralTimeout'
+
+drill "a call that names no deadline is not bounded at all" internal/llm/openai_compatible.go \
+  's = s.replace("\tif c.requestTimeout <= 0 {\n\t\treturn ctx, func() {}\n\t}", "\tif true {\n\t\treturn ctx, func() {}\n\t}", 1)' \
+  ./internal/llm 'TestClient_ACallerWithNoDeadlineIsStillBoundedByTheGeneralTimeout'
+
+drill "the general bound is stretched over the whole retry loop" internal/llm/openai_compatible.go \
+  's = s.replace("\tfor attempt := 0; attempt <= c.maxRetries; attempt++ {", "\tctx, cancelAll := context.WithTimeout(ctx, c.requestTimeout)\n\tdefer cancelAll()\n\tfor attempt := 0; attempt <= c.maxRetries; attempt++ {", 1)' \
+  ./internal/llm 'TestClient_TheGeneralTimeoutBoundsEachAttemptAndNotTheWholeRetryLoop'
+
+drill "the goal endpoints build a planner without its own timeout" internal/httpapi/goals.go \
+  's = s.replace("\t\t\tWithPlannerRequestTimeout(d.Config.LLM.PlannerRequestTimeout)", "\t\t\tWithLog(d.Log)", 1)' \
+  ./internal/agent 'TestEverySiteThatBuildsAPlannerGivesItThePlannersOwnTimeout'
+
+drill "the forwarder never reaches the planner" internal/agent/intake.go \
+  's = s.replace("\ti.planner = i.planner.WithRequestTimeout(d)\n\treturn i", "\treturn i", 1)' \
+  ./internal/agent 'TestIntake_ThePlannersOwnTimeoutReachesThePlannerItWillUse'
+
+echo
+echo "A turn that failed before replying"
+drill "a turn that fails before replying is recorded nowhere" internal/httpapi/converse.go \
+  's = s.replace("\t\tsaid := h.keepFailed(r, convID, user.ID, req.ProjectID, emitErr, refused, firstTokenMS, start)", "\t\tsaid := &agent.ConversationKept{ID: convID}\n\t\tif refused != nil {\n\t\t\tsaid = h.keepFailed(r, convID, user.ID, req.ProjectID, emitErr, refused, firstTokenMS, start)\n\t\t}", 1)' \
+  ./internal/httpapi 'TestConverse_ATurnThatFailedBeforeAnyReplyArrivedIsStillInTheRecord'
+
+drill "a turn nobody charged is recorded as having cost nothing" internal/httpapi/converse.go \
+  's = s.replace("\tif tokens > 0 {", "\tif tokens >= 0 {", 1)' \
+  ./internal/httpapi 'TestConverse_ATurnThatFailedBeforeAnyReplyArrivedIsStillInTheRecord'
+
+drill "the two failures are reported as one" internal/httpapi/telemetry.go \
+  's = s.replace("ReplyArrived: t.UnusableReply != \"\",", "ReplyArrived: t.Failed(),", 1)' \
+  ./internal/httpapi 'TestTelemetry_AFailureBeforeAnyReplyIsListedAndToldApartFromARefusedReply'
+
+drill "a restored transcript shows a failure as something FORGE said" internal/httpapi/assets/workbench.js \
+  "s = s.replace(\"          markRestoredFailure(addTurn(who, body, t.detail || '', true), t);\", \"          addTurn(who, body, t.detail || '', true);\", 1)" \
+  ./internal/httpapi 'TestTheRestoredTranscriptDrawsAFailedTurnAsAFailure'
+
+drill "the panel calls every failure a refused reply" internal/httpapi/assets/stage.js \
+  "s = s.replace(\"      : 'failed before any reply arrived';\", \"      : 'failed - the reply could not be used';\", 1)" \
+  ./internal/httpapi 'TestTheTelemetryPanelTellsAFailedReplyApartFromNoReplyAtAll'
 
 echo
 

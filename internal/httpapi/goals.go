@@ -30,7 +30,12 @@ type GoalHandlers struct {
 func NewGoalHandlers(d Deps) *GoalHandlers {
 	h := &GoalHandlers{deps: d, repo: engine.NewRepository(), queue: engine.NewQueue()}
 	if d.LLM != nil {
-		h.intake = agent.NewIntake(d.LLM, persona.DefaultCharacter(), d.Config.Engine, d.Clock)
+		h.intake = agent.NewIntake(d.LLM, persona.DefaultCharacter(), d.Config.Engine, d.Clock).
+			// The planner's own bound (FORGE_PLANNER_REQUEST_TIMEOUT). This is
+			// the surface that most needs it: planning here runs inside the HTTP
+			// handler, and a planner killed at the general timeout reads to the
+			// person waiting as the request having hung.
+			WithPlannerRequestTimeout(d.Config.LLM.PlannerRequestTimeout)
 	}
 	return h
 }
@@ -296,6 +301,17 @@ type decideRequest struct {
 // The decision is attributed to the authenticated user and recorded on the
 // timeline as an ActorHuman event with their account id. PRD SAF-05: an approval
 // that cannot name the person who made it is not an approval.
+//
+// NFR-03 durability — this is where an approval becomes ACKNOWLEDGED. The UPDATE
+// below is the only durable record that a human answered this gate, and the 200
+// is written after it commits, so "the reviewer was told it was approved" and
+// "forge_approvals says so" cannot come apart. `and decision = 'pending'` is what
+// makes the acknowledgement exclusive: it is why the loser of a race is told,
+// rather than silently overwriting the winner. Making this write best-effort so
+// the task can be released sooner, or replying before it commits, would let an
+// acknowledged approval be lost — and the gate would then be asked again of
+// somebody who has already answered it, which reads to them as the system
+// ignoring their decision.
 func (h *GoalHandlers) Decide(w http.ResponseWriter, r *http.Request) {
 	approvalID := r.PathValue("id")
 	user, _ := UserFrom(r.Context())

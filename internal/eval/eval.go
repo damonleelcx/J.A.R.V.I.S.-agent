@@ -327,9 +327,29 @@ type Runner struct {
 	conv    *agent.Conversation
 	model   string
 	repeats int
+	// plannerTimeout is FORGE_PLANNER_REQUEST_TIMEOUT, given to the planner this
+	// harness builds. Zero means the general bound, which is what it was before
+	// the setting existed.
+	//
+	// It is here rather than read from config inside the run because eval takes
+	// its client from the caller and nothing else: a Runner that reached for the
+	// environment would be a harness measuring a configuration its caller did
+	// not choose. See WithPlannerRequestTimeout.
+	plannerTimeout time.Duration
 	// OnProgress is called as each run completes, so a command can print
 	// something during the minutes this takes rather than going silent.
 	OnProgress func(caseID string, run, of int, err error)
+}
+
+// WithPlannerRequestTimeout gives this harness's planner its own bound.
+//
+// Worth having HERE in particular: an evaluation run is where the general 3m
+// timeout was first seen to bite, three attempts in a row, on a call measured at
+// 128 s (GitHub issue 13, .env.example:143-149). A harness that kept the general
+// bound would go on reporting those timeouts as planner failures.
+func (r *Runner) WithPlannerRequestTimeout(d time.Duration) *Runner {
+	r.plannerTimeout = d
+	return r
 }
 
 // NewRunner wires the suite to a model client.
@@ -472,7 +492,11 @@ func (r *Runner) plan(ctx context.Context, c Case, obs *Observation) {
 	// backed by a database, all three are optional, and a planner wired to none
 	// is the planner this case is about. What they would add is stated on
 	// plannerCases rather than faked here.
-	planner := agent.NewPlanner(r.client, persona.DefaultCharacter())
+	// With the planner's own bound, because an evaluation run is exactly where
+	// this was first measured: three consecutive timeouts at the general 3m
+	// while the call itself took 128 s (GitHub issue 13, .env.example:143-149).
+	planner := agent.NewPlanner(r.client, persona.DefaultCharacter()).
+		WithRequestTimeout(r.plannerTimeout)
 	goal := &engine.Goal{
 		Title:     c.Goal.Title,
 		Statement: c.Goal.Statement,

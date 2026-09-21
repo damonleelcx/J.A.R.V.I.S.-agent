@@ -134,6 +134,11 @@ func (c *OpenAICompatible) Transcribe(ctx context.Context, audio []byte, mimeTyp
 	// ‼️ c.baseURL and c.apiKey must not appear in this function. The production
 	// chat endpoint serves no speech model, and its key must never reach the host
 	// that does.
+	// The general request timeout, for a caller that set no deadline. It used to
+	// arrive as http.Client.Timeout; see requestTimeout in openai_compatible.go.
+	ctx, cancelBound := c.boundAttempt(ctx)
+	defer cancelBound()
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		c.transcriberURL+"/chat/completions", bytes.NewReader(body))
 	if err != nil {

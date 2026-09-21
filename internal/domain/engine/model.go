@@ -270,6 +270,7 @@ const (
 	EventGoalPaused        = "goal.paused"
 	EventGoalResumed       = "goal.resumed"
 	EventGoalEnded         = "goal.ended"
+	EventGoalProgress      = "goal.progress" // held work saying how long it has been; see agent.Progress
 	EventPlanCreated       = "plan.created"
 	EventPlanSuperseded    = "plan.superseded"
 	EventTaskCreated       = "task.created"

@@ -409,7 +409,33 @@ type LLMConfig struct {
 	// A deployment that does not want to pay that leaves this empty.
 	Illustrator    string
 	RequestTimeout time.Duration
-	MaxRetries     int
+	// PlannerRequestTimeout bounds the PLANNER's model call, and only that one.
+	//
+	// # Why one role gets its own number
+	//
+	// Measured 2026-09-07 (the note on FORGE_LLM_REQUEST_TIMEOUT in .env.example
+	// records it): qwen3.8-max planning this repository's reference goal took
+	// 128 s wall clock for 2982 reasoning and 4493 completion tokens — 71% of the
+	// 3m general budget — and one evaluation run hit the timeout on three
+	// consecutive attempts. The same call with deliberation off took 17 s. The
+	// planner is the only role that deliberates over a whole decomposition, and
+	// the measurement in docs/spikes/2026-09-20-planner-latency/README.md shows
+	// FORGE's own code is a rounding error beside it: essentially the whole wall
+	// clock is the provider thinking.
+	//
+	// .env.example's standing argument — that raising the general timeout "hides
+	// the shape of the problem" — is right, and nothing here weakens it. A bigger
+	// FORGE_LLM_REQUEST_TIMEOUT would also let a hung converse call, a stuck
+	// verifier or an unreachable endpoint sit for minutes before anything said
+	// so. A planner-specific number hides nothing: every other role keeps the
+	// tight bound, and the one call known to be slow is the only one allowed to
+	// be. The slowness stays visible, in one variable named after the role that
+	// is slow.
+	//
+	// UNSET IS THE DEFAULT and unset means RequestTimeout, so upgrading changes
+	// no deployment's behaviour. Set it, and it must be positive.
+	PlannerRequestTimeout time.Duration
+	MaxRetries            int
 	// TurnBudget bounds ONE CONVERSATIONAL TURN, which is a different thing from
 	// RequestTimeout and must never again be derived from it.
 	//
@@ -831,14 +857,34 @@ func Load(required ...Section) (*Config, []string, error) {
 		Vision:      l.str("FORGE_LLM_VISION_MODEL", ""),
 		Transcriber: l.str("FORGE_LLM_TRANSCRIBER_MODEL", "qwen3-asr-flash-2026-02-10"),
 		// No defaults: unset is "the same endpoint and key as chat".
-		TranscriberBaseURL: strings.TrimRight(l.str("FORGE_LLM_TRANSCRIBER_BASE_URL", ""), "/"),
-		TranscriberAPIKey:  l.str("FORGE_LLM_TRANSCRIBER_API_KEY", ""),
-		Speaker:            l.str("FORGE_LLM_SPEAKER_MODEL", "qwen3-omni-flash"),
-		Voice:              l.str("FORGE_LLM_VOICE", "Cherry"),
-		Illustrator:        strings.TrimSpace(l.str("FORGE_LLM_IMAGE_MODEL", "")),
-		RequestTimeout:     l.dur("FORGE_LLM_REQUEST_TIMEOUT", 3*time.Minute),
-		TurnBudget:         l.dur("FORGE_TURN_BUDGET", DefaultTurnBudget),
-		MaxRetries:         l.intVal("FORGE_LLM_MAX_RETRIES", 3),
+		TranscriberBaseURL:    strings.TrimRight(l.str("FORGE_LLM_TRANSCRIBER_BASE_URL", ""), "/"),
+		TranscriberAPIKey:     l.str("FORGE_LLM_TRANSCRIBER_API_KEY", ""),
+		Speaker:               l.str("FORGE_LLM_SPEAKER_MODEL", "qwen3-omni-flash"),
+		Voice:                 l.str("FORGE_LLM_VOICE", "Cherry"),
+		Illustrator:           strings.TrimSpace(l.str("FORGE_LLM_IMAGE_MODEL", "")),
+		RequestTimeout:        l.dur("FORGE_LLM_REQUEST_TIMEOUT", 3*time.Minute),
+		PlannerRequestTimeout: l.dur("FORGE_PLANNER_REQUEST_TIMEOUT", 0),
+		TurnBudget:            l.dur("FORGE_TURN_BUDGET", DefaultTurnBudget),
+		MaxRetries:            l.intVal("FORGE_LLM_MAX_RETRIES", 3),
+	}
+	// Unset means "whatever the general call timeout is". Resolved here, once,
+	// rather than at each use: a fallback every caller has to remember is a
+	// fallback one caller will forget, and the failure — the planner running with
+	// no bound at all — looks like nothing until an evaluation run hangs.
+	//
+	// Presence is read from the environment rather than inferred from a zero
+	// value, so `FORGE_PLANNER_REQUEST_TIMEOUT=0s` and `=-5m` are both refused as
+	// the nonsense they are instead of quietly meaning "share the general one".
+	// A deployment that typed a number was trying to say something.
+	if strings.TrimSpace(os.Getenv("FORGE_PLANNER_REQUEST_TIMEOUT")) == "" {
+		cfg.LLM.PlannerRequestTimeout = cfg.LLM.RequestTimeout
+	} else if cfg.LLM.PlannerRequestTimeout <= 0 {
+		l.fail("FORGE_PLANNER_REQUEST_TIMEOUT", fmt.Sprintf(
+			"is %s. A timeout that is not positive would cancel the planner's call before it was "+
+				"sent. Leave it unset to share FORGE_LLM_REQUEST_TIMEOUT (%s), or give it a "+
+				"positive duration such as 5m.",
+			cfg.LLM.PlannerRequestTimeout, cfg.LLM.RequestTimeout))
+		cfg.LLM.PlannerRequestTimeout = cfg.LLM.RequestTimeout
 	}
 	// A turn budget below one call's timeout puts the old bug back: the turn is
 	// cancelled while a single model call is still inside its own retry window,
@@ -1099,6 +1145,13 @@ func (c *Config) Redacted() map[string]any {
 		// was asked.
 		"llm_transcriber_base_url":    transcriberForPrint(c.LLM.TranscriberBaseURL),
 		"llm_transcriber_api_key_set": c.LLM.TranscriberAPIKey != "",
+		// The two call timeouts, printed together and always both, because the
+		// interesting fact about either is the gap between them. A plan that died
+		// at three minutes is read against these two numbers and nothing else,
+		// and an unset planner timeout prints as the general one rather than as
+		// blank — blank would read as "no bound".
+		"llm_request_timeout":     c.LLM.RequestTimeout.String(),
+		"planner_request_timeout": c.LLM.PlannerRequestTimeout.String(),
 		// A path, not a secret, and printed so an operator can see at a glance
 		// whether this deployment can write a parametric file at all.
 		"cad_kernel":  cadForPrint(c.CAD.Python),

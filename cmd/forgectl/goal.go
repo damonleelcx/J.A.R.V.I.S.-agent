@@ -89,6 +89,7 @@ func cmdGoalNew(ctx context.Context, cfg *config.Config, log *logx.Logger, args 
 	client := llm.NewOpenAICompatible(cfg.LLM, log, clock.System{})
 	intake := agent.NewIntake(client, persona.DefaultCharacter(), cfg.Engine, clock.System{}).
 		WithCharacters(agent.NewCharacterStore(pool, log)).
+		WithPlannerRequestTimeout(cfg.LLM.PlannerRequestTimeout).
 		WithLog(log)
 
 	goal, err := intake.Draft(ctx, pool, agent.DraftRequest{
@@ -207,6 +208,7 @@ func cmdGoalReplan(ctx context.Context, cfg *config.Config, log *logx.Logger, ar
 	client := llm.NewOpenAICompatible(cfg.LLM, log, clock.System{})
 	intake := agent.NewIntake(client, persona.DefaultCharacter(), cfg.Engine, clock.System{}).
 		WithCharacters(agent.NewCharacterStore(pool, log)).
+		WithPlannerRequestTimeout(cfg.LLM.PlannerRequestTimeout).
 		WithLog(log)
 
 	// ‼️ --build is not remembered from `goal new --build`: nothing on the goal
@@ -470,6 +472,30 @@ func cmdApprove(ctx context.Context, cfg *config.Config, log *logx.Logger, args 
 // It reports only what is known — how long this has been running. A fake
 // progress bar would be worse than silence: it would imply the command can see
 // how far along the model is, which it cannot.
+//
+// # Where the server's half of NFR-02 lives
+//
+// This is the terminal's half. The server's is agent.Progress
+// (internal/agent/progress.go), started by CreateGoal and Replan around the
+// same planner call (internal/httpapi/goals_start.go, planProgress): it appends
+// engine.EventGoalProgress to the goal's timeline at agent.ProgressEvery, with
+// the same label and the same wording this prints, so a person watching over
+// HTTP and a person watching a terminal see the same sentence. Between them
+// they cover both kinds of long job NFR-02 names — held planning here, a
+// running task's last_seen_at in agent.AliveEvery.
+//
+// # Why forgectl does not consume the server's signal
+//
+// It cannot and should not. `forgectl goal new` opens its own pool and calls
+// agent.Intake directly (see the call site above); there is no HTTP request in
+// flight and no server involved, so there is no timeline event for it to poll
+// — the events it would be waiting for are written by the process it is
+// already inside. Asking it to read back its own writes would add a database
+// round trip per tick to learn a number it is holding in a variable. The
+// duplication between the two tickers is 20 lines and buys each surface the
+// right mechanism; sharing them would mean forgectl either writing timeline
+// rows nobody reads or the server printing to a terminal that is not there.
+// Decided 2026-09-20: docs/spikes/2026-09-20-nfr02-server-progress/README.md.
 func startElapsedTicker(label string) func() {
 	done := make(chan struct{})
 	finished := make(chan struct{})

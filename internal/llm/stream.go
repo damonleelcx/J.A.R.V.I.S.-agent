@@ -92,6 +92,18 @@ func (c *OpenAICompatible) Stream(ctx context.Context, req Request, onChunk func
 		return errs.Wrap(op, errs.CodeSerializationFail, err)
 	}
 
+	// The general request timeout, for a caller that set no deadline.
+	//
+	// ‼️ On a STREAM this bound covers reading the body too, which is what
+	// http.Client.Timeout did before it moved here — so it is the whole stream,
+	// not the first byte. That is why a caller with a longer turn to spend (the
+	// workbench, which bounds a turn by FORGE_LLM_TURN_BUDGET rather than by one
+	// call) must set its own deadline: it keeps it now, where the client's
+	// timeout used to cut the stream underneath it. See converse.go's note on
+	// the timeout hierarchy, and requestTimeout in openai_compatible.go.
+	ctx, cancelBound := c.boundAttempt(ctx)
+	defer cancelBound()
+
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		c.baseURL+"/chat/completions", bytes.NewReader(payload))
 	if err != nil {
