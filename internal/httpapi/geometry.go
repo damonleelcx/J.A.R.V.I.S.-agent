@@ -297,12 +297,17 @@ func massBody(versionID string, report geometry.MassReport, skipped []string) ma
 			"of volume, which is the centre of gravity only if the model is one material",
 			len(report.WithoutDensity))
 	}
+	// Mesh-only parts are in no group, and the note says so (geometry/lattice.go).
+	if meshOnly := geometry.MeshOnlyNote(report.MeshOnly, "the mass, volume and centre"); meshOnly != "" {
+		note = strings.TrimSpace(note + " " + meshOnly)
+	}
 	return map[string]any{
 		"version_id":      versionID,
 		"basis":           report.Basis,
 		"groups":          report.Groups,
 		"without_density": report.WithoutDensity,
 		"unmeasured":      report.Unmeasured,
+		"mesh_only":       report.MeshOnly,
 		// A part the kernel could not build is in no group, and is named here.
 		"skipped": skipped,
 		"note":    note,
@@ -386,13 +391,18 @@ func (h *GeometryHandlers) Mesh(w http.ResponseWriter, r *http.Request) {
 		// as an exact one is the same class of claim this endpoint exists to
 		// stop the renderer making.
 		"deflection": built.Deflection,
+		// The angular limit in radians, searched with the deflection (stage A5).
+		"angular":    built.Angular,
 		"simplified": built.Simplified,
 		// Named, not dropped. A part the kernel could not build has no surface,
 		// and a viewport that silently drew nothing for it would be back to
 		// showing something other than what was built.
 		"skipped":          built.Skipped,
 		"feature_failures": built.FeatureFailures,
-		"mesh_error":       built.MeshError,
+		// Rounds applied smaller than asked, or on only some of their edges, and
+		// where (looks designed, stage B1). Always an array.
+		"feature_reductions": orEmptyStrings(built.FeatureReductions),
+		"mesh_error":         built.MeshError,
 		// ‼️ Why a part is NOT in the solid, which this reply used to drop.
 		//
 		// A part whose outline cannot be read is left out by the BUILDER, with
@@ -403,6 +413,11 @@ func (h *GeometryHandlers) Mesh(w http.ResponseWriter, r *http.Request) {
 		// KERNEL refused, and a part dropped before the kernel never reaches it.
 		// Observed while adding a spoiler to the sports car on 2026-09-09.
 		"inferred": built.Inferred,
+		// Every mesh-only part, by label, and the words the viewport shows on each
+		// one (PRD VIS-06: a render must never imply manufacturability). The parts
+		// themselves are in "parts" with mesh_only set.
+		"mesh_only":       built.MeshOnly,
+		"mesh_only_label": geometry.MeshOnlyLabel,
 	})
 }
 
@@ -416,12 +431,21 @@ type meshPartDTO struct {
 	Label     string    `json:"label"`
 	Vertices  []float64 `json:"vertices"`
 	Triangles []int32   `json:"triangles"`
+	// Normals is one unit normal per vertex, flat like vertices, from the kernel's
+	// surface (looks designed, stage A5). Additive and omitted when absent, so a
+	// reader that does not know it draws what it drew before.
+	Normals []float64 `json:"normals,omitempty"`
+	// MeshOnly marks a declared mesh-only part (geometry/lattice.go): the viewport
+	// draws it with the reply's mesh_only_label on it, never as a solid.
+	MeshOnly bool `json:"mesh_only,omitempty"`
 }
 
 // meshDefinitionDTO is one shape's surface in its own frame, in millimetres.
+// Normals are in the same frame: a copy turns them by its matrix's rotation.
 type meshDefinitionDTO struct {
 	Vertices  []float64 `json:"vertices"`
 	Triangles []int32   `json:"triangles"`
+	Normals   []float64 `json:"normals,omitempty"`
 }
 
 // meshInstanceDTO is one placed copy of a definition. Matrix is 4×4 and
@@ -439,12 +463,14 @@ func meshPayload(built *cad.Build) ([]meshPartDTO, []meshDefinitionDTO, []meshIn
 	parts := make([]meshPartDTO, 0, len(built.Mesh))
 	for _, m := range built.Mesh {
 		parts = append(parts, meshPartDTO{
-			ID: m.ID, Label: m.Label, Vertices: m.Vertices, Triangles: m.Triangles,
+			ID: m.ID, Label: m.Label, Vertices: m.Vertices, Triangles: m.Triangles, Normals: m.Normals,
+			MeshOnly: m.MeshOnly,
 		})
 	}
 	definitions := make([]meshDefinitionDTO, 0, len(built.MeshDefinitions))
 	for _, d := range built.MeshDefinitions {
-		definitions = append(definitions, meshDefinitionDTO{Vertices: d.Vertices, Triangles: d.Triangles})
+		definitions = append(definitions, meshDefinitionDTO{Vertices: d.Vertices, Triangles: d.Triangles,
+			Normals: d.Normals})
 	}
 	instances := make([]meshInstanceDTO, 0, len(built.MeshInstances))
 	for _, in := range built.MeshInstances {
@@ -805,26 +831,103 @@ func (h *GeometryHandlers) exportParametric(w http.ResponseWriter, r *http.Reque
 	w.Header().Set("Content-Disposition",
 		fmt.Sprintf("attachment; filename=%q", geometry.Filename(v, f)))
 	w.Header().Set("Content-Length", strconv.Itoa(len(built.STEP)))
-	label := fmt.Sprintf("unverified proposal; B-Rep, not tessellated; nothing about this shape "+
-		"has been analysed or checked; full label at /v1/geometry/%s/export/label?format=step",
-		v.VersionID)
-	// What is NOT in the file goes FIRST, because a header is read left to right
-	// and this is the half that changes what somebody does with it.
-	//
-	// A dropped feature is the dangerous one: a bracket whose fillet OCCT
-	// refused looks like a bracket, downloads like a bracket, and has square
-	// corners where the design said rounded. Observed live on 2026-09-05, where
-	// a model asked for a 5 mm fillet on a 6 mm plate and the kernel said no.
-	if n := len(built.FeatureFailures); n > 0 {
-		label = fmt.Sprintf("%d feature(s) could NOT be applied, so this shape is not what the "+
-			"design describes (%s); ", n, strings.Join(built.FeatureFailures, "; ")) + label
-	}
-	if len(built.Skipped) > 0 {
-		label = fmt.Sprintf("%d part(s) could not be built and are NOT in this file; ", len(built.Skipped)) + label
-	}
-	w.Header().Set("X-Forge-Export-Label", label)
+	w.Header().Set("X-Forge-Export-Label", stepExportLabel(v.VersionID, built))
 	w.WriteHeader(http.StatusOK)
 	_, _ = w.Write(built.STEP)
+}
+
+// stepExportLabel is the one-line X-Forge-Export-Label of a STEP file the kernel wrote.
+func stepExportLabel(versionID string, built *cad.Build) string {
+	label := fmt.Sprintf("unverified proposal; B-Rep, not tessellated; nothing about this shape "+
+		"has been analysed or checked; full label at /v1/geometry/%s/export/label?format=step",
+		versionID)
+	return exportLabelClauses(built.MeshOnly, built.Skipped, built.FeatureFailures, built.FeatureReductions) + label
+}
+
+// exportLabelClauses is the ONE place the X-Forge-Export-Label's clauses are
+// written: what the design asked for that this STEP file does not have.
+//
+// # Why one function and not one per path
+//
+// The same file is written two ways — in the request (stepExportLabel, from
+// cad.Build) and off-node by forge-worker (exportJobLabel, from agent.Export) —
+// and for a while only the in-request label said that a mesh-only part had been
+// left out. A person who downloaded the job's file was told less about the SAME
+// design than one who waited for the in-request one, which is the kind of gap
+// nobody notices until the file is already on a machine. Both paths now call
+// this, so a clause can only ever be added to both at once.
+//
+// What is NOT in the file goes FIRST, because a header is read left to right
+// and this is the half that changes what somebody does with it.
+//
+// A dropped feature is the dangerous one: a bracket whose fillet OCCT refused
+// looks like a bracket, downloads like a bracket, and has square corners where
+// the design said rounded. Observed live on 2026-09-05, where a model asked for
+// a 5 mm fillet on a 6 mm plate and the kernel said no.
+func exportLabelClauses(meshOnly, skipped, featureFailures, reduced []string) string {
+	clauses := reducedLabel(reduced)
+	if n := len(featureFailures); n > 0 {
+		clauses = fmt.Sprintf("%d feature(s) could NOT be applied, so this shape is not what the "+
+			"design describes (%s); ", n, strings.Join(featureFailures, "; ")) + clauses
+	}
+	if len(skipped) > 0 {
+		// NAMED, not counted. geometry/export.go's own label promises the reader
+		// that "a part the kernel cannot build is left out of the file, and the
+		// download names it in its X-Forge-Export-Label header", and until now
+		// both downloads gave a count and nothing else — a count tells somebody
+		// that the file is wrong without telling them which part to look for.
+		// The kernel's entries are already "Label: reason" (cad/sidecar.py), so
+		// they are joined the way the feature-failure clause joins its own.
+		clauses = fmt.Sprintf("%d part(s) could not be built and are NOT in this file: %s; ",
+			len(skipped), namedFew(skipped, "; ")) + clauses
+	}
+	return meshOnlyExcludedLabel(meshOnly) + clauses
+}
+
+// namedFew is a clause's list of names: at most a few, then " and N more".
+//
+// The cap is geometry.MeshOnlyNote's, for its reason — a header is ONE line, and
+// a design with hundreds of lattices or hundreds of refused parts must not push
+// the rest of the label off it. Both clauses that name PARTS read the cap here,
+// so one cannot quietly grow a different ceiling from the other.
+//
+// The feature-failure and reduced-round clauses still join all of theirs. They
+// are not capped because the failure text IS the clause — "which fillet, on what,
+// and why" is the whole content — and because a design refuses far fewer features
+// than it can declare lattices. If that ever stops being true they come here too.
+func namedFew(names []string, sep string) string {
+	const most = 3
+	shown, more := names, ""
+	if len(names) > most {
+		shown, more = names[:most], fmt.Sprintf(" and %d more", len(names)-most)
+	}
+	return strings.Join(shown, sep) + more
+}
+
+// meshOnlyExcludedLabel is the export label's clause for the mesh-only parts left
+// out of the file (looks designed, stage E1): a mesh-only part is never in a STEP
+// file (geometry/lattice.go). It NAMES them, as the file's own FILE_DESCRIPTION
+// does (sidecar.py), so the header and the file say the same thing. Empty when
+// there are none.
+func meshOnlyExcludedLabel(meshOnly []string) string {
+	if len(meshOnly) == 0 {
+		return ""
+	}
+	// At most a few names, as geometry.MeshOnlyNote does: a header is one line,
+	// and a design with hundreds of lattices must not push the rest off it.
+	return fmt.Sprintf("%d mesh-only part(s) are NOT in this file: %s (%s); ",
+		len(meshOnly), namedFew(meshOnly, ", "), geometry.MeshOnlyLabel)
+}
+
+// reducedLabel is the export label's clause for rounds the kernel built smaller
+// than asked or on only some of their edges (looks designed, stage B1): applied,
+// and still not the design as written, so the file says so. Empty when none.
+func reducedLabel(reduced []string) string {
+	if len(reduced) == 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d fillet(s) or chamfer(s) were built SMALLER than the design says or on only "+
+		"some of their edges (%s); ", len(reduced), strings.Join(reduced, "; "))
 }
 
 func labelDTO(l *geometry.Label) map[string]any {

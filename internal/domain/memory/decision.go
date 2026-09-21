@@ -156,6 +156,14 @@ func scanDecision(row pgx.Row) (*Decision, error) {
 // contradictory currents with nothing to choose between them. The database
 // enforces the same rule with a unique index, so a race loses rather than
 // splitting the chain.
+//
+// NFR-03 durability — "no acknowledged decision is lost". This owns its own
+// transaction, so the acknowledgement is exact: the *Decision is returned only
+// after Commit succeeds, and the deferred Rollback is what makes every other
+// exit lose the row rather than half-keep it. The break to watch for is moving
+// the return or the EventDecisionMade log above the Commit — the caller and the
+// log would then both assert a decision that the deferred Rollback throws away,
+// and a decision log that can forget is worth less than none.
 func (s *Service) RecordDecision(ctx context.Context, d *Decision) (*Decision, error) {
 	const op = "memory.Service.RecordDecision"
 

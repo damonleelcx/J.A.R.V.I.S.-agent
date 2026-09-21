@@ -266,6 +266,23 @@ func (e *Executor) Execute(ctx context.Context, tc *TaskContext, workspace strin
 			// the task because we could not save a resume point would discard
 			// work that actually succeeded. But it is loud, because the next
 			// crash now costs more.
+			//
+			// ‼️ NFR-03 durability is not violated here, and the argument is
+			// worth reading before "fixing" this either way. NFR-03 protects an
+			// ACKNOWLEDGED checkpoint; a write that failed was acknowledged to
+			// nobody — no caller is told a resume point exists, and the WARN says
+			// so. Two things make that safe, and a refactor that removes either
+			// one turns this line into real loss:
+			//   - tool results are NOT carried by this checkpoint. They are
+			//     written on their own path (recordToolCall), on a context that
+			//     outlives a stop, so losing a resume point loses at most the
+			//     model's working messages for one iteration.
+			//   - idempotency_key is unique (0004_engine.sql:47, 107, 233), so
+			//     the work replayed after a lost checkpoint deduplicates instead
+			//     of repeating a side effect.
+			// So: do not promote this to a hard failure (it would discard work
+			// that actually succeeded), and do not quieten it (the WARN is the
+			// only signal that the next crash costs more than one iteration).
 			e.log.WarnWith(ctx, logx.EventCheckpointFailed, err,
 				"task_id", tc.Task.ID, "iteration", iteration,
 				"detail", "no resume point was saved; a crash before the next checkpoint will restart this task")
@@ -568,12 +585,23 @@ func (e *Executor) findCompletedCall(ctx context.Context, key string) (json.RawM
 	return output, true
 }
 
-// recordToolCall appends to the idempotency ledger and the timeline.
+// recordToolCall writes one call to the idempotency ledger and the timeline.
 //
-// Best-effort: a ledger write that fails must not discard a tool result that
-// actually happened. It is warned loudly because the ledger is what makes a
-// retry safe, and a gap in it means the next retry may repeat a side effect.
-// recordToolCall writes one call to the idempotency ledger.
+// (This doc block used to restart with a second summary sentence — two headlines
+// for one function. Merged; no behaviour changed with it.)
+//
+// Best-effort relative to the CALLER: a ledger write that fails must not discard
+// a tool result that actually happened. It is warned loudly because the ledger is
+// what makes a retry safe, and a gap in it means the next retry may repeat a
+// side effect.
+//
+// NFR-03 durability — "no acknowledged tool result is lost". This row is the
+// only durable record of a tool call, which is why it is written on a context
+// that OUTLIVES a stop: a cancelled run must not be able to drop one. Making the
+// write depend on the run's context, or folding it into the per-iteration
+// checkpoint (which is genuinely best-effort, see the note at the checkpoint
+// site), would make an acknowledged tool result losable — and the next attempt
+// would then repeat a side effect the ledger no longer remembers.
 //
 // tier is the tier this call was CLASSIFIED at, which may be higher than the
 // tool declares (PRD SAF-01). Empty means the call was refused before it was

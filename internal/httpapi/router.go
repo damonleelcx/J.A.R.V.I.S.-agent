@@ -104,6 +104,7 @@ func NewRouter(d Deps) http.Handler {
 	// --- health and metadata (unauthenticated) ---
 	mux.HandleFunc("GET /healthz", health.Live)
 	mux.HandleFunc("GET /readyz", health.Ready)
+	mux.HandleFunc("GET /v1/meta/build", health.Build)
 	mux.HandleFunc("GET /v1/meta/error-codes", health.ErrorCodes)
 	mux.HandleFunc("GET /v1/meta/industries", health.Industries)
 

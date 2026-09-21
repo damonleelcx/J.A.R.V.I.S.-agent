@@ -19,6 +19,13 @@ COMMIT      ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 BUILD_DATE  ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS     := -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(BUILD_DATE)
 
+# The deployment image. IMAGE_BUILD_ARGS carries whatever the machine building it
+# needs — `--platform linux/arm64`, `--build-arg APT_MIRROR=…` — without that
+# having to be remembered alongside the version arguments, which are not
+# optional. See deploy/README.md.
+IMAGE            ?= forge:$(COMMIT)
+IMAGE_BUILD_ARGS ?=
+
 # Local development database. Runs on a non-default port so it cannot collide
 # with another Postgres already on this machine.
 DB_CONTAINER := forge-pg
@@ -85,6 +92,25 @@ build: ## Build all binaries into ./bin
 	go build -ldflags "$(LDFLAGS)" -o $(BINDIR)/forgectl ./cmd/forgectl
 	@echo "built $(VERSION) ($(COMMIT)) into $(BINDIR)/"
 
+.PHONY: image
+image: ## Build the deployment image, stamped with this commit
+	@# ‼️ The version arguments are the whole point of having this target rather
+	@# than a docker build command in a README: an image built without them
+	@# reports "unknown" for the rest of its life, and nothing downstream can
+	@# tell which commit answered a request. VERSION/COMMIT/BUILD_DATE are the
+	@# same three `make build` stamps into the local binaries.
+	docker build $(IMAGE_BUILD_ARGS) \
+	  --build-arg FORGE_VERSION=$(VERSION) \
+	  --build-arg FORGE_COMMIT=$(COMMIT) \
+	  --build-arg FORGE_BUILD_DATE=$(BUILD_DATE) \
+	  -t $(IMAGE) -f deploy/Dockerfile .
+	@echo "built image $(IMAGE) stamped $(VERSION) ($(COMMIT))"
+	@# The stamp, read back out of the image that will actually be deployed. A
+	@# build argument that is silently dropped (a typo in the ARG name, a stage
+	@# that never declared it) leaves a green build and an unstamped image, and
+	@# this is the only place that difference is visible before production is.
+	docker run --rm --entrypoint /usr/local/bin/forgectl $(IMAGE) version
+
 .PHONY: clean
 clean: ## Remove build output and local runtime state
 	rm -rf $(BINDIR) dist .forge
@@ -110,15 +136,30 @@ vet: ## Run go vet
 
 .PHONY: test
 test: ## Run unit tests (no database required)
-	go test -count=1 -race ./...
+	@# -timeout for the same reason as test-integration below.
+	go test -count=1 -race -timeout 30m ./...
 
 .PHONY: test-integration
 test-integration: db-wait ## Run all tests including those needing live Postgres
-	FORGE_TEST_DATABASE_URL="$(DB_URL)" go test -count=1 -race ./...
+	@# ‼️ -timeout, because `go test`'s 10m default is PER PACKAGE and two
+	@# packages are now close to it. Measured 2026-09-20 on this repository,
+	@# without -race: internal/httpapi ~600 s (601 s and 602 s in two whole-repo
+	@# runs) and internal/agent 565 s. On a contended machine httpapi tripped the
+	@# default outright — "panic: test timed out after 10m0s", in the middle of a
+	@# passing test — and the same package finished in 394 s on its own when the
+	@# machine was quiet. -race makes both slower still. Nothing was hung either
+	@# time; there is simply more work than the default allows, and the number
+	@# only goes up as fences are added.
+	@#
+	@# 30m rather than no limit, for the reason test-cad gives: a genuinely hung
+	@# test must still fail the job rather than run to the runner's own ceiling.
+	@# Raise it again only on a run that shows the honest work exceeding it.
+	FORGE_TEST_DATABASE_URL="$(DB_URL)" go test -count=1 -race -timeout 30m ./...
 
 .PHONY: test-cover
 test-cover: db-wait ## Run tests with coverage and print a summary
-	FORGE_TEST_DATABASE_URL="$(DB_URL)" go test -count=1 -coverprofile=coverage.out ./...
+	@# -timeout for the same reason as test-integration above.
+	FORGE_TEST_DATABASE_URL="$(DB_URL)" go test -count=1 -coverprofile=coverage.out -timeout 30m ./...
 	go tool cover -func=coverage.out | tail -20
 
 .PHONY: cad-venv
@@ -200,6 +241,29 @@ measure-car: ## Measure how far a live car build actually gets (SPENDS REAL TOKE
 	FORGE_MEASURE_TOKEN_BUDGET="$${FORGE_MEASURE_TOKEN_BUDGET:-300000}" \
 	FORGE_CAD_PYTHON="$${FORGE_CAD_PYTHON:-$(CAD_PYTHON)}" \
 	go test -count=1 -v -timeout 60m -run TestLiveCarCeiling ./internal/agent/
+
+.PHONY: looks-benchmark
+looks-benchmark: ## Build, render and judge the fixed looks prompts (SPENDS REAL TOKENS — read the budget note)
+	@# Five fixed prompts, one build each, rendered by this branch's forge3d.js and
+	@# by an earlier one, and scored by the looks judge (internal/looks). The record
+	@# and every picture land in docs/spikes/2026-09-20-looks-benchmark/.
+	@# See internal/agent/looks_benchmark_live_test.go.
+	@#
+	@# ‼️ TWO hard ceilings, both enforced by refusing the call: the run's total and
+	@# one per prompt, so a car that will not settle cannot eat the lever's budget.
+	@# 100k is what damon approved for the whole of stage D (2026-09-20); the default
+	@# below leaves headroom under it. Raise either deliberately, never by habit.
+	@#
+	@# FORGE_LOOKS_BEFORE_RENDERER names the forge3d.js today's pictures are compared
+	@# AGAINST. Without it the prompts are built and rendered but nothing is judged,
+	@# and the record says so. Get one with:
+	@#   git show origin/main:internal/httpapi/assets/forge3d.js > /tmp/before-forge3d.js
+	@test -n "$$FORGE_LLM_API_KEY" || { echo "FORGE_LLM_API_KEY is not set — source .env first"; exit 1; }
+	FORGE_LIVE_LLM_TESTS=1 \
+	FORGE_LOOKS_BENCH_BUDGET="$${FORGE_LOOKS_BENCH_BUDGET:-88000}" \
+	FORGE_LOOKS_BENCH_PER_PROMPT="$${FORGE_LOOKS_BENCH_PER_PROMPT:-17000}" \
+	FORGE_CAD_PYTHON="$${FORGE_CAD_PYTHON:-$(CAD_PYTHON)}" \
+	go test -count=1 -v -timeout 55m -run 'TestLiveLooksBenchmark$$' ./internal/agent/
 
 .PHONY: drill
 test-asr: ## Speech fences against the REAL provider, both directions (costs a fraction of a cent)
@@ -448,6 +512,22 @@ db-reset: ## Destroy and recreate the local database. DESTRUCTIVE.
 	 [ "$$ok" = "yes" ] || { echo "aborted"; exit 1; }
 	-docker rm -f $(DB_CONTAINER)
 	$(MAKE) db-up db-wait migrate
+
+.PHONY: db-clean-test-schemas
+db-clean-test-schemas: ## Drop every schema left behind by a test or drill run
+	@# Test schemas carry a random per-process id (internal/platform/db/testschema.go)
+	@# so that two worktrees cannot drop each other's. The cost of that is a run
+	@# killed part-way leaves its schemas behind, where before the next run of the
+	@# same test would have reused the name. This sweeps them.
+	@#
+	@# Only forge_* schemas, never `public` and never `forge_migrations` if it ever
+	@# becomes a schema: an operator running this against the wrong database should
+	@# lose scratch, not data.
+	@# The statement lives in a file rather than in -c: it is dollar-quoted
+	@# PL/pgSQL, and getting that through make's $ and the shell's $ intact is
+	@# three layers of escaping nobody should have to read. See the file for what
+	@# it does and what it refuses to touch.
+	docker exec -i $(DB_CONTAINER) psql -U $(DB_USER) -d $(DB_NAME) -q < scripts/clean-test-schemas.sql
 
 .PHONY: db-shell
 db-shell: ## Open psql against the local database

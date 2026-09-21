@@ -52,7 +52,7 @@ func characterHarness(t *testing.T) *db.Pool {
 		t.Skip("FORGE_TEST_DATABASE_URL is unset")
 	}
 	ctx := context.Background()
-	schema := "forge_char_test"
+	schema := db.UniqueSchema("forge_char_test", "")
 	cfg := func(u string) config.DBConfig {
 		return config.DBConfig{URL: u, MaxConns: 4, MinConns: 1,
 			MaxConnLifetime: time.Hour, MaxConnIdleTime: time.Minute, ConnectTimeout: 10 * time.Second}

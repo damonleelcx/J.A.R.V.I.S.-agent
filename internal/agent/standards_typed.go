@@ -63,6 +63,15 @@ import (
 // and the figure and NOTHING else that could be mistaken for a dimension, and
 // everything a reader needs about where it came from goes in Via.
 
+// noSourceNamed is what the banner calls a figure that names nothing at all.
+//
+// A phrase and not an empty string: the banner groups claims by this field and
+// renders it as the heading, so an empty one would produce a bullet with no
+// subject — and the reader would be told a figure was quoted from memory without
+// being told the one thing that matters about it, which is that there is nothing
+// behind it.
+const noSourceNamed = "a figure with no source"
+
 // typedClaims reads a document's parameters and resolved derived values.
 //
 // Returns nil for a document with no parameters — every stored variant predates
@@ -138,8 +147,8 @@ func typedClaims(doc *geometry.Document) []StandardsClaim {
 		if len(refs) == 0 {
 			continue
 		}
-		label := commonPartLabel(span.Parts)
-		if label == "" {
+		label, named := span.Name()
+		if !named {
 			// Nothing shared to call it. A span nobody can name cannot be
 			// attributed to a dimension, and the parameters underneath it are
 			// already reported above — so this would be a second copy of a
@@ -161,6 +170,38 @@ func typedClaims(doc *geometry.Document) []StandardsClaim {
 			Text: fmt.Sprintf("%s spacing = %s", label, figure),
 			Via: fmt.Sprintf("measured across %d parts placed on the %s axis from %s",
 				len(span.Parts), span.Axis, strings.Join(span.Depends, ", ")),
+		})
+	}
+
+	// A recalled figure written as a BARE CONSTANT in `derived` (issue 8).
+	//
+	// Everything else in this file travels along a dependency edge: a derived
+	// figure is attributable to whatever the parameters underneath it claimed.
+	// A bare constant has no edges — it depends on nothing — so nothing
+	// propagates to it and the check said nothing at all about it. In the live
+	// run the issue records that was 2 of 3 derived figures, and the reader took
+	// a clean banner to mean they had been traced.
+	//
+	// A bare constant answers "where did this come from" with silence, and
+	// silence is indistinguishable from a number the model invented. So it is
+	// reported here with the one thing that IS known about it: it has no source.
+	// Not as a refusal — Resolve already tells the model where the number
+	// belongs, in its own voice — but as a line in the banner whose whole job is
+	// to say which figures were not checked.
+	//
+	// noSourceNamed stands where a standard's name stands, because the banner
+	// groups by that field and this is exactly the same kind of statement: here
+	// is a figure, and here is what is known about where it came from.
+	for _, v := range doc.ConstantDerived() {
+		figure := figureText(v)
+		out = append(out, StandardsClaim{
+			Standards: []string{noSourceNamed},
+			Figures:   []string{figure},
+			Where:     "derived value",
+			Text:      fmt.Sprintf("%s = %s", v.Name, figure),
+			Via: fmt.Sprintf("written in \"derived\" as %s, which names no parameter, so this "+
+				"figure rests on nothing and there is no source to check it against",
+				strconv.Quote(v.Expression)),
 		})
 	}
 
@@ -266,36 +307,34 @@ func parameterNote(p geometry.Problem) string {
 	return fmt.Sprintf("%s — %s.", lead, p.Detail)
 }
 
-// commonPartLabel is the name a group of parts shares, or "" when they share
-// nothing worth calling them.
+// relationshipNote renders one thing relationship checking found, for the reader.
 //
-// Taken from the parts' own ids rather than composed here. "motor-mount-hole-bl"
-// and "motor-mount-hole-tr" are called "motor-mount-hole" because that is what
-// their author called them; inventing a name for a group would be deciding what
-// the group IS, which is the one thing this file must not do.
-//
-// A prefix is only used when it survives being trimmed back to a separator, so
-// "rib-left" and "rib-right" give "rib" and never "rib-l".
-func commonPartLabel(ids []string) string {
-	if len(ids) < 2 {
-		return ""
+// Its own lead, and not parameterNote's. "This design's parametric model
+// resolves, with a caveat" is about ARITHMETIC — a value that would not
+// evaluate, a number disagreeing with its own expression. These are about
+// whether the document's relationships mean anything: a parameter nothing reads
+// and four holes at typed coordinates both resolve perfectly. Telling a reader
+// the model "resolves with a caveat" about them would point them at the one
+// place the problem is not.
+func relationshipNote(p geometry.Problem) string {
+	if p.Name != "" {
+		return fmt.Sprintf("FORGE checked this design's relationships — %s %s.", p.Name, p.Detail)
 	}
-	prefix := ids[0]
-	for _, id := range ids[1:] {
-		n := 0
-		for n < len(prefix) && n < len(id) && prefix[n] == id[n] {
-			n++
-		}
-		prefix = prefix[:n]
-	}
-	prefix = strings.TrimRight(prefix, "-_ ")
-	// Two characters is not a name. Below that the "shared" prefix is an
-	// accident of spelling rather than something the author meant.
-	if len(prefix) < 3 {
-		return ""
-	}
-	return prefix
+	return fmt.Sprintf("FORGE checked this design's relationships — %s.", p.Detail)
 }
+
+// The name a group of parts shares now lives on Span itself (geometry's
+// relationships.go, issue 9), because two readers need it and they must not
+// disagree: this file, which scores a NAMED span against the dimension table,
+// and the relationship report, which has to say something honest about an
+// UNNAMED one instead of dropping it.
+//
+// The rule is unchanged. It is taken from the parts' own ids rather than
+// composed: "motor-mount-hole-bl" and "motor-mount-hole-tr" are called
+// "motor-mount-hole" because that is what their author called them, and
+// inventing a name for a group would be deciding what the group IS, which is the
+// one thing this file must not do. Span.Name's second return value is what keeps
+// that true here: a name FORGE assigned is never scored.
 
 // featureNote renders one rejected feature for the reader.
 //
@@ -306,6 +345,17 @@ func commonPartLabel(ids []string) string {
 func featureNote(p geometry.Problem) string {
 	return fmt.Sprintf("FORGE could not apply one of this design's features, so it is not in "+
 		"the shape — %s %s.", p.Name, p.Detail)
+}
+
+// templateNote renders what the car template said about a car (geometry/car.go):
+// an Error is a car that is NOT in the shape, a Warning a car built as asked with
+// something worth a look — usually a proportion outside its class's published cars.
+func templateNote(p geometry.Problem) string {
+	if p.Severity == geometry.Error {
+		return fmt.Sprintf("FORGE could not build the car from its numbers, so it is not in the "+
+			"shape — %s %s.", p.Name, p.Detail)
+	}
+	return fmt.Sprintf("The car was built as asked, with a caveat — %s %s.", p.Name, p.Detail)
 }
 
 // profileNote renders one unreadable outline for the reader.

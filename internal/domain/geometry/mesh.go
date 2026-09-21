@@ -223,6 +223,9 @@ func Tessellate(doc Document, unit Unit) *Mesh {
 			infer("%s: its %s is not in this file — a mesh has no edges to round. The rounded "+
 				"solid is what the STEP export contains.", labelOf(doc, f.Of),
 				strings.ToLower(f.Op))
+		case "shell", "thicken":
+			infer("%s: its %s is not in this file — this mesh is the part before it. The walls "+
+				"are in the STEP export.", labelOf(doc, f.Of), strings.ToLower(f.Op))
 		}
 	}
 
@@ -351,6 +354,15 @@ func partTriangles(p Part, unit Unit, infer func(string, ...any)) ([]Triangle, *
 		// kernel writes. That is where a lofted hull comes out.
 		infer("%s: a section is an outline with no thickness, so it is not in this mesh file. "+
 			"The solid its loft blends is in the parametric export.", p.Label())
+		return nil, nil
+
+	case latticeShape:
+		// Mesh-only, and built only by the CAD kernel's mesh (lattice.go): this
+		// tessellator has no level sets. Named and left out rather than drawn as its
+		// box, which would put a solid block in the file where the design has an
+		// open, decorative sheet.
+		infer("%s: a lattice is mesh-only (%s) and drawn only from the CAD kernel's mesh, "+
+			"so it is not in this file.", p.Label(), MeshOnlyLabel)
 		return nil, nil
 
 	case "extrusion":
@@ -566,10 +578,43 @@ func box(w, h, d float64) []Triangle {
 	return out
 }
 
+// ‼️ THE CONVENTION FOR A ZERO-THICKNESS PLANE LIVES HERE: a plane is ONE-SIDED
+// and it FACES UP. Its single face's normal is +Y, and its triangles are wound to
+// agree with it — the corner order below is the box's +Y face with y flattened to
+// zero, started at the corner that makes the quad's diagonal the one forge3d.js
+// splits on, so the two builders emit the same two facets and not merely two
+// facets facing the same way.
+//
+// Two other builders make the same plane and both obey this: the CAD kernel
+// (internal/domain/cad/sidecar.py, _shape, kind "plane") and the browser
+// (internal/httpapi/assets/forge3d.js, planeGeometry). All three declare +Y and
+// wind +Y; TestAPlaneFacesUp here, TestKernel_APlaneFacesUp and
+// TestTheRendererDrawsAPlaneFacingUp hold each of them to it, and the three are
+// written against the same sentence so none of them can drift alone.
+//
+// # Why up, and why one-sided rather than drawn from both sides
+//
+//   - The viewport is one-sided and cannot cheaply be anything else. forge3d.js
+//     draws the model pass with gl.enable(CULL_FACE) and gl.frontFace(gl.CCW), and
+//     culling is per-PASS GL state, not per-batch: there is no material flag that
+//     could make one part two-sided without new plumbing through _drawBatch.
+//   - Even with culling off the back would be wrong. The part fragment shader
+//     lights with the interpolated normal as it arrives — no gl_FrontFacing, no
+//     faceforward — so a plane seen from underneath would be lit as if its top
+//     were towards the viewer. An honest one-sided sheet is better than a
+//     two-sided one lit from the wrong side.
+//   - Up is the side that gets looked at. A plane is a ground, table, datum or
+//     reference surface; the default and "top" cameras both look DOWN on the
+//     model. Facing it down is what made it invisible in exactly the view it was
+//     drawn for.
+//   - Up is what the rest of the vocabulary already means by up: the box's +Y
+//     face, and a cone's radius_top at +height/2 (PR 167).
+//
+// docs/bugfix/2026-09-21-a-plane-faced-down-and-was-culled-from-above.md.
 func plane(w, d float64) []Triangle {
 	x, z := w/2, d/2
 	n := [3]float64{0, 1, 0}
-	return quad([3]float64{-x, 0, -z}, [3]float64{x, 0, -z}, [3]float64{x, 0, z}, [3]float64{-x, 0, z}, n)
+	return quad([3]float64{-x, 0, -z}, [3]float64{-x, 0, z}, [3]float64{x, 0, z}, [3]float64{x, 0, -z}, n)
 }
 
 func cylinder(radius, radiusTop, height float64, segments int) []Triangle {

@@ -46,8 +46,22 @@ try:
         Box, Cylinder, Cone, Sphere, Rectangle, Plane, Location, Vector,
         Compound, Axis, Polyline, PrecisionMode, extrude, fillet, chamfer, loft,
         make_face, revolve, sweep, Transition, Line, ThreePointArc, Wire, Face,
-        import_step,
+        import_step, offset, thicken,
     )
+    # Edge rules decided by OCCT itself (looks designed, stage B2; see _EDGE_RULES).
+    from OCP.BRepBuilderAPI import BRepBuilderAPI_MakeVertex
+    from OCP.BRepExtrema import BRepExtrema_DistShapeShape
+    from OCP.ChFi3d import ChFi3d
+    from OCP.ChFiDS import ChFiDS_TypeOfConcavity
+    from OCP.TopAbs import TopAbs_EDGE, TopAbs_FACE
+    from OCP.TopExp import TopExp
+    from OCP.TopoDS import TopoDS
+    from OCP.TopTools import TopTools_IndexedDataMapOfShapeListOfShape, TopTools_IndexedMapOfShape
+    # Per-vertex normals from the surface itself (stage A5; see _tessellate_once).
+    from OCP.BRep import BRep_Tool
+    from OCP.BRepLib import BRepLib_ToolTriangulatedShape
+    from OCP.BRepMesh import BRepMesh_IncrementalMesh
+    from OCP.TopAbs import TopAbs_Orientation
     # A located copy without the B-rep copy Shape.moved makes and discards; see _located.
     from build123d.topology.shape_core import Shape, downcast, shapetype
     from OCP.gp import gp_Ax3, gp_Pnt, gp_Trsf
@@ -55,11 +69,20 @@ try:
     from OCP.Bnd import Bnd_Box
     from OCP.BRepBndLib import BRepBndLib
     from OCP.BRepTools import BRepTools
+    # What a manufacturability check measures, and a named section's properties
+    # (issue 6): a ray through the material, a face's own normal, a surface's and a
+    # curve's kind, and the area and inertia of a planar cut. See _manufacturability.
+    from OCP.BRepAdaptor import BRepAdaptor_Curve, BRepAdaptor_Surface
+    from OCP.BRepGProp import BRepGProp, BRepGProp_Face
+    from OCP.BRepIntCurveSurface import BRepIntCurveSurface_Inter
+    from OCP.GeomAbs import GeomAbs_Circle, GeomAbs_Cylinder
+    from OCP.GProp import GProp_GProps
+    from OCP.gp import gp_Dir, gp_Lin, gp_Vec
     # The STEP writer's own pieces, used directly rather than through build123d's
     # export_step, which only accepts a Compound(children=...) — see _step_document.
     from OCP.APIHeaderSection import APIHeaderSection_MakeHeader
     from OCP.IFSelect import IFSelect_ReturnStatus
-    from OCP.Interface import Interface_Static
+    from OCP.Interface import Interface_HArray1OfHAsciiString, Interface_Static
     from OCP.Message import Message, Message_Gravity
     from OCP.STEPCAFControl import STEPCAFControl_Controller, STEPCAFControl_Writer
     from OCP.STEPControl import STEPControl_Controller, STEPControl_StepModelType
@@ -88,6 +111,14 @@ try:
     import numpy as _np
 except Exception:  # pragma: no cover - the per-pair path answers exactly the same
     _np = None
+
+# manifold3d builds the MESH-ONLY parts (see _lattice_mesh) and nothing else: it
+# never touches a solid OCCT built. Guarded, so a kernel without it still builds
+# every exact part and refuses each mesh-only part by name.
+try:
+    import manifold3d as _m3
+except Exception:  # pragma: no cover - reported per part, never fatal
+    _m3 = None
 
 
 def _wire(curve):
@@ -481,7 +512,14 @@ def _shape(solid):
     build123d builds a cylinder along +Z and this system draws it along +Y
     (mesh.go: the rings are at ±height/2 on y). The correction is applied here,
     once, as a rotation of the local frame rather than by rebuilding the
-    primitive — see Plane.XZ, whose normal is -Y and whose x stays x.
+    primitive.
+
+    ‼️ WHICH WAY the frame turns matters, and only for the shapes that can tell.
+    Plane.XZ's normal is -Y, so it lays the primitive's +Z end at -Y: correct for
+    a cylinder, which is the same at both ends, and end-for-end for everything
+    that is not. Plane.ZX's normal is +Y and is the one to reach for when the
+    primitive has a distinct top. See the cone below, and
+    docs/bugfix/2026-09-21-truncated-cone-built-upside-down.md.
     """
     kind = solid["shape"]
     d = solid["dims"]
@@ -506,8 +544,23 @@ def _shape(solid):
             body = Cone(d["radius"], 0, d["height"])
         else:
             body = Cone(d["radius"], top, d["height"])
-        # +Z to +Y.
-        return Plane.XZ * body
+        # +Z to +Y, with Plane.ZX and NOT Plane.XZ.
+        #
+        # Cone(radius, radius_top, height) runs along +Z with `radius` at -Z and
+        # `radius_top` at +Z. mesh.go and forge3d.js both draw radius_top at
+        # +height/2 — radius_top is the TOP — so the frame has to carry +Z to
+        # +Y. Plane.XZ carries it to -Y (its normal is -Y) and built every
+        # truncated cone end-for-end: a 20/5 frustum's centre of volume came out
+        # at y=+1.786 mm when the frustum formula h(R²+2Rr+3r²)/(4(R²+Rr+r²))
+        # puts it 3.214 mm from the LARGE base, i.e. at y=-1.786 with the large
+        # base down. Nothing caught it because a cylinder is the same at both
+        # ends and every orientation fence used one; volume, triangle count and
+        # STEP byte count are all identical either way up.
+        #
+        # Plane.ZX spins the local x round with it, which no cylinder or cone can
+        # see — both are round about their own axis. The `plane` shape below is
+        # NOT round about its axis (width is X, depth is Z) and keeps Plane.XZ.
+        return Plane.ZX * body
     if kind == "section":
         # A drawing with no thickness. It is not a solid and has no volume, and
         # that is correct: it exists to be blended with other sections by a loft,
@@ -572,7 +625,25 @@ def _shape(solid):
         # A face, not a solid, and deliberately so: a plane has no thickness and
         # will not print, machine, or hold a volume. It is exported because it is
         # part of what was drawn, and the label says what it is.
-        return Plane.XZ * Rectangle(d["width"], d["depth"])
+        #
+        # ‼️ It FACES UP. A plane is one-sided with its normal at +Y; the
+        # convention and the reasons for it live in internal/domain/geometry/
+        # mesh.go, func plane, and forge3d.js planeGeometry is the third copy.
+        # This built Plane.XZ * Rectangle for two years, whose normal is -Y, so
+        # the kernel's mesh faced DOWN — declared -Y and wound -Y, coherent with
+        # itself and against both renderers and the exported STL.
+        #
+        # The frame cannot simply become Plane.ZX the way the cone's did. A
+        # cylinder or a cone is round about its own axis and cannot see the spin;
+        # a rectangle can. Plane.ZX's x is +Z and its y is +X, so
+        # Plane.ZX * Rectangle(width, depth) would lay WIDTH along Z and DEPTH
+        # along X — the plane would face the right way and be the wrong shape.
+        # The frame here is the one that turns +Z to +Y and LEAVES x ALONE:
+        # x_dir +X, z_dir +Y, so width stays on X and depth runs along -Z, which
+        # a rectangle centred on its origin cannot tell from +Z.
+        return Plane(origin=Vector(0, 0, 0),
+                     x_dir=Vector(1, 0, 0),
+                     z_dir=Vector(0, 1, 0)) * Rectangle(d["width"], d["depth"])
     if kind == "step":
         # A solid that was built somewhere else and arrived as STEP.
         #
@@ -611,44 +682,177 @@ def _shape(solid):
     raise ValueError("unsupported shape %r" % kind)
 
 
-def _edges(shape, rule):
-    """Which edges a fillet or chamfer touches, by RULE and never by index.
+def _edge_faces(shape):
+    """Every edge of a shape mapped to the faces it bounds (OCCT's ancestor map)."""
+    faces = TopTools_IndexedDataMapOfShapeListOfShape()
+    TopExp.MapShapesAndAncestors_s(shape.wrapped, TopAbs_EDGE, TopAbs_FACE, faces)
+    return faces
 
-    An index selects a different edge the moment a parameter changes, which is
-    the failure mode that makes naive parametric scripts break on their second
-    run (docs/spikes/2026-09-05-parametric-cad-kernel/). Y is up in this system,
-    so "vertical" is the Y axis.
 
-    The names are validated in Go against the same closed table; an unknown one
-    never reaches here.
+def _two_faces(faces, edge):
+    """The two distinct faces an edge joins, or None for a seam or a free edge.
+
+    A seam — the line where a cylinder's one face closes on itself — lists the
+    same face twice, so faces are told apart by IsSame and not counted.
     """
-    edges = shape.edges()
-    if rule == "vertical":
-        return edges.filter_by(Axis.Y)
-    if rule == "horizontal":
-        return edges.filter_by(Axis.X) + edges.filter_by(Axis.Z)
-    if rule == "top":
-        return edges.group_by(Axis.Y)[-1]
-    if rule == "bottom":
-        return edges.group_by(Axis.Y)[0]
-    return edges
+    found = []
+    for f in faces.FindFromKey(edge.wrapped):
+        f = TopoDS.Face_s(f)
+        if not any(f.IsSame(g) for g in found):
+            found.append(f)
+    return found if len(found) == 2 else None
 
 
-def _apply(op, shapes):
+def _connection(faces, edge):
+    """OCCT's own answer to "is this edge convex": ChFi3d::DefineConnectType, the
+    question its fillet builder asks. None for a seam or a free edge."""
+    pair = _two_faces(faces, edge)
+    if pair is None:
+        return None
+    return ChFi3d.DefineConnectType_s(edge.wrapped, pair[0], pair[1], 1e-6, True)
+
+
+def _inner_edges(shape):
+    """The edges on some face's INNER boundary: the rims of holes through it."""
+    inner = TopTools_IndexedMapOfShape()
+    for face in shape.faces():
+        for wire in face.inner_wires():
+            for edge in wire.edges():
+                inner.Add(edge.wrapped)
+    return inner
+
+
+def _on_surface(shape, points, tol):
+    """Every point lies on the shape's boundary (within tol)."""
+    for p in points:
+        vertex = BRepBuilderAPI_MakeVertex(gp_Pnt(p.X, p.Y, p.Z)).Vertex()
+        d = BRepExtrema_DistShapeShape(vertex, shape.wrapped)
+        if not d.IsDone() or d.Value() > tol:
+            return False
+    return True
+
+
+def _joins(shape, op, history):
+    """The seam a fuse left: edges on the surface of the part as it was placed AND
+    on the surface of a part an earlier fuse welded into it. Sampled at three
+    points along each edge, so an edge that only touches the other part at an
+    end is not taken for one that runs along it."""
+    history = history or {}
+    placed = history.get("placed") or {}
+    target = placed.get(op["of"])
+    tools = [placed[t] for t in (history.get("fused") or {}).get(op["of"], []) if t in placed]
+    if target is None or not tools:
+        return []
+    tol = max(1e-6, 1e-7 * float(shape.bounding_box().diagonal))
+    out = []
+    for edge in shape.edges():
+        points = [edge.position_at(u) for u in (0.25, 0.5, 0.75)]
+        if _on_surface(target, points, tol) and any(_on_surface(t, points, tol) for t in tools):
+            out.append(edge)
+    return out
+
+
+def _by_connection(kind):
+    def select(shape, op, history):
+        faces = _edge_faces(shape)
+        return [e for e in shape.edges() if _connection(faces, e) == kind]
+    return select
+
+
+def _outer(shape, op, history):
+    faces, inner = _edge_faces(shape), _inner_edges(shape)
+    return [e for e in shape.edges()
+            if not inner.Contains(e.wrapped) and _two_faces(faces, e) is not None]
+
+
+def _holes(shape, op, history):
+    inner = _inner_edges(shape)
+    return [e for e in shape.edges() if inner.Contains(e.wrapped)]
+
+
+def _longer(shape, op, history):
+    # Strictly longer: an edge exactly edge_length long is not "longer than" it.
+    limit = float(op.get("edge_length") or 0.0)
+    return [e for e in shape.edges() if float(e.length) > limit * (1 + 1e-9)]
+
+
+# Which edges a fillet or chamfer touches, by RULE and never by index.
+#
+# An index selects a different edge the moment a parameter changes, which is the
+# failure mode that makes naive parametric scripts break on their second run
+# (docs/spikes/2026-09-05-parametric-cad-kernel/). Y is up in this system, so
+# "vertical" is the Y axis.
+#
+# ‼️ The names are geometry.EdgeRules', exactly: Go validates a document against
+# that table and teaches the contract from it, and this is the third reader of
+# the same list. TestTheKernelSelectsEdgesByExactlyTheRulesGoValidates reads this
+# dict's keys out of this file and compares them (looks designed, stage B2).
+_EDGE_RULES = {
+    "all": lambda shape, op, history: shape.edges(),
+    "vertical": lambda shape, op, history: shape.edges().filter_by(Axis.Y),
+    "horizontal": lambda shape, op, history: (shape.edges().filter_by(Axis.X)
+                                              + shape.edges().filter_by(Axis.Z)),
+    "top": lambda shape, op, history: shape.edges().group_by(Axis.Y)[-1],
+    "bottom": lambda shape, op, history: shape.edges().group_by(Axis.Y)[0],
+    "convex": _by_connection(ChFiDS_TypeOfConcavity.ChFiDS_Convex),
+    "concave": _by_connection(ChFiDS_TypeOfConcavity.ChFiDS_Concave),
+    "outer": _outer,
+    "holes": _holes,
+    "longer": _longer,
+    "joins": _joins,
+}
+
+
+def _edges(shape, op, history=None):
+    """The edges op's rule selects on shape. An unknown name never reaches here:
+    Go refuses it against the same table."""
+    return _EDGE_RULES[op.get("edges") or "all"](shape, op, history)
+
+
+# The faces a shell may leave open: geometry.OpenFaceRules, exactly, for the
+# reason _EDGE_RULES gives. Each is (axis, which end), in the assembly's frame.
+_OPEN_FACES = {
+    "top": (Axis.Y, -1),
+    "bottom": (Axis.Y, 0),
+    "right": (Axis.X, -1),
+    "left": (Axis.X, 0),
+    "front": (Axis.Z, -1),
+    "back": (Axis.Z, 0),
+}
+
+
+def _apply(op, shapes, history=None, report=None):
     """One operation, in place in the shapes dict.
 
     Order is the document's. A feature reads what the features before it left
     behind, which is what makes "cut the holes, then round what is left" mean
     something different from the other way round.
+
+    history holds each part as it was placed ("placed") and which parts earlier
+    fuses welded into which ("fused"), for the "joins" edge rule. report gathers
+    what a build reply says about the features beyond success and failure: how
+    many edges each round selected ("edges") and every round built smaller or
+    left partly square ("reduced").
     """
     target = shapes[op["of"]]
     kind = op["op"]
 
+    if kind == "cut" and len(op.get("with") or []) > 1:
+        # ONE boolean with every tool, not one per tool (looks designed, stage B6).
+        # Cut one at a time, each cut re-splits a target that already carries every
+        # earlier hole: a 1,000-hole perforation took 288 s this way and 1.6-8.1 s
+        # as one boolean, with the same exact volume (measured 2026-09-18,
+        # docs/spikes/2026-09-18-kernel-vocabulary). geometry.MaxCutTools bounds N.
+        # Fence: TestKernel_APerforationIsCutAsOneBoolean.
+        shapes[op["of"]] = target.cut(*[shapes[t] for t in op["with"]])
+        return
     if kind in ("cut", "fuse"):
         for tool_id in op.get("with") or []:
             tool = shapes[tool_id]
             target = (target - tool) if kind == "cut" else (target + tool)
         shapes[op["of"]] = target
+        if kind == "fuse" and history is not None:
+            history.setdefault("fused", {}).setdefault(op["of"], []).extend(op.get("with") or [])
         return
 
     if kind == "loft":
@@ -694,16 +898,184 @@ def _apply(op, shapes):
         shapes[op["of"]] = blended
         return
 
-    selected = _edges(target, op.get("edges") or "all")
+    if kind == "shell":
+        shapes[op["of"]] = _shelled(target, op)
+        return
+    if kind == "thicken":
+        shapes[op["of"]] = _thickened(target, op)
+        return
+
+    selected = _edges(target, op, history)
+    if report is not None:
+        report.setdefault("edges", {})[op["id"]] = len(selected)
     if not selected:
         # Nothing to round is not a failure: a rule can legitimately select no
         # edge (a sphere has none vertical). Reported so a person is not left
         # wondering why the fillet they asked for is not there.
         raise ValueError("the %s selected no %s edges" % (kind, op.get("edges") or "all"))
+    shapes[op["of"]] = _rounded(kind, target, selected, op, report)
+
+
+def _shelled(target, op):
+    """A solid hollowed to walls of op["thickness"], measured inward, open at the
+    faces op["open"] names (looks designed, stage B4).
+
+    Inward, so the outside stays the size the document says: a 100 mm housing
+    shelled 3 mm is still 100 mm across. At least one face is open — Go refuses
+    a shell with none, because build123d 0.11.1 returns a closed shell as one
+    solid whose volume is the CAVITY's (measured 2026-09-18).
+    """
+    faces = []
+    for name in op.get("open") or []:
+        axis, end = _OPEN_FACES[name]
+        for face in target.faces().group_by(axis)[end]:
+            if not any(face.wrapped.IsSame(f.wrapped) for f in faces):
+                faces.append(face)
+    if not faces:
+        raise ValueError("the shell found no face to leave open")
+    result = offset(target, amount=-float(op["thickness"]), openings=faces)
+    volume = float(getattr(result, "volume", 0.0))
+    # ‼️ A wall thicker than the part is thin does not raise: OCCT returns a
+    # shape, sometimes an empty one and sometimes the part unchanged. Either is a
+    # shell nobody asked for, so it is refused with the reason.
+    if volume <= 0.0 or volume >= float(target.volume) * (1 - 1e-9):
+        raise ValueError("a %g mm wall does not fit inside this part, so it cannot be shelled; "
+                         "use a thinner wall" % op["thickness"])
+    return result
+
+
+def _thickened(target, op):
+    """A surface grown into a solid skin op["thickness"] thick, CENTRED on the
+    surface as an extrusion is centred on its outline (looks designed, stage B4)."""
+    faces = target.faces()
+    if len(faces) != 1:
+        raise ValueError("a thicken needs one surface; this part has %d faces" % len(faces))
+    result = thicken(faces[0], amount=float(op["thickness"]) / 2.0, both=True)
+    if float(getattr(result, "volume", 0.0)) <= 0.0:
+        raise ValueError("the surface could not be thickened")
+    return result
+
+
+# The sizes a fillet or chamfer is retried at when OCCT refuses the one asked for
+# (looks designed, stage B1). A refused round used to drop the whole feature and
+# leave every edge it named square; half and a quarter of the size are almost
+# always a rounded edge somebody would rather have. Never silently: every edge
+# group built smaller, and every one left square, is REPORTED ("features_reduced"),
+# because a rounded edge a reader thinks is R5 and is R1.25 is a claim about the
+# part.
+_ROUND_RETRY = (1.0, 0.5, 0.25)
+# Past this many edge groups a feature is retried as ONE group. Each group costs
+# up to three OCCT attempts on a path that has already failed, and a perforated
+# panel's "holes" rule can select thousands of rims.
+_ROUND_GROUP_LIMIT = 64
+
+
+def _round(kind, edges, size):
     if kind == "fillet":
-        shapes[op["of"]] = fillet(selected, radius=op["radius"])
-    else:
-        shapes[op["of"]] = chamfer(selected, length=op["radius"])
+        return fillet(edges, radius=size)
+    return chamfer(edges, length=size)
+
+
+def _edge_groups(edges):
+    """The selected edges as connected chains: edges sharing a vertex are one group.
+
+    A group is what one refused fillet takes down with it. Filleted separately, a
+    fin too thin for the radius loses its own edges and not the plate's corners.
+    """
+    index = TopTools_IndexedMapOfShape()
+    parent = list(range(len(edges)))
+
+    def find(i):
+        while parent[i] != i:
+            parent[i] = parent[parent[i]]
+            i = parent[i]
+        return i
+
+    owner = {}
+    for i, edge in enumerate(edges):
+        for v in edge.vertices():
+            k = index.Add(v.wrapped)
+            if k in owner:
+                a, b = find(owner[k]), find(i)
+                if a != b:
+                    parent[b] = a
+            else:
+                owner[k] = i
+    groups = {}
+    for i in range(len(edges)):
+        groups.setdefault(find(i), []).append(edges[i])
+    return list(groups.values())
+
+
+def _edge_key(edge):
+    c = edge.center()
+    return (round(float(c.X), 5), round(float(c.Y), 5), round(float(c.Z), 5),
+            round(float(edge.length), 5))
+
+
+def _where(edges):
+    c = edges[0].center()
+    return "%d edge%s near (%g, %g, %g)" % (len(edges), "" if len(edges) == 1 else "s",
+                                             round(float(c.X), 1), round(float(c.Y), 1),
+                                             round(float(c.Z), 1))
+
+
+def _rounded(kind, target, selected, op, report):
+    """Round the selected edges, and when OCCT refuses, save what can be saved.
+
+    First all at once at the size asked for — the path every round that fits
+    takes, unchanged. When that is refused, each connected group of edges is
+    rounded on its own, at the size asked for, then half, then a quarter; a group
+    no size fits is left square and the rest are still rounded. Each group is
+    found again on the shape the groups before it left, by where it is: a group
+    whose edges an earlier round consumed is reported as left square.
+
+    Raises only when NO group could be rounded, so the feature is reported as
+    failed exactly as before, with the largest size that fits.
+    """
+    size = float(op["radius"])
+    try:
+        return _round(kind, selected, size)
+    except Exception:
+        pass
+    groups = _edge_groups(list(selected))
+    if len(groups) > _ROUND_GROUP_LIMIT:
+        groups = [list(selected)]
+    shape, reduced, square, applied = target, [], [], 0
+    for group in groups:
+        keys = {_edge_key(e) for e in group}
+        here = [e for e in shape.edges() if _edge_key(e) in keys]
+        if len(here) != len(group):
+            square.append("%s (an earlier group's round changed them)" % _where(group))
+            continue
+        done = False
+        for factor in _ROUND_RETRY:
+            try:
+                shape = _round(kind, here, size * factor)
+            except Exception:
+                continue
+            done = True
+            applied += 1
+            if factor != 1.0:
+                reduced.append("%s at %g mm (%g× the %g mm asked for)"
+                               % (_where(group), size * factor, factor, size))
+            break
+        if not done:
+            square.append("%s left square: no %s of %s mm builds there"
+                          % (_where(group), kind,
+                             ", ".join("%g" % (size * f) for f in _ROUND_RETRY)))
+    if applied == 0:
+        raise ValueError("no %s of %s mm builds on any of these %d edge group(s)"
+                         % (kind, ", ".join("%g" % (size * f) for f in _ROUND_RETRY), len(groups)))
+    if (reduced or square) and report is not None:
+        lines = reduced + square
+        more = ""
+        if len(lines) > 6:
+            lines, more = lines[:6], "; and %d more" % (len(lines) - 6)
+        report.setdefault("reduced", []).append(
+            "%s: the %s of %g mm did not build on all %d edge group(s), so FORGE rounded what it "
+            "could and says where — %s%s" % (op["id"], kind, size, len(groups), "; ".join(lines), more))
+    return shape
 
 
 # How many times the search below is allowed to call the kernel.
@@ -790,7 +1162,7 @@ def _largest_that_fits(kind, selected, requested):
     return math.floor(lo * 1000) / 1000
 
 
-def _with_a_way_out(op, shapes, reason):
+def _with_a_way_out(op, shapes, reason, history=None):
     """Add the largest radius that would have worked, when that is the problem.
 
     Only for a fillet or chamfer whose EDGES were found — "the fillet selected no
@@ -806,7 +1178,7 @@ def _with_a_way_out(op, shapes, reason):
     if kind not in ("fillet", "chamfer"):
         return reason
     try:
-        selected = _edges(shapes[op["of"]], op.get("edges") or "all")
+        selected = _edges(shapes[op["of"]], op, history)
         if not selected:
             return reason
         fits = _largest_that_fits(kind, selected, op["radius"])
@@ -852,19 +1224,121 @@ _MESH_BUDGET = 400000
 _MESH_COARSEN = 2.5
 _MESH_TRIES = 6
 
+# # The angular limit (looks designed, stage A5)
+#
+# The largest angle, in radians, one facet may turn through on a curved face. It
+# was always there — build123d's tessellate() defaults to 0.1 — but implicit, never
+# reported, and never coarsened: measured 2026-09-18 (build123d 0.11.1), a
+# cylinder of radius 5, 50 or 500 mm is 500 triangles at every deflection from
+# R/1000 to R/10, because 0.1 rad is the limit that binds. So the budget search
+# above, which coarsened only the deflection, could not shrink a mesh of many
+# curved parts at all: six tries, the same triangles, and "could not be
+# tessellated". Now it is named, sent back as mesh_angular, and coarsened with
+# the deflection — never past _MESH_ANGLE_MAX, a facet of 45°, beyond which a
+# cylinder is an octagon and the smooth normals below cannot hide it.
+_MESH_ANGLE = 0.1
+_MESH_ANGLE_MAX = 0.785
 
-def _tessellate_once(solids, deflection):
+# Normals are rounded to this many decimals on the wire: 1e-4 of a unit vector
+# is far below what shading can show, and a full double is 18 characters of JSON
+# per component (measured size in docs/spikes/2026-09-18-kernel-vocabulary).
+_NORMAL_DECIMALS = 4
+# _MESH_NORMALS = False sends meshes exactly as before this stage.
+_MESH_NORMALS = True
+
+
+def _face_normals(face, poly, trsf, reverse):
+    """One unit normal per node of face's triangulation, from the SURFACE.
+
+    OCCT evaluates the face's own surface at each node's UV
+    (BRepLib_ToolTriangulatedShape::ComputeNormals), so a node on a cylinder
+    gets the cylinder's normal there, not an average of the facets round it —
+    which is what makes a curved face shade smoothly. Nodes belong to ONE face
+    (tessellate() gives every face its own), so where two faces meet at a hard
+    edge each keeps its own normal and the edge stays sharp.
+    """
+    n = poly.NbNodes()
+    try:
+        BRepLib_ToolTriangulatedShape.ComputeNormals_s(face.wrapped, poly)
+        out = []
+        for i in range(1, n + 1):
+            d = poly.Normal(i).Transformed(trsf)
+            s = -1.0 if reverse else 1.0
+            out.extend((s * d.X(), s * d.Y(), s * d.Z()))
+        return out
+    except Exception:
+        # A face OCCT cannot evaluate (a degenerate patch): the facets' own
+        # normals averaged per node, which is flat shading where that is all
+        # there is to go on.
+        acc = [0.0] * (3 * n)
+        nodes = [poly.Node(i).Transformed(trsf) for i in range(1, n + 1)]
+        for t in poly.Triangles():
+            a, b, c = t.Value(1) - 1, t.Value(2) - 1, t.Value(3) - 1
+            if reverse:
+                b, c = c, b
+            pa, pb, pc = nodes[a], nodes[b], nodes[c]
+            ux, uy, uz = pb.X() - pa.X(), pb.Y() - pa.Y(), pb.Z() - pa.Z()
+            vx, vy, vz = pc.X() - pa.X(), pc.Y() - pa.Y(), pc.Z() - pa.Z()
+            nx, ny, nz = uy * vz - uz * vy, uz * vx - ux * vz, ux * vy - uy * vx
+            for k in (a, b, c):
+                acc[3 * k] += nx
+                acc[3 * k + 1] += ny
+                acc[3 * k + 2] += nz
+        for k in range(n):
+            x, y, z = acc[3 * k], acc[3 * k + 1], acc[3 * k + 2]
+            m = math.sqrt(x * x + y * y + z * z) or 1.0
+            acc[3 * k], acc[3 * k + 1], acc[3 * k + 2] = x / m, y / m, z / m
+        return acc
+
+
+def _tessellate_solid(solid, deflection, angle):
+    """build123d's Shape.tessellate, node for node and triangle for triangle, plus
+    each node's normal (stage A5). Written out rather than called so the normals
+    come from the same triangulation the triangles do.
+
+    ‼️ Cleaned, then meshed, every time. build123d's mesh() meshes only "if none
+    exists": it keeps any triangulation already FINER than asked. So the budget
+    search's second try, at 2.5x the deflection, found the first try's mesh finer
+    than that and kept it — measured 2026-09-18, a box with a bore is 520
+    triangles at deflection 0.01 and still 520 when asked again at 10, 68 once
+    cleaned. Coarsening never coarsened anything; a model over the budget failed
+    after six identical tries while mesh_simplified said it had been simplified.
+    Fence: TestKernel_AMeshOverTheBudgetIsReallyCoarsened.
+    """
+    BRepTools.Clean_s(solid.wrapped)
+    BRepMesh_IncrementalMesh(solid.wrapped, deflection, True, angle, True)
+    flat, idx, normals, offset_ = [], [], [], 0
+    for face in solid.faces():
+        loc = TopLoc_Location()
+        poly = BRep_Tool.Triangulation_s(face.wrapped, loc)
+        if poly is None:
+            continue
+        trsf = loc.Transformation()
+        reverse = face.wrapped.Orientation() == TopAbs_Orientation.TopAbs_REVERSED
+        for i in range(1, poly.NbNodes() + 1):
+            p = poly.Node(i).Transformed(trsf)
+            flat.extend((float(p.X()), float(p.Y()), float(p.Z())))
+        for t in poly.Triangles():
+            a, b, c = t.Value(1) + offset_ - 1, t.Value(2) + offset_ - 1, t.Value(3) + offset_ - 1
+            idx.extend((a, c, b) if reverse else (a, b, c))
+        if _MESH_NORMALS:
+            normals.extend(round(v, _NORMAL_DECIMALS) for v in _face_normals(face, poly, trsf, reverse))
+        offset_ += poly.NbNodes()
+    return flat, idx, normals
+
+
+def _tessellate_once(solids, deflection, angle=_MESH_ANGLE):
     meshes, total = [], 0
     for solid in solids:
-        verts, tris = solid.tessellate(deflection)
-        flat = []
-        for v in verts:
-            flat.extend((float(v.X), float(v.Y), float(v.Z)))
-        idx = []
-        for t in tris:
-            idx.extend((int(t[0]), int(t[1]), int(t[2])))
-        meshes.append({"vertices": flat, "triangles": idx})
-        total += len(tris)
+        flat, idx, normals = _tessellate_solid(solid, deflection, angle)
+        mesh = {"vertices": flat, "triangles": idx}
+        if _MESH_NORMALS:
+            # One normal per vertex, in the order of "vertices", in the same frame:
+            # a definition's in its own, a part's in the assembly's. Additive: a
+            # reader that does not know the field draws exactly what it drew before.
+            mesh["normals"] = normals
+        meshes.append(mesh)
+        total += len(idx) // 3
     return meshes, total
 
 
@@ -926,10 +1400,11 @@ def _tessellate(solids, ids, names, request, placed=None):
         instances.append((i, index[key], location))
 
     simplified = False
+    angle = float(request.get("angular") or _MESH_ANGLE)
     for _ in range(_MESH_TRIES):
         try:
-            definitions, shared = _tessellate_once(shapes, deflection)
-            meshes, separate = _tessellate_once([solids[i] for i in own], deflection)
+            definitions, shared = _tessellate_once(shapes, deflection, angle)
+            meshes, separate = _tessellate_once([solids[i] for i in own], deflection, angle)
         except Exception as exc:
             reason = str(exc).strip() or type(exc).__name__
             return {"mesh_error": "the solid could not be tessellated: %s" % reason}
@@ -937,8 +1412,11 @@ def _tessellate(solids, ids, names, request, placed=None):
         if total <= _MESH_BUDGET:
             break
         # Over budget. Coarsened rather than truncated: half a model is a lie
-        # about the shape, and a coarser one is the same shape less finely.
+        # about the shape, and a coarser one is the same shape less finely. The
+        # angle too, up to its bound: on curved faces it is the limit that binds
+        # (see _MESH_ANGLE).
         deflection *= _MESH_COARSEN
+        angle = min(angle * _MESH_COARSEN, _MESH_ANGLE_MAX)
         simplified = True
     else:
         return {"mesh_error": "this assembly could not be tessellated within %d triangles"
@@ -950,6 +1428,8 @@ def _tessellate(solids, ids, names, request, placed=None):
     out = {"mesh": meshes,
            "mesh_triangles": total,
            "mesh_deflection": deflection,
+           # The angular limit the mesh was made to, in radians (stage A5).
+           "mesh_angular": angle,
            "mesh_simplified": simplified}
     if instances:
         out["mesh_definitions"] = definitions
@@ -957,6 +1437,151 @@ def _tessellate(solids, ids, names, request, placed=None):
                                   "matrix": _column_major(location)}
                                  for i, d, location in instances]
     return out
+
+
+# --- mesh-only parts (stage E1 of the "looks designed" work) ----------------
+#
+# damon's decision, 2026-09-18: a part DECLARED mesh-only (shape "lattice") may
+# break the rule that every part is an exact solid. It is decorative: labelled
+# mesh-only, never in a STEP file, never weighed, never checked for interference,
+# and never a feature's target or tool (PRD VIS-06: a render must never imply
+# manufacturability). Every other part is still an OCCT solid.
+#
+# So such a part never reaches _shape or any OCCT boolean. It is taken out of the
+# request before anything is built (_split_mesh_only), and on a mesh request it is
+# built here, with manifold3d (Apache-2.0; wheels for linux aarch64 and x86_64,
+# macOS arm64, CPython 3.13 and 3.14): a triply periodic minimal surface sampled
+# as a level set, thickened to a sheet, and clipped to its box by manifold's own
+# boolean. Every other reply names it in "mesh_only" and says what it left out.
+#
+# The level function of each pattern. k = 2 pi / cell. The sheet is where |g| is
+# under `w`, and w is chosen so the wall comes out about `thickness` thick:
+# |g| / |grad g| is the distance to the surface near it, and |grad g| on the
+# surface averages about k * G for the pattern's G (measured, see
+# docs/spikes/2026-09-18-mesh-only-parts). The names are Go's table
+# (geometry/lattice.go, latticePatterns); a name missing here is refused by name.
+_LATTICE_PATTERNS = {
+    "gyroid": (lambda x, y, z: (math.sin(x) * math.cos(y) + math.sin(y) * math.cos(z)
+                                + math.sin(z) * math.cos(x)), 1.51),
+    "diamond": (lambda x, y, z: (math.sin(x) * math.sin(y) * math.sin(z)
+                                 + math.sin(x) * math.cos(y) * math.cos(z)
+                                 + math.cos(x) * math.sin(y) * math.cos(z)
+                                 + math.cos(x) * math.cos(y) * math.sin(z)), 1.43),
+    "primitive": (lambda x, y, z: math.cos(x) + math.cos(y) + math.cos(z), 1.31),
+}
+
+# The most triangles one mesh-only part may have. Go refuses past its own estimate
+# first (geometry.MaxLatticeTriangles, the same number); this is the kernel's own
+# count of what it actually built, so an estimate that ran low still cannot send
+# more than this.
+_LATTICE_BUDGET = 200000
+
+
+def _is_mesh_only(solid):
+    return bool(solid.get("mesh_only"))
+
+
+def _split_mesh_only(solids):
+    """(exact solids, mesh-only solids), each in the request's order."""
+    exact, mesh_only = [], []
+    for s in solids:
+        (mesh_only if _is_mesh_only(s) else exact).append(s)
+    return exact, mesh_only
+
+
+def _lattice_mesh(solid):
+    """A mesh-only lattice in its own frame, centred on the origin: (vertices, triangles)
+    as flat lists. Raises with a sentence when it cannot be built."""
+    if _m3 is None:
+        raise RuntimeError("this kernel has no manifold3d, which builds mesh-only parts")
+    pattern = solid.get("lattice") or ""
+    if pattern not in _LATTICE_PATTERNS:
+        raise RuntimeError("%r is not a lattice pattern this kernel knows" % pattern)
+    level, gradient = _LATTICE_PATTERNS[pattern]
+    d = solid["dims"]
+    w, h, dp = d["width"], d["height"], d["depth"]
+    cell, thickness, edge = d["cell"], d["thickness"], d["edge"]
+    k = 2.0 * math.pi / cell
+    half = gradient * k * thickness / 2.0
+
+    def sheet(x, y, z):
+        return half - abs(level(k * x, k * y, k * z))
+
+    # Sampled a little past the box, so the sheet is cut by the box and not by the
+    # sampling grid, which would leave it open.
+    pad = edge
+    bounds = [-w / 2 - pad, -h / 2 - pad, -dp / 2 - pad, w / 2 + pad, h / 2 + pad, dp / 2 + pad]
+    surface = _m3.Manifold.level_set(sheet, bounds, edge, 0.0)
+    region = _m3.Manifold.cube([w, h, dp], True)
+    built = surface ^ region
+    tris = built.num_tri()
+    if tris == 0:
+        raise RuntimeError("the lattice came out empty: its walls are thinner than the sampling can see")
+    if tris > _LATTICE_BUDGET:
+        raise RuntimeError("the lattice is %d triangles, past the %d a mesh-only part may have"
+                           % (tris, _LATTICE_BUDGET))
+    mesh = built.to_mesh()
+    return (_np.asarray(mesh.vert_properties, dtype=float)[:, :3],
+            _np.asarray(mesh.tri_verts, dtype=_np.int64))
+
+
+def _mesh_only_parts(mesh_only):
+    """Build every mesh-only part as a placed mesh: (mesh entries, triangles, refused).
+
+    Each distinct lattice is sampled once; a copy is its vertices moved. Placed the
+    way _placement places a solid: mirror the part's own x, rotate by the matrix
+    (row-major), translate to the position."""
+    out, total, refused, cache = [], 0, [], {}
+    for part in mesh_only:
+        name = part.get("label") or part.get("id")
+        key = (part.get("lattice"), tuple(sorted((part.get("dims") or {}).items())))
+        if key not in cache:
+            try:
+                cache[key] = (_lattice_mesh(part), None)
+            except Exception as exc:
+                cache[key] = (None, str(exc).strip() or type(exc).__name__)
+        built, reason = cache[key]
+        if built is None:
+            refused.append("%s: %s" % (name, reason))
+            continue
+        verts, tris = built
+        if part.get("mirrored"):
+            verts = verts * _np.array([-1.0, 1.0, 1.0])
+            tris = tris[:, ::-1]
+        m = _np.asarray(part["matrix"], dtype=float).reshape(3, 3)
+        placed = verts @ m.T + _np.asarray(part["position"], dtype=float)
+        out.append({"id": part.get("id"), "label": name, "mesh_only": True,
+                    "vertices": placed.ravel().tolist(),
+                    "triangles": tris.ravel().astype(int).tolist()})
+        total += len(tris)
+    return out, total, refused
+
+
+def _mesh_only_names(mesh_only):
+    return [s.get("label") or s.get("id") for s in mesh_only]
+
+
+def _only_mesh_only(request, mesh_only):
+    """The reply for a request whose every part is mesh-only: a mesh when one was
+    asked for, and a refusal by name for anything exact — there is no solid to
+    write, weigh or check."""
+    names = _mesh_only_names(mesh_only)
+    if request.get("format") != "mesh" or request.get("properties"):
+        return {"ok": False, "error": "every part is mesh-only (%s), so there is no exact solid to "
+                                      "build, export or measure" % ", ".join(names[:3]),
+                "mesh_only": names}
+    start = time.perf_counter()
+    meshes, triangles, refused = _mesh_only_parts(mesh_only)
+    if not meshes:
+        return {"ok": False, "error": "no mesh-only part could be built", "skipped": refused,
+                "mesh_only": names}
+    return {"ok": True, "parts": 0, "volume": 0.0, "bounds": [0.0] * 6, "shape_builds": 0,
+            "interferences": [], "interferences_found": 0, "interferences_buried": 0,
+            "interference_box_tests": 0, "interference_pairs": 0, "interference_booleans": 0,
+            "interference_reused": 0, "skipped": refused, "features_failed": [],
+            "phases": {"mesh": time.perf_counter() - start}, "mesh_only": names,
+            "mesh": meshes, "mesh_triangles": triangles, "mesh_only_triangles": triangles,
+            "mesh_deflection": 0.0, "mesh_simplified": False}
 
 
 # --- interference ----------------------------------------------------------
@@ -1296,6 +1921,408 @@ def _properties(solids, ids, placed=None):
         out.append({"id": ids[i], "volume": volume,
                     "centroid": list(centre) if centre is not None else None,
                     "bounds": list(box[0]) + list(box[1]) if box is not None else None})
+    return out
+
+
+# # What the kernel MEASURES for a manufacturability check, and what it does not
+#
+# addresses issue 6: "the kernel builds geometry but never evaluates it". The
+# interference check (Phase 5, stages V1-V2) is the first geometric check here;
+# this is the second, and it is per PART rather than per pair.
+#
+# The split is the same one interference uses and for the same reason: the kernel
+# MEASURES and Go JUDGES. Nothing here knows what a milling cutter can reach or
+# what a moulding needs — that is one table in geometry/manufacturability.go, with
+# its citations, and this file must never hold a second copy of a limit. What
+# comes back is five numbers a formula can predict, per part, plus the counts
+# saying how much was looked at.
+#
+# ‼️ Each number says exactly what it measures, because each is a PROXY and the
+# rule that reads it inherits the proxy's blind spots (they are written out in
+# geometry/manufacturability.go, beside the rule that reads each one):
+#
+#   - min_wall: a ray cast INWARD from the middle of every face, to the first
+#     surface it meets. On a plate it is the plate's thickness, on a rod its
+#     diameter, on a tube its annular wall — all three checked against the formula
+#     answer. It is the thinnest place the FACE CENTRES see, not the thinnest place
+#     there is: a wall that is thin only at a corner is not sampled.
+#   - min_feature: the smallest of each edge's length, or a circular edge's
+#     DIAMETER. A 2 mm hole is a 2 mm feature, not a 6.28 mm edge.
+#   - internal_radius: 0.0 when the part has any CONCAVE edge (OCCT's own answer,
+#     ChFi3d.DefineConnectType_s, the same call the "concave" edge rule uses);
+#     otherwise the smallest radius of a concave cylindrical face, which is what a
+#     fillet leaves behind. None when the part has neither — a box has no internal
+#     corner, and a rule about corners must not invent one.
+#   - min_draft and max_overhang: angles in DEGREES against +Y, which is up in this
+#     system (see _OPEN_FACES). Sampled at a 3x3 grid in each face's own parameter
+#     space, so a curved face is answered by where it is worst rather than by its
+#     middle. Draft skips faces square to the pull (a top and a bottom have no
+#     draft to give). Overhang skips samples at the part's own lowest point, which
+#     is where it rests.
+#
+# ‼️ The pull and build direction is the ASSEMBLY's +Y, not a direction anybody
+# chose per part: no FORGE document states one. A real moulding or print decides it,
+# and that decision changes every draft and overhang number here. Go says so in the
+# turn rather than letting the numbers read as a verdict about a real process plan.
+_MANUFACTURABILITY = True
+# The parameters each face's normal is sampled at, in each direction: a 3x3 grid,
+# away from the edges where a trimmed surface's normal is least representative.
+_MFG_SAMPLES = (0.17, 0.5, 0.83)
+# Below this, an angle is the same as zero: OCCT returns a planar face's normal to
+# about 1e-12, and a wall that is 1e-9 degrees off vertical is a vertical wall.
+_MFG_ANGLE_EPSILON = 1e-6
+# A face whose normal is within this of the pull direction is a top or a bottom,
+# not a wall, and has no draft angle to report.
+_MFG_SQUARE_TO_PULL = 89.0
+# # How many FACES one build may measure, and why 600
+#
+# Measured 2026-09-20 on this kernel, interleaved with the same builds run without
+# the pass (docs/spikes/2026-09-20-manufacturability-cost):
+#
+#   - 512 parts that are COPIES of one shape: 6 faces measured, 511 answered from
+#     the cache, 32 ms. 4,096 copies: 6 faces, 4,095 reused, 145 ms. The usual
+#     FORGE model is this one — a definition built once and placed — and the pass
+#     is then roughly free.
+#   - 512 DISTINCT shapes: 3,072 faces, no reuse, 10.7 s. 4,096 distinct shapes did
+#     not finish inside the kernel's own 30 s build limit at all.
+#
+# So the cost is per distinct FACE, at about 3.5 ms of it, and the rule that costs
+# most is the concave-edge test: OCCT's ChFi3d::DefineConnectType on every edge was
+# 6.9 s of a 9.0 s profile over 1,200 faces, against 0.47 s for the wall rays.
+#
+# 600 faces is about 2.1 s at that rate — a fourteenth of the kernel's 30 s build
+# limit, and the same order as the interference check's own worst case. It is a
+# CHOSEN bound from a measured rate, not an optimum: no model was measured being
+# read with and without a truncated check. A hundred distinct six-faced parts fit
+# inside it; past that the reply says how many were measured and Go says the rest
+# are not known to be makeable, which is the one thing that must never be silent.
+_MANUFACTURABILITY_BUDGET = 600
+
+
+def _face_samples(face):
+    """(point, outward normal) at a 3x3 grid over one face's own parameters.
+
+    ‼️ The normal is OCCT's own, and is not reversed here: BRepGProp_Face.Normal
+    already reverses it for a REVERSED face, so doing it again here pointed every
+    such face's normal INTO the solid. Measured: every cylinder in a model then
+    reported a 90 degree overhang on its own top face."""
+    s = BRepGProp_Face(face.wrapped)
+    u0, u1, v0, v1 = s.Bounds()
+    out = []
+    for su in _MFG_SAMPLES:
+        for sv in _MFG_SAMPLES:
+            p, n = gp_Pnt(), gp_Vec()
+            try:
+                s.Normal(u0 + (u1 - u0) * su, v0 + (v1 - v0) * sv, p, n)
+            except Exception:
+                continue
+            if n.Magnitude() == 0:
+                continue
+            n.Normalize()
+            out.append((p, n))
+    return out
+
+
+def _ray_thickness(shape, inter, point, normal):
+    """How far it is through the material from a point on the surface, inward."""
+    try:
+        inter.Init(shape.wrapped, gp_Lin(point, gp_Dir(normal.Reversed())), 1e-7)
+    except Exception:
+        return None
+    best = None
+    while inter.More():
+        w = inter.W()
+        # Strictly past the face the ray left from: its own surface is a hit at 0.
+        if w > 1e-6 and (best is None or w < best):
+            best = w
+        inter.Next()
+    return best
+
+
+def _cylinder_radius_if_concave(face, samples):
+    """A cylindrical face's radius when the material is OUTSIDE it — a bore, or the
+    fillet left in an internal corner. None for anything else.
+
+    The samples are the caller's: taking them again here doubled the sampling cost
+    of every build for nine numbers already in hand."""
+    if not samples:
+        return None
+    try:
+        a = BRepAdaptor_Surface(face.wrapped)
+        if a.GetType() != GeomAbs_Cylinder:
+            return None
+        cyl = a.Cylinder()
+    except Exception:
+        return None
+    p, n = samples[len(samples) // 2]
+    axis = cyl.Axis()
+    o, d = axis.Location(), axis.Direction()
+    v = gp_Vec(gp_Pnt(o.X(), o.Y(), o.Z()), p)
+    along = v.Dot(gp_Vec(d.X(), d.Y(), d.Z()))
+    radial = gp_Vec(v.X() - along * d.X(), v.Y() - along * d.Y(), v.Z() - along * d.Z())
+    # Outward normal pointing back at the axis: the solid is on the outside.
+    if radial.Dot(n) >= 0:
+        return None
+    return float(cyl.Radius())
+
+
+def _edge_feature(edge):
+    """The smallest thing this edge describes: a circle's DIAMETER, or a length."""
+    try:
+        a = BRepAdaptor_Curve(edge.wrapped)
+        if a.GetType() == GeomAbs_Circle:
+            return 2.0 * float(a.Circle().Radius())
+    except Exception:
+        pass
+    try:
+        return float(edge.length)
+    except Exception:
+        return None
+
+
+def _part_manufacturability(shape, inter):
+    """The five measurements, on one built solid. See the note above."""
+    faces = list(shape.faces())
+    if not faces:
+        return None, 0
+    min_wall = min_feature = min_draft = max_overhang = None
+    concave_radius = None
+    sharp = False
+    # ‼️ The floor is the lowest SAMPLE, not the bounding box's bottom.
+    #
+    # On a box, an extrusion or a rod the two are the same number to the bit
+    # (measured 2026-09-21: gap exactly 0). They come apart on a curved solid that
+    # has no sample at its lowest point: a 20 mm sphere's lowest sample is 2.47 mm
+    # above the bottom of its box, and a cone's apex 3.4 mm. A floor taken from the
+    # box leaves those samples above it, so the very point the part RESTS on is
+    # counted as a ceiling — the sphere's steepest overhang reads 61.2 degrees
+    # instead of 26.5. Taken from the samples,
+    # the resting face IS the floor, exactly.
+    sampled = [(face, _face_samples(face)) for face in faces]
+    floor = None
+    for _face, samples in sampled:
+        for p, _n in samples:
+            if floor is None or p.Y() < floor:
+                floor = p.Y()
+    if floor is None:
+        return None, len(faces)
+    try:
+        tol = max(1e-9, 1e-9 * float(shape.bounding_box().diagonal))
+    except Exception:
+        tol = 1e-9
+    for face, samples in sampled:
+        if samples:
+            p, n = samples[len(samples) // 2]
+            d = _ray_thickness(shape, inter, p, n)
+            if d is not None and (min_wall is None or d < min_wall):
+                min_wall = d
+        for p, n in samples:
+            y = n.Y()
+            if y > 1.0:
+                y = 1.0
+            elif y < -1.0:
+                y = -1.0
+            from_pull = math.degrees(math.acos(y))
+            draft = abs(90.0 - from_pull)
+            if draft < _MFG_SQUARE_TO_PULL and (min_draft is None or draft < min_draft):
+                min_draft = draft
+            # A sample that faces downward and is not where the part rests.
+            if n.Y() < 0 and p.Y() > floor + tol:
+                overhang = 90.0 - (180.0 - from_pull)
+                if max_overhang is None or overhang > max_overhang:
+                    max_overhang = overhang
+        if not sharp:
+            r = _cylinder_radius_if_concave(face, samples)
+            if r is not None and (concave_radius is None or r < concave_radius):
+                concave_radius = r
+    edge_faces = _edge_faces(shape)
+    for edge in shape.edges():
+        size = _edge_feature(edge)
+        if size is not None and (min_feature is None or size < min_feature):
+            min_feature = size
+        if not sharp and _connection(edge_faces, edge) == ChFiDS_TypeOfConcavity.ChFiDS_Concave:
+            sharp = True
+    internal = 0.0 if sharp else concave_radius
+    out = {
+        "min_wall": min_wall,
+        "min_feature": min_feature,
+        "internal_radius": internal,
+        "min_draft": None if min_draft is None else _snap(min_draft),
+        "max_overhang": None if max_overhang is None else _snap(max_overhang),
+        "faces": len(faces),
+    }
+    return out, len(faces)
+
+
+def _snap(angle):
+    """An angle within floating-point noise of zero IS zero: a vertical wall that
+    measures 4e-15 degrees of draft must report no draft, not a draft too small to
+    matter — the second reads as a number somebody chose."""
+    return 0.0 if abs(angle) < _MFG_ANGLE_EPSILON else angle
+
+
+def _manufacturability(solids, ids, placed=None):
+    """Each kept solid's five measurements, bounded by _MANUFACTURABILITY_BUDGET
+    faces and reusing a definition already measured at the same rotation.
+
+    Every measurement here is invariant under TRANSLATION — the four shape ones by
+    construction, and the two angles because the pull direction is a direction and
+    the floor is the part's own lowest point. So a copy of a shape already measured
+    at the same rotation is the same answer, and the 4,096th bolt costs a dict
+    lookup. It is NOT invariant under rotation: turning a part on its side changes
+    every draft and overhang, which is the whole point of measuring them."""
+    inter = BRepIntCurveSurface_Inter()
+    out, seen = [], {}
+    faces_used, reused, checked = 0, 0, 0
+    truncated = False
+    for i, solid in enumerate(solids):
+        key = None
+        if placed and placed[i] is not None:
+            shape_key, location, _shape_of = placed[i]
+            try:
+                key = (shape_key, _rounded_rotation(_rotation(location.wrapped.Transformation().Value)))
+            except Exception:
+                key = None
+        if key is not None and key in seen:
+            measure = seen[key]
+            reused += 1
+        elif truncated or faces_used >= _MANUFACTURABILITY_BUDGET:
+            # ‼️ Stopped, and SAID: every part past the budget is absent from the
+            # list, and Go names them unchecked rather than reading a short list as
+            # a clean model. The same rule as the interference pair budget (V2).
+            truncated = True
+            continue
+        else:
+            try:
+                measure, cost = _part_manufacturability(solid, inter)
+            except Exception as exc:
+                measure, cost = {"unchecked": str(exc).strip() or type(exc).__name__}, 0
+            faces_used += cost
+            if measure is None:
+                measure = {"unchecked": "the kernel found no faces to measure"}
+            if key is not None:
+                seen[key] = measure
+        checked += 1
+        row = dict(measure)
+        row["id"] = ids[i]
+        out.append(row)
+    return out, truncated, {"checked": checked, "parts": len(solids),
+                            "faces": faces_used, "reused": reused}
+
+
+# # A named section, and what it is honestly worth (issue 6, strength)
+#
+# There is no FEA here and this is not one. What a section gives is the geometry
+# half of a beam calculation — area, centroid, second moments of area about the
+# section's own centroid, and the section moduli that follow — which is cheap,
+# exact, and checkable against b*h^3/12 on a rectangle.
+#
+# It is NOT a stress. A stress needs a load, a load path, boundary conditions and a
+# material's yield; a second moment of area needs none of those and claims none of
+# them. Go reports the numbers as section PROPERTIES and never as a verdict, and
+# the PR beside this says what a real check would take.
+#
+# The cut is a plane normal to one of the three axes at a stated coordinate,
+# intersected with one part. A plane that misses the part returns no area, which is
+# reported as a section that could not be measured and never as a section of zero.
+def _section(shape, axis, at):
+    """Area, centroid, second moments and moduli of one planar cut, or a reason."""
+    try:
+        box = shape.bounding_box()
+    except Exception as exc:
+        return None, str(exc).strip() or type(exc).__name__
+    lo = (box.min.X, box.min.Y, box.min.Z)[axis]
+    hi = (box.max.X, box.max.Y, box.max.Z)[axis]
+    if at < lo or at > hi:
+        return None, ("the plane at %g is outside the part, which runs from %g to %g on that axis"
+                      % (at, lo, hi))
+    normal = [0.0, 0.0, 0.0]
+    normal[axis] = 1.0
+    # ‼️ Centred on the PART, not on the world origin. A cutting face at the origin
+    # missed every part that is not there — a cone 600 mm down the z axis came back
+    # "the plane met no material", which reads exactly like a plane outside the
+    # part and is not.
+    centre = box.center()
+    origin = [float(centre.X), float(centre.Y), float(centre.Z)]
+    origin[axis] = at
+    # Twice the diagonal, so the cutting face covers the part however it is turned.
+    size = float(box.diagonal) * 2.0 + 1.0
+    try:
+        cut = shape.intersect(Plane(origin=tuple(origin), z_dir=tuple(normal)) * Rectangle(size, size))
+    except Exception as exc:
+        return None, str(exc).strip() or type(exc).__name__
+    if cut is None:
+        return None, "the plane met no material"
+    if not hasattr(cut, "wrapped"):
+        cut = Compound(list(cut))
+    props = GProp_GProps()
+    try:
+        BRepGProp.SurfaceProperties_s(cut.wrapped, props)
+    except Exception as exc:
+        return None, str(exc).strip() or type(exc).__name__
+    area = float(props.Mass())
+    if area <= 0:
+        return None, "the plane met no material"
+    c = props.CentreOfMass()
+    centroid = (float(c.X()), float(c.Y()), float(c.Z()))
+    about = GProp_GProps(gp_Pnt(*centroid))
+    BRepGProp.SurfaceProperties_s(cut.wrapped, about)
+    m = about.MatrixOfInertia()
+    # The two axes the section lies IN. The diagonal entry for an in-plane axis is
+    # that axis's second moment of area, because the out-of-plane coordinate is
+    # zero over the whole face: for a cut normal to x, Value(2,2) is the integral of
+    # z^2 and Value(3,3) the integral of y^2.
+    other = [a for a in (0, 1, 2) if a != axis]
+    moments = [float(m.Value(a + 1, a + 1)) for a in other]
+    try:
+        cb = cut.bounding_box()
+    except Exception as exc:
+        return None, str(exc).strip() or type(exc).__name__
+    fibres, moduli = [], []
+    for n, a in enumerate(other):
+        # Bending about `a` stresses the material furthest away along the OTHER
+        # in-plane axis, so that is the extreme fibre the modulus divides by.
+        away = other[1 - n]
+        lo_a = (cb.min.X, cb.min.Y, cb.min.Z)[away]
+        hi_a = (cb.max.X, cb.max.Y, cb.max.Z)[away]
+        fibre = max(abs(hi_a - centroid[away]), abs(centroid[away] - lo_a))
+        if fibre <= 0:
+            # A section with area cannot be flat in an in-plane direction; if OCCT
+            # says it is, the cut is degenerate and no modulus is claimed from it.
+            return None, "the cut has area but no extent across it, so no section modulus follows"
+        fibres.append(fibre)
+        moduli.append(moments[n] / fibre)
+    # The keys are geometry.SectionProperties' own json tags, exactly: the reply is
+    # decoded straight into that type and a name invented here would arrive as a zero.
+    return {"area_mm2": area, "centroid_mm": list(centroid),
+            "axes": [_AXIS_NAMES[a] for a in other], "second_moments_mm4": moments,
+            "extreme_fibres_mm": fibres, "section_moduli_mm3": moduli}, None
+
+
+_AXIS_NAMES = ("x", "y", "z")
+
+
+def _sections(shapes, request):
+    """Every section the request named, each answered or refused by name."""
+    out = []
+    for s in request.get("sections") or []:
+        row = {"id": s.get("id"), "part": s.get("part"), "axis": s.get("axis"), "at": s.get("at")}
+        shape = shapes.get(s.get("part"))
+        if shape is None:
+            row["unmeasured"] = "no part with that id survived the build"
+            out.append(row)
+            continue
+        axis = {"x": 0, "y": 1, "z": 2}.get(s.get("axis"))
+        if axis is None:
+            row["unmeasured"] = "the axis must be x, y or z"
+            out.append(row)
+            continue
+        got, why = _section(shape, axis, float(s.get("at") or 0.0))
+        if got is None:
+            row["unmeasured"] = why
+        else:
+            row.update(got)
+        out.append(row)
     return out
 
 
@@ -2570,7 +3597,20 @@ def _label_name(label, name):
 _STEP_WRITE_PROPS = False
 
 
-def _write_step(doc, path, phases=None):
+def _step_mesh_only_note(mesh_only):
+    """The FILE_DESCRIPTION line that says which mesh-only parts this file does not
+    hold, or None. Geometry/lattice.go's MeshOnlyNote says the same to a person."""
+    if not mesh_only:
+        return None
+    names = _mesh_only_names(mesh_only)
+    shown = ", ".join(names[:3]) + (" and %d more" % (len(names) - 3) if len(names) > 3 else "")
+    # STEP header strings are ISO 10303-21 text: plain ASCII, no apostrophes.
+    text = ("FORGE: %d mesh-only part(s) are NOT in this file: %s. Mesh-only parts are "
+            "decorative, not manufacturable and never structural." % (len(names), shown))
+    return text.encode("ascii", "replace").decode("ascii").replace("'", " ")
+
+
+def _write_step(doc, path, phases=None, note=None):
     """Write an XDE document as STEP with the settings export_step used, so the
     file's header, curves and precision do not change with K2.
 
@@ -2594,6 +3634,15 @@ def _write_step(doc, path, phases=None):
         header = APIHeaderSection_MakeHeader(0)
         header.Apply(writer.Writer().Model())
     header.SetOriginatingSystem(TCollection_HAsciiString("build123d"))
+    if note:
+        # Appended to FILE_DESCRIPTION, keeping what the writer put there, so a
+        # file with no mesh-only part is the file it always was.
+        lines = [header.DescriptionValue(i).ToCString() for i in range(1, header.NbDescription() + 1)]
+        lines.append(note)
+        described = Interface_HArray1OfHAsciiString(1, len(lines))
+        for i, line in enumerate(lines, 1):
+            described.SetValue(i, TCollection_HAsciiString(line))
+        header.SetDescription(described)
     STEPCAFControl_Controller.Init_s()
     STEPControl_Controller.Init_s()
     Interface_Static.SetIVal_s("write.surfacecurve.mode", 1)
@@ -2644,7 +3693,12 @@ def _build(request):
 
 
 def _build_collected(request):
-    solids = request.get("solids") or []
+    # Mesh-only parts leave here, before anything is built: nothing below — OCCT,
+    # the features, the volume, the properties, the interference check, the STEP
+    # file — ever sees one (see _lattice_mesh).
+    solids, mesh_only = _split_mesh_only(request.get("solids") or [])
+    if not solids and mesh_only:
+        return _only_mesh_only(request, mesh_only)
     if not solids:
         return {"ok": False, "error": "no parts to build"}
 
@@ -2740,6 +3794,12 @@ def _build_collected(request):
     # attempt, not the success: a failure part-way through cannot then leave a
     # changed solid drawn as the shape it started from.
     consumed, failed, touched = set(), [], set()
+    # Each part as placed, before any feature, and what fuses welded into what:
+    # the "joins" edge rule's evidence (looks designed, stage B2).
+    history = {"placed": dict(shapes), "fused": {}}
+    # How many edges each round selected, and every round built smaller or left
+    # partly square (stage B1) — both said in the reply, never kept back.
+    report = {"edges": {}, "reduced": []}
     for op in request.get("operations") or []:
         missing = [n for n in [op["of"]] + list(op.get("with") or []) if n not in shapes]
         if missing:
@@ -2751,10 +3811,10 @@ def _build_collected(request):
             continue
         touched.add(op["of"])
         try:
-            _apply(op, shapes)
+            _apply(op, shapes, history, report)
         except Exception as exc:
             reason = str(exc).strip() or type(exc).__name__
-            failed.append("%s: %s" % (op["id"], _with_a_way_out(op, shapes, reason)))
+            failed.append("%s: %s" % (op["id"], _with_a_way_out(op, shapes, reason, history)))
             continue
         consumed.update(op.get("with") or [])
 
@@ -2819,6 +3879,20 @@ def _build_collected(request):
     if request.get("properties"):
         properties = _properties(built, ids, kept_placed)
         mark = _lap(phases, "properties", mark)
+    # The manufacturability measurements and the named sections, on the SAME kept
+    # solids the interference check ran on and for the same reason: a check of the
+    # shape as DESCRIBED would measure the wall of a plate before its pocket was
+    # cut. Asked for, unlike interference: it costs a ray per face and the export
+    # job's ceiling was measured without it (see cad.Kernel.BuildEvaluated).
+    manufacturability = mfg_stats = None
+    mfg_truncated = False
+    if request.get("manufacturability"):
+        manufacturability, mfg_truncated, mfg_stats = _manufacturability(built, ids, kept_placed)
+        mark = _lap(phases, "manufacturability", mark)
+    sections = None
+    if request.get("sections"):
+        sections = _sections(dict(zip(ids, built)), request)
+        mark = _lap(phases, "sections", mark)
     out = {
         "shape_builds": shape_builds,
         "ok": True,
@@ -2844,13 +3918,36 @@ def _build_collected(request):
                    float(box.max.X), float(box.max.Y), float(box.max.Z)],
         "skipped": skipped,
         "features_failed": failed,
+        # Stage B1: a round built smaller than asked, or on only some of its
+        # edges, is applied AND said. Stage B2: how many edges each round's rule
+        # selected, so a rule that picks the wrong edges can be seen.
+        "features_reduced": report["reduced"],
+        "feature_edges": report["edges"],
     }
     if properties is not None:
         out["part_properties"] = properties
+    if manufacturability is not None:
+        out["manufacturability"] = manufacturability
+        out["manufacturability_truncated"] = mfg_truncated
+        out["manufacturability_measured"] = mfg_stats["checked"]
+        out["manufacturability_parts"] = mfg_stats["parts"]
+        out["manufacturability_faces"] = mfg_stats["faces"]
+        out["manufacturability_reused"] = mfg_stats["reused"]
+    if sections is not None:
+        out["sections"] = sections
+    if mesh_only:
+        # Named in every reply, so each reader can say what it left out.
+        out["mesh_only"] = _mesh_only_names(mesh_only)
 
     fmt = request.get("format")
     if fmt == "mesh":
         out.update(_tessellate(built, ids, names, request, kept_placed))
+        if mesh_only and "mesh" in out:
+            meshes, triangles, refused = _mesh_only_parts(mesh_only)
+            out["mesh"].extend(meshes)
+            out["mesh_triangles"] += triangles
+            out["mesh_only_triangles"] = triangles
+            skipped.extend(refused)
         mark = _lap(phases, "mesh", mark)
     if fmt == "step":
         # The writer writes a file; its stream form is not used here.
@@ -2859,7 +3956,8 @@ def _build_collected(request):
         fd, path = tempfile.mkstemp(suffix=".step")
         os.close(fd)
         try:
-            _write_step(_step_document(built, names), path, phases)
+            _write_step(_step_document(built, names), path, phases,
+                        _step_mesh_only_note(mesh_only))
             with open(path, "rb") as fh:
                 out["step"] = base64.b64encode(fh.read()).decode("ascii")
         finally:

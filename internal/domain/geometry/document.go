@@ -82,6 +82,11 @@ type Document struct {
 	Definitions []Part     `json:"definitions,omitempty"`
 	Assemblies  []Assembly `json:"assemblies,omitempty"`
 	Root        string     `json:"root,omitempty"`
+	// Sections are plane cuts somebody named, for the section properties the
+	// kernel measures on them (section.go). Optional, and they are the closest
+	// thing to a strength number FORGE will produce: area, centroid and second
+	// moments of area, which are geometry, never a stress. addresses issue 6.
+	Sections []Section `json:"sections,omitempty"`
 }
 
 // Part is one solid.
@@ -94,7 +99,16 @@ type Part struct {
 	// is written out as the revolve or extrusion it is before anything reads the
 	// part, and kept on it so a reader can still say what it is (standard.go).
 	// Phase 2, stage A3 of docs/plan-2026-09-13-millions-of-parts.md.
-	Standard string             `json:"standard,omitempty"`
+	Standard string `json:"standard,omitempty"`
+	// Class is the kind of car a "car" part is ("hypercar", "sports", "sedan",
+	// "suv"), which its proportions are checked against, and is read for no other
+	// shape. A car is written out as the tree it is before anything stores it, so a
+	// stored part never carries one (car.go; stage C1 of the looks-designed work).
+	Class string `json:"class,omitempty"`
+	// Lattice names the pattern of a "lattice" part — "gyroid", "diamond",
+	// "primitive" — and is read for no other shape. A lattice is MESH-ONLY and
+	// decorative, never structural (lattice.go; damon's decision, 2026-09-18).
+	Lattice  string             `json:"lattice,omitempty"`
 	Size     map[string]float64 `json:"size"`
 	Position []float64          `json:"position"`
 	// SizeFrom and PositionFrom bind a dimension to an EXPRESSION over the
@@ -191,6 +205,15 @@ type Part struct {
 	// which is different from "unspecified material" and is left as nothing
 	// rather than filled in.
 	Material *Material `json:"material,omitempty"`
+	// Process is HOW this part is made — "milling-3-axis", "injection-moulding",
+	// "printing-fdm", "printing-slm" — and the only thing that turns the
+	// manufacturability check on for it (manufacturability.go). Optional, and
+	// empty means nobody said: the part is then checked against nothing and named
+	// as unchecked, because the same 0.9 mm wall is fine milled, marginal moulded
+	// and impossible in metal powder. Checked against geometry.Profiles, the same
+	// table the contract is written from and the findings are judged by.
+	// addresses issue 6.
+	Process string `json:"process,omitempty"`
 }
 
 // Label returns the part's human name, falling back to its id.

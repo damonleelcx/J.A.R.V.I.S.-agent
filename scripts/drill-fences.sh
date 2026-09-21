@@ -74,7 +74,11 @@ esac
 # it truthfully was about everything it knew about. The guard in drill() now
 # refuses rather than trusting this list to be kept up to date by hand.
 FILES=(
+  internal/domain/geometry/feature.go
+  internal/agent/cadbridge/cadbridge.go
+  internal/httpapi/geometry_exports.go
   internal/domain/geometry/curve.go
+  internal/domain/geometry/curve_guide.go
   internal/domain/geometry/triangulate.go
   internal/domain/geometry/sweep.go
   internal/domain/geometry/mesh.go
@@ -194,6 +198,62 @@ FILES=(
   internal/agent/designationrepair.go
   internal/domain/engine/budget.go
   Makefile
+  # Added 2026-09-20 (the small leftovers): export names, the version stamp, the
+  # per-run test schema.
+  deploy/Dockerfile
+  internal/platform/buildinfo/buildinfo.go
+  internal/httpapi/health.go
+  internal/platform/db/testschema.go
+  internal/domain/cad/mesh_only_support.go
+  # Added 2026-09-18 (looks-designed stage C: the car template, its proportion
+  # table and its design words).
+  internal/domain/geometry/car.go
+  internal/domain/geometry/carproportions.go
+  internal/domain/geometry/designwords.go
+  internal/domain/geometry/templates/car_proportions.json
+  internal/domain/geometry/templates/design_words.json
+  # Added 2026-09-18 (looks designed, stage E1): the mesh-only lattice drills.
+  internal/domain/geometry/lattice.go
+  internal/domain/geometry/units.go
+  # Added 2026-09-20 (looks designed, stage D): the looks judge, its audit trail
+  # and the surface-normals view the judge confirms an acceptance with.
+  internal/looks/judge.go
+  internal/looks/audit.go
+  # Added 2026-09-20 (looks designed, stage D2): the looks benchmark's two token
+  # ceilings and its ledger, both of which were wrong in its first live run.
+  internal/agent/looks_benchmark_live_test.go
+  # Added 2026-09-20 (engine requirements: issues 12, 13, 14, 16, 17, 18).
+  internal/httpapi/telemetry.go
+  internal/httpapi/assets/stage.js
+  internal/httpapi/assets/room.js
+  internal/httpapi/health.go
+  internal/agent/progress.go
+  internal/agent/plandeps.go
+  internal/agent/planner.go
+  internal/agent/intake.go
+  internal/llm/openai_compatible.go
+  internal/domain/workspace/repository.go
+  internal/domain/memory/decision.go
+  internal/eval/eval.go
+  # Added 2026-09-20 (issue 6, manufacturability and section properties): the
+  # drills for the new check's kernel measurements, its one table of limits, and
+  # the note that carries a finding to the turn.
+  internal/domain/geometry/manufacturability.go
+  internal/domain/geometry/section.go
+  internal/agent/manufacturability.go
+  # Added 2026-09-20 (PRD gaps: issues 15, 19, 20, 21). Time-bound access, the
+  # end-of-utterance clock, the autonomy write-once fence and the /v1 contract.
+  internal/domain/access/service.go
+  internal/domain/access/model.go
+  internal/domain/engine/autonomy_write.go
+  internal/httpapi/assets/stage.js
+  internal/httpapi/members.go
+  internal/platform/db/sql/0028_autonomy_is_write_once.sql
+  # Added 2026-09-20 (issues 7 to 11): the collapsing dimensions, and relationship
+  # checking beyond a distance.
+  internal/domain/geometry/degenerate.go
+  internal/domain/geometry/relationships.go
+  internal/agent/standards_typed.go
 )
 
 BACKUP=""
@@ -353,12 +413,14 @@ drill "the kernel is sent chords instead of arcs" internal/domain/geometry/curve
   's = s.replace("return CurveEdge{To: corners[i].to, Via: &via}", "_ = via\n\t\treturn CurveEdge{To: corners[i].to}", 1)' \
   ./internal/domain/cad 'TestKernel_ARoundedCornerIsARealArc'
 
+# Re-anchored by B3 (2026-09-18): profileExtent measures the exact curve (lines and
+# true arcs) now, not the flattened one, so the drawn vertices are added back in.
 drill "the measurement path measures the drawn vertex" internal/domain/geometry/overlay.go \
-  's = s.replace("flat, _, err := partOutline(p).flatten(\"outline\", Millimetre)\n\tif err != nil {\n\t\treturn min, max, false\n\t}", "flat := partOutline(p).Points\n\tif false {\n\t\treturn min, max, false\n\t}", 1)' \
+  's = s.replace("\treturn min, max, true\n}", "\tfor _, v := range partOutline(p).Points {\n\t\tgrow(v)\n\t}\n\treturn min, max, true\n}", 1)' \
   ./internal/domain/geometry 'TestMeasureFindsTheMaterialAndNotTheRoundedOffCorner'
 
 drill "the renderer steps its arcs at a different fineness" internal/httpapi/assets/forge3d.js \
-  "s = s.replace('Math.ceil(TESSELLATION.radial * c.angle / (2 * Math.PI))', 'Math.ceil(TESSELLATION.radial * c.angle / (3 * Math.PI))', 1)" \
+  "s = s.replace('Math.ceil(radialSegments() * c.angle / (2 * Math.PI))', 'Math.ceil(radialSegments() * c.angle / (3 * Math.PI))', 1)" \
   ./internal/httpapi 'TestRendererSweepsTheSameSolidAsTheExporter'
 
 drill "the kernel builds a straight line where an arc was sent" internal/domain/cad/sidecar.py \
@@ -396,7 +458,7 @@ drill "an arc that crosses another edge is not noticed" internal/domain/geometry
   ./internal/domain/geometry 'TestAnArcThatCrossesAnotherEdgeIsRefused'
 
 drill "the renderer steps its bows at a different fineness" internal/httpapi/assets/forge3d.js \
-  "s = s.replace('var steps2 = Math.max(1, Math.ceil(TESSELLATION.radial * a2.angle / (2 * Math.PI)));', 'var steps2 = Math.max(1, Math.ceil(TESSELLATION.radial * a2.angle / (3 * Math.PI)));', 1)" \
+  "s = s.replace('var steps2 = Math.max(1, Math.ceil(radialSegments() * a2.angle / (2 * Math.PI)));', 'var steps2 = Math.max(1, Math.ceil(radialSegments() * a2.angle / (3 * Math.PI)));', 1)" \
   ./internal/httpapi 'TestRendererBowsTheSameOutlineAsTheExporter'
 
 drill "the renderer bows the other way round" internal/httpapi/assets/forge3d.js \
@@ -416,6 +478,38 @@ drill "a retired word resolves silently" internal/domain/geometry/retired.go \
 drill "the renderer does not retire what Go retires" internal/httpapi/assets/forge3d.js \
   "s = s.replace('var RETIRED = {', 'var RETIRED = {}; var UNUSED_RETIRED = {', 1)" \
   ./internal/httpapi 'TestTheRendererRetiresTheSameShapeWords'
+
+echo
+echo "A truncated cone's radius_top is its top"
+# Added 2026-09-21. The sidecar turned every cylinder and cone with Plane.XZ,
+# whose normal is -Y, so radius_top landed at the BOTTOM. A cylinder is the same
+# at both ends and every orientation fence used one, so nothing moved. See
+# docs/bugfix/2026-09-21-truncated-cone-built-upside-down.md.
+drill "the kernel builds a truncated cone end-for-end" internal/domain/cad/sidecar.py \
+  "s = s.replace('        return Plane.ZX * body', '        return Plane.XZ * body', 1)" \
+  ./internal/domain/cad 'TestKernel_ATruncatedConesRadiusTopIsItsTop'
+
+echo
+echo "A plane is one-sided and faces up"
+# Added 2026-09-21. The same Plane.XZ, one shape further down _shape: the kernel
+# built a plane facing DOWN (declared -Y, wound -Y) while both renderers declared
+# +Y, and forge3d.js wound its own plane -Y against its own +Y normals, so the
+# viewport culled every plane the moment the camera was above it. No volume fence
+# could see any of it: a sheet encloses nothing either way up, which is why
+# TestExport_EverySolidIsWoundOutward skips `plane` by name. The convention now
+# lives on func plane in mesh.go and these three hold the three copies of it. See
+# docs/bugfix/2026-09-21-a-plane-faced-down-and-was-culled-from-above.md.
+drill "the kernel builds a plane facing down" internal/domain/cad/sidecar.py \
+  "s = s.replace('z_dir=Vector(0, 1, 0)) * Rectangle', 'z_dir=Vector(0, -1, 0)) * Rectangle', 1)" \
+  ./internal/domain/cad 'TestKernel_APlaneFacesUp'
+
+drill "the exporter's plane faces down" internal/domain/geometry/mesh.go \
+  's = s.replace("n := [3]float64{0, 1, 0}", "n := [3]float64{0, -1, 0}", 1)' \
+  ./internal/domain/geometry 'TestAPlaneFacesUp'
+
+drill "the browser winds a plane face-down" internal/httpapi/assets/forge3d.js \
+  "s = s.replace('indices: [0,2,1, 0,3,2]', 'indices: [0,1,2, 0,2,3]', 1)" \
+  ./internal/httpapi 'TestTheRendererDrawsAPlaneFacingUp'
 
 echo
 echo "Every document a turn installs is settled"
@@ -1198,7 +1292,7 @@ echo "A check that covered part of the model says how much"
 # when it found nothing, and a check the pair budget stopped found nothing too; parts
 # the kernel could not build were never in the check and never mentioned.
 drill "a truncated check reads as a clean one" internal/agent/interference.go \
-  's = s.replace("\tdefer func() {\n\t\tif note := coverageNote(sheet); note != \"\" {\n\t\t\treply.noteRepair(note)\n\t\t}\n\t}()\n", "", 1)' \
+  's = s.replace("\tdefer func() {\n\t\tif note := coverageNote(sheet); note != \"\" {\n\t\t\treply.noteRepair(note)\n\t\t}\n", "\tdefer func() {\n", 1)' \
   ./internal/agent 'TestInterference_ATruncatedCheckSaysSoInTheTurn'
 
 drill "truncation is not what the note is about" internal/agent/interference.go \
@@ -2553,7 +2647,7 @@ drill "the mic ends the hold on mouseleave again" internal/httpapi/assets/workbe
   ./internal/httpapi 'TestWorkbench_TheMicIsWiredToTheHoldAndKeepsWhatWasSaid'
 
 drill "a transcript goes straight to send() again" internal/httpapi/assets/workbench.js \
-  's = s.replace("        if (ForgeVoice.deliverSpoken(text, { busy: state.busy, input: $(\x27say\x27), send: send, note: voiceNote }) === \x27sent\x27) {", "        send(text); if (false) {", 1)' \
+  's = s.replace("        if (ForgeVoice.deliverSpoken(text, { busy: state.busy, input: $(\x27say\x27), send: send,\n          note: voiceNote, endedAt: endedAt }) === \x27sent\x27) {", "        send(text); if (false) {", 1)' \
   ./internal/httpapi 'TestWorkbench_TheMicIsWiredToTheHoldAndKeepsWhatWasSaid'
 
 drill "a typed message is cleared while a turn is in flight" internal/httpapi/assets/workbench.js \
@@ -2929,7 +3023,7 @@ drill "the offered repeat's turn is not checked" internal/domain/geometry/repeti
   ./internal/domain/geometry 'TestRepetition_FindsARingOfTopLevelParts'
 
 drill "the contract never teaches density" internal/agent/converse.go \
-  's = s.replace("geometry.FinishGuide() + \".\\n\" + densityContract + ", "geometry.FinishGuide() + \".\\n\" + ", 1)' \
+  's = s.replace("converseManner + geometryContract + geometry.FinishGuide() + \".\\n\" + densityContract", "converseManner + geometryContract + geometry.FinishGuide() + \".\\n\"", 1)' \
   ./internal/agent 'TestTheContractTeachesDensityAsTheValidatorReadsIt'
 
 drill "the contract's material shows no density" internal/agent/converse.go \
@@ -4111,7 +4205,7 @@ drill "an export job is refused at the view's ceiling" internal/domain/cad/cad.g
   ./internal/domain/cad 'TestKernel_AnExportJobIsBoundedByItsOwnCeilingAndNotTheBuildingOnes'
 
 drill "the export job asks for the interference check" internal/domain/cad/cad.go \
-  's = s.replace("SkipInterferences: job}", "SkipInterferences: false}", 1)' \
+  's = s.replace("SkipInterferences: job,", "SkipInterferences: false,", 1)' \
   ./internal/domain/cad 'TestKernel_AnExportJobBuildsAboveTheBuildingCeilingWithoutTheInterferenceCheck'
 
 drill "the sidecar ignores skip_interferences" internal/domain/cad/sidecar.py \
@@ -4290,7 +4384,7 @@ drill "a fallback hold that hears nothing says nothing" internal/httpapi/assets/
   ./internal/httpapi 'TestVoiceInput_AServerThatCannotTranscribeFallsBackAndTheNextHoldIsHeard/the_recogniser_returns_nothing'
 
 drill "interim words are dropped when the session ends" internal/httpapi/assets/voice.js \
-  's = s.replace("          if (partial) {\n            self.onTranscript(partial);", "          if (false) {\n            self.onTranscript(partial);", 1)' \
+  's = s.replace("          if (partial) {\n            // Interim words rescued", "          if (false) {\n            // Interim words rescued", 1)' \
   ./internal/httpapi 'TestVoiceInput_AServerThatCannotTranscribeFallsBackAndTheNextHoldIsHeard/only_interim_words_arrive'
 
 drill "a browser with no recogniser is not told the mic is off" internal/httpapi/assets/voice.js \
@@ -5084,6 +5178,1400 @@ drill "grouped containment takes a box's whole length for its reach" internal/do
 drill "grouped containment takes a quarter of a box for its reach" internal/domain/cad/sidecar.py \
   's = s.replace("            p.append(v * (lo[c] + hi[c]) / 2)\n            reach += abs(v) * (hi[c] - lo[c]) / 2\n", "            p.append(v * (lo[c] + hi[c]) / 2)\n            reach += abs(v) * (hi[c] - lo[c]) / 4\n", 1)' \
   ./internal/domain/cad 'TestKernel_APairKeyWithoutLocationsIsTheKeyBuild123dGave'
+
+
+echo
+echo "Bowed outlines taught and measured (B3, 2026-09-18)"
+drill "the contract drops the bowed-edge guide" internal/agent/converse.go \
+  's = s.replace("\tgeometry.CurveGuide(),", "\tgeometry.StandardGuide()[:0],", 1)' \
+  ./internal/agent 'TestContract_TeachesBowedEdgesFromTheValidatorsTable'
+
+drill "a via rule is refused in words the contract does not teach" internal/domain/geometry/profile.go \
+  's = s.replace("errors.New(ruleViaZ.refusal)", "errors.New(ruleViaZ.teach)", 1)' \
+  ./internal/domain/geometry 'TestCurveGuide_TeachesEveryRuleTheValidatorEnforces'
+
+drill "a bowed-edge rule is enforced but no longer taught" internal/domain/geometry/curve_guide.go \
+  's = s.replace("ruleViaOfVia, ruleViaRadius, ruleViaZ, ruleViaNoArc,", "ruleViaOfVia, ruleViaRadius, ruleViaZ,", 1)' \
+  ./internal/domain/geometry 'TestCurveGuide_TeachesEveryRuleTheValidatorEnforces'
+
+drill "the guide shows a crescent the validator refuses" internal/domain/geometry/curve_guide.go \
+  's = s.replace("viaPt(-20, 0, 0, 6), viaPt(20, 0, 0, 14)", "viaPt(-20, 0, 0, 6), viaPt(20, 0, 0, 6)", 1)' \
+  ./internal/domain/geometry 'TestCurveGuide_EveryExampleBuildsAsPrinted'
+
+drill "Go measures a bowed outline by its chords" internal/domain/geometry/overlay.go \
+  's = s.replace("range arcExtremes(at, *e.Via, e.To) {", "range arcExtremes(at, *e.Via, e.To)[:0] {", 1)' \
+  ./internal/domain/geometry 'TestMeasure_ABowedEdgeReachesItsArcNotItsChords'
+
+drill "an arc is measured past the ends of its sweep" internal/domain/geometry/overlay.go \
+  's = s.replace("\t\tif t <= angle {\n\t\t\tout = append(out, pt)", "\t\tif true {\n\t\t\tout = append(out, pt)", 1)' \
+  ./internal/domain/geometry 'TestMeasure_ABowedEdgeReachesItsArcNotItsChords'
+
+drill "Go measures a bowed outline short of where OCCT builds it" internal/domain/geometry/overlay.go \
+  's = s.replace("range arcExtremes(at, *e.Via, e.To) {", "range arcExtremes(at, *e.Via, e.To)[:0] {", 1)' \
+  ./internal/domain/cad 'TestKernel_GoMeasuresABowedOutlineWhereTheKernelDoes'
+
+drill "a lens and a bulged loft station are built from chords" internal/domain/cad/sidecar.py \
+  "s = s.replace('edges.append(ThreePointArc(at, Vector(*via), to))', 'edges.append(Line(at, Vector(*via)))\n            edges.append(Line(Vector(*via), to))', 1)" \
+  ./internal/domain/cad 'TestKernel_ALensExtrusionIsTwoExactArcs|TestKernel_ALoftIntoABulgedStationBlendsExactly'
+
+echo
+echo "Looks designed, kernel half (2026-09-18): safe fillets, edge rules, shells, perforation, smooth normals"
+# damon's decision of 2026-09-18 made "looks designed" a FORGE goal. B1: a fillet OCCT
+# refuses is retried at 0.5x and 0.25x, one connected edge group at a time, and every
+# reduced or dropped group is REPORTED (reply, turn, export label). B2: edge rules from
+# one table read by the validator, the kernel and the contract. B4: shell and thicken.
+# B6: a perforation cut as one boolean, with a budget. A5: the mesh budget really
+# coarsens (build123d's mesh() kept a finer triangulation) and carries smooth normals.
+# docs/spikes/2026-09-18-kernel-vocabulary.
+drill "a refused fillet is not retried smaller" internal/domain/cad/sidecar.py \
+  's = s.replace("_ROUND_RETRY = (1.0, 0.5, 0.25)", "_ROUND_RETRY = (1.0,)", 1)' \
+  ./internal/domain/cad 'TestKernel_ARefusedFilletIsBuiltSmallerAndSaysSo'
+
+drill "one bad edge group drops every group" internal/domain/cad/sidecar.py \
+  's = s.replace("    groups = _edge_groups(list(selected))\n", "    groups = [list(selected)]\n", 1)' \
+  ./internal/domain/cad 'TestKernel_OneEdgeGroupThatTakesNoFilletDoesNotDropTheRest'
+
+drill "a round built smaller is not reported" internal/domain/cad/sidecar.py \
+  's = s.replace("    if (reduced or square) and report is not None:\n", "    if False:\n", 1)' \
+  ./internal/domain/cad 'TestKernel_ARefusedFilletIsBuiltSmallerAndSaysSo'
+
+drill "the build drops the kernel's reductions" internal/domain/cad/cad.go \
+  's = s.replace("FeatureReductions: res.FeaturesReduced,", "", 1)' \
+  ./internal/domain/cad 'TestKernel_ARefusedFilletIsBuiltSmallerAndSaysSo'
+
+drill "the bridge drops the kernel's feature failures" internal/agent/cadbridge/cadbridge.go \
+  's = s.replace("Skipped: built.Skipped, FeatureFailures: built.FeatureFailures,", "Skipped: built.Skipped,", 1)' \
+  ./internal/agent/cadbridge 'TestBuildSurface_CarriesWhatTheKernelSaidAboutTheFeatures'
+
+drill "the bridge drops the kernel's reductions" internal/agent/cadbridge/cadbridge.go \
+  's = s.replace("FeatureReductions: built.FeatureReductions,", "", 1)' \
+  ./internal/agent/cadbridge 'TestBuildSurface_CarriesWhatTheKernelSaidAboutTheFeatures'
+
+drill "the render drops the reductions" internal/agent/render.go \
+  's = s.replace("FeatureFailures: built.FeatureFailures, FeatureReductions: built.FeatureReductions,", "", 1)' \
+  ./internal/agent 'TestTurn_SaysWhichRoundsTheKernelBuiltSmaller'
+
+drill "the turn never says a round was built smaller" internal/agent/interference.go \
+  's = s.replace("if note := builtFeaturesNote(sheet); note != \"\" {", "if note := \"\"; note != \"\" {", 1)' \
+  ./internal/agent 'TestTurn_SaysWhichRoundsTheKernelBuiltSmaller'
+
+drill "an export job's label hides the reductions" internal/httpapi/geometry_exports.go \
+  's = s.replace("exportLabelClauses(e.MeshOnly, e.Skipped, e.FeatureFailures, e.FeatureReductions)", "\"\"", 1)' \
+  ./internal/httpapi 'TestExportLabel_SaysWhichRoundsWereBuiltSmaller'
+
+drill "convex edges are taken for concave ones" internal/domain/cad/sidecar.py \
+  's = s.replace("\"convex\": _by_connection(ChFiDS_TypeOfConcavity.ChFiDS_Convex)", "\"convex\": _by_connection(ChFiDS_TypeOfConcavity.ChFiDS_Concave)", 1)' \
+  ./internal/domain/cad 'TestKernel_EveryEdgeRuleSelectsExactlyTheEdgesItNames'
+
+drill "outer edges include a cylinder's seams" internal/domain/cad/sidecar.py \
+  's = s.replace("if not inner.Contains(e.wrapped) and _two_faces(faces, e) is not None]", "if not inner.Contains(e.wrapped)]", 1)' \
+  ./internal/domain/cad 'TestKernel_EveryEdgeRuleSelectsExactlyTheEdgesItNames'
+
+drill "longer takes an edge exactly as long" internal/domain/cad/sidecar.py \
+  's = s.replace("if float(e.length) > limit * (1 + 1e-9)]", "if float(e.length) >= limit]", 1)' \
+  ./internal/domain/cad 'TestKernel_EveryEdgeRuleSelectsExactlyTheEdgesItNames'
+
+drill "joins takes every edge on the part" internal/domain/cad/sidecar.py \
+  's = s.replace("if _on_surface(target, points, tol) and any(_on_surface(t, points, tol) for t in tools):", "if _on_surface(target, points, tol):", 1)' \
+  ./internal/domain/cad 'TestKernel_EveryEdgeRuleSelectsExactlyTheEdgesItNames'
+
+drill "the kernel forgets an edge rule Go validates" internal/domain/cad/sidecar.py \
+  's = s.replace("    \"holes\": _holes,\n", "", 1)' \
+  ./internal/domain/cad 'TestTheKernelSelectsEdgesByExactlyTheRulesGoValidates'
+
+drill "joins is accepted with nothing fused" internal/domain/geometry/feature.go \
+  's = s.replace("if rule.Name == \"joins\" && !fusedInto[f.Of] {", "if false {", 1)' \
+  ./internal/domain/geometry 'TestOperations_JoinsNeedsAnEarlierFuse'
+
+drill "longer is read without its edge_length" internal/domain/geometry/feature.go \
+  's = s.replace("\t\t\tcase rule.Needs == \"length\":\n", "\t\t\tcase false:\n", 1)' \
+  ./internal/domain/geometry 'TestOperations_LongerNeedsAnEdgeLengthAndNothingElseTakesOne'
+
+drill "a shell with no open face is accepted" internal/domain/geometry/feature.go \
+  's = s.replace("\t\t\t\tif len(f.Open) == 0 {\n", "\t\t\t\tif false {\n", 1)' \
+  ./internal/domain/geometry 'TestOperations_AShellIsValidated'
+
+drill "a solid is accepted for thickening" internal/domain/geometry/feature.go \
+  's = s.replace("if op == \"thicken\" && !surface {", "if false {", 1)' \
+  ./internal/domain/geometry 'TestOperations_AShellIsValidated'
+
+drill "a shell wall reaches the kernel in the document's units" internal/domain/geometry/solid.go \
+  's = s.replace("\t\toperations[i].Thickness *= toMM\n", "", 1)' \
+  ./internal/domain/geometry 'TestSolids_ConvertsEveryFeatureLengthToMillimetres'
+
+drill "an edge_length reaches the kernel in the document's units" internal/domain/geometry/solid.go \
+  's = s.replace("\t\toperations[i].EdgeLength *= toMM\n", "", 1)' \
+  ./internal/domain/geometry 'TestSolids_ConvertsEveryFeatureLengthToMillimetres'
+
+drill "a shell grows outward" internal/domain/cad/sidecar.py \
+  's = s.replace("result = offset(target, amount=-float(op[\"thickness\"]), openings=faces)", "result = offset(target, amount=float(op[\"thickness\"]), openings=faces)", 1)' \
+  ./internal/domain/cad 'TestKernel_AShellAndASkinHaveTheVolumeTheFormulaSays'
+
+drill "a shell asked open at the top opens at the bottom" internal/domain/cad/sidecar.py \
+  's = s.replace("    \"top\": (Axis.Y, -1),\n", "    \"top\": (Axis.Y, 0),\n", 1)' \
+  ./internal/domain/cad 'TestKernel_AShellAndASkinHaveTheVolumeTheFormulaSays'
+
+drill "a skin grows on one side of its surface" internal/domain/cad/sidecar.py \
+  's = s.replace("thicken(faces[0], amount=float(op[\"thickness\"]) / 2.0, both=True)", "thicken(faces[0], amount=float(op[\"thickness\"]) / 2.0, both=False)", 1)' \
+  ./internal/domain/cad 'TestKernel_AShellAndASkinHaveTheVolumeTheFormulaSays'
+
+drill "a perforation past the budget is accepted" internal/domain/geometry/feature.go \
+  's = s.replace("if op == \"cut\" && len(tools) > MaxCutTools {", "if false {", 1)' \
+  ./internal/domain/geometry 'TestOperations_APerforationPastTheBudgetIsRefused'
+
+drill "a perforation is cut one hole at a time" internal/domain/cad/sidecar.py \
+  's = s.replace("    if kind == \"cut\" and len(op.get(\"with\") or []) > 1:\n", "    if False:\n", 1)' \
+  ./internal/domain/cad 'TestKernel_APerforationIsCutAsOneBoolean'
+
+drill "a mesh is never re-meshed coarser" internal/domain/cad/sidecar.py \
+  's = s.replace("    BRepTools.Clean_s(solid.wrapped)\n    BRepMesh_IncrementalMesh(", "    BRepMesh_IncrementalMesh(", 1)' \
+  ./internal/domain/cad 'TestKernel_AMeshOverTheBudgetIsReallyCoarsened'
+
+drill "the angular limit is never coarsened" internal/domain/cad/sidecar.py \
+  's = s.replace("        angle = min(angle * _MESH_COARSEN, _MESH_ANGLE_MAX)\n", "", 1)' \
+  ./internal/domain/cad 'TestKernel_AMeshOverTheBudgetIsReallyCoarsened'
+
+drill "the mesh carries no normals" internal/domain/cad/sidecar.py \
+  's = s.replace("            mesh[\"normals\"] = normals\n", "            pass\n", 1)' \
+  ./internal/domain/cad 'TestKernel_AMeshCarriesSmoothNormalsAndKeepsHardEdges'
+
+drill "a reversed face keeps its surface's normal" internal/domain/cad/sidecar.py \
+  's = s.replace("            s = -1.0 if reverse else 1.0\n", "            s = 1.0\n", 1)' \
+  ./internal/domain/cad 'TestKernel_AMeshCarriesSmoothNormalsAndKeepsHardEdges'
+
+drill "a placed copy's normals do not turn with it" internal/domain/cad/cad.go \
+  's = s.replace("n[i] = m[0]*x + m[4]*y + m[8]*z", "n[i] = x", 1)' \
+  ./internal/domain/cad 'TestKernel_AMeshCarriesSmoothNormalsAndKeepsHardEdges'
+
+drill "the wire drops a part's normals" internal/httpapi/geometry.go \
+  's = s.replace("ID: m.ID, Label: m.Label, Vertices: m.Vertices, Triangles: m.Triangles, Normals: m.Normals,", "ID: m.ID, Label: m.Label, Vertices: m.Vertices, Triangles: m.Triangles,", 1)' \
+  ./internal/httpapi 'TestMeshPayload_CarriesNormalsAdditively'
+
+drill "the contract does not teach the open faces" internal/agent/converse.go \
+  's = s.replace("\tgeometry.OpenFaceGuide(),", "\t\"\",", 1)' \
+  ./internal/agent 'TestTheContractTeachesEveryFeatureRuleFORGEHas'
+
+drill "the contract offers operations where it means edge rules" internal/agent/converse.go \
+  's = s.replace("geometry.FeatureOpChoices(), geometry.EdgeRuleChoices(),", "geometry.FeatureOpChoices(), geometry.FeatureOpChoices(),", 1)' \
+  ./internal/agent 'TestTheContractTeachesEveryFeatureRuleFORGEHas'
+
+echo
+
+echo "The car template, 2026-09-18 (looks-designed stage C): template, proportions, design words"
+# Added 2026-09-18 (docs/spikes/2026-09-18-car-template). A "car" part is written out
+# at the settle door as a bound tree; it builds through the kernel with nothing
+# missing or buried and at the height asked; proportions outside its class warn and
+# never refuse; the proportion table cites every figure and says UNVALIDATED; the
+# design-word table reaches the prompt whole and never sets a count.
+drill "a car is not written out at the settle door" internal/agent/settledoc.go \
+  's = s.replace("\tfor _, problem := range geometry.ExpandTemplates(d) {\n", "\tfor _, problem := range []geometry.Problem(nil) {\n", 1)' \
+  ./internal/agent 'TestSettle_WritesACarOutAsItsTreeAndSaysWhatIsOutsideItsClass'
+
+drill "Faults does not see a car it could not build" internal/domain/geometry/faults.go \
+  's = s.replace("\tout := carFaults(*d)\n", "\tvar out []Problem\n", 1)' \
+  ./internal/domain/geometry 'TestCar_AnImpossibleCarIsNamedAndLeftForTheRepairLoop'
+
+drill "a car's placements are written as numbers, not bindings" internal/domain/geometry/car.go \
+  's = s.replace("return []float64{x.v, y.v, z.v}, map[string]string{\"x\": x.s, \"y\": y.s, \"z\": z.s}", "return []float64{x.v, y.v, z.v}, map[string]string{}", 1)' \
+  ./internal/domain/geometry 'TestCar_ARespecMovesTheWheelsTheArchesAndTheBodyTogether'
+
+drill "a car a tree places is not written out" internal/domain/geometry/car.go \
+  's = s.replace("\tif hasCar(d.Definitions) {\n", "\tif false {\n", 1)' \
+  ./internal/domain/geometry 'TestCar_ACarDefinitionPlacedByATreeIsWrittenOutInPlace'
+
+drill "a corner radius the sections cannot carry is written out anyway" internal/domain/geometry/car.go \
+  's = s.replace("for _, sp := range carSectionProblems(sections) {", "for _, sp := range []Problem(nil) {", 1)' \
+  ./internal/domain/geometry 'TestCar_AnEdgeRadiusTheSectionsCannotCarryIsRefusedByName'
+
+drill "the wheel nuts are not fused to the rim" internal/domain/geometry/car.go \
+  's = s.replace("\twheel.Features = []Feature{{ID: \"nuts\"", "\t_ = []Feature{{ID: \"nuts\"", 1)' \
+  ./internal/domain/geometry 'TestCar_IsWrittenOutAsATreeWithNoFaults'
+
+drill "the wheel arches are too small for the tyres" internal/domain/geometry/car.go \
+  's = s.replace("\tarchR := D.over(2).plus(AC)\n", "\tarchR := D.over(4).plus(AC)\n", 1)' \
+  ./internal/domain/cad 'TestKernel_BuildsTheCarTemplateWithNothingMissingOrBuried'
+
+drill "the roof is built above the height asked" internal/domain/geometry/car.go \
+  's = s.replace("deck.plus(lit(1).minus(deck).times(cab)).times(H),", "deck.plus(lit(1).minus(deck).times(cab)).times(H).scale(1.05),", 1)' \
+  ./internal/domain/cad 'TestKernel_BuildsTheCarTemplateWithNothingMissingOrBuried'
+
+drill "a proportion outside its class is not warned" internal/domain/geometry/carproportions.go \
+  's = s.replace("\t\tif v >= r.Low && v <= r.High {\n", "\t\tif true {\n", 1)' \
+  ./internal/domain/geometry 'TestCar_ProportionsOutsideTheClassAreWarnedNeverRefused'
+
+drill "a proportion outside its class refuses the car" internal/domain/geometry/carproportions.go \
+  's = s.replace("\twarn := func(format string, args ...any) {\n\t\tout = append(out, Problem{Severity: Warning,", "\twarn := func(format string, args ...any) {\n\t\tout = append(out, Problem{Severity: Error,", 1)' \
+  ./internal/domain/geometry 'TestCar_ProportionsOutsideTheClassAreWarnedNeverRefused'
+
+drill "the proportion table stops saying UNVALIDATED" internal/domain/geometry/templates/car_proportions.json \
+  's = s.replace("\"status\": \"UNVALIDATED\",", "\"status\": \"validated\",", 1)' \
+  ./internal/domain/geometry 'TestCarProportions_EveryFigureNamesItsSourceAndTheTableIsUnvalidated'
+
+drill "a figure in the proportion table loses its source" internal/domain/geometry/templates/car_proportions.json \
+  's = s.replace("(mm) 1996\", \"source\": \"Defender 110 Technical Specifications, as above\"", "(mm) 1996\", \"source\": \"\"", 1)' \
+  ./internal/domain/geometry 'TestCarProportions_EveryFigureNamesItsSourceAndTheTableIsUnvalidated'
+
+drill "a design word sets a count" internal/domain/geometry/templates/design_words.json \
+  's = s.replace("\"set\": [{\"key\": \"edge_radius\", \"band\": [0.04, 0.06]}]", "\"set\": [{\"key\": \"edge_radius\", \"band\": [0.04, 0.06]}, {\"key\": \"lug_count\", \"band\": [4, 6]}]", 1)' \
+  ./internal/domain/geometry 'TestDesignWords_NeverSetACountAndStayInsideTheTemplate'
+
+drill "a design word the sketch filter rewrites" internal/domain/geometry/templates/design_words.json \
+  's = s.replace("\"words\": [\"crisp\",", "\"words\": [\"two-tone\", \"crisp\",", 1)' \
+  ./internal/agent 'TestDesignWordsSurviveTheSketchReadingsNumberFilter'
+
+drill "the design-word guide drops a row" internal/domain/geometry/designwords.go \
+  's = s.replace("\tfor _, r := range designWords {\n\t\tquoted", "\tfor _, r := range designWords[1:] {\n\t\tquoted", 1)' \
+  ./internal/domain/geometry 'TestDesignWords_TheGuideIsTheTable'
+
+drill "the prompt drops the design-word table" internal/agent/converse.go \
+  's = s.replace("geometry.CarGuide(), geometry.DesignWordGuide(),", "geometry.CarGuide(), \"\",", 1)' \
+  ./internal/agent 'TestTheContractCarriesTheCarTemplateAndEveryDesignWord'
+
+drill "the prompt does not offer the car shape" internal/agent/converse.go \
+  's = s.replace("| \"standard\" | \"car\" |", "| \"standard\" |", 1)' \
+  ./internal/agent 'TestTheContractCarriesTheCarTemplateAndEveryDesignWord'
+
+echo "Mesh-only decorative parts (looks designed, stage E1; damon 2026-09-18)"
+
+drill "a lattice past its triangle budget is accepted" internal/domain/geometry/lattice.go \
+  's = s.replace("if n := l.triangles(); n > MaxLatticeTriangles {", "if n := l.triangles(); n > MaxLatticeTriangles*100 {", 1)' \
+  ./internal/domain/geometry 'TestLattice_RefusesByNameWhatItCannotBuild'
+
+drill "a lattice wall of any thickness is accepted" internal/domain/geometry/lattice.go \
+  's = s.replace("if l.Thickness < l.Cell*minWallPerCell || l.Thickness > l.Cell*maxWallPerCell {", "if false {", 1)' \
+  ./internal/domain/geometry 'TestLattice_RefusesByNameWhatItCannotBuild'
+
+drill "the cell a lattice refusal names does not fit" internal/domain/geometry/lattice.go \
+  's = s.replace("fits := l.Cell * math.Cbrt(float64(n)/float64(MaxLatticeTriangles)) * 1.01", "fits := l.Cell * math.Cbrt(float64(n)/float64(MaxLatticeTriangles)) * 0.9", 1)' \
+  ./internal/domain/geometry 'TestLattice_TheCellARefusalNamesFits'
+
+drill "mesh-only copies do not share one budget" internal/domain/geometry/lattice.go \
+  's = s.replace("if n := l.triangles(); total+n > maxMeshOnlyTriangles {", "if n := l.triangles(); n > maxMeshOnlyTriangles {", 1)' \
+  ./internal/domain/geometry 'TestLattice_CopiesShareOneBudget'
+
+drill "a refused lattice is not a fault" internal/domain/geometry/faults.go \
+  's = s.replace("profileProblems = append(profileProblems, allLatticeProblems(d.Parts)...)", "", 1)' \
+  ./internal/domain/geometry 'TestLattice_RefusesByNameWhatItCannotBuild'
+
+drill "a lattice is sent to the kernel as an exact solid" internal/domain/geometry/solid.go \
+  's = s.replace("meshOnly, lattice = true, l.Pattern.Name", "meshOnly, lattice = false, l.Pattern.Name", 1)' \
+  ./internal/domain/geometry 'TestLattice_IsSentToTheKernelMarkedMeshOnlyInMillimetres'
+
+drill "a feature may operate on a lattice" internal/domain/geometry/feature.go \
+  's = s.replace("\t\tif meshOnly[f.Of] {", "\t\tif false && meshOnly[f.Of] {", 1)' \
+  ./internal/domain/geometry 'TestLattice_NoFeatureMayCutOrUseIt'
+
+drill "a feature may use a lattice as its tool" internal/domain/geometry/feature.go \
+  's = s.replace("\t\t\tcase meshOnly[t]:", "\t\t\tcase false && meshOnly[t]:", 1)' \
+  ./internal/domain/geometry 'TestLattice_NoFeatureMayCutOrUseIt'
+
+drill "the Go mesh draws a lattice as its box" internal/domain/geometry/mesh.go \
+  's = s.replace("\tcase latticeShape:\n\t\t// Mesh-only, and built only by the CAD kernel", "\tcase \"lattice-was-here\":\n\t\t// Mesh-only, and built only by the CAD kernel", 1)' \
+  ./internal/domain/geometry 'TestLattice_ExportsLeaveItOutAndSaySo'
+
+drill "the STEP label says nothing of mesh-only parts" internal/domain/geometry/export.go \
+  's = s.replace("if note := MeshOnlyNote(v.Document.MeshOnlyParts(), \"this STEP file\"); note != \"\" {", "if note := \"\"; note != \"\" {", 1)' \
+  ./internal/domain/geometry 'TestLattice_ExportsLeaveItOutAndSaySo'
+
+drill "the panel summary of a lattice hides that it is mesh-only" internal/domain/geometry/units.go \
+  's = s.replace("q(l.Width), q(l.Height), q(l.Depth), q(l.Cell), q(l.Thickness), MeshOnlyLabel)", "q(l.Width), q(l.Height), q(l.Depth), q(l.Cell), q(l.Thickness), \"\")", 1)' \
+  ./internal/domain/geometry 'TestLattice_ThePanelSummarySaysMeshOnly'
+
+drill "mass weighs a lattice it was handed a measure of" internal/domain/geometry/mass.go \
+  's = s.replace("\t\tif meshOnly[m.ID] {\n\t\t\tcontinue\n\t\t}\n", "", 1)' \
+  ./internal/domain/geometry 'TestLattice_MassLeavesItOutAndNamesIt'
+
+drill "the contract does not teach lattices" internal/agent/converse.go \
+  's = s.replace("\tgeometry.LatticeGuide(),", "\t\"\",", 1)' \
+  ./internal/agent 'TestTheContractTeachesLatticesFromTheTable'
+
+drill "the contract does not offer lattice as a shape" internal/agent/converse.go \
+  's = s.replace("\"lattice\" | \"script\",", "\"script\",", 1)' \
+  ./internal/agent 'TestTheContractTeachesLatticesFromTheTable'
+
+drill "the coverage note says nothing of mesh-only parts" internal/agent/interference.go \
+  's = s.replace("if note := geometry.MeshOnlyNote(sheet.MeshOnly, \"the check for shared material\"); note != \"\" {", "if note := \"\"; note != \"\" {", 1)' \
+  ./internal/agent 'TestCoverageNoteSaysMeshOnlyPartsWereNotChecked'
+
+drill "the render drops the mesh-only parts" internal/agent/render.go \
+  's = s.replace("MeshOnly: built.MeshOnly, Parts: built.Parts,", "Parts: built.Parts,", 1)' \
+  ./internal/agent 'TestRender_CarriesTheMeshOnlyParts'
+
+drill "the turn surface drops the mesh-only parts" internal/agent/cadbridge/cadbridge.go \
+  's = s.replace("\t\tMeshOnly: built.MeshOnly,\n", "", 1)' \
+  ./internal/agent/cadbridge 'TestKernel_TheTurnsSurfaceNamesItsMeshOnlyParts'
+
+drill "the mesh reply drops the mesh-only flag" internal/httpapi/geometry.go \
+  's = s.replace("\t\t\tMeshOnly: m.MeshOnly,\n", "", 1)' \
+  ./internal/httpapi 'TestTheMeshReplyMarksAMeshOnlyPart'
+
+drill "the STEP download header says nothing of mesh-only parts" internal/httpapi/geometry.go \
+  's = s.replace("exportLabelClauses(built.MeshOnly,", "exportLabelClauses(nil,", 1)' \
+  ./internal/httpapi 'TestSTEPAndMassRepliesSayMeshOnlyPartsAreLeftOut'
+
+drill "the mass note says nothing of mesh-only parts" internal/httpapi/geometry.go \
+  's = s.replace("if meshOnly := geometry.MeshOnlyNote(report.MeshOnly, \"the mass, volume and centre\"); meshOnly != \"\" {", "if meshOnly := \"\"; meshOnly != \"\" {", 1)' \
+  ./internal/httpapi 'TestSTEPAndMassRepliesSayMeshOnlyPartsAreLeftOut'
+
+drill "the banner does not label mesh-only parts" internal/httpapi/assets/workbench.js \
+  's = s.replace("(meshOnly.length ? \x27 <span class=\"prov-mesh-only\"", "(false ? \x27 <span class=\"prov-mesh-only\"", 1)' \
+  ./internal/httpapi 'TestWorkbenchLabelsMeshOnlyPartsOutsideTheFold'
+
+drill "the banner reads mesh-only parts only from the kernel" internal/httpapi/assets/workbench.js \
+  's = s.replace("      if (MESH_ONLY_SHAPES.indexOf(String(p.shape || \x27\x27).trim().toLowerCase()) >= 0) add(p.name || p.id);\n", "", 1)' \
+  ./internal/httpapi 'TestWorkbenchLabelsMeshOnlyPartsOutsideTheFold'
+
+drill "the workbench forgets the kernel mesh-only parts" internal/httpapi/assets/workbench.js \
+  's = s.replace("meshOnly: b.mesh_only || []", "meshOnly: []", 1)' \
+  ./internal/httpapi 'TestWorkbenchLabelsMeshOnlyPartsOutsideTheFold'
+
+drill "the workbench spells the mesh-only label its own way" internal/httpapi/assets/workbench.js \
+  's = s.replace("function meshOnlyLabel() { return \x27mesh-only - not manufacturable\x27; }", "function meshOnlyLabel() { return \x27decorative\x27; }", 1)' \
+  ./internal/httpapi 'TestTheWorkbenchSpellsMeshOnlyAsGeometryDoes'
+
+drill "the kernel builds a mesh-only part with OCCT" internal/domain/cad/sidecar.py \
+  's = s.replace("    solids, mesh_only = _split_mesh_only(request.get(\"solids\") or [])", "    solids, mesh_only = request.get(\"solids\") or [], []", 1)' \
+  ./internal/domain/cad 'TestKernel_AGyroidInABoxBuildsAsAMeshOnlyPartWithinBudget'
+
+drill "the kernel reply names no mesh-only parts" internal/domain/cad/sidecar.py \
+  's = s.replace("        out[\"mesh_only\"] = _mesh_only_names(mesh_only)", "        pass", 1)' \
+  ./internal/domain/cad 'TestKernel_AGyroidInABoxBuildsAsAMeshOnlyPartWithinBudget'
+
+drill "a mesh-only surface is not marked mesh_only" internal/domain/cad/sidecar.py \
+  's = s.replace("out.append({\"id\": part.get(\"id\"), \"label\": name, \"mesh_only\": True,", "out.append({\"id\": part.get(\"id\"), \"label\": name, \"mesh_only\": False,", 1)' \
+  ./internal/domain/cad 'TestKernel_AGyroidInABoxBuildsAsAMeshOnlyPartWithinBudget'
+
+drill "the Go reply drops the mesh-only flag" internal/domain/cad/cad.go \
+  's = s.replace("Triangles: m.Triangles, MeshOnly: m.MeshOnly,", "Triangles: m.Triangles,", 1)' \
+  ./internal/domain/cad 'TestKernel_AGyroidInABoxBuildsAsAMeshOnlyPartWithinBudget'
+
+drill "the STEP file does not say what it left out" internal/domain/cad/sidecar.py \
+  's = s.replace("    if note:\n        # Appended to FILE_DESCRIPTION", "    if False:\n        # Appended to FILE_DESCRIPTION", 1)' \
+  ./internal/domain/cad 'TestKernel_STEPLeavesOutAMeshOnlyPartAndSaysSoInTheFile'
+
+drill "the kernel sends a lattice past its own budget" internal/domain/cad/sidecar.py \
+  's = s.replace("    if tris > _LATTICE_BUDGET:", "    if tris > _LATTICE_BUDGET * 100:", 1)' \
+  ./internal/domain/cad 'TestKernel_ALatticePastTheKernelsOwnBudgetIsRefusedByName'
+
+drill "a lattice is drawn where it was built, not where it was placed" internal/domain/cad/sidecar.py \
+  's = s.replace("placed = verts @ m.T + _np.asarray(part[\"position\"], dtype=float)", "placed = verts + 0.0", 1)' \
+  ./internal/domain/cad 'TestKernel_ALatticeSitsInItsBoxWithTheWallItAskedFor'
+
+drill "a gyroid wall is cut at the level with no gradient factor" internal/domain/cad/sidecar.py \
+  's = s.replace("+ math.sin(z) * math.cos(x)), 1.51),", "+ math.sin(z) * math.cos(x)), 1.0),", 1)' \
+  ./internal/domain/cad 'TestKernel_ALatticeSitsInItsBoxWithTheWallItAskedFor'
+
+drill "a mirrored lattice is not reflected" internal/domain/cad/sidecar.py \
+  's = s.replace("        if part.get(\"mirrored\"):\n", "        if False:\n", 1)' \
+  ./internal/domain/cad 'TestKernel_AMirroredLatticeIsItsReflection'
+
+drill "a mirrored lattice faces inward" internal/domain/cad/sidecar.py \
+  's = s.replace("            tris = tris[:, ::-1]\n", "", 1)' \
+  ./internal/domain/cad 'TestKernel_AMirroredLatticeIsItsReflection'
+
+drill "a lone lattice is refused a mesh too" internal/domain/cad/sidecar.py \
+  's = s.replace("    if request.get(\"format\") != \"mesh\" or request.get(\"properties\"):", "    if True:", 1)' \
+  ./internal/domain/cad 'TestKernel_OnlyMeshOnlyPartsDrawButHaveNoSTEP'
+
+echo
+# Added 2026-09-18 (looks: presentation, stage A). forge3d.js lights from a studio
+# environment with a material per finish, tone maps to sRGB, lays a contact shadow, adds
+# occlusion on WebGL2, sizes its clip planes and zoom to the model, draws curves as finely
+# as the screen needs and faces every primitive outward. viewport_looks_fence_test.go and
+# viewport_shader_compile_test.go.
+drill "a finish is shaded without its material" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    return [m.metallic, m.roughness, m.coat];", "    return [0, 0.5, 0];", 1)' \
+  ./internal/httpapi 'TestRendererHasAMaterialForEveryFinishGoAccepts'
+
+drill "paint is rougher than plastic" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    painted:    { metallic: 0.0, roughness: 0.45, coat: 0.8 },", "    painted:    { metallic: 0.0, roughness: 0.60, coat: 0.8 },", 1)' \
+  ./internal/httpapi 'TestRendererHasAMaterialForEveryFinishGoAccepts'
+
+drill "the part shader asks for a uniform it does not declare" internal/httpapi/assets/forge3d.js \
+  's = s.replace("      material: gl.getUniformLocation(P, \x27uMaterial\x27),", "      material: gl.getUniformLocation(P, \x27uSpecPower\x27),", 1)' \
+  ./internal/httpapi 'TestRendererHasAMaterialForEveryFinishGoAccepts'
+
+drill "the part shader writes linear light to the screen" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    \x27  col = toSrgb(aces(col * uExposure));\x27,", "    \x27  col = col * uExposure;\x27,", 1)' \
+  ./internal/httpapi 'TestRendererToneMapsWithTheCurveItsShaderIsWrittenFrom'
+
+drill "the tone curve drifts from the table the shader is written from" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    var v = (x * (ACES.a * x + ACES.b)) / (x * (ACES.c * x + ACES.d) + ACES.e);", "    var v = (x * (ACES.a * x + 0.3)) / (x * (ACES.c * x + ACES.d) + ACES.e);", 1)' \
+  ./internal/httpapi 'TestRendererToneMapsWithTheCurveItsShaderIsWrittenFrom'
+
+drill "sRGB is written as a 2.2 power" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    return c <= 0.0031308 ? 12.92 * c : 1.055 * Math.pow(c, 1 / 2.4) - 0.055;", "    return Math.pow(c, 1 / 2.2);", 1)' \
+  ./internal/httpapi 'TestRendererToneMapsWithTheCurveItsShaderIsWrittenFrom'
+
+drill "the near plane is 0.05 whatever the model" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    var near = Math.max(toCentre - reach, toTarget * 0.01);", "    var near = 0.05;", 1)' \
+  ./internal/httpapi 'TestRendererDepthResolvesTheModelAtAnyScale'
+
+drill "the far plane stops at what the camera looks at" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    var far = Math.max(toCentre + reach, grid, near * 2);", "    var far = Math.max(toTarget, near * 2);", 1)' \
+  ./internal/httpapi 'TestRendererDepthResolvesTheModelAtAnyScale'
+
+drill "the frame projects with a fixed near plane" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    var proj = perspective(FOV_DEGREES, w / Math.max(1, h), clip.near, clip.far);", "    var proj = perspective(FOV_DEGREES, w / Math.max(1, h), 0.05, clip.far);", 1)' \
+  ./internal/httpapi 'TestRendererDepthResolvesTheModelAtAnyScale'
+
+drill "zoom stops at 0.4 and 400 units" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    return { min: s * 0.02, max: s * 100 };", "    return { min: 0.4, max: 400 };", 1)' \
+  ./internal/httpapi 'TestRendererZoomsInTheModelsOwnUnits'
+
+drill "a curve is never drawn finer than the export" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    if (!(radiusPx > DETAIL_TOLERANCE_PX) || !(baseSegments > 0)) return 1;", "    return 1;", 1)' \
+  ./internal/httpapi 'TestRendererDrawsCurvesAsFineAsTheScreenNeeds'
+
+drill "the finer level is chosen from the copy's centre inside it" internal/httpapi/assets/forge3d.js \
+  's = s.replace("      var px = r * f.pixels / Math.max(dist, r * 0.02);", "      var px = dist > r ? r * f.pixels / dist : f.pixels;", 1)' \
+  ./internal/httpapi 'TestRendererDrawsCurvesAsFineAsTheScreenNeeds'
+
+drill "a cylinder is wound inside out" internal/httpapi/assets/forge3d.js \
+  's = s.replace("      idx.push(a, d, b, a, c, d);", "      idx.push(a, b, d, a, d, c);", 1)' \
+  ./internal/httpapi 'TestRendererPrimitivesFaceOutward'
+
+drill "a sphere is wound inside out" internal/httpapi/assets/forge3d.js \
+  's = s.replace("        idx.push(a, a+1, b, b, a+1, b+1);", "        idx.push(a, b, a+1, b, b+1, a+1);", 1)' \
+  ./internal/httpapi 'TestRendererPrimitivesFaceOutward'
+
+drill "a revolve is shaded facet by facet" internal/httpapi/assets/forge3d.js \
+  's = s.replace("  var SMOOTHED_SHAPES = { extrusion: true, revolve: true,", "  var SMOOTHED_SHAPES = { extrusion: true, revolve: false,", 1)' \
+  ./internal/httpapi 'TestRendererShadesCurvedPrimitivesSmooth'
+
+drill "smoothing rounds every edge" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    var limit = Math.cos(creaseDeg * Math.PI / 180);\n    var raw", "    var limit = -1;\n    var raw", 1)' \
+  ./internal/httpapi 'TestRendererShadesCurvedPrimitivesSmooth'
+
+drill "the contact shadow is drawn every frame" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    this._shadowDirty = false;\n    if (!r ||", "    if (!r ||", 1)' \
+  ./internal/httpapi 'TestRendererCastsAContactShadowOnlyWhenTheModelChanges'
+
+drill "an exploded view keeps the assembled model's shadow" internal/httpapi/assets/forge3d.js \
+  's = s.replace("this.explode = v; this._shadowDirty = true; this.draw();", "this.explode = v; this.draw();", 1)' \
+  ./internal/httpapi 'TestRendererCastsAContactShadowOnlyWhenTheModelChanges'
+
+drill "the floor carries no shadow" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    this._drawGround(view, proj);\n", "", 1)' \
+  ./internal/httpapi 'TestRendererCastsAContactShadowOnlyWhenTheModelChanges'
+
+drill "occlusion darkens the glass laid over it" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    /* Occlusion darkens what is opaque, before anything see-through is laid over it. */\n    if (occluded) {", "    if (translucent.length) { this._drawTranslucent(translucent, stats); translucent = []; }\n    if (occluded) {", 1)' \
+  ./internal/httpapi 'TestRendererDrawsItsPassesInOrderOnEveryPath'
+
+drill "WebGL1 asks for WebGL2's occlusion targets" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    this.ambientOcclusion = webgl2;", "    this.ambientOcclusion = true;", 1).replace("    if (!this.webgl2 || !this.ambientOcclusion) return null;", "    if (!this.ambientOcclusion) return null;", 1)' \
+  ./internal/httpapi 'TestRendererDrawsItsPassesInOrderOnEveryPath'
+
+drill "the studio backdrop is not drawn" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    this._drawBackdrop(view, proj);\n", "", 1)' \
+  ./internal/httpapi 'TestRendererDrawsItsPassesInOrderOnEveryPath'
+
+drill "the default view is the old high iso view" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    this.camera = { yaw: HERO.yaw, pitch: HERO.pitch,", "    this.camera = { yaw: 0.7, pitch: 0.5,", 1)' \
+  ./internal/httpapi 'TestRendererDrawsItsPassesInOrderOnEveryPath'
+
+drill "feature lines are drawn without being asked for" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    this.featureLines = false;", "    this.featureLines = true;", 1)' \
+  ./internal/httpapi 'TestRendererDrawsItsPassesInOrderOnEveryPath'
+
+drill "a WebGL1 shader uses GLSL ES 3.00" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    \x27  float s = texture2D(uTex, vUV).r * 0.2270270;\x27,", "    \x27  float s = texture(uTex, vUV).r * 0.2270270;\x27,", 1)' \
+  ./internal/httpapi 'TestRendererDrawsItsPassesInOrderOnEveryPath|TestShadersCompileInARealBrowser'
+
+drill "every edge of a sphere is a feature line" internal/httpapi/assets/forge3d.js \
+  's = s.replace("      for (var i = 1; i < ns.length && !sharp; i++) if (dot(ns[0], ns[i]) < limit) sharp = true;", "      sharp = true;", 1)' \
+  ./internal/httpapi 'TestRendererFindsTheFeatureEdgesOfAShape'
+
+drill "the part shader does not compile" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    \x27  float NoV = max(dot(N, V), 1e-4);\x27,", "    \x27  float NoV = max(dot(N, V), 1e-4)\x27,", 1)' \
+  ./internal/httpapi 'TestShadersCompileInARealBrowser'
+
+drill "the occlusion shader does not compile" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    \x27  float occ = 0.0;\x27,", "    \x27  float occ = 0;\x27,", 1)' \
+  ./internal/httpapi 'TestShadersCompileInARealBrowser'
+
+drill "a live turn keeps its primitives when its variant is saved" internal/httpapi/assets/workbench.js \
+  's = s.replace("            refineWithBuiltSolid(ev.variant.version_id, state.prototype);", "            void 0;", 1)' \
+  ./internal/httpapi 'TestWorkbenchRefinesALiveTurnWithTheKernelMesh'
+
+echo
+
+echo "Looks integration, 2026-09-19: mesh-only parts and kernel normals on the stage, bowed car stations, exporter winding"
+# Follow-ups on looks/integration (PRs 154-158 merged). forge3d.js draws a declared
+# mesh-only part translucent in its own tint and material with an in-scene tag, and a
+# ghost box when no kernel answered; it shades a kernel mesh with the kernel's own
+# normals; the workbench says which rounds the kernel built smaller; the car's stations
+# bow each flank as one exact via arc, flaring over the wheels inside the car's width;
+# and the Go exporter's files are wound outward (checked, not changed).
+drill "the exporter keeps a facet wound against its normal" internal/domain/geometry/mesh.go \
+  's = s.replace("return append(out, orient(t))", "return append(out, t)", 1)' \
+  ./internal/domain/geometry 'TestExport_EveryPrimitiveIsWoundOutwardInTheFile'
+
+drill "a car station is straight-sided again" internal/domain/geometry/car.go \
+  's = s.replace("out[i].Via = &Point{X: vx.v, Y: vy.v, XFrom: vx.s, YFrom: vy.s}", "_, _ = vx, vy", 1)' \
+  ./internal/domain/geometry 'TestCar_TheFlanksAreExactArcsThatFlareOverTheWheels'
+
+drill "the fender does not flare over the wheels" internal/domain/geometry/car.go \
+  's = s.replace("flare = math.Max(flare, carFenderFlare*math.Exp(-u*u))", "flare = math.Max(flare, 0*u)", 1)' \
+  ./internal/domain/geometry 'TestCar_TheFlanksAreExactArcsThatFlareOverTheWheels'
+
+drill "a flank bows past the car's width" internal/domain/geometry/car.go \
+  's = s.replace("reach := hw.v * (1 - carFenderFlare + flare)", "reach := hw.v * (1 + flare)", 1)' \
+  ./internal/domain/geometry 'TestCar_TheFlanksAreExactArcsThatFlareOverTheWheels'
+
+drill "the renderer ignores the kernel's normals" internal/httpapi/assets/forge3d.js \
+  's = s.replace("if (given && given.length === positions.length && positions.length > 0) {", "if (false) {", 1)' \
+  ./internal/httpapi 'TestRendererShadesAKernelMeshWithItsOwnNormals'
+
+drill "the renderer trusts normals of the wrong count" internal/httpapi/assets/forge3d.js \
+  's = s.replace("if (given && given.length === positions.length && positions.length > 0) {", "if (given && given.length > 0) {", 1)' \
+  ./internal/httpapi 'TestRendererShadesAKernelMeshWithItsOwnNormals'
+
+drill "the kernel's normals are not renormalised" internal/httpapi/assets/forge3d.js \
+  's = s.replace("own[g] = given[g] / gl0; own[g + 1] = given[g + 1] / gl0; own[g + 2] = given[g + 2] / gl0;", "own[g] = given[g]; own[g + 1] = given[g + 1]; own[g + 2] = given[g + 2];", 1)' \
+  ./internal/httpapi 'TestRendererShadesAKernelMeshWithItsOwnNormals'
+
+drill "a mesh-only part is drawn as a solid" internal/httpapi/assets/forge3d.js \
+  's = s.replace("var meshOnly = isMeshOnly(part, mesh);", "var meshOnly = false;", 1)' \
+  ./internal/httpapi 'TestRendererDrawsMeshOnlyPartsAsMeshOnly'
+
+drill "a mesh-only surface is drawn opaque" internal/httpapi/assets/forge3d.js \
+  's = s.replace("b.opacity[i] = plan.meshOnly ? Math.min(", "b.opacity[i] = false ? Math.min(", 1)' \
+  ./internal/httpapi 'TestRendererDrawsMeshOnlyPartsAsMeshOnly'
+
+drill "a mesh-only part keeps the solid's colour" internal/httpapi/assets/forge3d.js \
+  's = s.replace("(b.meshOnly ? MESH_ONLY_TINT : (b.specs[i].color || g.part))", "(b.specs[i].color || g.part)", 1)' \
+  ./internal/httpapi 'TestRendererDrawsMeshOnlyPartsAsMeshOnly'
+
+drill "a lattice with no kernel is drawn as a solid box" internal/httpapi/assets/forge3d.js \
+  "s = s.replace(\"return MESH_ONLY_SHAPES.indexOf(String((part && part.shape) || '').trim().toLowerCase()) >= 0;\", \"return false;\", 1)" \
+  ./internal/httpapi 'TestRendererDrawsMeshOnlyPartsAsMeshOnly'
+
+drill "the mesh-only tag is switched off with the overlays" internal/httpapi/assets/forge3d.js \
+  's = s.replace("var tags = this.meshOnlyTags();", "var tags = this.showOverlays ? this.meshOnlyTags() : [];", 1)' \
+  ./internal/httpapi 'TestRendererDrawsMeshOnlyPartsAsMeshOnly'
+
+drill "the renderer spells the mesh-only label its own way" internal/httpapi/assets/forge3d.js \
+  "s = s.replace(\"var MESH_ONLY_LABEL = 'mesh-only - not manufacturable';\", \"var MESH_ONLY_LABEL = 'decorative';\", 1)" \
+  ./internal/httpapi 'TestRendererSpellsMeshOnlyAsGeometryDoes'
+
+drill "the banner does not count the rounds built smaller" internal/httpapi/assets/workbench.js \
+  "s = s.replace(\"(reduced.length ? ' <span class=\\\"prov-reduced\\\" data-reduced>'\", \"(false ? ' <span class=\\\"prov-reduced\\\" data-reduced>'\", 1)" \
+  ./internal/httpapi 'TestWorkbenchSaysWhichRoundsTheKernelBuiltSmaller'
+
+drill "the workbench drops the kernel's reductions" internal/httpapi/assets/workbench.js \
+  's = s.replace("          reductions: b.feature_reductions || []\n        };", "          reductions: []\n        };", 1)' \
+  ./internal/httpapi 'TestWorkbenchSaysWhichRoundsTheKernelBuiltSmaller'
+
+drill "the export panel forgets the rounds built smaller" internal/httpapi/assets/workbench.js \
+  's = s.replace("var reductions = exp.feature_reductions || [];", "var reductions = [];", 1)' \
+  ./internal/httpapi 'TestWorkbenchSaysWhichRoundsTheKernelBuiltSmaller'
+
+echo "Manufacturability and sections (issue 6)"
+
+# ‼️ Measured on the solids that SURVIVE the features, like the interference check.
+# Measured on the pre-feature shapes a tube's wall is its outer diameter, because
+# the bore is still a solid cylinder standing inside it.
+drill "the wall is measured before the bore is cut" internal/domain/cad/sidecar.py \
+  's = s.replace("    shapes = dict(zip(ids, built))", "    shapes = dict(zip(ids, built))\n    _pre = (list(built), list(ids))", 1); s = s.replace("manufacturability, mfg_truncated, mfg_stats = _manufacturability(built, ids, kept_placed)", "manufacturability, mfg_truncated, mfg_stats = _manufacturability(_pre[0], _pre[1], None)", 1)' \
+  ./internal/domain/cad 'TestKernel_ATubesWallIsMeasuredAfterTheBoreIsCut'
+
+# The face normal reversed twice: OCCT already reverses it for a REVERSED face, so
+# doing it again points it into the solid and every top face reads as a ceiling.
+drill "a reversed face's normal is turned inward" internal/domain/cad/sidecar.py \
+  's = s.replace("            n.Normalize()\n            out.append((p, n))\n    return out", "            n.Normalize()\n            if face.wrapped.Orientation() == TopAbs_Orientation.TopAbs_REVERSED:\n                n.Reverse()\n            out.append((p, n))\n    return out", 1)' \
+  ./internal/domain/cad 'TestKernel_AnOverhangIsMeasuredFromVerticalAndAFloorIsNotOne'
+
+# The floor read from the bounding box instead of from the samples: OCCT's box
+# round a curved solid sits a hair below it, so a rod's own end face floats above
+# its floor and reports a 90 degree overhang.
+drill "the floor comes from the bounding box" internal/domain/cad/sidecar.py \
+  's = s.replace("            if floor is None or p.Y() < floor:\n                floor = p.Y()", "            floor = float(shape.bounding_box().min.Y)", 1)' \
+  ./internal/domain/cad 'TestKernel_AnOverhangIsMeasuredFromVerticalAndAFloorIsNotOne'
+
+# A sharp inside corner reported as "no corner at all": a milled pocket no tool can
+# cut then reads exactly like a plain box.
+drill "a sharp inside corner is reported as none" internal/domain/cad/sidecar.py \
+  's = s.replace("    internal = 0.0 if sharp else concave_radius", "    internal = concave_radius", 1)' \
+  ./internal/domain/cad 'TestKernel_ASquareInsideCornerIsZeroAndAFilletedOneIsItsRadius'
+
+# The face budget lifted: a model of any size is measured in full and nothing is
+# ever reported as truncated, so a check that could not finish reads as clean.
+drill "the manufacturability budget never binds" internal/domain/cad/sidecar.py \
+  's = s.replace("_MANUFACTURABILITY_BUDGET = 600", "_MANUFACTURABILITY_BUDGET = 10 ** 9", 1)' \
+  ./internal/domain/cad 'TestKernel_TheFaceBudgetStopsTheMeasurementAndSaysSo'
+
+# Every copy measured again: correct, and 4,096 bolts then cost 4,096 measurements.
+drill "a placed copy is measured again" internal/domain/cad/sidecar.py \
+  's = s.replace("                key = (shape_key, _rounded_rotation(_rotation(location.wrapped.Transformation().Value)))", "                key = None", 1)' \
+  ./internal/domain/cad 'TestKernel_AMeasurementIsReusedForEveryCopyOfAShape'
+
+# The cutting face built at the world origin: it misses every part that is not
+# there, and the refusal reads like a plane outside the part.
+drill "a section is cut at the world origin" internal/domain/cad/sidecar.py \
+  's = s.replace("    centre = box.center()\n    origin = [float(centre.X), float(centre.Y), float(centre.Z)]", "    origin = [0.0, 0.0, 0.0]", 1)' \
+  ./internal/domain/cad 'TestKernel_ANamedSectionIsMeasuredAgainstTheRectangleFormula'
+
+# A part that says nothing about how it is made, checked against milling anyway:
+# the same 0.9 mm wall is fine milled and impossible in metal powder.
+drill "a part with no process is given one" internal/domain/geometry/manufacturability.go \
+  's = s.replace("\t\tp, ok := Profiles[process[m.ID]]", "\t\tp, ok := Profiles[ProcessMilling3Axis]", 1)' \
+  ./internal/domain/geometry 'TestManufacturability_APartWithNoProcessIsNamedAsUncheckedAndNeverGuessedAt'
+
+# The UNVALIDATED label dropped: a published rule of thumb then reads like a number
+# FORGE has checked against a part somebody made.
+drill "a rule of thumb stops saying it is unvalidated" internal/domain/geometry/manufacturability.go \
+  's = s.replace("\tnote := \" (UNVALIDATED rule of thumb: \" + f.Source + \")\"", "\tnote := \" (\" + f.Source + \")\"", 1)' \
+  ./internal/domain/geometry 'TestManufacturability_AFindingNamesThePartTheRuleTheValueAndTheLimit'
+
+# A measurement the kernel never took, judged as zero: the worst finding it is
+# possible to have, about a wall nobody looked at.
+drill "an unmeasured value is judged as zero" internal/domain/geometry/manufacturability.go \
+  's = s.replace("\t\tif measured == nil || !limit.applies || *measured >= limit.Value {\n\t\t\treturn\n\t\t}", "\t\tif !limit.applies {\n\t\t\treturn\n\t\t}\n\t\tzero := 0.0\n\t\tif measured == nil {\n\t\t\tmeasured = &zero\n\t\t}\n\t\tif *measured >= limit.Value {\n\t\t\treturn\n\t\t}", 1)' \
+  ./internal/domain/geometry 'TestManufacturability_AnUnmeasuredValueIsNotJudgedAsZero'
+
+# A truncated check calling itself clean: the defect stage V2 closed for the
+# interference check, reopened for this one.
+drill "a truncated check reads as clean" internal/domain/geometry/manufacturability.go \
+  's = s.replace("\treturn len(r.Findings) == 0 && !r.Truncated && len(r.WithoutProcess) == 0 &&", "\treturn len(r.Findings) == 0 && len(r.WithoutProcess) == 0 &&", 1)' \
+  ./internal/domain/geometry 'TestManufacturability_ATruncatedCheckSaysSoAndIsNeverClean'
+
+# The caveat dropped from the section note: a second moment of area beside a part,
+# with nothing saying FORGE ran no analysis.
+drill "a section stops saying it is not a stress" internal/domain/geometry/section.go \
+  's = s.replace("These are GEOMETRY, not a stress: FORGE ran no analysis, applied no load and knows ", "", 1)' \
+  ./internal/domain/geometry 'TestSections_TheNoteAlwaysSaysTheseAreNotAStress'
+
+# A deployment with no kernel told its parts can be made: the silent downgrade the
+# fifth promise refuses.
+drill "a described render reports manufacturability" internal/agent/manufacturability.go \
+  's = s.replace("\tif reply == nil || reply.Prototype == nil || sheet == nil || !sheet.FromKernel {", "\tif reply == nil || reply.Prototype == nil || sheet == nil {", 1)' \
+  ./internal/agent 'TestManufacturability_ADescribedRenderSaysNothingAboutMakingAnything'
+
+# The findings measured and then never said: the exact shape of the gap issue 6
+# describes — a kernel that evaluates and tells nobody.
+drill "the findings never reach the turn" internal/agent/interference.go \
+  's = s.replace("\t\tnoteManufacturability(reply, sheet)", "\t\t_ = sheet", 1)' \
+  ./internal/agent 'TestManufacturability_AFindingReachesTheTurnWithItsNumbersAndChangesNothing'
+
+# A process FORGE does not know, kept: the part is then checked against nothing and
+# counted as checked, which is the one reading that must not happen.
+drill "an unknown process is kept" internal/agent/settledoc.go \
+  's = s.replace("\t\tif p := d.Parts[i].Process; p != \"\" && !geometry.ValidProcess(p) {", "\t\tif p := d.Parts[i].Process; false && p != \"\" {", 1)' \
+  ./internal/agent 'TestManufacturability_AProcessFORGEDoesNotKnowIsDroppedAndSaid'
+
+# The build step's contract losing the process paragraph, exactly as it lost the
+# finish list and the density rule in 2026-09-15.
+drill "a build step is never taught the processes" internal/agent/converse.go \
+  's = s.replace("var buildContract = geometryContract + geometry.FinishGuide() + \".\\n\" + densityContract + processContract", "var buildContract = geometryContract + geometry.FinishGuide() + \".\\n\" + densityContract", 1)' \
+  ./internal/agent 'TestTheContractTeachesProcessAsTheValidatorReadsIt'
+
+# The measurements thrown away at the bridge: the kernel measures, and the turn
+# gets triangles only.
+drill "the bridge drops what the kernel measured" internal/agent/cadbridge/cadbridge.go \
+  's = s.replace("\t\tManufacturability:          built.Manufacturability,", "\t\tManufacturability:          nil,", 1)' \
+  ./internal/agent/cadbridge 'TestKernel_TheTurnsSurfaceCarriesWhatTheKernelMeasured'
+
+echo
+
+echo
+echo "A plan that is a chain because the planner wrote it in order (issue 12)"
+drill "a task that says it needs nothing still depends on what the model wrote" internal/agent/plandeps.go \
+  's = s.replace("if t.Needs == nil {\n\t\t\t// Declared nothing.", "if true {\n\t\t\t// Declared nothing.", 1)' \
+  ./internal/agent 'TestDerive_ATaskThatDeclaresItNeedsNothingLosesTheEdgeTheModelWroteAnyway'
+
+drill "an artifact key produces no edge, so a join never waits" internal/agent/plandeps.go \
+  's = s.replace("producers[a] = append(producers[a], t.Key)", "_ = a", 1)' \
+  ./internal/agent 'TestDerive_ATaskThatNeedsAnothersOutputDependsOnItWhateverTheModelWrote'
+
+drill "a task that never mentioned needs has its edges recomputed anyway" internal/agent/plandeps.go \
+  's = s.replace("derived[i] = t.DependsOn", "derived[i] = nil", 1)' \
+  ./internal/agent 'TestDerive_ATaskThatDeclaredNoNeedsKeepsExactlyWhatTheModelWrote'
+
+drill "a derived cycle is inserted instead of discarded" internal/agent/plandeps.go \
+  's = s.replace("if cycle := findCycle(out); cycle != nil {", "if cycle := findCycle(out); false {", 1)' \
+  ./internal/agent 'TestDerive_ADerivationThatWouldCycleIsDiscardedForWhatTheModelDeclared'
+
+drill "the planner is never told that independent tasks run at the same time" internal/agent/planner.go \
+  's = s.replace("Tasks with no path between them RUN AT THE SAME TIME on a pool of workers, so", "Order the tasks sensibly, so", 1)' \
+  ./internal/agent 'TestThePlannerContractSaysIndependentTasksRunAtTheSameTime'
+
+drill "the planner is never told its needs list decides its edges" internal/agent/planner.go \
+  's = s.replace("has its \"depends_on\" RECOMPUTED as exactly the tasks producing what it needs,", "has its \"depends_on\" left alone,", 1)' \
+  ./internal/agent 'TestThePlannerContractSaysIndependentTasksRunAtTheSameTime'
+
+drill "the derivation is never on the path a plan takes" internal/agent/planner.go \
+  's = s.replace("out.Tasks, derivation = deriveDependencies(out.Tasks)", "derivation = Derivation{}", 1)' \
+  ./internal/agent 'TestThePlannerContractSaysIndependentTasksRunAtTheSameTime'
+
+drill "a plan does not record the edges the derivation dropped" internal/agent/planner.go \
+  's = s.replace("out.Rationale = strings.TrimSpace(out.Rationale + \"\\n\\n\" + derivation.Summary())", "out.Rationale = strings.TrimSpace(out.Rationale)", 1)' \
+  ./internal/agent 'TestThePlannerContractSaysIndependentTasksRunAtTheSameTime'
+
+drill "promotion offers one task at a time" internal/domain/engine/queue.go \
+  "s = s.replace(\"and t.status  = 'pending'\", \"and t.status  = 'pending' and t.id = (select min(x.id) from forge_tasks x where x.goal_id = \$1 and x.status = 'pending')\", 1)" \
+  ./internal/domain/engine 'TestQueue_TwoTasksWithNoPathBetweenThemAreHeldAtOnceAndAChainIsNot'
+
+drill "the queue allows only one task in flight per goal" internal/domain/engine/queue.go \
+  "s = s.replace('and t.lease_owner is null', \"and t.lease_owner is null and not exists (select 1 from forge_tasks c where c.goal_id = t.goal_id and c.status = 'claimed')\", 1)" \
+  ./internal/domain/engine 'TestQueue_TwoTasksWithNoPathBetweenThemAreHeldAtOnceAndAChainIsNot'
+
+drill "a dependency no longer has to have succeeded" internal/domain/engine/queue.go \
+  "s = s.replace(\"dep.status = 'succeeded'\", 'true', 1)" \
+  ./internal/domain/engine 'TestQueue_TwoTasksWithNoPathBetweenThemAreHeldAtOnceAndAChainIsNot'
+
+echo
+echo "One timeout shared with every other call (issue 13)"
+drill "an unset planner timeout is no bound at all" internal/platform/config/config.go \
+  's = s.replace("== \"\" {\n\t\tcfg.LLM.PlannerRequestTimeout = cfg.LLM.RequestTimeout", "== \"\" {\n\t\tcfg.LLM.PlannerRequestTimeout = 0", 1)' \
+  ./internal/platform/config 'TestConfig_AnUnsetPlannerTimeoutIsTheGeneralRequestTimeout'
+
+drill "the planner timeout is always the general one" internal/platform/config/config.go \
+  's = s.replace("if strings.TrimSpace(os.Getenv(\"FORGE_PLANNER_REQUEST_TIMEOUT\")) == \"\" {", "if true {", 1)' \
+  ./internal/platform/config 'TestConfig_APlannerTimeoutSetSmallerThanTheGeneralOneIsStillWhatThePlannerGets'
+
+drill "a planner timeout that is not positive is accepted" internal/platform/config/config.go \
+  's = s.replace("} else if cfg.LLM.PlannerRequestTimeout <= 0 {", "} else if false {", 1)' \
+  ./internal/platform/config 'TestConfig_APlannerTimeoutThatIsNotPositiveIsRefusedByName'
+
+drill "start-up never prints the planner's own timeout" internal/platform/config/config.go \
+  's = s.replace("\"planner_request_timeout\": c.LLM.PlannerRequestTimeout.String(),", "", 1)' \
+  ./internal/platform/config 'TestConfig_APlannerTimeoutSetSmallerThanTheGeneralOneIsStillWhatThePlannerGets'
+
+echo
+echo "Long jobs on the server path (NFR-02, issue 14)"
+drill "held work reports only when it finishes" internal/agent/progress.go \
+  's = s.replace("ticker := time.NewTicker(every)", "ticker := time.NewTicker(time.Hour)", 1)' \
+  ./internal/agent 'TestProgress_AJobHeldLongerThanNFR02sTenSecondsReportsInsideIt'
+
+drill "a plan running past ten seconds reports nothing" internal/httpapi/goals_start.go \
+  's = s.replace("\tstopProgress := h.planProgress(ctx, goal.ID)\n\toutcome, err := plan(ctx, h.deps.Pool, goal)", "\tstopProgress := func() {}\n\toutcome, err := plan(ctx, h.deps.Pool, goal)", 1)' \
+  ./internal/httpapi 'TestCreateGoal_AGoalWaitingOnThePlannerReportsProgressInsideNFR02sTenSeconds'
+
+drill "a progress report invents how far along the plan is" internal/agent/progress.go \
+  's = s.replace("\tSummary string\n}", "\tSummary string\n\tPercentComplete int\n}", 1)' \
+  ./internal/agent 'TestProgress_AProgressReportSaysOnlyHowLongItHasBeenRunning'
+
+drill "elapsed time is read off the wall clock, not the caller's" internal/agent/progress.go \
+  's = s.replace("started := clk.Now()", "started := time.Now()", 1).replace("elapsed := clk.Now().Sub(started)", "elapsed := time.Since(started)", 1)' \
+  ./internal/agent 'TestProgress_AProgressReportSaysOnlyHowLongItHasBeenRunning'
+
+drill "the ticker goes on reporting after the work has finished" internal/agent/progress.go \
+  's = s.replace("\t\t\tcase <-done:\n\t\t\t\treturn\n", "", 1).replace("\t\t<-finished\n", "", 1)' \
+  ./internal/agent 'TestProgress_TheTickerStopsWhenTheWorkDoes'
+
+drill "a cancelled plan goes on reporting progress" internal/agent/progress.go \
+  's = s.replace("\t\t\tcase <-ctx.Done():\n\t\t\t\treturn\n", "", 1)' \
+  ./internal/agent 'TestProgress_TheTickerStopsWhenTheWorkDoes'
+
+drill "a progress report that could not be written is lost silently" internal/agent/progress.go \
+  's = s.replace("if err := p.Emit(ctx, rep); err != nil && p.Log != nil {", "if err := p.Emit(ctx, rep); err != nil && false {", 1)' \
+  ./internal/agent 'TestProgress_AProgressReportThatCannotBeWrittenIsLoggedAndDoesNotStopTheWork'
+
+drill "every short plan writes a progress event too" internal/agent/progress.go \
+  's = s.replace("\tevery := p.Every\n", "\tevery := 10 * time.Millisecond\n\t_ = p.Every\n", 1)' \
+  ./internal/httpapi 'TestCreateGoal_APlanThatAnswersAtOnceDoesNotSpamTheTimelineWithProgress'
+
+echo
+echo "Mute, stop and end under degradation (NFR-01, issue 16)"
+drill "mute is routed through the server" internal/httpapi/assets/voice.js \
+  's = s.replace("this.muted = !this.muted;", "this.muted = !this.muted;\n    global.fetch(\"/v1/mute\", { method: \"POST\" });", 1)' \
+  ./internal/httpapi 'TestNFR01_MuteAndStop'
+
+drill "stopping her voice asks the server to stop" internal/httpapi/assets/voice.js \
+  's = s.replace("if (this.synthAvailable) global.speechSynthesis.cancel();", "global.fetch(\"/v1/speech/stop\", { method: \"POST\" });", 1)' \
+  ./internal/httpapi 'TestNFR01_MuteAndStop'
+
+drill "an interrupted reply is left in flight and still arrives" internal/httpapi/assets/voice.js \
+  's = s.replace("try { this._remoteAbort.abort(); } catch (e) { /* already settled */ }", "/* left in flight */", 1)' \
+  ./internal/httpapi 'TestNFR01_MuteAndStopStillWorkWhileTheEndpointIsSlowErroringOrDisconnecting'
+
+drill "a cancelled hold is uploaded anyway" internal/httpapi/assets/voice.js \
+  's = s.replace("if (this._session) { this._finishRecording(true); return; }", "if (this._session) { this._finishRecording(false); return; }", 1)' \
+  ./internal/httpapi 'TestNFR01_MuteAndStopTakeEffectWithNoNetworkAtAll'
+
+drill "a refused room mute is shown as applied" internal/httpapi/assets/room.js \
+  "s = s.replace(\"self.on('error', { message: 'the server did not accept that change: ' + err.message });\", \"/* swallowed */\", 1)" \
+  ./internal/httpapi 'TestNFR01_ARefusedRoomMuteSaysItIsNotInForceRatherThanShowingItApplied'
+
+drill "end-recording resolves whether or not the server took it" internal/httpapi/assets/room.js \
+  's = s.replace("body: JSON.stringify({ on: !!on })\n    }).then(readOrThrow);", "body: JSON.stringify({ on: !!on })\n    }).then(readOrThrow).catch(function () { return {}; });", 1)' \
+  ./internal/httpapi 'TestNFR01_ARefusedRoomMuteSaysItIsNotInForceRatherThanShowingItApplied'
+
+drill "liveness reads the database too" internal/httpapi/health.go \
+  's = s.replace("func (h *HealthHandlers) Live(w http.ResponseWriter, r *http.Request) {", "func (h *HealthHandlers) Live(w http.ResponseWriter, r *http.Request) {\n\tif _, err := db.HealthCheck(r.Context(), h.d.Pool, 3*time.Second); err != nil {\n\t\tWriteJSON(w, http.StatusServiceUnavailable, map[string]any{\"status\": \"unavailable\"})\n\t\treturn\n\t}", 1)' \
+  ./internal/httpapi 'TestNFR01_LivenessAnswersWithoutTouchingTheDatabase'
+
+drill "readiness answers 200 when the database is gone" internal/httpapi/health.go \
+  's = s.replace("WriteJSON(w, http.StatusServiceUnavailable, body)", "WriteJSON(w, http.StatusOK, body)", 1)' \
+  ./internal/httpapi 'TestNFR01_ReadinessReportsTheDatabaseAndRefusesTrafficWhenItIsUnreachable'
+
+echo
+echo "Nothing acknowledged is lost (NFR-03, issue 17)"
+drill "a checkpoint is acknowledged with state it does not store" internal/domain/engine/repository.go \
+  's = s.replace("cp.ID, taskID, kind, state, now)", "cp.ID, taskID, kind, json.RawMessage(\"{}\"), now)", 1)' \
+  ./internal/domain/engine 'TestNFR03_AnAcknowledgedCheckpointSurvivesThePoolThatWroteIt'
+
+drill "a plan is acknowledged with a rationale it does not store" internal/agent/apply.go \
+  's = s.replace("created.ID, created.GoalID, created.Version, created.Rationale, created.Author, created.CreatedAt", "created.ID, created.GoalID, created.Version, \"\", created.Author, created.CreatedAt", 1)' \
+  ./internal/domain/engine 'TestNFR03_AnApprovedPlanSurvivesThePoolThatWroteIt'
+
+drill "the acknowledged-approval statement the durability fence stands in has moved" internal/httpapi/goals.go \
+  "s = s.replace(\"where id = \$1 and decision = 'pending'\", \"where id = \$1 and decision in ('pending')\", 1)" \
+  ./internal/domain/engine 'TestNFR03_TheSubstitutedWritesAreStillTheStatementsProductionRuns'
+
+drill "a version is acknowledged with a diff it does not store" internal/domain/workspace/repository.go \
+  's = s.replace("v.Inputs, v.Diff, string(v.Verification), v.VerificationNote,", "v.Inputs, \"\", string(v.Verification), v.VerificationNote,", 1)' \
+  ./internal/domain/engine 'TestNFR03_AnArtifactVersionSurvivesThePoolThatWroteIt'
+
+drill "the tool-result ledger statement the durability fence stands in has moved" internal/agent/executor.go \
+  's = s.replace("on conflict (idempotency_key) do nothing", "on conflict do nothing", 1)' \
+  ./internal/domain/engine 'TestNFR03_TheSubstitutedWritesAreStillTheStatementsProductionRuns'
+
+drill "a decision is acknowledged before it is committed" internal/domain/memory/decision.go \
+  's = s.replace("\tif err := tx.Commit(ctx); err != nil {\n\t\treturn nil, errs.Wrap(op, errs.CodeDatabaseUnavail, err)\n\t}\n", "", 1)' \
+  ./internal/domain/engine 'TestNFR03_ADecisionSurvivesThePoolThatWroteIt'
+
+drill "the checkpoint write path no longer says what would break its durability" internal/domain/engine/repository.go \
+  's = s.replace("acknowledging earlier than the row", "acknowledging before the row", 1)' \
+  ./internal/domain/engine 'TestNFR03_EveryWritePathStillSaysWhatItPromises'
+
+echo
+echo "Whose timeout wins (issue 13, the wiring)"
+drill "the general timeout outranks a caller that asked for longer" internal/llm/openai_compatible.go \
+  's = s.replace("client:         &http.Client{},", "client:         &http.Client{Timeout: cfg.RequestTimeout},", 1)' \
+  ./internal/llm 'TestClient_ACallerWithALongerDeadlineOfItsOwnKeepsItRatherThanTheGeneralTimeout'
+
+drill "a call that names no deadline is not bounded at all" internal/llm/openai_compatible.go \
+  's = s.replace("\tif c.requestTimeout <= 0 {\n\t\treturn ctx, func() {}\n\t}", "\tif true {\n\t\treturn ctx, func() {}\n\t}", 1)' \
+  ./internal/llm 'TestClient_ACallerWithNoDeadlineIsStillBoundedByTheGeneralTimeout'
+
+drill "the general bound is stretched over the whole retry loop" internal/llm/openai_compatible.go \
+  's = s.replace("\tfor attempt := 0; attempt <= c.maxRetries; attempt++ {", "\tctx, cancelAll := context.WithTimeout(ctx, c.requestTimeout)\n\tdefer cancelAll()\n\tfor attempt := 0; attempt <= c.maxRetries; attempt++ {", 1)' \
+  ./internal/llm 'TestClient_TheGeneralTimeoutBoundsEachAttemptAndNotTheWholeRetryLoop'
+
+drill "the goal endpoints build a planner without its own timeout" internal/httpapi/goals.go \
+  's = s.replace("\t\t\tWithPlannerRequestTimeout(d.Config.LLM.PlannerRequestTimeout)", "\t\t\tWithLog(d.Log)", 1)' \
+  ./internal/agent 'TestEverySiteThatBuildsAPlannerGivesItThePlannersOwnTimeout'
+
+drill "the forwarder never reaches the planner" internal/agent/intake.go \
+  's = s.replace("\ti.planner = i.planner.WithRequestTimeout(d)\n\treturn i", "\treturn i", 1)' \
+  ./internal/agent 'TestIntake_ThePlannersOwnTimeoutReachesThePlannerItWillUse'
+
+echo
+echo "A turn that failed before replying"
+drill "a turn that fails before replying is recorded nowhere" internal/httpapi/converse.go \
+  's = s.replace("\t\tsaid := h.keepFailed(r, convID, user.ID, req.ProjectID, emitErr, refused, firstTokenMS, start)", "\t\tsaid := &agent.ConversationKept{ID: convID}\n\t\tif refused != nil {\n\t\t\tsaid = h.keepFailed(r, convID, user.ID, req.ProjectID, emitErr, refused, firstTokenMS, start)\n\t\t}", 1)' \
+  ./internal/httpapi 'TestConverse_ATurnThatFailedBeforeAnyReplyArrivedIsStillInTheRecord'
+
+drill "a turn nobody charged is recorded as having cost nothing" internal/httpapi/converse.go \
+  's = s.replace("\tif tokens > 0 {", "\tif tokens >= 0 {", 1)' \
+  ./internal/httpapi 'TestConverse_ATurnThatFailedBeforeAnyReplyArrivedIsStillInTheRecord'
+
+drill "the two failures are reported as one" internal/httpapi/telemetry.go \
+  's = s.replace("ReplyArrived: t.UnusableReply != \"\",", "ReplyArrived: t.Failed(),", 1)' \
+  ./internal/httpapi 'TestTelemetry_AFailureBeforeAnyReplyIsListedAndToldApartFromARefusedReply'
+
+drill "a restored transcript shows a failure as something FORGE said" internal/httpapi/assets/workbench.js \
+  "s = s.replace(\"          markRestoredFailure(addTurn(who, body, t.detail || '', true), t);\", \"          addTurn(who, body, t.detail || '', true);\", 1)" \
+  ./internal/httpapi 'TestTheRestoredTranscriptDrawsAFailedTurnAsAFailure'
+
+drill "the panel calls every failure a refused reply" internal/httpapi/assets/stage.js \
+  "s = s.replace(\"      : 'failed before any reply arrived';\", \"      : 'failed - the reply could not be used';\", 1)" \
+  ./internal/httpapi 'TestTheTelemetryPanelTellsAFailedReplyApartFromNoReplyAtAll'
+
+echo
+
+echo "One export label, both paths, 2026-09-20: what is missing is said the same way"
+# Found by PR 159: exportJobLabel carried the reduced-round clause but not the
+# mesh-only one, so an off-node download did not say that a lattice had been left
+# out of the file while the in-request download did. Both labels now build their
+# clauses in one place (exportLabelClauses), and the job carries the names.
+drill "the job label drops the mesh-only parts" internal/httpapi/geometry_exports.go \
+  's = s.replace("exportLabelClauses(e.MeshOnly,", "exportLabelClauses(nil,", 1)' \
+  ./internal/httpapi 'TestExportLabel_BothDownloadsSayTheSameThingWasLeftOut'
+
+drill "the export label does not name the mesh-only parts" internal/httpapi/geometry.go \
+  's = s.replace("len(meshOnly), namedFew(meshOnly, \", \"), geometry.MeshOnlyLabel)", "len(meshOnly), \"\", geometry.MeshOnlyLabel)", 1)' \
+  ./internal/httpapi 'TestExportLabel_BothDownloadsSayTheSameThingWasLeftOut'
+
+drill "the export status forgets the mesh-only parts" internal/httpapi/geometry_exports.go \
+  's = s.replace("MeshOnly:          orEmptyStrings(e.MeshOnly),", "MeshOnly:          nil,", 1)' \
+  ./internal/httpapi 'TestExportLabel_BothDownloadsSayTheSameThingWasLeftOut'
+
+drill "the export panel forgets the mesh-only parts" internal/httpapi/assets/workbench.js \
+  's = s.replace("var jobMeshOnly = exp.mesh_only || [];", "var jobMeshOnly = [];", 1)' \
+  ./internal/httpapi 'TestExportLabel_BothDownloadsSayTheSameThingWasLeftOut'
+
+echo
+
+echo "Both downloads name the parts FORGE could not build, 2026-09-21"
+# geometry/export.go promises the reader that a part the kernel cannot build is
+# named in the X-Forge-Export-Label header. Both labels gave a count and nothing
+# else, so nobody could tell which part to look for. The clause names them now,
+# capped the way the mesh-only clause is.
+drill "the export label counts the parts it could not build instead of naming them" internal/httpapi/geometry.go \
+  's = s.replace("could not be built and are NOT in this file: %s; \",\n\t\t\tlen(skipped), namedFew(skipped, \"; \")) + clauses", "could not be built and are NOT in this file; \",\n\t\t\tlen(skipped)) + clauses", 1)' \
+  ./internal/httpapi 'TestExportLabel_BothDownloadsNameThePartsTheyCouldNotBuild'
+
+drill "the export label names every part it could not build, with no cap" internal/httpapi/geometry.go \
+  's = s.replace("\tconst most = 3", "\tconst most = 99", 1)' \
+  ./internal/httpapi 'TestExportLabel_BothDownloadsNameThePartsTheyCouldNotBuild'
+
+drill "the job label drops the parts it could not build" internal/httpapi/geometry_exports.go \
+  's = s.replace("exportLabelClauses(e.MeshOnly, e.Skipped,", "exportLabelClauses(e.MeshOnly, nil,", 1)' \
+  ./internal/httpapi 'TestExportLabel_BothDownloadsNameThePartsTheyCouldNotBuild'
+
+echo
+
+echo "The looks judge and the surface-normals view (looks, stage D)"
+drill "the normals view never reaches the shader" internal/httpapi/assets/forge3d.js \
+  "s = s.replace(\"gl.uniform1f(loc.surface, this.surfaceView === 'normals' ? 1 : 0);\", \"gl.uniform1f(loc.surface, 0);\", 1)" \
+  ./internal/httpapi 'TestRendererHasASurfaceNormalsViewAndDoesNotDefaultToIt'
+
+drill "the shader ignores which surface view was asked for" internal/httpapi/assets/forge3d.js \
+  's = s.replace("if (uSurfaceView > 0.5)", "if (uSurfaceView > 2.0)", 1)' \
+  ./internal/httpapi 'TestTheNormalsViewIsADifferentPictureInARealBrowser'
+
+drill "a reader is left looking at the debug picture" internal/httpapi/assets/forge3d.js \
+  "s = s.replace(\"this.surfaceView = name === 'normals' ? 'normals' : 'shaded';\", \"this.surfaceView = 'normals';\", 1)" \
+  ./internal/httpapi 'TestRendererHasASurfaceNormalsViewAndDoesNotDefaultToIt'
+
+drill "the occlusion darkens the normals view" internal/httpapi/assets/forge3d.js \
+  "s = s.replace(\"var occluded = !!post && this.surfaceView !== 'normals';\", \"var occluded = !!post;\", 1)" \
+  ./internal/httpapi 'TestRendererHasASurfaceNormalsViewAndDoesNotDefaultToIt'
+
+drill "the judge asks twice without swapping" internal/looks/judge.go \
+  's = s.replace("[]bool{true, false}", "[]bool{true, true}", 1)' \
+  ./internal/looks 'TestAVerdictCountsOnlyWhenTheSwapAgrees'
+
+drill "the swap is not undone on the second ask" internal/looks/judge.go \
+  's = s.replace("r.Said = betterIf(!newFirst)", "r.Said = betterIf(newFirst)", 1)' \
+  ./internal/looks 'TestAVerdictCountsOnlyWhenTheSwapAgrees'
+
+drill "a judge that flips is counted as agreeing" internal/looks/judge.go \
+  's = s.replace("\tif said[0] != said[1] {", "\tif false {", 1)' \
+  ./internal/looks 'TestAJudgeThatFlipsWhenSwappedIsRefused'
+
+drill "a third image joins the question" internal/looks/judge.go \
+  's = s.replace("Images: []string{first, second}}", "Images: []string{first, second, first}}", 1)' \
+  ./internal/looks 'TestOneLooksQuestionCarriesAtMostTwoImages'
+
+drill "the check cannot refuse what the judge liked" internal/looks/judge.go \
+  's = s.replace("\tcase !d.Guard.OK:", "\tcase false:", 1)' \
+  ./internal/looks 'TestAPrettierPictureCannotPayForAWorseModel'
+
+drill "a newly buried pair does not count" internal/looks/judge.go \
+  's = s.replace("\tif g.BuriedAfter > g.BuriedBefore {", "\tif false {", 1)' \
+  ./internal/looks 'TestAPrettierPictureCannotPayForAWorseModel'
+
+drill "a part the kernel could not build does not count" internal/looks/judge.go \
+  's = s.replace("\tif g.SkippedAfter > g.SkippedBefore {", "\tif false {", 1)' \
+  ./internal/looks 'TestAPrettierPictureCannotPayForAWorseModel'
+
+drill "the surfaces cannot overrule the shading" internal/looks/judge.go \
+  's = s.replace("case nVerdict != Better:", "case nVerdict == Better:", 1)' \
+  ./internal/looks 'TestTheNormalsPairConfirmsAnAcceptanceAndNeverRescuesOne'
+
+drill "a refusal is re-asked in the normals view" internal/looks/judge.go \
+  's = s.replace("if verdict == Better && normalsHelp(c) {", "if normalsHelp(c) {", 1)' \
+  ./internal/looks 'TestTheNormalsPairConfirmsAnAcceptanceAndNeverRescuesOne'
+
+drill "a normals view is compared against a shaded one" internal/looks/judge.go \
+  's = s.replace("c.Before.Normals != \"\" && c.After.Normals", "c.Before.Normals != \"\" || c.After.Normals", 1)' \
+  ./internal/looks 'TestTheNormalsPairConfirmsAnAcceptanceAndNeverRescuesOne'
+
+drill "an unreadable answer is read as a preference" internal/looks/judge.go \
+  's = s.replace("\treturn neitherIsBetter, why", "\treturn firstIsBetter, why", 1)' \
+  ./internal/looks 'TestAnUnreadableAnswerRefuses'
+
+drill "the audit keeps a summary rather than the answer" internal/looks/audit.go \
+  's = s.replace("Raw: r.Raw, Why: r.Why,", "Raw: \"(recorded)\", Why: r.Why,", 1)' \
+  ./internal/looks 'TestEveryVerdictIsKeptWithItsImages'
+
+drill "the audit does not say which picture was image 1" internal/looks/audit.go \
+  's = s.replace("\t\tif r.NewIsFirst {", "\t\tif false {", 1)' \
+  ./internal/looks 'TestEveryVerdictIsKeptWithItsImages'
+
+drill "an audit id can climb out of its directory" internal/looks/audit.go \
+  's = s.replace("safeName(d.Change.ID)", "d.Change.ID", 1)' \
+  ./internal/looks 'TestAnAuditCannotBeWrittenOutsideItsDirectory'
+
+drill "the defect check is opened to styling" internal/agent/look.go \
+  's = s.replace("materials, styling, realism", "materials and realism", 1)' \
+  ./internal/looks 'TestTheRepairLoopCannotSeeAStylingVerdict'
+
+echo
+
+echo "The looks benchmark's token ceilings (looks, stage D2)"
+drill "a prompt's first call is judged against the per-prompt ceiling" internal/agent/looks_benchmark_live_test.go \
+  's = s.replace("overPrompt := here > 0 && here+need > m.perPrompt", "overPrompt := here+need > m.perPrompt", 1)' \
+  ./internal/agent 'TestTheLooksBenchmarksPerPromptCeilingCannotStopEveryPromptAfterTheFirst'
+
+drill "the per-prompt ceiling never bounds a prompt at all" internal/agent/looks_benchmark_live_test.go \
+  's = s.replace("overPrompt := here > 0 && here+need > m.perPrompt", "overPrompt := false", 1)' \
+  ./internal/agent 'TestTheLooksBenchmarksPerPromptCeilingCannotStopEveryPromptAfterTheFirst'
+
+drill "the token ceiling forgets what earlier runs spent" internal/agent/looks_benchmark_live_test.go \
+  's = s.replace("overRun := m.already+m.spent+need > m.total", "overRun := m.spent+need > m.total", 1)' \
+  ./internal/agent 'TestTheLooksBenchmarksTotalCeilingCountsEarlierRuns'
+
+drill "a ledger nobody can read is read as nothing spent" internal/agent/looks_benchmark_live_test.go \
+  's = s.replace("return 0, unreadableLedger(err)", "return 0, nil", 1)' \
+  ./internal/agent 'TestTheLooksBenchmarksLedgerIsNeverReadOptimistically'
+
+drill "the ledger's own total is trusted over its rows" internal/agent/looks_benchmark_live_test.go \
+  's = s.replace("\tif sum != l.Total {", "\tif false {", 1)' \
+  ./internal/agent 'TestTheLooksBenchmarksLedgerIsNeverReadOptimistically'
+
+drill "a model an earlier run paid for is built again" internal/agent/looks_benchmark_live_test.go \
+  's = s.replace("\treturn &doc, true", "\treturn &doc, false", 1)' \
+  ./internal/agent 'TestTheLooksBenchmarksLedgerIsNeverReadOptimistically'
+
+echo
+
+echo "PRD gaps, 2026-09-20: issues 15, 19, 20, 21"
+# Four requirements the PRD names and the code did not hold:
+#   AUD-02 timed latency from Send rather than from the end of the utterance;
+#   AGT-03's "time-bound" clause had no expiry column anywhere, including on the
+#   review authority that RAISES a project's risk ceiling;
+#   AGT-04's "never silently raises its own autonomy" was true by the absence of
+#   a code path, which no test held;
+#   NFR-06 named "desktop" and nothing in the tree referenced it.
+
+# --- AGT-03: access that runs out (issue 20) ---
+drill "an expired grant is still access" internal/domain/access/service.go \
+  's = s.replace("if expires != nil && !expires.After(s.clock.Now()) {", "if false {", 1)' \
+  ./internal/domain/access 'TestAccessExpiry_AnExpiredGrantIsNotAccess'
+
+drill "the project list ignores expiry" internal/domain/access/service.go \
+  's = s.replace("where user_id = $1 and (expires_at is null or expires_at > $2)", "where user_id = $1 and (expires_at is null or $2::timestamptz is not null)", 1)' \
+  ./internal/domain/access 'TestAccessExpiry_AnExpiredGrantIsNotAccess'
+
+drill "the members list hides that a grant lapsed" internal/domain/access/service.go \
+  's = s.replace("m.Expired = !expires.After(now)", "m.Expired = !expires.After(now) && false", 1)' \
+  ./internal/domain/access 'TestAccessExpiry_AnExpiredGrantIsNotAccess'
+
+drill "a grant with no stated expiry never ends" internal/domain/access/service.go \
+  's = s.replace("return g.ExpiresAt(now), nil", "return time.Time{}, nil", 1)' \
+  ./internal/domain/access 'TestAccessExpiry_AGrantWithNoExpiryGetsTheDefault'
+
+drill "an owner grant expires like any other" internal/domain/access/service.go \
+  's = s.replace("if g.Role == RoleOwner && g.Until.IsZero() {", "if false {", 1)' \
+  ./internal/domain/access 'TestAccessExpiry_AnOwnerDoesNotLapseByDefault'
+
+drill "the default grant lifetime drifts from the migration" internal/domain/access/model.go \
+  's = s.replace("const DefaultGrantLifetime = 90 * 24 * time.Hour", "const DefaultGrantLifetime = 30 * 24 * time.Hour", 1)' \
+  ./internal/domain/access 'TestMigrationAndCodeAgreeOnTheDefaultGrantLifetime'
+
+drill "a lapsed review authority still raises the ceiling" internal/domain/workspace/service.go \
+  's = s.replace("return !a.expired &&", "return true &&", 1)' \
+  ./internal/domain/workspace 'TestReviewAuthority_ARecordedAuthorityExpires'
+
+drill "a claim with no stated end gets a different life" internal/domain/workspace/service.go \
+  's = s.replace("until = now.Add(access.DefaultGrantLifetime)", "until = now.Add(10 * access.DefaultGrantLifetime)", 1)' \
+  ./internal/domain/workspace 'TestReviewAuthority_AnUndatedClaimGetsTheDefaultLifetime'
+
+# --- AGT-04: autonomy is write-once (issue 21) ---
+drill "moving off prohibited is not a raise" internal/domain/engine/autonomy_write.go \
+  's = s.replace("if from == AutonomyProhibited {\n\t\treturn true\n\t}", "if from == AutonomyProhibited {\n\t\treturn false\n\t}", 1)' \
+  ./internal/domain/engine 'TestRaisesAutonomy_ProhibitedIsARefusalNotALevel|TestSchemaAndCodeAgreeOnWhatARaiseIs'
+
+drill "an unrecognised autonomy level is the safe side" internal/domain/engine/autonomy_write.go \
+  's = s.replace("if !okF || !okT {", "if false {", 1)' \
+  ./internal/domain/engine 'TestRaisesAutonomy_AnUnknownLevelIsTreatedAsARaise'
+
+drill "a new handler writes autonomy and nothing notices" internal/httpapi/goals_start.go \
+  "s = s.replace('const op = \"httpapi.Replan\"', 'const op = \"httpapi.Replan\"\n\tconst _drill = \"update forge_goals set autonomy = x\"', 1)" \
+  ./internal/domain/engine 'TestAutonomyIsWriteOnceAndEveryWriterIsDeclared'
+
+drill "the trigger and the code disagree about the ladder" internal/platform/db/sql/0028_autonomy_is_write_once.sql \
+  "s = s.replace(\"rank_new := case new.autonomy\n        when 'discuss' then 0 when 'draft' then 1\n        when 'sandbox_execute' then 2 when 'approval_gated' then 3 end;\", \"rank_new := case new.autonomy\n        when 'discuss' then 0 when 'draft' then 1\n        when 'sandbox_execute' then 2 when 'approval_gated' then 0 end;\", 1)" \
+  ./internal/domain/engine 'TestSchemaAndCodeAgreeOnWhatARaiseIs'
+
+drill "the database lets a goal climb the ladder" internal/platform/db/sql/0028_autonomy_is_write_once.sql \
+  's = s.replace("if rank_old is null or rank_new is null or rank_new > rank_old then", "if false then", 1)' \
+  ./internal/httpapi 'TestAutonomyRaiseIsRefusedByTheDatabase'
+
+drill "a replan quietly grants the autonomy it was asked for" internal/httpapi/goals_start.go \
+  's = s.replace("if engine.RaisesAutonomy(goal.Autonomy, want) {", "if false {", 1)' \
+  ./internal/httpapi 'TestReplan_RefusesARaiseOfTheGoalsOwnAutonomy'
+
+drill "a refused raise is refused silently" internal/domain/engine/autonomy_write.go \
+  's = s.replace("logx.EventAutonomyRaiseRefused,\n\t\t\t\"goal_id\"", "logx.EventGoalDrafted,\n\t\t\t\"goal_id\"", 1)' \
+  ./internal/httpapi 'TestReplan_RefusesARaiseOfTheGoalsOwnAutonomy'
+
+# --- AUD-02: the clock starts at the end of the utterance (issue 19) ---
+drill "the server path times from the transcript" internal/httpapi/assets/voice.js \
+  's = s.replace("this.onTranscript(text, endedAt == null ? null : endedAt);", "this.onTranscript(text, nowMS());", 1)' \
+  ./internal/httpapi 'TestVoiceLatency_TheServerPathTimesFromTheHoldNotTheTranscript'
+
+drill "a held recording forgets when the hold ended" internal/httpapi/assets/voice.js \
+  's = s.replace("if (session.endedAt == null) session.endedAt = this._heldUntil != null ? this._heldUntil : nowMS();", "session.endedAt = null;", 1)' \
+  ./internal/httpapi 'TestVoiceLatency_TheServerPathTimesFromTheHoldNotTheTranscript'
+
+drill "the browser path times from the final result" internal/httpapi/assets/voice.js \
+  's = s.replace("if (final.trim()) self.onTranscript(final.trim(), self._utteranceEnd());", "if (final.trim()) self.onTranscript(final.trim(), nowMS());", 1)' \
+  ./internal/httpapi 'TestVoiceLatency_TheBrowserPathEndsTheUtteranceWhenSpeechEnds'
+
+drill "the transcript reaches send without its moment" internal/httpapi/assets/voice.js \
+  's = s.replace("ctx.send(text, ctx.endedAt == null ? null : ctx.endedAt);", "ctx.send(text);", 1)' \
+  ./internal/httpapi 'TestVoiceLatency_ATranscriptKeptInTheBoxCarriesNoMeasurement'
+
+drill "a turn is timed from Send again" internal/httpapi/assets/workbench.js \
+  's = s.replace("if (spokenAt != null) turn.spokenMS = at - spokenAt;", "if (spokenAt != null) turn.spokenMS = at - t0;", 1)' \
+  ./internal/httpapi 'TestWorkbenchTimesATurnFromTheEndOfTheUtterance'
+
+drill "a typed turn is scored against AUD-02 as zero" internal/httpapi/assets/workbench.js \
+  's = s.replace("if (spokenAt != null) turn.spokenMS = at - spokenAt;", "turn.spokenMS = spokenAt == null ? 0 : at - spokenAt;", 1)' \
+  ./internal/httpapi 'TestWorkbenchTimesATurnFromTheEndOfTheUtterance'
+
+drill "the AUD-02 median counts turns that never spoke" internal/httpapi/assets/stage.js \
+  's = s.replace("return t.spokenMS != null && !t.retrieval; })", "return !t.retrieval; })", 1)' \
+  ./internal/httpapi 'TestTelemetryPanelReportsTheEndOfUtteranceMedianAndTheRetrievalCase'
+
+drill "the retrieval case is not reported separately" internal/httpapi/assets/stage.js \
+  "s = s.replace(\"stat('the same, with retrieval', ms(median(spokenRecalled)),\", \"stat('the same, with retrieval', ms(null),\", 1)" \
+  ./internal/httpapi 'TestTelemetryPanelReportsTheEndOfUtteranceMedianAndTheRetrievalCase'
+
+# --- NFR-06: the contract "desktop and web" rests on (issue 15) ---
+drill "a page route changes state" internal/httpapi/router.go \
+  's = s.replace("mux.HandleFunc(\"GET /console\", pages.Console)", "mux.HandleFunc(\"POST /console\", pages.Console)", 1)' \
+  ./internal/httpapi 'TestEveryStateChangeIsOnTheJSONContract'
+
+drill "a new page route is added to nobody's list" internal/httpapi/router.go \
+  's = s.replace("mux.HandleFunc(\"GET /workbench\", pages.Workbench)", "mux.HandleFunc(\"GET /desktop\", pages.Workbench)", 1)' \
+  ./internal/httpapi 'TestEveryPageRouteIsDeclaredAndOnlyRenders'
+
+drill "the workbench shell carries who is looking at it" internal/httpapi/pages.go \
+  's = s.replace("\tp.render(w, r, \"workbench\", pageData{", "\tif u, ok := UserFrom(r.Context()); ok {\n\t\tw.Write([]byte(\"<!-- \" + u.Email + \" -->\"))\n\t}\n\tp.render(w, r, \"workbench\", pageData{", 1)' \
+  ./internal/httpapi 'TestAPageCarriesNoStateOfItsOwn'
+
+echo "Export names, the version stamp, the per-run test schema (2026-09-20)"
+
+drill "a part's name keeps the punctuation it was typed with" internal/domain/geometry/export.go \
+  "s = s.replace('\t\tdefault:\n\t\t\tsep = true\n', '\t\tdefault:\n\t\t\tb.WriteRune(r)\n', 1)" \
+  ./internal/domain/geometry 'TestExport_PartNamesBecomeOneReadableTokenAndStayDistinct'
+
+drill "an accent is dropped instead of folded to its letter" internal/domain/geometry/export.go \
+  "s = s.replace('for _, r := range norm.NFD.String(s) {', 'for _, r := range s {', 1)" \
+  ./internal/domain/geometry 'TestExport_PartNamesBecomeOneReadableTokenAndStayDistinct'
+
+drill "two parts of one name share a group name" internal/domain/geometry/export.go \
+  "s = s.replace('\tfor i := 2; n.used[candidate]; i++ {', '\tfor i := 2; i < 1; i++ {', 1)" \
+  ./internal/domain/geometry 'TestExport_PartNamesBecomeOneReadableTokenAndStayDistinct'
+
+drill "a group is written without the name it was made from" internal/domain/geometry/export.go \
+  "s = s.replace('\t\tc(\"FORGE part id=%s name=%s\", g.PartID, g.Label)\n', '', 1)" \
+  ./internal/domain/geometry 'TestExport_PartNamesBecomeOneReadableTokenAndStayDistinct'
+
+drill "a newline in a name ends the comment it is in" internal/domain/geometry/export.go \
+  "s = s.replace('\t\tfor _, line := range strings.Split(commentSafe(fmt.Sprintf(format, args...)), \"\\\\n\") {\n\t\t\tb.WriteString(\"# \" + line + \"\\\\n\")\n\t\t}\n', '\t\tb.WriteString(\"# \" + fmt.Sprintf(format, args...) + \"\\\\n\")\n', 1)" \
+  ./internal/domain/geometry 'TestExport_PartNamesBecomeOneReadableTokenAndStayDistinct'
+
+drill "the STL solid name keeps its spaces" internal/domain/geometry/export.go \
+  "s = s.replace('objName(v.Name), v.Version, v.Units)', 'v.Name, v.Version, v.Units)', 1)" \
+  ./internal/domain/geometry 'TestExport_TheSTLSolidNameIsOneTokenAndSaysTheNameDidNotTravel'
+
+drill "a goal's first call reserves nothing" internal/domain/engine/budget.go \
+  "s = s.replace('\tif largest <= 0 {\n\t\treturn FirstCallReserve\n\t}', '\tif largest <= 0 {\n\t\treturn 0\n\t}', 1)" \
+  ./internal/domain/engine 'TestCheckCall_AGoalsFirstCallReservesTheDocumentedDefault'
+
+drill "a first call is reported as a call the goal measured" internal/domain/engine/budget.go \
+  "s = s.replace('\tif goal.Spend.LargestCall <= 0 {\n\t\tbasis = fmt.Sprintf(', '\tif false {\n\t\tbasis = fmt.Sprintf(', 1)" \
+  ./internal/domain/engine 'TestCheckCall_AGoalsFirstCallReservesTheDocumentedDefault'
+
+drill "forgectl is built without the version flags" deploy/Dockerfile \
+  "s = s.replace('go build -trimpath -ldflags=\"\$LD\" -o /out/forgectl', 'go build -trimpath -ldflags=\"-s -w\" -o /out/forgectl', 1)" \
+  ./deploy 'TestDockerfile_StampsTheBuildIntoAllThreeBinaries'
+
+drill "the image's commit argument defaults to something else" deploy/Dockerfile \
+  "s = s.replace('ARG FORGE_COMMIT=unknown\\nARG FORGE_BUILD_DATE=unknown\\n\\nWORKDIR', 'ARG FORGE_COMMIT=dev\\nARG FORGE_BUILD_DATE=unknown\\n\\nWORKDIR', 1)" \
+  ./deploy 'TestDockerfile_StampsTheBuildIntoAllThreeBinaries'
+
+drill "make image forgets to pass the commit" Makefile \
+  "s = s.replace('\t  --build-arg FORGE_COMMIT=\$(COMMIT) \\\\\n', '', 1)" \
+  ./deploy 'TestMakeImage_PassesTheVersionArgumentsFromGit'
+
+drill "dev is reported as a version" internal/platform/buildinfo/buildinfo.go \
+  "s = s.replace('case \"\", Unknown, \"dev\", \"devel\", \"(devel)\", \"none\", \"null\":', 'case \"\", Unknown:', 1)" \
+  ./internal/platform/buildinfo 'TestBuildInfo_SaysUnknownRatherThanSomethingThatLooksLikeAVersion'
+
+drill "the loaded configuration does not say which build read it" internal/platform/config/config.go \
+  "s = s.replace('\t\t\"build\":              buildinfo.Get().String(),\n', '', 1)" \
+  ./internal/platform/config 'TestRedacted_PrintsTheBuildAndSaysUnknownWhenTheImageDidNotStampIt'
+
+drill "an unstamped build says it is stamped" internal/httpapi/health.go \
+  "s = s.replace('\t\t\"stamped\": info.Stamped(),', '\t\t\"stamped\": true,', 1)" \
+  ./internal/httpapi 'TestMetaBuild_ReportsTheBuildOrSaysUnknown'
+
+drill "two runs share one test schema" internal/platform/db/testschema.go \
+  "s = s.replace('\tsuffix := \"_\" + run\n', '\tsuffix := \"\"\n', 1)" \
+  ./internal/platform/db 'TestUniqueSchema'
+
+drill "a long schema name is truncated after its run id" internal/platform/db/testschema.go \
+  "s = s.replace('\tif len(head)+len(suffix) > maxSchemaName {\n\t\thead = head[:maxSchemaName-len(suffix)]\n\t}\n\treturn head + suffix\n', '\tout := head + suffix\n\tif len(out) > maxSchemaName {\n\t\tout = out[:maxSchemaName]\n\t}\n\treturn out\n', 1)" \
+  ./internal/platform/db 'TestUniqueSchema'
+
+drill "a test run's schema is left behind" internal/platform/db/testschema.go \
+  "s = s.replace('\t_, _ = pool.Exec(ctx, \"drop schema if exists \"+schema+\" cascade\")', '\t_ = schema', 1)" \
+  ./internal/platform/db 'TestUniqueSchema'
+
+echo
+
+drill "a kernel with no manifold3d is treated as having it" internal/domain/cad/mesh_only_support.go \
+  "s = s.replace('\t\tif strings.Contains(skipped, meshOnlyMissing) {', '\t\tif false && strings.Contains(skipped, meshOnlyMissing) {', 1)" \
+  ./internal/domain/cad 'TestMeshOnlySupport_RecognisesAMissingManifold3dAndNothingElse'
+
+drill "any refusal at all is read as a missing manifold3d" internal/domain/cad/mesh_only_support.go \
+  "s = s.replace('\t\tif strings.Contains(skipped, meshOnlyMissing) {', '\t\tif skipped != \\\"\\\" {', 1)" \
+  ./internal/domain/cad 'TestMeshOnlySupport_RecognisesAMissingManifold3dAndNothingElse'
+
+drill "the probe carries no lattice for the kernel to refuse" internal/domain/cad/mesh_only_support.go \
+  "s = s.replace('\t\t{ID: \\\"probe\\\", Name: \\\"Probe\\\", Shape: \\\"lattice\\\", Lattice: \\\"gyroid\\\",', '\t\t{ID: \\\"probe\\\", Name: \\\"Probe\\\", Shape: \\\"box\\\",', 1)" \
+  ./internal/domain/cad 'TestMeshOnlySupport_RecognisesAMissingManifold3dAndNothingElse'
+
+echo
+
+echo
+echo "Collapsing dimensions and relationship checking (issues 7 to 11, 2026-09-20)"
+
+drill "a collapsed part is still sent to the kernel" internal/domain/geometry/solid.go \
+  's = s.replace("len(degenerate) > 0", "len(degenerate) > 99", 1)' \
+  ./internal/domain/geometry 'TestSolids_AZeroRadiusPartIsRefusedByTheNameOfTheDimension'
+
+drill "faults read the typed radius, not the bound one" internal/domain/geometry/faults.go \
+  's = s.replace("\n\tbound.bind(false)", "", 1)' \
+  ./internal/domain/geometry 'TestSolids_ACollapsedDimensionNamesTheExpressionItResolvedFrom'
+
+drill "a dimension of exactly zero is let through" internal/domain/geometry/degenerate.go \
+  's = s.replace("if !stated || value > 0 {", "if !stated || value >= 0 {", 1)' \
+  ./internal/domain/geometry 'TestFaults_AZeroRadiusPartIsAFault'
+
+drill "a box height is not one of the dimensions checked" internal/domain/geometry/degenerate.go \
+  "s = s.replace('{\"box\", []string{\"width\", \"height\", \"depth\"}},', '{\"box\", []string{\"width\", \"depth\"}},', 1)" \
+  ./internal/domain/geometry 'TestFaults_ANegativeDimensionIsRefusedToo'
+
+drill "a plane is refused for a height it never reads" internal/domain/geometry/degenerate.go \
+  "s = s.replace('{\"plane\", []string{\"width\", \"depth\"}},', '{\"plane\", []string{\"width\", \"depth\", \"height\"}},', 1)" \
+  ./internal/domain/geometry 'TestFaults_ADimensionAShapeDoesNotReadIsNotRefused'
+
+drill "a dimension nobody stated reads as zero" internal/domain/geometry/degenerate.go \
+  's = s.replace("return 0, \"\", false", "return 0, key, true", 1)' \
+  ./internal/domain/geometry 'TestSolids_AMissingDimensionIsStillDefaultedRatherThanRefused'
+
+drill "a span nothing can name is reported as checked" internal/domain/geometry/relationships.go \
+  's = s.replace("Kind: relationshipDistance, Name: name, Named: named, Checked: named,", "Kind: relationshipDistance, Name: name, Named: named, Checked: true,", 1)' \
+  ./internal/domain/geometry 'TestRelationships_ASpanNothingCanNameIsReportedRatherThanDropped'
+
+drill "the shared name of a group of parts is thrown away" internal/domain/geometry/relationships.go \
+  's = s.replace("if len(prefix) < 3 {", "if len(prefix) < 30 {", 1)' \
+  ./internal/domain/geometry 'TestRelationships_ASpanThePartsNameIsChecked'
+
+drill "a value nothing reads goes unreported" internal/domain/geometry/relationships.go \
+  's = s.replace("out := d.unreadValueProblems()", "out := []Problem(nil)", 1)' \
+  ./internal/domain/geometry 'TestRelationships_AValueNothingReadsIsReportedWithItsName'
+
+drill "a design that binds nothing is nagged about every parameter" internal/domain/geometry/relationships.go \
+  's = s.replace("if len(read) == 0 {", "if len(read) == 99 {", 1)' \
+  ./internal/domain/geometry 'TestRelationships_ADocumentThatBindsNothingIsNotToldEveryParameterIsUnread'
+
+drill "a row of parts with no binding is never looked at" internal/domain/geometry/relationships.go \
+  's = s.replace("if len(members) < 3 {", "if len(members) < 30 {", 1)' \
+  ./internal/domain/geometry 'TestRelationships_EvenlySpacedPartsWithNoBindingAreReported'
+
+drill "a bound row is called an unbound pattern" internal/domain/geometry/relationships.go \
+  's = s.replace("bound = true", "bound = false", 1)' \
+  ./internal/domain/geometry 'TestRelationships_AnUnevenPairAndABoundRowAreNotCalledAPattern'
+
+drill "a polar pattern's step angle is the wrong angle" internal/domain/geometry/relationships.go \
+  's = s.replace("sweepAngle(&Repeat{Count: p.Count, Angle: sweep}) * 180 / math.Pi", "sweepAngle(&Repeat{Count: p.Count, Angle: sweep}) * 90 / math.Pi", 1)' \
+  ./internal/domain/geometry 'TestRelationships_APolarPatternsBoundSweepIsCheckedAsAnAngle'
+
+drill "two parts turned apart state no angle" internal/domain/geometry/relationships.go \
+  's = s.replace("if degrees < axisAngleFloor {", "if degrees < 999 {", 1)' \
+  ./internal/domain/geometry 'TestRelationships_TwoRelatedPartsTurnedApartStateAnAngle'
+
+drill "every parallel part is given an angle of zero" internal/domain/geometry/relationships.go \
+  's = s.replace("const axisAngleFloor = 0.5", "const axisAngleFloor = -1.0", 1)' \
+  ./internal/domain/geometry 'TestRelationships_PartsThatAreNotTurnedApartDescribeNoAngle'
+
+drill "a ratio reports something other than the quotient" internal/domain/geometry/relationships.go \
+  's = s.replace("Value: v.Number, Parts: []string{over, under},", "Value: v.Number * 2, Parts: []string{over, under},", 1)' \
+  ./internal/domain/geometry 'TestRelationships_ADerivedQuotientOfTwoMeasurementsIsCheckedAsARatio'
+
+drill "a rate is checked as a ratio" internal/domain/geometry/relationships.go \
+  's = s.replace("if !strings.EqualFold(top.Unit, bottom.Unit) {", "if strings.EqualFold(top.Unit, bottom.Unit) {", 1)' \
+  ./internal/domain/geometry 'TestRelationships_AQuotientOfUnlikeUnitsIsNotCalledARatio'
+
+drill "the wall between an outline and its hole is skipped" internal/domain/geometry/relationships.go \
+  's = s.replace("for j := i + 1; j < len(loops); j++ {", "for j := i + 2; j < len(loops); j++ {", 1)' \
+  ./internal/domain/geometry 'TestRelationships_TheLeastMaterialBetweenAnOutlineAndItsHoleIsMeasured'
+
+drill "the wall is measured against the outline alone" internal/domain/geometry/relationships.go \
+  's = s.replace("least, between := leastMaterial(loops)", "least, between := leastMaterial(loops[:1])", 1)' \
+  ./internal/domain/geometry 'TestRelationships_AThinWallIsMeasuredAndNotJudged'
+
+drill "a rounded wall is given a number anyway" internal/domain/geometry/relationships.go \
+  's = s.replace("if curvedLoops(loops) {", "if false && curvedLoops(loops) {", 1)' \
+  ./internal/domain/geometry 'TestRelationships_AWallWithARoundedCornerIsNotGivenANumber'
+
+drill "the relationship table is not the one the checker reads" internal/domain/geometry/relationships.go \
+  's = s.replace("return append([]RelationshipKind(nil), relationshipKinds...)", "return append([]RelationshipKind(nil), relationshipKinds[:3]...)", 1)' \
+  ./internal/domain/geometry 'TestRelationships_TheTableIsWhatTheCheckerReads'
+
+drill "the contract stops teaching the collapsing dimensions" internal/agent/converse.go \
+  's = s.replace("geometry.CollapsingDimensionGuide(),", "\"\",", 1)' \
+  ./internal/agent 'TestContract_TeachesTheCollapsingDimensionsFromTheValidatorsTable'
+
+drill "the contract stops teaching what relationship checking covers" internal/agent/converse.go \
+  's = s.replace("geometry.RelationshipGuide())", "\"\")", 1)' \
+  ./internal/agent 'TestContract_TeachesRelationshipCheckingFromTheCheckersTable'
+
+drill "the banner drops the figures with no source" internal/agent/standards_typed.go \
+  's = s.replace("for _, v := range doc.ConstantDerived() {", "for _, v := range doc.ConstantDerived()[:0] {", 1)' \
+  ./internal/agent 'TestStandardsClaims_ABareConstantInDerivedIsReportedAsHavingNoSource'
+
+drill "a derived zero is called a recalled figure" internal/domain/geometry/parameters.go \
+  's = s.replace("if !ok || v.Number == 0 {", "if !ok {", 1)' \
+  ./internal/agent 'TestStandardsClaims_AConstantZeroInDerivedIsNotCalledARecalledFigure'
+
+drill "the turn is not told what could not be checked" internal/agent/settledoc.go \
+  's = s.replace("for _, problem := range d.RelationshipProblems() {", "for _, problem := range d.RelationshipProblems()[:0] {", 1)' \
+  ./internal/agent 'TestSettle_TheTurnIsToldWhatRelationshipCheckingCouldNotCheck'
+
+drill "a relationship that checked out is reported anyway" internal/domain/geometry/relationships.go \
+  's = s.replace("if r.Checked || r.Why == \"\" {", "if false {", 1)' \
+  ./internal/agent 'TestSettle_ADesignWhoseRelationshipsCheckOutIsToldNothing'
+
+drill "no shape has any collapsing dimension" internal/domain/geometry/degenerate.go \
+  's = s.replace("for _, key := range collapsingKeys(shape) {", "for _, key := range collapsingKeys(shape)[:0] {", 1)' \
+  ./internal/domain/cad 'TestKernel_ACollapsedDimensionIsRefusedBeforeTheKernelIsAsked'
+
+drill "the kernel is sent a cylinder of no radius" internal/domain/geometry/degenerate.go \
+  "s = s.replace('{\"cylinder\", []string{\"radius\", \"height\"}},', '{\"cylinder\", []string{\"height\"}},', 1)" \
+  ./internal/domain/cad 'TestKernel_AZeroRadiusPartNeverReachesOCCT'
+
+drill "no pair of parts is ever seen as turned apart" internal/domain/geometry/relationships.go \
+  's = s.replace("if pa.RotationRadians() != pb.RotationRadians() {", "if pa.RotationRadians() == pb.RotationRadians() {", 1)' \
+  ./internal/domain/geometry 'TestRelationships_TwoRelatedPartsTurnedApartStateAnAngle'
+
+drill "a definition's wall is never measured" internal/domain/geometry/relationships.go \
+  's = s.replace("if !anyHoles(d.Definitions) {", "if true {", 1)' \
+  ./internal/domain/geometry 'TestRelationships_ADefinitionsWallIsMeasuredOnItsOwnDrawing'
+
+drill "one span is read in two frames at once" internal/domain/geometry/relationships.go \
+  's = s.replace("\t\tif found != nil {\n\t\t\treturn nil, false\n\t\t}\n", "", 1)' \
+  ./internal/domain/geometry 'TestRelationships_AnAngleIsNotMeasuredAcrossTwoFrames'
+
+drill "a drawing past the wall ceiling is measured anyway" internal/domain/geometry/relationships.go \
+  's = s.replace("if n := loopPoints(loops); n > maxWallLoopPoints {", "if n := loopPoints(loops); n > 999999 {", 1)' \
+  ./internal/domain/geometry 'TestRelationships_AWallDrawnWithTooManyPointsIsNotMeasured'
+
+drill "the wall measurement forgets the hole" internal/domain/geometry/relationships.go \
+  's = s.replace("loops := append([]polyline{section.Outer}, section.Holes...)", "loops := append([]polyline{section.Outer}, section.Holes[:0]...)", 1)' \
+  ./internal/domain/cad 'TestKernel_TheWallFORGEMeasuresIsTheWallOCCTBuilds'
 
 echo
 

@@ -42,6 +42,16 @@ func settleDocument(d *Prototype) *Prototype {
 		// failure. Dropping it is more honest than showing nothing.
 		return nil
 	}
+	/* A "car" part is written out here as the tree it is (geometry/car.go, stage C1
+	 * of the looks-designed work, 2026-09-18): FIRST, because everything below —
+	 * the defaults, the binding, the notes about outlines and features — reads the
+	 * tree it becomes, and here because this is the door every producer of a
+	 * document goes through. A car it could not build stays a "car" part, which
+	 * Faults reports, and its reasons are told like every other note; so is every
+	 * proportion outside the car's class, which never stops it being built. */
+	for _, problem := range geometry.ExpandTemplates(d) {
+		d.NotVerified = append(d.NotVerified, templateNote(problem))
+	}
 	/* PRD WRK-05: a dimension without its unit will eventually be read in
 	 * the wrong one.
 	 *
@@ -96,6 +106,25 @@ func settleDocument(d *Prototype) *Prototype {
 					"A material FORGE named could not be read and was dropped: "+err.Error())
 			}
 		}
+		// A process is what turns the manufacturability check on for a part, and it
+		// is checked against the same table the contract is written from and the
+		// findings are judged by (geometry.Profiles; addresses issue 6). A name that
+		// is not in it is DROPPED and said, never guessed at: a part checked against
+		// the wrong process gets numbers that look exactly like the right ones.
+		if p := d.Parts[i].Process; p != "" && !geometry.ValidProcess(p) {
+			d.Parts[i].Process = ""
+			d.NotVerified = append(d.NotVerified, fmt.Sprintf(
+				"%s says it is made by %q, which FORGE does not know, so it was not checked for "+
+					"manufacturability. The processes FORGE checks are: %s.",
+				d.Parts[i].Label(), p, geometry.ProcessGuide()))
+		}
+	}
+	// A section that cannot be cut is dropped here, in the document's own words,
+	// rather than coming back from the kernel as a refusal per section.
+	if len(d.Sections) > 0 {
+		kept, dropped := geometry.ValidateSections(d.Sections, d.Parts)
+		d.Sections = kept
+		d.NotVerified = append(d.NotVerified, dropped...)
 	}
 	if err := geometry.ValidateStates(d.States, d.Parts); err != nil {
 		d.States = nil
@@ -149,6 +178,20 @@ func settleDocument(d *Prototype) *Prototype {
 	 * is the one place the reader is already looking. */
 	for _, problem := range d.Bind() {
 		d.NotVerified = append(d.NotVerified, parameterNote(problem))
+	}
+	/* And what relationship checking could NOT check, and why (issues 9, 10
+	 * and 11; geometry/relationships.go).
+	 *
+	 * Wave 13 checked a distance between two bound positions and said nothing
+	 * about anything else, so a document whose only "relationships" were a
+	 * parameter nothing reads and four holes at typed coordinates came back
+	 * indistinguishable from one that had been checked. Silence there is not
+	 * neutral: it is read as a clean result.
+	 *
+	 * Here for the same reason Bind's problems are here — none of it changes a
+	 * pixel, and this is the one place the reader is already looking. */
+	for _, problem := range d.RelationshipProblems() {
+		d.NotVerified = append(d.NotVerified, relationshipNote(problem))
 	}
 	/* Features, and the one place the picture and the file disagree.
 	 *

@@ -380,9 +380,22 @@ func init() {
 // Grants and revocations are logged because they change who can do what, and
 // "when did they get access" is the first question after anything goes wrong.
 const (
-	EventAccessGranted   Event = "forge.access.granted"
-	EventAccessRevoked   Event = "forge.access.revoked"
-	EventAccessRefused   Event = "forge.access.refused"
+	EventAccessGranted Event = "forge.access.granted"
+	EventAccessRevoked Event = "forge.access.revoked"
+	EventAccessRefused Event = "forge.access.refused"
+	// A grant ran out (PRD AGT-03, "time-bound"). Distinct from revoked because
+	// nobody did it: an expiry is the one way access ends with no actor, and a
+	// reader who finds only "refused" afterwards has no way to tell a lapse from
+	// somebody being thrown out. Said at the moment the refusal happens rather
+	// than on a sweep, so the record exists even in a deployment where no job
+	// ever runs.
+	EventAccessExpired Event = "forge.access.expired"
+	// The qualified-review authority a raised risk ceiling rests on ran out
+	// (PRD AGT-03, AGT-07). Its own event, not EventAccessExpired: what lapsed
+	// is not a person's access but a project's CEILING, and work that was
+	// permitted an hour ago now is not.
+	EventReviewAuthorityExpired Event = "forge.review_authority.expired"
+
 	EventMFAEnrolled     Event = "forge.mfa.enrolled"
 	EventMFAActivated    Event = "forge.mfa.activated"
 	EventMFAChallenged   Event = "forge.mfa.challenged"
@@ -490,11 +503,22 @@ const (
 	// said loudly because from the outside it looks identical to a workbench
 	// where "model this requirement" simply does nothing.
 	EventWorkspaceUnreadable Event = "forge.workspace.unreadable"
+
+	// Something asked for a goal's autonomy to be raised, and was refused
+	// (PRD AGT-04). Autonomy is fixed when a goal is created; nothing in this
+	// build raises it afterwards, and this is what records that somebody tried.
+	//
+	// The requirement's word is "never SILENTLY raises its own autonomy level".
+	// A refusal that left no trace would satisfy the letter and miss the point:
+	// the question the event answers is "has anything ever asked", and before it
+	// there was no way to find out.
+	EventAutonomyRaiseRefused Event = "forge.goal.autonomy_raise_refused"
 )
 
 func init() {
 	allEvents = append(allEvents,
-		EventAccessGranted, EventAccessRevoked, EventAccessRefused,
+		EventAccessGranted, EventAccessRevoked, EventAccessRefused, EventAccessExpired,
+		EventReviewAuthorityExpired,
 		EventMFAEnrolled, EventMFAActivated, EventMFAChallenged,
 		EventMFAAccepted, EventMFARejected, EventMFARecoveryUsed,
 		EventDeviceTrusted, EventDeviceRevoked,
@@ -509,7 +533,7 @@ func init() {
 		EventTTSSpoke, EventTTSInterrupted, EventTTSFailed, EventTTSEmpty,
 		EventCharacterFallback, EventToolExceededTier, EventPlanHazardsLoaded,
 		EventChoiceUnreadable, EventWorkspaceUnreadable,
-		EventAssumptionUnfiled,
+		EventAssumptionUnfiled, EventAutonomyRaiseRefused,
 	)
 }
 

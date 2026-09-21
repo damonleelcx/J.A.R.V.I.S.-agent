@@ -103,10 +103,7 @@ func newBuildHarness(t *testing.T) *buildHarness {
 		t.Skip("FORGE_TEST_DATABASE_URL is unset")
 	}
 	ctx := context.Background()
-	schema := "forge_build_" + strings.ToLower(strings.NewReplacer("/", "_", "-", "_").Replace(t.Name()))
-	if len(schema) > 60 {
-		schema = schema[:60]
-	}
+	schema := db.UniqueSchema("forge_build_", t.Name())
 	dbc := func(u string) config.DBConfig {
 		return config.DBConfig{URL: u, MaxConns: 10, MinConns: 1,
 			MaxConnLifetime: time.Hour, MaxConnIdleTime: time.Minute, ConnectTimeout: 10 * time.Second}
@@ -444,13 +441,15 @@ func TestBuildGoal_AStepKeptBeforeItsWorkerStoppedIsNotBuiltAgain(t *testing.T) 
 // Past its ceiling, a build stops between steps, keeps what it built, and ends failed.
 func TestBuildGoal_ABudgetRefusalStopsTheGoalCleanly(t *testing.T) {
 	h := newBuildHarness(t)
-	// 250, not 150, since calls reserve before they are placed (2026-09-17): after the
-	// plan's 100, step 1's call may cost 125 and fits; after step 1, step 2's does not.
-	ceiling := int64(250)
+	// 30,000, since calls reserve before they are placed (2026-09-17): the plan reserves
+	// the documented default of 12,000 and fits; after its 12,000, step 1's call may cost
+	// 15,000 and fits; after step 1, step 2's does not. In thousands because the plan
+	// reserves rather than being free (2026-09-20) — see engine.FirstCallReserve.
+	ceiling := int64(30_000)
 	goal := h.goal(t, &ceiling)
-	stub := &goalStub{tokens: 100, replies: []string{threeSteps,
+	stub := &goalStub{tokens: 12_000, replies: []string{threeSteps,
 		wholeDoc("chassis", "Chassis"), addPart("wheels", "Wheels"), addPart("body", "Body")}}
-	h.plan(t, goal, stub) // 100 tokens: under the ceiling, so step 1 runs
+	h.plan(t, goal, stub) // 12,000 tokens: under the ceiling, so step 1 runs
 
 	if status := h.settle(t, h.worker(t, stub), goal.ID); status != string(engine.GoalFailed) {
 		t.Fatalf("a build past its budget ended %s", status)
@@ -483,7 +482,9 @@ func TestBuildGoal_ABudgetRefusalStopsTheGoalCleanly(t *testing.T) {
 // Inside a step, a call past the ceiling is refused, and the step fails for it.
 func TestBuildGoal_AStepStopsAskingOnceTheBudgetIsSpent(t *testing.T) {
 	h := newBuildHarness(t)
-	ceiling := int64(100)
+	// 12,000 — exactly engine.FirstCallReserve, so the step's own call is placed and
+	// its repair, which would reserve 15,000 on top, is not.
+	ceiling := int64(12_000)
 	goal := h.goal(t, &ceiling)
 	// Written directly rather than planned, so the ceiling is untouched when the
 	// step starts.
@@ -495,7 +496,7 @@ func TestBuildGoal_AStepStopsAskingOnceTheBudgetIsSpent(t *testing.T) {
 	broken := `{"speech":"x","prototype":{"name":"m","units":"mm","parts":[
 	  {"id":"chassis","name":"Chassis","shape":"sweep","profile":[{"x":0,"y":0},{"x":10,"y":0}],
 	   "path":[{"x":0,"y":0,"z":0},{"x":0,"y":0,"z":100}]}]}}`
-	stub := &goalStub{tokens: 100, replies: []string{broken, broken, broken}}
+	stub := &goalStub{tokens: 12_000, replies: []string{broken, broken, broken}}
 	first := h.tasks(t, goal.ID)[0]
 	in, _ := buildStepOf(first)
 

@@ -61,6 +61,29 @@ exactly like a raised ceiling and changes nothing.
 mechanism that raises a ceiling and cannot lower it is one nobody should switch
 on.
 
+**4. A claim runs out.** Every authority carries
+`review_authority_expires_at`, and past it the pack's ordinary ceiling is in
+force again (`0027_access_expiry.sql`, PRD AGT-03). There is no way to record a
+permanent one.
+
+This is the rule the first three do not cover. They make a raised ceiling
+*attributable* — a holder always has an author — and attribution is not
+currency: the engineer who accepted responsibility for r2 work can leave the
+company, and a record nobody has revisited goes on raising the ceiling on the
+strength of a statement its author is no longer in a position to make.
+
+Expiry is decided **on every read**, in `ReviewAuthorityFor`, against the
+service's clock — not by a sweep job. A background task that cleared lapsed
+claims would be a ceiling that stays raised in every deployment where the task
+is not running, which is every deployment during an incident. The row itself is
+left alone: what was claimed, by whom, and until when is exactly the record
+somebody needs afterwards.
+
+A lapsed claim is **reported, not hidden**. `forgectl` prints who it was and
+when it ran out; the HTTP response carries `expired_authority` beside the
+ordinary ceiling. A ceiling that fell back with nothing on screen explaining why
+is the same silence this feature exists to end, one step removed.
+
 ## How it composes with the goal's own tier
 
 The grant takes the **lower** of the goal's tier and the domain's ceiling, and
@@ -76,6 +99,8 @@ the domain's ceiling is `CeilingWith(authorityRecorded)`. So:
 ```bash
 forgectl project review-authority --project prj_... \
   --holder "R. Okonkwo" --note "CEng MICE 481920" --as usr_...
+forgectl project review-authority --project prj_... \
+  --holder "R. Okonkwo" --as usr_... --until 2026-12-31T00:00:00Z
 forgectl project review-authority --project prj_...            # read
 forgectl project review-authority --project prj_... --clear    # back down
 ```
@@ -84,9 +109,14 @@ Over HTTP, where the people accountable for the work actually are:
 
 ```
 GET    /v1/projects/{id}/review-authority     any project member
-PUT    /v1/projects/{id}/review-authority     owner only   {"holder": "...", "note": "..."}
+PUT    /v1/projects/{id}/review-authority     owner only   {"holder": "...", "note": "...", "until": "..."}
 DELETE /v1/projects/{id}/review-authority     owner only
 ```
+
+**`until` is optional and "forever" is not an option.** Omitted, the claim lasts
+`access.DefaultGrantLifetime` — ninety days — from the moment it is recorded.
+Recording it again is how a ceiling stays raised, and having to do that is the
+point: it is the only moment anybody is asked whether the claim is still true.
 
 **Owner-only for the writes** (`access.PermProjectManage`). A maintainer decides
 individual approvals; recording an authority changes the ceiling for every piece

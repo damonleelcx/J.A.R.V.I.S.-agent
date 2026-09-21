@@ -121,6 +121,18 @@
    * and fails when Go disagrees with it. Keep the shape literal and greppable. */
   var TESSELLATION = { radial: 40, sphereRadial: 32 };
 
+  /* How many times finer than TESSELLATION a curve is drawn right now (A5, 2026-09-18).
+   *
+   * 1 everywhere except inside geometryAtDetail, which draws a curved primitive that
+   * covers a lot of the screen with 2, 4 or 8 times the segments (see "Curves as fine
+   * as the screen needs"). The counts above stay what the exporter uses: the level at
+   * DETAIL 1 is the surface the file carries, and a finer level only lies closer to the
+   * true curve than the file does — the export's stated chord deviation is still an
+   * upper bound on what is on screen. flattenDrawing's arithmetic, which Go's parity
+   * fences compare, is only ever read at 1. */
+  var DETAIL = 1;
+  function radialSegments() { return TESSELLATION.radial * DETAIL; }
+
   function boxGeometry(w, h, d) {
     var x = w/2, y = h/2, z = d/2;
     var p = [], n = [], i = [];
@@ -161,7 +173,7 @@
     }
     for (var s2 = 0; s2 < segments; s2++) {
       var a = s2*2, b = a+1, c = a+2, d = a+3;
-      idx.push(a, b, d, a, d, c);
+      idx.push(a, d, b, a, c, d);
     }
     // Caps.
     [[half, radiusTop, [0,1,0], false], [-half, radius, [0,-1,0], true]].forEach(function (cap) {
@@ -174,8 +186,8 @@
         n.push(nrm[0], nrm[1], nrm[2]);
       }
       for (var s4 = 0; s4 < segments; s4++) {
-        if (flip) idx.push(centre, centre+s4+2, centre+s4+1);
-        else idx.push(centre, centre+s4+1, centre+s4+2);
+        if (flip) idx.push(centre, centre+s4+1, centre+s4+2);
+        else idx.push(centre, centre+s4+2, centre+s4+1);
       }
     });
     return { positions: p, normals: n, indices: idx };
@@ -199,18 +211,30 @@
     for (var y2 = 0; y2 < rings; y2++) {
       for (var x2 = 0; x2 < segments; x2++) {
         var a = y2*(segments+1) + x2, b = a + segments + 1;
-        idx.push(a, b, a+1, b, b+1, a+1);
+        idx.push(a, a+1, b, b, a+1, b+1);
       }
     }
     return { positions: p, normals: n, indices: idx };
   }
 
+  /* A plane is ONE-SIDED and FACES UP: normals +Y, and wound to agree with them.
+   * The convention and the reasons for it are in internal/domain/geometry/mesh.go,
+   * func plane — this is a copy of it and nothing more.
+   *
+   * ‼️ The winding is not decoration here. This pass runs with gl.enable(CULL_FACE)
+   * and gl.frontFace(gl.CCW), so a plane wound the other way is CULLED when it is
+   * looked at from above — which is the view a ground or datum plane exists for.
+   * It used to be: the indices ran 0,1,2 / 0,2,3 over these corners, whose cross
+   * product is -Y, while every normal said +Y. Nothing lit it wrongly, because
+   * nothing drew it at all. (Unlike the Go exporter, there is no orient() here to
+   * quietly repair a winding that disagrees with its normal.)
+   * docs/bugfix/2026-09-21-a-plane-faced-down-and-was-culled-from-above.md */
   function planeGeometry(w, d) {
     var x = w/2, z = d/2;
     return {
       positions: [-x,0,-z, x,0,-z, x,0,z, -x,0,z],
       normals: [0,1,0, 0,1,0, 0,1,0, 0,1,0],
-      indices: [0,1,2, 0,2,3]
+      indices: [0,2,1, 0,3,2]
     };
   }
 
@@ -959,7 +983,7 @@
     function bow(i2) {
       var a2 = arcs[i2];
       if (!a2) return;
-      var steps2 = Math.max(1, Math.ceil(TESSELLATION.radial * a2.angle / (2 * Math.PI)));
+      var steps2 = Math.max(1, Math.ceil(radialSegments() * a2.angle / (2 * Math.PI)));
       var spoke2 = sub(a2.from, a2.centre);
       for (var k3 = 0; k3 <= steps2; k3++) {
         var t2 = a2.angle * k3 / steps2, c2 = Math.cos(t2), s2 = Math.sin(t2);
@@ -979,7 +1003,7 @@
         if (i === 0) seam = out.length;
         continue;
       }
-      var steps = Math.max(1, Math.ceil(TESSELLATION.radial * c.angle / (2 * Math.PI)));
+      var steps = Math.max(1, Math.ceil(radialSegments() * c.angle / (2 * Math.PI)));
       var spoke = sub(c.from, c.centre);
       for (var k = 0; k <= steps; k++) {
         var t = c.angle * k / steps;
@@ -1157,7 +1181,7 @@
      * hole, wound the other way, turns into a surface facing into the void. */
     var loops = sectionLoops2D(raw, bores);
     var aboutX = String(axis || '').toLowerCase() === 'x';
-    var seg = TESSELLATION.radial;
+    var seg = radialSegments();
 
     function at(pts, i, t) {
       if (aboutX) {
@@ -1429,6 +1453,24 @@
      * is the factor between them (drawBatches), and 1 or absent for a design in mm. */
     if (scale && scale !== 1) positions = Array.prototype.map.call(positions, function (v) { return v * scale; });
     var indices = mesh.triangles || [];
+    /* The kernel's own normals when the reply carries them (looks designed, A5; PR 158):
+     * one per vertex, from OCCT's surface evaluation, so a curved face is smooth and a
+     * hard edge stays split (every face has vertices of its own). A definition's are in
+     * its own frame like its vertices; the part shader turns them per copy by the
+     * cofactor of the copy's matrix — its rotation, since the kernel's matrices carry
+     * no scale — and renormalises. They are rounded to 4 decimals on the wire, so they
+     * are renormalised here too. A reply without them, or with the wrong count, is
+     * shaded from its triangles as before. Fence: TestRendererShadesAKernelMeshWithItsOwnNormals. */
+    var given = mesh.normals;
+    if (given && given.length === positions.length && positions.length > 0) {
+      var own = new Array(given.length);
+      for (var g = 0; g < given.length; g += 3) {
+        var gl0 = Math.sqrt(given[g] * given[g] + given[g + 1] * given[g + 1] + given[g + 2] * given[g + 2]);
+        if (gl0 > 0) { own[g] = given[g] / gl0; own[g + 1] = given[g + 1] / gl0; own[g + 2] = given[g + 2] / gl0; }
+        else { own[g] = 0; own[g + 1] = 1; own[g + 2] = 0; }
+      }
+      return { geo: { positions: positions, normals: own, indices: indices }, fromKernel: true, kernelNormals: true };
+    }
     var normals = new Array(positions.length);
     for (var n = 0; n < normals.length; n++) normals[n] = 0;
 
@@ -2205,6 +2247,56 @@
    * load and addSubtree read it.
    * docs/bugfix/2026-09-15-mesh-replies-were-drawn-in-millimetres-on-a-stage-in-the-documents-units.md
    * Fence: TestMeshSubtree_ADesignInInchesOrMetresIsDrawnWhereItsPrimitivesAre. */
+
+  /* ---- Mesh-only parts (looks designed, stage E1 follow-up, 2026-09-19) ---------
+   *
+   * damon's decision of 2026-09-18: a part DECLARED mesh-only (today only a "lattice")
+   * may break "every part is an exact solid", and is labelled mesh-only, left out of
+   * STEP and flagged not manufacturable — PRD VIS-06: a render must never imply
+   * manufacturability. The provenance banner already says so outside the fold; the
+   * stage says it too, on the part:
+   *   - a kernel surface marked mesh_only (GET /v1/geometry/{id}/mesh, PR 156) is drawn
+   *     translucent, in MESH_ONLY_TINT, with its own flat material — never a solid
+   *     part's colour, finish or opacity;
+   *   - with no kernel surface (a deployment without one, or before it answers) the
+   *     part's box is drawn as a GHOST, never a solid box: the old fallback drew an
+   *     unknown shape as a solid bounding box, which is the one picture VIS-06 forbids;
+   *   - every such part carries a screen-space tag reading the reply's mesh_only_label,
+   *     anchored at its centre and always on top (Studio.meshOnlyTags, _placeLabels).
+   * MESH_ONLY_SHAPES and MESH_ONLY_LABEL are spelled as geometry spells them
+   * (latticeShape, MeshOnlyLabel); TestRendererSpellsMeshOnlyAsGeometryDoes holds that.
+   * Fence: TestRendererDrawsMeshOnlyPartsAsMeshOnly. */
+  var MESH_ONLY_SHAPES = ['lattice'];
+  var MESH_ONLY_LABEL = 'mesh-only - not manufacturable';
+  var MESH_ONLY_TINT = '#39c6c0';
+  var MESH_ONLY_SHADING = [0, 0.8, 0];
+  var MESH_ONLY_ALPHA = 0.6;
+  var MESH_ONLY_GHOST_ALPHA = 0.16;
+
+  function isMeshOnly(part, mesh) {
+    if (mesh && mesh.mesh_only) return true;
+    return MESH_ONLY_SHAPES.indexOf(String((part && part.shape) || '').trim().toLowerCase()) >= 0;
+  }
+
+  /* The batch a mesh-only part is drawn in: its kernel surface (one batch per part, the
+   * vertices already where it is) or its ghost box (one batch per size). */
+  function meshOnlyBatch(part, mesh, fromMM, byKey, batches) {
+    var s = part.size || {};
+    var key = mesh ? 'mesh-only:' + part.id
+      : 'mesh-only-ghost:' + [num(s.width, 1), num(s.height, 1), num(s.depth, 1)].join('x');
+    var b = byKey[key];
+    if (b) return b;
+    var geo = mesh ? kernelGeometry(mesh, fromMM)
+      : { geo: boxGeometry(num(s.width, 1), num(s.height, 1), num(s.depth, 1)) };
+    b = byKey[key] = {
+      key: key, fromKernel: !!mesh, definition: -1, shading: MESH_ONLY_SHADING.slice(),
+      geo: geo.geo, approximated: '', bounds: geometryBounds(geo.geo.positions), instances: [],
+      shape: null, curve: null, meshOnly: true, ghost: !mesh
+    };
+    batches.push(b);
+    return b;
+  }
+
   function drawBatches(drawn, built, opts) {
     opts = opts || {};
     var wide = opts.wide !== false;
@@ -2225,11 +2317,22 @@
       var part = d.spec, shading = shadingFor(part.material);
       var inst = instanceOf[part.id];
       var mesh = inst ? definitions[inst.definition] : (placedMesh[part.id] || (d.fromKernel ? d.mesh : null));
+      /* A declared mesh-only part (see "Mesh-only parts" above MESH_ONLY_SHAPES) is
+       * drawn with its own tint, material and translucency — never the solid-part
+       * look — and with no kernel surface as a ghost of its box, never a solid one. */
+      var meshOnly = isMeshOnly(part, mesh);
+      if (meshOnly) {
+        var ghost = !(mesh && mesh.triangles && mesh.triangles.length);
+        var mo = meshOnlyBatch(part, ghost ? null : mesh, fromMM, byKey, batches);
+        mo.instances.push({ id: part.id, matrix: mo.ghost ? placementMatrix(part) : IDENTITY.slice(), spec: part,
+                            removed: !!d.removed, repeatOf: d.repeatOf || '' });
+        return;
+      }
       /* A tessellation this browser cannot index is drawn as its primitive instead,
        * and named — truncating to 65,535 vertices would draw a shape nobody built,
        * which is worse than the approximation everybody has been looking at. */
       var narrow = !!(mesh && !wide && mesh.vertices.length / 3 > 65535);
-      var key, matrix, make;
+      var key, matrix, make, drawnShape = null;
       if (mesh && !narrow) {
         key = inst ? 'definition:' + inst.definition : 'placed:' + part.id;
         matrix = inst ? Array.prototype.slice.call(inst.matrix) : IDENTITY.slice();
@@ -2242,6 +2345,7 @@
                       path: part.path, path_closed: part.path_closed, axis: part.axis };
         key = 'shape:' + primitiveKey(part) + (narrow ? '|narrow' : '');
         matrix = placementMatrix(part);
+        drawnShape = narrow ? null : shape;
         make = function () {
           var built2 = buildGeometry(shape);
           if (narrow) {
@@ -2258,7 +2362,10 @@
         b = byKey[key] = {
           key: key, fromKernel: !!geo.fromKernel, definition: inst ? inst.definition : -1,
           shading: shading, geo: geo.geo, approximated: geo.approximated || '',
-          bounds: geometryBounds(geo.geo.positions), instances: []
+          bounds: geometryBounds(geo.geo.positions), instances: [],
+          /* A primitive that is curved and drawn as itself can be drawn finer (A5). */
+          shape: drawnShape && !geo.approximated ? drawnShape : null,
+          curve: drawnShape && !geo.approximated ? curveOf(drawnShape) : null
         };
         batches.push(b);
       }
@@ -2600,9 +2707,81 @@
      * on `approximated` — the same channel every other substitution uses, which
      * is what puts it in the provenance banner rather than nowhere. */
     var retired = RETIRED[part.shape];
-    var built = buildResolved(retired ? retired.as : part.shape, part);
+    var shape = retired ? retired.as : part.shape;
+    var built = buildResolved(shape, part);
     if (retired) built.approximated = retired.because;
+    /* Shaded smooth where the surface is curved (A5, 2026-09-18): these builders give
+     * every facet its own flat normal, so a revolved boss or a rounded corner showed each
+     * of its 40 steps. Positions and triangles are untouched — only how light reads them. */
+    if (SMOOTHED_SHAPES[shape] && !built.approximated) built.geo = smoothNormals(built.geo, CREASE_DEGREES);
     return built;
+  }
+
+  /* The builders whose facets approximate a curve with flat normals. A cylinder, cone and
+   * sphere are built with the true normal already, and a box has no curve. */
+  var SMOOTHED_SHAPES = { extrusion: true, revolve: true, sweep: true, section: true, gear: true };
+
+  /* Two facets meeting at more than this are an EDGE: shaded as a crease, and drawn as a
+   * feature line when those are on. Under it they are one curved surface. 35° keeps every
+   * right angle and chamfer sharp and joins a 40-step circle (9° a step) into one surface;
+   * a gear's flank steps join and its tip corners stay sharp. */
+  var CREASE_DEGREES = 35;
+
+  /* Normals averaged over the facets that meet at a point within the crease angle,
+   * weighted by the angle each facet makes at that point — so a quad counts the same
+   * however it was split into triangles, and a smooth surface's normal points where the
+   * surface does (an area weighting leans towards whichever side has more triangles
+   * there: 1.5° on a revolved tube). Vertices are matched by POSITION, because these builders give each
+   * facet its own corners; a facet's own corners keep their own answer, so a vertex
+   * shared by facets on both sides of a crease is split the way the facets are. */
+  function smoothNormals(geo, creaseDeg) {
+    var pos = geo.positions, idx = geo.indices, tris = idx.length / 3;
+    if (!tris) return geo;
+    var limit = Math.cos(creaseDeg * Math.PI / 180);
+    var raw = new Float64Array(tris * 3), unit = new Float64Array(tris * 3), t, k;
+    for (t = 0; t < tris; t++) {
+      var a = idx[t * 3] * 3, b = idx[t * 3 + 1] * 3, c = idx[t * 3 + 2] * 3;
+      var ux = pos[b] - pos[a], uy = pos[b + 1] - pos[a + 1], uz = pos[b + 2] - pos[a + 2];
+      var vx = pos[c] - pos[a], vy = pos[c + 1] - pos[a + 1], vz = pos[c + 2] - pos[a + 2];
+      var nx = uy * vz - uz * vy, ny = uz * vx - ux * vz, nz = ux * vy - uy * vx;
+      /* Faced the way the builder said, whatever the winding: the builder's normal is the
+       * statement of which side is outside. */
+      var gn = geo.normals;
+      if (nx * gn[a] + ny * gn[a + 1] + nz * gn[a + 2] < 0) { nx = -nx; ny = -ny; nz = -nz; }
+      var l = Math.sqrt(nx * nx + ny * ny + nz * nz);
+      raw[t * 3] = nx; raw[t * 3 + 1] = ny; raw[t * 3 + 2] = nz;
+      if (l > 0) { unit[t * 3] = nx / l; unit[t * 3 + 1] = ny / l; unit[t * 3 + 2] = nz / l; }
+    }
+    var bd = geometryBounds(pos), q = Math.max(bd.half[0], bd.half[1], bd.half[2], 1e-9) * 1e-7;
+    var byPoint = {}, keyOf = new Array(idx.length), corner = new Float64Array(idx.length);
+    for (k = 0; k < idx.length; k++) {
+      var v = idx[k] * 3;
+      var key = Math.round(pos[v] / q) + ',' + Math.round(pos[v + 1] / q) + ',' + Math.round(pos[v + 2] / q);
+      keyOf[k] = key;
+      (byPoint[key] || (byPoint[key] = [])).push(k);
+      /* The facet's angle at this corner. */
+      var base = k - k % 3, p1 = idx[base + (k % 3 + 1) % 3] * 3, p2 = idx[base + (k % 3 + 2) % 3] * 3;
+      var e1 = [pos[p1] - pos[v], pos[p1 + 1] - pos[v + 1], pos[p1 + 2] - pos[v + 2]];
+      var e2 = [pos[p2] - pos[v], pos[p2 + 1] - pos[v + 1], pos[p2 + 2] - pos[v + 2]];
+      var l12 = length3(e1) * length3(e2);
+      corner[k] = l12 > 0 ? Math.acos(Math.max(-1, Math.min(1, dot(e1, e2) / l12))) : 0;
+    }
+    var normals = geo.normals.slice();
+    for (k = 0; k < idx.length; k++) {
+      var own = Math.floor(k / 3), sx = 0, sy = 0, sz = 0, around = byPoint[keyOf[k]];
+      if (!(unit[own * 3] || unit[own * 3 + 1] || unit[own * 3 + 2])) continue;
+      for (var j = 0; j < around.length; j++) {
+        var o = Math.floor(around[j] / 3), w = corner[around[j]];
+        if (unit[own * 3] * unit[o * 3] + unit[own * 3 + 1] * unit[o * 3 + 1] +
+            unit[own * 3 + 2] * unit[o * 3 + 2] < limit) continue;
+        sx += unit[o * 3] * w; sy += unit[o * 3 + 1] * w; sz += unit[o * 3 + 2] * w;
+      }
+      var len = Math.sqrt(sx * sx + sy * sy + sz * sz);
+      if (!(len > 0)) continue;
+      var at = idx[k] * 3;
+      normals[at] = sx / len; normals[at + 1] = sy / len; normals[at + 2] = sz / len;
+    }
+    return { positions: pos, normals: normals, indices: idx };
   }
 
   /* The shape actually drawn, given the word after retirement is applied. Split
@@ -2612,10 +2791,13 @@
   function buildResolved(shape, part) {
     var s = part.size || {};
     switch (shape) {
+      /* A cylinder's length is read by cylinderLength, the one reading Go's exporter
+       * shares (TestCylinderDepthIsReadTheSameWayInBothPlaces); the segments are the
+       * export's count times DETAIL, which is radialSegments() written out. */
       case 'box':      return { geo: boxGeometry(num(s.width,1), num(s.height,1), num(s.depth,1)) };
-      case 'cylinder': return { geo: cylinderGeometry(num(s.radius,0.5), cylinderLength(s), TESSELLATION.radial, num(s.radius_top, num(s.radius,0.5))) };
-      case 'cone':     return { geo: cylinderGeometry(num(s.radius,0.5), cylinderLength(s), TESSELLATION.radial, 0) };
-      case 'sphere':   return { geo: sphereGeometry(num(s.radius,0.5), TESSELLATION.sphereRadial) };
+      case 'cylinder': return { geo: cylinderGeometry(num(s.radius,0.5), cylinderLength(s), TESSELLATION.radial * DETAIL, num(s.radius_top, num(s.radius,0.5))) };
+      case 'cone':     return { geo: cylinderGeometry(num(s.radius,0.5), cylinderLength(s), TESSELLATION.radial * DETAIL, 0) };
+      case 'sphere':   return { geo: sphereGeometry(num(s.radius,0.5), TESSELLATION.sphereRadial * DETAIL) };
       case 'plane':    return { geo: planeGeometry(num(s.width,1), num(s.depth,1)) };
       case 'extrusion': return extrusionGeometry(part.profile || [], num(s.depth, 1), part.holes);
       case 'revolve':   return revolveGeometry(part.profile || [], part.axis, part.holes);
@@ -2716,7 +2898,69 @@
   /* One instance: 16 matrix, 4 colour and opacity, 1 highlight. */
   var INSTANCE_FLOATS = 21;
 
-  var VERT = [
+  /* ---- Looking designed (2026-09-18) --------------------------------------------
+   *
+   * damon, 2026-09-18: "looks designed" is a FORGE goal — the output should read as a
+   * designed product, not boxes and sticks. This renderer's half of that is PRESENTATION
+   * ONLY: light, materials, grounding, a camera. Nothing here changes a shape, a
+   * placement or what is exported, and the defect check (internal/agent look.go,
+   * sketch.go) stays closed to styling: looks are judged by a separate gate.
+   *
+   * Until this stage a part was lit by one directional light, Blinn-Phong and a rim,
+   * written straight to the screen in whatever space the colours happened to be: no
+   * reflections of anything, no tone mapping, no shadow, no occlusion, so every
+   * material looked like matte plastic floating over a grid.
+   *
+   * Now, on every path:
+   *   - image-based light from a small studio (two soft boxes, strip lights, a cove)
+   *     generated here, pre-filtered for four roughnesses into one texture, plus its
+   *     diffuse irradiance as nine spherical-harmonic coefficients (no fetch: the page's
+   *     CSP allows only same-origin, and this needs no file at all);
+   *   - a metal/roughness material read from the document's FINISH (MATERIALS below;
+   *     the names are Go's closed set, unchanged);
+   *   - colours taken from sRGB to linear, lit in linear, ACES-filmic tone mapped and
+   *     written back as sRGB;
+   *   - a studio backdrop (a cove: floor to wall to ceiling) in each theme, a soft
+   *     contact shadow under the model, and a three-quarter hero camera.
+   * WebGL2 only (it needs a depth texture and a multisampled target to resolve from):
+   *   - screen-space ambient occlusion, applied before anything translucent is drawn.
+   * WebGL1 draws everything else identically and has no occlusion.
+   *
+   * ‼️ The part program is still GLSL ES 1.00 on every path — "one pair of shaders, no
+   * second place for the lighting to drift" (W1) holds. Only the occlusion passes, which
+   * exist on WebGL2 alone, are GLSL ES 3.00. */
+
+  /* ACES filmic, Narkowicz's fit (2015): x(ax+b) / (x(cx+d)+e). Written into the shader
+   * from these numbers, and computed by acesFilm from the same ones, so a fence can read
+   * the curve the GPU applies. */
+  var ACES = { a: 2.51, b: 0.03, c: 2.43, d: 0.59, e: 0.14 };
+  function acesFilm(x) {
+    var v = (x * (ACES.a * x + ACES.b)) / (x * (ACES.c * x + ACES.d) + ACES.e);
+    return Math.max(0, Math.min(1, v));
+  }
+  /* The exact sRGB transfer functions (IEC 61966-2-1), not a 2.2 power. */
+  function linearToSrgb(c) {
+    return c <= 0.0031308 ? 12.92 * c : 1.055 * Math.pow(c, 1 / 2.4) - 0.055;
+  }
+  function srgbToLinear(c) {
+    return c <= 0.04045 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4);
+  }
+  function glslFloat(v) { var s = String(v); return /[.e]/.test(s) ? s : s + '.0'; }
+
+  /* The environment's layout in its texture: ENV.levels rows of ENV.width × ENV.height,
+   * row k pre-filtered for roughness k / (levels − 1), each an equirectangular map
+   * (u = azimuth, v = polar angle from +Y), RGBM-encoded with ENV.range. Both sides
+   * powers of two, so WebGL1 can repeat it round the seam. */
+  var ENV = { width: 128, height: 64, levels: 4, range: 16 };
+  /* Real spherical harmonics to order 2, as (constant, which product of x, y, z). */
+  var SH_BASIS = [0.282095, 0.488603, 0.488603, 0.488603, 1.092548, 1.092548, 0.315392, 1.092548, 0.546274];
+  function shBasis(n) {
+    var x = n[0], y = n[1], z = n[2], k = SH_BASIS;
+    return [k[0], k[1] * y, k[2] * z, k[3] * x, k[4] * x * y, k[5] * y * z,
+            k[6] * (3 * z * z - 1), k[7] * x * z, k[8] * (x * x - y * y)];
+  }
+
+  var PART_VERT = [
     'attribute vec3 aPos;',
     'attribute vec3 aNormal;',
     'attribute mat4 aModel;',
@@ -2728,6 +2972,12 @@
     'varying vec3 vWorld;',
     'varying vec4 vColour;',
     'varying float vHighlight;',
+    /* A document's colour is sRGB (what a person means by #b3122e); light adds up in
+     * linear. Converted here, per vertex, so the instance data stays the document's
+     * colour — what the placement fences read back. */
+    'vec3 toLinear(vec3 c) {',
+    '  return mix(c / 12.92, pow((c + 0.055) / 1.055, vec3(2.4)), step(0.04045, c));',
+    '}',
     'void main() {',
     '  vec4 world = aModel * vec4(aPos, 1.0);',
     '  vec3 c0 = aModel[0].xyz;',
@@ -2736,55 +2986,128 @@
     '  vec3 n = mat3(cross(c1, c2), cross(c2, c0), cross(c0, c1)) * aNormal;',
     '  vNormal = n * sign(dot(c0, cross(c1, c2)));',
     '  vWorld = world.xyz;',
-    '  vColour = aColour;',
+    '  vColour = vec4(toLinear(aColour.rgb), aColour.a);',
     '  vHighlight = aHighlight;',
     '  gl_Position = uProj * uView * world;',
     '}'
+  ].join('\n');
+  var VERT = PART_VERT;
+
+  var HIGHP = [
+    '#ifdef GL_FRAGMENT_PRECISION_HIGH',
+    'precision highp float;',
+    '#else',
+    'precision mediump float;',
+    '#endif'
   ].join('\n');
 
   /* Section cutting is done in the fragment shader by discarding anything on the
    * far side of a plane. Cheap, exact, and it needs no CSG — and a section view
    * is one of the few things that makes an assembly legible at all. */
   var FRAG = [
-    'precision mediump float;',
+    HIGHP,
     'varying vec3 vNormal;',
     'varying vec3 vWorld;',
     'varying vec4 vColour;',
-    'uniform vec3 uLightDir;',
+    'varying float vHighlight;',
     'uniform vec3 uCamPos;',
     'uniform int uSectionAxis;',   // 0 none, 1 x, 2 y, 3 z
     'uniform float uSectionAt;',
-    'varying float vHighlight;',
     'uniform float uLight;',
-    'uniform float uSpecPower;',
-    'uniform float uSpecGloss;',
+    'uniform vec3 uMaterial;',     // metallic, roughness, clear coat
+    'uniform sampler2D uEnv;',
+    'uniform vec3 uSH[9];',
+    'uniform vec3 uKeyDir;',
+    'uniform vec3 uKeyColour;',
+    'uniform float uExposure;',
+    'uniform float uSurfaceView;',   // 0 shaded, 1 surface normals (looks, stage D)
+    'const float PI = 3.14159265;',
+    'const float LEVELS = ' + glslFloat(ENV.levels) + ';',
+    'const float HALF_TEXEL = ' + glslFloat(0.5 / ENV.height) + ';',
+    'vec3 irradiance(vec3 n) {',
+    '  return uSH[0] * ' + glslFloat(SH_BASIS[0]) +
+         ' + uSH[1] * (' + glslFloat(SH_BASIS[1]) + ' * n.y)' +
+         ' + uSH[2] * (' + glslFloat(SH_BASIS[2]) + ' * n.z)' +
+         ' + uSH[3] * (' + glslFloat(SH_BASIS[3]) + ' * n.x)' +
+         ' + uSH[4] * (' + glslFloat(SH_BASIS[4]) + ' * n.x * n.y)' +
+         ' + uSH[5] * (' + glslFloat(SH_BASIS[5]) + ' * n.y * n.z)' +
+         ' + uSH[6] * (' + glslFloat(SH_BASIS[6]) + ' * (3.0 * n.z * n.z - 1.0))' +
+         ' + uSH[7] * (' + glslFloat(SH_BASIS[7]) + ' * n.x * n.z)' +
+         ' + uSH[8] * (' + glslFloat(SH_BASIS[8]) + ' * (n.x * n.x - n.y * n.y));',
+    '}',
+    'vec2 envUV(vec3 d, float level) {',
+    '  float u = atan(d.z, d.x) * (0.5 / PI) + 0.5;',
+    '  float v = clamp(acos(clamp(d.y, -1.0, 1.0)) / PI, HALF_TEXEL, 1.0 - HALF_TEXEL);',
+    '  return vec2(u, (level + v) / LEVELS);',
+    '}',
+    'vec3 rgbm(vec4 c) { return c.rgb * c.a * ' + glslFloat(ENV.range) + '; }',
+    'vec3 envAt(vec3 d, float rough) {',
+    '  float lv = clamp(rough, 0.0, 1.0) * (LEVELS - 1.0);',
+    '  float l0 = floor(lv);',
+    '  float l1 = min(l0 + 1.0, LEVELS - 1.0);',
+    '  return mix(rgbm(texture2D(uEnv, envUV(d, l0))), rgbm(texture2D(uEnv, envUV(d, l1))), lv - l0);',
+    '}',
+    /* Karis's analytic fit of the split-sum BRDF term: no lookup table to ship. */
+    'vec2 envBRDF(float NoV, float r) {',
+    '  vec4 r4 = r * vec4(-1.0, -0.0275, -0.572, 0.022) + vec4(1.0, 0.0425, 1.04, -0.04);',
+    '  float a004 = min(r4.x * r4.x, exp2(-9.28 * NoV)) * r4.x + r4.y;',
+    '  return vec2(-1.04, 1.04) * a004 + r4.zw;',
+    '}',
+    'vec3 aces(vec3 x) {',
+    '  return clamp((x * (' + glslFloat(ACES.a) + ' * x + ' + glslFloat(ACES.b) + ')) / (x * (' +
+         glslFloat(ACES.c) + ' * x + ' + glslFloat(ACES.d) + ') + ' + glslFloat(ACES.e) + '), 0.0, 1.0);',
+    '}',
+    'vec3 toSrgb(vec3 c) {',
+    '  return mix(c * 12.92, 1.055 * pow(c, vec3(1.0 / 2.4)) - 0.055, step(0.0031308, c));',
+    '}',
     'void main() {',
     '  if (uSectionAxis == 1 && vWorld.x > uSectionAt) discard;',
     '  if (uSectionAxis == 2 && vWorld.y > uSectionAt) discard;',
     '  if (uSectionAxis == 3 && vWorld.z > uSectionAt) discard;',
     '  vec3 N = normalize(vNormal);',
-    '  vec3 L = normalize(uLightDir);',
-    '  float diff = max(dot(N, L), 0.0);',
+    // The surface view, before any light touches it: the direction the surface faces,
+    // mapped into colour. Taken after the section discard so a cut model still cuts.
+    '  if (uSurfaceView > 0.5) {',
+    '    gl_FragColor = vec4(N * 0.5 + 0.5, vColour.a);',
+    '    return;',
+    '  }',
     '  vec3 V = normalize(uCamPos - vWorld);',
+    '  float NoV = max(dot(N, V), 1e-4);',
+    '  float metal = clamp(uMaterial.x, 0.0, 1.0);',
+    '  float rough = clamp(uMaterial.y, 0.03, 1.0);',
+    '  vec3 base = vColour.rgb;',
+    '  vec3 F0 = mix(vec3(0.04), base, metal);',
+    '  vec3 R = reflect(-V, N);',
+    '  vec2 ab = envBRDF(NoV, rough);',
+    '  vec3 spec = envAt(R, rough) * (F0 * ab.x + ab.y);',
+    '  vec3 diff = base * (1.0 - metal) * max(irradiance(N), vec3(0.0));',
+    // One key light on top of the environment, for a highlight with a direction.
+    '  vec3 L = normalize(uKeyDir);',
+    '  float NoL = max(dot(N, L), 0.0);',
     '  vec3 H = normalize(L + V);',
-    '  float spec = pow(max(dot(N, H), 0.0), uSpecPower) * uSpecGloss;',
+    '  float NoH = max(dot(N, H), 0.0);',
+    '  float a2 = max(rough * rough * rough * rough, 1e-5);',
+    '  float dd = NoH * NoH * (a2 - 1.0) + 1.0;',
+    '  float D = min(a2 / (PI * dd * dd), 400.0);',
+    '  float LoH = max(dot(L, H), 0.05);',
+    '  vec3 Fk = F0 + (1.0 - F0) * pow(1.0 - LoH, 5.0);',
+    '  spec += uKeyColour * NoL * D * Fk * (0.25 / (LoH * LoH));',
+    '  diff += base * (1.0 - metal) * uKeyColour * NoL / PI;',
+    '  vec3 col = diff + spec;',
+    // A clear coat over the base: a second, sharp reflection (painted finishes).
+    '  if (uMaterial.z > 0.0) {',
+    '    vec2 cab = envBRDF(NoV, 0.05);',
+    '    float Fc = (0.04 * cab.x + cab.y) * uMaterial.z;',
+    '    col = col * (1.0 - Fc) + envAt(R, 0.05) * Fc;',
+    '  }',
+    '  col = toSrgb(aces(col * uExposure));',
     // The edge treatment is the one thing that cannot be shared between the two
-    // grounds, and it is worth being explicit about why.
-    //
-    // Against near-black, a silhouette is invisible until something lifts it, so
-    // an additive cyan rim is added: that is the difference between "a shape"
-    // and "a mass" at a glance. Against paper the mass is ALREADY darker than
-    // what is behind it, so there is nothing to lift — adding light to a pale
-    // ground just fogs the edge. The same edge is carved instead, by taking
-    // light away, which is what contact shadow does on a physical object.
-    //
-    // Both are driven from one term so the falloff is identical and only its
-    // sign changes.
-    '  float rim = pow(1.0 - max(dot(N, V), 0.0), 2.5);',
-    '  vec3 ambient = vColour.rgb * mix(0.30, 0.46, uLight);',
-    '  vec3 col = ambient + vColour.rgb * diff * mix(0.78, 0.62, uLight) + vec3(spec);',
-    '  col += vec3(0.31, 0.85, 0.91) * rim * 0.30 * (1.0 - uLight);',
-    '  col *= 1.0 - rim * 0.30 * uLight;',
+    // grounds. Against near-black a silhouette is invisible until something lifts it,
+    // so a faint cyan rim is added; against paper the mass is already darker than the
+    // ground and the same edge is carved instead. One term, only its sign changes.
+    '  float rim = pow(1.0 - NoV, 2.5);',
+    '  col += vec3(0.31, 0.85, 0.91) * rim * 0.12 * (1.0 - uLight);',
+    '  col *= 1.0 - rim * 0.12 * uLight;',
     // Selection. Bright cyan reads as "lit" on black and as "washed out" on
     // paper, so the light ground gets the same hue at a legible depth.
     '  col = mix(col, mix(vec3(0.31, 0.85, 0.91), vec3(0.10, 0.40, 0.50), uLight), vHighlight * 0.45);',
@@ -2792,18 +3115,237 @@
     '}'
   ].join('\n');
 
+  /* A full-screen triangle's vertex shader, shared by every screen pass written in
+   * GLSL ES 1.00 (backdrop, blur). */
+  var SCREEN_VERT = [
+    'attribute vec3 aPos;',
+    'varying vec2 vUV;',
+    'varying vec2 vNdc;',
+    'void main() { vNdc = aPos.xy; vUV = aPos.xy * 0.5 + 0.5; gl_Position = vec4(aPos.xy, 0.0, 1.0); }'
+  ].join('\n');
+
+  /* The studio backdrop: an infinite cove, floor curving up into wall and on into a
+   * lighter ceiling, read from each pixel's view direction so it turns with the camera
+   * like a room rather than sitting on the screen like wallpaper. Written in sRGB — it is
+   * a colour on the page, not a lit surface. */
+  var BACKDROP_FRAG = [
+    HIGHP,
+    'varying vec2 vUV;',
+    'varying vec2 vNdc;',
+    'uniform mat4 uInvViewProj;',
+    'uniform vec3 uFloor;',
+    'uniform vec3 uWall;',
+    'uniform vec3 uTop;',
+    'void main() {',
+    '  vec4 p0 = uInvViewProj * vec4(vNdc, -1.0, 1.0);',
+    '  vec4 p1 = uInvViewProj * vec4(vNdc, 1.0, 1.0);',
+    '  vec3 d = normalize(p1.xyz / p1.w - p0.xyz / p0.w);',
+    '  vec3 c = mix(uFloor, uWall, smoothstep(-0.35, 0.30, d.y));',
+    '  c = mix(c, uTop, smoothstep(0.30, 1.0, d.y));',
+    '  c *= 1.0 - 0.10 * dot(vNdc, vNdc);',
+    '  gl_FragColor = vec4(c, 1.0);',
+    '}'
+  ].join('\n');
+
+  /* The contact shadow, captured from BELOW: the depth test keeps each column's lowest
+   * surface, and how close that surface is to the floor is how dark the column is. */
+  var SHADOW_VERT = [
+    'attribute vec3 aPos;',
+    'attribute mat4 aModel;',
+    'attribute vec3 aNormal;',
+    'attribute vec4 aColour;',
+    'attribute float aHighlight;',
+    'uniform mat4 uView;',
+    'uniform mat4 uProj;',
+    'uniform float uFloor;',
+    'uniform float uFalloff;',
+    'varying float vOcc;',
+    'void main() {',
+    '  vec4 world = aModel * vec4(aPos, 1.0);',
+    '  vOcc = exp(-max(world.y - uFloor, 0.0) / uFalloff) * step(0.5, aColour.a);',
+    '  gl_Position = uProj * uView * world;',
+    '}'
+  ].join('\n');
+  var SHADOW_FRAG = [
+    'precision mediump float;',
+    'varying float vOcc;',
+    'void main() { gl_FragColor = vec4(vOcc, vOcc, vOcc, 1.0); }'
+  ].join('\n');
+
+  /* One direction of a separable Gaussian over the captured shadow. */
+  var BLUR_FRAG = [
+    'precision mediump float;',
+    'varying vec2 vUV;',
+    'varying vec2 vNdc;',
+    'uniform sampler2D uTex;',
+    'uniform vec2 uStep;',
+    'void main() {',
+    '  float s = texture2D(uTex, vUV).r * 0.2270270;',
+    '  s += (texture2D(uTex, vUV + uStep * 1.3846154).r + texture2D(uTex, vUV - uStep * 1.3846154).r) * 0.3162162;',
+    '  s += (texture2D(uTex, vUV + uStep * 3.2307692).r + texture2D(uTex, vUV - uStep * 3.2307692).r) * 0.0702703;',
+    '  gl_FragColor = vec4(s, s, s, 1.0);',
+    '}'
+  ].join('\n');
+
+  /* The floor the shadow is laid on: transparent except where the shadow is. */
+  var GROUND_VERT = [
+    'attribute vec3 aPos;',
+    'uniform mat4 uView;',
+    'uniform mat4 uProj;',
+    'uniform vec4 uRect;',
+    'varying vec2 vUV;',
+    'void main() {',
+    '  vUV = (aPos.xz - uRect.xy) / uRect.zw;',
+    '  gl_Position = uProj * uView * vec4(aPos, 1.0);',
+    '}'
+  ].join('\n');
+  var GROUND_FRAG = [
+    'precision mediump float;',
+    'varying vec2 vUV;',
+    'uniform sampler2D uShadow;',
+    'uniform vec3 uTint;',
+    'uniform float uStrength;',
+    'void main() {',
+    '  vec2 e = min(vUV, 1.0 - vUV);',
+    '  float fade = smoothstep(0.0, 0.12, min(e.x, e.y));',
+    '  float s = texture2D(uShadow, vUV).r;',
+    '  gl_FragColor = vec4(uTint, clamp(s * uStrength * fade, 0.0, 1.0));',
+    '}'
+  ].join('\n');
+
+  /* Feature lines: a batch's sharp edges, drawn per instance like its triangles. */
+  var EDGE_VERT = [
+    'attribute vec3 aPos;',
+    'attribute vec3 aNormal;',
+    'attribute mat4 aModel;',
+    'attribute vec4 aColour;',
+    'attribute float aHighlight;',
+    'uniform mat4 uView;',
+    'uniform mat4 uProj;',
+    'varying float vAlpha;',
+    'void main() {',
+    '  vAlpha = aColour.a;',
+    '  gl_Position = uProj * uView * (aModel * vec4(aPos, 1.0));',
+    '}'
+  ].join('\n');
+  var EDGE_FRAG = [
+    'precision mediump float;',
+    'varying float vAlpha;',
+    'uniform vec4 uEdge;',
+    'void main() { gl_FragColor = vec4(uEdge.rgb, uEdge.a * vAlpha); }'
+  ].join('\n');
+
+  /* ---- Screen-space ambient occlusion (WebGL2 only; GLSL ES 3.00) ---------------
+   *
+   * Read from the depth of what was drawn opaque, at half resolution: for each pixel,
+   * AO_SAMPLES points in the hemisphere over its surface (the normal is rebuilt from the
+   * neighbouring depths), and the share of them that something nearer the camera hides
+   * darkens it. A range check stops a far background from occluding a near edge. It
+   * costs a fixed number of full-screen passes whatever the model — 30,000 copies cost
+   * it nothing more than one. */
+  var AO_SAMPLES = 8;
+  var AO_KERNEL = (function () {
+    var out = [];
+    for (var i = 0; i < AO_SAMPLES; i++) {
+      /* A spiral over the hemisphere, denser near the surface. */
+      var t = (i + 0.5) / AO_SAMPLES, phi = i * 2.399963;
+      var z = 0.15 + 0.85 * Math.sqrt(1 - t), r = Math.sqrt(1 - z * z), s = 0.2 + 0.8 * t * t;
+      out.push([r * Math.cos(phi) * s, r * Math.sin(phi) * s, z * s]);
+    }
+    return out;
+  })();
+  var AO_VERT = [
+    '#version 300 es',
+    'in vec3 aPos;',
+    'out vec2 vUV;',
+    'void main() { vUV = aPos.xy * 0.5 + 0.5; gl_Position = vec4(aPos.xy, 0.0, 1.0); }'
+  ].join('\n');
+  var AO_FRAG = [
+    '#version 300 es',
+    'precision highp float;',
+    'in vec2 vUV;',
+    'out vec4 outColour;',
+    'uniform sampler2D uDepth;',
+    'uniform mat4 uInvProj;',
+    'uniform mat4 uProj;',
+    'uniform vec2 uTexel;',
+    'uniform float uRadius;',
+    'uniform float uStrength;',
+    'const vec3 K[' + AO_SAMPLES + '] = vec3[' + AO_SAMPLES + '](' + AO_KERNEL.map(function (k) {
+      return 'vec3(' + k.map(function (v) { return v.toFixed(5); }).join(', ') + ')';
+    }).join(', ') + ');',
+    'vec3 viewAt(vec2 uv) {',
+    '  float z = texture(uDepth, uv).r;',
+    '  vec4 p = uInvProj * vec4(uv * 2.0 - 1.0, z * 2.0 - 1.0, 1.0);',
+    '  return p.xyz / p.w;',
+    '}',
+    'void main() {',
+    '  float d = texture(uDepth, vUV).r;',
+    '  if (d >= 1.0) { outColour = vec4(1.0); return; }',
+    '  vec3 P = viewAt(vUV);',
+    '  vec3 r = viewAt(vUV + vec2(uTexel.x, 0.0)) - P, l = P - viewAt(vUV - vec2(uTexel.x, 0.0));',
+    '  vec3 u = viewAt(vUV + vec2(0.0, uTexel.y)) - P, b = P - viewAt(vUV - vec2(0.0, uTexel.y));',
+    '  vec3 N = normalize(cross(abs(r.z) < abs(l.z) ? r : l, abs(u.z) < abs(b.z) ? u : b));',
+    '  if (dot(N, P) > 0.0) N = -N;',
+    /* The kernel turned by one of sixteen angles laid out on a 4 × 4 tile, which the
+     * composite's 4 × 4 box averages away exactly: no grain left behind. */
+    '  vec2 cell = mod(floor(gl_FragCoord.xy), 4.0);',
+    '  float a = 6.2831853 * (cell.x * 4.0 + cell.y + 0.5) / 16.0;',
+    '  vec3 rv = vec3(cos(a), sin(a), 0.0);',
+    '  vec3 T = normalize(rv - N * dot(rv, N));',
+    '  if (length(rv - N * dot(rv, N)) < 1e-3) T = normalize(cross(N, vec3(0.0, 1.0, 0.0)));',
+    '  vec3 B = cross(N, T);',
+    '  float occ = 0.0;',
+    '  for (int i = 0; i < ' + AO_SAMPLES + '; i++) {',
+    '    vec3 S = P + (T * K[i].x + B * K[i].y + N * K[i].z) * uRadius;',
+    '    vec4 c = uProj * vec4(S, 1.0);',
+    '    vec2 suv = c.xy / c.w * 0.5 + 0.5;',
+    '    if (suv.x < 0.0 || suv.y < 0.0 || suv.x > 1.0 || suv.y > 1.0) continue;',
+    '    float sz = viewAt(suv).z;',
+    '    float range = smoothstep(0.0, 1.0, uRadius / max(abs(P.z - sz), 1e-6));',
+    '    occ += (sz >= S.z + uRadius * 0.03 ? 1.0 : 0.0) * range;',
+    '  }',
+    '  outColour = vec4(vec3(clamp(1.0 - occ / ' + glslFloat(AO_SAMPLES) + ' * uStrength, 0.0, 1.0)), 1.0);',
+    '}'
+  ].join('\n');
+  /* Laid over the opaque picture by multiplying, through a 4×4 blur of the half-size
+   * occlusion that hides its sampling pattern (read as four bilinear taps). */
+  var AO_COMPOSITE_FRAG = [
+    '#version 300 es',
+    'precision highp float;',
+    'in vec2 vUV;',
+    'out vec4 outColour;',
+    'uniform sampler2D uAO;',
+    'uniform vec2 uTexel;',
+    'void main() {',
+    /* Four bilinear taps on texel corners: the 4 × 4 box for a quarter of the reads. */
+    '  float s = texture(uAO, vUV + vec2(-1.0, -1.0) * uTexel).r + texture(uAO, vUV + vec2(1.0, -1.0) * uTexel).r +',
+    '            texture(uAO, vUV + vec2(-1.0, 1.0) * uTexel).r + texture(uAO, vUV + vec2(1.0, 1.0) * uTexel).r;',
+    '  outColour = vec4(vec3(s * 0.25), 1.0);',
+    '}'
+  ].join('\n');
+
   var LINE_VERT = [
     'attribute vec3 aPos;',
     'uniform mat4 uView;',
     'uniform mat4 uProj;',
-    'void main() { gl_Position = uProj * uView * vec4(aPos, 1.0); }'
+    'varying vec3 vWorld;',
+    'void main() { vWorld = aPos; gl_Position = uProj * uView * vec4(aPos, 1.0); }'
   ].join('\n');
 
+  /* uFade (2026-09-18): the grid fades out between two distances from the model's centre
+   * (x, z, start, end), so it reads as a floor under the model rather than a sheet of
+   * lines aliasing to the horizon. An end of 0 draws the line whole — every overlay. */
   var LINE_FRAG = [
-    'precision mediump float;',
+    HIGHP,
     'uniform vec3 uColor;',
     'uniform float uOpacity;',
-    'void main() { gl_FragColor = vec4(uColor, uOpacity); }'
+    'uniform vec4 uFade;',
+    'varying vec3 vWorld;',
+    'void main() {',
+    '  float f = uFade.w > 0.0 ? 1.0 - smoothstep(uFade.z, uFade.w, length(vWorld.xz - uFade.xy)) : 1.0;',
+    '  gl_FragColor = vec4(uColor, uOpacity * f);',
+    '}'
   ].join('\n');
 
   function compile(gl, type, src) {
@@ -2835,6 +3377,314 @@
     var v = parseInt(h, 16);
     if (isNaN(v)) return ground().partFallback;
     return [((v >> 16) & 255) / 255, ((v >> 8) & 255) / 255, (v & 255) / 255];
+  }
+
+  /* ---- The studio the parts are lit by (2026-09-18) ------------------------------
+   *
+   * A photographic studio, written as a function of direction rather than shipped as a
+   * picture: a large soft box overhead, a key strip to one side, a dimmer fill strip
+   * opposite, a rim panel behind, and a cove that is dark at the floor and lifts towards
+   * the ceiling. Linear radiance; a soft box is several times brighter than the walls,
+   * which is what gives a metal part its long bright reflections. The edges are smooth
+   * so the pre-filtered maps converge with few samples. */
+  function smoothstep(a, b, x) {
+    var t = (x - a) / (b - a);
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    return t * t * (3 - 2 * t);
+  }
+  /* 1 within `half` of centre, falling to 0 over `soft` beyond it. */
+  function band(x, centre, half, soft) {
+    return 1 - smoothstep(half, half + soft, Math.abs(x - centre));
+  }
+  /* A light spread round the horizon: centred at azimuth `az`, `half` radians either
+   * side, fading over `soft` — as a smoothstep on the cosine of the angle away from it,
+   * so no inverse trigonometry per direction. */
+  function strip(az, half, soft) {
+    return { cx: Math.cos(az), sz: Math.sin(az), lo: Math.cos(half + soft), hi: Math.cos(half) };
+  }
+  var KEY_STRIP = strip(0.95, 0.10, 0.08), FILL_STRIP = strip(-2.25, 0.16, 0.12), RIM_PANEL = strip(2.55, 0.28, 0.15);
+
+  function studioRadiance(d, out) {
+    out = out || [0, 0, 0];
+    var x = d[0], y = d[1], z = d[2];
+    var up = smoothstep(-0.25, 0.6, y);
+    var flat = Math.sqrt(x * x + z * z), light = 0;
+    /* Overhead soft box: a rectangle seen through the ceiling. */
+    if (y > 0.2) light += 4.0 * band(x / y, 0.0, 0.35, 0.18) * band(z / y, 0.10, 0.22, 0.15);
+    /* Key strip, tall and narrow, front right; fill strip, back left; rim panel, behind. */
+    var key = 0, fill = 0, rim = 0;
+    if (flat > 1e-6) {
+      var cx = x / flat, sz = z / flat;
+      key = 4.2 * smoothstep(KEY_STRIP.lo, KEY_STRIP.hi, cx * KEY_STRIP.cx + sz * KEY_STRIP.sz) * band(y, 0.35, 0.30, 0.12);
+      fill = 1.4 * smoothstep(FILL_STRIP.lo, FILL_STRIP.hi, cx * FILL_STRIP.cx + sz * FILL_STRIP.sz) * band(y, 0.30, 0.28, 0.15);
+      rim = 2.2 * smoothstep(RIM_PANEL.lo, RIM_PANEL.hi, cx * RIM_PANEL.cx + sz * RIM_PANEL.sz) * band(y, 0.28, 0.16, 0.10);
+    }
+    light += key + fill + rim;
+    /* The key is a touch warm, the fill a touch cool: enough to separate the planes of
+     * a part, not enough to tint it. */
+    out[0] = 0.15 + 0.22 * up + light + key * 0.06 - fill * 0.05;
+    out[1] = 0.155 + 0.23 * up + light;
+    out[2] = 0.165 + 0.26 * up + light - key * 0.05 + fill * 0.08;
+    return out;
+  }
+
+  function envDirection(u, v) {
+    var phi = (u - 0.5) * 2 * Math.PI, theta = v * Math.PI;
+    return [Math.sin(theta) * Math.cos(phi), Math.cos(theta), Math.sin(theta) * Math.sin(phi)];
+  }
+
+  /* GGX half-vectors for `samples` Hammersley points at one roughness, in the frame of a
+   * normal along +Z (Karis 2013) — computed once per roughness, turned per texel. */
+  function radicalInverse(i) {
+    var b = 0, f = 0.5;
+    while (i) { if (i & 1) b += f; i >>>= 1; f *= 0.5; }
+    return b;
+  }
+  function ggxSamples(rough, samples) {
+    var a = rough * rough, out = [];
+    for (var i = 0; i < samples; i++) {
+      var e1 = (i + 0.5) / samples, e2 = radicalInverse(i), phi = 2 * Math.PI * e1;
+      var cosT = Math.sqrt((1 - e2) / (1 + (a * a - 1) * e2)), sinT = Math.sqrt(1 - cosT * cosT);
+      out.push(sinT * Math.cos(phi), sinT * Math.sin(phi), cosT);
+    }
+    return out;
+  }
+  /* The environment seen by a mirror-like view along n through a GGX lobe (N = V = R). */
+  function prefiltered(n, table) {
+    var up = Math.abs(n[1]) < 0.999 ? [0, 1, 0] : [1, 0, 0];
+    var tx = normalize(cross(up, n)), ty = cross(n, tx), c = [0, 0, 0], l = [0, 0, 0];
+    var r = 0, g = 0, bl = 0, w = 0;
+    for (var i = 0; i < table.length; i += 3) {
+      var hx = table[i], hy = table[i + 1], hz = table[i + 2];
+      var h0 = tx[0] * hx + ty[0] * hy + n[0] * hz, h1 = tx[1] * hx + ty[1] * hy + n[1] * hz,
+          h2 = tx[2] * hx + ty[2] * hy + n[2] * hz;
+      var vh = 2 * hz;   /* dot(n, h) = hz, and l = 2(n·h)h − n */
+      l[0] = vh * h0 - n[0]; l[1] = vh * h1 - n[1]; l[2] = vh * h2 - n[2];
+      var nl = vh * hz - 1;
+      if (nl <= 0) continue;
+      studioRadiance(l, c);
+      r += c[0] * nl; g += c[1] * nl; bl += c[2] * nl; w += nl;
+    }
+    return w > 0 ? [r / w, g / w, bl / w] : studioRadiance(n);
+  }
+
+  /* The diffuse light arriving at a surface facing n, over π (so an albedo of 1 reflects
+   * exactly this), as nine SH coefficients per channel: k_l · L_lm, with k = 1, 2/3, 1/4
+   * (Ramamoorthi & Hanrahan 2001). The shader sums them against SH_BASIS. */
+  function environmentSH() {
+    var coeff = new Float64Array(27), W = 64, H = 32;
+    var band2 = [1, 2 / 3, 2 / 3, 2 / 3, 0.25, 0.25, 0.25, 0.25, 0.25];
+    for (var j = 0; j < H; j++) {
+      var v = (j + 0.5) / H, dOmega = (2 * Math.PI / W) * (Math.PI / H) * Math.sin(v * Math.PI);
+      for (var i = 0; i < W; i++) {
+        var d = envDirection((i + 0.5) / W, v), c = studioRadiance(d), y = shBasis(d);
+        for (var k = 0; k < 9; k++) {
+          coeff[k * 3] += c[0] * y[k] * dOmega;
+          coeff[k * 3 + 1] += c[1] * y[k] * dOmega;
+          coeff[k * 3 + 2] += c[2] * y[k] * dOmega;
+        }
+      }
+    }
+    var out = new Float32Array(27);
+    for (var m = 0; m < 27; m++) out[m] = coeff[m] * band2[Math.floor(m / 3)];
+    return out;
+  }
+  function shIrradiance(sh, n) {
+    var y = shBasis(n), out = [0, 0, 0];
+    for (var k = 0; k < 9; k++) {
+      out[0] += sh[k * 3] * y[k]; out[1] += sh[k * 3 + 1] * y[k]; out[2] += sh[k * 3 + 2] * y[k];
+    }
+    return out;
+  }
+
+  /* The texture: ENV.levels rows, RGBM. Built once per page and shared by every Studio.
+   * A rough row is filtered at a quarter or an eighth of the size and stretched: it has
+   * nothing sharp to lose. */
+  var ENVIRONMENT = null;
+  function environment() {
+    if (ENVIRONMENT) return ENVIRONMENT;
+    var W = ENV.width, H = ENV.height, px = new Uint8Array(W * H * ENV.levels * 4);
+    for (var level = 0; level < ENV.levels; level++) {
+      var rough = level / (ENV.levels - 1), shrink = [1, 4, 8, 8][level] || 8;
+      var w = W / shrink, h = H / shrink, small = [], table = level ? ggxSamples(rough, 64) : null;
+      for (var j = 0; j < h; j++) {
+        for (var i = 0; i < w; i++) {
+          var dir = envDirection((i + 0.5) / w, (j + 0.5) / h);
+          small.push(table ? prefiltered(dir, table) : studioRadiance(dir));
+        }
+      }
+      for (var y = 0; y < H; y++) {
+        for (var x = 0; x < W; x++) {
+          /* Bilinear from the small map, wrapping round in u. */
+          var fx = (x + 0.5) / shrink - 0.5, fy = Math.max(0, Math.min(h - 1, (y + 0.5) / shrink - 0.5));
+          var x0 = Math.floor(fx), y0 = Math.floor(fy), ax = fx - x0, ay = fy - y0;
+          var y1 = Math.min(h - 1, y0 + 1), c = [0, 0, 0];
+          var xa = ((x0 % w) + w) % w, xb = (xa + 1) % w;
+          for (var ch = 0; ch < 3; ch++) {
+            var top = small[y0 * w + xa][ch] * (1 - ax) + small[y0 * w + xb][ch] * ax;
+            var bottom = small[y1 * w + xa][ch] * (1 - ax) + small[y1 * w + xb][ch] * ax;
+            c[ch] = top * (1 - ay) + bottom * ay;
+          }
+          var m = Math.max(c[0], c[1], c[2]) / ENV.range;
+          m = Math.min(1, Math.max(1 / 255, Math.ceil(m * 255) / 255));
+          var o = ((level * H + y) * W + x) * 4;
+          for (ch = 0; ch < 3; ch++) px[o + ch] = Math.max(0, Math.min(255, Math.round(c[ch] / (m * ENV.range) * 255)));
+          px[o + 3] = Math.round(m * 255);
+        }
+      }
+    }
+    ENVIRONMENT = { width: W, height: H * ENV.levels, pixels: px, sh: environmentSH() };
+    return ENVIRONMENT;
+  }
+
+  /* What each finish looks like (PRD VIS-02), as a metal/roughness material.
+   *
+   * The renderer owns this and the server does not. Go holds the closed set of finish
+   * NAMES (geometry.FinishNames), because it validates them and describes them to the
+   * model; these numbers are how each one catches light, which nothing outside this file
+   * has any use for. Splitting the table by who needs it is what stops the two halves
+   * drifting — neither side holds the other's. ONE table: a finish is looked up here and
+   * nowhere else, and TestRendererHasAMaterialForEveryFinishGoAccepts holds its names to
+   * Go's and its roughness to the order the contract describes (glass sharpest, then
+   * metal's hard tight highlight, painted's soft sheen, plastic's broad dull one, rubber
+   * almost none).
+   *
+   *   metallic   0 a dielectric (its colour is diffuse), 1 a conductor (its colour tints
+   *              the reflection and there is no diffuse)
+   *   roughness  0 a mirror … 1 no highlight at all
+   *   coat       a clear coat's strength: a second, sharp reflection over the base —
+   *              what makes paint read as paint
+   *
+   * An unknown finish falls back rather than failing: the material's NAME is the claim,
+   * and losing the look is a much smaller harm than losing the part. */
+  var MATERIALS = {
+    metal:      { metallic: 1.0, roughness: 0.28, coat: 0.0 },
+    painted:    { metallic: 0.0, roughness: 0.45, coat: 0.8 },
+    plastic:    { metallic: 0.0, roughness: 0.55, coat: 0.0 },
+    glass:      { metallic: 0.0, roughness: 0.05, coat: 0.0 },
+    rubber:     { metallic: 0.0, roughness: 0.90, coat: 0.0 },
+    unfinished: { metallic: 0.0, roughness: 0.62, coat: 0.0 }
+  };
+
+  /* A batch's material as the three numbers the shader reads. */
+  function shadingFor(material) {
+    var f = material && material.finish;
+    var m = (Object.prototype.hasOwnProperty.call(MATERIALS, f) && MATERIALS[f]) || MATERIALS.unfinished;
+    return [m.metallic, m.roughness, m.coat];
+  }
+
+  /* ---- Where the camera may look from, and how deep it sees (A4, 2026-09-18) ----
+   *
+   * # What was wrong
+   *
+   * The near plane was 0.05 whatever the model, and the far plane at least 200. The
+   * workbench draws a design in its own unit, so a car in millimetres framed whole put
+   * the camera about 11,000 units away with a near plane of 0.05: a far/near ratio of
+   * 1.75 million, and a 24-bit depth buffer that can no longer tell apart two surfaces
+   * closer than ~140 mm at that distance. A rim 2.5 mm proud of its tyre, or a cut
+   * tool's ghost beside the wheel it clears, fought the tyre for every pixel — the
+   * streaks on the wheel faces. Nothing about the geometry was wrong.
+   * docs/bugfix/2026-09-18-wheel-faces-streaked-because-the-near-plane-ignored-the-models-size.md
+   *
+   * # The rule
+   *
+   * Both planes follow the model: `reach` is how far from the model's centre anything
+   * drawn can be (its box, an exploded view's spread, the dimension overlays), and the
+   * near plane is as far out as the eye can be without cutting into that — never nearer
+   * than 1% of the eye's distance to its target, so a camera zoomed right into a part
+   * keeps a usable ratio too. The far plane takes the whole reach and the floor grid.
+   * The wheel/pinch zoom is limited in the same terms (zoomLimits): it was 0.4 to 400
+   * units, so the first wheel tick on a millimetre car jumped the camera from 11,000 to
+   * 400 — inside the body.
+   * Fences: TestRendererDepthResolvesTheModelAtAnyScale, TestRendererZoomsInTheModelsOwnUnits. */
+  function clipPlanes(eye, target, bounds, explode) {
+    var span = bounds && bounds.span > 0 ? bounds.span : 10;
+    var centre = bounds ? bounds.centre : [0, 0, 0];
+    var reach = span * (0.9 + (explode || 0) * 0.6) + span * 0.1;
+    var toCentre = length3(sub(eye, centre)), toTarget = Math.max(length3(sub(eye, target)), span * 1e-4);
+    var near = Math.max(toCentre - reach, toTarget * 0.01);
+    /* The grid is centred on the origin and reaches 24 steps of about a tenth of the span. */
+    var grid = length3(sub(eye, [0, centre[1], 0])) + span * 2.5 * Math.SQRT2;
+    var far = Math.max(toCentre + reach, grid, near * 2);
+    return { near: near, far: far };
+  }
+  function zoomLimits(span) {
+    var s = span > 0 ? span : 10;
+    return { min: s * 0.02, max: s * 100 };
+  }
+
+  /* ---- Curves as fine as the screen needs (A5, 2026-09-18) ----------------------
+   *
+   * A cylinder's 40 sides are right for the export and for a part a few hundred pixels
+   * across; a wheel filling the viewport showed its facets along the silhouette. So a
+   * curved primitive batch is drawn, frame by frame, with the fewest of 1, 2, 4 or 8
+   * times its segments that keeps the chord's sag under DETAIL_TOLERANCE_PX pixels on its
+   * largest copy on screen. The sag of a circle of r pixels cut into n chords is
+   * r(1 − cos(π/n)), so the count needed is π / acos(1 − tol/r). Small copies never go
+   * below the export's count — the level of detail (W2) already draws those simplified
+   * or as a box — and each finer level is built once, when first needed, and kept. */
+  var DETAIL_TOLERANCE_PX = 0.5;
+  var DETAIL_MAX = 8;
+  function detailFor(radiusPx, baseSegments) {
+    if (!(radiusPx > DETAIL_TOLERANCE_PX) || !(baseSegments > 0)) return 1;
+    var need = Math.PI / Math.acos(1 - DETAIL_TOLERANCE_PX / radiusPx), f = 1;
+    while (f < DETAIL_MAX && baseSegments * f < need) f *= 2;
+    return f;
+  }
+  function geometryAtDetail(shape, factor) {
+    var saved = DETAIL;
+    DETAIL = factor;
+    try { return buildGeometry(shape); } finally { DETAIL = saved; }
+  }
+  /* The radius of the curve a primitive is drawn round, in its own frame, and how many
+   * segments its export count gives that curve; null for a shape with no curve to refine. */
+  function curveOf(shape) {
+    var s = shape.size || {};
+    switch (shape.shape) {
+      case 'cylinder': return { radius: Math.max(num(s.radius, 0.5), num(s.radius_top, 0)), segments: TESSELLATION.radial };
+      case 'cone': return { radius: num(s.radius, 0.5), segments: TESSELLATION.radial };
+      case 'sphere': return { radius: num(s.radius, 0.5), segments: TESSELLATION.sphereRadial };
+    }
+    /* The outline shapes curve wherever their outline or path does: refined by their box. */
+    return SMOOTHED_SHAPES[shape.shape] ? { radius: 0, segments: TESSELLATION.radial } : null;
+  }
+
+  /* ---- Feature lines (A6, 2026-09-18) ---------------------------------------------
+   *
+   * Every edge of a batch's surface where the two facets meeting there turn by more than
+   * CREASE_DEGREES, and every open edge, as a line list in the batch's frame. Computed
+   * once per batch the first time lines are asked for; off by default (setFeatureLines). */
+  function featureEdges(geo, creaseDeg) {
+    var pos = geo.positions, idx = geo.indices, tris = idx.length / 3;
+    var limit = Math.cos((creaseDeg || CREASE_DEGREES) * Math.PI / 180);
+    var bd = geometryBounds(pos), q = Math.max(bd.half[0], bd.half[1], bd.half[2], 1e-9) * 1e-6;
+    var ids = {}, points = [], weld = new Int32Array(pos.length / 3), v;
+    for (v = 0; v < weld.length; v++) {
+      var key = Math.round(pos[v * 3] / q) + ',' + Math.round(pos[v * 3 + 1] / q) + ',' + Math.round(pos[v * 3 + 2] / q);
+      if (ids[key] === undefined) { ids[key] = points.length / 3; points.push(pos[v * 3], pos[v * 3 + 1], pos[v * 3 + 2]); }
+      weld[v] = ids[key];
+    }
+    var edges = {};
+    for (var t = 0; t < tris; t++) {
+      var a = weld[idx[t * 3]], b = weld[idx[t * 3 + 1]], c = weld[idx[t * 3 + 2]];
+      if (a === b || b === c || a === c) continue;
+      var ux = points[b * 3] - points[a * 3], uy = points[b * 3 + 1] - points[a * 3 + 1], uz = points[b * 3 + 2] - points[a * 3 + 2];
+      var wx = points[c * 3] - points[a * 3], wy = points[c * 3 + 1] - points[a * 3 + 1], wz = points[c * 3 + 2] - points[a * 3 + 2];
+      var n = normalize([uy * wz - uz * wy, uz * wx - ux * wz, ux * wy - uy * wx]);
+      [[a, b], [b, c], [c, a]].forEach(function (e) {
+        var k = e[0] < e[1] ? e[0] + ':' + e[1] : e[1] + ':' + e[0];
+        (edges[k] || (edges[k] = [])).push(n);
+      });
+    }
+    var lines = [];
+    Object.keys(edges).forEach(function (k) {
+      var ns = edges[k], sharp = ns.length === 1;
+      for (var i = 1; i < ns.length && !sharp; i++) if (dot(ns[0], ns[i]) < limit) sharp = true;
+      if (!sharp) return;
+      var ends = k.split(':');
+      lines.push(+ends[0], +ends[1]);
+    });
+    return { positions: points, indices: lines };
   }
 
   /* ---- the studio ------------------------------------------------------- */
@@ -2873,7 +3723,13 @@
        * whole story. Matches --warn-ink in shell.css, in each theme. */
       removed: '#e6cd8f',
       stated: [0.55, 0.85, 0.95],
-      derived: [0.52, 0.60, 0.72]
+      derived: [0.52, 0.60, 0.72],
+      /* The studio backdrop (2026-09-18): the cove's floor, its wall at the horizon and
+       * the ceiling above, in sRGB; the contact shadow's colour and depth; exposure. */
+      backdrop: { floor: [0.085, 0.095, 0.120], wall: [0.120, 0.135, 0.170], top: [0.165, 0.180, 0.225] },
+      shadow: { tint: [0.0, 0.0, 0.0], strength: 1.0 },
+      edge: [0.02, 0.03, 0.05, 0.55],
+      exposure: 0.85
     },
     light: {
       clear: [0.949, 0.953, 0.965],
@@ -2883,7 +3739,11 @@
       partFallback: [0.55, 0.57, 0.61],
       removed: '#8a6520',
       stated: [0.08, 0.38, 0.52],
-      derived: [0.34, 0.38, 0.48]
+      derived: [0.34, 0.38, 0.48],
+      backdrop: { floor: [0.830, 0.838, 0.855], wall: [0.935, 0.940, 0.952], top: [0.975, 0.977, 0.982] },
+      shadow: { tint: [0.10, 0.11, 0.14], strength: 0.85 },
+      edge: [0.10, 0.11, 0.14, 0.60],
+      exposure: 0.85
     }
   };
 
@@ -2912,10 +3772,13 @@
      * versions, and a second pair would be a second place for the lighting to drift.
      * TestRendererUploadsTheInstancesTheExporterPlaces draws through all three. */
     var attrs = { antialias: true, alpha: false };
-    var gl = canvas.getContext('webgl2', attrs), webgl2 = !!gl, instancing = null;
+    /* WebGL2 draws into its own multisampled target and resolves that to the canvas
+     * (2026-09-18: the occlusion pass needs the depth of what was drawn, and a canvas's
+     * depth cannot be read), so its canvas needs no multisampling of its own. */
+    var gl = canvas.getContext('webgl2', { antialias: false, alpha: false }), webgl2 = !!gl, instancing = null;
     if (gl) {
       instancing = {
-        draw: function (count, type, n) { gl.drawElementsInstanced(gl.TRIANGLES, count, type, 0, n); },
+        draw: function (count, type, n, mode) { gl.drawElementsInstanced(mode || gl.TRIANGLES, count, type, 0, n); },
         divisor: function (loc, d) { gl.vertexAttribDivisor(loc, d); }
       };
     } else {
@@ -2923,7 +3786,7 @@
       var angle = gl && gl.getExtension ? gl.getExtension('ANGLE_instanced_arrays') : null;
       if (angle) {
         instancing = {
-          draw: function (count, type, n) { angle.drawElementsInstancedANGLE(gl.TRIANGLES, count, type, 0, n); },
+          draw: function (count, type, n, mode) { angle.drawElementsInstancedANGLE(mode || gl.TRIANGLES, count, type, 0, n); },
           divisor: function (loc, d) { angle.vertexAttribDivisorANGLE(loc, d); }
         };
       }
@@ -2950,6 +3813,30 @@
     this.renderPath = webgl2 ? 'webgl2' : instancing ? 'webgl1-instanced' : 'webgl1-per-copy';
     this.prog = program(gl, VERT, FRAG, PART_ATTRIBUTES);
     this.lineProg = program(gl, LINE_VERT, LINE_FRAG, { aPos: ATTRIB.pos });
+    /* The presentation's programs (2026-09-18): every one but the occlusion pair is GLSL
+     * ES 1.00 and so the same on every path. */
+    this.backdropProg = program(gl, SCREEN_VERT, BACKDROP_FRAG, { aPos: ATTRIB.pos });
+    this.shadowProg = program(gl, SHADOW_VERT, SHADOW_FRAG, PART_ATTRIBUTES);
+    this.blurProg = program(gl, SCREEN_VERT, BLUR_FRAG, { aPos: ATTRIB.pos });
+    this.groundProg = program(gl, GROUND_VERT, GROUND_FRAG, { aPos: ATTRIB.pos });
+    this.edgeProg = program(gl, EDGE_VERT, EDGE_FRAG, PART_ATTRIBUTES);
+    if (webgl2) {
+      this.aoProg = program(gl, AO_VERT, AO_FRAG, { aPos: ATTRIB.pos });
+      this.aoCompositeProg = program(gl, AO_VERT, AO_COMPOSITE_FRAG, { aPos: ATTRIB.pos });
+    }
+    this._uniforms = {};
+    this._screen = makeBuffer(gl, gl.ARRAY_BUFFER, new Float32Array([-1, -1, 0, 3, -1, 0, -1, 3, 0]));
+    this._envTexture = this._makeEnvironment();
+    /* What the presentation draws; each can be turned off (the measurement page does, to
+     * time what each costs). Feature lines are off unless asked for. */
+    this.contactShadow = true;
+    this.ambientOcclusion = webgl2;
+    this.featureLines = false;
+    /* 'shaded' unless something asks for 'normals' (setSurfaceView). Nothing in the
+     * workbench does; the looks judge does. */
+    this.surfaceView = 'shaded';
+    this.adaptiveDetail = true;
+    this._shadowDirty = true;
 
     this.parts = [];
     this.spec = null;
@@ -2978,7 +3865,7 @@
     this.lazy = null;
     this.stats = null;
 
-    this.camera = { yaw: 0.7, pitch: 0.5, distance: 6, target: [0, 0, 0] };
+    this.camera = { yaw: HERO.yaw, pitch: HERO.pitch, distance: 6, target: [0, 0, 0] };
     this._bindControls();
     this._resize();
 
@@ -3089,7 +3976,7 @@
     });
     this.canvas.addEventListener('wheel', function (e) {
       e.preventDefault();
-      self.camera.distance = Math.max(0.4, Math.min(400, self.camera.distance * (1 + e.deltaY * 0.0013)));
+      self.zoomBy(1 + e.deltaY * 0.0013);
       self.draw();
     }, { passive: false });
 
@@ -3109,7 +3996,7 @@
       } else if (e.touches.length === 2) {
         var d = touchDistance(e.touches);
         if (lastPinch) {
-          self.camera.distance = Math.max(0.4, Math.min(400, self.camera.distance * (lastPinch / d)));
+          self.zoomBy(lastPinch / d);
           self.draw();
         }
         lastPinch = d;
@@ -3134,6 +4021,328 @@
 
   Studio.prototype._eye = function () {
     return add(this.camera.target, scale3(this._eyeDir(), this.camera.distance));
+  };
+
+  /* Zoom by a factor of the camera's distance, within zoomLimits of the model's size. */
+  Studio.prototype.zoomBy = function (factor) {
+    var lim = zoomLimits(this.bounds && this.bounds.span);
+    this.camera.distance = Math.max(lim.min, Math.min(lim.max, this.camera.distance * factor));
+  };
+
+  /* The presentation's switches (2026-09-18). Each redraws. */
+  Studio.prototype.setFeatureLines = function (on) { this.featureLines = !!on; this.draw(); };
+  Studio.prototype.setAmbientOcclusion = function (on) { this.ambientOcclusion = !!on && this.webgl2; this.draw(); };
+  Studio.prototype.setContactShadow = function (on) { this.contactShadow = !!on; this._shadowDirty = true; this.draw(); };
+
+  /* The surface view (looks, stage D): 'shaded' — what a reader sees — or 'normals',
+   * where a surface's colour is the direction it faces and nothing else.
+   *
+   * ‼️ This exists for the looks judge (internal/looks), not for the workbench. A studio
+   * light is exactly what hides the difference between a fillet and a chamfer, between a
+   * curved panel and eight flats: a flattering highlight rolls across both. The normals
+   * view removes the light from the question, so a row of facets reads as a row of bands
+   * and a real curve reads as a gradient. It changes nothing about the model, the export
+   * or any other pass — only what the part program writes. An unknown name is 'shaded',
+   * because a view nobody can name must not silently become a debug picture on a
+   * reader's screen. */
+  Studio.prototype.setSurfaceView = function (name) {
+    this.surfaceView = name === 'normals' ? 'normals' : 'shaded';
+    this.draw();
+  };
+
+  /* A uniform's location in a program, looked up once. */
+  Studio.prototype._u = function (prog, name) {
+    var key = (prog.__forgeID || (prog.__forgeID = ++PROGRAM_IDS)) + ':' + name;
+    var memo = this._uniforms;
+    if (!(key in memo)) memo[key] = this.gl.getUniformLocation(prog, name);
+    return memo[key];
+  };
+  var PROGRAM_IDS = 0;
+
+  /* The studio's environment as a texture: built once per page, uploaded once per Studio. */
+  Studio.prototype._makeEnvironment = function () {
+    var gl = this.gl, env = environment(), tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, env.width, env.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, env.pixels);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.REPEAT);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.bindTexture(gl.TEXTURE_2D, null);
+    return tex;
+  };
+
+  /* A colour texture of w × h, and a framebuffer drawing into it (with a depth buffer when
+   * asked). RGBA8 with linear filtering: renderable and filterable on every WebGL1. */
+  function colourTarget(gl, w, h, depth) {
+    var tex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0, gl.RGBA, gl.UNSIGNED_BYTE, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    var fb = gl.createFramebuffer(), rb = null;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, fb);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, tex, 0);
+    if (depth) {
+      rb = gl.createRenderbuffer();
+      gl.bindRenderbuffer(gl.RENDERBUFFER, rb);
+      gl.renderbufferStorage(gl.RENDERBUFFER, gl.DEPTH_COMPONENT16, w, h);
+      gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, rb);
+    }
+    var ok = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.bindTexture(gl.TEXTURE_2D, null);
+    return ok ? { fb: fb, tex: tex, rb: rb, w: w, h: h } : null;
+  }
+
+  /* One full-screen triangle through the bound program. */
+  Studio.prototype._fullScreen = function () {
+    var gl = this.gl;
+    gl.bindBuffer(gl.ARRAY_BUFFER, this._screen);
+    gl.enableVertexAttribArray(ATTRIB.pos);
+    gl.vertexAttribPointer(ATTRIB.pos, 3, gl.FLOAT, false, 0, 0);
+    gl.drawArrays(gl.TRIANGLES, 0, 3);
+  };
+
+  /* ---- The contact shadow (A3, 2026-09-18) ---------------------------------------
+   *
+   * The model seen from under the floor, straight up, into a small texture: each texel
+   * is how close to the floor the lowest surface above it is. Blurred, and laid on the
+   * floor under the model. It does not depend on the camera, so it is captured only when
+   * what is drawn changes — a load, an explode, an assembly state, an isolation — and a
+   * frame that only turns the camera costs one textured quad. */
+  var SHADOW_SIZE = 256;
+  Studio.prototype._shadowRect = function () {
+    var bd = this.bounds;
+    if (!bd) return null;
+    var grow = bd.span * (0.35 + (this.explode || 0) * 0.6);
+    return { x0: bd.min[0] - grow, z0: bd.min[2] - grow, x1: bd.max[0] + grow, z1: bd.max[2] + grow,
+             floor: bd.min[1] - bd.span * 0.002, span: bd.span };
+  };
+
+  Studio.prototype._captureShadow = function () {
+    var gl = this.gl, r = this._shadowRect();
+    this._shadowDirty = false;
+    if (!r || !this.batches || !this.batches.length) { this._shadow = null; return; }
+    if (!this._shadowTargets) {
+      var a = colourTarget(gl, SHADOW_SIZE, SHADOW_SIZE, true), b = colourTarget(gl, SHADOW_SIZE, SHADOW_SIZE, false);
+      var c = colourTarget(gl, SHADOW_SIZE, SHADOW_SIZE, false);
+      this._shadowTargets = a && b && c ? [a, b, c] : false;
+    }
+    if (!this._shadowTargets) { this._shadow = null; return; }
+    var t = this._shadowTargets, cx = (r.x0 + r.x1) / 2, cz = (r.z0 + r.z1) / 2;
+    var hx = (r.x1 - r.x0) / 2, hz = (r.z1 - r.z0) / 2, depth = r.span * 4;
+    /* From below, looking up, with +Z up the texture: texture u is world x, v world z. */
+    var eye = [cx, r.floor - r.span, cz];
+    var view = lookAt(eye, [cx, r.floor, cz], [0, 0, 1]);
+    var proj = orthographic(-hx, hx, -hz, hz, 0, depth);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, t[0].fb);
+    gl.viewport(0, 0, SHADOW_SIZE, SHADOW_SIZE);
+    gl.clearColor(0, 0, 0, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    gl.enable(gl.DEPTH_TEST);
+    gl.disable(gl.CULL_FACE);
+    gl.disable(gl.BLEND);
+    gl.useProgram(this.shadowProg);
+    gl.uniformMatrix4fv(this._u(this.shadowProg, 'uView'), false, view);
+    gl.uniformMatrix4fv(this._u(this.shadowProg, 'uProj'), false, proj);
+    gl.uniform1f(this._u(this.shadowProg, 'uFloor'), r.floor);
+    gl.uniform1f(this._u(this.shadowProg, 'uFalloff'), r.span * 0.12);
+    /* Through the same batches, culling and level of detail as a frame, at the texture's
+     * own scale — its own frame number, so pick() still reads the last frame on screen. */
+    var frame = { number: -1, view: view, proj: proj, eye: eye, planes: frustumPlanes(multiply(proj, view)),
+                  pixels: SHADOW_SIZE / (2 * Math.max(hx, hz)) * r.span, pass: 'shadow' };
+    var stats = { drawCalls: 0, instances: 0, culled: 0, proxied: 0, simplified: 0, hidden: 0, translucent: 0,
+                  placeholders: 0, visited: 0, uploadedBytes: 0 };
+    this._pass = 'shadow';
+    for (var n = 0; n < this.batches.length; n++) {
+      if (this.batches[n].placeholder) continue;
+      this._drawBatch(this.batches[n], frame, stats, []);
+    }
+    this._pass = null;
+    this._resetInstanceAttributes();   // before the blur's full-screen passes
+    /* Two rounds of a separable blur, ping-ponging through the other two targets. */
+    gl.disable(gl.DEPTH_TEST);
+    gl.useProgram(this.blurProg);
+    gl.uniform1i(this._u(this.blurProg, 'uTex'), 0);
+    gl.activeTexture(gl.TEXTURE0);
+    var src = t[0], steps = [[1, 0], [0, 1], [1, 0], [0, 1]], spread = 3.0 / SHADOW_SIZE;
+    for (var s = 0; s < steps.length; s++) {
+      var dst = s % 2 === 0 ? t[1] : t[2];
+      gl.bindFramebuffer(gl.FRAMEBUFFER, dst.fb);
+      gl.viewport(0, 0, SHADOW_SIZE, SHADOW_SIZE);
+      gl.bindTexture(gl.TEXTURE_2D, src.tex);
+      gl.uniform2f(this._u(this.blurProg, 'uStep'), steps[s][0] * spread, steps[s][1] * spread);
+      this._fullScreen();
+      src = dst;
+    }
+    gl.bindTexture(gl.TEXTURE_2D, null);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.enable(gl.CULL_FACE);
+    this._shadow = { tex: src.tex, rect: r, drawCalls: stats.drawCalls, instances: stats.instances };
+  };
+
+  function orthographic(l, r, b, t, n, f) {
+    var out = new Float32Array(16);
+    out[0] = 2 / (r - l); out[5] = 2 / (t - b); out[10] = -2 / (f - n);
+    out[12] = -(r + l) / (r - l); out[13] = -(t + b) / (t - b); out[14] = -(f + n) / (f - n); out[15] = 1;
+    return out;
+  }
+
+  /* The captured shadow, laid on the floor under the model. */
+  Studio.prototype._drawGround = function (view, proj) {
+    var gl = this.gl, sh = this._shadow;
+    if (!sh) return;
+    var r = sh.rect, g = ground().shadow;
+    if (!this._groundBuffer || this._groundKey !== [r.x0, r.z0, r.x1, r.z1, r.floor].join()) {
+      if (this._groundBuffer) gl.deleteBuffer(this._groundBuffer);
+      this._groundBuffer = makeBuffer(gl, gl.ARRAY_BUFFER, new Float32Array([
+        r.x0, r.floor, r.z0, r.x1, r.floor, r.z1, r.x1, r.floor, r.z0,
+        r.x0, r.floor, r.z0, r.x0, r.floor, r.z1, r.x1, r.floor, r.z1]));
+      this._groundKey = [r.x0, r.z0, r.x1, r.z1, r.floor].join();
+    }
+    var P = this.groundProg;
+    gl.useProgram(P);
+    gl.uniformMatrix4fv(this._u(P, 'uView'), false, view);
+    gl.uniformMatrix4fv(this._u(P, 'uProj'), false, proj);
+    gl.uniform4f(this._u(P, 'uRect'), r.x0, r.z0, r.x1 - r.x0, r.z1 - r.z0);
+    gl.uniform3fv(this._u(P, 'uTint'), g.tint);
+    gl.uniform1f(this._u(P, 'uStrength'), g.strength);
+    gl.uniform1i(this._u(P, 'uShadow'), 0);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, sh.tex);
+    gl.disable(gl.CULL_FACE);
+    gl.depthMask(false);
+    gl.bindBuffer(gl.ARRAY_BUFFER, this._groundBuffer);
+    gl.enableVertexAttribArray(ATTRIB.pos);
+    gl.vertexAttribPointer(ATTRIB.pos, 3, gl.FLOAT, false, 0, 0);
+    gl.drawArrays(gl.TRIANGLES, 0, 6);
+    gl.depthMask(true);
+    gl.enable(gl.CULL_FACE);
+    gl.bindTexture(gl.TEXTURE_2D, null);
+  };
+
+  /* The studio backdrop, first, behind everything and writing no depth. */
+  Studio.prototype._drawBackdrop = function (view, proj) {
+    var gl = this.gl, P = this.backdropProg, b = ground().backdrop;
+    var inv = invert4(multiply(proj, view));
+    if (!inv) return;
+    gl.useProgram(P);
+    gl.uniformMatrix4fv(this._u(P, 'uInvViewProj'), false, new Float32Array(inv));
+    gl.uniform3fv(this._u(P, 'uFloor'), b.floor);
+    gl.uniform3fv(this._u(P, 'uWall'), b.wall);
+    gl.uniform3fv(this._u(P, 'uTop'), b.top);
+    gl.disable(gl.DEPTH_TEST);
+    gl.depthMask(false);
+    this._fullScreen();
+    gl.depthMask(true);
+    gl.enable(gl.DEPTH_TEST);
+  };
+
+  /* ---- WebGL2's own target, and the occlusion read from it (A3, 2026-09-18) --------
+   *
+   * A multisampled colour and depth target the size of the canvas: the frame is drawn
+   * there, its depth resolved into a texture the occlusion pass reads, the occlusion
+   * multiplied back over the opaque picture, translucent parts and overlays drawn on top,
+   * and the whole resolved to the canvas. null — and the frame drawn straight to the
+   * canvas as on WebGL1 — when occlusion is off or a target cannot be made. */
+  Studio.prototype._postTargets = function (w, h) {
+    var gl = this.gl;
+    if (!this.webgl2 || !this.ambientOcclusion) return null;
+    var p = this._post;
+    if (p === false) return null;
+    if (p && p.w === w && p.h === h) return p;
+    if (p) releasePost(gl, p);
+    var samples = Math.min(4, gl.getParameter(gl.MAX_SAMPLES) || 0);
+    p = { w: w, h: h, samples: samples };
+    p.ms = gl.createFramebuffer();
+    p.colour = gl.createRenderbuffer();
+    gl.bindRenderbuffer(gl.RENDERBUFFER, p.colour);
+    gl.renderbufferStorageMultisample(gl.RENDERBUFFER, samples, gl.RGBA8, w, h);
+    p.depthRB = gl.createRenderbuffer();
+    gl.bindRenderbuffer(gl.RENDERBUFFER, p.depthRB);
+    gl.renderbufferStorageMultisample(gl.RENDERBUFFER, samples, gl.DEPTH_COMPONENT24, w, h);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, p.ms);
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.RENDERBUFFER, p.colour);
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.RENDERBUFFER, p.depthRB);
+    var ok = gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
+    /* The resolved depth, as a texture. */
+    p.depthTex = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, p.depthTex);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.DEPTH_COMPONENT24, w, h, 0, gl.DEPTH_COMPONENT, gl.UNSIGNED_INT, null);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    p.resolve = gl.createFramebuffer();
+    gl.bindFramebuffer(gl.FRAMEBUFFER, p.resolve);
+    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.DEPTH_ATTACHMENT, gl.TEXTURE_2D, p.depthTex, 0);
+    ok = ok && gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
+    /* The multisampled colour is resolved into this, same format, and copied from here to
+     * the canvas: a canvas without alpha is RGB8, and a multisample resolve must not
+     * change format (a single-sample copy may). */
+    p.flat = gl.createFramebuffer();
+    p.flatRB = gl.createRenderbuffer();
+    gl.bindRenderbuffer(gl.RENDERBUFFER, p.flatRB);
+    gl.renderbufferStorage(gl.RENDERBUFFER, gl.RGBA8, w, h);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, p.flat);
+    gl.framebufferRenderbuffer(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.RENDERBUFFER, p.flatRB);
+    ok = ok && gl.checkFramebufferStatus(gl.FRAMEBUFFER) === gl.FRAMEBUFFER_COMPLETE;
+    p.ao = colourTarget(gl, Math.max(1, w >> 1), Math.max(1, h >> 1), false);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    gl.bindTexture(gl.TEXTURE_2D, null);
+    if (!ok || !p.ao) { releasePost(gl, p); this._post = false; return null; }
+    this._post = p;
+    return p;
+  };
+
+  function releasePost(gl, p) {
+    ['ms', 'resolve', 'flat'].forEach(function (k) { if (p[k]) gl.deleteFramebuffer(p[k]); });
+    ['colour', 'depthRB', 'flatRB'].forEach(function (k) { if (p[k]) gl.deleteRenderbuffer(p[k]); });
+    if (p.depthTex) gl.deleteTexture(p.depthTex);
+    if (p.ao) { gl.deleteFramebuffer(p.ao.fb); gl.deleteTexture(p.ao.tex); }
+  }
+
+  /* The occlusion over what is opaque so far: resolve depth, compute at half size, and
+   * multiply it into the multisampled picture. */
+  Studio.prototype._applyOcclusion = function (p, proj, span) {
+    var gl = this.gl;
+    gl.bindFramebuffer(gl.READ_FRAMEBUFFER, p.ms);
+    gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, p.resolve);
+    gl.blitFramebuffer(0, 0, p.w, p.h, 0, 0, p.w, p.h, gl.DEPTH_BUFFER_BIT, gl.NEAREST);
+    gl.bindFramebuffer(gl.FRAMEBUFFER, p.ao.fb);
+    gl.viewport(0, 0, p.ao.w, p.ao.h);
+    gl.disable(gl.DEPTH_TEST);
+    gl.disable(gl.BLEND);
+    var P = this.aoProg, inv = invert4(proj);
+    gl.useProgram(P);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, p.depthTex);
+    gl.uniform1i(this._u(P, 'uDepth'), 0);
+    gl.uniformMatrix4fv(this._u(P, 'uInvProj'), false, new Float32Array(inv || IDENTITY));
+    gl.uniformMatrix4fv(this._u(P, 'uProj'), false, proj);
+    gl.uniform2f(this._u(P, 'uTexel'), 1 / p.w, 1 / p.h);
+    gl.uniform1f(this._u(P, 'uRadius'), Math.min(span * 0.05, this.camera.distance * 0.08));
+    gl.uniform1f(this._u(P, 'uStrength'), 1.1);
+    this._fullScreen();
+    /* Back over the picture: destination × occlusion. */
+    gl.bindFramebuffer(gl.FRAMEBUFFER, p.ms);
+    gl.viewport(0, 0, p.w, p.h);
+    var C = this.aoCompositeProg;
+    gl.useProgram(C);
+    gl.bindTexture(gl.TEXTURE_2D, p.ao.tex);
+    gl.uniform1i(this._u(C, 'uAO'), 0);
+    gl.uniform2f(this._u(C, 'uTexel'), 1 / p.ao.w, 1 / p.ao.h);
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.ZERO, gl.SRC_COLOR);
+    gl.depthMask(false);
+    this._fullScreen();
+    gl.depthMask(true);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    gl.enable(gl.DEPTH_TEST);
+    gl.bindTexture(gl.TEXTURE_2D, null);
   };
 
   /* load replaces the scene from a prototype spec.
@@ -3177,7 +4386,9 @@
      * — and `built`, the mesh reply when the kernel answered, is how a definition's
      * triangles and its copies' matrices reach it (Phase 6, stage W1). */
     var wide = this.webgl2 || !!gl.getExtension('OES_element_index_uint');
+    this._wide = wide;
     var plan = drawBatches(partsToDraw(this.spec), built || null, { wide: wide, toMM: unitToMM(this.spec.units) });
+    this._meshOnlyLabel = (built && built.mesh_only_label) || MESH_ONLY_LABEL;
     this.approximations = plan.approximations;
     this.batches = plan.batches.map(function (b) { return self._upload(b, wide); });
 
@@ -3229,6 +4440,8 @@
        * frame; and this frame's drawn copies with their run, in the order they were found. */
       seen: new Uint32Array(n), drawn: new Int32Array(n), drawnGroup: new Uint8Array(n),
       placeholder: !!plan.placeholder, simple: null, tree: null,
+      meshOnly: !!plan.meshOnly, ghost: !!plan.ghost,
+      shape: plan.shape || null, curve: plan.shape ? plan.curve || null : null, details: {}, draw: null, detail: 1,
       scratch: new Float32Array(n * INSTANCE_FLOATS), instanceBuffer: gl.createBuffer()
     };
     var c = bd.centre, h = bd.half;
@@ -3238,7 +4451,9 @@
       b.repeatOf[i] = inst.repeatOf;
       b.specs[i] = s;
       b.removed[i] = inst.removed ? 1 : 0;
-      b.opacity[i] = num(s.opacity, 1);
+      /* A mesh-only part is never drawn opaque like a solid (see MESH_ONLY_SHAPES). */
+      b.opacity[i] = plan.meshOnly ? Math.min(num(s.opacity, 1), plan.ghost ? MESH_ONLY_GHOST_ALPHA : MESH_ONLY_ALPHA)
+        : num(s.opacity, 1);
       for (var k = 0; k < 16; k++) b.model[i * 16 + k] = m[k];
       b.centre[o]     = m[0] * c[0] + m[4] * c[1] + m[8] * c[2] + m[12];
       b.centre[o + 1] = m[1] * c[0] + m[5] * c[1] + m[9] * c[2] + m[13];
@@ -3291,6 +4506,11 @@
       gl.deleteBuffer(b.simple.normal);
       gl.deleteBuffer(b.simple.index);
     }
+    Object.keys(b.details || {}).forEach(function (k) {
+      var d = b.details[k];
+      if (d.position) { gl.deleteBuffer(d.position); gl.deleteBuffer(d.normal); gl.deleteBuffer(d.index); }
+    });
+    if (b.edges && b.edges.position) { gl.deleteBuffer(b.edges.position); gl.deleteBuffer(b.edges.index); }
     gl.deleteBuffer(b.instanceBuffer);
   }
 
@@ -3349,9 +4569,22 @@
     var centre = [(min[0]+max[0])/2, (min[1]+max[1])/2, (min[2]+max[2])/2];
     var span = Math.max(max[0]-min[0], max[1]-min[1], max[2]-min[2], 0.5);
     this.camera.target = centre;
-    this.camera.distance = span * 2.4;
+    /* Framed on the sphere round the box, so the whole model fits the 45° view from any
+     * side with a little room (2026-09-18: span × 2.4 left a long car a third of the
+     * frame). Never nearer than the old framing's half, for a model that is one long bar. */
+    var half = length3([(max[0] - min[0]) / 2, (max[1] - min[1]) / 2, (max[2] - min[2]) / 2]);
+    this.camera.distance = Math.max(half * 1.08 / Math.sin(FOV_DEGREES * Math.PI / 360), span * 1.2);
+    /* A design browsed a row at a time is framed on what has arrived so far, and the rows
+     * after it arrive round it: framed as loosely as before, so they arrive in view. */
+    if (this.lazy && this.lazy.browse) this.camera.distance = span * 2.4;
     this.bounds = { min: min, max: max, span: span, centre: centre };
+    this._shadowDirty = true;
   };
+
+  /* The default view: a three-quarter hero angle, looking a little down across the model
+   * from front-left — the angle a product is photographed from (A7, 2026-09-18). It was
+   * yaw 0.7, pitch 0.5: nearly the "iso" preset, high enough to flatten a car's sides. */
+  var HERO = { yaw: 0.62, pitch: 0.34 };
 
   /* Engineering overlays (PRD VIS-03).
    *
@@ -3376,8 +4609,8 @@
     this.draw();
   };
 
-  Studio.prototype.setExplode = function (v) { this.explode = v; this.draw(); };
-  Studio.prototype.setTransparency = function (v) { this.transparency = v; this.draw(); };
+  Studio.prototype.setExplode = function (v) { this.explode = v; this._shadowDirty = true; this.draw(); };
+  Studio.prototype.setTransparency = function (v) { this.transparency = v; this._shadowDirty = true; this.draw(); };
   Studio.prototype.setGrid = function (on) { this.showGrid = !!on; this.draw(); };
   /* select highlights what a person picked: a part as written ("spoke" lights every
    * copy), a path (its whole subtree, Phase 6 stage W2), or a matcher from
@@ -3388,6 +4621,7 @@
    * redraw, not a reload: isolating a subtree of a car must not rebuild the car. */
   Studio.prototype.isolate = function (matcher) {
     this.isolated = typeof matcher === 'function' ? matcher : null;
+    this._shadowDirty = true;
     this.draw();
   };
 
@@ -3585,6 +4819,7 @@
       return { id: d.spec.id, spec: d.spec, removed: !!d.removed, repeatOf: d.repeatOf, fromKernel: false };
     });
     var wide = this.webgl2 || !!gl.getExtension('OES_element_index_uint');
+    this._wide = wide;
     /* Where each top-level slot's parts are, from the boxes of the shapes that will be
      * drawn there: computed on the CPU and never uploaded. */
     var slots = {}, order = [];
@@ -3825,6 +5060,7 @@
       if (!framed) this._frameAll();
       this._notice('');
     }
+    this._shadowDirty = true;
     this.draw();
     return drawn.length;
   };
@@ -3920,9 +5156,9 @@
     this.draw();
   };
 
-  Studio.prototype.resetView = function () { this.camera.yaw = 0.7; this.camera.pitch = 0.5; this._frameAll(); this.draw(); };
+  Studio.prototype.resetView = function () { this.camera.yaw = HERO.yaw; this.camera.pitch = HERO.pitch; this._frameAll(); this.draw(); };
   Studio.prototype.viewFrom = function (which) {
-    var v = { front: [0, 0], top: [0, 1.5], side: [Math.PI/2, 0], iso: [0.7, 0.5] }[which] || [0.7, 0.5];
+    var v = { front: [0, 0], top: [0, 1.5], side: [Math.PI/2, 0], iso: [0.7, 0.5], hero: [HERO.yaw, HERO.pitch] }[which] || [HERO.yaw, HERO.pitch];
     this.camera.yaw = v[0]; this.camera.pitch = v[1];
     this.draw();
   };
@@ -4200,6 +5436,25 @@
     var gl = this.gl;
     var w = this.canvas.width, h = this.canvas.height;
 
+    /* The contact shadow first, when what is drawn has changed: it draws into its own
+     * target and leaves the canvas alone. */
+    var captured = 0;
+    if (this._shadowDirty) {
+      if (this.contactShadow && this.bounds) {
+        this._captureShadow();
+        captured = this._shadow ? this._shadow.instances : 0;
+      } else { this._shadow = null; this._shadowDirty = false; }
+    }
+
+    var post = this._postTargets(w, h);
+    /* Whether the occlusion pass runs THIS frame, decided once. The stats line below
+     * and the pass itself both read this one expression, because two places deciding
+     * the same thing is how a stats line ends up reporting a pass that did not run —
+     * and the stats line is where a reader looks to find out what was drawn. Not in
+     * the normals view: there a pixel's colour is the direction the surface faces and
+     * nothing else, and a darkened crease would read as a turn that is not there. */
+    var occluded = !!post && this.surfaceView !== 'normals';
+    gl.bindFramebuffer(gl.FRAMEBUFFER, post ? post.ms : null);
     gl.viewport(0, 0, w, h);
     var g = ground();
     gl.clearColor(g.clear[0], g.clear[1], g.clear[2], 1);
@@ -4211,58 +5466,101 @@
 
     var eye = this._eye();
     var view = lookAt(eye, this.camera.target, [0, 1, 0]);
-    var proj = perspective(FOV_DEGREES, w / Math.max(1, h), 0.05, Math.max(200, this.camera.distance * 8));
+    /* Near and far from the model's size, not fixed numbers (A4, 2026-09-18). */
+    var clip = clipPlanes(eye, this.camera.target, this.bounds, this.explode);
+    var proj = perspective(FOV_DEGREES, w / Math.max(1, h), clip.near, clip.far);
 
+    this._drawBackdrop(view, proj);
     if (this.showGrid) this._drawGrid(view, proj);
+    this._drawGround(view, proj);
 
     gl.useProgram(this.prog);
     var P = this.prog;
     var loc = this._loc || (this._loc = {
       view: gl.getUniformLocation(P, 'uView'),
       proj: gl.getUniformLocation(P, 'uProj'),
-      light: gl.getUniformLocation(P, 'uLightDir'),
       cam: gl.getUniformLocation(P, 'uCamPos'),
       secAxis: gl.getUniformLocation(P, 'uSectionAxis'),
       secAt: gl.getUniformLocation(P, 'uSectionAt'),
       light2: gl.getUniformLocation(P, 'uLight'),
-      specPower: gl.getUniformLocation(P, 'uSpecPower'),
-      specGloss: gl.getUniformLocation(P, 'uSpecGloss')
+      material: gl.getUniformLocation(P, 'uMaterial'),
+      env: gl.getUniformLocation(P, 'uEnv'),
+      sh: gl.getUniformLocation(P, 'uSH'),
+      keyDir: gl.getUniformLocation(P, 'uKeyDir'),
+      keyColour: gl.getUniformLocation(P, 'uKeyColour'),
+      exposure: gl.getUniformLocation(P, 'uExposure'),
+      surface: gl.getUniformLocation(P, 'uSurfaceView')
     });
     gl.uniformMatrix4fv(loc.view, false, view);
     gl.uniformMatrix4fv(loc.proj, false, proj);
-    gl.uniform3fv(loc.light, normalize([0.45, 0.85, 0.5]));
     gl.uniform3fv(loc.cam, eye);
     gl.uniform1f(loc.light2, LIGHT ? 1 : 0);
     gl.uniform1i(loc.secAxis, this.section.axis);
     gl.uniform1f(loc.secAt, this.section.at);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this._envTexture);
+    gl.uniform1i(loc.env, 0);
+    gl.uniform3fv(loc.sh, environment().sh);
+    gl.uniform3fv(loc.keyDir, KEY_LIGHT.direction);
+    gl.uniform3fv(loc.keyColour, KEY_LIGHT.colour);
+    gl.uniform1f(loc.exposure, g.exposure);
+    gl.uniform1f(loc.surface, this.surfaceView === 'normals' ? 1 : 0);
 
     /* What the frame was drawn with, kept for pick(): a click is resolved against the
      * camera and the displacements that were on screen, not whatever changed since. */
     var frame = this._frame = {
       number: (this._frameNumber = (this._frameNumber || 0) + 1),
       view: view, proj: proj, eye: eye, planes: frustumPlanes(multiply(proj, view)),
-      pixels: h / (2 * Math.tan(FOV_DEGREES * Math.PI / 360))
+      pixels: h / (2 * Math.tan(FOV_DEGREES * Math.PI / 360)), near: clip.near, far: clip.far
     };
     /* Counted every frame and kept, because "how many draw calls" is the question a
      * slow viewport is asked first and the answer must not need a debugger. */
     var stats = this.stats = { path: this.renderPath, batches: (this.batches || []).length, drawCalls: 0,
       instances: 0, culled: 0, proxied: 0, simplified: 0, hidden: 0, translucent: 0, placeholders: 0,
-      visited: 0, uploadedBytes: 0 };
+      visited: 0, uploadedBytes: 0, edgeDraws: 0, finer: 0,
+      /* '+ssao' only when the occlusion pass actually runs — the same `occluded` the
+       * pass below is guarded by, so the two cannot disagree. */
+      post: post ? 'msaa' + post.samples + (occluded ? '+ssao' : '') : 'none',
+      shadow: !!this._shadow,
+      /* Copies drawn into the contact shadow THIS frame: 0 unless what is drawn changed. */
+      shadowPass: captured };
     var translucent = [];
     for (var n = 0; n < (this.batches || []).length; n++) {
       this._drawBatch(this.batches[n], frame, stats, translucent);
     }
+    /* Occlusion darkens what is opaque, before anything see-through is laid over it. */
+    if (occluded) {
+      this._resetInstanceAttributes();   // before the occlusion's full-screen passes
+      this._applyOcclusion(post, proj, (this.bounds && this.bounds.span) || 10);
+      gl.useProgram(this.prog);
+      gl.activeTexture(gl.TEXTURE0);
+      gl.bindTexture(gl.TEXTURE_2D, this._envTexture);
+    }
     if (translucent.length) this._drawTranslucent(translucent, stats);
     this._resetInstanceAttributes();
     gl.frontFace(gl.CCW);
+    gl.bindTexture(gl.TEXTURE_2D, null);
 
     /* PRD VIS-03, drawn last so the marks sit over the model rather than
      * inside it, and placed last so the numbers follow the same camera the
      * lines were drawn with — computing them from a stale matrix is how a
      * label ends up beside the wrong feature. */
     if (this.showOverlays) this._drawOverlays(view, proj);
+    if (post) {
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, post.ms);
+      gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, post.flat);
+      gl.blitFramebuffer(0, 0, w, h, 0, 0, w, h, gl.COLOR_BUFFER_BIT, gl.NEAREST);
+      gl.bindFramebuffer(gl.READ_FRAMEBUFFER, post.flat);
+      gl.bindFramebuffer(gl.DRAW_FRAMEBUFFER, null);
+      gl.blitFramebuffer(0, 0, w, h, 0, 0, w, h, gl.COLOR_BUFFER_BIT, gl.NEAREST);
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+    }
     this._placeLabels(view, proj);
   };
+
+  /* The key light: from above, front-right of the hero view, slightly warm. The
+   * environment carries the rest of the light; this gives the highlight a direction. */
+  var KEY_LIGHT = { direction: normalize([0.45, 0.85, 0.5]), colour: [2.2, 2.1, 1.95] };
 
   /* One batch: decide each copy — through the batch's hierarchy, or one by one — lay
    * the survivors out in six runs (whole, simplified or box, each wound either way),
@@ -4272,7 +5570,7 @@
     var ctx = { b: b, f: f, stats: stats, translucent: translucent,
       explode: this.explode > 0 && this.bounds ? this.explode * this.bounds.span * 0.6 : 0,
       isolated: this.isolated, state: this.state, lod: this.lod, simple: this.lodSimple,
-      count: 0, counts: [0, 0, 0, 0, 0, 0] };
+      count: 0, counts: [0, 0, 0, 0, 0, 0], widest: 0 };
     var k;
     if (this.hierarchy && b.tree && !this.state) {
       this._visitTree(ctx);
@@ -4280,6 +5578,9 @@
       for (k = 0; k < b.n; k++) this._classify(ctx, k, false, -1);
     }
     var counts = ctx.counts, total = ctx.count;
+    /* How finely a curved primitive is drawn this frame, from its largest copy on screen
+     * (A5). Decided in the frame a person sees, never in the shadow's. */
+    if (f.pass !== 'shadow') this._chooseDetail(b, ctx.widest, stats);
     if (!total) return;
     var starts = [0];
     for (k = 1; k < 6; k++) starts[k] = starts[k - 1] + counts[k - 1];
@@ -4294,6 +5595,82 @@
     for (k = 0; k < 6; k++) {
       if (counts[k]) this._drawRun(b, k >> 1, k % 2 === 1, b.instanceBuffer, b.scratch, starts[k], counts[k], stats);
     }
+    /* Feature lines over the copies drawn whole (A6). Instanced paths only: a browser
+     * drawing one call per copy is already slow, and lines would double it. */
+    if (this.featureLines && f.pass !== 'shadow' && this.instancing && counts[0] + counts[1]) {
+      this._drawEdges(b, starts[0], counts[0] + counts[1], stats);
+    }
+  };
+
+  /* Pick the level of a curved primitive batch for this frame and put its buffers in
+   * b.draw, building a finer level the first time it is needed. `widest` is the largest
+   * bounding radius, in pixels, of a copy drawn whole. */
+  Studio.prototype._chooseDetail = function (b, widest, stats) {
+    var factor = 1;
+    if (this.adaptiveDetail && b.curve && widest > 0) {
+      /* The curve's own radius when the shape names one (a cylinder's), else the box's. */
+      var r = b.curve.radius > 0 ? widest * b.curve.radius / Math.max(b.bounds.radius, 1e-12) : widest;
+      factor = detailFor(r, b.curve.segments);
+    }
+    if (factor === 1) { b.draw = b.buffers; b.drawCount = b.count; b.drawType = b.indexType; b.detail = 1; return; }
+    var level = b.details[factor];
+    if (!level) {
+      var gl = this.gl, built = geometryAtDetail(b.shape, factor), geo = built.geo;
+      var wide = geo.positions.length / 3 > 65535;
+      if (wide && !this._wide) { level = b.details[factor] = { fallback: true }; }
+      else {
+        level = b.details[factor] = {
+          position: makeBuffer(gl, gl.ARRAY_BUFFER, new Float32Array(geo.positions)),
+          normal: makeBuffer(gl, gl.ARRAY_BUFFER, new Float32Array(geo.normals)),
+          index: makeBuffer(gl, gl.ELEMENT_ARRAY_BUFFER, wide ? new Uint32Array(geo.indices) : new Uint16Array(geo.indices)),
+          count: geo.indices.length, type: wide ? gl.UNSIGNED_INT : gl.UNSIGNED_SHORT
+        };
+      }
+    }
+    if (level.fallback) { b.draw = b.buffers; b.drawCount = b.count; b.drawType = b.indexType; b.detail = 1; return; }
+    b.draw = level; b.drawCount = level.count; b.drawType = level.type; b.detail = factor;
+    stats.finer++;
+  };
+
+  /* One batch's feature lines, for `count` copies from `start` of its instance buffer. */
+  Studio.prototype._drawEdges = function (b, start, count, stats) {
+    var gl = this.gl, E = this.edgeProg, f = this._frame;
+    if (!b.edges) {
+      var fe = featureEdges(b.geo, CREASE_DEGREES);
+      b.edges = fe.indices.length ? {
+        position: makeBuffer(gl, gl.ARRAY_BUFFER, new Float32Array(fe.positions)),
+        index: makeBuffer(gl, gl.ELEMENT_ARRAY_BUFFER, fe.positions.length / 3 > 65535 ? new Uint32Array(fe.indices) : new Uint16Array(fe.indices)),
+        count: fe.indices.length, type: fe.positions.length / 3 > 65535 ? gl.UNSIGNED_INT : gl.UNSIGNED_SHORT
+      } : { count: 0 };
+    }
+    if (!b.edges.count || (b.edges.type === gl.UNSIGNED_INT && !this._wide)) return;
+    gl.useProgram(E);
+    gl.uniformMatrix4fv(this._u(E, 'uView'), false, f.view);
+    gl.uniformMatrix4fv(this._u(E, 'uProj'), false, f.proj);
+    gl.uniform4fv(this._u(E, 'uEdge'), ground().edge);
+    gl.bindBuffer(gl.ARRAY_BUFFER, b.edges.position);
+    gl.enableVertexAttribArray(ATTRIB.pos);
+    gl.vertexAttribPointer(ATTRIB.pos, 3, gl.FLOAT, false, 0, 0);
+    /* The normal is not read, and its array holds the TRIANGLES' vertices — fewer than
+     * the lines may index — so it is switched off for this draw (_drawRun turns it on). */
+    gl.disableVertexAttribArray(ATTRIB.normal);
+    gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, b.edges.index);
+    var stride = INSTANCE_FLOATS * 4, off = start * stride, inst = this.instancing, k;
+    gl.bindBuffer(gl.ARRAY_BUFFER, b.instanceBuffer);
+    for (k = 0; k < 4; k++) {
+      gl.enableVertexAttribArray(ATTRIB.model + k);
+      gl.vertexAttribPointer(ATTRIB.model + k, 4, gl.FLOAT, false, stride, off + k * 16);
+      inst.divisor(ATTRIB.model + k, 1);
+    }
+    gl.enableVertexAttribArray(ATTRIB.colour);
+    gl.vertexAttribPointer(ATTRIB.colour, 4, gl.FLOAT, false, stride, off + 16 * 4);
+    inst.divisor(ATTRIB.colour, 1);
+    gl.enableVertexAttribArray(ATTRIB.highlight);
+    gl.vertexAttribPointer(ATTRIB.highlight, 1, gl.FLOAT, false, stride, off + 20 * 4);
+    inst.divisor(ATTRIB.highlight, 1);
+    inst.draw(b.edges.count, b.edges.type, count, gl.LINES);
+    stats.edgeDraws++;
+    gl.useProgram(this.prog);
   };
 
   /* The batch's hierarchy, walked with the rules above; a leaf and a node wholly in view
@@ -4360,6 +5737,12 @@
     var ex = cx - f.eye[0], ey = cy - f.eye[1], ez = cz - f.eye[2];
     var dist = Math.sqrt(ex * ex + ey * ey + ez * ez);
     if (level < 0) level = levelFor(b, r, dist, f.pixels, ctx.lod, ctx.simple);
+    if (level === 0) {
+      /* The camera may be inside a big copy's sphere: its surface is then nearer than its
+       * centre, and the curve needs more than the centre's distance says. */
+      var px = r * f.pixels / Math.max(dist, r * 0.02);
+      if (px > ctx.widest) ctx.widest = px;
+    }
     if (alphaOf(b, i, this.transparency) < 1) {
       ctx.translucent.push({ b: b, i: i, level: level, depth: dist });
       return;
@@ -4378,7 +5761,7 @@
     out[o + 12] += b.disp[i * 3];
     out[o + 13] += b.disp[i * 3 + 1];
     out[o + 14] += b.disp[i * 3 + 2];
-    var rgb = this._colour(b.removed[i] ? g.removed : (b.specs[i].color || g.part));
+    var rgb = this._colour(b.removed[i] ? g.removed : (b.meshOnly ? MESH_ONLY_TINT : (b.specs[i].color || g.part)));
     out[o + 16] = rgb[0]; out[o + 17] = rgb[1]; out[o + 18] = rgb[2]; out[o + 19] = alpha;
     out[o + 20] = this._highlighted(b.ids[i], b.repeatOf[i]) ? 1 : 0;
   };
@@ -4430,13 +5813,14 @@
   /* Draw `count` instances starting at `start` of `data` (uploaded to `buffer`). */
   Studio.prototype._drawRun = function (b, level, mirrored, buffer, data, start, count, stats) {
     var gl = this.gl, loc = this._loc;
-    var geo = level === 2 ? b.proxy : level === 1 ? b.simple : b.buffers;
-    var elements = level ? geo.count : b.count, type = level ? gl.UNSIGNED_SHORT : b.indexType;
-    /* The finish, as the document declared it. Not looked up from the material
-     * NAME: that table would have to exist here and in Go, and this codebase
-     * has already recorded what two copies of one rule cost. */
-    gl.uniform1f(loc.specPower, b.shading[0]);
-    gl.uniform1f(loc.specGloss, b.shading[1]);
+    /* Whole copies are drawn at the level _chooseDetail picked for this frame (A5). */
+    var whole = b.draw || b.buffers;
+    var geo = level === 2 ? b.proxy : level === 1 ? b.simple : whole;
+    var elements = level ? geo.count : (b.draw ? b.drawCount : b.count);
+    var type = level ? gl.UNSIGNED_SHORT : (b.draw ? b.drawType : b.indexType);
+    /* The finish, as the document declared it, as MATERIALS maps it. Not set in the
+     * shadow's pass, whose program has no material. */
+    if (this._pass !== 'shadow') gl.uniform3fv(loc.material, b.shading);
     gl.bindBuffer(gl.ARRAY_BUFFER, geo.position);
     gl.enableVertexAttribArray(ATTRIB.pos);
     gl.vertexAttribPointer(ATTRIB.pos, 3, gl.FLOAT, false, 0, 0);
@@ -4588,35 +5972,18 @@
     var gg = ground();
     gl.uniform3fv(gl.getUniformLocation(this.lineProg, 'uColor'), gg.grid);
     gl.uniform1f(gl.getUniformLocation(this.lineProg, 'uOpacity'), gg.gridOpacity);
+    var c = this.bounds ? this.bounds.centre : [0, 0, 0];
+    gl.uniform4f(gl.getUniformLocation(this.lineProg, 'uFade'), c[0], c[2], span * 0.45, span * 1.1);
     gl.bindBuffer(gl.ARRAY_BUFFER, this._gridBuffer);
     gl.enableVertexAttribArray(pos);
     gl.vertexAttribPointer(pos, 3, gl.FLOAT, false, 0, 0);
+    /* Writing no depth (2026-09-18): the grid is a mark on the floor, not a surface, and
+     * its faded far lines left depth the occlusion pass read as geometry — a band of
+     * speckle at the horizon. Parts still hide it: they are drawn after. */
+    gl.depthMask(false);
     gl.drawArrays(gl.LINES, 0, this._gridCount);
+    gl.depthMask(true);
   };
-
-  /* What each finish looks like (PRD VIS-02).
-   *
-   * The renderer owns this and the server does not. Go holds the closed set of
-   * finish NAMES, because it validates them and describes them to the model;
-   * these two numbers are the specular exponent and its strength, which nothing
-   * outside this file has any use for. Splitting the table by who needs it is
-   * what stops the two halves drifting — neither side holds the other's.
-   *
-   * An unknown finish falls back rather than failing: the material's NAME is the
-   * claim, and losing the look is a much smaller harm than losing the part. */
-  var FINISHES = {
-    metal:      [42, 0.55],
-    painted:    [26, 0.30],
-    plastic:    [18, 0.22],
-    glass:      [60, 0.70],
-    rubber:     [6,  0.05],
-    unfinished: [20, 0.18]
-  };
-
-  function shadingFor(material) {
-    var f = material && material.finish;
-    return FINISHES[f] || FINISHES.unfinished;
-  }
 
   /* _stateFor resolves what the active assembly state does to one part. */
   Studio.prototype._stateFor = function (id, repeatOf) {
@@ -4637,6 +6004,7 @@
    * geometry, and the document on screen stays the document that was stored. */
   Studio.prototype.setState = function (state) {
     this.state = state || null;
+    this._shadowDirty = true;
     this.draw();
   };
 
@@ -4738,6 +6106,7 @@
     gl.uniformMatrix4fv(gl.getUniformLocation(this.lineProg, 'uProj'), false, proj);
     gl.uniform3fv(gl.getUniformLocation(this.lineProg, 'uColor'), colour);
     gl.uniform1f(gl.getUniformLocation(this.lineProg, 'uOpacity'), opacity);
+    gl.uniform4f(gl.getUniformLocation(this.lineProg, 'uFade'), 0, 0, 0, 0);
     gl.bindBuffer(gl.ARRAY_BUFFER, this._olBuffer);
     gl.enableVertexAttribArray(pos);
     gl.vertexAttribPointer(pos, 3, gl.FLOAT, false, 0, 0);
@@ -4767,13 +6136,24 @@
   Studio.prototype._placeLabels = function (view, proj) {
     var layer = this.labelLayer;
     if (!layer) return;
-    if (!this.showOverlays || !this.overlays.length) { layer.innerHTML = ''; return; }
+    var tags = this.meshOnlyTags();
+    if (!tags.length && (!this.showOverlays || !this.overlays.length)) { layer.innerHTML = ''; return; }
 
     var rect = this.canvas.getBoundingClientRect();
     var w = rect.width, h = rect.height;
     var html = [];
 
-    this.overlays.forEach(function (o) {
+    /* A mesh-only part's tag is not an overlay and is not switched off with them:
+     * VIS-06 says a render never implies manufacturability, so while the part is on
+     * the stage its tag is (see MESH_ONLY_SHAPES). */
+    tags.forEach(function (tag) {
+      var at = project(tag.at, view, proj, w, h);
+      if (!at) return;
+      html.push('<div class="mesh-only-tag" style="left:' + at.x.toFixed(1) + 'px;top:' + at.y.toFixed(1) +
+        'px" title="' + esc(tag.name) + '">' + esc(tag.text) + '</div>');
+    });
+
+    (this.showOverlays ? this.overlays : []).forEach(function (o) {
       var anchor = o.kind !== 'dimension'
         ? o.from
         : (o.from && o.to ? [(o.from[0]+o.to[0])/2, (o.from[1]+o.to[1])/2, (o.from[2]+o.to[2])/2] : null);
@@ -4819,6 +6199,23 @@
 
     layer.innerHTML = html.join('');
     this._spreadLabels(layer);
+  };
+
+  /* meshOnlyTags is one tag per mesh-only part on the stage: its id and name, the
+   * words (the mesh reply's mesh_only_label, else MESH_ONLY_LABEL) and where it is
+   * anchored — the centre of its box as drawn. A removed copy has none. */
+  Studio.prototype.meshOnlyTags = function () {
+    var text = this._meshOnlyLabel || MESH_ONLY_LABEL, out = [];
+    (this.batches || []).forEach(function (b) {
+      if (!b.meshOnly) return;
+      for (var i = 0; i < b.n; i++) {
+        if (b.removed[i]) continue;
+        var s = b.specs[i] || {};
+        out.push({ id: b.ids[i], name: s.name || b.ids[i], text: text, ghost: !!b.ghost,
+                   at: [b.centre[i * 3], b.centre[i * 3 + 1], b.centre[i * 3 + 2]] });
+      }
+    });
+    return out;
   };
 
   /* _spreadLabels pushes overlapping labels apart, downward.
@@ -4986,6 +6383,25 @@
      * solids. The DRAWING is what must match, so the drawing is what is
      * exported for comparison. */
     flattenDrawing: flattenDrawing,
+    /* The presentation's rules (2026-09-18), exported so node fences can hold them
+     * without a GPU: the finish table, the tone curve the shader is written from, the
+     * clip planes and zoom limits, how fine a curve is drawn, the studio's light and its
+     * irradiance, smoothing and feature edges, the hero view, and every shader source. */
+    presentation: {
+      materials: MATERIALS, shadingFor: shadingFor, aces: ACES, acesFilm: acesFilm,
+      linearToSrgb: linearToSrgb, srgbToLinear: srgbToLinear,
+      clipPlanes: clipPlanes, zoomLimits: zoomLimits, perspective: perspective,
+      detailFor: detailFor, detailTolerancePx: DETAIL_TOLERANCE_PX, curveOf: curveOf,
+      geometryAtDetail: geometryAtDetail,
+      studioRadiance: studioRadiance, environmentSH: environmentSH, shIrradiance: shIrradiance,
+      environment: environment, envLayout: ENV, shBasis: SH_BASIS,
+      smoothNormals: smoothNormals, featureEdges: featureEdges, creaseDegrees: CREASE_DEGREES,
+      hero: HERO, aoKernel: AO_KERNEL,
+      shaders: { part: [VERT, FRAG], line: [LINE_VERT, LINE_FRAG], backdrop: [SCREEN_VERT, BACKDROP_FRAG],
+                 shadow: [SHADOW_VERT, SHADOW_FRAG], blur: [SCREEN_VERT, BLUR_FRAG],
+                 ground: [GROUND_VERT, GROUND_FRAG], edge: [EDGE_VERT, EDGE_FRAG],
+                 ao: [AO_VERT, AO_FRAG], aoComposite: [AO_VERT, AO_COMPOSITE_FRAG] }
+    },
     Studio: Studio,
     geometry: {
       box: boxGeometry, cylinder: cylinderGeometry,

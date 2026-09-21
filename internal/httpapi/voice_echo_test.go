@@ -34,7 +34,11 @@ func TestHandsFreeEchoGuardsArePresent(t *testing.T) {
 	// 1. The echo check must come before onTranscript, or her words are
 	//    submitted no matter what the check concludes.
 	guard := strings.Index(js, "_isOwnEcho(heard)")
-	submit := strings.Index(js, "self.onTranscript(final.trim())")
+	// The call carries the end-of-utterance moment since issue 19 (PRD AUD-02),
+	// so the anchor is the prefix rather than the whole call: this fence is
+	// about ORDER, and it must not go quiet again the next time an argument is
+	// added.
+	submit := strings.Index(js, "self.onTranscript(final.trim()")
 	if guard < 0 {
 		t.Fatal("the echo guard is gone: nothing separates FORGE's own voice from an " +
 			"interruption, so hands-free will submit her replies back to her")

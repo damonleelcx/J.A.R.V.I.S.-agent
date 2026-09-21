@@ -1,0 +1,2907 @@
+{
+  "name": "Sports Coupe",
+  "units": "mm",
+  "parts": [
+    {
+      "id": "wheel-fl",
+      "name": "Front Left Wheel",
+      "shape": "cylinder",
+      "size": {
+        "height": 250,
+        "radius": 350
+      },
+      "position": [
+        -1350,
+        350,
+        800
+      ],
+      "rotation": [
+        0,
+        0,
+        90
+      ],
+      "color": "#b8bcc4",
+      "opacity": 1,
+      "note": "Front left wheel assembly",
+      "material": {
+        "name": "aluminium alloy",
+        "finish": "metal",
+        "how": "assumed",
+        "density": 2700
+      }
+    },
+    {
+      "id": "wheel-fr",
+      "name": "Front Right Wheel",
+      "shape": "cylinder",
+      "size": {
+        "height": 250,
+        "radius": 350
+      },
+      "position": [
+        -1350,
+        350,
+        -800
+      ],
+      "rotation": [
+        0,
+        0,
+        90
+      ],
+      "color": "#b8bcc4",
+      "opacity": 1,
+      "note": "Front right wheel assembly",
+      "material": {
+        "name": "aluminium alloy",
+        "finish": "metal",
+        "how": "assumed",
+        "density": 2700
+      }
+    },
+    {
+      "id": "wheel-rl",
+      "name": "Rear Left Wheel",
+      "shape": "cylinder",
+      "size": {
+        "height": 280,
+        "radius": 350
+      },
+      "position": [
+        1350,
+        350,
+        810
+      ],
+      "rotation": [
+        0,
+        0,
+        90
+      ],
+      "color": "#b8bcc4",
+      "opacity": 1,
+      "note": "Rear left wheel assembly, slightly wider",
+      "material": {
+        "name": "aluminium alloy",
+        "finish": "metal",
+        "how": "assumed",
+        "density": 2700
+      }
+    },
+    {
+      "id": "wheel-rr",
+      "name": "Rear Right Wheel",
+      "shape": "cylinder",
+      "size": {
+        "height": 280,
+        "radius": 350
+      },
+      "position": [
+        1350,
+        350,
+        -810
+      ],
+      "rotation": [
+        0,
+        0,
+        90
+      ],
+      "color": "#b8bcc4",
+      "opacity": 1,
+      "note": "Rear right wheel assembly, slightly wider",
+      "material": {
+        "name": "aluminium alloy",
+        "finish": "metal",
+        "how": "assumed",
+        "density": 2700
+      }
+    }
+  ],
+  "parameters": [
+    {
+      "name": "length",
+      "value": 4600,
+      "unit": "mm",
+      "how": "chosen"
+    },
+    {
+      "name": "width",
+      "value": 1900,
+      "unit": "mm",
+      "how": "chosen"
+    },
+    {
+      "name": "height",
+      "value": 1300,
+      "unit": "mm",
+      "how": "chosen"
+    },
+    {
+      "name": "wheelbase",
+      "value": 2700,
+      "unit": "mm",
+      "how": "chosen"
+    },
+    {
+      "name": "track_front",
+      "value": 1600,
+      "unit": "mm",
+      "how": "chosen"
+    },
+    {
+      "name": "track_rear",
+      "value": 1620,
+      "unit": "mm",
+      "how": "chosen"
+    },
+    {
+      "name": "wheel_diameter",
+      "value": 700,
+      "unit": "mm",
+      "how": "standard",
+      "source": "typical 19-20 inch tyre OD"
+    },
+    {
+      "name": "ride_height",
+      "value": 110,
+      "unit": "mm",
+      "how": "chosen"
+    },
+    {
+      "name": "nose_height_ratio",
+      "value": 0.35,
+      "unit": "",
+      "how": "chosen"
+    },
+    {
+      "name": "cabin_start_ratio",
+      "value": 0.35,
+      "unit": "",
+      "how": "chosen"
+    },
+    {
+      "name": "cabin_length_ratio",
+      "value": 0.45,
+      "unit": "",
+      "how": "chosen"
+    },
+    {
+      "name": "tail_height_ratio",
+      "value": 0.65,
+      "unit": "",
+      "how": "chosen"
+    },
+    {
+      "name": "belt_height_ratio",
+      "value": 0.45,
+      "unit": "",
+      "how": "chosen"
+    },
+    {
+      "name": "roof_width_ratio",
+      "value": 0.65,
+      "unit": "",
+      "how": "chosen"
+    },
+    {
+      "name": "edge_radius_ratio",
+      "value": 0.04,
+      "unit": "",
+      "how": "chosen"
+    },
+    {
+      "name": "car_body_length",
+      "value": 4600,
+      "unit": "mm",
+      "how": "chosen"
+    },
+    {
+      "name": "car_body_width",
+      "value": 1900,
+      "unit": "mm",
+      "how": "chosen"
+    },
+    {
+      "name": "car_body_height",
+      "value": 1300,
+      "unit": "mm",
+      "how": "chosen"
+    },
+    {
+      "name": "car_body_wheelbase",
+      "value": 2700,
+      "unit": "mm",
+      "how": "chosen"
+    },
+    {
+      "name": "car_body_track_front",
+      "value": 1603.1436156602558,
+      "unit": "mm",
+      "how": "chosen"
+    },
+    {
+      "name": "car_body_track_rear",
+      "value": 1603.1436156602558,
+      "unit": "mm",
+      "how": "chosen"
+    },
+    {
+      "name": "car_body_wheel_diameter",
+      "value": 681.2313302100476,
+      "unit": "mm",
+      "how": "chosen"
+    },
+    {
+      "name": "car_body_tyre_width",
+      "value": 246.94394336497038,
+      "unit": "mm",
+      "how": "chosen"
+    },
+    {
+      "name": "car_body_rim_diameter",
+      "value": 496.43429170072403,
+      "unit": "mm",
+      "how": "chosen"
+    },
+    {
+      "name": "car_body_ride_height",
+      "value": 81,
+      "unit": "mm",
+      "how": "chosen"
+    },
+    {
+      "name": "car_body_front_overhang",
+      "value": 1030.491631799163,
+      "unit": "mm",
+      "how": "chosen"
+    },
+    {
+      "name": "car_body_arch_clearance",
+      "value": 40.87387981260286,
+      "unit": "mm",
+      "how": "chosen"
+    },
+    {
+      "name": "car_body_cabin_start",
+      "value": 0.33,
+      "unit": "",
+      "how": "chosen"
+    },
+    {
+      "name": "car_body_cabin_length",
+      "value": 0.42,
+      "unit": "",
+      "how": "chosen"
+    },
+    {
+      "name": "car_body_nose_height",
+      "value": 0.42,
+      "unit": "",
+      "how": "chosen"
+    },
+    {
+      "name": "car_body_belt_height",
+      "value": 0.62,
+      "unit": "",
+      "how": "chosen"
+    },
+    {
+      "name": "car_body_tail_height",
+      "value": 0.78,
+      "unit": "",
+      "how": "chosen"
+    },
+    {
+      "name": "car_body_roof_width",
+      "value": 0.74,
+      "unit": "",
+      "how": "chosen"
+    },
+    {
+      "name": "car_body_edge_radius",
+      "value": 0.025,
+      "unit": "",
+      "how": "chosen"
+    }
+  ],
+  "derived": [
+    {
+      "name": "front_overhang",
+      "expression": "(length - wheelbase) / 2",
+      "why": "balanced overhangs"
+    },
+    {
+      "name": "rear_overhang",
+      "expression": "(length - wheelbase) / 2",
+      "why": "balanced overhangs"
+    },
+    {
+      "name": "nose_height",
+      "expression": "height * nose_height_ratio",
+      "why": "proportional nose"
+    },
+    {
+      "name": "cabin_start_x",
+      "expression": "length * cabin_start_ratio - length / 2",
+      "why": "cabin position relative to center"
+    },
+    {
+      "name": "cabin_length",
+      "expression": "length * cabin_length_ratio",
+      "why": "cabin size"
+    },
+    {
+      "name": "tail_height",
+      "expression": "height * tail_height_ratio",
+      "why": "proportional tail"
+    },
+    {
+      "name": "belt_height",
+      "expression": "height * belt_height_ratio",
+      "why": "window line height"
+    },
+    {
+      "name": "roof_width",
+      "expression": "width * roof_width_ratio",
+      "why": "roof narrowing"
+    },
+    {
+      "name": "edge_radius",
+      "expression": "height * edge_radius_ratio",
+      "why": "smooth edges"
+    },
+    {
+      "name": "car_body_rear_overhang",
+      "expression": "car_body_length - car_body_wheelbase - car_body_front_overhang",
+      "why": "the length the wheelbase and the front overhang leave behind the rear axle"
+    },
+    {
+      "name": "car_body_station_0_cabin",
+      "expression": "((min(max((0 - car_body_cabin_start) / (0.3 * car_body_cabin_length), 0), 1)) * (min(max((0 - car_body_cabin_start) / (0.3 * car_body_cabin_length), 0), 1)) * (3 - 2 * (min(max((0 - car_body_cabin_start) / (0.3 * car_body_cabin_length), 0), 1)))) * ((min(max((car_body_cabin_start + car_body_cabin_length - 0) / (0.4 * car_body_cabin_length), 0), 1)) * (min(max((car_body_cabin_start + car_body_cabin_length - 0) / (0.4 * car_body_cabin_length), 0), 1)) * (3 - 2 * (min(max((car_body_cabin_start + car_body_cabin_length - 0) / (0.4 * car_body_cabin_length), 0), 1))))",
+      "why": "how much of the cabin this station is in, 0 to 1"
+    },
+    {
+      "name": "car_body_station_0_deck",
+      "expression": "(((car_body_nose_height + (car_body_belt_height - car_body_nose_height) * ((min(max(0 / car_body_cabin_start, 0), 1)) * (min(max(0 / car_body_cabin_start, 0), 1)) * (3 - 2 * (min(max(0 / car_body_cabin_start, 0), 1))))) + (max(car_body_belt_height, car_body_tail_height) - car_body_belt_height) * ((min(max((0 - car_body_cabin_start) / car_body_cabin_length, 0), 1)) * (min(max((0 - car_body_cabin_start) / car_body_cabin_length, 0), 1)) * (3 - 2 * (min(max((0 - car_body_cabin_start) / car_body_cabin_length, 0), 1))))) + (0.94 * car_body_tail_height - max(car_body_belt_height, car_body_tail_height)) * ((min(max((0 - car_body_cabin_start - car_body_cabin_length) / (1 - car_body_cabin_start - car_body_cabin_length), 0), 1)) * (min(max((0 - car_body_cabin_start - car_body_cabin_length) / (1 - car_body_cabin_start - car_body_cabin_length), 0), 1)) * (3 - 2 * (min(max((0 - car_body_cabin_start - car_body_cabin_length) / (1 - car_body_cabin_start - car_body_cabin_length), 0), 1)))))",
+      "why": "this station's top outside the cabin, as a share of height"
+    },
+    {
+      "name": "car_body_station_0_top",
+      "expression": "(car_body_station_0_deck + (1 - car_body_station_0_deck) * car_body_station_0_cabin) * car_body_height",
+      "why": "the height of this station's top: the deck, rising to the roof in the cabin"
+    },
+    {
+      "name": "car_body_station_0_half_width",
+      "expression": "0.4 * car_body_width",
+      "why": "half this station's width"
+    },
+    {
+      "name": "car_body_station_0_belt",
+      "expression": "((car_body_ride_height + 0.95 * (car_body_station_0_top - car_body_ride_height)) + (car_body_belt_height * car_body_height - (car_body_ride_height + 0.95 * (car_body_station_0_top - car_body_ride_height))) * car_body_station_0_cabin)",
+      "why": "the height of this station's shoulder: just under the deck, or the beltline in the cabin"
+    },
+    {
+      "name": "car_body_station_0_roof",
+      "expression": "car_body_station_0_half_width * (0.6 + (car_body_roof_width - 0.6) * car_body_station_0_cabin)",
+      "why": "half this station's top: a crowned deck, widening to the roof in the cabin"
+    },
+    {
+      "name": "car_body_station_1_cabin",
+      "expression": "((min(max((0.0625 - car_body_cabin_start) / (0.3 * car_body_cabin_length), 0), 1)) * (min(max((0.0625 - car_body_cabin_start) / (0.3 * car_body_cabin_length), 0), 1)) * (3 - 2 * (min(max((0.0625 - car_body_cabin_start) / (0.3 * car_body_cabin_length), 0), 1)))) * ((min(max((car_body_cabin_start + car_body_cabin_length - 0.0625) / (0.4 * car_body_cabin_length), 0), 1)) * (min(max((car_body_cabin_start + car_body_cabin_length - 0.0625) / (0.4 * car_body_cabin_length), 0), 1)) * (3 - 2 * (min(max((car_body_cabin_start + car_body_cabin_length - 0.0625) / (0.4 * car_body_cabin_length), 0), 1))))",
+      "why": "how much of the cabin this station is in, 0 to 1"
+    },
+    {
+      "name": "car_body_station_1_deck",
+      "expression": "(((car_body_nose_height + (car_body_belt_height - car_body_nose_height) * ((min(max(0.0625 / car_body_cabin_start, 0), 1)) * (min(max(0.0625 / car_body_cabin_start, 0), 1)) * (3 - 2 * (min(max(0.0625 / car_body_cabin_start, 0), 1))))) + (max(car_body_belt_height, car_body_tail_height) - car_body_belt_height) * ((min(max((0.0625 - car_body_cabin_start) / car_body_cabin_length, 0), 1)) * (min(max((0.0625 - car_body_cabin_start) / car_body_cabin_length, 0), 1)) * (3 - 2 * (min(max((0.0625 - car_body_cabin_start) / car_body_cabin_length, 0), 1))))) + (0.94 * car_body_tail_height - max(car_body_belt_height, car_body_tail_height)) * ((min(max((0.0625 - car_body_cabin_start - car_body_cabin_length) / (1 - car_body_cabin_start - car_body_cabin_length), 0), 1)) * (min(max((0.0625 - car_body_cabin_start - car_body_cabin_length) / (1 - car_body_cabin_start - car_body_cabin_length), 0), 1)) * (3 - 2 * (min(max((0.0625 - car_body_cabin_start - car_body_cabin_length) / (1 - car_body_cabin_start - car_body_cabin_length), 0), 1)))))",
+      "why": "this station's top outside the cabin, as a share of height"
+    },
+    {
+      "name": "car_body_station_1_top",
+      "expression": "(car_body_station_1_deck + (1 - car_body_station_1_deck) * car_body_station_1_cabin) * car_body_height",
+      "why": "the height of this station's top: the deck, rising to the roof in the cabin"
+    },
+    {
+      "name": "car_body_station_1_half_width",
+      "expression": "0.423193359375 * car_body_width",
+      "why": "half this station's width"
+    },
+    {
+      "name": "car_body_station_1_belt",
+      "expression": "((car_body_ride_height + 0.95 * (car_body_station_1_top - car_body_ride_height)) + (car_body_belt_height * car_body_height - (car_body_ride_height + 0.95 * (car_body_station_1_top - car_body_ride_height))) * car_body_station_1_cabin)",
+      "why": "the height of this station's shoulder: just under the deck, or the beltline in the cabin"
+    },
+    {
+      "name": "car_body_station_1_roof",
+      "expression": "car_body_station_1_half_width * (0.6 + (car_body_roof_width - 0.6) * car_body_station_1_cabin)",
+      "why": "half this station's top: a crowned deck, widening to the roof in the cabin"
+    },
+    {
+      "name": "car_body_station_2_cabin",
+      "expression": "((min(max((0.125 - car_body_cabin_start) / (0.3 * car_body_cabin_length), 0), 1)) * (min(max((0.125 - car_body_cabin_start) / (0.3 * car_body_cabin_length), 0), 1)) * (3 - 2 * (min(max((0.125 - car_body_cabin_start) / (0.3 * car_body_cabin_length), 0), 1)))) * ((min(max((car_body_cabin_start + car_body_cabin_length - 0.125) / (0.4 * car_body_cabin_length), 0), 1)) * (min(max((car_body_cabin_start + car_body_cabin_length - 0.125) / (0.4 * car_body_cabin_length), 0), 1)) * (3 - 2 * (min(max((car_body_cabin_start + car_body_cabin_length - 0.125) / (0.4 * car_body_cabin_length), 0), 1))))",
+      "why": "how much of the cabin this station is in, 0 to 1"
+    },
+    {
+      "name": "car_body_station_2_deck",
+      "expression": "(((car_body_nose_height + (car_body_belt_height - car_body_nose_height) * ((min(max(0.125 / car_body_cabin_start, 0), 1)) * (min(max(0.125 / car_body_cabin_start, 0), 1)) * (3 - 2 * (min(max(0.125 / car_body_cabin_start, 0), 1))))) + (max(car_body_belt_height, car_body_tail_height) - car_body_belt_height) * ((min(max((0.125 - car_body_cabin_start) / car_body_cabin_length, 0), 1)) * (min(max((0.125 - car_body_cabin_start) / car_body_cabin_length, 0), 1)) * (3 - 2 * (min(max((0.125 - car_body_cabin_start) / car_body_cabin_length, 0), 1))))) + (0.94 * car_body_tail_height - max(car_body_belt_height, car_body_tail_height)) * ((min(max((0.125 - car_body_cabin_start - car_body_cabin_length) / (1 - car_body_cabin_start - car_body_cabin_length), 0), 1)) * (min(max((0.125 - car_body_cabin_start - car_body_cabin_length) / (1 - car_body_cabin_start - car_body_cabin_length), 0), 1)) * (3 - 2 * (min(max((0.125 - car_body_cabin_start - car_body_cabin_length) / (1 - car_body_cabin_start - car_body_cabin_length), 0), 1)))))",
+      "why": "this station's top outside the cabin, as a share of height"
+    },
+    {
+      "name": "car_body_station_2_top",
+      "expression": "(car_body_station_2_deck + (1 - car_body_station_2_deck) * car_body_station_2_cabin) * car_body_height",
+      "why": "the height of this station's top: the deck, rising to the roof in the cabin"
+    },
+    {
+      "name": "car_body_station_2_half_width",
+      "expression": "0.468359375 * car_body_width",
+      "why": "half this station's width"
+    },
+    {
+      "name": "car_body_station_2_belt",
+      "expression": "((car_body_ride_height + 0.95 * (car_body_station_2_top - car_body_ride_height)) + (car_body_belt_height * car_body_height - (car_body_ride_height + 0.95 * (car_body_station_2_top - car_body_ride_height))) * car_body_station_2_cabin)",
+      "why": "the height of this station's shoulder: just under the deck, or the beltline in the cabin"
+    },
+    {
+      "name": "car_body_station_2_roof",
+      "expression": "car_body_station_2_half_width * (0.6 + (car_body_roof_width - 0.6) * car_body_station_2_cabin)",
+      "why": "half this station's top: a crowned deck, widening to the roof in the cabin"
+    },
+    {
+      "name": "car_body_station_3_cabin",
+      "expression": "((min(max((0.1875 - car_body_cabin_start) / (0.3 * car_body_cabin_length), 0), 1)) * (min(max((0.1875 - car_body_cabin_start) / (0.3 * car_body_cabin_length), 0), 1)) * (3 - 2 * (min(max((0.1875 - car_body_cabin_start) / (0.3 * car_body_cabin_length), 0), 1)))) * ((min(max((car_body_cabin_start + car_body_cabin_length - 0.1875) / (0.4 * car_body_cabin_length), 0), 1)) * (min(max((car_body_cabin_start + car_body_cabin_length - 0.1875) / (0.4 * car_body_cabin_length), 0), 1)) * (3 - 2 * (min(max((car_body_cabin_start + car_body_cabin_length - 0.1875) / (0.4 * car_body_cabin_length), 0), 1))))",
+      "why": "how much of the cabin this station is in, 0 to 1"
+    },
+    {
+      "name": "car_body_station_3_deck",
+      "expression": "(((car_body_nose_height + (car_body_belt_height - car_body_nose_height) * ((min(max(0.1875 / car_body_cabin_start, 0), 1)) * (min(max(0.1875 / car_body_cabin_start, 0), 1)) * (3 - 2 * (min(max(0.1875 / car_body_cabin_start, 0), 1))))) + (max(car_body_belt_height, car_body_tail_height) - car_body_belt_height) * ((min(max((0.1875 - car_body_cabin_start) / car_body_cabin_length, 0), 1)) * (min(max((0.1875 - car_body_cabin_start) / car_body_cabin_length, 0), 1)) * (3 - 2 * (min(max((0.1875 - car_body_cabin_start) / car_body_cabin_length, 0), 1))))) + (0.94 * car_body_tail_height - max(car_body_belt_height, car_body_tail_height)) * ((min(max((0.1875 - car_body_cabin_start - car_body_cabin_length) / (1 - car_body_cabin_start - car_body_cabin_length), 0), 1)) * (min(max((0.1875 - car_body_cabin_start - car_body_cabin_length) / (1 - car_body_cabin_start - car_body_cabin_length), 0), 1)) * (3 - 2 * (min(max((0.1875 - car_body_cabin_start - car_body_cabin_length) / (1 - car_body_cabin_start - car_body_cabin_length), 0), 1)))))",
+      "why": "this station's top outside the cabin, as a share of height"
+    },
+    {
+      "name": "car_body_station_3_top",
+      "expression": "(car_body_station_3_deck + (1 - car_body_station_3_deck) * car_body_station_3_cabin) * car_body_height",
+      "why": "the height of this station's top: the deck, rising to the roof in the cabin"
+    },
+    {
+      "name": "car_body_station_3_half_width",
+      "expression": "0.498876953125 * car_body_width",
+      "why": "half this station's width"
+    },
+    {
+      "name": "car_body_station_3_belt",
+      "expression": "((car_body_ride_height + 0.95 * (car_body_station_3_top - car_body_ride_height)) + (car_body_belt_height * car_body_height - (car_body_ride_height + 0.95 * (car_body_station_3_top - car_body_ride_height))) * car_body_station_3_cabin)",
+      "why": "the height of this station's shoulder: just under the deck, or the beltline in the cabin"
+    },
+    {
+      "name": "car_body_station_3_roof",
+      "expression": "car_body_station_3_half_width * (0.6 + (car_body_roof_width - 0.6) * car_body_station_3_cabin)",
+      "why": "half this station's top: a crowned deck, widening to the roof in the cabin"
+    },
+    {
+      "name": "car_body_station_4_cabin",
+      "expression": "((min(max((0.25 - car_body_cabin_start) / (0.3 * car_body_cabin_length), 0), 1)) * (min(max((0.25 - car_body_cabin_start) / (0.3 * car_body_cabin_length), 0), 1)) * (3 - 2 * (min(max((0.25 - car_body_cabin_start) / (0.3 * car_body_cabin_length), 0), 1)))) * ((min(max((car_body_cabin_start + car_body_cabin_length - 0.25) / (0.4 * car_body_cabin_length), 0), 1)) * (min(max((car_body_cabin_start + car_body_cabin_length - 0.25) / (0.4 * car_body_cabin_length), 0), 1)) * (3 - 2 * (min(max((car_body_cabin_start + car_body_cabin_length - 0.25) / (0.4 * car_body_cabin_length), 0), 1))))",
+      "why": "how much of the cabin this station is in, 0 to 1"
+    },
+    {
+      "name": "car_body_station_4_deck",
+      "expression": "(((car_body_nose_height + (car_body_belt_height - car_body_nose_height) * ((min(max(0.25 / car_body_cabin_start, 0), 1)) * (min(max(0.25 / car_body_cabin_start, 0), 1)) * (3 - 2 * (min(max(0.25 / car_body_cabin_start, 0), 1))))) + (max(car_body_belt_height, car_body_tail_height) - car_body_belt_height) * ((min(max((0.25 - car_body_cabin_start) / car_body_cabin_length, 0), 1)) * (min(max((0.25 - car_body_cabin_start) / car_body_cabin_length, 0), 1)) * (3 - 2 * (min(max((0.25 - car_body_cabin_start) / car_body_cabin_length, 0), 1))))) + (0.94 * car_body_tail_height - max(car_body_belt_height, car_body_tail_height)) * ((min(max((0.25 - car_body_cabin_start - car_body_cabin_length) / (1 - car_body_cabin_start - car_body_cabin_length), 0), 1)) * (min(max((0.25 - car_body_cabin_start - car_body_cabin_length) / (1 - car_body_cabin_start - car_body_cabin_length), 0), 1)) * (3 - 2 * (min(max((0.25 - car_body_cabin_start - car_body_cabin_length) / (1 - car_body_cabin_start - car_body_cabin_length), 0), 1)))))",
+      "why": "this station's top outside the cabin, as a share of height"
+    },
+    {
+      "name": "car_body_station_4_top",
+      "expression": "(car_body_station_4_deck + (1 - car_body_station_4_deck) * car_body_station_4_cabin) * car_body_height",
+      "why": "the height of this station's top: the deck, rising to the roof in the cabin"
+    },
+    {
+      "name": "car_body_station_4_half_width",
+      "expression": "0.5 * car_body_width",
+      "why": "half this station's width"
+    },
+    {
+      "name": "car_body_station_4_belt",
+      "expression": "((car_body_ride_height + 0.95 * (car_body_station_4_top - car_body_ride_height)) + (car_body_belt_height * car_body_height - (car_body_ride_height + 0.95 * (car_body_station_4_top - car_body_ride_height))) * car_body_station_4_cabin)",
+      "why": "the height of this station's shoulder: just under the deck, or the beltline in the cabin"
+    },
+    {
+      "name": "car_body_station_4_roof",
+      "expression": "car_body_station_4_half_width * (0.6 + (car_body_roof_width - 0.6) * car_body_station_4_cabin)",
+      "why": "half this station's top: a crowned deck, widening to the roof in the cabin"
+    },
+    {
+      "name": "car_body_station_5_cabin",
+      "expression": "((min(max((0.3125 - car_body_cabin_start) / (0.3 * car_body_cabin_length), 0), 1)) * (min(max((0.3125 - car_body_cabin_start) / (0.3 * car_body_cabin_length), 0), 1)) * (3 - 2 * (min(max((0.3125 - car_body_cabin_start) / (0.3 * car_body_cabin_length), 0), 1)))) * ((min(max((car_body_cabin_start + car_body_cabin_length - 0.3125) / (0.4 * car_body_cabin_length), 0), 1)) * (min(max((car_body_cabin_start + car_body_cabin_length - 0.3125) / (0.4 * car_body_cabin_length), 0), 1)) * (3 - 2 * (min(max((car_body_cabin_start + car_body_cabin_length - 0.3125) / (0.4 * car_body_cabin_length), 0), 1))))",
+      "why": "how much of the cabin this station is in, 0 to 1"
+    },
+    {
+      "name": "car_body_station_5_deck",
+      "expression": "(((car_body_nose_height + (car_body_belt_height - car_body_nose_height) * ((min(max(0.3125 / car_body_cabin_start, 0), 1)) * (min(max(0.3125 / car_body_cabin_start, 0), 1)) * (3 - 2 * (min(max(0.3125 / car_body_cabin_start, 0), 1))))) + (max(car_body_belt_height, car_body_tail_height) - car_body_belt_height) * ((min(max((0.3125 - car_body_cabin_start) / car_body_cabin_length, 0), 1)) * (min(max((0.3125 - car_body_cabin_start) / car_body_cabin_length, 0), 1)) * (3 - 2 * (min(max((0.3125 - car_body_cabin_start) / car_body_cabin_length, 0), 1))))) + (0.94 * car_body_tail_height - max(car_body_belt_height, car_body_tail_height)) * ((min(max((0.3125 - car_body_cabin_start - car_body_cabin_length) / (1 - car_body_cabin_start - car_body_cabin_length), 0), 1)) * (min(max((0.3125 - car_body_cabin_start - car_body_cabin_length) / (1 - car_body_cabin_start - car_body_cabin_length), 0), 1)) * (3 - 2 * (min(max((0.3125 - car_body_cabin_start - car_body_cabin_length) / (1 - car_body_cabin_start - car_body_cabin_length), 0), 1)))))",
+      "why": "this station's top outside the cabin, as a share of height"
+    },
+    {
+      "name": "car_body_station_5_top",
+      "expression": "(car_body_station_5_deck + (1 - car_body_station_5_deck) * car_body_station_5_cabin) * car_body_height",
+      "why": "the height of this station's top: the deck, rising to the roof in the cabin"
+    },
+    {
+      "name": "car_body_station_5_half_width",
+      "expression": "0.5 * car_body_width",
+      "why": "half this station's width"
+    },
+    {
+      "name": "car_body_station_5_belt",
+      "expression": "((car_body_ride_height + 0.95 * (car_body_station_5_top - car_body_ride_height)) + (car_body_belt_height * car_body_height - (car_body_ride_height + 0.95 * (car_body_station_5_top - car_body_ride_height))) * car_body_station_5_cabin)",
+      "why": "the height of this station's shoulder: just under the deck, or the beltline in the cabin"
+    },
+    {
+      "name": "car_body_station_5_roof",
+      "expression": "car_body_station_5_half_width * (0.6 + (car_body_roof_width - 0.6) * car_body_station_5_cabin)",
+      "why": "half this station's top: a crowned deck, widening to the roof in the cabin"
+    },
+    {
+      "name": "car_body_station_6_cabin",
+      "expression": "((min(max((0.375 - car_body_cabin_start) / (0.3 * car_body_cabin_length), 0), 1)) * (min(max((0.375 - car_body_cabin_start) / (0.3 * car_body_cabin_length), 0), 1)) * (3 - 2 * (min(max((0.375 - car_body_cabin_start) / (0.3 * car_body_cabin_length), 0), 1)))) * ((min(max((car_body_cabin_start + car_body_cabin_length - 0.375) / (0.4 * car_body_cabin_length), 0), 1)) * (min(max((car_body_cabin_start + car_body_cabin_length - 0.375) / (0.4 * car_body_cabin_length), 0), 1)) * (3 - 2 * (min(max((car_body_cabin_start + car_body_cabin_length - 0.375) / (0.4 * car_body_cabin_length), 0), 1))))",
+      "why": "how much of the cabin this station is in, 0 to 1"
+    },
+    {
+      "name": "car_body_station_6_deck",
+      "expression": "(((car_body_nose_height + (car_body_belt_height - car_body_nose_height) * ((min(max(0.375 / car_body_cabin_start, 0), 1)) * (min(max(0.375 / car_body_cabin_start, 0), 1)) * (3 - 2 * (min(max(0.375 / car_body_cabin_start, 0), 1))))) + (max(car_body_belt_height, car_body_tail_height) - car_body_belt_height) * ((min(max((0.375 - car_body_cabin_start) / car_body_cabin_length, 0), 1)) * (min(max((0.375 - car_body_cabin_start) / car_body_cabin_length, 0), 1)) * (3 - 2 * (min(max((0.375 - car_body_cabin_start) / car_body_cabin_length, 0), 1))))) + (0.94 * car_body_tail_height - max(car_body_belt_height, car_body_tail_height)) * ((min(max((0.375 - car_body_cabin_start - car_body_cabin_length) / (1 - car_body_cabin_start - car_body_cabin_length), 0), 1)) * (min(max((0.375 - car_body_cabin_start - car_body_cabin_length) / (1 - car_body_cabin_start - car_body_cabin_length), 0), 1)) * (3 - 2 * (min(max((0.375 - car_body_cabin_start - car_body_cabin_length) / (1 - car_body_cabin_start - car_body_cabin_length), 0), 1)))))",
+      "why": "this station's top outside the cabin, as a share of height"
+    },
+    {
+      "name": "car_body_station_6_top",
+      "expression": "(car_body_station_6_deck + (1 - car_body_station_6_deck) * car_body_station_6_cabin) * car_body_height",
+      "why": "the height of this station's top: the deck, rising to the roof in the cabin"
+    },
+    {
+      "name": "car_body_station_6_half_width",
+      "expression": "0.5 * car_body_width",
+      "why": "half this station's width"
+    },
+    {
+      "name": "car_body_station_6_belt",
+      "expression": "((car_body_ride_height + 0.95 * (car_body_station_6_top - car_body_ride_height)) + (car_body_belt_height * car_body_height - (car_body_ride_height + 0.95 * (car_body_station_6_top - car_body_ride_height))) * car_body_station_6_cabin)",
+      "why": "the height of this station's shoulder: just under the deck, or the beltline in the cabin"
+    },
+    {
+      "name": "car_body_station_6_roof",
+      "expression": "car_body_station_6_half_width * (0.6 + (car_body_roof_width - 0.6) * car_body_station_6_cabin)",
+      "why": "half this station's top: a crowned deck, widening to the roof in the cabin"
+    },
+    {
+      "name": "car_body_station_7_cabin",
+      "expression": "((min(max((0.4375 - car_body_cabin_start) / (0.3 * car_body_cabin_length), 0), 1)) * (min(max((0.4375 - car_body_cabin_start) / (0.3 * car_body_cabin_length), 0), 1)) * (3 - 2 * (min(max((0.4375 - car_body_cabin_start) / (0.3 * car_body_cabin_length), 0), 1)))) * ((min(max((car_body_cabin_start + car_body_cabin_length - 0.4375) / (0.4 * car_body_cabin_length), 0), 1)) * (min(max((car_body_cabin_start + car_body_cabin_length - 0.4375) / (0.4 * car_body_cabin_length), 0), 1)) * (3 - 2 * (min(max((car_body_cabin_start + car_body_cabin_length - 0.4375) / (0.4 * car_body_cabin_length), 0), 1))))",
+      "why": "how much of the cabin this station is in, 0 to 1"
+    },
+    {
+      "name": "car_body_station_7_deck",
+      "expression": "(((car_body_nose_height + (car_body_belt_height - car_body_nose_height) * ((min(max(0.4375 / car_body_cabin_start, 0), 1)) * (min(max(0.4375 / car_body_cabin_start, 0), 1)) * (3 - 2 * (min(max(0.4375 / car_body_cabin_start, 0), 1))))) + (max(car_body_belt_height, car_body_tail_height) - car_body_belt_height) * ((min(max((0.4375 - car_body_cabin_start) / car_body_cabin_length, 0), 1)) * (min(max((0.4375 - car_body_cabin_start) / car_body_cabin_length, 0), 1)) * (3 - 2 * (min(max((0.4375 - car_body_cabin_start) / car_body_cabin_length, 0), 1))))) + (0.94 * car_body_tail_height - max(car_body_belt_height, car_body_tail_height)) * ((min(max((0.4375 - car_body_cabin_start - car_body_cabin_length) / (1 - car_body_cabin_start - car_body_cabin_length), 0), 1)) * (min(max((0.4375 - car_body_cabin_start - car_body_cabin_length) / (1 - car_body_cabin_start - car_body_cabin_length), 0), 1)) * (3 - 2 * (min(max((0.4375 - car_body_cabin_start - car_body_cabin_length) / (1 - car_body_cabin_start - car_body_cabin_length), 0), 1)))))",
+      "why": "this station's top outside the cabin, as a share of height"
+    },
+    {
+      "name": "car_body_station_7_top",
+      "expression": "(car_body_station_7_deck + (1 - car_body_station_7_deck) * car_body_station_7_cabin) * car_body_height",
+      "why": "the height of this station's top: the deck, rising to the roof in the cabin"
+    },
+    {
+      "name": "car_body_station_7_half_width",
+      "expression": "0.5 * car_body_width",
+      "why": "half this station's width"
+    },
+    {
+      "name": "car_body_station_7_belt",
+      "expression": "((car_body_ride_height + 0.95 * (car_body_station_7_top - car_body_ride_height)) + (car_body_belt_height * car_body_height - (car_body_ride_height + 0.95 * (car_body_station_7_top - car_body_ride_height))) * car_body_station_7_cabin)",
+      "why": "the height of this station's shoulder: just under the deck, or the beltline in the cabin"
+    },
+    {
+      "name": "car_body_station_7_roof",
+      "expression": "car_body_station_7_half_width * (0.6 + (car_body_roof_width - 0.6) * car_body_station_7_cabin)",
+      "why": "half this station's top: a crowned deck, widening to the roof in the cabin"
+    },
+    {
+      "name": "car_body_station_8_cabin",
+      "expression": "((min(max((0.5 - car_body_cabin_start) / (0.3 * car_body_cabin_length), 0), 1)) * (min(max((0.5 - car_body_cabin_start) / (0.3 * car_body_cabin_length), 0), 1)) * (3 - 2 * (min(max((0.5 - car_body_cabin_start) / (0.3 * car_body_cabin_length), 0), 1)))) * ((min(max((car_body_cabin_start + car_body_cabin_length - 0.5) / (0.4 * car_body_cabin_length), 0), 1)) * (min(max((car_body_cabin_start + car_body_cabin_length - 0.5) / (0.4 * car_body_cabin_length), 0), 1)) * (3 - 2 * (min(max((car_body_cabin_start + car_body_cabin_length - 0.5) / (0.4 * car_body_cabin_length), 0), 1))))",
+      "why": "how much of the cabin this station is in, 0 to 1"
+    },
+    {
+      "name": "car_body_station_8_deck",
+      "expression": "(((car_body_nose_height + (car_body_belt_height - car_body_nose_height) * ((min(max(0.5 / car_body_cabin_start, 0), 1)) * (min(max(0.5 / car_body_cabin_start, 0), 1)) * (3 - 2 * (min(max(0.5 / car_body_cabin_start, 0), 1))))) + (max(car_body_belt_height, car_body_tail_height) - car_body_belt_height) * ((min(max((0.5 - car_body_cabin_start) / car_body_cabin_length, 0), 1)) * (min(max((0.5 - car_body_cabin_start) / car_body_cabin_length, 0), 1)) * (3 - 2 * (min(max((0.5 - car_body_cabin_start) / car_body_cabin_length, 0), 1))))) + (0.94 * car_body_tail_height - max(car_body_belt_height, car_body_tail_height)) * ((min(max((0.5 - car_body_cabin_start - car_body_cabin_length) / (1 - car_body_cabin_start - car_body_cabin_length), 0), 1)) * (min(max((0.5 - car_body_cabin_start - car_body_cabin_length) / (1 - car_body_cabin_start - car_body_cabin_length), 0), 1)) * (3 - 2 * (min(max((0.5 - car_body_cabin_start - car_body_cabin_length) / (1 - car_body_cabin_start - car_body_cabin_length), 0), 1)))))",
+      "why": "this station's top outside the cabin, as a share of height"
+    },
+    {
+      "name": "car_body_station_8_top",
+      "expression": "(car_body_station_8_deck + (1 - car_body_station_8_deck) * car_body_station_8_cabin) * car_body_height",
+      "why": "the height of this station's top: the deck, rising to the roof in the cabin"
+    },
+    {
+      "name": "car_body_station_8_half_width",
+      "expression": "0.5 * car_body_width",
+      "why": "half this station's width"
+    },
+    {
+      "name": "car_body_station_8_belt",
+      "expression": "((car_body_ride_height + 0.95 * (car_body_station_8_top - car_body_ride_height)) + (car_body_belt_height * car_body_height - (car_body_ride_height + 0.95 * (car_body_station_8_top - car_body_ride_height))) * car_body_station_8_cabin)",
+      "why": "the height of this station's shoulder: just under the deck, or the beltline in the cabin"
+    },
+    {
+      "name": "car_body_station_8_roof",
+      "expression": "car_body_station_8_half_width * (0.6 + (car_body_roof_width - 0.6) * car_body_station_8_cabin)",
+      "why": "half this station's top: a crowned deck, widening to the roof in the cabin"
+    },
+    {
+      "name": "car_body_station_9_cabin",
+      "expression": "((min(max((0.5625 - car_body_cabin_start) / (0.3 * car_body_cabin_length), 0), 1)) * (min(max((0.5625 - car_body_cabin_start) / (0.3 * car_body_cabin_length), 0), 1)) * (3 - 2 * (min(max((0.5625 - car_body_cabin_start) / (0.3 * car_body_cabin_length), 0), 1)))) * ((min(max((car_body_cabin_start + car_body_cabin_length - 0.5625) / (0.4 * car_body_cabin_length), 0), 1)) * (min(max((car_body_cabin_start + car_body_cabin_length - 0.5625) / (0.4 * car_body_cabin_length), 0), 1)) * (3 - 2 * (min(max((car_body_cabin_start + car_body_cabin_length - 0.5625) / (0.4 * car_body_cabin_length), 0), 1))))",
+      "why": "how much of the cabin this station is in, 0 to 1"
+    },
+    {
+      "name": "car_body_station_9_deck",
+      "expression": "(((car_body_nose_height + (car_body_belt_height - car_body_nose_height) * ((min(max(0.5625 / car_body_cabin_start, 0), 1)) * (min(max(0.5625 / car_body_cabin_start, 0), 1)) * (3 - 2 * (min(max(0.5625 / car_body_cabin_start, 0), 1))))) + (max(car_body_belt_height, car_body_tail_height) - car_body_belt_height) * ((min(max((0.5625 - car_body_cabin_start) / car_body_cabin_length, 0), 1)) * (min(max((0.5625 - car_body_cabin_start) / car_body_cabin_length, 0), 1)) * (3 - 2 * (min(max((0.5625 - car_body_cabin_start) / car_body_cabin_length, 0), 1))))) + (0.94 * car_body_tail_height - max(car_body_belt_height, car_body_tail_height)) * ((min(max((0.5625 - car_body_cabin_start - car_body_cabin_length) / (1 - car_body_cabin_start - car_body_cabin_length), 0), 1)) * (min(max((0.5625 - car_body_cabin_start - car_body_cabin_length) / (1 - car_body_cabin_start - car_body_cabin_length), 0), 1)) * (3 - 2 * (min(max((0.5625 - car_body_cabin_start - car_body_cabin_length) / (1 - car_body_cabin_start - car_body_cabin_length), 0), 1)))))",
+      "why": "this station's top outside the cabin, as a share of height"
+    },
+    {
+      "name": "car_body_station_9_top",
+      "expression": "(car_body_station_9_deck + (1 - car_body_station_9_deck) * car_body_station_9_cabin) * car_body_height",
+      "why": "the height of this station's top: the deck, rising to the roof in the cabin"
+    },
+    {
+      "name": "car_body_station_9_half_width",
+      "expression": "0.5 * car_body_width",
+      "why": "half this station's width"
+    },
+    {
+      "name": "car_body_station_9_belt",
+      "expression": "((car_body_ride_height + 0.95 * (car_body_station_9_top - car_body_ride_height)) + (car_body_belt_height * car_body_height - (car_body_ride_height + 0.95 * (car_body_station_9_top - car_body_ride_height))) * car_body_station_9_cabin)",
+      "why": "the height of this station's shoulder: just under the deck, or the beltline in the cabin"
+    },
+    {
+      "name": "car_body_station_9_roof",
+      "expression": "car_body_station_9_half_width * (0.6 + (car_body_roof_width - 0.6) * car_body_station_9_cabin)",
+      "why": "half this station's top: a crowned deck, widening to the roof in the cabin"
+    },
+    {
+      "name": "car_body_station_10_cabin",
+      "expression": "((min(max((0.625 - car_body_cabin_start) / (0.3 * car_body_cabin_length), 0), 1)) * (min(max((0.625 - car_body_cabin_start) / (0.3 * car_body_cabin_length), 0), 1)) * (3 - 2 * (min(max((0.625 - car_body_cabin_start) / (0.3 * car_body_cabin_length), 0), 1)))) * ((min(max((car_body_cabin_start + car_body_cabin_length - 0.625) / (0.4 * car_body_cabin_length), 0), 1)) * (min(max((car_body_cabin_start + car_body_cabin_length - 0.625) / (0.4 * car_body_cabin_length), 0), 1)) * (3 - 2 * (min(max((car_body_cabin_start + car_body_cabin_length - 0.625) / (0.4 * car_body_cabin_length), 0), 1))))",
+      "why": "how much of the cabin this station is in, 0 to 1"
+    },
+    {
+      "name": "car_body_station_10_deck",
+      "expression": "(((car_body_nose_height + (car_body_belt_height - car_body_nose_height) * ((min(max(0.625 / car_body_cabin_start, 0), 1)) * (min(max(0.625 / car_body_cabin_start, 0), 1)) * (3 - 2 * (min(max(0.625 / car_body_cabin_start, 0), 1))))) + (max(car_body_belt_height, car_body_tail_height) - car_body_belt_height) * ((min(max((0.625 - car_body_cabin_start) / car_body_cabin_length, 0), 1)) * (min(max((0.625 - car_body_cabin_start) / car_body_cabin_length, 0), 1)) * (3 - 2 * (min(max((0.625 - car_body_cabin_start) / car_body_cabin_length, 0), 1))))) + (0.94 * car_body_tail_height - max(car_body_belt_height, car_body_tail_height)) * ((min(max((0.625 - car_body_cabin_start - car_body_cabin_length) / (1 - car_body_cabin_start - car_body_cabin_length), 0), 1)) * (min(max((0.625 - car_body_cabin_start - car_body_cabin_length) / (1 - car_body_cabin_start - car_body_cabin_length), 0), 1)) * (3 - 2 * (min(max((0.625 - car_body_cabin_start - car_body_cabin_length) / (1 - car_body_cabin_start - car_body_cabin_length), 0), 1)))))",
+      "why": "this station's top outside the cabin, as a share of height"
+    },
+    {
+      "name": "car_body_station_10_top",
+      "expression": "(car_body_station_10_deck + (1 - car_body_station_10_deck) * car_body_station_10_cabin) * car_body_height",
+      "why": "the height of this station's top: the deck, rising to the roof in the cabin"
+    },
+    {
+      "name": "car_body_station_10_half_width",
+      "expression": "0.5 * car_body_width",
+      "why": "half this station's width"
+    },
+    {
+      "name": "car_body_station_10_belt",
+      "expression": "((car_body_ride_height + 0.95 * (car_body_station_10_top - car_body_ride_height)) + (car_body_belt_height * car_body_height - (car_body_ride_height + 0.95 * (car_body_station_10_top - car_body_ride_height))) * car_body_station_10_cabin)",
+      "why": "the height of this station's shoulder: just under the deck, or the beltline in the cabin"
+    },
+    {
+      "name": "car_body_station_10_roof",
+      "expression": "car_body_station_10_half_width * (0.6 + (car_body_roof_width - 0.6) * car_body_station_10_cabin)",
+      "why": "half this station's top: a crowned deck, widening to the roof in the cabin"
+    },
+    {
+      "name": "car_body_station_11_cabin",
+      "expression": "((min(max((0.6875 - car_body_cabin_start) / (0.3 * car_body_cabin_length), 0), 1)) * (min(max((0.6875 - car_body_cabin_start) / (0.3 * car_body_cabin_length), 0), 1)) * (3 - 2 * (min(max((0.6875 - car_body_cabin_start) / (0.3 * car_body_cabin_length), 0), 1)))) * ((min(max((car_body_cabin_start + car_body_cabin_length - 0.6875) / (0.4 * car_body_cabin_length), 0), 1)) * (min(max((car_body_cabin_start + car_body_cabin_length - 0.6875) / (0.4 * car_body_cabin_length), 0), 1)) * (3 - 2 * (min(max((car_body_cabin_start + car_body_cabin_length - 0.6875) / (0.4 * car_body_cabin_length), 0), 1))))",
+      "why": "how much of the cabin this station is in, 0 to 1"
+    },
+    {
+      "name": "car_body_station_11_deck",
+      "expression": "(((car_body_nose_height + (car_body_belt_height - car_body_nose_height) * ((min(max(0.6875 / car_body_cabin_start, 0), 1)) * (min(max(0.6875 / car_body_cabin_start, 0), 1)) * (3 - 2 * (min(max(0.6875 / car_body_cabin_start, 0), 1))))) + (max(car_body_belt_height, car_body_tail_height) - car_body_belt_height) * ((min(max((0.6875 - car_body_cabin_start) / car_body_cabin_length, 0), 1)) * (min(max((0.6875 - car_body_cabin_start) / car_body_cabin_length, 0), 1)) * (3 - 2 * (min(max((0.6875 - car_body_cabin_start) / car_body_cabin_length, 0), 1))))) + (0.94 * car_body_tail_height - max(car_body_belt_height, car_body_tail_height)) * ((min(max((0.6875 - car_body_cabin_start - car_body_cabin_length) / (1 - car_body_cabin_start - car_body_cabin_length), 0), 1)) * (min(max((0.6875 - car_body_cabin_start - car_body_cabin_length) / (1 - car_body_cabin_start - car_body_cabin_length), 0), 1)) * (3 - 2 * (min(max((0.6875 - car_body_cabin_start - car_body_cabin_length) / (1 - car_body_cabin_start - car_body_cabin_length), 0), 1)))))",
+      "why": "this station's top outside the cabin, as a share of height"
+    },
+    {
+      "name": "car_body_station_11_top",
+      "expression": "(car_body_station_11_deck + (1 - car_body_station_11_deck) * car_body_station_11_cabin) * car_body_height",
+      "why": "the height of this station's top: the deck, rising to the roof in the cabin"
+    },
+    {
+      "name": "car_body_station_11_half_width",
+      "expression": "0.5 * car_body_width",
+      "why": "half this station's width"
+    },
+    {
+      "name": "car_body_station_11_belt",
+      "expression": "((car_body_ride_height + 0.95 * (car_body_station_11_top - car_body_ride_height)) + (car_body_belt_height * car_body_height - (car_body_ride_height + 0.95 * (car_body_station_11_top - car_body_ride_height))) * car_body_station_11_cabin)",
+      "why": "the height of this station's shoulder: just under the deck, or the beltline in the cabin"
+    },
+    {
+      "name": "car_body_station_11_roof",
+      "expression": "car_body_station_11_half_width * (0.6 + (car_body_roof_width - 0.6) * car_body_station_11_cabin)",
+      "why": "half this station's top: a crowned deck, widening to the roof in the cabin"
+    },
+    {
+      "name": "car_body_station_12_cabin",
+      "expression": "((min(max((0.75 - car_body_cabin_start) / (0.3 * car_body_cabin_length), 0), 1)) * (min(max((0.75 - car_body_cabin_start) / (0.3 * car_body_cabin_length), 0), 1)) * (3 - 2 * (min(max((0.75 - car_body_cabin_start) / (0.3 * car_body_cabin_length), 0), 1)))) * ((min(max((car_body_cabin_start + car_body_cabin_length - 0.75) / (0.4 * car_body_cabin_length), 0), 1)) * (min(max((car_body_cabin_start + car_body_cabin_length - 0.75) / (0.4 * car_body_cabin_length), 0), 1)) * (3 - 2 * (min(max((car_body_cabin_start + car_body_cabin_length - 0.75) / (0.4 * car_body_cabin_length), 0), 1))))",
+      "why": "how much of the cabin this station is in, 0 to 1"
+    },
+    {
+      "name": "car_body_station_12_deck",
+      "expression": "(((car_body_nose_height + (car_body_belt_height - car_body_nose_height) * ((min(max(0.75 / car_body_cabin_start, 0), 1)) * (min(max(0.75 / car_body_cabin_start, 0), 1)) * (3 - 2 * (min(max(0.75 / car_body_cabin_start, 0), 1))))) + (max(car_body_belt_height, car_body_tail_height) - car_body_belt_height) * ((min(max((0.75 - car_body_cabin_start) / car_body_cabin_length, 0), 1)) * (min(max((0.75 - car_body_cabin_start) / car_body_cabin_length, 0), 1)) * (3 - 2 * (min(max((0.75 - car_body_cabin_start) / car_body_cabin_length, 0), 1))))) + (0.94 * car_body_tail_height - max(car_body_belt_height, car_body_tail_height)) * ((min(max((0.75 - car_body_cabin_start - car_body_cabin_length) / (1 - car_body_cabin_start - car_body_cabin_length), 0), 1)) * (min(max((0.75 - car_body_cabin_start - car_body_cabin_length) / (1 - car_body_cabin_start - car_body_cabin_length), 0), 1)) * (3 - 2 * (min(max((0.75 - car_body_cabin_start - car_body_cabin_length) / (1 - car_body_cabin_start - car_body_cabin_length), 0), 1)))))",
+      "why": "this station's top outside the cabin, as a share of height"
+    },
+    {
+      "name": "car_body_station_12_top",
+      "expression": "(car_body_station_12_deck + (1 - car_body_station_12_deck) * car_body_station_12_cabin) * car_body_height",
+      "why": "the height of this station's top: the deck, rising to the roof in the cabin"
+    },
+    {
+      "name": "car_body_station_12_half_width",
+      "expression": "0.5 * car_body_width",
+      "why": "half this station's width"
+    },
+    {
+      "name": "car_body_station_12_belt",
+      "expression": "((car_body_ride_height + 0.95 * (car_body_station_12_top - car_body_ride_height)) + (car_body_belt_height * car_body_height - (car_body_ride_height + 0.95 * (car_body_station_12_top - car_body_ride_height))) * car_body_station_12_cabin)",
+      "why": "the height of this station's shoulder: just under the deck, or the beltline in the cabin"
+    },
+    {
+      "name": "car_body_station_12_roof",
+      "expression": "car_body_station_12_half_width * (0.6 + (car_body_roof_width - 0.6) * car_body_station_12_cabin)",
+      "why": "half this station's top: a crowned deck, widening to the roof in the cabin"
+    },
+    {
+      "name": "car_body_station_13_cabin",
+      "expression": "((min(max((0.8125 - car_body_cabin_start) / (0.3 * car_body_cabin_length), 0), 1)) * (min(max((0.8125 - car_body_cabin_start) / (0.3 * car_body_cabin_length), 0), 1)) * (3 - 2 * (min(max((0.8125 - car_body_cabin_start) / (0.3 * car_body_cabin_length), 0), 1)))) * ((min(max((car_body_cabin_start + car_body_cabin_length - 0.8125) / (0.4 * car_body_cabin_length), 0), 1)) * (min(max((car_body_cabin_start + car_body_cabin_length - 0.8125) / (0.4 * car_body_cabin_length), 0), 1)) * (3 - 2 * (min(max((car_body_cabin_start + car_body_cabin_length - 0.8125) / (0.4 * car_body_cabin_length), 0), 1))))",
+      "why": "how much of the cabin this station is in, 0 to 1"
+    },
+    {
+      "name": "car_body_station_13_deck",
+      "expression": "(((car_body_nose_height + (car_body_belt_height - car_body_nose_height) * ((min(max(0.8125 / car_body_cabin_start, 0), 1)) * (min(max(0.8125 / car_body_cabin_start, 0), 1)) * (3 - 2 * (min(max(0.8125 / car_body_cabin_start, 0), 1))))) + (max(car_body_belt_height, car_body_tail_height) - car_body_belt_height) * ((min(max((0.8125 - car_body_cabin_start) / car_body_cabin_length, 0), 1)) * (min(max((0.8125 - car_body_cabin_start) / car_body_cabin_length, 0), 1)) * (3 - 2 * (min(max((0.8125 - car_body_cabin_start) / car_body_cabin_length, 0), 1))))) + (0.94 * car_body_tail_height - max(car_body_belt_height, car_body_tail_height)) * ((min(max((0.8125 - car_body_cabin_start - car_body_cabin_length) / (1 - car_body_cabin_start - car_body_cabin_length), 0), 1)) * (min(max((0.8125 - car_body_cabin_start - car_body_cabin_length) / (1 - car_body_cabin_start - car_body_cabin_length), 0), 1)) * (3 - 2 * (min(max((0.8125 - car_body_cabin_start - car_body_cabin_length) / (1 - car_body_cabin_start - car_body_cabin_length), 0), 1)))))",
+      "why": "this station's top outside the cabin, as a share of height"
+    },
+    {
+      "name": "car_body_station_13_top",
+      "expression": "(car_body_station_13_deck + (1 - car_body_station_13_deck) * car_body_station_13_cabin) * car_body_height",
+      "why": "the height of this station's top: the deck, rising to the roof in the cabin"
+    },
+    {
+      "name": "car_body_station_13_half_width",
+      "expression": "0.4994384765625 * car_body_width",
+      "why": "half this station's width"
+    },
+    {
+      "name": "car_body_station_13_belt",
+      "expression": "((car_body_ride_height + 0.95 * (car_body_station_13_top - car_body_ride_height)) + (car_body_belt_height * car_body_height - (car_body_ride_height + 0.95 * (car_body_station_13_top - car_body_ride_height))) * car_body_station_13_cabin)",
+      "why": "the height of this station's shoulder: just under the deck, or the beltline in the cabin"
+    },
+    {
+      "name": "car_body_station_13_roof",
+      "expression": "car_body_station_13_half_width * (0.6 + (car_body_roof_width - 0.6) * car_body_station_13_cabin)",
+      "why": "half this station's top: a crowned deck, widening to the roof in the cabin"
+    },
+    {
+      "name": "car_body_station_14_cabin",
+      "expression": "((min(max((0.875 - car_body_cabin_start) / (0.3 * car_body_cabin_length), 0), 1)) * (min(max((0.875 - car_body_cabin_start) / (0.3 * car_body_cabin_length), 0), 1)) * (3 - 2 * (min(max((0.875 - car_body_cabin_start) / (0.3 * car_body_cabin_length), 0), 1)))) * ((min(max((car_body_cabin_start + car_body_cabin_length - 0.875) / (0.4 * car_body_cabin_length), 0), 1)) * (min(max((car_body_cabin_start + car_body_cabin_length - 0.875) / (0.4 * car_body_cabin_length), 0), 1)) * (3 - 2 * (min(max((car_body_cabin_start + car_body_cabin_length - 0.875) / (0.4 * car_body_cabin_length), 0), 1))))",
+      "why": "how much of the cabin this station is in, 0 to 1"
+    },
+    {
+      "name": "car_body_station_14_deck",
+      "expression": "(((car_body_nose_height + (car_body_belt_height - car_body_nose_height) * ((min(max(0.875 / car_body_cabin_start, 0), 1)) * (min(max(0.875 / car_body_cabin_start, 0), 1)) * (3 - 2 * (min(max(0.875 / car_body_cabin_start, 0), 1))))) + (max(car_body_belt_height, car_body_tail_height) - car_body_belt_height) * ((min(max((0.875 - car_body_cabin_start) / car_body_cabin_length, 0), 1)) * (min(max((0.875 - car_body_cabin_start) / car_body_cabin_length, 0), 1)) * (3 - 2 * (min(max((0.875 - car_body_cabin_start) / car_body_cabin_length, 0), 1))))) + (0.94 * car_body_tail_height - max(car_body_belt_height, car_body_tail_height)) * ((min(max((0.875 - car_body_cabin_start - car_body_cabin_length) / (1 - car_body_cabin_start - car_body_cabin_length), 0), 1)) * (min(max((0.875 - car_body_cabin_start - car_body_cabin_length) / (1 - car_body_cabin_start - car_body_cabin_length), 0), 1)) * (3 - 2 * (min(max((0.875 - car_body_cabin_start - car_body_cabin_length) / (1 - car_body_cabin_start - car_body_cabin_length), 0), 1)))))",
+      "why": "this station's top outside the cabin, as a share of height"
+    },
+    {
+      "name": "car_body_station_14_top",
+      "expression": "(car_body_station_14_deck + (1 - car_body_station_14_deck) * car_body_station_14_cabin) * car_body_height",
+      "why": "the height of this station's top: the deck, rising to the roof in the cabin"
+    },
+    {
+      "name": "car_body_station_14_half_width",
+      "expression": "0.4841796875 * car_body_width",
+      "why": "half this station's width"
+    },
+    {
+      "name": "car_body_station_14_belt",
+      "expression": "((car_body_ride_height + 0.95 * (car_body_station_14_top - car_body_ride_height)) + (car_body_belt_height * car_body_height - (car_body_ride_height + 0.95 * (car_body_station_14_top - car_body_ride_height))) * car_body_station_14_cabin)",
+      "why": "the height of this station's shoulder: just under the deck, or the beltline in the cabin"
+    },
+    {
+      "name": "car_body_station_14_roof",
+      "expression": "car_body_station_14_half_width * (0.6 + (car_body_roof_width - 0.6) * car_body_station_14_cabin)",
+      "why": "half this station's top: a crowned deck, widening to the roof in the cabin"
+    },
+    {
+      "name": "car_body_station_15_cabin",
+      "expression": "((min(max((0.9375 - car_body_cabin_start) / (0.3 * car_body_cabin_length), 0), 1)) * (min(max((0.9375 - car_body_cabin_start) / (0.3 * car_body_cabin_length), 0), 1)) * (3 - 2 * (min(max((0.9375 - car_body_cabin_start) / (0.3 * car_body_cabin_length), 0), 1)))) * ((min(max((car_body_cabin_start + car_body_cabin_length - 0.9375) / (0.4 * car_body_cabin_length), 0), 1)) * (min(max((car_body_cabin_start + car_body_cabin_length - 0.9375) / (0.4 * car_body_cabin_length), 0), 1)) * (3 - 2 * (min(max((car_body_cabin_start + car_body_cabin_length - 0.9375) / (0.4 * car_body_cabin_length), 0), 1))))",
+      "why": "how much of the cabin this station is in, 0 to 1"
+    },
+    {
+      "name": "car_body_station_15_deck",
+      "expression": "(((car_body_nose_height + (car_body_belt_height - car_body_nose_height) * ((min(max(0.9375 / car_body_cabin_start, 0), 1)) * (min(max(0.9375 / car_body_cabin_start, 0), 1)) * (3 - 2 * (min(max(0.9375 / car_body_cabin_start, 0), 1))))) + (max(car_body_belt_height, car_body_tail_height) - car_body_belt_height) * ((min(max((0.9375 - car_body_cabin_start) / car_body_cabin_length, 0), 1)) * (min(max((0.9375 - car_body_cabin_start) / car_body_cabin_length, 0), 1)) * (3 - 2 * (min(max((0.9375 - car_body_cabin_start) / car_body_cabin_length, 0), 1))))) + (0.94 * car_body_tail_height - max(car_body_belt_height, car_body_tail_height)) * ((min(max((0.9375 - car_body_cabin_start - car_body_cabin_length) / (1 - car_body_cabin_start - car_body_cabin_length), 0), 1)) * (min(max((0.9375 - car_body_cabin_start - car_body_cabin_length) / (1 - car_body_cabin_start - car_body_cabin_length), 0), 1)) * (3 - 2 * (min(max((0.9375 - car_body_cabin_start - car_body_cabin_length) / (1 - car_body_cabin_start - car_body_cabin_length), 0), 1)))))",
+      "why": "this station's top outside the cabin, as a share of height"
+    },
+    {
+      "name": "car_body_station_15_top",
+      "expression": "(car_body_station_15_deck + (1 - car_body_station_15_deck) * car_body_station_15_cabin) * car_body_height",
+      "why": "the height of this station's top: the deck, rising to the roof in the cabin"
+    },
+    {
+      "name": "car_body_station_15_half_width",
+      "expression": "0.4615966796875 * car_body_width",
+      "why": "half this station's width"
+    },
+    {
+      "name": "car_body_station_15_belt",
+      "expression": "((car_body_ride_height + 0.95 * (car_body_station_15_top - car_body_ride_height)) + (car_body_belt_height * car_body_height - (car_body_ride_height + 0.95 * (car_body_station_15_top - car_body_ride_height))) * car_body_station_15_cabin)",
+      "why": "the height of this station's shoulder: just under the deck, or the beltline in the cabin"
+    },
+    {
+      "name": "car_body_station_15_roof",
+      "expression": "car_body_station_15_half_width * (0.6 + (car_body_roof_width - 0.6) * car_body_station_15_cabin)",
+      "why": "half this station's top: a crowned deck, widening to the roof in the cabin"
+    },
+    {
+      "name": "car_body_station_16_cabin",
+      "expression": "((min(max((1 - car_body_cabin_start) / (0.3 * car_body_cabin_length), 0), 1)) * (min(max((1 - car_body_cabin_start) / (0.3 * car_body_cabin_length), 0), 1)) * (3 - 2 * (min(max((1 - car_body_cabin_start) / (0.3 * car_body_cabin_length), 0), 1)))) * ((min(max((car_body_cabin_start + car_body_cabin_length - 1) / (0.4 * car_body_cabin_length), 0), 1)) * (min(max((car_body_cabin_start + car_body_cabin_length - 1) / (0.4 * car_body_cabin_length), 0), 1)) * (3 - 2 * (min(max((car_body_cabin_start + car_body_cabin_length - 1) / (0.4 * car_body_cabin_length), 0), 1))))",
+      "why": "how much of the cabin this station is in, 0 to 1"
+    },
+    {
+      "name": "car_body_station_16_deck",
+      "expression": "(((car_body_nose_height + (car_body_belt_height - car_body_nose_height) * ((min(max(1 / car_body_cabin_start, 0), 1)) * (min(max(1 / car_body_cabin_start, 0), 1)) * (3 - 2 * (min(max(1 / car_body_cabin_start, 0), 1))))) + (max(car_body_belt_height, car_body_tail_height) - car_body_belt_height) * ((min(max((1 - car_body_cabin_start) / car_body_cabin_length, 0), 1)) * (min(max((1 - car_body_cabin_start) / car_body_cabin_length, 0), 1)) * (3 - 2 * (min(max((1 - car_body_cabin_start) / car_body_cabin_length, 0), 1))))) + (0.94 * car_body_tail_height - max(car_body_belt_height, car_body_tail_height)) * ((min(max((1 - car_body_cabin_start - car_body_cabin_length) / (1 - car_body_cabin_start - car_body_cabin_length), 0), 1)) * (min(max((1 - car_body_cabin_start - car_body_cabin_length) / (1 - car_body_cabin_start - car_body_cabin_length), 0), 1)) * (3 - 2 * (min(max((1 - car_body_cabin_start - car_body_cabin_length) / (1 - car_body_cabin_start - car_body_cabin_length), 0), 1)))))",
+      "why": "this station's top outside the cabin, as a share of height"
+    },
+    {
+      "name": "car_body_station_16_top",
+      "expression": "(car_body_station_16_deck + (1 - car_body_station_16_deck) * car_body_station_16_cabin) * car_body_height",
+      "why": "the height of this station's top: the deck, rising to the roof in the cabin"
+    },
+    {
+      "name": "car_body_station_16_half_width",
+      "expression": "0.45 * car_body_width",
+      "why": "half this station's width"
+    },
+    {
+      "name": "car_body_station_16_belt",
+      "expression": "((car_body_ride_height + 0.95 * (car_body_station_16_top - car_body_ride_height)) + (car_body_belt_height * car_body_height - (car_body_ride_height + 0.95 * (car_body_station_16_top - car_body_ride_height))) * car_body_station_16_cabin)",
+      "why": "the height of this station's shoulder: just under the deck, or the beltline in the cabin"
+    },
+    {
+      "name": "car_body_station_16_roof",
+      "expression": "car_body_station_16_half_width * (0.6 + (car_body_roof_width - 0.6) * car_body_station_16_cabin)",
+      "why": "half this station's top: a crowned deck, widening to the roof in the cabin"
+    }
+  ],
+  "assumptions": [
+    "Balanced front and rear overhangs for GT styling",
+    "Rear wheels slightly wider than front for traction",
+    "Standard sports car ride height and track widths",
+    "Car Body: track_front 1603.144 — FORGE chose it as a share of width, the midpoint of the sports cars in the UNVALIDATED proportion table.",
+    "Car Body: track_rear 1603.144 — FORGE chose it as a share of width, the midpoint of the sports cars in the UNVALIDATED proportion table.",
+    "Car Body: wheel_diameter 681.231 — FORGE chose it as a share of height, the midpoint of the sports cars in the UNVALIDATED proportion table.",
+    "Car Body: tyre_width 246.944 — FORGE chose it from the cited cars' tyre sizes.",
+    "Car Body: rim_diameter 496.434 — FORGE chose it from the cited cars' tyre sizes.",
+    "Car Body: ride_height 81 — FORGE chose it, the midpoint of the sports cars in the UNVALIDATED proportion table.",
+    "Car Body: front_overhang 1030.492 — FORGE split the overhangs in the cited cars' front-to-rear share.",
+    "Car Body: arch_clearance 40.874 — FORGE chose 6% of the wheel diameter.",
+    "Car Body: cabin_start 0.33 — FORGE's own default style.",
+    "Car Body: cabin_length 0.42 — FORGE's own default style.",
+    "Car Body: nose_height 0.42 — FORGE's own default style.",
+    "Car Body: belt_height 0.62 — FORGE's own default style.",
+    "Car Body: tail_height 0.78 — FORGE's own default style.",
+    "Car Body: roof_width 0.74 — FORGE's own default style.",
+    "Car Body: edge_radius 0.025 — FORGE's own default style.",
+    "Car Body: lug_count 5 — FORGE's own default.",
+    "Car Body: diffuser_fins 4 — FORGE's own default."
+  ],
+  "not_verified": [
+    "No structural analysis performed",
+    "No interference check between body and wheels",
+    "Suspension geometry not modeled",
+    "Aerodynamic performance not evaluated"
+  ],
+  "definitions": [
+    {
+      "id": "car-body-station-0",
+      "name": "Body station 0",
+      "shape": "section",
+      "size": {},
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "profile": [
+        {
+          "x": -646,
+          "y": 81,
+          "x_from": "-(0.85 * car_body_station_0_half_width)",
+          "y_from": "car_body_ride_height",
+          "via": {
+            "x": -732.062875,
+            "y": 293.5359,
+            "x_from": "((-(0.955 * car_body_station_0_half_width) + -(0.85 * car_body_station_0_half_width)) / 2 + (car_body_ride_height - car_body_station_0_belt) * 0.1045)",
+            "y_from": "((car_body_station_0_belt + car_body_ride_height) / 2 - (-(0.85 * car_body_station_0_half_width) - -(0.955 * car_body_station_0_half_width)) * 0.1045)"
+          }
+        },
+        {
+          "x": 646,
+          "y": 81,
+          "x_from": "0.85 * car_body_station_0_half_width",
+          "y_from": "car_body_ride_height"
+        },
+        {
+          "x": 725.8,
+          "y": 522.75,
+          "x_from": "0.955 * car_body_station_0_half_width",
+          "y_from": "car_body_station_0_belt",
+          "via": {
+            "x": 732.062875,
+            "y": 293.5359,
+            "x_from": "((0.85 * car_body_station_0_half_width + 0.955 * car_body_station_0_half_width) / 2 + (car_body_station_0_belt - car_body_ride_height) * 0.1045)",
+            "y_from": "((car_body_ride_height + car_body_station_0_belt) / 2 - (0.955 * car_body_station_0_half_width - 0.85 * car_body_station_0_half_width) * 0.1045)"
+          }
+        },
+        {
+          "x": 456,
+          "y": 546,
+          "radius": 32.5,
+          "x_from": "car_body_station_0_roof",
+          "y_from": "car_body_station_0_top",
+          "radius_from": "car_body_edge_radius * car_body_height"
+        },
+        {
+          "x": -456,
+          "y": 546,
+          "radius": 32.5,
+          "x_from": "-car_body_station_0_roof",
+          "y_from": "car_body_station_0_top",
+          "radius_from": "car_body_edge_radius * car_body_height"
+        },
+        {
+          "x": -725.8,
+          "y": 522.75,
+          "x_from": "-(0.955 * car_body_station_0_half_width)",
+          "y_from": "car_body_station_0_belt"
+        }
+      ],
+      "rotation": [
+        0,
+        90,
+        0
+      ],
+      "color": "#2f4f6f",
+      "opacity": 1,
+      "note": "a section of the body, blended into the others by the body's loft"
+    },
+    {
+      "id": "car-body-station-1",
+      "name": "Body station 1",
+      "shape": "section",
+      "size": {},
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "profile": [
+        {
+          "x": -683.457275390625,
+          "y": 81,
+          "x_from": "-(0.85 * car_body_station_1_half_width)",
+          "y_from": "car_body_ride_height",
+          "via": {
+            "x": -774.6325428272181,
+            "y": 304.59667532066527,
+            "x_from": "((-(0.955 * car_body_station_1_half_width) + -(0.85 * car_body_station_1_half_width)) / 2 + (car_body_ride_height - car_body_station_1_belt) * 0.1053)",
+            "y_from": "((car_body_station_1_belt + car_body_ride_height) / 2 - (-(0.85 * car_body_station_1_half_width) - -(0.955 * car_body_station_1_half_width)) * 0.1053)"
+          }
+        },
+        {
+          "x": 683.457275390625,
+          "y": 81,
+          "x_from": "0.85 * car_body_station_1_half_width",
+          "y_from": "car_body_ride_height"
+        },
+        {
+          "x": 767.8843505859375,
+          "y": 545.9736926774633,
+          "x_from": "0.955 * car_body_station_1_half_width",
+          "y_from": "car_body_station_1_belt",
+          "via": {
+            "x": 774.6325428272181,
+            "y": 304.59667532066527,
+            "x_from": "((0.85 * car_body_station_1_half_width + 0.955 * car_body_station_1_half_width) / 2 + (car_body_station_1_belt - car_body_ride_height) * 0.1053)",
+            "y_from": "((car_body_ride_height + car_body_station_1_belt) / 2 - (0.955 * car_body_station_1_half_width - 0.85 * car_body_station_1_half_width) * 0.1053)"
+          }
+        },
+        {
+          "x": 482.4404296875,
+          "y": 570.4459922920666,
+          "radius": 32.5,
+          "x_from": "car_body_station_1_roof",
+          "y_from": "car_body_station_1_top",
+          "radius_from": "car_body_edge_radius * car_body_height"
+        },
+        {
+          "x": -482.4404296875,
+          "y": 570.4459922920666,
+          "radius": 32.5,
+          "x_from": "-car_body_station_1_roof",
+          "y_from": "car_body_station_1_top",
+          "radius_from": "car_body_edge_radius * car_body_height"
+        },
+        {
+          "x": -767.8843505859375,
+          "y": 545.9736926774633,
+          "x_from": "-(0.955 * car_body_station_1_half_width)",
+          "y_from": "car_body_station_1_belt"
+        }
+      ],
+      "rotation": [
+        0,
+        90,
+        0
+      ],
+      "color": "#2f4f6f",
+      "opacity": 1,
+      "note": "a section of the body, blended into the others by the body's loft"
+    },
+    {
+      "id": "car-body-station-2",
+      "name": "Body station 2",
+      "shape": "section",
+      "size": {},
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "profile": [
+        {
+          "x": -756.400390625,
+          "y": 81,
+          "x_from": "-(0.85 * car_body_station_2_half_width)",
+          "y_from": "car_body_ride_height",
+          "via": {
+            "x": -860.8183665494694,
+            "y": 331.26678257705163,
+            "x_from": "((-(0.955 * car_body_station_2_half_width) + -(0.85 * car_body_station_2_half_width)) / 2 + (car_body_ride_height - car_body_station_2_belt) * 0.1107)",
+            "y_from": "((car_body_station_2_belt + car_body_ride_height) / 2 - (-(0.85 * car_body_station_2_half_width) - -(0.955 * car_body_station_2_half_width)) * 0.1107)"
+          }
+        },
+        {
+          "x": 756.400390625,
+          "y": 81,
+          "x_from": "0.85 * car_body_station_2_half_width",
+          "y_from": "car_body_ride_height"
+        },
+        {
+          "x": 849.8380859375,
+          "y": 602.2206708962907,
+          "x_from": "0.955 * car_body_station_2_half_width",
+          "y_from": "car_body_station_2_belt",
+          "via": {
+            "x": 860.8183665494694,
+            "y": 331.26678257705163,
+            "x_from": "((0.85 * car_body_station_2_half_width + 0.955 * car_body_station_2_half_width) / 2 + (car_body_station_2_belt - car_body_ride_height) * 0.1107)",
+            "y_from": "((car_body_ride_height + car_body_station_2_belt) / 2 - (0.955 * car_body_station_2_half_width - 0.85 * car_body_station_2_half_width) * 0.1107)"
+          }
+        },
+        {
+          "x": 533.9296875,
+          "y": 629.6533377855692,
+          "radius": 32.5,
+          "x_from": "car_body_station_2_roof",
+          "y_from": "car_body_station_2_top",
+          "radius_from": "car_body_edge_radius * car_body_height"
+        },
+        {
+          "x": -533.9296875,
+          "y": 629.6533377855692,
+          "radius": 32.5,
+          "x_from": "-car_body_station_2_roof",
+          "y_from": "car_body_station_2_top",
+          "radius_from": "car_body_edge_radius * car_body_height"
+        },
+        {
+          "x": -849.8380859375,
+          "y": 602.2206708962907,
+          "x_from": "-(0.955 * car_body_station_2_half_width)",
+          "y_from": "car_body_station_2_belt"
+        }
+      ],
+      "rotation": [
+        0,
+        90,
+        0
+      ],
+      "color": "#2f4f6f",
+      "opacity": 1,
+      "note": "a section of the body, blended into the others by the body's loft"
+    },
+    {
+      "id": "car-body-station-3",
+      "name": "Body station 3",
+      "shape": "section",
+      "size": {},
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "profile": [
+        {
+          "x": -805.686279296875,
+          "y": 81,
+          "x_from": "-(0.85 * car_body_station_3_half_width)",
+          "y_from": "car_body_ride_height",
+          "via": {
+            "x": -933.8483708106129,
+            "y": 362.9603460227566,
+            "x_from": "((-(0.955 * car_body_station_3_half_width) + -(0.85 * car_body_station_3_half_width)) / 2 + (car_body_ride_height - car_body_station_3_belt) * 0.1328)",
+            "y_from": "((car_body_station_3_belt + car_body_ride_height) / 2 - (-(0.85 * car_body_station_3_half_width) - -(0.955 * car_body_station_3_half_width)) * 0.1328)"
+          }
+        },
+        {
+          "x": 805.686279296875,
+          "y": 81,
+          "x_from": "0.85 * car_body_station_3_half_width",
+          "y_from": "car_body_ride_height"
+        },
+        {
+          "x": 905.2122314453125,
+          "y": 671.3547849361382,
+          "x_from": "0.955 * car_body_station_3_half_width",
+          "y_from": "car_body_station_3_belt",
+          "via": {
+            "x": 933.8483708106129,
+            "y": 362.9603460227566,
+            "x_from": "((0.85 * car_body_station_3_half_width + 0.955 * car_body_station_3_half_width) / 2 + (car_body_station_3_belt - car_body_ride_height) * 0.1328)",
+            "y_from": "((car_body_ride_height + car_body_station_3_belt) / 2 - (0.955 * car_body_station_3_half_width - 0.85 * car_body_station_3_half_width) * 0.1328)"
+          }
+        },
+        {
+          "x": 568.7197265625,
+          "y": 702.4260894064613,
+          "radius": 32.5,
+          "x_from": "car_body_station_3_roof",
+          "y_from": "car_body_station_3_top",
+          "radius_from": "car_body_edge_radius * car_body_height"
+        },
+        {
+          "x": -568.7197265625,
+          "y": 702.4260894064613,
+          "radius": 32.5,
+          "x_from": "-car_body_station_3_roof",
+          "y_from": "car_body_station_3_top",
+          "radius_from": "car_body_edge_radius * car_body_height"
+        },
+        {
+          "x": -905.2122314453125,
+          "y": 671.3547849361382,
+          "x_from": "-(0.955 * car_body_station_3_half_width)",
+          "y_from": "car_body_station_3_belt"
+        }
+      ],
+      "rotation": [
+        0,
+        90,
+        0
+      ],
+      "color": "#2f4f6f",
+      "opacity": 1,
+      "note": "a section of the body, blended into the others by the body's loft"
+    },
+    {
+      "id": "car-body-station-4",
+      "name": "Body station 4",
+      "shape": "section",
+      "size": {},
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "profile": [
+        {
+          "x": -807.5,
+          "y": 81,
+          "x_from": "-(0.85 * car_body_station_4_half_width)",
+          "y_from": "car_body_ride_height",
+          "via": {
+            "x": -938.9049856345828,
+            "y": 394.6511925383309,
+            "x_from": "((-(0.955 * car_body_station_4_half_width) + -(0.85 * car_body_station_4_half_width)) / 2 + (car_body_ride_height - car_body_station_4_belt) * 0.125)",
+            "y_from": "((car_body_station_4_belt + car_body_ride_height) / 2 - (-(0.85 * car_body_station_4_half_width) - -(0.955 * car_body_station_4_half_width)) * 0.125)"
+          }
+        },
+        {
+          "x": 807.5,
+          "y": 81,
+          "x_from": "0.85 * car_body_station_4_half_width",
+          "y_from": "car_body_ride_height"
+        },
+        {
+          "x": 907.25,
+          "y": 733.2398850766618,
+          "x_from": "0.955 * car_body_station_4_half_width",
+          "y_from": "car_body_station_4_belt",
+          "via": {
+            "x": 938.9049856345828,
+            "y": 394.6511925383309,
+            "x_from": "((0.85 * car_body_station_4_half_width + 0.955 * car_body_station_4_half_width) / 2 + (car_body_station_4_belt - car_body_ride_height) * 0.125)",
+            "y_from": "((car_body_ride_height + car_body_station_4_belt) / 2 - (0.955 * car_body_station_4_half_width - 0.85 * car_body_station_4_half_width) * 0.125)"
+          }
+        },
+        {
+          "x": 570,
+          "y": 767.5683000806968,
+          "radius": 32.5,
+          "x_from": "car_body_station_4_roof",
+          "y_from": "car_body_station_4_top",
+          "radius_from": "car_body_edge_radius * car_body_height"
+        },
+        {
+          "x": -570,
+          "y": 767.5683000806968,
+          "radius": 32.5,
+          "x_from": "-car_body_station_4_roof",
+          "y_from": "car_body_station_4_top",
+          "radius_from": "car_body_edge_radius * car_body_height"
+        },
+        {
+          "x": -907.25,
+          "y": 733.2398850766618,
+          "x_from": "-(0.955 * car_body_station_4_half_width)",
+          "y_from": "car_body_station_4_belt"
+        }
+      ],
+      "rotation": [
+        0,
+        90,
+        0
+      ],
+      "color": "#2f4f6f",
+      "opacity": 1,
+      "note": "a section of the body, blended into the others by the body's loft"
+    },
+    {
+      "id": "car-body-station-5",
+      "name": "Body station 5",
+      "shape": "section",
+      "size": {},
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "profile": [
+        {
+          "x": -807.5,
+          "y": 81,
+          "x_from": "-(0.85 * car_body_station_5_half_width)",
+          "y_from": "car_body_ride_height",
+          "via": {
+            "x": -920.9671074799302,
+            "y": 415.13306079875895,
+            "x_from": "((-(0.955 * car_body_station_5_half_width) + -(0.85 * car_body_station_5_half_width)) / 2 + (car_body_ride_height - car_body_station_5_belt) * 0.0926)",
+            "y_from": "((car_body_station_5_belt + car_body_ride_height) / 2 - (-(0.85 * car_body_station_5_half_width) - -(0.955 * car_body_station_5_half_width)) * 0.0926)"
+          }
+        },
+        {
+          "x": 807.5,
+          "y": 81,
+          "x_from": "0.85 * car_body_station_5_half_width",
+          "y_from": "car_body_ride_height"
+        },
+        {
+          "x": 907.25,
+          "y": 767.7398215975179,
+          "x_from": "0.955 * car_body_station_5_half_width",
+          "y_from": "car_body_station_5_belt",
+          "via": {
+            "x": 920.9671074799302,
+            "y": 415.13306079875895,
+            "x_from": "((0.85 * car_body_station_5_half_width + 0.955 * car_body_station_5_half_width) / 2 + (car_body_station_5_belt - car_body_ride_height) * 0.0926)",
+            "y_from": "((car_body_ride_height + car_body_station_5_belt) / 2 - (0.955 * car_body_station_5_half_width - 0.85 * car_body_station_5_half_width) * 0.0926)"
+          }
+        },
+        {
+          "x": 570,
+          "y": 803.8840227342295,
+          "radius": 32.5,
+          "x_from": "car_body_station_5_roof",
+          "y_from": "car_body_station_5_top",
+          "radius_from": "car_body_edge_radius * car_body_height"
+        },
+        {
+          "x": -570,
+          "y": 803.8840227342295,
+          "radius": 32.5,
+          "x_from": "-car_body_station_5_roof",
+          "y_from": "car_body_station_5_top",
+          "radius_from": "car_body_edge_radius * car_body_height"
+        },
+        {
+          "x": -907.25,
+          "y": 767.7398215975179,
+          "x_from": "-(0.955 * car_body_station_5_half_width)",
+          "y_from": "car_body_station_5_belt"
+        }
+      ],
+      "rotation": [
+        0,
+        90,
+        0
+      ],
+      "color": "#2f4f6f",
+      "opacity": 1,
+      "note": "a section of the body, blended into the others by the body's loft"
+    },
+    {
+      "id": "car-body-station-6",
+      "name": "Body station 6",
+      "shape": "section",
+      "size": {},
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "profile": [
+        {
+          "x": -807.5,
+          "y": 81,
+          "x_from": "-(0.85 * car_body_station_6_half_width)",
+          "y_from": "car_body_ride_height",
+          "via": {
+            "x": -915.652892848859,
+            "y": 473.4394242377162,
+            "x_from": "((-(0.955 * car_body_station_6_half_width) + -(0.85 * car_body_station_6_half_width)) / 2 + (car_body_ride_height - car_body_station_6_belt) * 0.0729)",
+            "y_from": "((car_body_station_6_belt + car_body_ride_height) / 2 - (-(0.85 * car_body_station_6_half_width) - -(0.955 * car_body_station_6_half_width)) * 0.0729)"
+          }
+        },
+        {
+          "x": 807.5,
+          "y": 81,
+          "x_from": "0.85 * car_body_station_6_half_width",
+          "y_from": "car_body_ride_height"
+        },
+        {
+          "x": 907.25,
+          "y": 880.4223984754324,
+          "x_from": "0.955 * car_body_station_6_half_width",
+          "y_from": "car_body_station_6_belt",
+          "via": {
+            "x": 915.652892848859,
+            "y": 473.4394242377162,
+            "x_from": "((0.85 * car_body_station_6_half_width + 0.955 * car_body_station_6_half_width) / 2 + (car_body_station_6_belt - car_body_ride_height) * 0.0729)",
+            "y_from": "((car_body_ride_height + car_body_station_6_belt) / 2 - (0.955 * car_body_station_6_half_width - 0.85 * car_body_station_6_half_width) * 0.0729)"
+          }
+        },
+        {
+          "x": 608.7755102040816,
+          "y": 954.7356841112121,
+          "radius": 32.5,
+          "x_from": "car_body_station_6_roof",
+          "y_from": "car_body_station_6_top",
+          "radius_from": "car_body_edge_radius * car_body_height"
+        },
+        {
+          "x": -608.7755102040816,
+          "y": 954.7356841112121,
+          "radius": 32.5,
+          "x_from": "-car_body_station_6_roof",
+          "y_from": "car_body_station_6_top",
+          "radius_from": "car_body_edge_radius * car_body_height"
+        },
+        {
+          "x": -907.25,
+          "y": 880.4223984754324,
+          "x_from": "-(0.955 * car_body_station_6_half_width)",
+          "y_from": "car_body_station_6_belt"
+        }
+      ],
+      "rotation": [
+        0,
+        90,
+        0
+      ],
+      "color": "#2f4f6f",
+      "opacity": 1,
+      "note": "a section of the body, blended into the others by the body's loft"
+    },
+    {
+      "id": "car-body-station-7",
+      "name": "Body station 7",
+      "shape": "section",
+      "size": {},
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "profile": [
+        {
+          "x": -807.5,
+          "y": 81,
+          "x_from": "-(0.85 * car_body_station_7_half_width)",
+          "y_from": "car_body_ride_height",
+          "via": {
+            "x": -915.3303775071828,
+            "y": 447.6680935864522,
+            "x_from": "((-(0.955 * car_body_station_7_half_width) + -(0.85 * car_body_station_7_half_width)) / 2 + (car_body_ride_height - car_body_station_7_belt) * 0.0774)",
+            "y_from": "((car_body_station_7_belt + car_body_ride_height) / 2 - (-(0.85 * car_body_station_7_half_width) - -(0.955 * car_body_station_7_half_width)) * 0.0774)"
+          }
+        },
+        {
+          "x": 807.5,
+          "y": 81,
+          "x_from": "0.85 * car_body_station_7_half_width",
+          "y_from": "car_body_ride_height"
+        },
+        {
+          "x": 907.25,
+          "y": 829.7774871729043,
+          "x_from": "0.955 * car_body_station_7_half_width",
+          "y_from": "car_body_station_7_belt",
+          "via": {
+            "x": 915.3303775071828,
+            "y": 447.6680935864522,
+            "x_from": "((0.85 * car_body_station_7_half_width + 0.955 * car_body_station_7_half_width) / 2 + (car_body_station_7_belt - car_body_ride_height) * 0.0774)",
+            "y_from": "((car_body_ride_height + car_body_station_7_belt) / 2 - (0.955 * car_body_station_7_half_width - 0.85 * car_body_station_7_half_width) * 0.0774)"
+          }
+        },
+        {
+          "x": 695.2404266747851,
+          "y": 1273.1567667997488,
+          "radius": 32.5,
+          "x_from": "car_body_station_7_roof",
+          "y_from": "car_body_station_7_top",
+          "radius_from": "car_body_edge_radius * car_body_height"
+        },
+        {
+          "x": -695.2404266747851,
+          "y": 1273.1567667997488,
+          "radius": 32.5,
+          "x_from": "-car_body_station_7_roof",
+          "y_from": "car_body_station_7_top",
+          "radius_from": "car_body_edge_radius * car_body_height"
+        },
+        {
+          "x": -907.25,
+          "y": 829.7774871729043,
+          "x_from": "-(0.955 * car_body_station_7_half_width)",
+          "y_from": "car_body_station_7_belt"
+        }
+      ],
+      "rotation": [
+        0,
+        90,
+        0
+      ],
+      "color": "#2f4f6f",
+      "opacity": 1,
+      "note": "a section of the body, blended into the others by the body's loft"
+    },
+    {
+      "id": "car-body-station-8",
+      "name": "Body station 8",
+      "shape": "section",
+      "size": {},
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "profile": [
+        {
+          "x": -807.5,
+          "y": 81,
+          "x_from": "-(0.85 * car_body_station_8_half_width)",
+          "y_from": "car_body_ride_height",
+          "via": {
+            "x": -915.3025,
+            "y": 435.529975,
+            "x_from": "((-(0.955 * car_body_station_8_half_width) + -(0.85 * car_body_station_8_half_width)) / 2 + (car_body_ride_height - car_body_station_8_belt) * 0.0799)",
+            "y_from": "((car_body_station_8_belt + car_body_ride_height) / 2 - (-(0.85 * car_body_station_8_half_width) - -(0.955 * car_body_station_8_half_width)) * 0.0799)"
+          }
+        },
+        {
+          "x": 807.5,
+          "y": 81,
+          "x_from": "0.85 * car_body_station_8_half_width",
+          "y_from": "car_body_ride_height"
+        },
+        {
+          "x": 907.25,
+          "y": 806,
+          "x_from": "0.955 * car_body_station_8_half_width",
+          "y_from": "car_body_station_8_belt",
+          "via": {
+            "x": 915.3025,
+            "y": 435.529975,
+            "x_from": "((0.85 * car_body_station_8_half_width + 0.955 * car_body_station_8_half_width) / 2 + (car_body_station_8_belt - car_body_ride_height) * 0.0799)",
+            "y_from": "((car_body_ride_height + car_body_station_8_belt) / 2 - (0.955 * car_body_station_8_half_width - 0.85 * car_body_station_8_half_width) * 0.0799)"
+          }
+        },
+        {
+          "x": 703,
+          "y": 1300,
+          "radius": 32.5,
+          "x_from": "car_body_station_8_roof",
+          "y_from": "car_body_station_8_top",
+          "radius_from": "car_body_edge_radius * car_body_height"
+        },
+        {
+          "x": -703,
+          "y": 1300,
+          "radius": 32.5,
+          "x_from": "-car_body_station_8_roof",
+          "y_from": "car_body_station_8_top",
+          "radius_from": "car_body_edge_radius * car_body_height"
+        },
+        {
+          "x": -907.25,
+          "y": 806,
+          "x_from": "-(0.955 * car_body_station_8_half_width)",
+          "y_from": "car_body_station_8_belt"
+        }
+      ],
+      "rotation": [
+        0,
+        90,
+        0
+      ],
+      "color": "#2f4f6f",
+      "opacity": 1,
+      "note": "a section of the body, blended into the others by the body's loft"
+    },
+    {
+      "id": "car-body-station-9",
+      "name": "Body station 9",
+      "shape": "section",
+      "size": {},
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "profile": [
+        {
+          "x": -807.5,
+          "y": 81,
+          "x_from": "-(0.85 * car_body_station_9_half_width)",
+          "y_from": "car_body_ride_height",
+          "via": {
+            "x": -915.3025,
+            "y": 435.529975,
+            "x_from": "((-(0.955 * car_body_station_9_half_width) + -(0.85 * car_body_station_9_half_width)) / 2 + (car_body_ride_height - car_body_station_9_belt) * 0.0799)",
+            "y_from": "((car_body_station_9_belt + car_body_ride_height) / 2 - (-(0.85 * car_body_station_9_half_width) - -(0.955 * car_body_station_9_half_width)) * 0.0799)"
+          }
+        },
+        {
+          "x": 807.5,
+          "y": 81,
+          "x_from": "0.85 * car_body_station_9_half_width",
+          "y_from": "car_body_ride_height"
+        },
+        {
+          "x": 907.25,
+          "y": 806,
+          "x_from": "0.955 * car_body_station_9_half_width",
+          "y_from": "car_body_station_9_belt",
+          "via": {
+            "x": 915.3025,
+            "y": 435.529975,
+            "x_from": "((0.85 * car_body_station_9_half_width + 0.955 * car_body_station_9_half_width) / 2 + (car_body_station_9_belt - car_body_ride_height) * 0.0799)",
+            "y_from": "((car_body_ride_height + car_body_station_9_belt) / 2 - (0.955 * car_body_station_9_half_width - 0.85 * car_body_station_9_half_width) * 0.0799)"
+          }
+        },
+        {
+          "x": 703,
+          "y": 1300,
+          "radius": 32.5,
+          "x_from": "car_body_station_9_roof",
+          "y_from": "car_body_station_9_top",
+          "radius_from": "car_body_edge_radius * car_body_height"
+        },
+        {
+          "x": -703,
+          "y": 1300,
+          "radius": 32.5,
+          "x_from": "-car_body_station_9_roof",
+          "y_from": "car_body_station_9_top",
+          "radius_from": "car_body_edge_radius * car_body_height"
+        },
+        {
+          "x": -907.25,
+          "y": 806,
+          "x_from": "-(0.955 * car_body_station_9_half_width)",
+          "y_from": "car_body_station_9_belt"
+        }
+      ],
+      "rotation": [
+        0,
+        90,
+        0
+      ],
+      "color": "#2f4f6f",
+      "opacity": 1,
+      "note": "a section of the body, blended into the others by the body's loft"
+    },
+    {
+      "id": "car-body-station-10",
+      "name": "Body station 10",
+      "shape": "section",
+      "size": {},
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "profile": [
+        {
+          "x": -807.5,
+          "y": 81,
+          "x_from": "-(0.85 * car_body_station_10_half_width)",
+          "y_from": "car_body_ride_height",
+          "via": {
+            "x": -915.3165837622698,
+            "y": 467.28328968933306,
+            "x_from": "((-(0.955 * car_body_station_10_half_width) + -(0.85 * car_body_station_10_half_width)) / 2 + (car_body_ride_height - car_body_station_10_belt) * 0.0736)",
+            "y_from": "((car_body_station_10_belt + car_body_ride_height) / 2 - (-(0.85 * car_body_station_10_half_width) - -(0.955 * car_body_station_10_half_width)) * 0.0736)"
+          }
+        },
+        {
+          "x": 807.5,
+          "y": 81,
+          "x_from": "0.85 * car_body_station_10_half_width",
+          "y_from": "car_body_ride_height"
+        },
+        {
+          "x": 907.25,
+          "y": 868.2497793786661,
+          "x_from": "0.955 * car_body_station_10_half_width",
+          "y_from": "car_body_station_10_belt",
+          "via": {
+            "x": 915.3165837622698,
+            "y": 467.28328968933306,
+            "x_from": "((0.85 * car_body_station_10_half_width + 0.955 * car_body_station_10_half_width) / 2 + (car_body_station_10_belt - car_body_ride_height) * 0.0736)",
+            "y_from": "((car_body_ride_height + car_body_station_10_belt) / 2 - (0.955 * car_body_station_10_half_width - 0.85 * car_body_station_10_half_width) * 0.0736)"
+          }
+        },
+        {
+          "x": 681.3211126464474,
+          "y": 1246.1604962026931,
+          "radius": 32.5,
+          "x_from": "car_body_station_10_roof",
+          "y_from": "car_body_station_10_top",
+          "radius_from": "car_body_edge_radius * car_body_height"
+        },
+        {
+          "x": -681.3211126464474,
+          "y": 1246.1604962026931,
+          "radius": 32.5,
+          "x_from": "-car_body_station_10_roof",
+          "y_from": "car_body_station_10_top",
+          "radius_from": "car_body_edge_radius * car_body_height"
+        },
+        {
+          "x": -907.25,
+          "y": 868.2497793786661,
+          "x_from": "-(0.955 * car_body_station_10_half_width)",
+          "y_from": "car_body_station_10_belt"
+        }
+      ],
+      "rotation": [
+        0,
+        90,
+        0
+      ],
+      "color": "#2f4f6f",
+      "opacity": 1,
+      "note": "a section of the body, blended into the others by the body's loft"
+    },
+    {
+      "id": "car-body-station-11",
+      "name": "Body station 11",
+      "shape": "section",
+      "size": {},
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "profile": [
+        {
+          "x": -807.5,
+          "y": 81,
+          "x_from": "-(0.85 * car_body_station_11_half_width)",
+          "y_from": "car_body_ride_height",
+          "via": {
+            "x": -916.6528798276518,
+            "y": 518.7085927485136,
+            "x_from": "((-(0.955 * car_body_station_11_half_width) + -(0.85 * car_body_station_11_half_width)) / 2 + (car_body_ride_height - car_body_station_11_belt) * 0.0667)",
+            "y_from": "((car_body_station_11_belt + car_body_ride_height) / 2 - (-(0.85 * car_body_station_11_half_width) - -(0.955 * car_body_station_11_half_width)) * 0.0667)"
+          }
+        },
+        {
+          "x": 807.5,
+          "y": 81,
+          "x_from": "0.85 * car_body_station_11_half_width",
+          "y_from": "car_body_ride_height"
+        },
+        {
+          "x": 907.25,
+          "y": 969.7238354970272,
+          "x_from": "0.955 * car_body_station_11_half_width",
+          "y_from": "car_body_station_11_belt",
+          "via": {
+            "x": 916.6528798276518,
+            "y": 518.7085927485136,
+            "x_from": "((0.85 * car_body_station_11_half_width + 0.955 * car_body_station_11_half_width) / 2 + (car_body_station_11_belt - car_body_ride_height) * 0.0667)",
+            "y_from": "((car_body_ride_height + car_body_station_11_belt) / 2 - (0.955 * car_body_station_11_half_width - 0.85 * car_body_station_11_half_width) * 0.0667)"
+          }
+        },
+        {
+          "x": 611.5262811939011,
+          "y": 1094.7362823737462,
+          "radius": 32.5,
+          "x_from": "car_body_station_11_roof",
+          "y_from": "car_body_station_11_top",
+          "radius_from": "car_body_edge_radius * car_body_height"
+        },
+        {
+          "x": -611.5262811939011,
+          "y": 1094.7362823737462,
+          "radius": 32.5,
+          "x_from": "-car_body_station_11_roof",
+          "y_from": "car_body_station_11_top",
+          "radius_from": "car_body_edge_radius * car_body_height"
+        },
+        {
+          "x": -907.25,
+          "y": 969.7238354970272,
+          "x_from": "-(0.955 * car_body_station_11_half_width)",
+          "y_from": "car_body_station_11_belt"
+        }
+      ],
+      "rotation": [
+        0,
+        90,
+        0
+      ],
+      "color": "#2f4f6f",
+      "opacity": 1,
+      "note": "a section of the body, blended into the others by the body's loft"
+    },
+    {
+      "id": "car-body-station-12",
+      "name": "Body station 12",
+      "shape": "section",
+      "size": {},
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "profile": [
+        {
+          "x": -807.5,
+          "y": 81,
+          "x_from": "-(0.85 * car_body_station_12_half_width)",
+          "y_from": "car_body_ride_height",
+          "via": {
+            "x": -928.46027,
+            "y": 516.1750499999999,
+            "x_from": "((-(0.955 * car_body_station_12_half_width) + -(0.85 * car_body_station_12_half_width)) / 2 + (car_body_ride_height - car_body_station_12_belt) * 0.0802)",
+            "y_from": "((car_body_station_12_belt + car_body_ride_height) / 2 - (-(0.85 * car_body_station_12_half_width) - -(0.955 * car_body_station_12_half_width)) * 0.0802)"
+          }
+        },
+        {
+          "x": 807.5,
+          "y": 81,
+          "x_from": "0.85 * car_body_station_12_half_width",
+          "y_from": "car_body_ride_height"
+        },
+        {
+          "x": 907.25,
+          "y": 967.3499999999999,
+          "x_from": "0.955 * car_body_station_12_half_width",
+          "y_from": "car_body_station_12_belt",
+          "via": {
+            "x": 928.46027,
+            "y": 516.1750499999999,
+            "x_from": "((0.85 * car_body_station_12_half_width + 0.955 * car_body_station_12_half_width) / 2 + (car_body_station_12_belt - car_body_ride_height) * 0.0802)",
+            "y_from": "((car_body_ride_height + car_body_station_12_belt) / 2 - (0.955 * car_body_station_12_half_width - 0.85 * car_body_station_12_half_width) * 0.0802)"
+          }
+        },
+        {
+          "x": 570,
+          "y": 1014,
+          "radius": 32.5,
+          "x_from": "car_body_station_12_roof",
+          "y_from": "car_body_station_12_top",
+          "radius_from": "car_body_edge_radius * car_body_height"
+        },
+        {
+          "x": -570,
+          "y": 1014,
+          "radius": 32.5,
+          "x_from": "-car_body_station_12_roof",
+          "y_from": "car_body_station_12_top",
+          "radius_from": "car_body_edge_radius * car_body_height"
+        },
+        {
+          "x": -907.25,
+          "y": 967.3499999999999,
+          "x_from": "-(0.955 * car_body_station_12_half_width)",
+          "y_from": "car_body_station_12_belt"
+        }
+      ],
+      "rotation": [
+        0,
+        90,
+        0
+      ],
+      "color": "#2f4f6f",
+      "opacity": 1,
+      "note": "a section of the body, blended into the others by the body's loft"
+    },
+    {
+      "id": "car-body-station-13",
+      "name": "Body station 13",
+      "shape": "section",
+      "size": {},
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "profile": [
+        {
+          "x": -806.5931396484375,
+          "y": 81,
+          "x_from": "-(0.85 * car_body_station_13_half_width)",
+          "y_from": "car_body_ride_height",
+          "via": {
+            "x": -941.3366129355469,
+            "y": 510.0145751660156,
+            "x_from": "((-(0.955 * car_body_station_13_half_width) + -(0.85 * car_body_station_13_half_width)) / 2 + (car_body_ride_height - car_body_station_13_belt) * 0.0968)",
+            "y_from": "((car_body_station_13_belt + car_body_ride_height) / 2 - (-(0.85 * car_body_station_13_half_width) - -(0.955 * car_body_station_13_half_width)) * 0.0968)"
+          }
+        },
+        {
+          "x": 806.5931396484375,
+          "y": 81,
+          "x_from": "0.85 * car_body_station_13_half_width",
+          "y_from": "car_body_ride_height"
+        },
+        {
+          "x": 906.2311157226562,
+          "y": 958.3190625,
+          "x_from": "0.955 * car_body_station_13_half_width",
+          "y_from": "car_body_station_13_belt",
+          "via": {
+            "x": 941.3366129355469,
+            "y": 510.0145751660156,
+            "x_from": "((0.85 * car_body_station_13_half_width + 0.955 * car_body_station_13_half_width) / 2 + (car_body_station_13_belt - car_body_ride_height) * 0.0968)",
+            "y_from": "((car_body_ride_height + car_body_station_13_belt) / 2 - (0.955 * car_body_station_13_half_width - 0.85 * car_body_station_13_half_width) * 0.0968)"
+          }
+        },
+        {
+          "x": 569.35986328125,
+          "y": 1004.49375,
+          "radius": 32.5,
+          "x_from": "car_body_station_13_roof",
+          "y_from": "car_body_station_13_top",
+          "radius_from": "car_body_edge_radius * car_body_height"
+        },
+        {
+          "x": -569.35986328125,
+          "y": 1004.49375,
+          "radius": 32.5,
+          "x_from": "-car_body_station_13_roof",
+          "y_from": "car_body_station_13_top",
+          "radius_from": "car_body_edge_radius * car_body_height"
+        },
+        {
+          "x": -906.2311157226562,
+          "y": 958.3190625,
+          "x_from": "-(0.955 * car_body_station_13_half_width)",
+          "y_from": "car_body_station_13_belt"
+        }
+      ],
+      "rotation": [
+        0,
+        90,
+        0
+      ],
+      "color": "#2f4f6f",
+      "opacity": 1,
+      "note": "a section of the body, blended into the others by the body's loft"
+    },
+    {
+      "id": "car-body-station-14",
+      "name": "Body station 14",
+      "shape": "section",
+      "size": {},
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "profile": [
+        {
+          "x": -781.9501953125,
+          "y": 81,
+          "x_from": "-(0.85 * car_body_station_14_half_width)",
+          "y_from": "car_body_ride_height",
+          "via": {
+            "x": -898.1572383406251,
+            "y": 502.07526726562503,
+            "x_from": "((-(0.955 * car_body_station_14_half_width) + -(0.85 * car_body_station_14_half_width)) / 2 + (car_body_ride_height - car_body_station_14_belt) * 0.0792)",
+            "y_from": "((car_body_station_14_belt + car_body_ride_height) / 2 - (-(0.85 * car_body_station_14_half_width) - -(0.955 * car_body_station_14_half_width)) * 0.0792)"
+          }
+        },
+        {
+          "x": 781.9501953125,
+          "y": 81,
+          "x_from": "0.85 * car_body_station_14_half_width",
+          "y_from": "car_body_ride_height"
+        },
+        {
+          "x": 878.54404296875,
+          "y": 938.451,
+          "x_from": "0.955 * car_body_station_14_half_width",
+          "y_from": "car_body_station_14_belt",
+          "via": {
+            "x": 898.1572383406251,
+            "y": 502.07526726562503,
+            "x_from": "((0.85 * car_body_station_14_half_width + 0.955 * car_body_station_14_half_width) / 2 + (car_body_station_14_belt - car_body_ride_height) * 0.0792)",
+            "y_from": "((car_body_ride_height + car_body_station_14_belt) / 2 - (0.955 * car_body_station_14_half_width - 0.85 * car_body_station_14_half_width) * 0.0792)"
+          }
+        },
+        {
+          "x": 551.96484375,
+          "y": 983.58,
+          "radius": 32.5,
+          "x_from": "car_body_station_14_roof",
+          "y_from": "car_body_station_14_top",
+          "radius_from": "car_body_edge_radius * car_body_height"
+        },
+        {
+          "x": -551.96484375,
+          "y": 983.58,
+          "radius": 32.5,
+          "x_from": "-car_body_station_14_roof",
+          "y_from": "car_body_station_14_top",
+          "radius_from": "car_body_edge_radius * car_body_height"
+        },
+        {
+          "x": -878.54404296875,
+          "y": 938.451,
+          "x_from": "-(0.955 * car_body_station_14_half_width)",
+          "y_from": "car_body_station_14_belt"
+        }
+      ],
+      "rotation": [
+        0,
+        90,
+        0
+      ],
+      "color": "#2f4f6f",
+      "opacity": 1,
+      "note": "a section of the body, blended into the others by the body's loft"
+    },
+    {
+      "id": "car-body-station-15",
+      "name": "Body station 15",
+      "shape": "section",
+      "size": {},
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "profile": [
+        {
+          "x": -745.4786376953125,
+          "y": 81,
+          "x_from": "-(0.85 * car_body_station_15_half_width)",
+          "y_from": "car_body_ride_height",
+          "via": {
+            "x": -846.1333140191407,
+            "y": 493.7872960986328,
+            "x_from": "((-(0.955 * car_body_station_15_half_width) + -(0.85 * car_body_station_15_half_width)) / 2 + (car_body_ride_height - car_body_station_15_belt) * 0.0652)",
+            "y_from": "((car_body_station_15_belt + car_body_ride_height) / 2 - (-(0.85 * car_body_station_15_half_width) - -(0.955 * car_body_station_15_half_width)) * 0.0652)"
+          }
+        },
+        {
+          "x": 745.4786376953125,
+          "y": 81,
+          "x_from": "0.85 * car_body_station_15_half_width",
+          "y_from": "car_body_ride_height"
+        },
+        {
+          "x": 837.5671752929687,
+          "y": 918.5829375,
+          "x_from": "0.955 * car_body_station_15_half_width",
+          "y_from": "car_body_station_15_belt",
+          "via": {
+            "x": 846.1333140191407,
+            "y": 493.7872960986328,
+            "x_from": "((0.85 * car_body_station_15_half_width + 0.955 * car_body_station_15_half_width) / 2 + (car_body_station_15_belt - car_body_ride_height) * 0.0652)",
+            "y_from": "((car_body_ride_height + car_body_station_15_belt) / 2 - (0.955 * car_body_station_15_half_width - 0.85 * car_body_station_15_half_width) * 0.0652)"
+          }
+        },
+        {
+          "x": 526.22021484375,
+          "y": 962.66625,
+          "radius": 32.5,
+          "x_from": "car_body_station_15_roof",
+          "y_from": "car_body_station_15_top",
+          "radius_from": "car_body_edge_radius * car_body_height"
+        },
+        {
+          "x": -526.22021484375,
+          "y": 962.66625,
+          "radius": 32.5,
+          "x_from": "-car_body_station_15_roof",
+          "y_from": "car_body_station_15_top",
+          "radius_from": "car_body_edge_radius * car_body_height"
+        },
+        {
+          "x": -837.5671752929687,
+          "y": 918.5829375,
+          "x_from": "-(0.955 * car_body_station_15_half_width)",
+          "y_from": "car_body_station_15_belt"
+        }
+      ],
+      "rotation": [
+        0,
+        90,
+        0
+      ],
+      "color": "#2f4f6f",
+      "opacity": 1,
+      "note": "a section of the body, blended into the others by the body's loft"
+    },
+    {
+      "id": "car-body-station-16",
+      "name": "Body station 16",
+      "shape": "section",
+      "size": {},
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "profile": [
+        {
+          "x": -726.75,
+          "y": 81,
+          "x_from": "-(0.85 * car_body_station_16_half_width)",
+          "y_from": "car_body_ride_height",
+          "via": {
+            "x": -823.836276,
+            "y": 489.62017499999996,
+            "x_from": "((-(0.955 * car_body_station_16_half_width) + -(0.85 * car_body_station_16_half_width)) / 2 + (car_body_ride_height - car_body_station_16_belt) * 0.063)",
+            "y_from": "((car_body_station_16_belt + car_body_ride_height) / 2 - (-(0.85 * car_body_station_16_half_width) - -(0.955 * car_body_station_16_half_width)) * 0.063)"
+          }
+        },
+        {
+          "x": 726.75,
+          "y": 81,
+          "x_from": "0.85 * car_body_station_16_half_width",
+          "y_from": "car_body_ride_height"
+        },
+        {
+          "x": 816.525,
+          "y": 909.5519999999999,
+          "x_from": "0.955 * car_body_station_16_half_width",
+          "y_from": "car_body_station_16_belt",
+          "via": {
+            "x": 823.836276,
+            "y": 489.62017499999996,
+            "x_from": "((0.85 * car_body_station_16_half_width + 0.955 * car_body_station_16_half_width) / 2 + (car_body_station_16_belt - car_body_ride_height) * 0.063)",
+            "y_from": "((car_body_ride_height + car_body_station_16_belt) / 2 - (0.955 * car_body_station_16_half_width - 0.85 * car_body_station_16_half_width) * 0.063)"
+          }
+        },
+        {
+          "x": 513,
+          "y": 953.16,
+          "radius": 32.5,
+          "x_from": "car_body_station_16_roof",
+          "y_from": "car_body_station_16_top",
+          "radius_from": "car_body_edge_radius * car_body_height"
+        },
+        {
+          "x": -513,
+          "y": 953.16,
+          "radius": 32.5,
+          "x_from": "-car_body_station_16_roof",
+          "y_from": "car_body_station_16_top",
+          "radius_from": "car_body_edge_radius * car_body_height"
+        },
+        {
+          "x": -816.525,
+          "y": 909.5519999999999,
+          "x_from": "-(0.955 * car_body_station_16_half_width)",
+          "y_from": "car_body_station_16_belt"
+        }
+      ],
+      "rotation": [
+        0,
+        90,
+        0
+      ],
+      "color": "#2f4f6f",
+      "opacity": 1,
+      "note": "a section of the body, blended into the others by the body's loft"
+    },
+    {
+      "id": "car-body-arch-front",
+      "name": "Wheel arch cutter (front)",
+      "shape": "cylinder",
+      "size": {
+        "height": 353.6479234775629,
+        "radius": 381.4895449176267
+      },
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "size_from": {
+        "height": "((car_body_width / 2 + car_body_arch_clearance) - ((car_body_track_front / 2 - car_body_tyre_width / 2) - car_body_arch_clearance))",
+        "radius": "(car_body_wheel_diameter / 2 + car_body_arch_clearance)"
+      },
+      "rotation": [
+        90,
+        0,
+        0
+      ],
+      "color": "#2f4f6f",
+      "opacity": 1,
+      "note": "the material the front wheel arches remove from the body"
+    },
+    {
+      "id": "car-body-arch-rear",
+      "name": "Wheel arch cutter (rear)",
+      "shape": "cylinder",
+      "size": {
+        "height": 353.6479234775629,
+        "radius": 381.4895449176267
+      },
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "size_from": {
+        "height": "((car_body_width / 2 + car_body_arch_clearance) - ((car_body_track_rear / 2 - car_body_tyre_width / 2) - car_body_arch_clearance))",
+        "radius": "(car_body_wheel_diameter / 2 + car_body_arch_clearance)"
+      },
+      "rotation": [
+        90,
+        0,
+        0
+      ],
+      "color": "#2f4f6f",
+      "opacity": 1,
+      "note": "the material the rear wheel arches remove from the body"
+    },
+    {
+      "id": "car-body-tyre",
+      "name": "Tyre",
+      "shape": "extrusion",
+      "size": {
+        "depth": 246.94394336497038
+      },
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "size_from": {
+        "depth": "car_body_tyre_width"
+      },
+      "profile": [
+        {
+          "x": 340.6156651050238,
+          "y": 0,
+          "x_from": "car_body_wheel_diameter / 2",
+          "via": {
+            "x": 0,
+            "y": -340.6156651050238,
+            "y_from": "-(car_body_wheel_diameter / 2)"
+          }
+        },
+        {
+          "x": -340.6156651050238,
+          "y": 0,
+          "x_from": "-(car_body_wheel_diameter / 2)",
+          "via": {
+            "x": 0,
+            "y": 340.6156651050238,
+            "y_from": "car_body_wheel_diameter / 2"
+          }
+        }
+      ],
+      "holes": [
+        [
+          {
+            "x": 248.21714585036202,
+            "y": 0,
+            "x_from": "car_body_rim_diameter / 2",
+            "via": {
+              "x": 0,
+              "y": -248.21714585036202,
+              "y_from": "-(car_body_rim_diameter / 2)"
+            }
+          },
+          {
+            "x": -248.21714585036202,
+            "y": 0,
+            "x_from": "-(car_body_rim_diameter / 2)",
+            "via": {
+              "x": 0,
+              "y": 248.21714585036202,
+              "y_from": "car_body_rim_diameter / 2"
+            }
+          }
+        ]
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "color": "#1b1b1b",
+      "opacity": 1,
+      "note": "the tyre, its bore the rim's diameter"
+    },
+    {
+      "id": "car-body-rim",
+      "name": "Rim",
+      "shape": "extrusion",
+      "size": {
+        "depth": 172.86076035547924
+      },
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "size_from": {
+        "depth": "0.7 * car_body_tyre_width"
+      },
+      "profile": [
+        {
+          "x": 248.21714585036202,
+          "y": 0,
+          "x_from": "car_body_rim_diameter / 2",
+          "via": {
+            "x": 0,
+            "y": -248.21714585036202,
+            "y_from": "-(car_body_rim_diameter / 2)"
+          }
+        },
+        {
+          "x": -248.21714585036202,
+          "y": 0,
+          "x_from": "-(car_body_rim_diameter / 2)",
+          "via": {
+            "x": 0,
+            "y": 248.21714585036202,
+            "y_from": "car_body_rim_diameter / 2"
+          }
+        }
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "color": "#c9ccd1",
+      "opacity": 1,
+      "note": "the wheel's rim, inside the tyre"
+    },
+    {
+      "id": "car-body-lug",
+      "name": "Wheel nut",
+      "shape": "cylinder",
+      "size": {
+        "height": 24.69439433649704,
+        "radius": 22.33954312653258
+      },
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "size_from": {
+        "height": "0.1 * car_body_tyre_width",
+        "radius": "0.045 * car_body_rim_diameter"
+      },
+      "rotation": [
+        90,
+        0,
+        0
+      ],
+      "color": "#8c9096",
+      "opacity": 1,
+      "note": "a wheel nut, standing on the rim's outer face"
+    },
+    {
+      "id": "car-body-splitter",
+      "name": "Front splitter",
+      "shape": "box",
+      "size": {
+        "depth": 1140,
+        "height": 15.6,
+        "width": 324.50104344076817
+      },
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "size_from": {
+        "depth": "0.6 * car_body_width",
+        "height": "min(0.3 * car_body_ride_height, 0.012 * car_body_height)",
+        "width": "0.5 * (car_body_front_overhang - (car_body_wheel_diameter / 2 + car_body_arch_clearance))"
+      },
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "color": "#202326",
+      "opacity": 1,
+      "note": "a splitter under the nose, clear of the front wheels"
+    },
+    {
+      "id": "car-body-diffuser-fin",
+      "name": "Diffuser fin",
+      "shape": "extrusion",
+      "size": {
+        "depth": 19
+      },
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "size_from": {
+        "depth": "0.01 * car_body_width"
+      },
+      "profile": [
+        {
+          "x": -2219.508368200837,
+          "y": 81,
+          "x_from": "-(car_body_wheelbase / 2 + ((car_body_length - car_body_wheelbase) - car_body_front_overhang))",
+          "y_from": "car_body_ride_height"
+        },
+        {
+          "x": -1975.498956559232,
+          "y": 81,
+          "x_from": "(-(car_body_wheelbase / 2 + ((car_body_length - car_body_wheelbase) - car_body_front_overhang)) + 0.5 * (((car_body_length - car_body_wheelbase) - car_body_front_overhang) - (car_body_wheel_diameter / 2 + car_body_arch_clearance)))",
+          "y_from": "car_body_ride_height"
+        },
+        {
+          "x": -2219.508368200837,
+          "y": 40.5,
+          "x_from": "-(car_body_wheelbase / 2 + ((car_body_length - car_body_wheelbase) - car_body_front_overhang))",
+          "y_from": "(car_body_ride_height - 0.5 * car_body_ride_height)"
+        }
+      ],
+      "rotation": [
+        0,
+        0,
+        0
+      ],
+      "color": "#202326",
+      "opacity": 1,
+      "note": "a diffuser fin under the tail, between the rear wheels"
+    }
+  ],
+  "assemblies": [
+    {
+      "id": "car-body-car",
+      "name": "Car Body",
+      "features": [
+        {
+          "id": "splitter-edges",
+          "op": "fillet",
+          "of": "splitter",
+          "radius": 4.68,
+          "radius_from": "0.3 * (min(0.3 * car_body_ride_height, 0.012 * car_body_height))",
+          "edges": "all",
+          "note": "the splitter's edges, rounded"
+        }
+      ],
+      "children": [
+        {
+          "id": "body",
+          "ref": "car-body-body"
+        },
+        {
+          "id": "front-left",
+          "ref": "car-body-wheel",
+          "position": [
+            1350,
+            340.6156651050238,
+            801.5718078301279
+          ],
+          "position_from": {
+            "x": "car_body_wheelbase / 2",
+            "y": "car_body_wheel_diameter / 2",
+            "z": "car_body_track_front / 2"
+          }
+        },
+        {
+          "id": "front-right",
+          "ref": "car-body-wheel",
+          "position": [
+            1350,
+            340.6156651050238,
+            -801.5718078301279
+          ],
+          "position_from": {
+            "x": "car_body_wheelbase / 2",
+            "y": "car_body_wheel_diameter / 2",
+            "z": "-(car_body_track_front / 2)"
+          },
+          "mirror": "z"
+        },
+        {
+          "id": "rear-left",
+          "ref": "car-body-wheel",
+          "position": [
+            -1350,
+            340.6156651050238,
+            801.5718078301279
+          ],
+          "position_from": {
+            "x": "-(car_body_wheelbase / 2)",
+            "y": "car_body_wheel_diameter / 2",
+            "z": "car_body_track_rear / 2"
+          }
+        },
+        {
+          "id": "rear-right",
+          "ref": "car-body-wheel",
+          "position": [
+            -1350,
+            340.6156651050238,
+            -801.5718078301279
+          ],
+          "position_from": {
+            "x": "-(car_body_wheelbase / 2)",
+            "y": "car_body_wheel_diameter / 2",
+            "z": "-(car_body_track_rear / 2)"
+          },
+          "mirror": "z"
+        },
+        {
+          "id": "splitter",
+          "ref": "car-body-splitter",
+          "position": [
+            2218.2411100787785,
+            73.2,
+            0
+          ],
+          "position_from": {
+            "x": "((car_body_wheelbase / 2 + car_body_front_overhang) - (0.5 * (car_body_front_overhang - (car_body_wheel_diameter / 2 + car_body_arch_clearance))) / 2)",
+            "y": "(car_body_ride_height - (min(0.3 * car_body_ride_height, 0.012 * car_body_height)) / 2)"
+          }
+        },
+        {
+          "id": "diffuser-fin",
+          "ref": "car-body-diffuser-fin",
+          "position": [
+            0,
+            0,
+            -400.78590391506395
+          ],
+          "position_from": {
+            "z": "-((0.5 * car_body_track_rear) / 2)"
+          },
+          "pattern": {
+            "kind": "linear",
+            "count": 4,
+            "offset": [
+              0,
+              0,
+              267.1906026100426
+            ],
+            "offset_from": {
+              "z": "(0.5 * car_body_track_rear) / 3"
+            },
+            "note": "the diffuser's fins, evenly across the tail"
+          }
+        }
+      ]
+    },
+    {
+      "id": "car-body-body",
+      "name": "Body",
+      "features": [
+        {
+          "id": "loft",
+          "op": "loft",
+          "of": "station-0",
+          "with": [
+            "station-1",
+            "station-2",
+            "station-3",
+            "station-4",
+            "station-5",
+            "station-6",
+            "station-7",
+            "station-8",
+            "station-9",
+            "station-10",
+            "station-11",
+            "station-12",
+            "station-13",
+            "station-14",
+            "station-15",
+            "station-16"
+          ],
+          "note": "the body, a smooth surface through its stations nose to tail"
+        },
+        {
+          "id": "wheel-arches",
+          "op": "cut",
+          "of": "station-0",
+          "with": [
+            "arch-front-left",
+            "arch-front-right",
+            "arch-rear-left",
+            "arch-rear-right"
+          ],
+          "note": "the wheel arches"
+        }
+      ],
+      "children": [
+        {
+          "id": "station-0",
+          "ref": "car-body-station-0",
+          "position": [
+            2380.491631799163,
+            0,
+            0
+          ],
+          "position_from": {
+            "x": "((car_body_wheelbase / 2 + car_body_front_overhang) - 0 * car_body_length)"
+          }
+        },
+        {
+          "id": "station-1",
+          "ref": "car-body-station-1",
+          "position": [
+            2092.991631799163,
+            0,
+            0
+          ],
+          "position_from": {
+            "x": "((car_body_wheelbase / 2 + car_body_front_overhang) - 0.0625 * car_body_length)"
+          }
+        },
+        {
+          "id": "station-2",
+          "ref": "car-body-station-2",
+          "position": [
+            1805.4916317991629,
+            0,
+            0
+          ],
+          "position_from": {
+            "x": "((car_body_wheelbase / 2 + car_body_front_overhang) - 0.125 * car_body_length)"
+          }
+        },
+        {
+          "id": "station-3",
+          "ref": "car-body-station-3",
+          "position": [
+            1517.9916317991629,
+            0,
+            0
+          ],
+          "position_from": {
+            "x": "((car_body_wheelbase / 2 + car_body_front_overhang) - 0.1875 * car_body_length)"
+          }
+        },
+        {
+          "id": "station-4",
+          "ref": "car-body-station-4",
+          "position": [
+            1230.4916317991629,
+            0,
+            0
+          ],
+          "position_from": {
+            "x": "((car_body_wheelbase / 2 + car_body_front_overhang) - 0.25 * car_body_length)"
+          }
+        },
+        {
+          "id": "station-5",
+          "ref": "car-body-station-5",
+          "position": [
+            942.9916317991629,
+            0,
+            0
+          ],
+          "position_from": {
+            "x": "((car_body_wheelbase / 2 + car_body_front_overhang) - 0.3125 * car_body_length)"
+          }
+        },
+        {
+          "id": "station-6",
+          "ref": "car-body-station-6",
+          "position": [
+            655.4916317991629,
+            0,
+            0
+          ],
+          "position_from": {
+            "x": "((car_body_wheelbase / 2 + car_body_front_overhang) - 0.375 * car_body_length)"
+          }
+        },
+        {
+          "id": "station-7",
+          "ref": "car-body-station-7",
+          "position": [
+            367.99163179916286,
+            0,
+            0
+          ],
+          "position_from": {
+            "x": "((car_body_wheelbase / 2 + car_body_front_overhang) - 0.4375 * car_body_length)"
+          }
+        },
+        {
+          "id": "station-8",
+          "ref": "car-body-station-8",
+          "position": [
+            80.49163179916286,
+            0,
+            0
+          ],
+          "position_from": {
+            "x": "((car_body_wheelbase / 2 + car_body_front_overhang) - 0.5 * car_body_length)"
+          }
+        },
+        {
+          "id": "station-9",
+          "ref": "car-body-station-9",
+          "position": [
+            -207.00836820083714,
+            0,
+            0
+          ],
+          "position_from": {
+            "x": "((car_body_wheelbase / 2 + car_body_front_overhang) - 0.5625 * car_body_length)"
+          }
+        },
+        {
+          "id": "station-10",
+          "ref": "car-body-station-10",
+          "position": [
+            -494.50836820083714,
+            0,
+            0
+          ],
+          "position_from": {
+            "x": "((car_body_wheelbase / 2 + car_body_front_overhang) - 0.625 * car_body_length)"
+          }
+        },
+        {
+          "id": "station-11",
+          "ref": "car-body-station-11",
+          "position": [
+            -782.0083682008371,
+            0,
+            0
+          ],
+          "position_from": {
+            "x": "((car_body_wheelbase / 2 + car_body_front_overhang) - 0.6875 * car_body_length)"
+          }
+        },
+        {
+          "id": "station-12",
+          "ref": "car-body-station-12",
+          "position": [
+            -1069.5083682008371,
+            0,
+            0
+          ],
+          "position_from": {
+            "x": "((car_body_wheelbase / 2 + car_body_front_overhang) - 0.75 * car_body_length)"
+          }
+        },
+        {
+          "id": "station-13",
+          "ref": "car-body-station-13",
+          "position": [
+            -1357.0083682008371,
+            0,
+            0
+          ],
+          "position_from": {
+            "x": "((car_body_wheelbase / 2 + car_body_front_overhang) - 0.8125 * car_body_length)"
+          }
+        },
+        {
+          "id": "station-14",
+          "ref": "car-body-station-14",
+          "position": [
+            -1644.5083682008371,
+            0,
+            0
+          ],
+          "position_from": {
+            "x": "((car_body_wheelbase / 2 + car_body_front_overhang) - 0.875 * car_body_length)"
+          }
+        },
+        {
+          "id": "station-15",
+          "ref": "car-body-station-15",
+          "position": [
+            -1932.0083682008371,
+            0,
+            0
+          ],
+          "position_from": {
+            "x": "((car_body_wheelbase / 2 + car_body_front_overhang) - 0.9375 * car_body_length)"
+          }
+        },
+        {
+          "id": "station-16",
+          "ref": "car-body-station-16",
+          "position": [
+            -2219.508368200837,
+            0,
+            0
+          ],
+          "position_from": {
+            "x": "((car_body_wheelbase / 2 + car_body_front_overhang) - 1 * car_body_length)"
+          }
+        },
+        {
+          "id": "arch-front-left",
+          "ref": "car-body-arch-front",
+          "position": [
+            1350,
+            340.6156651050238,
+            814.0499180738213
+          ],
+          "position_from": {
+            "x": "car_body_wheelbase / 2",
+            "y": "car_body_wheel_diameter / 2",
+            "z": "(((car_body_track_front / 2 - car_body_tyre_width / 2) - car_body_arch_clearance) + (car_body_width / 2 + car_body_arch_clearance)) / 2"
+          }
+        },
+        {
+          "id": "arch-front-right",
+          "ref": "car-body-arch-front",
+          "position": [
+            1350,
+            340.6156651050238,
+            -814.0499180738213
+          ],
+          "position_from": {
+            "x": "car_body_wheelbase / 2",
+            "y": "car_body_wheel_diameter / 2",
+            "z": "-((((car_body_track_front / 2 - car_body_tyre_width / 2) - car_body_arch_clearance) + (car_body_width / 2 + car_body_arch_clearance)) / 2)"
+          }
+        },
+        {
+          "id": "arch-rear-left",
+          "ref": "car-body-arch-rear",
+          "position": [
+            -1350,
+            340.6156651050238,
+            814.0499180738213
+          ],
+          "position_from": {
+            "x": "-(car_body_wheelbase / 2)",
+            "y": "car_body_wheel_diameter / 2",
+            "z": "(((car_body_track_rear / 2 - car_body_tyre_width / 2) - car_body_arch_clearance) + (car_body_width / 2 + car_body_arch_clearance)) / 2"
+          }
+        },
+        {
+          "id": "arch-rear-right",
+          "ref": "car-body-arch-rear",
+          "position": [
+            -1350,
+            340.6156651050238,
+            -814.0499180738213
+          ],
+          "position_from": {
+            "x": "-(car_body_wheelbase / 2)",
+            "y": "car_body_wheel_diameter / 2",
+            "z": "-((((car_body_track_rear / 2 - car_body_tyre_width / 2) - car_body_arch_clearance) + (car_body_width / 2 + car_body_arch_clearance)) / 2)"
+          }
+        }
+      ]
+    },
+    {
+      "id": "car-body-wheel",
+      "name": "Wheel",
+      "features": [
+        {
+          "id": "nuts",
+          "op": "fuse",
+          "of": "rim",
+          "with": [
+            "lug"
+          ],
+          "note": "the wheel nuts, one solid with the rim"
+        }
+      ],
+      "children": [
+        {
+          "id": "tyre",
+          "ref": "car-body-tyre"
+        },
+        {
+          "id": "rim",
+          "ref": "car-body-rim"
+        },
+        {
+          "id": "lug",
+          "ref": "car-body-lug",
+          "position": [
+            109.21554417415929,
+            0,
+            98.77757734598813
+          ],
+          "position_from": {
+            "x": "0.22 * car_body_rim_diameter",
+            "z": "((0.7 * car_body_tyre_width) / 2 + (0.1 * car_body_tyre_width) / 2)"
+          },
+          "pattern": {
+            "kind": "polar",
+            "count": 5,
+            "about": "z",
+            "note": "the wheel nuts, evenly round the rim"
+          }
+        }
+      ]
+    },
+    {
+      "id": "scene",
+      "name": "Sports Coupe",
+      "children": [
+        {
+          "id": "car-body",
+          "ref": "car-body-car",
+          "position": [
+            0,
+            650,
+            0
+          ]
+        }
+      ]
+    }
+  ],
+  "root": "scene"
+}

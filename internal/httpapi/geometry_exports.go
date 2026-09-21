@@ -7,7 +7,6 @@ import (
 	"io"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/agent"
@@ -54,13 +53,18 @@ type ExportDTO struct {
 	// What the kernel left out of the file. Always arrays.
 	Skipped         []string `json:"skipped"`
 	FeatureFailures []string `json:"feature_failures"`
-	Attempts        int      `json:"attempts"`
-	MaxAttempts     int      `json:"max_attempts"`
-	GoalID          string   `json:"goal_id"`
-	RequestedBy     string   `json:"requested_by"`
-	CreatedAt       string   `json:"created_at"`
-	StoredAt        *string  `json:"stored_at"`
-	StatusURL       string   `json:"status_url"`
+	// MeshOnly names the declared mesh-only parts left out of the STEP file
+	// (looks designed, stage E1), as the download's label does.
+	MeshOnly []string `json:"mesh_only"`
+	// Rounds built smaller than asked or on only some edges (stage B1).
+	FeatureReductions []string `json:"feature_reductions"`
+	Attempts          int      `json:"attempts"`
+	MaxAttempts       int      `json:"max_attempts"`
+	GoalID            string   `json:"goal_id"`
+	RequestedBy       string   `json:"requested_by"`
+	CreatedAt         string   `json:"created_at"`
+	StoredAt          *string  `json:"stored_at"`
+	StatusURL         string   `json:"status_url"`
 	// DownloadURL is set only once there is something to download.
 	DownloadURL string `json:"download_url,omitempty"`
 }
@@ -70,7 +74,9 @@ func toExportDTO(e *agent.Export) ExportDTO {
 		ID: e.ID, VersionID: e.VersionID, ProjectID: e.ProjectID, Format: e.Format,
 		Status: e.Status, Reason: e.Reason, Filename: e.Filename,
 		Skipped: orEmptyStrings(e.Skipped), FeatureFailures: orEmptyStrings(e.FeatureFailures),
-		Attempts: e.Attempts, MaxAttempts: e.MaxAttempts, GoalID: e.GoalID, RequestedBy: e.RequestedBy,
+		MeshOnly:          orEmptyStrings(e.MeshOnly),
+		FeatureReductions: orEmptyStrings(e.FeatureReductions),
+		Attempts:          e.Attempts, MaxAttempts: e.MaxAttempts, GoalID: e.GoalID, RequestedBy: e.RequestedBy,
 		CreatedAt: e.CreatedAt.UTC().Format(time.RFC3339),
 		StatusURL: "/v1/geometry/exports/" + e.ID,
 	}
@@ -277,18 +283,14 @@ func (h *GeometryHandlers) DownloadExport(w http.ResponseWriter, r *http.Request
 
 // exportJobLabel is exportParametric's label, saying one thing more: this file's
 // build ran no interference check (cad.Kernel.ExportSTEPJob).
+//
+// The clauses in front of it are exportLabelClauses', the same source the
+// in-request label reads, so the two labels cannot drift apart again.
 func exportJobLabel(e *agent.Export) string {
 	label := fmt.Sprintf("unverified proposal; B-Rep, not tessellated; nothing about this shape has been "+
 		"analysed or checked, and no interference check ran for this file; full label at "+
 		"/v1/geometry/%s/export/label?format=step", e.VersionID)
-	if n := len(e.FeatureFailures); n > 0 {
-		label = fmt.Sprintf("%d feature(s) could NOT be applied, so this shape is not what the "+
-			"design describes (%s); ", n, strings.Join(e.FeatureFailures, "; ")) + label
-	}
-	if len(e.Skipped) > 0 {
-		label = fmt.Sprintf("%d part(s) could not be built and are NOT in this file; ", len(e.Skipped)) + label
-	}
-	return label
+	return exportLabelClauses(e.MeshOnly, e.Skipped, e.FeatureFailures, e.FeatureReductions) + label
 }
 
 // streamVerified copies src to dst, holding back the last chunk until the bytes

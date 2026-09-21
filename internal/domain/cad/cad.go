@@ -96,6 +96,10 @@ type Kernel struct {
 	// Copied by each slot like timeout.
 	startLimit time.Duration
 
+	// meshOnly caches whether this kernel can build mesh-only parts. Asked by the
+	// lattice fences, answered once per kernel — see mesh_only_support.go.
+	meshOnly meshOnlySupport
+
 	// size is how many processes serve builds at once. The pool is made on
 	// first use, so a kernel nobody builds with owns nothing.
 	size  int
@@ -198,6 +202,14 @@ type Build struct {
 	// an assembly quietly missing a hole is wrong in a way nobody notices.
 	Skipped         []string
 	FeatureFailures []string
+	// FeatureReductions names every fillet or chamfer the kernel APPLIED at a
+	// smaller size than asked, or on only some of its edges, and where (looks
+	// designed, stage B1). A reduced round is still a claim about the part that
+	// differs from the design, so it travels with every build like a failure.
+	FeatureReductions []string
+	// FeatureEdges is how many edges each fillet or chamfer's rule selected, by
+	// feature id (stage B2).
+	FeatureEdges map[string]int
 	// Volume is the assembly's, in CUBIC MILLIMETRES whatever the document
 	// declared — the kernel works in millimetres because that is what a STEP
 	// file states. Zero for an assembly of faces, which have none.
@@ -326,6 +338,9 @@ type Build struct {
 	Triangles  int
 	Deflection float64
 	Simplified bool
+	// Angular is the largest angle in radians one facet turns through on a curved
+	// face (looks designed, stage A5): searched with Deflection to fit the budget.
+	Angular float64
 	// MeshError is why there is no mesh, when one was asked for and the solid
 	// built. Reported rather than returned as an error: the build succeeded and
 	// its volume, bounds and STEP are all still true.
@@ -333,6 +348,31 @@ type Build struct {
 	// Properties is each surviving part's volume, centre of volume and box, in
 	// millimetres. Empty unless asked for with BuildProperties (Phase 5, stage V3).
 	Properties []geometry.SolidMeasure
+	// MeshOnly names every mesh-only part the kernel took out before it built
+	// anything (geometry/lattice.go): none of them is in Parts, Volume, Bounds,
+	// Properties, the interference check or the STEP file, whatever was asked. On a
+	// mesh request each one that built is in Mesh, marked MeshOnly, and
+	// MeshOnlyTriangles counts them (they are in Triangles too).
+	MeshOnly          []string
+	MeshOnlyTriangles int
+	// Manufacturability is each measured part's five numbers, for
+	// geometry.Manufacturability to judge against geometry.Profiles. Empty unless
+	// asked for with BuildEvaluated (addresses issue 6).
+	//
+	// ‼️ ManufacturabilityTruncated says the FACE budget stopped the measurement
+	// before the end, so a short list is a check that did not finish and never a
+	// model with fewer parts. Parts is how many there were to measure and Measured
+	// how many were; Faces and Reused are what it cost, so a budget can be chosen
+	// from a count a test reads rather than from a wall clock.
+	Manufacturability          []geometry.PartMeasure
+	ManufacturabilityTruncated bool
+	ManufacturabilityMeasured  int
+	ManufacturabilityParts     int
+	ManufacturabilityFaces     int
+	ManufacturabilityReused    int
+	// Sections is each named plane cut's area, centroid and second moments of area
+	// (geometry/section.go). Geometry, never a stress. Empty unless asked for.
+	Sections []geometry.SectionProperties
 }
 
 // MeshPart is one built solid's surface, attributed to the part it came from.
@@ -348,6 +388,14 @@ type MeshPart struct {
 	Label     string
 	Vertices  []float64
 	Triangles []int32
+	// Normals is one unit normal per vertex, flat like Vertices, taken from the
+	// surface itself (stage A5): smooth across a curved face, split at a hard
+	// edge because every face has vertices of its own. Empty from a kernel that
+	// does not send them.
+	Normals []float64
+	// MeshOnly says this surface is a declared mesh-only part: decorative, never a
+	// solid, and to be shown labelled geometry.MeshOnlyLabel.
+	MeshOnly bool
 }
 
 // MeshDefinition is one shape's surface in its own frame, in millimetres, drawn
@@ -355,6 +403,7 @@ type MeshPart struct {
 type MeshDefinition struct {
 	Vertices  []float64
 	Triangles []int32
+	Normals   []float64
 }
 
 // MeshInstance is one placed copy of a MeshDefinition.
@@ -390,7 +439,18 @@ func (b *Build) WorldMeshes() []MeshPart {
 			v[i+1] = m[1]*x + m[5]*y + m[9]*z + m[13]
 			v[i+2] = m[2]*x + m[6]*y + m[10]*z + m[14]
 		}
-		out = append(out, MeshPart{ID: in.ID, Label: in.Label, Vertices: v, Triangles: d.Triangles})
+		// A normal turns with the part and does not move: the matrix's rotation only.
+		var n []float64
+		if len(d.Normals) == len(d.Vertices) {
+			n = make([]float64, len(d.Normals))
+			for i := 0; i+2 < len(d.Normals); i += 3 {
+				x, y, z := d.Normals[i], d.Normals[i+1], d.Normals[i+2]
+				n[i] = m[0]*x + m[4]*y + m[8]*z
+				n[i+1] = m[1]*x + m[5]*y + m[9]*z
+				n[i+2] = m[2]*x + m[6]*y + m[10]*z
+			}
+		}
+		out = append(out, MeshPart{ID: in.ID, Label: in.Label, Vertices: v, Triangles: d.Triangles, Normals: n})
 	}
 	return out
 }
@@ -409,6 +469,12 @@ type request struct {
 	// means the check runs, so a caller that forgets it gets the check. Only
 	// ExportSTEPJob sets it; see there for why.
 	SkipInterferences bool `json:"skip_interferences,omitempty"`
+	// Manufacturability asks for each part's five measurements, and Sections for
+	// each named plane cut (see BuildEvaluated). Both OFF by default, unlike the
+	// interference check: this one costs a ray cast per face, and the export job's
+	// memory ceiling was measured without it.
+	Manufacturability bool               `json:"manufacturability,omitempty"`
+	Sections          []geometry.Section `json:"sections,omitempty"`
 }
 
 type partProperties struct {
@@ -419,17 +485,19 @@ type partProperties struct {
 }
 
 type reply struct {
-	OK             bool         `json:"ok"`
-	Ready          bool         `json:"ready"`
-	Error          string       `json:"error,omitempty"`
-	Trace          string       `json:"trace,omitempty"`
-	Parts          int          `json:"parts"`
-	Volume         float64      `json:"volume"`
-	Bounds         [6]float64   `json:"bounds"`
-	Skipped        []string     `json:"skipped,omitempty"`
-	FeaturesFailed []string     `json:"features_failed,omitempty"`
-	ShapeBuilds    int          `json:"shape_builds"`
-	Phases         phaseSeconds `json:"phases"`
+	OK              bool           `json:"ok"`
+	Ready           bool           `json:"ready"`
+	Error           string         `json:"error,omitempty"`
+	Trace           string         `json:"trace,omitempty"`
+	Parts           int            `json:"parts"`
+	Volume          float64        `json:"volume"`
+	Bounds          [6]float64     `json:"bounds"`
+	Skipped         []string       `json:"skipped,omitempty"`
+	FeaturesFailed  []string       `json:"features_failed,omitempty"`
+	FeaturesReduced []string       `json:"features_reduced,omitempty"`
+	FeatureEdges    map[string]int `json:"feature_edges,omitempty"`
+	ShapeBuilds     int            `json:"shape_builds"`
+	Phases          phaseSeconds   `json:"phases"`
 
 	Interferences          []geometry.Interference `json:"interferences,omitempty"`
 	InterferencesTruncated bool                    `json:"interferences_truncated,omitempty"`
@@ -450,10 +518,25 @@ type reply struct {
 	MeshInstances   []meshInstance   `json:"mesh_instances,omitempty"`
 	MeshTriangles   int              `json:"mesh_triangles,omitempty"`
 	MeshDeflection  float64          `json:"mesh_deflection,omitempty"`
+	MeshAngular     float64          `json:"mesh_angular,omitempty"`
 	MeshSimplified  bool             `json:"mesh_simplified,omitempty"`
 	MeshError       string           `json:"mesh_error,omitempty"`
 
 	PartProperties []partProperties `json:"part_properties,omitempty"`
+
+	// addresses issue 6. Measured is how many parts the kernel could have
+	// measured and Checked how many it did; Checked below Measured with Truncated
+	// set is the face budget binding.
+	Manufacturability          []geometry.PartMeasure       `json:"manufacturability,omitempty"`
+	ManufacturabilityTruncated bool                         `json:"manufacturability_truncated,omitempty"`
+	ManufacturabilityMeasured  int                          `json:"manufacturability_measured,omitempty"`
+	ManufacturabilityParts     int                          `json:"manufacturability_parts,omitempty"`
+	ManufacturabilityFaces     int                          `json:"manufacturability_faces,omitempty"`
+	ManufacturabilityReused    int                          `json:"manufacturability_reused,omitempty"`
+	Sections                   []geometry.SectionProperties `json:"sections,omitempty"`
+
+	MeshOnly          []string `json:"mesh_only,omitempty"`
+	MeshOnlyTriangles int      `json:"mesh_only_triangles,omitempty"`
 }
 
 // phaseSeconds is the reply's "phases": seconds per phase of a build, written by
@@ -463,14 +546,18 @@ type phaseSeconds struct {
 	Features      float64 `json:"features"`
 	Assembly      float64 `json:"assembly"`
 	Interferences float64 `json:"interferences"`
-	Export        float64 `json:"export"`
-	Mesh          float64 `json:"mesh"`
+	// addresses issue 6: the two evaluation phases, absent unless asked for.
+	Manufacturability float64 `json:"manufacturability"`
+	Sections          float64 `json:"sections"`
+	Export            float64 `json:"export"`
+	Mesh              float64 `json:"mesh"`
 }
 
 func (p phaseSeconds) durations() Phases {
 	d := func(seconds float64) time.Duration { return time.Duration(seconds * float64(time.Second)) }
 	return Phases{Shapes: d(p.Shapes), Features: d(p.Features), Assembly: d(p.Assembly),
-		Interferences: d(p.Interferences), Export: d(p.Export), Mesh: d(p.Mesh)}
+		Interferences: d(p.Interferences), Manufacturability: d(p.Manufacturability),
+		Sections: d(p.Sections), Export: d(p.Export), Mesh: d(p.Mesh)}
 }
 
 type meshPart struct {
@@ -478,11 +565,14 @@ type meshPart struct {
 	Label     string    `json:"label"`
 	Vertices  []float64 `json:"vertices"`
 	Triangles []int32   `json:"triangles"`
+	Normals   []float64 `json:"normals,omitempty"`
+	MeshOnly  bool      `json:"mesh_only,omitempty"`
 }
 
 type meshDefinition struct {
 	Vertices  []float64 `json:"vertices"`
 	Triangles []int32   `json:"triangles"`
+	Normals   []float64 `json:"normals,omitempty"`
 }
 
 type meshInstance struct {
@@ -503,6 +593,11 @@ type Phases struct {
 	Assembly time.Duration
 	// Interferences is the check for parts that share material.
 	Interferences time.Duration
+	// Manufacturability is measuring each part against how it is made, and
+	// Sections measuring each named plane cut. Both zero unless asked for
+	// (BuildEvaluated). addresses issue 6.
+	Manufacturability time.Duration
+	Sections          time.Duration
 	// Export is writing the STEP file, zero unless one was asked for.
 	Export time.Duration
 	// Mesh is tessellating, zero unless a mesh was asked for.
@@ -514,6 +609,7 @@ func (p Phases) LogFields() []any {
 	ms := func(d time.Duration) int64 { return d.Milliseconds() }
 	return []any{"kernel_shapes_ms", ms(p.Shapes), "kernel_features_ms", ms(p.Features),
 		"kernel_assembly_ms", ms(p.Assembly), "kernel_interferences_ms", ms(p.Interferences),
+		"kernel_manufacturability_ms", ms(p.Manufacturability), "kernel_sections_ms", ms(p.Sections),
 		"kernel_export_ms", ms(p.Export), "kernel_mesh_ms", ms(p.Mesh)}
 }
 
@@ -550,9 +646,47 @@ func (k *Kernel) BuildProperties(ctx context.Context, doc geometry.Document, uni
 	return k.build(ctx, doc, unit, "", true)
 }
 
+// BuildEvaluated builds a document and EVALUATES it: each part measured against
+// how it is made, and each named section's properties (addresses issue 6).
+//
+// # Why this is asked for and the interference check is not
+//
+// The interference check runs on every build, deliberately: "a check that a caller
+// has to remember to ask for is a check that is off in the one deployment that
+// needed it", and its broad phase makes the usual case free. This one is not free —
+// it casts a ray through the solid from every face — so it is asked for by the one
+// caller that shows its answer to a reader, and the export job's memory ceiling
+// stays a number measured on the work it actually does.
+//
+// The same build as every other reader's, asking for more. A manufacturability
+// finding taken from a different build than the picture could describe a part the
+// reader is not looking at.
+func (k *Kernel) BuildEvaluated(ctx context.Context, doc geometry.Document, unit geometry.Unit,
+	format string, sections []geometry.Section) (*Build, error) {
+	return k.buildWith(ctx, doc, unit, buildAsk{format: format, manufacturability: true, sections: sections})
+}
+
 // build is BuildDocument, optionally asking the kernel for each part's properties.
 func (k *Kernel) build(ctx context.Context, doc geometry.Document, unit geometry.Unit, format string, properties bool) (*Build, error) {
-	return k.buildWith(ctx, doc, unit, format, properties, false)
+	return k.buildWith(ctx, doc, unit, buildAsk{format: format, properties: properties})
+}
+
+// buildAsk is what one build is asked for beyond the solids themselves.
+//
+// A struct rather than a row of booleans: the call already carried three, and the
+// fourth and fifth are the ones a caller is most likely to pass in the wrong
+// order. Every field's zero value is the plain build BuildDocument has always done.
+type buildAsk struct {
+	// format is "", "mesh" or "step".
+	format string
+	// properties asks for each part's volume, centre and box (BuildProperties).
+	properties bool
+	// job marks the off-node STEP export job, which skips the interference check;
+	// see ExportSTEPJob.
+	job bool
+	// manufacturability and sections are the evaluation pass (BuildEvaluated).
+	manufacturability bool
+	sections          []geometry.Section
 }
 
 // exportJobTimeout bounds one kernel round trip of an export job.
@@ -579,12 +713,13 @@ const exportJobTimeout = 5 * time.Minute
 //     numbers an upper bound for this call, and so what the ceiling rests on. The
 //     download's label says no interference check ran.
 func (k *Kernel) ExportSTEPJob(ctx context.Context, doc geometry.Document, unit geometry.Unit) (*Build, error) {
-	return k.buildWith(ctx, doc, unit, "step", false, true)
+	return k.buildWith(ctx, doc, unit, buildAsk{format: "step", job: true})
 }
 
-// buildWith is every build. job is the export job's build (ExportSTEPJob).
-func (k *Kernel) buildWith(ctx context.Context, doc geometry.Document, unit geometry.Unit, format string,
-	properties, job bool) (*Build, error) {
+// buildWith is every build. ask says what beyond the solids it wants (buildAsk).
+func (k *Kernel) buildWith(ctx context.Context, doc geometry.Document, unit geometry.Unit,
+	ask buildAsk) (*Build, error) {
+	format, properties, job := ask.format, ask.properties, ask.job
 	const op = "cad.Kernel.BuildDocument"
 	if !k.Available() {
 		return nil, Unavailable(op)
@@ -724,7 +859,7 @@ func (k *Kernel) buildWith(ctx context.Context, doc geometry.Document, unit geom
 	}()
 
 	req := request{Solids: solids, Operations: operations, Format: format, Properties: properties,
-		SkipInterferences: job}
+		SkipInterferences: job, Manufacturability: ask.manufacturability, Sections: ask.sections}
 	// The limit is still the slot's (see sidecar.timeout), except for the export
 	// job, whose round trip gets exportJobTimeout. Either way this slot enforces it
 	// on its own process, and running out of it is a lateError like any other.
@@ -822,7 +957,8 @@ func (k *Kernel) buildWith(ctx context.Context, doc geometry.Document, unit geom
 func buildOf(res *reply, inferred []string, scriptRuns int) (*Build, error) {
 	const op = "cad.Kernel.BuildDocument"
 	out := &Build{Parts: res.Parts, Volume: res.Volume, Bounds: res.Bounds,
-		Skipped: res.Skipped, FeatureFailures: res.FeaturesFailed, Inferred: inferred,
+		Skipped: res.Skipped, FeatureFailures: res.FeaturesFailed, FeatureReductions: res.FeaturesReduced,
+		FeatureEdges: res.FeatureEdges, Inferred: inferred,
 		Interferences: res.Interferences, InterferencesTruncated: res.InterferencesTruncated, InterferenceBoxTests: res.InterferenceBoxTests,
 		InterferencePairs: res.InterferencePairs, InterferenceBooleans: res.InterferenceBooleans, InterferenceReused: res.InterferenceReused,
 		ShapeBuilds: res.ShapeBuilds, ScriptRuns: scriptRuns, Phases: res.Phases.durations()}
@@ -859,12 +995,25 @@ func buildOf(res *reply, inferred []string, scriptRuns int) (*Build, error) {
 		out.Mesh = make([]MeshPart, 0, len(res.Mesh))
 		for _, m := range res.Mesh {
 			out.Mesh = append(out.Mesh, MeshPart{
-				ID: m.ID, Label: m.Label, Vertices: m.Vertices, Triangles: m.Triangles,
+				ID: m.ID, Label: m.Label, Vertices: m.Vertices, Triangles: m.Triangles, MeshOnly: m.MeshOnly,
+				Normals: m.Normals,
 			})
 		}
 	}
+	out.MeshOnly, out.MeshOnlyTriangles = res.MeshOnly, res.MeshOnlyTriangles
+	// addresses issue 6. Both counts floor at the list's length, so a kernel that
+	// does not count them cannot report fewer parts than it just listed. Truncation
+	// is carried separately and is never inferred from a count.
+	out.Manufacturability = res.Manufacturability
+	out.ManufacturabilityTruncated = res.ManufacturabilityTruncated
+	out.ManufacturabilityMeasured = max(res.ManufacturabilityMeasured, len(res.Manufacturability))
+	out.ManufacturabilityParts = max(res.ManufacturabilityParts, out.ManufacturabilityMeasured)
+	out.ManufacturabilityFaces = res.ManufacturabilityFaces
+	out.ManufacturabilityReused = res.ManufacturabilityReused
+	out.Sections = res.Sections
 	for _, d := range res.MeshDefinitions {
-		out.MeshDefinitions = append(out.MeshDefinitions, MeshDefinition{Vertices: d.Vertices, Triangles: d.Triangles})
+		out.MeshDefinitions = append(out.MeshDefinitions, MeshDefinition{Vertices: d.Vertices, Triangles: d.Triangles,
+			Normals: d.Normals})
 	}
 	for _, in := range res.MeshInstances {
 		out.MeshInstances = append(out.MeshInstances, MeshInstance{
@@ -873,6 +1022,7 @@ func buildOf(res *reply, inferred []string, scriptRuns int) (*Build, error) {
 	}
 	out.Triangles = res.MeshTriangles
 	out.Deflection = res.MeshDeflection
+	out.Angular = res.MeshAngular
 	out.Simplified = res.MeshSimplified
 	out.MeshError = res.MeshError
 	for _, p := range res.PartProperties {

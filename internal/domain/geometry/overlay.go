@@ -558,20 +558,68 @@ func profileExtent(p Part) (min, max [2]float64, ok bool) {
 	if !drawnInNumbers(p.Profile) {
 		return min, max, false
 	}
-	// The FLATTENED outline. A rounded corner is inside the corner it replaced,
-	// so measuring the drawn vertices would report a plate bigger than the plate
-	// — by the radius, on every side that has one.
-	flat, _, err := partOutline(p).flatten("outline", Millimetre)
-	if err != nil {
+	// The EXACT outline — the lines and true arcs the kernel is sent — and not
+	// the drawing's vertices: a rounded corner is inside the corner it replaced,
+	// so measuring the drawn vertices would report a plate bigger than the plate.
+	//
+	// Not the FLATTENED outline either, which this read until B3 (2026-09-18).
+	// Chords sit inside their arc, so a bowed edge whose furthest point falls
+	// between two chord ends measured short by up to the chord deviation — a
+	// number the kernel contradicts. An arc's extent is its two ends plus
+	// whichever of its four axis-extreme points it sweeps through, which is
+	// exact. Fences: TestMeasure_ABowedEdgeReachesItsArcNotItsChords,
+	// TestKernel_GoMeasuresABowedOutlineWhereTheKernelDoes.
+	curve, err := partOutline(p).exact("outline")
+	if err != nil || len(curve.Edges) == 0 {
 		return min, max, false
 	}
-	for _, pt := range flat {
+	grow := func(pt [3]float64) {
 		min[0] = math.Min(min[0], pt[0])
 		min[1] = math.Min(min[1], pt[1])
 		max[0] = math.Max(max[0], pt[0])
 		max[1] = math.Max(max[1], pt[1])
 	}
-	return min, max, len(flat) >= minProfilePoints
+	at := curve.Start
+	grow(at)
+	for _, e := range curve.Edges {
+		if e.Via != nil {
+			for _, pt := range arcExtremes(at, *e.Via, e.To) {
+				grow(pt)
+			}
+		}
+		grow(e.To)
+		at = e.To
+	}
+	return min, max, true
+}
+
+// arcExtremes is the points of the arc from→via→to that reach furthest along ±x
+// and ±y: the circle's axis-extreme points, kept only where the arc actually
+// sweeps through them. With the two ends they bound the arc exactly.
+func arcExtremes(from, via, to [3]float64) [][3]float64 {
+	centre, axis, radius, angle, ok := arcThrough(from, via, to)
+	if !ok {
+		return nil
+	}
+	a := sub3(from, centre)
+	var out [][3]float64
+	for _, d := range [][3]float64{{1, 0, 0}, {-1, 0, 0}, {0, 1, 0}, {0, -1, 0}} {
+		// The circle's extreme along d is at d projected into its plane.
+		dir := sub3(d, scale3(axis, dot3(d, axis)))
+		if length3(dir) < arcTolerance {
+			continue
+		}
+		pt := add3(centre, scale3(normalise(dir), radius))
+		off := sub3(pt, centre)
+		t := math.Atan2(dot3(axis, cross3(a, off)), dot3(a, off))
+		if t < 0 {
+			t += 2 * math.Pi
+		}
+		if t <= angle {
+			out = append(out, pt)
+		}
+	}
+	return out
 }
 
 // DrawableOverlays keeps the overlays that may be shown and reports what was

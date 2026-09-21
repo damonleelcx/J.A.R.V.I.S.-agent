@@ -1,0 +1,43 @@
+{
+  "id": "gear",
+  "what": "the same document drawn by the earlier renderer and by this branch's",
+  "verdict": "better",
+  "accepted": true,
+  "both_ways_agreed": true,
+  "reason": "the judge preferred the new render both ways round, and no fault, buried pair or skipped part was added",
+  "tokens": 1626,
+  "check": {
+    "passes": true,
+    "faults": "1→1",
+    "buried_pairs": "1→1",
+    "skipped_parts": "0→0"
+  },
+  "rounds": [
+    {
+      "n": 1,
+      "view": "shaded",
+      "order": "image 1 is the NEW render, image 2 is the OLD one",
+      "images": [
+        "round1-shaded-image1.png",
+        "round1-shaded-image2.png"
+      ],
+      "answer_verbatim": "{\"verdict\": \"image1\", \"why\": \"The first image features softer lighting and smoother shading that gives the object a more solid, manufactured appearance, whereas the second image looks like a raw viewport preview with a prominent grid and flatter lighting.\"}",
+      "why": "The first image features softer lighting and smoother shading that gives the object a more solid, manufactured appearance, whereas the second image looks like a raw viewport preview with a prominent grid and flatter lighting.",
+      "said_about_the_new_one": "better",
+      "tokens": 817
+    },
+    {
+      "n": 2,
+      "view": "shaded",
+      "order": "image 1 is the OLD render, image 2 is the NEW one",
+      "images": [
+        "round2-shaded-image1.png",
+        "round2-shaded-image2.png"
+      ],
+      "answer_verbatim": "{\"verdict\": \"image2\", \"why\": \"The second image features smoother shading, softer lighting, and a cleaner presentation without the distracting grid, making the object appear more like a polished, finished product.\"}",
+      "why": "The second image features smoother shading, softer lighting, and a cleaner presentation without the distracting grid, making the object appear more like a polished, finished product.",
+      "said_about_the_new_one": "better",
+      "tokens": 809
+    }
+  ]
+}

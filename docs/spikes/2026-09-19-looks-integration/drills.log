@@ -1,0 +1,86 @@
+Selected drills
+  ✅ went red      — a corner radius the sections cannot carry is written out anyway
+  ✅ went red      — the exporter keeps a facet wound against its normal
+           export_winding_test.go:80: STL: 1520 of 1532 facets are wound toward their part's centre — a viewer that culls back faces draws the inside of the far wall, as forge3d.js did before PR 157
+           export_winding_test.go:84: STL: 1520 of 1532 facets are wound against the normal the file states
+  ✅ went red      — a car station is straight-sided again
+           car_arcs_test.go:22: station 0: 6 points and vias on []; a station is six corners with both flanks bowed
+           car_arcs_test.go:22: station 0: 6 points and vias on []; a station is six corners with both flanks bowed
+  ✅ went red      — the fender does not flare over the wheels
+           car_arcs_test.go:22: station 4 is over a wheel and its flank reaches 0.9750 of its half width; the fender flares to the whole of it
+           car_arcs_test.go:22: station 13 is over a wheel and its flank reaches 0.9750 of its half width; the fender flares to the whole of it
+  ✅ went red      — a flank bows past the car's width
+           car_arcs_test.go:22: station 3: a flank reaches 990.5 from the centreline; the car is 1950 wide
+           car_arcs_test.go:22: station 4: a flank reaches 996.8 from the centreline; the car is 1950 wide
+  ✅ went red      — the renderer ignores the kernel's normals
+           looks_integration_fence_test.go:85: plate is shaded with normals [0 -1 0 0 -1 0 0 -1 0]; want [0.7071067811865476 0.7071067811865476 0 0.7071067811865476 0.7071067811865476 0 0 0 1]
+           looks_integration_fence_test.go:85: bolt-1 is shaded with normals [0 -1 0 0 -1 0 0 -1 0]; want [0.7071067811865476 0.7071067811865476 0 0.7071067811865476 0.7071067811865476 0 0 0 1]
+  ✅ went red      — the renderer trusts normals of the wrong count
+           looks_integration_fence_test.go:81: pin-1: 3 normals for 3 vertices
+       --- FAIL: TestRendererShadesAKernelMeshWithItsOwnNormals (0.49s)
+  ✅ went red      — the kernel's normals are not renormalised
+           looks_integration_fence_test.go:85: plate is shaded with normals [2 2 0 2 2 0 0 0 3]; want [0.7071067811865476 0.7071067811865476 0 0.7071067811865476 0.7071067811865476 0 0 0 1]
+           looks_integration_fence_test.go:85: bolt-1 is shaded with normals [2 2 0 2 2 0 0 0 3]; want [0.7071067811865476 0.7071067811865476 0 0.7071067811865476 0.7071067811865476 0 0 0 1]
+  ✅ went red      — a mesh-only part is drawn as a solid
+           looks_integration_fence_test.go:187: kernel: the lattice is drawn as {IDs:[infill] MeshOnly:false Ghost:false Shading:[1 0.28 0] Opacity:[1] Elements:36 FromKernel:true}; want mesh-only, ghost=false
+           looks_integration_fence_test.go:194: kernel: the lattice shares the solid part's material [1 0.28 0]
+  ✅ went red      — a mesh-only surface is drawn opaque
+           looks_integration_fence_test.go:201: kernel: the lattice is drawn at opacity [1]; want at most 0.6 (never opaque like a solid)
+           looks_integration_fence_test.go:214: kernel: the lattice reached the GPU at alpha 1
+  ✅ went red      — a mesh-only part keeps the solid's colour
+           looks_integration_fence_test.go:223: none: drawn in the tint false, the block's colour true; draws [{Instanced:true Elements:36 FrontFace:ccw Instances:[{Model:[1 0 0 0 0 1 0 0 0 0 1 0 -100 0 0 1] Colour:[0.6666666865348816 0.20000000298023224 0.13333334028720856 1] Highlight:0}]} {Instanced:true Elements:36 FrontFace:ccw Instances:[{Model:[1 0 0 0 0 1 0 0 0 0 1 0 40 20 0 1] Colour:[0.6666666865348816 0.20000000298023224 0.13333334028720856 0.1599999964237213] Highlight:0}]}]
+           looks_integration_fence_test.go:223: kernel: drawn in the tint false, the block's colour true; draws [{Instanced:true Elements:36 FrontFace:ccw Instances:[{Model:[1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1] Colour:[0.6666666865348816 0.20000000298023224 0.13333334028720856 1] Highlight:0}]} {Instanced:true Elements:36 FrontFace:ccw Instances:[{Model:[1 0 0 0 0 1 0 0 0 0 1 0 0 0 0 1] Colour:[0.6666666865348816 0.20000000298023224 0.13333334028720856 0.6000000238418579] Highlight:0}]}]
+  ✅ went red      — a lattice with no kernel is drawn as a solid box
+           looks_integration_fence_test.go:187: none: the lattice is drawn as {IDs:[infill] MeshOnly:false Ghost:false Shading:[1 0.28 0] Opacity:[1] Elements:36 FromKernel:false}; want mesh-only, ghost=true
+           looks_integration_fence_test.go:194: none: the lattice shares the solid part's material [1 0.28 0]
+  ✅ went red      — the mesh-only tag is switched off with the overlays
+           looks_integration_fence_test.go:231: kernel: with the overlays off the label layer reads ""; the tag is not an overlay
+           looks_integration_fence_test.go:231: none: with the overlays off the label layer reads ""; the tag is not an overlay
+  ✅ went red      — the renderer spells the mesh-only label its own way
+           looks_integration_fence_test.go:248: forge3d.js does not spell the label "mesh-only - not manufacturable"
+       --- FAIL: TestRendererSpellsMeshOnlyAsGeometryDoes (0.00s)
+      1 [main] bash 62183 dofork: child -1 - forked process 7408 died unexpectedly, retry 0, exit code 0xC0000142, errno 11
+scripts/_looks_runner.sh: fork: retry: Resource temporarily unavailable
+  ✅ went red      — the banner does not count the rounds built smaller
+           looks_integration_fence_test.go:298: the folded banner reads "This is a proposal, not a verified design. Details (1)"; a round built smaller is not on it
+       --- FAIL: TestWorkbenchSaysWhichRoundsTheKernelBuiltSmaller (0.49s)
+  ✅ went red      — the workbench drops the kernel's reductions
+           looks_integration_fence_test.go:298: the folded banner reads "This is a proposal, not a verified design. Details (0)"; a round built smaller is not on it
+           looks_integration_fence_test.go:301: the banner's details do not name the round: "This is a proposal, not a verified design. Details (0) Proposed by FORGE. No solver or interference check exists in this deployment."
+  ✅ went red      — the export panel forgets the rounds built smaller
+           looks_integration_fence_test.go:306: the STEP export panel does not say which rounds were built smaller
+       --- FAIL: TestWorkbenchSaysWhichRoundsTheKernelBuiltSmaller (0.35s)
+
+
+The tree is byte-identical to how the drill found it.
+17 went red, 0 stayed green, 0 unproven, 0 anchor(s) moved.
+Covered: the sweep fences. NOT covered: the extrusion and revolve fences,
+which have no drills — see the note in this script.
+Selected drills
+  ✅ went red      — the contract's catalogue is typed rather than rendered
+           standard_contract_test.go:45: the contract does not say which lengths a cap screw comes in
+       --- FAIL: TestTheContractTeachesEveryStandardPartFORGEHas (0.00s)
+  ✅ went red      — the contract drops the bowed-edge guide
+           curve_contract_test.go:21: the converse contract does not print geometry.CurveGuide()
+           curve_contract_test.go:29: the converse contract shows no example of a lens
+  ✅ went red      — the contract does not teach the open faces
+           feature_contract_test.go:60: converse: the contract does not say which face "top" leaves open
+           feature_contract_test.go:60: converse: the contract does not say which face "bottom" leaves open
+  ✅ went red      — the prompt does not offer the car shape
+           car_contract_test.go:27: the contract does not offer the car shape:
+       --- FAIL: TestTheContractCarriesTheCarTemplateAndEveryDesignWord (0.01s)
+  ✅ went red      — the contract does not teach lattices
+           lattice_contract_test.go:23: the contract does not carry geometry.LatticeGuide
+       --- FAIL: TestTheContractTeachesLatticesFromTheTable (0.00s)
+  ✅ went red      — the turn surface drops the mesh-only parts
+           mesh_only_kernel_test.go:38: the surface names [] as mesh-only; want [Infill]
+           mesh_only_kernel_test.go:45: the lattice is not drawn on the turn's surface
+  ✅ went red      — the mesh reply drops the mesh-only flag
+           mesh_only_fence_test.go:123: mesh parts on the wire: [{"id":"block","label":"Block","vertices":null,"triangles":null},{"id":"infill","label":"Infill","vertices":null,"triangles":null}]
+       --- FAIL: TestTheMeshReplyMarksAMeshOnlyPart (0.00s)
+
+
+The tree is byte-identical to how the drill found it.
+7 went red, 0 stayed green, 0 unproven, 0 anchor(s) moved.
+Covered: the sweep fences. NOT covered: the extrusion and revolve fences,
+which have no drills — see the note in this script.

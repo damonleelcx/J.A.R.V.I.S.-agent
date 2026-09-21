@@ -79,7 +79,11 @@ func (r kernelSolids) BuildSurface(ctx context.Context, doc *geometry.Document) 
 	if !known {
 		unit = geometry.Millimetre
 	}
-	built, err := r.k.BuildMesh(ctx, *doc, unit)
+	// ‼️ BuildEvaluated, not BuildMesh: the same build, asked to MEASURE what it
+	// built as well as draw it (addresses issue 6). One build per turn was settled
+	// in Stage 7 and a second one to ask "could this be made" would reverse it, so
+	// the manufacturability numbers and any named section ride on this one.
+	built, err := r.k.BuildEvaluated(ctx, *doc, unit, "mesh", doc.Sections)
 	if err != nil {
 		return agent.Built{}, err
 	}
@@ -109,7 +113,20 @@ func (r kernelSolids) BuildSurface(ctx context.Context, doc *geometry.Document) 
 		// left behind, because a builder that does not pass it reads as "not counted"
 		// and no repair past the list's bound could ever be kept (repairVerdict).
 		Buried: built.InterferencesBuried, BuriedCounted: built.InterferencesBuriedCounted,
-		Skipped: built.Skipped}, nil
+		Skipped: built.Skipped, FeatureFailures: built.FeatureFailures,
+		// Mesh-only parts were never in the check (geometry/lattice.go), and the turn
+		// says so beside what else it did not cover.
+		MeshOnly: built.MeshOnly,
+		// Rounds built smaller than asked, said in the turn (looks designed, stage B1).
+		FeatureReductions: built.FeatureReductions,
+		// Whether what was built could be MADE, and what a named section of it is
+		// worth (issue 6). Parts travels beside the list for the same reason Pairs
+		// does beside the interferences: a list shorter than the model is a budget
+		// that bound, and the turn has to be able to say so.
+		Manufacturability:          built.Manufacturability,
+		ManufacturabilityTruncated: built.ManufacturabilityTruncated,
+		ManufacturabilityParts:     built.ManufacturabilityParts,
+		Sections:                   built.Sections}, nil
 }
 
 // Solids returns the thing that builds a surface, or nil when this

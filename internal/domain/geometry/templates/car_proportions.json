@@ -1,0 +1,110 @@
+{
+  "status": "UNVALIDATED",
+  "status_note": "UNVALIDATED. Every figure below was read from the source named beside it on 2026-09-18 and nobody has checked it against a second source. Figures marked retrieved \"search\" were quoted by a web-search result that named the page but whose page could not be opened (HTTP 403) - they are weaker still. The ranges FORGE checks against are COMPUTED from these cars (car.go, proportionRanges) and are only as good as the handful of cars listed. A design outside a range is WARNED about and never refused. Decision: damon, 2026-09-18 (stage C2 of the looks-designed work).",
+  "tolerance": 0.1,
+  "tolerance_source": "FORGE's own choice, not from any reference: each range is the span of the cited cars widened by this fraction of each end, because two or three cars do not bound a class.",
+  "classes": {
+    "hypercar": {
+      "cars": [
+        {
+          "name": "Bugatti Chiron (2016)",
+          "length": {"mm": 4544, "as_written": "4,544 mm", "source": "https://en.wikipedia.org/wiki/Bugatti_Chiron (specifications box)", "retrieved": "fetched"},
+          "width": {"mm": 2038, "as_written": "2,038 mm", "source": "https://en.wikipedia.org/wiki/Bugatti_Chiron (specifications box)", "retrieved": "fetched"},
+          "height": {"mm": 1212, "as_written": "1,212 mm", "source": "https://en.wikipedia.org/wiki/Bugatti_Chiron (specifications box)", "retrieved": "fetched"},
+          "wheelbase": {"mm": 2711, "as_written": "2,711 mm", "source": "https://en.wikipedia.org/wiki/Bugatti_Chiron (specifications box)", "retrieved": "fetched"},
+          "tyre_front": {"size": "285/30 R20", "source": "https://www.1010tires.com/Tires/2021/Bugatti/Chiron/2-Dr-Coupe-Base/F-285-30R20-99Y-R-355-25R21-103Y/208496 (fitment listing)", "retrieved": "search"}
+        },
+        {
+          "name": "McLaren P1 (2013)",
+          "length": {"mm": 4588, "as_written": "4,588 mm", "source": "https://en.wikipedia.org/wiki/McLaren_P1 (specifications box)", "retrieved": "fetched"},
+          "width": {"mm": 1946, "as_written": "1,946 mm", "source": "https://en.wikipedia.org/wiki/McLaren_P1 (specifications box)", "retrieved": "fetched"},
+          "height": {"mm": 1188, "as_written": "1,188 mm", "source": "https://en.wikipedia.org/wiki/McLaren_P1 (specifications box)", "retrieved": "fetched"},
+          "wheelbase": {"mm": 2670, "as_written": "2,670 mm", "source": "https://en.wikipedia.org/wiki/McLaren_P1 (specifications box, its reference 6)", "retrieved": "fetched"},
+          "tyre_front": {"size": "245/35 R19", "source": "https://www.conceptcarz.com/s27461/mclaren-p1.aspx (2015 McLaren P1 specifications)", "retrieved": "search"}
+        }
+      ]
+    },
+    "sports": {
+      "cars": [
+        {
+          "name": "Porsche 911 Carrera (992.2)",
+          "length": {"mm": 4542, "as_written": "178.8 in. / 4,542 mm", "source": "Porsche Cars North America, Technical Data 911 Carrera (992.2): https://newsroom.porsche.com/dam/jcr:86fc9a9b-ece1-4cca-9930-39a78e89baf3/992.2%20911%20Carrera%20and%20Carrera%20Cabriolet%20Technical%20Specifications.pdf", "retrieved": "fetched"},
+          "width": {"mm": 1852, "as_written": "Width w/o mirrors 72.9 in. / 1852 mm", "source": "Porsche Cars North America, Technical Data 911 Carrera (992.2), as above", "retrieved": "fetched"},
+          "height": {"mm": 1298, "as_written": "51.1 in. / 1298 mm (standard PASM suspension)", "source": "Porsche Cars North America, Technical Data 911 Carrera (992.2), as above", "retrieved": "fetched"},
+          "wheelbase": {"mm": 2450, "as_written": "96.5 in. / 2450 mm", "source": "Porsche Cars North America, Technical Data 911 Carrera (992.2), as above", "retrieved": "fetched"},
+          "track_front": {"mm": 1591, "as_written": "62.7 in. / 1591 mm", "source": "Porsche Cars North America, Technical Data 911 Carrera (992.2), as above", "retrieved": "fetched"},
+          "track_rear": {"mm": 1557, "as_written": "61.2 in. / 1557 mm", "source": "Porsche Cars North America, Technical Data 911 Carrera (992.2), as above", "retrieved": "fetched"},
+          "tyre_front": {"size": "235/40 ZR19", "source": "Porsche Cars North America, Technical Data 911 Carrera (992.2), standard tire size (front/rear) 235/40 ZR 19 / 295/35 ZR 20", "retrieved": "fetched"}
+        },
+        {
+          "name": "Chevrolet Corvette Stingray coupe (C8, 2020)",
+          "length": {"mm": 4630, "as_written": "182.3 in (4,630 mm)", "source": "https://en.wikipedia.org/wiki/Chevrolet_Corvette_(C8) (specifications box)", "retrieved": "fetched"},
+          "width": {"mm": 1933, "as_written": "76.1 in (1,933 mm)", "source": "https://en.wikipedia.org/wiki/Chevrolet_Corvette_(C8) (specifications box)", "retrieved": "fetched"},
+          "height": {"mm": 1234, "as_written": "48.6 in (1,234 mm)", "source": "https://en.wikipedia.org/wiki/Chevrolet_Corvette_(C8) (specifications box)", "retrieved": "fetched"},
+          "wheelbase": {"mm": 2723, "as_written": "107.2 in (2,723 mm)", "source": "https://en.wikipedia.org/wiki/Chevrolet_Corvette_(C8) (specifications box)", "retrieved": "fetched"},
+          "track_front": {"mm": 1648, "as_written": "Track Width, Front: 64.9 in", "source": "https://www.auto123.com/en/new-cars/technical-specs/chevrolet/corvette/2020/411155/base/ and https://www.stingraychevrolet.com/2020-chevrolet-corvette-stingray-specs/", "retrieved": "search"},
+          "track_rear": {"mm": 1585, "as_written": "Track Width, Rear: 62.4 in", "source": "as track_front", "retrieved": "search"},
+          "tyre_front": {"size": "245/35 ZR19", "source": "https://en.wikipedia.org/wiki/Chevrolet_Corvette_(C8) (Wheels: front 245/35ZR-19)", "retrieved": "fetched"},
+          "front_overhang": {"mm": 1037, "as_written": "Front overhang: 1037 mm", "source": "GM, Chevrolet Corvette Stingray Tech Specs: https://media.gm.com/content/dam/Media/documents/INTL/chevrolet/tech-data/corvette-stingray/Chevrolet-Corvette-Stingray-TechSpecs_EN.pdf", "retrieved": "search"},
+          "rear_overhang": {"mm": 875, "as_written": "Rear overhang: 875 mm", "source": "GM, Chevrolet Corvette Stingray Tech Specs, as front_overhang", "retrieved": "search"},
+          "ground_clearance": {"mm": 81, "as_written": "Ground clearance between the axles: 81 mm", "source": "GM, Chevrolet Corvette Stingray Tech Specs, as front_overhang", "retrieved": "search"}
+        }
+      ]
+    },
+    "sedan": {
+      "cars": [
+        {
+          "name": "BMW 330i xDrive sedan (G20, 2020MY)",
+          "length": {"mm": 4717, "as_written": "Length, mm 4717", "source": "BMW Group Canada, BMW 3 Series 2020MY Product Guide: https://www.press.bmwgroup.com/canada/article/attachment/T0304258EN/444864", "retrieved": "fetched"},
+          "width": {"mm": 1827, "as_written": "Width, mm 1827", "source": "BMW 3 Series 2020MY Product Guide, as above", "retrieved": "fetched"},
+          "height": {"mm": 1448, "as_written": "Height, mm 1448", "source": "BMW 3 Series 2020MY Product Guide, as above", "retrieved": "fetched"},
+          "wheelbase": {"mm": 2851, "as_written": "Wheelbase, mm 2851", "source": "BMW 3 Series 2020MY Product Guide, as above", "retrieved": "fetched"},
+          "track_front": {"mm": 1583, "as_written": "Track front, mm 1583", "source": "BMW 3 Series 2020MY Product Guide, as above", "retrieved": "fetched"},
+          "track_rear": {"mm": 1567, "as_written": "Width of the rear track, mm 1567/1597 (the first figure)", "source": "BMW 3 Series 2020MY Product Guide, as above", "retrieved": "fetched"},
+          "tyre_front": {"size": "225/45 R18", "source": "BMW 3 Series 2020MY Product Guide, standard 18x7.5, 225/45 R18", "retrieved": "fetched"},
+          "front_overhang": {"mm": 807, "as_written": "Overhang front, mm 807", "source": "BMW 3 Series 2020MY Product Guide, as above", "retrieved": "fetched"},
+          "rear_overhang": {"mm": 1059, "as_written": "Rear overhang, mm 1059", "source": "BMW 3 Series 2020MY Product Guide, as above", "retrieved": "fetched"},
+          "ground_clearance": {"mm": 138, "as_written": "Ground clearance, mm 138", "source": "BMW 3 Series 2020MY Product Guide, as above", "retrieved": "fetched"}
+        },
+        {
+          "name": "Toyota Camry (XV70)",
+          "length": {"mm": 4880, "as_written": "4,880-4,910 mm (the first figure)", "source": "https://en.wikipedia.org/wiki/Toyota_Camry_(XV70) (specifications box)", "retrieved": "fetched"},
+          "width": {"mm": 1840, "as_written": "1,840 mm", "source": "https://en.wikipedia.org/wiki/Toyota_Camry_(XV70) (specifications box)", "retrieved": "fetched"},
+          "height": {"mm": 1445, "as_written": "1,445 mm", "source": "https://en.wikipedia.org/wiki/Toyota_Camry_(XV70) (specifications box)", "retrieved": "fetched"},
+          "wheelbase": {"mm": 2820, "as_written": "2,820 mm (111.2 in)", "source": "https://en.wikipedia.org/wiki/Toyota_Camry_(XV70) (specifications box)", "retrieved": "fetched"},
+          "track_front": {"mm": 1600, "as_written": "Track Width, Front: 63 in", "source": "https://www.thecarconnection.com/specifications/toyota_camry_2020 (2020 Camry)", "retrieved": "search"},
+          "track_rear": {"mm": 1605, "as_written": "Track Width, Rear: 63.2 in", "source": "as track_front", "retrieved": "search"},
+          "tyre_front": {"size": "205/65 R16", "source": "https://tiresize.com/tires/Toyota/Camry/2018/LE/ (2018 Camry LE standard tyre)", "retrieved": "search"},
+          "ground_clearance": {"mm": 145, "as_written": "Minimum Ground Clearance: 5.7 in", "source": "https://www.thecarconnection.com/specifications/toyota_camry_2020 (2020 Camry)", "retrieved": "search"}
+        }
+      ]
+    },
+    "suv": {
+      "cars": [
+        {
+          "name": "Land Rover Defender 110 (L663, 2020MY)",
+          "length": {"mm": 4758, "as_written": "Overall length (mm) Without Spare Wheel: 4758", "source": "Jaguar Land Rover, 2020 Model Year Land Rover Defender 110 Technical Specifications: https://jlrnewsroom.media/wp-content/uploads/2019/09/20MY-Defender-Tech-Spec-110-1.pdf", "retrieved": "fetched"},
+          "width": {"mm": 1996, "as_written": "Overall width (body, no mirrors) (mm) 1996", "source": "Defender 110 Technical Specifications, as above", "retrieved": "fetched"},
+          "height": {"mm": 1967, "as_written": "Overall height (mm) 1967", "source": "Defender 110 Technical Specifications, as above", "retrieved": "fetched"},
+          "wheelbase": {"mm": 3022, "as_written": "Wheelbase (mm) 3022", "source": "Defender 110 Technical Specifications, as above", "retrieved": "fetched"},
+          "track_front": {"mm": 1704.1, "as_written": "Front track (mm) 1704,1", "source": "Defender 110 Technical Specifications, as above", "retrieved": "fetched"},
+          "track_rear": {"mm": 1699.7, "as_written": "Rear track (mm) 1699,7", "source": "Defender 110 Technical Specifications, as above", "retrieved": "fetched"},
+          "tyre_front": {"size": "255/70 R18", "source": "Defender 110 Technical Specifications (tyres 255/70R18, 255/65R19, 255/60R20, 275/45R22; the first)", "retrieved": "fetched"},
+          "front_overhang": {"mm": 845, "as_written": "Front overhang (mm) 845", "source": "Defender 110 Technical Specifications, as above", "retrieved": "fetched"},
+          "rear_overhang": {"mm": 891, "as_written": "Rear overhang (mm) Without spare wheel: 891", "source": "Defender 110 Technical Specifications, as above", "retrieved": "fetched"},
+          "ground_clearance": {"mm": 218, "as_written": "Ground clearance (mm) 218 (Off Road height: 291)", "source": "Defender 110 Technical Specifications, as above", "retrieved": "fetched"}
+        },
+        {
+          "name": "Porsche Cayenne (2024 MY, base)",
+          "length": {"mm": 4930, "as_written": "Length 194.1 (in)", "source": "Porsche Cars North America, 2024 (MYR) Cayenne Models Technical Data: https://newsroom.porsche.com/dam/jcr:54c29b0e-60ba-46ab-9999-71bb2cdbdd71/2023%20Cayenne%20Technical%20Information.pdf", "retrieved": "fetched"},
+          "height": {"mm": 1699, "as_written": "Height 66.9 (in)", "source": "2024 (MYR) Cayenne Models Technical Data, as above", "retrieved": "fetched"},
+          "wheelbase": {"mm": 2896, "as_written": "Wheelbase 114 (in)", "source": "2024 (MYR) Cayenne Models Technical Data, as above", "retrieved": "fetched"},
+          "track_front": {"mm": 1676, "as_written": "Track width front 1676", "source": "2024 (MYR) Cayenne Models Technical Data, as above", "retrieved": "fetched"},
+          "track_rear": {"mm": 1653, "as_written": "Track width rear 1653", "source": "2024 (MYR) Cayenne Models Technical Data, as above", "retrieved": "fetched"},
+          "tyre_front": {"size": "255/55 R20", "source": "2024 (MYR) Cayenne Models Technical Data, tires 255/55 R 20 / 295/45 R 20", "retrieved": "fetched"},
+          "ground_clearance": {"mm": 211, "as_written": "Ground Clearance (std/normal level) 8.3\"", "source": "2024 (MYR) Cayenne Models Technical Data, as above", "retrieved": "fetched"}
+        }
+      ]
+    }
+  }
+}

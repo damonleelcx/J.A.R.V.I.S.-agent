@@ -313,7 +313,7 @@ const provenanceHarness = `
     state.subtrees = {};
     for (let i = 0; i < subtrees; i++) state.subtrees['slot-' + i] = { source: 'kernel', note: 'built by the CAD kernel', occurrences: 30 + i, outside: [] };
     const fns = new Function('$', 'state', 'studio', 'standardsOf', 'figuresOf',
-      ['esc', 'renderProvenance', 'initProvenance'].map((n) => lift(src, n)).join('\n') +
+      ['esc', 'meshOnlyLabel', 'meshOnlyNames', 'renderProvenance', 'initProvenance'].map((n) => lift(src, n)).join('\n') +
       '; return { renderProvenance: renderProvenance, initProvenance: initProvenance };')(
       (id) => (id === 'provenance' ? el : null), state, { approximationNotes: () => ['Bracket: drawn as its box'] },
       (c) => c.standards || [], (c) => c.figures || []);

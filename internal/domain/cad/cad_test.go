@@ -39,6 +39,25 @@ func kernel(t *testing.T) *cad.Kernel {
 	return k
 }
 
+// latticeKernel is kernel(t) for a fence about mesh-only parts.
+//
+// It skips for one more reason: a kernel whose venv has no manifold3d builds
+// every exact solid and refuses every lattice by name, so these fences fail with
+// "the lattice is not drawn", which reads as a defect in the lattice code and is
+// a missing package. See cad.MeshOnlySupport.
+func latticeKernel(t *testing.T) *cad.Kernel {
+	t.Helper()
+	k := kernel(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	if ok, why := k.MeshOnlySupport(ctx); !ok {
+		t.Skipf("this kernel cannot build mesh-only parts, so a lattice fence would be testing their "+
+			"absence rather than their shape — the kernel says %q. Run `make cad-venv` to install the "+
+			"pinned internal/domain/cad/requirements.txt, which carries manifold3d (pinned by PR 156).", why)
+	}
+	return k
+}
+
 func plate() geometry.Document {
 	return geometry.Document{
 		Name: "bracket", Units: "mm",
@@ -139,13 +158,24 @@ func TestKernel_OneBadPartDoesNotLoseTheOthers(t *testing.T) {
 	defer cancel()
 
 	doc := plate()
-	// A NEGATIVE radius. Measured against build123d 0.11.1 rather than assumed:
-	// a zero radius is accepted and builds a solid of volume 0, and only a
-	// negative one is refused. The first version of this test used zero and
-	// passed for the wrong reason — three parts built, nothing skipped, and the
-	// assertion was about a refusal that never happened.
+	// A negative RADIUS_TOP, and the choice matters.
+	//
+	// This fixture used to be a negative "radius", measured against build123d
+	// 0.11.1: a zero radius was accepted and built a solid of volume 0, and only
+	// a negative one was refused. Issue 7 removed that whole path — FORGE now
+	// refuses a zero or negative radius by name before the kernel is asked — so
+	// the old fixture never reaches OCCT and this test would have been asserting
+	// a kernel skip that no longer happens.
+	//
+	// "radius_top" is the dimension FORGE deliberately does NOT police, because a
+	// cylinder with a zero top radius is a cone and a real shape. A NEGATIVE one
+	// is not, and OCCT is the thing that knows it: it comes back "cone with
+	// negative or too small radius". So the property this test is about — a shape
+	// the KERNEL cannot build does not take the rest of the file with it — is
+	// still tested against a real kernel refusal.
 	doc.Parts = append(doc.Parts, geometry.Part{ID: "bad", Name: "Impossible", Shape: "cylinder",
-		Size: map[string]float64{"radius": -3, "height": 5}, Position: []float64{0, 0, 0}})
+		Size:     map[string]float64{"radius": 3, "height": 5, "radius_top": -4},
+		Position: []float64{0, 0, 0}})
 
 	got, err := k.BuildDocument(ctx, doc, geometry.Millimetre, "")
 	if err != nil {
@@ -157,10 +187,48 @@ func TestKernel_OneBadPartDoesNotLoseTheOthers(t *testing.T) {
 	if len(got.Skipped) != 1 || !strings.Contains(got.Skipped[0], "Impossible") {
 		t.Fatalf("the part that could not be built was not named: %v", got.Skipped)
 	}
-	// OCCT raises Standard_Failure with an EMPTY message for this, so a reason
-	// composed only of str(exc) would read "Impossible: " and say nothing.
+	// A reason, not just a name. OCCT can raise Standard_Failure with an EMPTY
+	// message, so a reason composed only of str(exc) would read "Impossible: "
+	// and say nothing.
 	if strings.TrimSpace(strings.TrimPrefix(got.Skipped[0], "Impossible:")) == "" {
 		t.Errorf("the part was named with no reason: %q", got.Skipped[0])
+	}
+}
+
+// And the dimension FORGE refuses ITSELF never reaches the kernel at all.
+//
+// The other half of the same story (issue 7). A zero radius builds a solid of
+// volume 0 in OCCT, the mesh path agrees with it, and the meaningless result
+// travels to the exported file — so it is refused before the kernel is asked,
+// and the reason names the dimension rather than arriving as an OCCT message
+// about a shape nobody can place.
+func TestKernel_ACollapsedDimensionIsRefusedBeforeTheKernelIsAsked(t *testing.T) {
+	k := kernel(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	doc := plate()
+	doc.Parts = append(doc.Parts, geometry.Part{ID: "flat", Name: "Flat", Shape: "cylinder",
+		Size: map[string]float64{"radius": 0, "height": 5}, Position: []float64{0, 0, 0}})
+
+	got, err := k.BuildDocument(ctx, doc, geometry.Millimetre, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Parts != 2 {
+		t.Errorf("built %d parts, want the 2 good ones", got.Parts)
+	}
+	if len(got.Skipped) != 0 {
+		t.Errorf("the kernel skipped %v; it was never meant to see the part", got.Skipped)
+	}
+	told := false
+	for _, note := range got.Inferred {
+		if strings.Contains(note, "Flat") && strings.Contains(note, `"radius"`) {
+			told = true
+		}
+	}
+	if !told {
+		t.Errorf("the collapsed dimension was not named to the reader: %v", got.Inferred)
 	}
 }
 
@@ -1659,9 +1727,16 @@ func TestKernel_ARefusedFilletNamesTheLargestThatFits(t *testing.T) {
 	// A 60×6×60 plate. Rounding its four vertical corners can go as far as
 	// R30 — half the plate — and no further: at R45 the arcs would have to
 	// overlap each other, and OCCT refuses.
+	//
+	// ‼️ R400, not R45, since 2026-09-18 (looks designed, stage B1): a refused
+	// round is now retried at half and a quarter, so R45 BUILDS, at 22.5 on the
+	// corners that cannot take 45, and is reported as reduced
+	// (TestKernel_ARefusedFilletIsBuiltSmallerAndSaysSo). A feature still fails —
+	// and still names the largest that fits — when no retry fits: 400, 200 and
+	// 100 are all past 60.
 	doc := bracket()
 	doc.Features = []geometry.Feature{{
-		ID: "too-big", Op: "fillet", Of: "plate", Radius: 45, Edges: "vertical"}}
+		ID: "too-big", Op: "fillet", Of: "plate", Radius: 400, Edges: "vertical"}}
 
 	got, err := k.BuildDocument(ctx, doc, geometry.Millimetre, "")
 	if err != nil {
@@ -1680,7 +1755,7 @@ func TestKernel_ARefusedFilletNamesTheLargestThatFits(t *testing.T) {
 	// And the number it names has to be true. A suggestion that then fails is
 	// worse than no suggestion, so the suggestion is BUILT here.
 	suggested := largestFromMessage(t, msg)
-	if suggested <= 0 || suggested >= 45 {
+	if suggested <= 0 || suggested >= 400 {
 		t.Fatalf("suggested radius %g is not a smaller, usable radius (from %q)", suggested, msg)
 	}
 	doc.Features[0].Radius = suggested

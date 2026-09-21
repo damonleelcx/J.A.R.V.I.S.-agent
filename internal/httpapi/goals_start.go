@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
@@ -85,6 +86,22 @@ type replanRequest struct {
 	// whose planning tripped must be replanned with build:true, or it comes back
 	// as ordinary tasks the executor runs instead of steps the kernel builds.
 	Build bool `json:"build"`
+	// Autonomy is accepted here ONLY so that asking for a different one is
+	// refused in the requirement's own words (PRD AGT-04).
+	//
+	// # Why the field exists at all when nothing may set it
+	//
+	// Replanning is the one place a caller plausibly reaches for it: the goal
+	// exists, its plan is being rewritten, and "while you are at it, let it do
+	// more" is the obvious next thought — it is the feature request this
+	// codebase will get. Without the field, DecodeJSON rejects it as an unknown
+	// field and answers with a message about JSON, which teaches nobody
+	// anything and records nothing. With it, the attempt meets the rule that
+	// forbids it and the audit log shows somebody asked.
+	//
+	// Naming the level the goal already has is accepted and changes nothing:
+	// a client echoing back what it read is not asking for anything.
+	Autonomy string `json:"autonomy"`
 }
 
 // Field ceilings. These are not security controls — BodyLimit already bounds the
@@ -193,7 +210,13 @@ func (h *GoalHandlers) CreateGoal(w http.ResponseWriter, r *http.Request) {
 	if req.Build {
 		plan = h.intake.PlanBuild
 	}
+	// Say it is still planning while it plans (PRD NFR-02). Started after Draft
+	// so the goal row its events reference already exists, and stopped the
+	// instant the planner returns — before any of the paths out below. See
+	// planProgress.
+	stopProgress := h.planProgress(ctx, goal.ID)
 	outcome, err := plan(ctx, h.deps.Pool, goal)
+	stopProgress()
 	if err != nil {
 		// The draft survives, and the reader is told so by id. Rolling it back
 		// would be tidier and less truthful: the goal exists, it is visible in
@@ -291,6 +314,29 @@ func (h *GoalHandlers) Replan(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// ‼️ A replan may rewrite the plan. It may not move the goal up the ladder.
+	//
+	// PRD AGT-04 forbids autonomy being raised without the person seeing it, and
+	// what makes that true today is that autonomy is written once, at creation,
+	// and nothing changes it. This is the surface where a caller would first
+	// try, so this is where the rule is said — and where the attempt is
+	// recorded. Lowering is refused here too, but for a duller reason: this
+	// endpoint plans, it does not administer a goal, and a level that changed
+	// as a side effect of replanning would be a change nobody pressed a button
+	// for either.
+	if want := engine.Autonomy(strings.TrimSpace(req.Autonomy)); want != "" && want != goal.Autonomy {
+		if engine.RaisesAutonomy(goal.Autonomy, want) {
+			WriteError(w, r, h.deps.Log,
+				engine.RefuseAutonomyRaise(r.Context(), h.deps.Log, goal.ID, goal.Autonomy, want, user.ID))
+			return
+		}
+		WriteError(w, r, h.deps.Log, errs.New(op, errs.CodeValidationFailed).
+			WithDetail("goal %s is at autonomy %q. Replanning rewrites the plan and never changes "+
+				"the level the work may run at; send no autonomy, or the one it already has.",
+				goal.ID, goal.Autonomy))
+		return
+	}
+
 	// The same budget hierarchy as CreateGoal: longer than the model client's
 	// own timeout, never shorter, or the handler kills the call mid-retry and
 	// reports a deadline that points at the model rather than at the timeout
@@ -302,7 +348,12 @@ func (h *GoalHandlers) Replan(w http.ResponseWriter, r *http.Request) {
 	if req.Build {
 		replan = h.intake.ReplanBuild
 	}
+	// The same signal CreateGoal emits, for the same reason: a replan is the
+	// same model call of one to three minutes, and the person waiting on it is
+	// the person whose first plan already tripped.
+	stopProgress := h.planProgress(ctx, goal.ID)
 	outcome, err := replan(ctx, h.deps.Pool, goal)
+	stopProgress()
 	if err != nil {
 		h.deps.Log.WarnWith(r.Context(), logx.EventGoalPlanFailed, err,
 			"goal_id", goalID, "user_id", user.ID)
@@ -337,6 +388,93 @@ func (h *GoalHandlers) Replan(w http.ResponseWriter, r *http.Request) {
 		"note": "Planned. Nothing runs until it is started — that is the separate act, and it is " +
 			"deliberately separate (PRD AGT-02).",
 	})
+}
+
+// planProgressEvery is how often a goal held by the planner says so.
+//
+// agent.ProgressEvery, which is agent.AliveEvery, which is the one number in
+// this repository for "how often held work reports" — a running task's stamp
+// and a planning goal's event are read by the same client, polling at the same
+// rate, against the same 10 s in NFR-02. A var rather than a const only so a
+// fence can hold a plan for several intervals without holding a test for half a
+// minute; nothing in production assigns it.
+var planProgressEvery = agent.ProgressEvery
+
+// planProgress reports that a goal is still being planned, and returns the
+// function that stops reporting.
+//
+// # Why a timeline event and not a stamp on the goal row
+//
+// The row stamp is what a running TASK uses (TaskDTO.last_seen_at, written by
+// the worker's heartbeat), and it was the obvious thing to copy. It was not
+// copied, for three reasons:
+//
+//   - A stamp says "something happened" and not WHAT or WHEN IT STARTED. NFR-02
+//     asks a long job to report progress, and "the row was touched 3 s ago"
+//     makes a client compute elapsed time itself from a started_at it has to
+//     have fetched separately. The event carries the elapsed time in its own
+//     summary.
+//   - GET /v1/goals/{id}/timeline is already the polling surface for "what is
+//     happening to this goal", it already returns every kind, and the workbench
+//     card already reads it. A stamp would need a new field on GoalDTO and a
+//     new thing for every client to learn.
+//   - A goal in DRAFT being planned has no other writer, so appending cannot
+//     collide with one; a row stamp on the goal would race the planner's own
+//     writes to that row.
+//
+// # What it costs
+//
+// One row per interval, hash-chained (SAF-06), so one SELECT of the previous
+// event and one INSERT each. At ProgressEvery = 5 s, a plan that takes the 128 s
+// a live plan took (GitHub issue 13) writes 25 of them; a 30 s plan writes 6.
+// That is real and it is not free: those rows sit in the timeline a person
+// reads to reconstruct what happened, and 25 "still planning" lines are noise
+// around the one plan.created line that matters. It is accepted because the
+// alternative on offer is nothing at all for two minutes, and because a client
+// that does not want them can filter one kind. If the timeline is ever given a
+// kind filter or a fold, this is the kind to fold.
+//
+// # Which context the writes run on
+//
+// ctx — the planner's own deadline — and deliberately NOT agent.outliving(ctx).
+// outliving exists for a RECORD of something that already happened, which must
+// survive a stop that overtakes it. A progress report is the opposite: it is a
+// ping about work that is still running, and if that work has just been
+// cancelled or has run out of deadline, "still planning" is no longer true. A
+// report written after the plan it describes was abandoned would be worse than
+// the silence it was added to fix.
+func (h *GoalHandlers) planProgress(ctx context.Context, goalID string) func() {
+	return agent.Progress{
+		// The same words `forgectl goal new` prints to a terminal, so the two
+		// halves of NFR-02 read identically wherever a person is watching from.
+		What:  "still planning",
+		Every: planProgressEvery,
+		Clock: h.deps.Clock,
+		Log:   h.deps.Log,
+		// Borrowed: logx has no event for "a progress report was lost", and this
+		// is the planning path's own event, which is what an operator asking
+		// "did planning go wrong for this goal?" greps. The detail line
+		// agent.Progress attaches says what actually happened.
+		Lost: logx.EventGoalPlanFailed,
+		Emit: func(ctx context.Context, rep agent.ProgressReport) error {
+			// Both forms. elapsed_ms is for anything computing with it;
+			// elapsed_human is the same number as the summary says it, so a
+			// payload read on its own cannot disagree with the line above it.
+			payload, _ := json.Marshal(map[string]any{
+				"elapsed_ms":    rep.Elapsed.Milliseconds(),
+				"elapsed_human": rep.Elapsed.Round(time.Second).String(),
+			})
+			return h.repo.AppendEvent(ctx, h.deps.Pool, &engine.Event{
+				GoalID: goalID,
+				Kind:   engine.EventGoalProgress,
+				// The planner is what is holding the goal. Not 'system': this is
+				// a model call somebody is waiting on, not infrastructure.
+				Actor:   engine.ActorPlanner,
+				Summary: rep.Summary,
+				Payload: payload,
+			}, h.deps.Clock.Now())
+		},
+	}.Start(ctx)
 }
 
 // StartGoal handles POST /v1/goals/{id}/start — the material act.

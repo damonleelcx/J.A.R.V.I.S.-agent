@@ -50,6 +50,10 @@ type Check struct {
 // Result is one scenario's outcome.
 type Result struct {
 	Scenario string
+	// Schema is the Postgres schema this drill ran in. Unique per process
+	// (internal/platform/db/testschema.go), so with --keep it is the only way to
+	// find the data the drill left behind.
+	Schema string
 	// FaultEvidence is what proved the fault actually happened. Empty means the
 	// scenario did not disturb anything, and the run FAILS regardless of the
 	// checks below.

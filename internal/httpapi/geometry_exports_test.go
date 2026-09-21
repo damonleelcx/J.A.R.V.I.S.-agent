@@ -66,7 +66,7 @@ func newExportsHarness(t *testing.T, blobs blob.Store) *exportsHarness {
 			"Run `make db-up` then `make test-integration`.")
 	}
 	ctx := context.Background()
-	const schema = "forge_http_exports"
+	schema := db.UniqueSchema("forge_http_exports", "")
 	cfg := func(u string) config.DBConfig {
 		return config.DBConfig{URL: u, MaxConns: 8, MinConns: 1,
 			MaxConnLifetime: time.Hour, MaxConnIdleTime: time.Minute, ConnectTimeout: 10 * time.Second}
@@ -92,7 +92,12 @@ func newExportsHarness(t *testing.T, blobs blob.Store) *exportsHarness {
 	if _, err := db.MigrateFS(ctx, pool, db.Files, db.MigrationsDir, logx.Discard()); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(pool.Close)
+	// The schema name now carries this run id (db.UniqueSchema), so nothing
+	// reuses it and leaving it behind leaks one schema per run.
+	t.Cleanup(func() {
+		pool.Close()
+		db.DropTestSchema(url, schema)
+	})
 
 	x := &exportsHarness{pool: pool}
 	x.d = testDeps()

@@ -1,0 +1,19 @@
+{"variant": "main", "case": "copies4096", "ok": true, "reply_bytes": 2715111, "triangles": 43070, "angular": null, "has_normals": false, "mesh_s": 4.122, "total_s": 5.369, "cpu_percent_before": 74.2}
+{"variant": "branch-no-normals", "case": "copies4096", "ok": true, "reply_bytes": 2715176, "triangles": 43070, "angular": 0.1, "has_normals": false, "mesh_s": 4.11, "total_s": 5.699, "cpu_percent_before": 87.1}
+{"variant": "branch-normals", "case": "copies4096", "ok": true, "reply_bytes": 3279956, "triangles": 43070, "angular": 0.1, "has_normals": true, "mesh_s": 6.773, "total_s": 8.95, "cpu_percent_before": 65.8}
+{"variant": "main", "case": "distinct256", "ok": true, "reply_bytes": 7861423, "triangles": 128000, "angular": null, "has_normals": false, "mesh_s": 16.667, "total_s": 18.715, "cpu_percent_before": 75.2}
+{"variant": "branch-no-normals", "case": "distinct256", "ok": true, "reply_bytes": 7861492, "triangles": 128000, "angular": 0.1, "has_normals": false, "mesh_s": 14.464, "total_s": 16.766, "cpu_percent_before": 63.3}
+{"variant": "branch-normals", "case": "distinct256", "ok": true, "reply_bytes": 10344435, "triangles": 128000, "angular": 0.1, "has_normals": true, "mesh_s": 16.444, "total_s": 19.076, "cpu_percent_before": 58.0}
+{"variant": "branch-normals", "case": "copies4096", "ok": true, "reply_bytes": 3279960, "triangles": 43070, "angular": 0.1, "has_normals": true, "mesh_s": 0.78, "total_s": 1.01, "cpu_percent_before": 46.7}
+{"variant": "branch-no-normals", "case": "copies4096", "ok": true, "reply_bytes": 2715180, "triangles": 43070, "angular": 0.1, "has_normals": false, "mesh_s": 0.69, "total_s": 0.896, "cpu_percent_before": 46.8}
+{"variant": "main", "case": "copies4096", "ok": true, "reply_bytes": 2715114, "triangles": 43070, "angular": null, "has_normals": false, "mesh_s": 0.954, "total_s": 1.211, "cpu_percent_before": 66.8}
+{"variant": "branch-normals", "case": "distinct256", "ok": true, "reply_bytes": 10344438, "triangles": 128000, "angular": 0.1, "has_normals": true, "mesh_s": 2.803, "total_s": 3.34, "cpu_percent_before": 57.4}
+{"variant": "branch-no-normals", "case": "distinct256", "ok": true, "reply_bytes": 7861493, "triangles": 128000, "angular": 0.1, "has_normals": false, "mesh_s": 2.272, "total_s": 2.686, "cpu_percent_before": 50.5}
+{"variant": "main", "case": "distinct256", "ok": true, "reply_bytes": 7861425, "triangles": 128000, "angular": null, "has_normals": false, "mesh_s": 3.905, "total_s": 4.317, "cpu_percent_before": 43.2}
+{"variant": "main", "case": "copies4096", "ok": true, "reply_bytes": 2715113, "triangles": 43070, "angular": null, "has_normals": false, "mesh_s": 0.794, "total_s": 0.993, "cpu_percent_before": 34.9}
+{"variant": "branch-no-normals", "case": "copies4096", "ok": true, "reply_bytes": 2715177, "triangles": 43070, "angular": 0.1, "has_normals": false, "mesh_s": 0.581, "total_s": 0.756, "cpu_percent_before": 44.0}
+{"variant": "branch-normals", "case": "copies4096", "ok": true, "reply_bytes": 3279956, "triangles": 43070, "angular": 0.1, "has_normals": true, "mesh_s": 2.635, "total_s": 3.391, "cpu_percent_before": 30.7}
+{"variant": "main", "case": "distinct256", "ok": true, "reply_bytes": 7861424, "triangles": 128000, "angular": null, "has_normals": false, "mesh_s": 13.835, "total_s": 16.019, "cpu_percent_before": 35.5}
+{"variant": "branch-no-normals", "case": "distinct256", "ok": true, "reply_bytes": 7861491, "triangles": 128000, "angular": 0.1, "has_normals": false, "mesh_s": 11.625, "total_s": 13.197, "cpu_percent_before": 35.1}
+{"variant": "branch-normals", "case": "distinct256", "ok": true, "reply_bytes": 10344434, "triangles": 128000, "angular": 0.1, "has_normals": true, "mesh_s": 10.293, "total_s": 12.68, "cpu_percent_before": 45.6}
+done

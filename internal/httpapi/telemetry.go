@@ -26,14 +26,17 @@ import (
 // else was working. The reply names the population it covers rather than letting
 // a reader assume a larger one.
 //
-// A turn that failed before any reply arrived — a model that could not be
-// reached, a turn cut off. Nothing is written for one. That is stated in the
-// reply too, because a latency history that silently omitted its failures would
-// read best exactly when things were worst.
+// A latency history that silently omitted its failures would read best exactly
+// when things were worst, so every failed turn is listed here, marked failed,
+// with whatever was known about it.
 //
-// A turn whose reply ARRIVED and could not be used is written since migration
-// 0023, and is listed here marked failed with what it cost. It is left out of
-// both medians: a refusal's timing is not a reply's.
+// Two kinds arrive, knowing different amounts. A reply that ARRIVED and could
+// not be used has been written since migration 0023 and carries what it cost. A
+// turn that failed BEFORE any reply — a model that could not be reached, a turn
+// cut off — used to be written nowhere at all, and this panel said so; it is now
+// recorded too, with the code it failed with and the elapsed time, and with no
+// token count, because nobody reported one. Both are left out of both medians:
+// a failure's timing is not a reply's.
 
 // TelemetryHandlers serves the measured history.
 type TelemetryHandlers struct {
@@ -63,9 +66,21 @@ type measuredTurnDTO struct {
 	// Geometry says this turn produced a shape. Read from the record rather than
 	// re-derived: a turn whose detail is empty produced speech only.
 	Spoke bool `json:"spoke"`
-	// Failed marks a turn whose reply arrived and could not be used. Its tokens
-	// were still spent, which is why it is listed at all.
+	// Failed marks a turn that did not produce a reply — either one that arrived
+	// and could not be used, or one that failed before any reply arrived at all.
+	// The first spent tokens and says how many; the second has none to report,
+	// and its token count is null rather than zero.
 	Failed bool `json:"failed,omitempty"`
+	// ReplyArrived tells those two apart, and only means something when Failed.
+	// They are different problems with different remedies — a model that
+	// answered nonsense is not a model that could not be reached — and a panel
+	// that drew them the same way would send the reader looking in the wrong
+	// place. It is derived from whether a reply was kept, not asserted.
+	ReplyArrived bool `json:"reply_arrived,omitempty"`
+	// Failure is the error code the turn failed with, empty when it did not.
+	// The code only; the refused reply itself stays in the conversation record,
+	// which is deletable with the conversation (AUD-07).
+	Failure string `json:"failure,omitempty"`
 }
 
 // Turns handles GET /v1/telemetry/turns.
@@ -92,6 +107,8 @@ func (h *TelemetryHandlers) Turns(w http.ResponseWriter, r *http.Request) {
 			ProjectID:    t.ProjectID,
 			Spoke:        t.Text != "" && !t.Failed(),
 			Failed:       t.Failed(),
+			ReplyArrived: t.UnusableReply != "",
+			Failure:      t.Failure,
 		})
 		if t.Failed() {
 			continue
@@ -115,11 +132,12 @@ func (h *TelemetryHandlers) Turns(w http.ResponseWriter, r *http.Request) {
 		// Named, so nobody reads this as the deployment.
 		"population": "your own turns on this deployment, newest first",
 		// Named, so nobody reads a quiet history as a healthy one.
-		"excludes": "turns that failed before any reply arrived — a model that could not be " +
-			"reached, a turn cut off. Nothing is recorded for one, so they are in the server log " +
-			"with their error code and not in this list. A turn whose reply arrived and could " +
-			"not be used IS listed, marked failed with the tokens it cost, and is left out of " +
-			"both medians.",
+		"excludes": "nothing that happened. Every failed turn is listed, marked failed: one " +
+			"whose reply arrived and could not be used, with the tokens it cost, and one that " +
+			"failed before any reply arrived — a model that could not be reached, a turn cut " +
+			"off — with its error code and no token count, because nobody reported one. Both " +
+			"are left out of the two medians, which are over replies. What is still not here " +
+			"is anybody else's turns.",
 	})
 }
 

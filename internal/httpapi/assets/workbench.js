@@ -37,6 +37,9 @@
     lastLatency: null,
     firstToken: null,
     lastBargeIn: null,
+    // PRD AUD-02's own figure for the last turn that had an utterance to end:
+    // end of speech to first audio. Null for a typed turn — see send().
+    lastSpoken: null,
     turnAudio: null,   // set while a turn is in flight; see send()
     model: null,
     busy: false,
@@ -257,7 +260,7 @@
             body += (body ? ' ' : '') + '[' + t.images +
               (t.images === 1 ? ' image' : ' images') + ' attached]';
           }
-          addTurn(who, body, t.detail || '', true);
+          markRestoredFailure(addTurn(who, body, t.detail || '', true), t);
         });
         /* The project this conversation ended in, adopted so the rails show its
          * work rather than nothing.
@@ -282,6 +285,32 @@
         return true;
       })
       .catch(function () { return false; });
+  }
+
+  /* ‼️ A failed turn is not something FORGE said.
+   *
+   * Its text is the sentence the person was shown INSTEAD of a reply. Painted
+   * back into the ordinary bubble on reload it is indistinguishable from an
+   * answer, so the record shows FORGE saying a sentence it never said — the
+   * same substitution historyFor refuses to make towards the MODEL, made
+   * towards the person instead.
+   *
+   * Drawn the way a live failure is drawn — in --bad, with the error code
+   * beside it — so the restored transcript agrees with what was on screen at
+   * the time. Migration 0023 started writing these rows for a reply that
+   * arrived and could not be used; since 2026-09-20 a turn that failed before
+   * any reply arrived leaves one too, so there is more of this to draw.
+   *
+   * Nothing happens for a turn that did not fail, which is almost all of them. */
+  function markRestoredFailure(el, t) {
+    if (!el || !t.failure) return;
+    var body = el.querySelector('.body');
+    if (body) body.style.color = 'var(--bad)';
+    var why = document.createElement('div');
+    why.className = 'detail';
+    why.style.color = 'var(--bad)';
+    why.textContent = 'this turn failed (' + t.failure + ')';
+    el.appendChild(why);
   }
 
   function forgetConversationKey() {
@@ -1141,12 +1170,25 @@
         /* The label BEFORE the link: the same words the download carries in
          * X-Forge-Export-Label (geometry_exports.go exportJobLabel). */
         var skipped = exp.skipped || [], failures = exp.feature_failures || [];
+        var reductions = exp.feature_reductions || [];
+        var jobMeshOnly = exp.mesh_only || [];
         html += '<b>This STEP file is an unverified proposal.</b>';
+        /* A declared mesh-only part is never in a STEP file (E1, PR 156). First,
+         * as in the download's header, and named there too. */
+        if (jobMeshOnly.length) {
+          html += section(jobMeshOnly.length + ' mesh-only part(s) are NOT in this file (' + meshOnlyLabel() + ')', jobMeshOnly);
+        }
         if (skipped.length) {
           html += section(skipped.length + ' part(s) could not be built and are NOT in this file', skipped);
         }
         if (failures.length) {
           html += section(failures.length + ' feature(s) could NOT be applied, so this shape is not what the design describes', failures);
+        }
+        /* A round the kernel built smaller than asked, or on only some of its edges
+         * (looks designed B1, PR 158): applied, and still not the design as written —
+         * the same clause the download's X-Forge-Export-Label carries (reducedLabel). */
+        if (reductions.length) {
+          html += section(reductions.length + ' fillet(s) or chamfer(s) were built SMALLER than the design says or on only some of their edges', reductions);
         }
         html += '<div>B-Rep, not tessellated. Nothing about this shape has been analysed or checked, and ' +
           '<b>no interference check ran for this file</b>.</div>' +
@@ -1706,7 +1748,16 @@
           /* Why a part of this document is not in the solid on screen. Kept
            * because the count alone cannot say it: eight parts and seven bodies
            * looks like a rendering choice until something names the eighth. */
-          notes: (b.inferred || []).concat(b.skipped || [], b.feature_failures || [])
+          notes: (b.inferred || []).concat(b.skipped || [], b.feature_failures || []),
+          /* The mesh-only parts the kernel named (geometry/lattice.go), shown under
+           * meshOnlyLabel() by renderProvenance. Each one's surface is in b.parts
+           * with mesh_only set, for the renderer to label on the stage. */
+          meshOnly: b.mesh_only || [],
+          /* Rounds the kernel built smaller than asked or on only some of their edges
+           * (PR 158's feature_reductions), shown by renderProvenance in the headline
+           * and in the details: a round quietly built at a quarter of its radius is a
+           * part that is not the one described. */
+          reductions: b.feature_reductions || []
         };
         studio.load(proto, b);
         studio.setOverlays(proto.overlays || [], state.measured);
@@ -1730,7 +1781,8 @@
       .then(function (b) {
         if (state.prototype !== proto) return;
         state.subtrees[path] = { source: b.source, note: b.source_note, occurrences: b.occurrences,
-          outside: (b.features_outside || []).concat(b.skipped || [], b.feature_failures || []) };
+          outside: (b.features_outside || []).concat(b.skipped || [], b.feature_failures || []),
+          reductions: b.feature_reductions || [] };
         studio.addSubtree(path, b);
         renderProvenance();
       })
@@ -2239,6 +2291,31 @@
    * PRD VIS-06: a render must not imply manufacturability, structural adequacy,
    * or compliance — and it is persuasive in inverse proportion to how much has
    * actually been checked. */
+  /* Mesh-only parts (stage E1 of the "looks designed" work; damon, 2026-09-18).
+   *
+   * A part declared mesh-only — shape "lattice" — is a decorative mesh, never a
+   * solid: not in STEP, not weighed, not checked for interference. PRD VIS-06: a
+   * render must never imply manufacturability, so whenever one is in the design the
+   * banner's HEADLINE (outside the fold) says so with these words, spelled as
+   * geometry.MeshOnlyLabel and geometry.MeshOnlyShapes spell them. Fence:
+   * TestWorkbenchLabelsMeshOnlyPartsOutsideTheFold. Functions rather than constants
+   * so a harness lifts them with renderProvenance. */
+  function meshOnlyLabel() { return 'mesh-only - not manufacturable'; }
+
+  /* meshOnlyNames is every mesh-only part the design declares, by name — from the
+   * document itself, so it is said before (and without) a kernel — plus any the
+   * kernel's mesh reply named. */
+  function meshOnlyNames(proto, built) {
+    var MESH_ONLY_SHAPES = ['lattice'];
+    var names = [];
+    var add = function (n) { if (n && names.indexOf(n) < 0) names.push(n); };
+    (proto ? (proto.parts || []).concat(proto.definitions || []) : []).forEach(function (p) {
+      if (MESH_ONLY_SHAPES.indexOf(String(p.shape || '').trim().toLowerCase()) >= 0) add(p.name || p.id);
+    });
+    ((built && built.meshOnly) || []).forEach(add);
+    return names;
+  }
+
   function renderProvenance() {
     var el = $('provenance');
     if (!state.prototype) { el.classList.add('hidden'); return; }
@@ -2281,6 +2358,20 @@
             (s.outside.length ? '<ul>' + s.outside.map(function (n) { return '<li>' + esc(n) + '</li>'; }).join('') + '</ul>' : '') +
             '</li>';
         }).join('') + '</ul></div>';
+    }
+    /* Every round the kernel built smaller than asked, or on only some of its edges,
+     * in what is on the stage: the whole design's mesh reply and each subtree's
+     * (feature_reductions, PR 158), named once each. On the headline as a count and
+     * here by name: a round built at a quarter of its radius is not the part described. */
+    var reduced = [];
+    var addReduced = function (n) { if (n && reduced.indexOf(n) < 0) reduced.push(n); };
+    ((state.builtSolid && state.builtSolid.reductions) || []).forEach(addReduced);
+    Object.keys(state.subtrees || {}).forEach(function (path) {
+      ((state.subtrees[path] && state.subtrees[path].reductions) || []).forEach(addReduced);
+    });
+    if (reduced.length) {
+      html += '<div style="margin-top:7px"><b>Built smaller than the design says:</b><ul>' +
+        reduced.map(function (n) { return '<li>' + esc(n) + '</li>'; }).join('') + '</ul></div>';
     }
     if (state.builtSolid && state.builtSolid.notes && state.builtSolid.notes.length) {
       html += '<div style="margin-top:7px"><b>Not in the built solid:</b><ul>' +
@@ -2335,7 +2426,12 @@
      * thing VIS-06 forbids. Fence: TestWorkbenchProvenanceBannerFoldsItsDetailsOffTheStage. */
     var notes = (html.match(/<li>/g) || []).length;
     var open = !!state.provenanceOpen;
+    var meshOnly = meshOnlyNames(p, state.builtSolid);
     el.innerHTML = '<div class="prov-head"><b>This is a proposal, not a verified design.</b>' +
+      (meshOnly.length ? ' <span class="prov-mesh-only" data-mesh-only>' + esc(meshOnlyLabel()) + ': ' +
+        esc(meshOnly.join(', ')) + '</span>' : '') +
+      (reduced.length ? ' <span class="prov-reduced" data-reduced>' + reduced.length +
+        ' round(s) built smaller than asked</span>' : '') +
       '<button type="button" class="ghost prov-toggle" data-prov-toggle aria-controls="provenance-details" ' +
       'aria-expanded="' + open + '">' + (open ? 'Hide details' : 'Details (' + notes + ')') + '</button></div>' +
       '<div class="prov-details' + (open ? '' : ' hidden') + '" id="provenance-details">' + html + '</div>';
@@ -2366,7 +2462,38 @@
    *
    * Geometry is still applied only when the complete object has parsed on the
    * server — never from a partial one. */
-  function send(text) {
+  /* audioClock records, for one turn, the moment FORGE's reply became audible —
+   * against both clocks that matter, under different names.
+   *
+   * `audioMS` runs from Send: the browser's view of the turn it issued.
+   * `spokenMS` runs from the END OF THE UTTERANCE, which is PRD AUD-02's own
+   * measurement and is the larger of the two, because between speaking and
+   * Send there is a recogniser settling and, on the server transcription path,
+   * a whole /v1/transcribe round trip. That difference is the gap the panel
+   * used to leave out of a figure it compared against 700ms.
+   *
+   * A turn with no utterance — typed, or spoken and left to wait in the text
+   * box — leaves spokenMS null forever. Not zero: zero is the best-looking
+   * number on the panel and the one a reader would take for "instant".
+   *
+   * Its own function so it can be driven on its own
+   * (TestWorkbenchTimesATurnFromTheEndOfTheUtterance). Inline inside send() it
+   * was reachable only by standing up the whole page. */
+  function audioClock(turn, t0, spokenAt) {
+    return function (at) {
+      if (turn.audioMS != null) return;
+      turn.audioMS = at - t0;
+      if (spokenAt != null) turn.spokenMS = at - spokenAt;
+    };
+  }
+
+  /* send(text, spokenAt)
+   *
+   * spokenAt is performance.now() at the END OF THE UTTERANCE that produced
+   * `text`, when one produced it — see voice.js. Null for a typed turn, and
+   * null for a spoken turn that waited in the text box, because neither has an
+   * utterance whose end is the start of anything. */
+  function send(text, spokenAt) {
     if (state.busy || !text.trim()) return;
     state.busy = true;
     clearPartial();
@@ -2394,17 +2521,36 @@
      * network, the parse, and the synthesiser starting. They are recorded under
      * different names because they answer different questions, and the Telemetry
      * panel refuses to average them. A field nothing measured stays null and is
-     * drawn as an em dash rather than a zero. */
+     * drawn as an em dash rather than a zero.
+     *
+     * `spokenMS` is the third, and it is the only one that is AUD-02's own
+     * figure: end of utterance to first audio. It differs from `audioMS` by
+     * everything that happened between the person finishing speaking and this
+     * function being called — the recogniser settling, and on the server path a
+     * whole /v1/transcribe round trip. That gap is why the panel used to report
+     * low against a 700ms threshold it was not measuring. A typed turn has no
+     * utterance and reports null here, forever: there is nothing to measure,
+     * and a zero would be the best-looking number on the panel. */
     var turn = {
       prompt: text.length > 44 ? text.slice(0, 44) + '…' : text,
       at: new Date().toISOString().slice(11, 19) + ' UTC',
       serverFirstMS: null, serverTotalMS: null, browserTotalMS: null,
-      audioMS: null, model: null, tokens: null,
+      audioMS: null, spokenMS: null, model: null, tokens: null,
       retrieval: false, geometry: false, failed: false, bargeInMS: null
     };
     /* Where onState writes the moment speech starts. Held on `state` because the
      * voice layer reports to one handler for the whole page, not to this turn. */
-    state.turnAudio = function (at) { if (turn.audioMS == null) turn.audioMS = at - t0; };
+    var clock = audioClock(turn, t0, spokenAt);
+    state.turnAudio = function (at) {
+      clock(at);
+      if (turn.spokenMS != null && state.lastSpoken == null) {
+        state.lastSpoken = Math.round(turn.spokenMS);
+        updateMeta();
+      }
+    };
+    // Cleared per turn, so the line never shows the previous spoken turn's
+    // figure beside a typed turn's reply.
+    state.lastSpoken = null;
 
     streamTurn(text, sending, fromNodes, function (ev) {
       switch (ev.kind) {
@@ -3593,6 +3739,11 @@
      * words arrived, which is before the synthesiser has said anything; the
      * Telemetry panel keeps that distinction and this line used to blur it. */
     if (state.firstToken != null) bits.push('first token ' + state.firstToken + 'ms');
+    /* AUD-02's own figure, on the line where latency is read at a glance.
+     * Named for what it measures — from the moment speech ended, not from Send
+     * — because the whole of issue 19 was a number that looked like this one
+     * and was not. Absent for a typed turn, which has no utterance to end. */
+    if (state.lastSpoken != null) bits.push('spoke ' + state.lastSpoken + 'ms after you stopped');
     if (state.lastLatency != null) bits.push('full reply ' + state.lastLatency + 'ms');
     if (state.lastBargeIn != null) bits.push('barge-in ' + state.lastBargeIn + 'ms');
     $('meta').textContent = bits.join(' · ');
@@ -3677,9 +3828,10 @@
       onPartial: function (text) { showPartial(text); },
       /* Never straight to send(): see deliverSpoken in voice.js for where a
        * transcript goes while a turn is in flight, and why. */
-      onTranscript: function (text) {
+      onTranscript: function (text, endedAt) {
         clearPartial();
-        if (ForgeVoice.deliverSpoken(text, { busy: state.busy, input: $('say'), send: send, note: voiceNote }) === 'sent') {
+        if (ForgeVoice.deliverSpoken(text, { busy: state.busy, input: $('say'), send: send,
+          note: voiceNote, endedAt: endedAt }) === 'sent') {
           voiceNote('');
         }
       },

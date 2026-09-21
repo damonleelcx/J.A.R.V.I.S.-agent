@@ -43,10 +43,7 @@ func newHarness(t *testing.T) *harness {
 	url := envOr(t)
 	ctx := context.Background()
 
-	schema := "forge_mem_" + strings.ToLower(strings.NewReplacer("/", "_", "-", "_").Replace(t.Name()))
-	if len(schema) > 60 {
-		schema = schema[:60]
-	}
+	schema := db.UniqueSchema("forge_mem_", t.Name())
 	admin, err := db.Connect(ctx, dbConfig(url), logx.Discard())
 	if err != nil {
 		t.Fatalf("cannot reach the test database: %v", err)
