@@ -616,7 +616,25 @@ def _shape(solid):
         # A face, not a solid, and deliberately so: a plane has no thickness and
         # will not print, machine, or hold a volume. It is exported because it is
         # part of what was drawn, and the label says what it is.
-        return Plane.XZ * Rectangle(d["width"], d["depth"])
+        #
+        # ‼️ It FACES UP. A plane is one-sided with its normal at +Y; the
+        # convention and the reasons for it live in internal/domain/geometry/
+        # mesh.go, func plane, and forge3d.js planeGeometry is the third copy.
+        # This built Plane.XZ * Rectangle for two years, whose normal is -Y, so
+        # the kernel's mesh faced DOWN — declared -Y and wound -Y, coherent with
+        # itself and against both renderers and the exported STL.
+        #
+        # The frame cannot simply become Plane.ZX the way the cone's did. A
+        # cylinder or a cone is round about its own axis and cannot see the spin;
+        # a rectangle can. Plane.ZX's x is +Z and its y is +X, so
+        # Plane.ZX * Rectangle(width, depth) would lay WIDTH along Z and DEPTH
+        # along X — the plane would face the right way and be the wrong shape.
+        # The frame here is the one that turns +Z to +Y and LEAVES x ALONE:
+        # x_dir +X, z_dir +Y, so width stays on X and depth runs along -Z, which
+        # a rectangle centred on its origin cannot tell from +Z.
+        return Plane(origin=Vector(0, 0, 0),
+                     x_dir=Vector(1, 0, 0),
+                     z_dir=Vector(0, 1, 0)) * Rectangle(d["width"], d["depth"])
     if kind == "step":
         # A solid that was built somewhere else and arrived as STEP.
         #
