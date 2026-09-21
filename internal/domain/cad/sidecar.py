@@ -503,7 +503,14 @@ def _shape(solid):
     build123d builds a cylinder along +Z and this system draws it along +Y
     (mesh.go: the rings are at ±height/2 on y). The correction is applied here,
     once, as a rotation of the local frame rather than by rebuilding the
-    primitive — see Plane.XZ, whose normal is -Y and whose x stays x.
+    primitive.
+
+    ‼️ WHICH WAY the frame turns matters, and only for the shapes that can tell.
+    Plane.XZ's normal is -Y, so it lays the primitive's +Z end at -Y: correct for
+    a cylinder, which is the same at both ends, and end-for-end for everything
+    that is not. Plane.ZX's normal is +Y and is the one to reach for when the
+    primitive has a distinct top. See the cone below, and
+    docs/bugfix/2026-09-21-truncated-cone-built-upside-down.md.
     """
     kind = solid["shape"]
     d = solid["dims"]
@@ -528,8 +535,23 @@ def _shape(solid):
             body = Cone(d["radius"], 0, d["height"])
         else:
             body = Cone(d["radius"], top, d["height"])
-        # +Z to +Y.
-        return Plane.XZ * body
+        # +Z to +Y, with Plane.ZX and NOT Plane.XZ.
+        #
+        # Cone(radius, radius_top, height) runs along +Z with `radius` at -Z and
+        # `radius_top` at +Z. mesh.go and forge3d.js both draw radius_top at
+        # +height/2 — radius_top is the TOP — so the frame has to carry +Z to
+        # +Y. Plane.XZ carries it to -Y (its normal is -Y) and built every
+        # truncated cone end-for-end: a 20/5 frustum's centre of volume came out
+        # at y=+1.786 mm when the frustum formula h(R²+2Rr+3r²)/(4(R²+Rr+r²))
+        # puts it 3.214 mm from the LARGE base, i.e. at y=-1.786 with the large
+        # base down. Nothing caught it because a cylinder is the same at both
+        # ends and every orientation fence used one; volume, triangle count and
+        # STEP byte count are all identical either way up.
+        #
+        # Plane.ZX spins the local x round with it, which no cylinder or cone can
+        # see — both are round about their own axis. The `plane` shape below is
+        # NOT round about its axis (width is X, depth is Z) and keeps Plane.XZ.
+        return Plane.ZX * body
     if kind == "section":
         # A drawing with no thickness. It is not a solid and has no volume, and
         # that is correct: it exists to be blended with other sections by a loft,

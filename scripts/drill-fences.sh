@@ -434,6 +434,16 @@ drill "the renderer does not retire what Go retires" internal/httpapi/assets/for
   ./internal/httpapi 'TestTheRendererRetiresTheSameShapeWords'
 
 echo
+echo "A truncated cone's radius_top is its top"
+# Added 2026-09-21. The sidecar turned every cylinder and cone with Plane.XZ,
+# whose normal is -Y, so radius_top landed at the BOTTOM. A cylinder is the same
+# at both ends and every orientation fence used one, so nothing moved. See
+# docs/bugfix/2026-09-21-truncated-cone-built-upside-down.md.
+drill "the kernel builds a truncated cone end-for-end" internal/domain/cad/sidecar.py \
+  "s = s.replace('        return Plane.ZX * body', '        return Plane.XZ * body', 1)" \
+  ./internal/domain/cad 'TestKernel_ATruncatedConesRadiusTopIsItsTop'
+
+echo
 echo "Every document a turn installs is settled"
 # Added 2026-09-11. validate() was the only place a document was bound, defaulted
 # and noted, and it ran once, before the three other producers of a turn's
