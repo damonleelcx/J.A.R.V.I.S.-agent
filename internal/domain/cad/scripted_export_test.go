@@ -112,14 +112,26 @@ func TestKernel_ARefusedAssemblyNamesWhatItRefused(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
-	// A box with no width: Go passes a stated 0 through, and OCCT refuses it.
+	// A cone whose top radius is NEGATIVE, and the choice of fixture matters.
+	//
+	// This was a box with no width, on the note "Go passes a stated 0 through,
+	// and OCCT refuses it". Issue 7 removed that: a dimension a shape is built
+	// from may not be zero, and FORGE now refuses it by name before the kernel is
+	// asked — so the old fixture produces FORGE's refusal and never reaches the
+	// sidecar, and this test would be asserting about a message the kernel never
+	// sent.
+	//
+	// "radius_top" is the dimension FORGE deliberately leaves alone, because a
+	// zero one is a cone. A negative one is a shape only OCCT can rule on, and it
+	// does: "cone with negative or too small radius". What is being fenced here
+	// is unchanged — that the sidecar's own reason reaches the caller.
 	doc := geometry.Document{Name: "flat", Units: "mm", Parts: []geometry.Part{{
-		ID: "sliver", Name: "Sliver", Shape: "box",
-		Size:     map[string]float64{"width": 0, "height": 6, "depth": 60},
+		ID: "sliver", Name: "Sliver", Shape: "cylinder",
+		Size:     map[string]float64{"radius": 3, "height": 6, "radius_top": -4},
 		Position: []float64{0, 0, 0}, Rotation: []float64{0, 0, 0}}}}
 	_, err := k.BuildDocument(ctx, doc, geometry.Millimetre, "step")
 	if err == nil {
-		t.Fatal("a zero-width box built; this fixture no longer makes the kernel refuse a part")
+		t.Fatal("an impossible cone built; this fixture no longer makes the kernel refuse a part")
 	}
 	if !strings.Contains(err.Error(), "Sliver") {
 		t.Errorf("the refusal does not name the part the kernel refused, so a reader cannot tell "+

@@ -249,6 +249,11 @@ FILES=(
   internal/httpapi/assets/stage.js
   internal/httpapi/members.go
   internal/platform/db/sql/0028_autonomy_is_write_once.sql
+  # Added 2026-09-20 (issues 7 to 11): the collapsing dimensions, and relationship
+  # checking beyond a distance.
+  internal/domain/geometry/degenerate.go
+  internal/domain/geometry/relationships.go
+  internal/agent/standards_typed.go
 )
 
 BACKUP=""
@@ -5445,7 +5450,7 @@ drill "mass weighs a lattice it was handed a measure of" internal/domain/geometr
   ./internal/domain/geometry 'TestLattice_MassLeavesItOutAndNamesIt'
 
 drill "the contract does not teach lattices" internal/agent/converse.go \
-  's = s.replace("\tgeometry.LatticeGuide())", "\t\"\")", 1)' \
+  's = s.replace("\tgeometry.LatticeGuide(),", "\t\"\",", 1)' \
   ./internal/agent 'TestTheContractTeachesLatticesFromTheTable'
 
 drill "the contract does not offer lattice as a shape" internal/agent/converse.go \
@@ -6396,6 +6401,145 @@ drill "the probe carries no lattice for the kernel to refuse" internal/domain/ca
   ./internal/domain/cad 'TestMeshOnlySupport_RecognisesAMissingManifold3dAndNothingElse'
 
 echo
+
+echo
+echo "Collapsing dimensions and relationship checking (issues 7 to 11, 2026-09-20)"
+
+drill "a collapsed part is still sent to the kernel" internal/domain/geometry/solid.go \
+  's = s.replace("len(degenerate) > 0", "len(degenerate) > 99", 1)' \
+  ./internal/domain/geometry 'TestSolids_AZeroRadiusPartIsRefusedByTheNameOfTheDimension'
+
+drill "faults read the typed radius, not the bound one" internal/domain/geometry/faults.go \
+  's = s.replace("\n\tbound.bind(false)", "", 1)' \
+  ./internal/domain/geometry 'TestSolids_ACollapsedDimensionNamesTheExpressionItResolvedFrom'
+
+drill "a dimension of exactly zero is let through" internal/domain/geometry/degenerate.go \
+  's = s.replace("if !stated || value > 0 {", "if !stated || value >= 0 {", 1)' \
+  ./internal/domain/geometry 'TestFaults_AZeroRadiusPartIsAFault'
+
+drill "a box height is not one of the dimensions checked" internal/domain/geometry/degenerate.go \
+  "s = s.replace('{\"box\", []string{\"width\", \"height\", \"depth\"}},', '{\"box\", []string{\"width\", \"depth\"}},', 1)" \
+  ./internal/domain/geometry 'TestFaults_ANegativeDimensionIsRefusedToo'
+
+drill "a plane is refused for a height it never reads" internal/domain/geometry/degenerate.go \
+  "s = s.replace('{\"plane\", []string{\"width\", \"depth\"}},', '{\"plane\", []string{\"width\", \"depth\", \"height\"}},', 1)" \
+  ./internal/domain/geometry 'TestFaults_ADimensionAShapeDoesNotReadIsNotRefused'
+
+drill "a dimension nobody stated reads as zero" internal/domain/geometry/degenerate.go \
+  's = s.replace("return 0, \"\", false", "return 0, key, true", 1)' \
+  ./internal/domain/geometry 'TestSolids_AMissingDimensionIsStillDefaultedRatherThanRefused'
+
+drill "a span nothing can name is reported as checked" internal/domain/geometry/relationships.go \
+  's = s.replace("Kind: relationshipDistance, Name: name, Named: named, Checked: named,", "Kind: relationshipDistance, Name: name, Named: named, Checked: true,", 1)' \
+  ./internal/domain/geometry 'TestRelationships_ASpanNothingCanNameIsReportedRatherThanDropped'
+
+drill "the shared name of a group of parts is thrown away" internal/domain/geometry/relationships.go \
+  's = s.replace("if len(prefix) < 3 {", "if len(prefix) < 30 {", 1)' \
+  ./internal/domain/geometry 'TestRelationships_ASpanThePartsNameIsChecked'
+
+drill "a value nothing reads goes unreported" internal/domain/geometry/relationships.go \
+  's = s.replace("out := d.unreadValueProblems()", "out := []Problem(nil)", 1)' \
+  ./internal/domain/geometry 'TestRelationships_AValueNothingReadsIsReportedWithItsName'
+
+drill "a design that binds nothing is nagged about every parameter" internal/domain/geometry/relationships.go \
+  's = s.replace("if len(read) == 0 {", "if len(read) == 99 {", 1)' \
+  ./internal/domain/geometry 'TestRelationships_ADocumentThatBindsNothingIsNotToldEveryParameterIsUnread'
+
+drill "a row of parts with no binding is never looked at" internal/domain/geometry/relationships.go \
+  's = s.replace("if len(members) < 3 {", "if len(members) < 30 {", 1)' \
+  ./internal/domain/geometry 'TestRelationships_EvenlySpacedPartsWithNoBindingAreReported'
+
+drill "a bound row is called an unbound pattern" internal/domain/geometry/relationships.go \
+  's = s.replace("bound = true", "bound = false", 1)' \
+  ./internal/domain/geometry 'TestRelationships_AnUnevenPairAndABoundRowAreNotCalledAPattern'
+
+drill "a polar pattern's step angle is the wrong angle" internal/domain/geometry/relationships.go \
+  's = s.replace("sweepAngle(&Repeat{Count: p.Count, Angle: sweep}) * 180 / math.Pi", "sweepAngle(&Repeat{Count: p.Count, Angle: sweep}) * 90 / math.Pi", 1)' \
+  ./internal/domain/geometry 'TestRelationships_APolarPatternsBoundSweepIsCheckedAsAnAngle'
+
+drill "two parts turned apart state no angle" internal/domain/geometry/relationships.go \
+  's = s.replace("if degrees < axisAngleFloor {", "if degrees < 999 {", 1)' \
+  ./internal/domain/geometry 'TestRelationships_TwoRelatedPartsTurnedApartStateAnAngle'
+
+drill "every parallel part is given an angle of zero" internal/domain/geometry/relationships.go \
+  's = s.replace("const axisAngleFloor = 0.5", "const axisAngleFloor = -1.0", 1)' \
+  ./internal/domain/geometry 'TestRelationships_PartsThatAreNotTurnedApartDescribeNoAngle'
+
+drill "a ratio reports something other than the quotient" internal/domain/geometry/relationships.go \
+  's = s.replace("Value: v.Number, Parts: []string{over, under},", "Value: v.Number * 2, Parts: []string{over, under},", 1)' \
+  ./internal/domain/geometry 'TestRelationships_ADerivedQuotientOfTwoMeasurementsIsCheckedAsARatio'
+
+drill "a rate is checked as a ratio" internal/domain/geometry/relationships.go \
+  's = s.replace("if !strings.EqualFold(top.Unit, bottom.Unit) {", "if strings.EqualFold(top.Unit, bottom.Unit) {", 1)' \
+  ./internal/domain/geometry 'TestRelationships_AQuotientOfUnlikeUnitsIsNotCalledARatio'
+
+drill "the wall between an outline and its hole is skipped" internal/domain/geometry/relationships.go \
+  's = s.replace("for j := i + 1; j < len(loops); j++ {", "for j := i + 2; j < len(loops); j++ {", 1)' \
+  ./internal/domain/geometry 'TestRelationships_TheLeastMaterialBetweenAnOutlineAndItsHoleIsMeasured'
+
+drill "the wall is measured against the outline alone" internal/domain/geometry/relationships.go \
+  's = s.replace("least, between := leastMaterial(loops)", "least, between := leastMaterial(loops[:1])", 1)' \
+  ./internal/domain/geometry 'TestRelationships_AThinWallIsMeasuredAndNotJudged'
+
+drill "a rounded wall is given a number anyway" internal/domain/geometry/relationships.go \
+  's = s.replace("if curvedLoops(loops) {", "if false && curvedLoops(loops) {", 1)' \
+  ./internal/domain/geometry 'TestRelationships_AWallWithARoundedCornerIsNotGivenANumber'
+
+drill "the relationship table is not the one the checker reads" internal/domain/geometry/relationships.go \
+  's = s.replace("return append([]RelationshipKind(nil), relationshipKinds...)", "return append([]RelationshipKind(nil), relationshipKinds[:3]...)", 1)' \
+  ./internal/domain/geometry 'TestRelationships_TheTableIsWhatTheCheckerReads'
+
+drill "the contract stops teaching the collapsing dimensions" internal/agent/converse.go \
+  's = s.replace("geometry.CollapsingDimensionGuide(),", "\"\",", 1)' \
+  ./internal/agent 'TestContract_TeachesTheCollapsingDimensionsFromTheValidatorsTable'
+
+drill "the contract stops teaching what relationship checking covers" internal/agent/converse.go \
+  's = s.replace("geometry.RelationshipGuide())", "\"\")", 1)' \
+  ./internal/agent 'TestContract_TeachesRelationshipCheckingFromTheCheckersTable'
+
+drill "the banner drops the figures with no source" internal/agent/standards_typed.go \
+  's = s.replace("for _, v := range doc.ConstantDerived() {", "for _, v := range doc.ConstantDerived()[:0] {", 1)' \
+  ./internal/agent 'TestStandardsClaims_ABareConstantInDerivedIsReportedAsHavingNoSource'
+
+drill "a derived zero is called a recalled figure" internal/domain/geometry/parameters.go \
+  's = s.replace("if !ok || v.Number == 0 {", "if !ok {", 1)' \
+  ./internal/agent 'TestStandardsClaims_AConstantZeroInDerivedIsNotCalledARecalledFigure'
+
+drill "the turn is not told what could not be checked" internal/agent/settledoc.go \
+  's = s.replace("for _, problem := range d.RelationshipProblems() {", "for _, problem := range d.RelationshipProblems()[:0] {", 1)' \
+  ./internal/agent 'TestSettle_TheTurnIsToldWhatRelationshipCheckingCouldNotCheck'
+
+drill "a relationship that checked out is reported anyway" internal/domain/geometry/relationships.go \
+  's = s.replace("if r.Checked || r.Why == \"\" {", "if false {", 1)' \
+  ./internal/agent 'TestSettle_ADesignWhoseRelationshipsCheckOutIsToldNothing'
+
+drill "no shape has any collapsing dimension" internal/domain/geometry/degenerate.go \
+  's = s.replace("for _, key := range collapsingKeys(shape) {", "for _, key := range collapsingKeys(shape)[:0] {", 1)' \
+  ./internal/domain/cad 'TestKernel_ACollapsedDimensionIsRefusedBeforeTheKernelIsAsked'
+
+drill "the kernel is sent a cylinder of no radius" internal/domain/geometry/degenerate.go \
+  "s = s.replace('{\"cylinder\", []string{\"radius\", \"height\"}},', '{\"cylinder\", []string{\"height\"}},', 1)" \
+  ./internal/domain/cad 'TestKernel_AZeroRadiusPartNeverReachesOCCT'
+
+drill "no pair of parts is ever seen as turned apart" internal/domain/geometry/relationships.go \
+  's = s.replace("if pa.RotationRadians() != pb.RotationRadians() {", "if pa.RotationRadians() == pb.RotationRadians() {", 1)' \
+  ./internal/domain/geometry 'TestRelationships_TwoRelatedPartsTurnedApartStateAnAngle'
+
+drill "a definition's wall is never measured" internal/domain/geometry/relationships.go \
+  's = s.replace("if !anyHoles(d.Definitions) {", "if true {", 1)' \
+  ./internal/domain/geometry 'TestRelationships_ADefinitionsWallIsMeasuredOnItsOwnDrawing'
+
+drill "one span is read in two frames at once" internal/domain/geometry/relationships.go \
+  's = s.replace("\t\tif found != nil {\n\t\t\treturn nil, false\n\t\t}\n", "", 1)' \
+  ./internal/domain/geometry 'TestRelationships_AnAngleIsNotMeasuredAcrossTwoFrames'
+
+drill "a drawing past the wall ceiling is measured anyway" internal/domain/geometry/relationships.go \
+  's = s.replace("if n := loopPoints(loops); n > maxWallLoopPoints {", "if n := loopPoints(loops); n > 999999 {", 1)' \
+  ./internal/domain/geometry 'TestRelationships_AWallDrawnWithTooManyPointsIsNotMeasured'
+
+drill "the wall measurement forgets the hole" internal/domain/geometry/relationships.go \
+  's = s.replace("loops := append([]polyline{section.Outer}, section.Holes...)", "loops := append([]polyline{section.Outer}, section.Holes[:0]...)", 1)' \
+  ./internal/domain/cad 'TestKernel_TheWallFORGEMeasuresIsTheWallOCCTBuilds'
 
 echo
 

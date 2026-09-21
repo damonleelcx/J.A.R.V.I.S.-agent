@@ -158,13 +158,24 @@ func TestKernel_OneBadPartDoesNotLoseTheOthers(t *testing.T) {
 	defer cancel()
 
 	doc := plate()
-	// A NEGATIVE radius. Measured against build123d 0.11.1 rather than assumed:
-	// a zero radius is accepted and builds a solid of volume 0, and only a
-	// negative one is refused. The first version of this test used zero and
-	// passed for the wrong reason — three parts built, nothing skipped, and the
-	// assertion was about a refusal that never happened.
+	// A negative RADIUS_TOP, and the choice matters.
+	//
+	// This fixture used to be a negative "radius", measured against build123d
+	// 0.11.1: a zero radius was accepted and built a solid of volume 0, and only
+	// a negative one was refused. Issue 7 removed that whole path — FORGE now
+	// refuses a zero or negative radius by name before the kernel is asked — so
+	// the old fixture never reaches OCCT and this test would have been asserting
+	// a kernel skip that no longer happens.
+	//
+	// "radius_top" is the dimension FORGE deliberately does NOT police, because a
+	// cylinder with a zero top radius is a cone and a real shape. A NEGATIVE one
+	// is not, and OCCT is the thing that knows it: it comes back "cone with
+	// negative or too small radius". So the property this test is about — a shape
+	// the KERNEL cannot build does not take the rest of the file with it — is
+	// still tested against a real kernel refusal.
 	doc.Parts = append(doc.Parts, geometry.Part{ID: "bad", Name: "Impossible", Shape: "cylinder",
-		Size: map[string]float64{"radius": -3, "height": 5}, Position: []float64{0, 0, 0}})
+		Size:     map[string]float64{"radius": 3, "height": 5, "radius_top": -4},
+		Position: []float64{0, 0, 0}})
 
 	got, err := k.BuildDocument(ctx, doc, geometry.Millimetre, "")
 	if err != nil {
@@ -176,10 +187,48 @@ func TestKernel_OneBadPartDoesNotLoseTheOthers(t *testing.T) {
 	if len(got.Skipped) != 1 || !strings.Contains(got.Skipped[0], "Impossible") {
 		t.Fatalf("the part that could not be built was not named: %v", got.Skipped)
 	}
-	// OCCT raises Standard_Failure with an EMPTY message for this, so a reason
-	// composed only of str(exc) would read "Impossible: " and say nothing.
+	// A reason, not just a name. OCCT can raise Standard_Failure with an EMPTY
+	// message, so a reason composed only of str(exc) would read "Impossible: "
+	// and say nothing.
 	if strings.TrimSpace(strings.TrimPrefix(got.Skipped[0], "Impossible:")) == "" {
 		t.Errorf("the part was named with no reason: %q", got.Skipped[0])
+	}
+}
+
+// And the dimension FORGE refuses ITSELF never reaches the kernel at all.
+//
+// The other half of the same story (issue 7). A zero radius builds a solid of
+// volume 0 in OCCT, the mesh path agrees with it, and the meaningless result
+// travels to the exported file — so it is refused before the kernel is asked,
+// and the reason names the dimension rather than arriving as an OCCT message
+// about a shape nobody can place.
+func TestKernel_ACollapsedDimensionIsRefusedBeforeTheKernelIsAsked(t *testing.T) {
+	k := kernel(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+
+	doc := plate()
+	doc.Parts = append(doc.Parts, geometry.Part{ID: "flat", Name: "Flat", Shape: "cylinder",
+		Size: map[string]float64{"radius": 0, "height": 5}, Position: []float64{0, 0, 0}})
+
+	got, err := k.BuildDocument(ctx, doc, geometry.Millimetre, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Parts != 2 {
+		t.Errorf("built %d parts, want the 2 good ones", got.Parts)
+	}
+	if len(got.Skipped) != 0 {
+		t.Errorf("the kernel skipped %v; it was never meant to see the part", got.Skipped)
+	}
+	told := false
+	for _, note := range got.Inferred {
+		if strings.Contains(note, "Flat") && strings.Contains(note, `"radius"`) {
+			told = true
+		}
+	}
+	if !told {
+		t.Errorf("the collapsed dimension was not named to the reader: %v", got.Inferred)
 	}
 }
 

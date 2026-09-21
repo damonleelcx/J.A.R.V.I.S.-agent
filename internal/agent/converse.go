@@ -100,7 +100,16 @@ var geometryContract = fmt.Sprintf(geometryContractTemplate, geometry.PatternBin
 	// The mesh-only lattice, from geometry's one table of patterns and its budget
 	// (stage E1, damon's decision 2026-09-18): a lattice is decorative and never
 	// structural. TestTheContractTeachesLatticesFromTheTable fences it.
-	geometry.LatticeGuide())
+	geometry.LatticeGuide(),
+	// The dimensions that collapse a solid, from the table the refusal is written
+	// from (issue 7): a zero radius is refused by name rather than built as a
+	// volume of nothing.
+	// Fence: TestContract_TeachesTheCollapsingDimensionsFromTheValidatorsTable.
+	geometry.CollapsingDimensionGuide(),
+	// What relationship checking covers and what it does NOT, from the same table
+	// the checker reads (issues 9, 10 and 11).
+	// Fence: TestContract_TeachesRelationshipCheckingFromTheCheckersTable.
+	geometry.RelationshipGuide())
 
 var geometryContractTemplate = `Reply with JSON only:
 
@@ -513,6 +522,7 @@ About "prototype":
   bare "sin" or "cos", because a document that does not state the convention gets
   a plausible wrong number rather than an error. Inside a script you have
   Python's own math and may use radians there.
+%[12]s%[13]s
 - There is NO "tube" shape. A hollow tube is a cylinder with a cylinder cut from
   it when the bore runs straight, and an outline with a "holes" loop when the
   bore follows the part — which is the only one of the two that can turn a

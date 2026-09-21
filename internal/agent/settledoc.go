@@ -179,6 +179,20 @@ func settleDocument(d *Prototype) *Prototype {
 	for _, problem := range d.Bind() {
 		d.NotVerified = append(d.NotVerified, parameterNote(problem))
 	}
+	/* And what relationship checking could NOT check, and why (issues 9, 10
+	 * and 11; geometry/relationships.go).
+	 *
+	 * Wave 13 checked a distance between two bound positions and said nothing
+	 * about anything else, so a document whose only "relationships" were a
+	 * parameter nothing reads and four holes at typed coordinates came back
+	 * indistinguishable from one that had been checked. Silence there is not
+	 * neutral: it is read as a clean result.
+	 *
+	 * Here for the same reason Bind's problems are here — none of it changes a
+	 * pixel, and this is the one place the reader is already looking. */
+	for _, problem := range d.RelationshipProblems() {
+		d.NotVerified = append(d.NotVerified, relationshipNote(problem))
+	}
 	/* Features, and the one place the picture and the file disagree.
 	 *
 	 * A feature that does not check out is dropped by the kernel rather than
