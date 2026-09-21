@@ -163,6 +163,10 @@ type Export struct {
 	// travel with the download for the reason exportParametric's label does.
 	Skipped         []string
 	FeatureFailures []string
+	// MeshOnly names the declared mesh-only parts the kernel took out before it
+	// built anything (cad.Build.MeshOnly): never in a STEP file, and so named in
+	// the download's label exactly as the in-request one names them.
+	MeshOnly []string
 	// FeatureReductions are rounds the kernel applied smaller than asked, or on
 	// only some of their edges (cad.Build.FeatureReductions).
 	FeatureReductions []string
@@ -180,6 +184,8 @@ func (e *Export) SHA256() string { return e.BlobKey.Hex() }
 type exportReport struct {
 	Skipped         []string `json:"skipped,omitempty"`
 	FeatureFailures []string `json:"feature_failures,omitempty"`
+	// Absent from a report stored before stage E1, which reads as none.
+	MeshOnly []string `json:"mesh_only,omitempty"`
 	// Absent from a report stored before stage B1, which reads as none.
 	FeatureReductions []string         `json:"feature_reductions,omitempty"`
 	Inferred          []string         `json:"inferred,omitempty"`
@@ -445,6 +451,7 @@ func (s *StepExports) find(ctx context.Context, q db.Querier, where string, args
 	var r exportReport
 	_ = json.Unmarshal(report, &r)
 	e.Skipped, e.FeatureFailures, e.FeatureReductions = r.Skipped, r.FeatureFailures, r.FeatureReductions
+	e.MeshOnly = r.MeshOnly
 	e.Attempts, e.MaxAttempts = attempts, maxTries
 	e.Status, e.Reason = exportStatus(engine.TaskStatus(taskStatus), e.BlobKey, detail, attempts)
 	return &e, nil
@@ -593,6 +600,7 @@ func (x *StepExporter) run(ctx context.Context, task *engine.Task, in exportStep
 	}
 	got := &storedExport{ExportID: in.ExportID, BlobKey: key, Bytes: int64(len(built.STEP)), SHA256: key.Hex(),
 		Parts: built.Parts, report: exportReport{Skipped: built.Skipped, FeatureFailures: built.FeatureFailures,
+			MeshOnly:          built.MeshOnly,
 			FeatureReductions: built.FeatureReductions,
 			Inferred:          built.Inferred, PhasesMS: phases}}
 	x.log.Info(ctx, logx.EventGeometryExportStored, append([]any{
