@@ -201,6 +201,58 @@ Fences: `TestNoRegulatedPackIsAvailableInThisBuild`,
 
 ---
 
+## AGT-03 — Least privilege, and what "time-bound" costs
+
+### The promise
+
+Access is project-scoped, role-based, revocable **and time-bound**. A grant made
+through any surface carries an end: ninety days
+(`access.DefaultGrantLifetime`) unless somebody names another with `--until` or
+`"until"`. Past it the grant refuses at every permission check, in
+`access.Service.RoleIn` — the one function every authorisation in this build
+reaches the database through — and the refusal says when it lapsed.
+
+The same rule covers the qualified-review authority that **raises a project's
+risk ceiling**. That is the sharp case: a named engineer who accepted
+responsibility for r2 work can leave the company, and before this the ceiling
+stayed raised on a record nobody had revisited. See `docs/qualified-review.md`.
+
+### What is NOT promised
+
+**An owner's membership does not expire.** Not an oversight and not a gap that
+will be closed later: an owner is the role that administers a project, and one
+that lapsed on a timer would leave a project nobody can add a member to, change
+a role in, or restore access to — including the person who lost it. That is not
+a stricter control, it is a project that can only be recovered through the
+database, and `wouldStrandProject` already refuses to create it by every other
+route. An owner grant can still be given an explicit `--until`; it just is never
+given one by default.
+
+**Nothing sweeps.** There is no job that deletes lapsed rows, and expiry is
+decided at the moment access is checked. A deployment running nothing but
+`forged` enforces expiry exactly as one running every worker. The consequence is
+deliberate: a lapsed membership stays in the table, marked `EXPIRED` in
+`forgectl access members` and carrying `"expired": true` over HTTP, because "who
+had access, and until when" is the first question asked after anything goes
+wrong and deleting the row answers it with silence.
+
+**Expiry is not revocation.** Both end access; only one of them was somebody's
+decision. They are separate audit events — `forge.access.revoked` and
+`forge.access.expired` — so a reader can tell a lapse from somebody being thrown
+out.
+
+### Enforced by
+
+`internal/domain/access/service.go` (`RoleIn`, `Projects`, `SetRole`,
+`wouldStrandProject`), `internal/domain/workspace/service.go`
+(`ReviewAuthorityFor`, whose `Recorded()` is the single gate the raised ceiling
+hangs on), `0027_access_expiry.sql`. Fenced by
+`TestAccessExpiry_AnExpiredGrantIsNotAccess`,
+`TestAccessExpiry_AGrantWithNoExpiryGetsTheDefault` and
+`TestReviewAuthority_ARecordedAuthorityExpires`.
+
+---
+
 ## The rest of the security surface, in one line each
 
 Summaries, not decisions. Each was settled by the wave that built it.

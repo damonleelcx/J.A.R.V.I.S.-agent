@@ -84,8 +84,55 @@
    * decode, which is also why it is MP3: the same reason /v1/speech serves MP3. */
   var SILENT_MP3 = 'data:audio/mpeg;base64,SUQzBAAAAAAAI1RTU0UAAAAPAAADTGF2ZjU4Ljc2LjEwMAAAAAAAAAAAAAAA//tQxAADB8AhSmxhIIEVCSiJrDCQBTcu3UrAIwUdkRgQbFAZC1CQEwTJ9mjRvBA4UOLD8nKVOWfh+UlK3z/177OXrfOdKl7pyn3Xf//WreyTRUoAWgBgkOAGbZHBgG1OF6zM82DWbZaUmMBptgQhGjsyYqc9ae9XFz280948NMBWInljyzsNRFLPWdnZGWrddDsjK1unuSrVN9jJsK8KuQtQCtMBjCEtImISdNKJOouhYnb17nJfrfvltIQAAAAAAAA=';
 
+  /* nowMS is the clock AUD-02 is measured on.
+   *
+   * performance.now(), not Date.now(): it is monotonic, so a latency figure
+   * cannot come out negative because the machine's wall clock stepped during a
+   * turn. It is the same clock workbench.js times a turn with, which is what
+   * makes "end of utterance" and "first audio" subtractable at all. */
+  function nowMS() {
+    return (typeof performance !== 'undefined' && performance.now) ? performance.now() : Date.now();
+  }
+
+  /* ---- where AUD-02's clock starts ---------------------------------------
+   *
+   * > AUD-02 Median end-of-utterance → first audio ≤700 ms (≤1.5 s with
+   * > retrieval)
+   *
+   * What was measured before this was the time from SEND. So everything
+   * between a person finishing speaking and the request leaving the browser —
+   * the recogniser settling, the upload, the whole /v1/transcribe round trip on
+   * the server path — was outside the number, and the figure compared against
+   * 700 ms was a different quantity from the one the requirement names. It read
+   * low, and nothing said so.
+   *
+   * # The end of an utterance is a thing this file already knows
+   *
+   * It just never wrote it down. There are three ways a person stops talking
+   * here and each has its own moment:
+   *
+   *   - push-to-talk: the button (or the space bar) is RELEASED. That is the
+   *     person saying "I have finished", and it is the anchor for both paths
+   *     that use a hold, including the server one where the transcription round
+   *     trip happens afterwards and belongs inside the measurement.
+   *   - hands-free: the recogniser returns a FINAL result. That is the
+   *     browser's own segmenter declaring the utterance over; there is no
+   *     release to use.
+   *   - a hold whose recogniser never finalised: onend, with the release
+   *     moment, same as the first case.
+   *
+   * Never the moment the TEXT arrives. On the server path that is after the
+   * upload and the model, which is precisely the gap this was omitting.
+   *
+   * The moment travels with the transcript — onTranscript(text, endedAt) — and
+   * not on a field somebody reads later, because two holds can be in flight
+   * (deliverSpoken is ordered, uploads are not) and the second one's end must
+   * not be attributed to the first one's words. */
+
   function Voice(opts) {
     opts = opts || {};
+    /* onTranscript(text, endedAt) — endedAt is performance.now() at the end of
+     * the utterance, or null when nothing established one. */
     this.onTranscript = opts.onTranscript || function () {};
     this.onPartial = opts.onPartial || function () {};
     this.onState = opts.onState || function () {};
@@ -135,6 +182,11 @@
     /* What the browser's recogniser has produced during the current push-to-talk
      * hold: null outside one. See rec.onend for why it is tracked. */
     this._browserHold = null;
+    /* When the current hold was released, on nowMS()'s clock — the end of the
+     * utterance for every path that has a hold. Null while one is in progress
+     * and in hands-free, where the recogniser's final result is the end
+     * instead. */
+    this._heldUntil = null;
 
     if (SR) this._initRecognition();
 
@@ -160,6 +212,12 @@
     global.addEventListener('pointerdown', unlock, true);
     global.addEventListener('keydown', unlock, true);
   }
+
+  /* _utteranceEnd answers "when did the person stop talking", for a transcript
+   * the browser's recogniser produced. */
+  Voice.prototype._utteranceEnd = function () {
+    return this._heldUntil != null ? this._heldUntil : nowMS();
+  };
 
   Voice.prototype._initRecognition = function () {
     var self = this;
@@ -219,7 +277,12 @@
       }
 
       if (interim) self.onPartial(interim);
-      if (final.trim()) self.onTranscript(final.trim());
+      /* The hold's release when there was one, this moment when there was not.
+       * In hands-free nobody released anything and the recogniser calling the
+       * result FINAL is the end of the utterance; during a hold the person had
+       * already stopped and let go, and that earlier moment is the one AUD-02
+       * names. */
+      if (final.trim()) self.onTranscript(final.trim(), self._utteranceEnd());
     };
 
     /* Every error says something, except the two that are ours.
@@ -305,7 +368,10 @@
         if (!held.delivered && !held.errored) {
           var partial = String(held.interim || '').trim();
           if (partial) {
-            self.onTranscript(partial);
+            // Interim words rescued from a session that ended without a final
+            // result. The utterance still ended when the button came up, which
+            // is what _utteranceEnd returns here.
+            self.onTranscript(partial, self._utteranceEnd());
           } else if (!held.heard) {
             self.onError("The browser's speech recognition returned nothing for that hold. Chrome and Edge " +
               'send the audio to Google, and on a network that blocks it (mainland China among them) ' +
@@ -452,6 +518,11 @@
 
   /* stopListening ends a hold and hands what was said on. */
   Voice.prototype.stopListening = function () {
+    // The end of the utterance, recorded BEFORE anything else happens here: the
+    // person stopped speaking and let go, and every millisecond after this one
+    // — the recogniser settling, the upload, the transcription — is inside what
+    // AUD-02 measures rather than before it.
+    this._heldUntil = nowMS();
     if (this._session) { this._finishRecording(false); return; }
     this._restartWhenEnded = false;
     this.listening = false;
@@ -486,6 +557,8 @@
   Voice.prototype._startRecognition = function () {
     this._browserHold = this.mode === 'push'
       ? { heard: false, delivered: false, errored: false, interim: '' } : null;
+    // A new hold: the previous one's end is no longer this utterance's end.
+    this._heldUntil = null;
     this.listening = true;
     this._setState();
     if (this._recActive) {
@@ -520,8 +593,11 @@
   Voice.prototype._startRecording = function () {
     var self = this;
     if (this._session) return;   // already held, by the button or the space bar
-    var session = { chunks: [], stopped: false, cancelled: false, recorder: null, stream: null, timer: null, failed: '' };
+    var session = { chunks: [], stopped: false, cancelled: false, recorder: null, stream: null,
+      timer: null, failed: '', endedAt: null };
     this._session = session;
+    // A new hold: the previous one's release is not this utterance's end.
+    this._heldUntil = null;
     this.listening = true;
     this._setState();
 
@@ -586,6 +662,13 @@
     var session = this._session;
     if (!session) return;
     session.cancelled = !!cancel;
+    /* The end of the utterance, carried on the SESSION.
+     *
+     * Not read off this._heldUntil when the transcript comes back: two holds
+     * can be in flight at once — deliverSpoken keeps the words in order, the
+     * uploads race — and the second release must not be attributed to the first
+     * hold's words. AUD-02 is a per-turn measurement or it is nothing. */
+    if (session.endedAt == null) session.endedAt = this._heldUntil != null ? this._heldUntil : nowMS();
     if (!cancel) {
       // Counted at release, not when the upload starts, so the state never
       // flickers to Ready between letting go and the text arriving.
@@ -607,7 +690,9 @@
     if (session.stream) stopTracks(session.stream);
     if (!session.stopped) {
       // The browser ended the recording itself — the device was unplugged, or
-      // permission revoked mid-hold. What was captured is still sent.
+      // permission revoked mid-hold. What was captured is still sent, and the
+      // utterance ended when the recording did: nobody released anything.
+      if (session.endedAt == null) session.endedAt = nowMS();
       this._uploads++;
       this.transcribing = true;
       this._endSession(session);
@@ -629,10 +714,10 @@
         'Check which input device the browser is using. Nothing was sent to FORGE.');
       return;
     }
-    this._upload(blob);
+    this._upload(blob, session.endedAt);
   };
 
-  Voice.prototype._upload = function (blob) {
+  Voice.prototype._upload = function (blob, endedAt) {
     var self = this;
     var answer = global.fetch('/v1/transcribe', {
       method: 'POST',
@@ -648,7 +733,7 @@
      * quick holds are one sentence in two halves more often than not. */
     this._delivery = this._delivery.then(function () {
       return answer.then(function (res) {
-        self._transcribed(res.r, res.body);
+        self._transcribed(res.r, res.body, endedAt);
       }, function (err) {
         self.onError('Could not reach the server to transcribe (' + describeError(err) + '). ' +
           'Nothing was sent to FORGE; hold and say it again, or type it.');
@@ -661,7 +746,7 @@
     });
   };
 
-  Voice.prototype._transcribed = function (r, body) {
+  Voice.prototype._transcribed = function (r, body, endedAt) {
     if (!r.ok) {
       var said = (body.details && body.details.detail) || body.message || ('the server answered ' + r.status);
       if (r.status === 501) {
@@ -693,7 +778,11 @@
       this.onError('No words were recognised in that recording. Nothing was sent to FORGE.');
       return;
     }
-    this.onTranscript(text);
+    /* ‼️ The hold's release, NOT this moment. Everything between them — the
+     * upload, the provider's transcription, the answer coming back — is time
+     * the person spent waiting after they stopped speaking, and AUD-02 counts
+     * it. Timing from here is what made the old figure read low. */
+    this.onTranscript(text, endedAt == null ? null : endedAt);
   };
 
   Voice.prototype._settleUpload = function () {
@@ -1101,9 +1190,19 @@
     text = String(text == null ? '' : text).trim();
     if (!text) return 'nothing';
     if (!ctx.busy) {
-      ctx.send(text);
+      // The end of the utterance goes with the words (PRD AUD-02). send() is
+      // where a turn's clocks start, and it cannot recover a moment that
+      // happened before it was called.
+      ctx.send(text, ctx.endedAt == null ? null : ctx.endedAt);
       return 'sent';
     }
+    /* ‼️ The end-of-utterance moment is deliberately DROPPED on this branch.
+     *
+     * What goes in the box is sent later, by a person pressing send when they
+     * choose. The gap between speaking and that press is somebody reading a
+     * reply and deciding, which is not latency and must never be averaged in
+     * as though it were. A turn that waited in the box therefore reports no
+     * AUD-02 figure at all rather than an enormous one. */
     var typed = String(ctx.input.value || '');
     var end = typed.length;
     while (end > 0 && /\s/.test(typed.charAt(end - 1))) end--;

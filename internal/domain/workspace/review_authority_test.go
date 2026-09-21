@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/errs"
 )
@@ -40,7 +41,7 @@ func TestRecordReviewAuthority_RoundTripsAndClears(t *testing.T) {
 	}
 
 	if err := h.svc.RecordReviewAuthority(ctx, h.pool, id,
-		"R. Okonkwo", "CEng MICE 481920", h.userID); err != nil {
+		"R. Okonkwo", "CEng MICE 481920", h.userID, time.Time{}); err != nil {
 		t.Fatalf("recording: %v", err)
 	}
 	a, err := h.svc.ReviewAuthorityFor(ctx, h.pool, id)
@@ -57,7 +58,7 @@ func TestRecordReviewAuthority_RoundTripsAndClears(t *testing.T) {
 	// Clearing is the way back down, and it must be as easy as the way up: a
 	// mechanism that raises a ceiling and cannot lower it is one nobody should
 	// switch on.
-	if err := h.svc.RecordReviewAuthority(ctx, h.pool, id, "", "", ""); err != nil {
+	if err := h.svc.RecordReviewAuthority(ctx, h.pool, id, "", "", "", time.Time{}); err != nil {
 		t.Fatalf("clearing: %v", err)
 	}
 	if a, _ := h.svc.ReviewAuthorityFor(ctx, h.pool, id); a.Recorded() {
@@ -74,7 +75,7 @@ func TestRecordReviewAuthority_RefusesAnUnattributedClaim(t *testing.T) {
 	h := newHarness(t)
 	id := civilProject(t, h)
 
-	err := h.svc.RecordReviewAuthority(context.Background(), h.pool, id, "R. Okonkwo", "", "")
+	err := h.svc.RecordReviewAuthority(context.Background(), h.pool, id, "R. Okonkwo", "", "", time.Time{})
 	if err == nil {
 		t.Fatal("an authority was recorded with nobody attesting to it.\n" +
 			"A raised ceiling resting on a value with no author is a ceiling resting on nobody")
@@ -96,7 +97,7 @@ func TestRecordReviewAuthority_RefusesADomainThatOffersNoRaisedCeiling(t *testin
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = h.svc.RecordReviewAuthority(ctx, h.pool, id, "R. Okonkwo", "", h.userID)
+	err = h.svc.RecordReviewAuthority(ctx, h.pool, id, "R. Okonkwo", "", h.userID, time.Time{})
 	if err == nil {
 		t.Fatal("an authority was recorded on a project whose domain nothing raises")
 	}

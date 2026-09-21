@@ -53,6 +53,13 @@ type memberDTO struct {
 	Role      string `json:"role"`
 	GrantedBy string `json:"granted_by"`
 	GrantedAt string `json:"granted_at"`
+	// ExpiresAt is when this grant stops being access (PRD AGT-03), or empty
+	// for one with no expiry. Expired says whether it already has — sent as its
+	// own field rather than left for the client to compute, because a client
+	// comparing timestamps against ITS clock would disagree with the server
+	// about who can do what.
+	ExpiresAt string `json:"expires_at,omitempty"`
+	Expired   bool   `json:"expired"`
 	// IsYou lets a client mark the caller's own row without comparing ids it
 	// would have to be given separately.
 	IsYou bool `json:"is_you"`
@@ -85,7 +92,9 @@ func (h *MemberHandlers) List(w http.ResponseWriter, r *http.Request) {
 	for _, m := range members {
 		dto := memberDTO{
 			UserID: m.UserID, DisplayName: names[m.UserID], Role: string(m.Role),
-			GrantedBy: m.GrantedBy, GrantedAt: m.GrantedAt, IsYou: m.UserID == user.ID,
+			GrantedBy: m.GrantedBy, GrantedAt: m.GrantedAt,
+			ExpiresAt: m.ExpiresAt, Expired: m.Expired,
+			IsYou: m.UserID == user.ID,
 		}
 		if canManage {
 			dto.Email = emails[m.UserID]
@@ -142,11 +151,34 @@ func (h *MemberHandlers) resolveIdentities(r *http.Request, members []access.Mem
 
 type setRoleRequest struct {
 	Role string `json:"role"`
+	// Until is when the grant lapses, RFC3339 (PRD AGT-03). Omitted means the
+	// default lifetime for every role but owner, which has none. See
+	// access.Service.SetRole for why the owner is the exception.
+	Until string `json:"until"`
 }
 
 type addMemberRequest struct {
 	Email string `json:"email"`
 	Role  string `json:"role"`
+	Until string `json:"until"`
+}
+
+// grantUntil parses the optional expiry a caller may name.
+//
+// One parser for both write handlers: two would be two answers to "what does an
+// unparseable date mean", and the wrong answer there is a grant that quietly
+// lasts the default when somebody meant it to end on Friday.
+func grantUntil(op, raw string) (time.Time, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return time.Time{}, nil
+	}
+	t, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return time.Time{}, errs.New(op, errs.CodeValidationFailed).
+			WithDetail("until must be an RFC3339 instant such as 2026-12-31T00:00:00Z; got %q", raw)
+	}
+	return t, nil
 }
 
 // SetRole handles PUT /v1/projects/{id}/members/{user_id}.
@@ -163,6 +195,11 @@ func (h *MemberHandlers) SetRole(w http.ResponseWriter, r *http.Request) {
 		WriteError(w, r, h.deps.Log, err)
 		return
 	}
+	until, err := grantUntil(op, req.Until)
+	if err != nil {
+		WriteError(w, r, h.deps.Log, err)
+		return
+	}
 	if err := h.deps.Access.SetRole(r.Context(), access.Grant{
 		ProjectID: r.PathValue("id"),
 		UserID:    r.PathValue("user_id"),
@@ -170,7 +207,8 @@ func (h *MemberHandlers) SetRole(w http.ResponseWriter, r *http.Request) {
 		// The granter is the authenticated user and can never be named by the
 		// caller, for the reason the review authority follows: a grant is a record
 		// of who decided, and one that could be attributed elsewhere is worthless.
-		By: user.ID,
+		By:    user.ID,
+		Until: until,
 	}); err != nil {
 		WriteError(w, r, h.deps.Log, errs.Wrap(op, errs.CodeOf(err), err))
 		return
@@ -219,9 +257,14 @@ func (h *MemberHandlers) Add(w http.ResponseWriter, r *http.Request) {
 				"added to a project.", email))
 		return
 	}
+	until, err := grantUntil(op, req.Until)
+	if err != nil {
+		WriteError(w, r, h.deps.Log, err)
+		return
+	}
 	if err := h.deps.Access.SetRole(r.Context(), access.Grant{
 		ProjectID: projectID, UserID: userID,
-		Role: access.Role(strings.TrimSpace(req.Role)), By: user.ID,
+		Role: access.Role(strings.TrimSpace(req.Role)), By: user.ID, Until: until,
 	}); err != nil {
 		WriteError(w, r, h.deps.Log, err)
 		return

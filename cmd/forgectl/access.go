@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"text/tabwriter"
+	"time"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/access"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/collab"
@@ -87,9 +88,19 @@ func cmdAccessMembers(ctx context.Context, cfg *config.Config, log *logx.Logger,
 		return nil
 	}
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(w, "USER\tROLE\tGRANTED BY\tSINCE")
+	fmt.Fprintln(w, "USER\tROLE\tGRANTED BY\tSINCE\tUNTIL")
 	for _, m := range members {
-		fmt.Fprintf(w, "%s\t%s\t%s\t%s\n", m.UserID, m.Role, m.GrantedBy, m.GrantedAt)
+		// A lapsed row is shown and marked, never dropped. Hiding it would read
+		// as "they were removed", which nobody did — and it would take the answer
+		// to "who had access and until when" off the one screen that answers it.
+		until := "no expiry"
+		if m.ExpiresAt != "" {
+			until = m.ExpiresAt
+		}
+		if m.Expired {
+			until += "  EXPIRED"
+		}
+		fmt.Fprintf(w, "%s\t%s\t%s\t%s\t%s\n", m.UserID, m.Role, m.GrantedBy, m.GrantedAt, until)
 	}
 	return w.Flush()
 }
@@ -103,13 +114,29 @@ func cmdAccessGrant(ctx context.Context, cfg *config.Config, log *logx.Logger, a
 	user := fs.String("user", "", "the user id being given the role (required)")
 	role := fs.String("role", "", "owner|maintainer|contributor|viewer (required)")
 	as := fs.String("as", "", "the user id making the grant (required)")
+	until := fs.String("until", "",
+		"when this access lapses, RFC3339 (default: 90 days; owners default to no expiry)")
+	forever := fs.Bool("forever", false, "grant with no expiry — owners only")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
 	if *project == "" || *user == "" || *role == "" || *as == "" {
 		return errs.New(op, errs.CodeValidationFailed).
 			WithDetail("usage: forgectl access grant --project <id> --user <id> --role <role> --as <user-id>\n"+
-				"The roles are: %s", strings.Join(roleNames(), ", "))
+				"                       [--until <RFC3339>] [--forever]\n"+
+				"The roles are: %s\n\n"+
+				"Access is time-bound (PRD AGT-03). Without --until a grant lasts 90 days; an "+
+				"owner's lasts until somebody changes it, because a project whose owner expires "+
+				"is one nobody can administer, not even to undo it.", strings.Join(roleNames(), ", "))
+	}
+	var ends time.Time
+	if *until != "" {
+		parsed, perr := time.Parse(time.RFC3339, *until)
+		if perr != nil {
+			return errs.New(op, errs.CodeValidationFailed).
+				WithDetail("--until must be an RFC3339 instant such as 2026-12-31T00:00:00Z; got %q", *until)
+		}
+		ends = parsed
 	}
 	svc, pool, err := accessFor(ctx, cfg, log)
 	if err != nil {
@@ -118,10 +145,22 @@ func cmdAccessGrant(ctx context.Context, cfg *config.Config, log *logx.Logger, a
 	defer pool.Close()
 
 	if err := svc.SetRole(ctx, access.Grant{
-		ProjectID: *project, UserID: *user, Role: access.Role(*role), By: *as}); err != nil {
+		ProjectID: *project, UserID: *user, Role: access.Role(*role), By: *as,
+		Until: ends, Forever: *forever}); err != nil {
 		return err
 	}
-	fmt.Printf("%s is now a %s in %s\n", *user, *role, *project)
+	switch {
+	case *forever:
+		fmt.Printf("%s is now a %s in %s, with no expiry\n", *user, *role, *project)
+	case ends.IsZero() && access.Role(*role) == access.RoleOwner:
+		fmt.Printf("%s is now a %s in %s, with no expiry (owners do not lapse)\n", *user, *role, *project)
+	case ends.IsZero():
+		fmt.Printf("%s is now a %s in %s until %s (the default %d days)\n", *user, *role, *project,
+			time.Now().UTC().Add(access.DefaultGrantLifetime).Format(time.RFC3339),
+			int(access.DefaultGrantLifetime.Hours()/24))
+	default:
+		fmt.Printf("%s is now a %s in %s until %s\n", *user, *role, *project, ends.UTC().Format(time.RFC3339))
+	}
 	return nil
 }
 

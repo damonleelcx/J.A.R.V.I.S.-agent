@@ -21,11 +21,29 @@
 // and neither can a check constraint. So: one table, printed verbatim by
 // `forgectl access matrix`, and a fence that every permission is reachable by
 // somebody and that the roles are ordered.
+//
+// # Access runs out
+//
+// PRD AGT-03 asks for access that is "project-scoped, role-based, revocable,
+// time-bound". The first three were built here in 0010. The fourth was not:
+// there was no expiry column, so access lasted until somebody remembered to
+// revoke it, and nothing surfaced membership that had gone stale.
+//
+// Every grant now carries an end — DefaultGrantLifetime unless the caller names
+// one — and an expired grant is refused in RoleIn, which is the one function
+// every authorisation in this build reaches the database through. The row is
+// not deleted: expiry is not revocation, and who had access until when is the
+// first question after anything goes wrong.
+//
+// The OWNER role is the exception, for the reason given at Service.expiryFor:
+// an owner that lapsed on a timer is a project nobody can administer, which is
+// the state wouldStrandProject already refuses to create by any other route.
 package access
 
 import (
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/errs"
 )
@@ -206,6 +224,29 @@ func (r Role) AtLeast(other Role) bool {
 	return a.Rank <= b.Rank
 }
 
+// DefaultGrantLifetime is how long a grant lasts when nobody says (PRD AGT-03,
+// "time-bound").
+//
+// # Why there is a default at all
+//
+// Because the alternative is that every grant made through a UI with no date
+// field lasts forever, and that is exactly the state issue 20 found: access
+// permanent until somebody remembered to revoke it. A default is the only way
+// "time-bound" survives the ordinary path where nobody thinks about time.
+//
+// # Why ninety days
+//
+// Long enough that it is not in the way of a piece of work — a project phase,
+// a contractor's engagement, a quarter — and short enough that access granted
+// for something that finished does not outlive it by a year. It is a judgement,
+// not a derivation, and it is deliberately one number rather than one per role:
+// a lifetime that varied by role would be a second permission matrix.
+//
+// 0027_access_expiry.sql writes this same interval as a literal, because a
+// migration cannot read Go. TestMigrationAndCodeAgreeOnTheDefaultGrantLifetime
+// holds the two together.
+const DefaultGrantLifetime = 90 * 24 * time.Hour
+
 // Member is somebody's place in a project.
 type Member struct {
 	ProjectID string
@@ -213,6 +254,15 @@ type Member struct {
 	Role      Role
 	GrantedBy string
 	GrantedAt string
+	// ExpiresAt is when this grant stops being access, RFC3339, or empty for a
+	// grant with no expiry. Owner memberships and everything granted before
+	// 0027 have none.
+	ExpiresAt string
+	// Expired is whether it already has, as of the read. Carried as a field
+	// rather than recomputed by every caller so that one clock decides, and so
+	// a listing can SHOW a lapsed row instead of hiding it: who had access, and
+	// until when, is the first question after anything goes wrong.
+	Expired bool
 }
 
 // Grant is a request to add or change somebody's role.
@@ -222,6 +272,14 @@ type Grant struct {
 	Role      Role
 	// By is the person making the grant. Their own role is checked against it.
 	By string
+	// Until is when this grant lapses. Zero means "unstated", which is
+	// DefaultGrantLifetime from now — NOT "forever". A caller that means forever
+	// says so with Forever, so that the permanent case is always a decision
+	// somebody typed rather than a field they left blank.
+	Until time.Time
+	// Forever grants access with no expiry. Refused for every role but owner:
+	// see Service.SetRole.
+	Forever bool
 }
 
 // Validate checks a grant's shape before any database work.
@@ -240,7 +298,27 @@ func (g *Grant) Validate() error {
 		return errs.New(op, errs.CodeValidationFailed).
 			WithDetail("%q is not a role; the roles are %s", g.Role, strings.Join(roleNames(), ", "))
 	}
+	if g.Forever && !g.Until.IsZero() {
+		return errs.New(op, errs.CodeValidationFailed).
+			WithDetail("a grant is either until a date or forever, not both; this one names %s and "+
+				"also asks for no expiry", g.Until.UTC().Format(time.RFC3339))
+	}
 	return nil
+}
+
+// ExpiresAt resolves when a grant lapses, given the moment it is being made.
+//
+// One function so the terminal, the browser and the tests cannot each decide
+// what an unstated expiry means. A zero return is "no expiry", which only
+// Forever produces.
+func (g *Grant) ExpiresAt(now time.Time) time.Time {
+	if g.Forever {
+		return time.Time{}
+	}
+	if !g.Until.IsZero() {
+		return g.Until
+	}
+	return now.Add(DefaultGrantLifetime)
 }
 
 // Matrix renders the permission table, one row per permission.
