@@ -310,6 +310,35 @@
    * immediately, then the server, which is what actually guarantees nobody hears
    * it. The local half is a latency optimisation on a control the server
    * enforces — not the control itself.
+   *
+   * # NFR-01 and why this control is scoped OUT of it
+   *
+   * NFR-01 ("99.9% monthly; mute/stop/end remain available during cloud
+   * degradation") reads, on its face, as a promise that this button works with
+   * the cloud down. It is not, and the ruling recorded in
+   * docs/spikes/2026-09-20-nfr01-availability/README.md says which reading
+   * applies: NFR-01's guarantee is honoured by the SINGLE-USER controls in
+   * voice.js — toggleMute, stopSpeaking, cancelListening — which contain no
+   * request at all. The MULTI-PARTY controls here are scoped out.
+   *
+   * The reason is not that it would be hard. It is that the alternative is a
+   * lie. Room mute is enforced at the server because a mute that only stops the
+   * browser sending is a picture of a mute (internal/httpapi/rooms_media.go).
+   * If this client reported "muted" on the strength of the local track alone,
+   * it would be telling a person that a room full of people cannot hear them
+   * while having no way to know whether that is true — and it would be doing it
+   * precisely in the state where the client's own view of the world is least
+   * reliable. Privacy failures are a worse thing to be down than a control is.
+   *
+   * What makes the scoping honest rather than convenient: during real
+   * degradation the SFU is not forwarding this audio either, so there is nobody
+   * on the other end to be overheard by. What is owed in that state is not a
+   * working mute. It is the truth — which is what the .catch below is for, and
+   * what TestNFR01_ARefusedRoomMuteSaysItIsNotInForceRatherThanShowingItApplied
+   * in internal/httpapi/nfr01_degradation_test.go holds in place.
+   *
+   * A future amendment to NFR-01 would say so in the requirement rather than in
+   * this comment. The wording it would need is in the spike doc.
    */
   Room.prototype.setState = function (state) {
     var self = this;

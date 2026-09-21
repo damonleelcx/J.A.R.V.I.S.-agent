@@ -86,6 +86,11 @@ func (c *OpenAICompatible) Speak(ctx context.Context, text string, onPCM func([]
 		return errs.Wrap(op, errs.CodeSerializationFail, err)
 	}
 
+	// The general request timeout, for a caller that set no deadline. It used to
+	// arrive as http.Client.Timeout; see requestTimeout in openai_compatible.go.
+	ctx, cancelBound := c.boundAttempt(ctx)
+	defer cancelBound()
+
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		c.baseURL+"/chat/completions", bytes.NewReader(body))
 	if err != nil {

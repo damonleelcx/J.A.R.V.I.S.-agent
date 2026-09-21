@@ -34,6 +34,17 @@
  *   AUD-05  identifies itself as AI; voice and rate are choosable
  *   AUD-06  captions for everything spoken, keyboard operation, non-audio path
  *   AUD-07  mute, stop-speaking and end-session always reachable
+ *   NFR-01  99.9% monthly; mute/stop/end remain available during cloud
+ *           degradation. AUD-07 says the controls are always REACHABLE; NFR-01
+ *           says they still WORK when the cloud does not. In this file that is
+ *           a structural claim rather than a behavioural one: toggleMute,
+ *           stopSpeaking and cancelListening contain no fetch, so there is no
+ *           degraded endpoint for them to wait on. The only two requests this
+ *           file ever makes are POST /v1/transcribe (_upload) and POST
+ *           /v1/speech (_speakRemote), and neither is reached from a control.
+ *           Fenced in internal/httpapi/nfr01_degradation_test.go; the scoping
+ *           ruling on the room's server-authoritative mute is in
+ *           docs/spikes/2026-09-20-nfr01-availability/README.md.
  *
  * Honest limits, stated because a voice interface that overstates itself is
  * worse than one that admits its edges:
@@ -450,7 +461,18 @@
     this._setState();
   };
 
-  /* cancelListening ends a hold and discards it — a click, not a hold. */
+  /* cancelListening ends a hold and discards it — a click, not a hold.
+   *
+   * NFR-01: the network-free half of the pair. stopListening directly above
+   * hands on what was already said, which is a delivery and therefore a
+   * request; cancelListening discards, so nothing is owed and nothing is sent —
+   * _finishRecording(true) marks the session cancelled and _recordingStopped
+   * returns before _upload. That is what lets a person abandon a hold with the
+   * cloud unreachable. The two must not converge: a "cancel" that needed the
+   * server would be the one control that fails while a microphone is open.
+   *
+   * Fence: TestNFR01_MuteAndStopTakeEffectWithNoNetworkAtAll in
+   * internal/httpapi/nfr01_degradation_test.go, which asserts both sides. */
   Voice.prototype.cancelListening = function () {
     if (this._session) { this._finishRecording(true); return; }
     this._browserHold = null;   // a click: nothing is owed
@@ -795,6 +817,25 @@
     this.onLevel(0);
   };
 
+  /* Mute: AUD-07's first control, and NFR-01's clearest case.
+   *
+   * Nothing here asks anything of the cloud. The flag flips, the two stop paths
+   * run, the state is published — all synchronous, all local. That is not an
+   * accident of the implementation, it is the requirement: NFR-01 asks for mute
+   * to remain available DURING cloud degradation, and the only way to promise
+   * that is for mute never to have needed the cloud in the first place. A mute
+   * that POSTed anywhere would be at its least reliable exactly when a person
+   * most wants to be sure they are not being heard.
+   *
+   * ‼️ One edge, stated because it looks like a violation and is not: muting
+   * while a push-to-talk hold is open calls stopListening, which DELIVERS what
+   * was already said (POST /v1/transcribe). Mute is still local and immediate;
+   * what the upload finishes is the hold, not the mute. cancelListening is the
+   * control that discards instead — see there.
+   *
+   * Fence: TestNFR01_MuteAndStopTakeEffectWithNoNetworkAtAll and
+   * TestNFR01_MuteAndStopStillWorkWhileTheEndpointIsSlowErroringOrDisconnecting
+   * in internal/httpapi/nfr01_degradation_test.go. */
   Voice.prototype.toggleMute = function () {
     this.muted = !this.muted;
     if (this.muted) {
@@ -1397,6 +1438,23 @@
       .replace(/\s+/g, ' ').trim();
   }
 
+  /* NFR-01: this is the control that must survive a degraded cloud, and the
+   * abort below is what makes that true rather than what threatens it.
+   *
+   * Every line is local: cancel the synthesiser, pause the element, drop the
+   * echo tail, publish the state. The one line that mentions the network —
+   * _remoteAbort.abort() — CALLS BACK a request already in flight. It sends
+   * nothing, waits on nothing, and needs no answer from the vendor, so it works
+   * identically whether /v1/speech is fast, slow, erroring or gone. Aborting a
+   * request is not making one, and a fence on this function must count NEW
+   * requests rather than network activity or it would forbid the very mechanism
+   * that keeps the stop inside AUD-02's 250ms budget while a vendor hangs.
+   *
+   * Leaving that request in flight during an outage is the failure mode: the
+   * audio arrives late and she starts speaking AFTER the person stopped her.
+   *
+   * Fence: TestNFR01_MuteAndStopStillWorkWhileTheEndpointIsSlowErroringOrDisconnecting
+   * in internal/httpapi/nfr01_degradation_test.go. */
   Voice.prototype.stopSpeaking = function () {
     this._doneSpeaking();
     if (this._remoteAbort) {

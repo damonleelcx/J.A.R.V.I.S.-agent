@@ -87,6 +87,9 @@ func cmdEvalRun(ctx context.Context, cfg *config.Config, log *logx.Logger, args 
 	if err != nil {
 		return err
 	}
+	// The planner's own bound, so a run stops reporting the general timeout as a
+	// planner failure (GitHub issue 13).
+	runner = runner.WithPlannerRequestTimeout(cfg.LLM.PlannerRequestTimeout)
 
 	var names []string
 	for _, n := range strings.Split(*only, ",") {

@@ -453,16 +453,29 @@ func (h *ConverseHandlers) Converse(w http.ResponseWriter, r *http.Request) {
 		 * The raw reply goes to the turn and NOT to the log: the log cannot be
 		 * deleted with the conversation (AUD-07), and a reply can quote what
 		 * the person said. The log line carries the code, the model and the
-		 * tokens, which are what an operator needs. */
+		 * tokens, which are what an operator needs.
+		 *
+		 * ‼️ A turn that failed BEFORE any reply arrived is kept TOO, and that
+		 * is the other half of the same rule. Until this, only the case above
+		 * left a row: a model that could not be reached, a turn that timed out,
+		 * a reader that went away, all left the person's half in the record and
+		 * FORGE's half nowhere. The absence of a row was then indistinguishable
+		 * from the person never having spoken — so "it just stopped responding"
+		 * generated no evidence at all, which is the report that most needs it.
+		 *
+		 * What is known is less, and the row says only what is known: the code
+		 * it failed with, the sentence the person was shown, the elapsed time.
+		 * There is no reply to keep and no usage any provider reported, so
+		 * unusable_reply stays null and the token count stays NOT MEASURED
+		 * rather than being written as a zero somebody would read as free. */
 		var refused *agent.UnusableReply
-		kept := false
 		if errors.As(emitErr, &refused) {
 			model, tokens = refused.Model, refused.Tokens
-			said := h.keepFailed(r, convID, user.ID, req.ProjectID, emitErr, refused, firstTokenMS, start)
-			kept = said.NotKept == ""
-			if !kept {
-				_ = send(agent.StreamEvent{Kind: "conversation", Conversation: said})
-			}
+		}
+		said := h.keepFailed(r, convID, user.ID, req.ProjectID, emitErr, refused, firstTokenMS, start)
+		kept := said.NotKept == ""
+		if !kept {
+			_ = send(agent.StreamEvent{Kind: "conversation", Conversation: said})
 		}
 		h.deps.Log.WarnWith(r.Context(), logx.EventConverseTurn, emitErr, "user_id", user.ID,
 			"model", model, "tokens", tokens, "failed_reply_kept", kept)
@@ -487,29 +500,47 @@ func (h *ConverseHandlers) Converse(w http.ResponseWriter, r *http.Request) {
 		"variant_id", savedVariant)
 }
 
-// keepFailed records FORGE's half of a turn whose reply could not be used.
+// keepFailed records FORGE's half of a turn that failed.
 //
 // # What is written
 //
 // The sentence the person was shown in place of a reply, as the turn's text: it
 // is what FORGE "said" from where they sat, and it keeps the record's rule that a
-// turn says something without inventing speech. The error code, the refused reply
-// (bounded, untrusted) and the measured cost go beside it (migration 0023).
+// turn says something without inventing speech. The error code and the measured
+// elapsed time go beside it (migration 0023).
+//
+// # Why refused may be nil
+//
+// Two different failures end up here and they know different amounts. A reply
+// that ARRIVED and could not be used brings the refused text, the model that
+// sent it and what the provider charged, and all three are kept: the turn was
+// paid for. A turn that failed BEFORE any reply brings none of that — nothing
+// was said, no provider reported usage, and often no model was reached at all.
+// It is still recorded, because a turn nobody can see is the one failure mode
+// that reads as the person never having spoken; it is recorded with LESS, which
+// the nil pointers here are what makes true. Writing a zero for tokens, or the
+// model that was going to be asked, would fill the gap with an invention.
 //
 // On a context of its own, bounded like keepGeometry's: the turn's context is
-// close to its budget by the time a reply is refused, and a failure that could
+// close to its budget by the time a reply is refused — and on a turn cut off by
+// its own deadline the context is already cancelled — so a failure that could
 // not be written because the turn had just failed would be the same gap again.
 func (h *ConverseHandlers) keepFailed(r *http.Request, convID, userID, projectID string, err error,
 	refused *agent.UnusableReply, firstTokenMS int64, start time.Time) *agent.ConversationKept {
 	ctx, cancel := context.WithTimeout(context.WithoutCancel(r.Context()), 5*time.Second)
 	defer cancel()
+	var model, raw string
+	var tokens int64
+	if refused != nil {
+		model, raw, tokens = refused.Model, refused.Raw, refused.Tokens
+	}
 	return h.keepSaid(ctx, conversation.Said{
 		ConversationID: convID, OwnerID: userID, ProjectID: projectID,
 		Role: conversation.RoleForge, Text: userFacing(err),
-		Timing: turnTiming(refused.Model, firstTokenMS, 0, refused.Tokens,
+		Timing: turnTiming(model, firstTokenMS, 0, tokens,
 			h.deps.Clock.Now().Sub(start).Milliseconds()),
 		Failure:       string(errs.CodeOf(err)),
-		UnusableReply: refused.Raw,
+		UnusableReply: raw,
 	})
 }
 

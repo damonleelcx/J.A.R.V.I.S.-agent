@@ -820,10 +820,11 @@
       'What is measured starts at Send.</li>' +
       '<li><b>Retrieval time.</b> A turn is marked as having quoted memory or not; how long ' +
       'that took is not separated from the rest of the turn.</li>' +
-      '<li><b>A turn that failed before any reply arrived</b> — a model that could not be ' +
-      'reached, a turn cut off. Nothing is recorded for one; those are in the server log with ' +
-      'their error code — so a quiet history is not the same as a healthy one. A reply that ' +
-      'arrived and could not be used is listed below, marked failed.</li>' +
+      '<li><b>What a failed turn cost when nothing came back.</b> Both kinds of failure are ' +
+      'now listed below, marked — a reply that arrived and could not be used, with the tokens ' +
+      'it spent, and a turn that failed before any reply arrived, with its error code. The ' +
+      'second has no token count, because no provider reported one; that is shown as an em ' +
+      'dash and not as zero.</li>' +
       '<li><b>Tool calls, plans and approvals</b> (NFR-05). Those belong to goals, ' +
       'which run in the worker and report on their own timeline — see Operations, not here.</li>' +
       '<li><b>Anybody else\'s turns.</b> The history below is your own, not the deployment\'s. ' +
@@ -858,8 +859,9 @@
     var rows = h.turns || [];
     if (!rows.length) {
       return '<div class="wbtel-h">Before this session</div>' +
-        empty('No turn has been measured on this account yet. A turn is recorded when its ' +
-          'reply lands, so the first one appears here after you have asked something.');
+        empty('No turn has been measured on this account yet. A turn is recorded when it ' +
+          'resolves, whether that is a reply or a failure, so the first one appears here ' +
+          'after you have asked something.');
     }
     return '<div class="wbtel-h">Before this session</div>' +
       '<div class="wbtel-g">' +
@@ -873,14 +875,33 @@
       '<p class="wbnote">' + esc(h.excludes || '') + '</p>';
   }
 
+  /* What a failed turn is called, in the words of what actually went wrong.
+   *
+   * The two failures are not the same problem and must not read as one. A reply
+   * that ARRIVED and could not be used means the model answered and the answer
+   * was refused — the tokens were spent and the refused text is in the record. A
+   * turn that failed BEFORE any reply means nothing came back at all: the
+   * endpoint, the network or the turn's own deadline. Drawn identically, the
+   * second sends the reader to look at the model's output, which does not exist.
+   *
+   * The error code is shown beside it because it is the one thing that makes a
+   * report actionable, and it is already in the conversation record the person
+   * can read and delete. */
+  function failedLabel(t) {
+    var what = t.reply_arrived
+      ? 'failed — the reply could not be used'
+      : 'failed before any reply arrived';
+    return what + (t.failure ? ' (' + t.failure + ')' : '');
+  }
+
   function historyRow(t) {
-    /* A refused reply is listed because its tokens were spent, and marked so it
-     * is not read as a reply. The server leaves it out of both medians. */
+    /* A failed turn is listed whatever it cost, and marked so it is not read as
+     * a reply. The server leaves it out of both medians. */
     return '<li class="wbturn' + (t.failed ? ' bad' : '') + '">' +
       '<div class="wbturn-h">' +
         '<span class="wbver-w">' + esc(t.at) + '</span>' +
         (t.model ? '<span class="wbver-a">' + esc(t.model) + '</span>' : '') +
-        (t.failed ? '<span class="wbver-a">failed — the reply could not be used</span>' : '') +
+        (t.failed ? '<span class="wbver-a">' + esc(failedLabel(t)) + '</span>' : '') +
       '</div>' +
       '<div class="wbturn-m">' +
         '<span>first token ' + ms(t.first_token_ms) + ' <i>server</i></span>' +

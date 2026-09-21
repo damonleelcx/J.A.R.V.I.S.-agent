@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/engine"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/pack"
@@ -81,6 +82,22 @@ func (in *Intake) logger() *logx.Logger {
 // WithLog gives the intake somewhere to record what planning did, notably the
 // hazard load that PRD SAF-02 requires at r3 and above.
 func (i *Intake) WithLog(log *logx.Logger) *Intake { i.log = log; return i }
+
+// WithPlannerRequestTimeout gives the planner's single model call its own bound
+// (FORGE_PLANNER_REQUEST_TIMEOUT), rather than the one number every call shares.
+//
+// Forwarded rather than reached through, for the reason WithCharacters is: the
+// Intake owns the planner, and every caller that plans builds one of these. A
+// timeout configured on the planner directly would be a timeout each of the four
+// construction sites could forget, and the one that forgot would be the one
+// whose planner times out at two minutes for no visible reason.
+//
+// Zero is the default and means no planner-specific bound — the call is governed
+// by the general FORGE_LLM_REQUEST_TIMEOUT exactly as before.
+func (i *Intake) WithPlannerRequestTimeout(d time.Duration) *Intake {
+	i.planner = i.planner.WithRequestTimeout(d)
+	return i
+}
 
 // WithCharacters makes planning honour the project's critique intensity
 // (PRD RSN-04). Forwarded to the planner: Intake owns one, and a caller that had

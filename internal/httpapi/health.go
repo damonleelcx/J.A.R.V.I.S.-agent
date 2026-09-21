@@ -22,6 +22,15 @@ func NewHealthHandlers(d Deps) *HealthHandlers { return &HealthHandlers{d: d} }
 // touch the database: if it did, a database outage would make every orchestrator
 // restart every instance, turning a recoverable dependency failure into a
 // restart storm at the worst possible moment.
+//
+// NFR-01: this endpoint is not the availability measurement — /readyz below is
+// — but the measurement only works because these two answer different
+// questions. If /healthz ever began reading the database, a database outage
+// would read as the process being dead, the liveness probe in
+// deploy/k8s/30-forged.yaml would kill healthy instances, and the monthly
+// figure would be computed over a fleet its own monitoring was restarting.
+// Fenced by TestNFR01_LivenessAnswersWithoutTouchingTheDatabase; the method is
+// in docs/spikes/2026-09-20-nfr01-availability/README.md.
 func (h *HealthHandlers) Live(w http.ResponseWriter, r *http.Request) {
 	WriteJSON(w, http.StatusOK, map[string]any{
 		"status":  "ok",
@@ -36,6 +45,20 @@ func (h *HealthHandlers) Live(w http.ResponseWriter, r *http.Request) {
 // database. It reports latency rather than a bare boolean, because "healthy"
 // and "answering in four seconds" are different states and only one of them
 // precedes an outage.
+//
+// NFR-01: this is the endpoint the 99.9% monthly figure is defined against. A
+// sample is "available" when this answers 200 within the probe's timeout, which
+// is why the 503 below is load-bearing rather than cosmetic — it is what an
+// external checker scores as a failed sample and what takes the instance out of
+// the service. A refactor that answered 200-with-a-warning when the database
+// was gone would break no user-visible behaviour and would silently take the
+// availability figure to 100%. Fenced by
+// TestNFR01_ReadinessReportsTheDatabaseAndRefusesTrafficWhenItIsUnreachable.
+//
+// What this probe cannot see is set out in
+// docs/spikes/2026-09-20-nfr01-availability/README.md — chiefly that an
+// instance whose model endpoint is unreachable answers "ready" here, so the
+// measured number is an upper bound on what a person experienced.
 func (h *HealthHandlers) Ready(w http.ResponseWriter, r *http.Request) {
 	latency, err := db.HealthCheck(r.Context(), h.d.Pool, 3*time.Second)
 

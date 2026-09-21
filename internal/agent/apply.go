@@ -78,6 +78,19 @@ func (a *PlanApplier) logAssumptionFailure(ctx context.Context, goal *engine.Goa
 // already exists keeps its row, and therefore keeps its completed work, its
 // checkpoints, and its place in the timeline. Recreating it would silently
 // discard work that was already done and paid for.
+//
+// # NFR-03 durability
+//
+// The plan row and its tasks ARE the "approved plan" the requirement names, and
+// the acknowledgement is this function returning them. It returns only after
+// db.InTx commits, so there is no window in which a caller believes a plan
+// exists that Postgres would not replay. Two ways to break it: acknowledge
+// earlier than the commit (return the built *engine.Plan from inside the
+// closure's happy path and let the commit fail unseen), or write any part of the
+// plan outside this transaction, which would leave a goal holding tasks whose
+// plan nobody can read back. The content is acknowledged too — a rationale the
+// caller supplied and this drops on the way into the row is an acknowledged
+// plan, partly lost.
 func (a *PlanApplier) Apply(ctx context.Context, pool *db.Pool, goal *engine.Goal, plan *PlanResult, author string) (*engine.Plan, []*engine.Task, error) {
 	const op = "agent.PlanApplier.Apply"
 
