@@ -5806,6 +5806,10 @@ drill "a relationship that checked out is reported anyway" internal/domain/geome
   's = s.replace("if r.Checked || r.Why == \"\" {", "if false {", 1)' \
   ./internal/agent 'TestSettle_ADesignWhoseRelationshipsCheckOutIsToldNothing'
 
+drill "no shape has any collapsing dimension" internal/domain/geometry/degenerate.go \
+  's = s.replace("for _, key := range collapsingKeys(shape) {", "for _, key := range collapsingKeys(shape)[:0] {", 1)' \
+  ./internal/domain/cad 'TestKernel_ACollapsedDimensionIsRefusedBeforeTheKernelIsAsked'
+
 drill "the kernel is sent a cylinder of no radius" internal/domain/geometry/degenerate.go \
   "s = s.replace('{\"cylinder\", []string{\"radius\", \"height\"}},', '{\"cylinder\", []string{\"height\"}},', 1)" \
   ./internal/domain/cad 'TestKernel_AZeroRadiusPartNeverReachesOCCT'
