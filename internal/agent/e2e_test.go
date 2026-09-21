@@ -232,7 +232,7 @@ func newLiveHarness(t *testing.T) *liveHarness {
 		t.Skip("FORGE_TEST_DATABASE_URL is unset")
 	}
 	ctx := context.Background()
-	schema := "forge_live_agent"
+	schema := db.UniqueSchema("forge_live_agent", "")
 
 	admin, err := db.Connect(ctx, config.DBConfig{
 		URL: url, MaxConns: 4, MinConns: 1,
@@ -263,7 +263,12 @@ func newLiveHarness(t *testing.T) *liveHarness {
 	if _, err := db.MigrateFS(ctx, pool, db.Files, db.MigrationsDir, logx.Discard()); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(pool.Close)
+	// The schema name now carries this run id (db.UniqueSchema), so nothing
+	// reuses it and leaving it behind leaks one schema per run.
+	t.Cleanup(func() {
+		pool.Close()
+		db.DropTestSchema(url, schema)
+	})
 
 	// Logs go to the test output so a failure is diagnosable from the test log
 	// alone, rather than requiring the run to be repeated with logging on.

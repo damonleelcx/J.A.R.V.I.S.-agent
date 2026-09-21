@@ -43,10 +43,7 @@ func testPool(t *testing.T) *pgxpool.Pool {
 // fast while still being a real, migrated Postgres schema.
 func freshSchema(t *testing.T, pool *pgxpool.Pool) string {
 	t.Helper()
-	name := "forge_test_" + strings.ToLower(strings.ReplaceAll(t.Name(), "/", "_"))
-	if len(name) > 60 {
-		name = name[:60]
-	}
+	name := db.UniqueSchema("forge_test_", t.Name())
 	ctx := context.Background()
 	if _, err := pool.Exec(ctx, "drop schema if exists "+name+" cascade"); err != nil {
 		t.Fatalf("dropping schema: %v", err)
@@ -348,7 +345,7 @@ func TestMigrationsRunInTwoIsolatedSchemas(t *testing.T) {
 	// used the test name as the schema name, and its own guard then matched the
 	// word "public" inside it.
 	for i, suffix := range []string{"iso_a", "iso_b"} {
-		schema := "forge_test_" + suffix
+		schema := db.UniqueSchema("forge_test_", suffix)
 		if _, err := pool.Exec(ctx, "drop schema if exists "+schema+" cascade"); err != nil {
 			t.Fatal(err)
 		}
@@ -505,7 +502,7 @@ func TestTwoSchemasGetTheSameObjects(t *testing.T) {
 		return out
 	}
 
-	schemas := []string{"forge_test_same_a", "forge_test_same_b"}
+	schemas := []string{db.UniqueSchema("forge_test_same_", "a"), db.UniqueSchema("forge_test_same_", "b")}
 	for _, schema := range schemas {
 		if _, err := pool.Exec(ctx, "drop schema if exists "+schema+" cascade"); err != nil {
 			t.Fatal(err)
@@ -596,7 +593,7 @@ func TestEveryUpdatedAtColumnHasItsTrigger(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	schema := "forge_test_updated_at_rule"
+	schema := db.UniqueSchema("forge_test_updated_at_rule", "")
 	if _, err := pool.Exec(ctx, "drop schema if exists "+schema+" cascade"); err != nil {
 		t.Fatal(err)
 	}

@@ -198,6 +198,13 @@ FILES=(
   internal/agent/designationrepair.go
   internal/domain/engine/budget.go
   Makefile
+  # Added 2026-09-20 (the small leftovers): export names, the version stamp, the
+  # per-run test schema.
+  deploy/Dockerfile
+  internal/platform/buildinfo/buildinfo.go
+  internal/httpapi/health.go
+  internal/platform/db/testschema.go
+  internal/domain/cad/mesh_only_support.go
   # Added 2026-09-18 (looks-designed stage C: the car template, its proportion
   # table and its design words).
   internal/domain/geometry/car.go
@@ -5702,6 +5709,92 @@ drill "the workbench drops the kernel's reductions" internal/httpapi/assets/work
 drill "the export panel forgets the rounds built smaller" internal/httpapi/assets/workbench.js \
   's = s.replace("var reductions = exp.feature_reductions || [];", "var reductions = [];", 1)' \
   ./internal/httpapi 'TestWorkbenchSaysWhichRoundsTheKernelBuiltSmaller'
+
+echo "Export names, the version stamp, the per-run test schema (2026-09-20)"
+
+drill "a part's name keeps the punctuation it was typed with" internal/domain/geometry/export.go \
+  "s = s.replace('\t\tdefault:\n\t\t\tsep = true\n', '\t\tdefault:\n\t\t\tb.WriteRune(r)\n', 1)" \
+  ./internal/domain/geometry 'TestExport_PartNamesBecomeOneReadableTokenAndStayDistinct'
+
+drill "an accent is dropped instead of folded to its letter" internal/domain/geometry/export.go \
+  "s = s.replace('for _, r := range norm.NFD.String(s) {', 'for _, r := range s {', 1)" \
+  ./internal/domain/geometry 'TestExport_PartNamesBecomeOneReadableTokenAndStayDistinct'
+
+drill "two parts of one name share a group name" internal/domain/geometry/export.go \
+  "s = s.replace('\tfor i := 2; n.used[candidate]; i++ {', '\tfor i := 2; i < 1; i++ {', 1)" \
+  ./internal/domain/geometry 'TestExport_PartNamesBecomeOneReadableTokenAndStayDistinct'
+
+drill "a group is written without the name it was made from" internal/domain/geometry/export.go \
+  "s = s.replace('\t\tc(\"FORGE part id=%s name=%s\", g.PartID, g.Label)\n', '', 1)" \
+  ./internal/domain/geometry 'TestExport_PartNamesBecomeOneReadableTokenAndStayDistinct'
+
+drill "a newline in a name ends the comment it is in" internal/domain/geometry/export.go \
+  "s = s.replace('\t\tfor _, line := range strings.Split(commentSafe(fmt.Sprintf(format, args...)), \"\\\\n\") {\n\t\t\tb.WriteString(\"# \" + line + \"\\\\n\")\n\t\t}\n', '\t\tb.WriteString(\"# \" + fmt.Sprintf(format, args...) + \"\\\\n\")\n', 1)" \
+  ./internal/domain/geometry 'TestExport_PartNamesBecomeOneReadableTokenAndStayDistinct'
+
+drill "the STL solid name keeps its spaces" internal/domain/geometry/export.go \
+  "s = s.replace('objName(v.Name), v.Version, v.Units)', 'v.Name, v.Version, v.Units)', 1)" \
+  ./internal/domain/geometry 'TestExport_TheSTLSolidNameIsOneTokenAndSaysTheNameDidNotTravel'
+
+drill "a goal's first call reserves nothing" internal/domain/engine/budget.go \
+  "s = s.replace('\tif largest <= 0 {\n\t\treturn FirstCallReserve\n\t}', '\tif largest <= 0 {\n\t\treturn 0\n\t}', 1)" \
+  ./internal/domain/engine 'TestCheckCall_AGoalsFirstCallReservesTheDocumentedDefault'
+
+drill "a first call is reported as a call the goal measured" internal/domain/engine/budget.go \
+  "s = s.replace('\tif goal.Spend.LargestCall <= 0 {\n\t\tbasis = fmt.Sprintf(', '\tif false {\n\t\tbasis = fmt.Sprintf(', 1)" \
+  ./internal/domain/engine 'TestCheckCall_AGoalsFirstCallReservesTheDocumentedDefault'
+
+drill "forgectl is built without the version flags" deploy/Dockerfile \
+  "s = s.replace('go build -trimpath -ldflags=\"\$LD\" -o /out/forgectl', 'go build -trimpath -ldflags=\"-s -w\" -o /out/forgectl', 1)" \
+  ./deploy 'TestDockerfile_StampsTheBuildIntoAllThreeBinaries'
+
+drill "the image's commit argument defaults to something else" deploy/Dockerfile \
+  "s = s.replace('ARG FORGE_COMMIT=unknown\\nARG FORGE_BUILD_DATE=unknown\\n\\nWORKDIR', 'ARG FORGE_COMMIT=dev\\nARG FORGE_BUILD_DATE=unknown\\n\\nWORKDIR', 1)" \
+  ./deploy 'TestDockerfile_StampsTheBuildIntoAllThreeBinaries'
+
+drill "make image forgets to pass the commit" Makefile \
+  "s = s.replace('\t  --build-arg FORGE_COMMIT=\$(COMMIT) \\\\\n', '', 1)" \
+  ./deploy 'TestMakeImage_PassesTheVersionArgumentsFromGit'
+
+drill "dev is reported as a version" internal/platform/buildinfo/buildinfo.go \
+  "s = s.replace('case \"\", Unknown, \"dev\", \"devel\", \"(devel)\", \"none\", \"null\":', 'case \"\", Unknown:', 1)" \
+  ./internal/platform/buildinfo 'TestBuildInfo_SaysUnknownRatherThanSomethingThatLooksLikeAVersion'
+
+drill "the loaded configuration does not say which build read it" internal/platform/config/config.go \
+  "s = s.replace('\t\t\"build\":              buildinfo.Get().String(),\n', '', 1)" \
+  ./internal/platform/config 'TestRedacted_PrintsTheBuildAndSaysUnknownWhenTheImageDidNotStampIt'
+
+drill "an unstamped build says it is stamped" internal/httpapi/health.go \
+  "s = s.replace('\t\t\"stamped\": info.Stamped(),', '\t\t\"stamped\": true,', 1)" \
+  ./internal/httpapi 'TestMetaBuild_ReportsTheBuildOrSaysUnknown'
+
+drill "two runs share one test schema" internal/platform/db/testschema.go \
+  "s = s.replace('\tsuffix := \"_\" + run\n', '\tsuffix := \"\"\n', 1)" \
+  ./internal/platform/db 'TestUniqueSchema'
+
+drill "a long schema name is truncated after its run id" internal/platform/db/testschema.go \
+  "s = s.replace('\tif len(head)+len(suffix) > maxSchemaName {\n\t\thead = head[:maxSchemaName-len(suffix)]\n\t}\n\treturn head + suffix\n', '\tout := head + suffix\n\tif len(out) > maxSchemaName {\n\t\tout = out[:maxSchemaName]\n\t}\n\treturn out\n', 1)" \
+  ./internal/platform/db 'TestUniqueSchema'
+
+drill "a test run's schema is left behind" internal/platform/db/testschema.go \
+  "s = s.replace('\t_, _ = pool.Exec(ctx, \"drop schema if exists \"+schema+\" cascade\")', '\t_ = schema', 1)" \
+  ./internal/platform/db 'TestUniqueSchema'
+
+echo
+
+drill "a kernel with no manifold3d is treated as having it" internal/domain/cad/mesh_only_support.go \
+  "s = s.replace('\t\tif strings.Contains(skipped, meshOnlyMissing) {', '\t\tif false && strings.Contains(skipped, meshOnlyMissing) {', 1)" \
+  ./internal/domain/cad 'TestMeshOnlySupport_RecognisesAMissingManifold3dAndNothingElse'
+
+drill "any refusal at all is read as a missing manifold3d" internal/domain/cad/mesh_only_support.go \
+  "s = s.replace('\t\tif strings.Contains(skipped, meshOnlyMissing) {', '\t\tif skipped != \\\"\\\" {', 1)" \
+  ./internal/domain/cad 'TestMeshOnlySupport_RecognisesAMissingManifold3dAndNothingElse'
+
+drill "the probe carries no lattice for the kernel to refuse" internal/domain/cad/mesh_only_support.go \
+  "s = s.replace('\t\t{ID: \\\"probe\\\", Name: \\\"Probe\\\", Shape: \\\"lattice\\\", Lattice: \\\"gyroid\\\",', '\t\t{ID: \\\"probe\\\", Name: \\\"Probe\\\", Shape: \\\"box\\\",', 1)" \
+  ./internal/domain/cad 'TestMeshOnlySupport_RecognisesAMissingManifold3dAndNothingElse'
+
+echo
 
 echo
 echo "A plan that is a chain because the planner wrote it in order (issue 12)"

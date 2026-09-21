@@ -24,6 +24,14 @@ func TestKernel_ALatticePastTheKernelsOwnBudgetIsRefusedByName(t *testing.T) {
 	defer k.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
+	// A kernel with no manifold3d refuses this lattice for THAT reason instead of
+	// for its triangle count, so the fence would be asserting the wrong refusal.
+	// See MeshOnlySupport.
+	if ok, why := k.MeshOnlySupport(ctx); !ok {
+		t.Skipf("this kernel cannot build mesh-only parts at all, so its triangle budget cannot be "+
+			"reached — the kernel says %q. Run `make cad-venv` to install the pinned "+
+			"internal/domain/cad/requirements.txt, which carries manifold3d (pinned by PR 156).", why)
+	}
 	s, err := k.acquire(ctx)
 	if err != nil {
 		t.Fatal(err)

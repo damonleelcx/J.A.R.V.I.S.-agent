@@ -22,6 +22,15 @@ func TestKernel_TheTurnsSurfaceNamesItsMeshOnlyParts(t *testing.T) {
 	defer k.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
+	// A kernel whose venv has no manifold3d builds every exact solid and refuses
+	// every lattice by name, so this fence fails with "the lattice is not drawn",
+	// which reads as a defect in the lattice code and is a missing package. The
+	// kernel is asked rather than the interpreter — see cad.MeshOnlySupport.
+	if ok, why := k.MeshOnlySupport(ctx); !ok {
+		t.Skipf("this kernel cannot build mesh-only parts, so the turn's surface would be naming "+
+			"their absence — the kernel says %q. Run `make cad-venv` to install the pinned "+
+			"internal/domain/cad/requirements.txt, which carries manifold3d (pinned by PR 156).", why)
+	}
 
 	doc := &geometry.Document{Name: "infill", Units: "mm", Parts: []geometry.Part{
 		{ID: "plate", Name: "Plate", Shape: "box", Size: map[string]float64{"width": 60, "height": 6, "depth": 60},

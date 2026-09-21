@@ -58,13 +58,17 @@ func TestGetGoal_ABuildsTasksAreListedInStepOrder(t *testing.T) {
 
 // A goal's token ceiling can be set when it is created, build or not, and is
 // read back. Until now there was no field for it: a live exercise set it by SQL.
+//
+// 50,000 rather than 5,000: creating a build goal places its plan call, and a
+// goal's first call now reserves engine.FirstCallReserve (12,000), so a 5,000
+// ceiling would refuse the plan before this could read anything back.
 func TestCreateGoal_ATokenCeilingIsStoredOnTheGoal(t *testing.T) {
 	stub := &buildLLM{tokens: 70, replies: []string{buildThreeSteps}}
 	h, pool, user := buildHandlers(t, stub)
 
 	rec := httptest.NewRecorder()
 	h.CreateGoal(rec, postAs(user, "/v1/goals",
-		`{"title":"A car","statement":"a car","build":true,"max_tokens":5000}`))
+		`{"title":"A car","statement":"a car","build":true,"max_tokens":50000}`))
 	if rec.Code != http.StatusCreated {
 		t.Fatalf("want 201, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -79,10 +83,10 @@ func TestCreateGoal_ATokenCeilingIsStoredOnTheGoal(t *testing.T) {
 		`select max_tokens from forge_goals where id = $1`, body.Goal.ID).Scan(&stored); err != nil {
 		t.Fatal(err)
 	}
-	if stored == nil || *stored != 5000 {
-		t.Errorf("the goal's max_tokens is %v; the request asked for 5000", stored)
+	if stored == nil || *stored != 50000 {
+		t.Errorf("the goal's max_tokens is %v; the request asked for 50000", stored)
 	}
-	if body.Goal.MaxTokens == nil || *body.Goal.MaxTokens != 5000 {
+	if body.Goal.MaxTokens == nil || *body.Goal.MaxTokens != 50000 {
 		t.Errorf("the goal does not read back its ceiling: %s", rec.Body.String())
 	}
 }

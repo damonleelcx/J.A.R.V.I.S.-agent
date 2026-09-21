@@ -19,6 +19,7 @@ import (
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/llm"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/mail"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/blob"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/buildinfo"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/clock"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/config"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/db"
@@ -26,10 +27,15 @@ import (
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/logx"
 )
 
+// Build metadata, written at link time: `-X main.version=…` and the two beside
+// it. `make build` sets them from git; deploy/Dockerfile takes them from its
+// FORGE_VERSION / FORGE_COMMIT / FORGE_BUILD_DATE build arguments. Unset, they
+// stay "unknown" here and are reported as "unknown" everywhere — see
+// internal/platform/buildinfo.
 var (
-	version = "dev"
-	commit  = "unknown"
-	date    = "unknown"
+	version = buildinfo.Unknown
+	commit  = buildinfo.Unknown
+	date    = buildinfo.Unknown
 )
 
 // dbWaitLimit bounds the wait for the database at boot. See the same constant
@@ -76,8 +82,14 @@ func run() error {
 		Format:  cfg.Log.Format,
 		Service: "forged",
 	})
+	// One reading of this build for every surface that reports it: this line,
+	// forge.config.loaded below, /healthz and GET /v1/meta/build. An image built
+	// without deploy/Dockerfile's version arguments says "unknown" in all four
+	// rather than "dev" in some of them.
+	buildinfo.Set(version, commit, date)
+	build := buildinfo.Get()
 	log.Info(ctx, logx.EventServerStarting,
-		"version", version, "commit", commit, "built", date)
+		"version", build.Version, "commit", build.Commit, "built", build.Date)
 	for _, w := range warnings {
 		log.Warn(ctx, logx.EventConfigDefault, "warning", w)
 	}
@@ -188,8 +200,8 @@ func run() error {
 		Speaker: httpapi.SpeakerFor(ctx, cfg, log),
 		Clock:   clk,
 		Log:     log,
-		Version: version,
-		Commit:  commit,
+		Version: build.Version,
+		Commit:  build.Commit,
 	})
 
 	srv := &http.Server{

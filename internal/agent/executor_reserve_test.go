@@ -12,8 +12,8 @@ import (
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/llm"
 )
 
-// toolingModel asks for a tool on every call and charges 100 tokens a call: a task that
-// would go on calling the model for as many iterations as it is allowed.
+// toolingModel asks for a tool on every call and charges 12,000 tokens a call: a task
+// that would go on calling the model for as many iterations as it is allowed.
 type toolingModel struct {
 	mu sync.Mutex
 	n  int
@@ -24,7 +24,7 @@ func (m *toolingModel) Complete(context.Context, llm.Request) (*llm.Response, er
 	m.n++
 	n := m.n
 	m.mu.Unlock()
-	return &llm.Response{FinishReason: "tool_calls", Usage: llm.Usage{TotalTokens: 100},
+	return &llm.Response{FinishReason: "tool_calls", Usage: llm.Usage{TotalTokens: 12_000},
 		ToolCalls: []llm.ToolCall{{ID: fmt.Sprintf("call-%d", n), Type: "function",
 			Function: llm.FunctionCall{Name: "read_file", Arguments: `{"path":"notes.txt"}`}}}}, nil
 }
@@ -40,16 +40,19 @@ func (m *toolingModel) calls() int {
 // ‼️ An ordinary (non-build) goal's executor stops before a call its ceiling cannot pay
 // for, as a build's calls do (2026-09-17, follow-up to the live re-check).
 //
-// The ceiling is 300 and every call costs 100. The executor called its model directly
-// and the worker checked the ceiling only before the task started, so this task used to
-// call until its iteration limit: 1,200 tokens of a 300 ceiling. Now the third call may
-// cost 125 (the largest, 100, and a quarter) with 100 left, and is not placed.
+// The ceiling is 36,000 and every call costs 12,000. The executor called its model
+// directly and the worker checked the ceiling only before the task started, so this task
+// used to call until its iteration limit. Now the third call may cost 15,000 (the
+// largest, 12,000, and a quarter) with 12,000 left, and is not placed.
+//
+// In thousands because a goal's first call reserves engine.FirstCallReserve rather than
+// nothing (2026-09-20): a 300-token ceiling cannot pay for any call this system makes.
 func TestExecutor_AnOrdinaryGoalStopsBeforeACallThatWouldPassItsCeiling(t *testing.T) {
 	skipWithoutDatabase(t)
 	h := newGateHarness(t)
 	goal := h.createGoal(t, "Reserve", "an ordinary goal", engine.AutonomySandboxExecute, engine.RiskR1)
 	h.seedChain(t, goal)
-	if _, err := h.pool.Exec(context.Background(), `update forge_goals set max_tokens = 300 where id = $1`, goal.ID); err != nil {
+	if _, err := h.pool.Exec(context.Background(), `update forge_goals set max_tokens = 36000 where id = $1`, goal.ID); err != nil {
 		t.Fatal(err)
 	}
 	model := &toolingModel{}
@@ -64,14 +67,15 @@ func TestExecutor_AnOrdinaryGoalStopsBeforeACallThatWouldPassItsCeiling(t *testi
 		goal.ID).Scan(&spent, &largest); err != nil {
 		t.Fatal(err)
 	}
-	if spent > 300 || spent != 200 || largest != 100 || model.calls() != 2 {
-		t.Fatalf("%d call(s), %d of 300 spent, largest %d; want 2 calls and 200 spent", model.calls(), spent, largest)
+	if spent > 36_000 || spent != 24_000 || largest != 12_000 || model.calls() != 2 {
+		t.Fatalf("%d call(s), %d of 36000 spent, largest %d; want 2 calls and 24000 spent",
+			model.calls(), spent, largest)
 	}
 	a, _ := h.chainTasks(t, goal.ID)
-	why := "100 tokens were left, and the next model call was not placed because it may cost 125 " +
-		"(the largest call this goal has made, 100 tokens, and a quarter more), which would pass the ceiling. " +
+	why := "12000 tokens were left, and the next model call was not placed because it may cost 15000 " +
+		"(the largest call this goal has made, 12000 tokens, and a quarter more), which would pass the ceiling. " +
 		"The goal stops here rather than spend past it."
-	if a.Status != engine.StatusFailed || !strings.Contains(a.ErrorDetail, "goal budget exhausted on tokens: used 200 tokens of 300. "+why) {
+	if a.Status != engine.StatusFailed || !strings.Contains(a.ErrorDetail, "goal budget exhausted on tokens: used 24000 tokens of 36000. "+why) {
 		t.Errorf("the task ended %s with %q", a.Status, a.ErrorDetail)
 	}
 	var said string
@@ -79,7 +83,7 @@ func TestExecutor_AnOrdinaryGoalStopsBeforeACallThatWouldPassItsCeiling(t *testi
 		goal.ID, engine.EventBudgetExceeded).Scan(&said); err != nil {
 		t.Fatalf("the timeline does not say the budget stopped the task part-way: %v", err)
 	}
-	if said != "Budget exhausted on tokens: used 200 tokens of 300. "+why {
+	if said != "Budget exhausted on tokens: used 24000 tokens of 36000. "+why {
 		t.Errorf("the timeline says %q", said)
 	}
 }

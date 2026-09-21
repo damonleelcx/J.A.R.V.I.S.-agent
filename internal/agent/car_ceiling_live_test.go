@@ -17,6 +17,7 @@ import (
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/agent"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/cad"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/engine"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/geometry"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/llm"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/persona"
@@ -395,7 +396,11 @@ func (m *meteredClient) setStep(n int) {
 
 // firstCallReserve is what a call is assumed to cost before any call of the run
 // has been seen. The largest call of the 2026-09-15 verified run was 19,648 tokens.
-const firstCallReserve = 12_000
+//
+// The same number the engine now reserves for a goal's first call, and taken from
+// it rather than written down twice: this harness had the rule the goal ceiling
+// was missing, and two copies of it would drift the day one of them is retuned.
+const firstCallReserve = engine.FirstCallReserve
 
 // reserve is what the next call is assumed to cost: the largest call this run has
 // seen, with a quarter on top, because a build's calls grow with the model it

@@ -26,7 +26,7 @@ func gyroidInABox(cell, wall float64) geometry.Document {
 // A gyroid in a box builds as a mesh-only surface within the triangle budget, and
 // the exact solids beside it are built exactly as they would be without it.
 func TestKernel_AGyroidInABoxBuildsAsAMeshOnlyPartWithinBudget(t *testing.T) {
-	k := kernel(t)
+	k := latticeKernel(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
@@ -97,7 +97,7 @@ func TestKernel_AGyroidInABoxBuildsAsAMeshOnlyPartWithinBudget(t *testing.T) {
 // A STEP file leaves the lattice out and says so in its own FILE_DESCRIPTION; a
 // file with no mesh-only part is unchanged.
 func TestKernel_STEPLeavesOutAMeshOnlyPartAndSaysSoInTheFile(t *testing.T) {
-	k := kernel(t)
+	k := latticeKernel(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
@@ -131,7 +131,7 @@ func TestKernel_STEPLeavesOutAMeshOnlyPartAndSaysSoInTheFile(t *testing.T) {
 
 // Mass properties never measure a lattice, and name it.
 func TestKernel_PropertiesLeaveOutAMeshOnlyPart(t *testing.T) {
-	k := kernel(t)
+	k := latticeKernel(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
@@ -153,7 +153,7 @@ func TestKernel_PropertiesLeaveOutAMeshOnlyPart(t *testing.T) {
 
 // Every pattern in Go's table builds in the kernel: the two lists are one list.
 func TestKernel_EveryLatticePatternFORGETeachesBuilds(t *testing.T) {
-	k := kernel(t)
+	k := latticeKernel(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 	defer cancel()
 
@@ -179,7 +179,7 @@ func TestKernel_EveryLatticePatternFORGETeachesBuilds(t *testing.T) {
 // docs/spikes/2026-09-18-mesh-only-parts. Within 20%: the factor is exact near cell/10
 // and the wall runs thicker as it approaches cell/7 (diamond +16% at cell/7.5).
 func TestKernel_ALatticeSitsInItsBoxWithTheWallItAskedFor(t *testing.T) {
-	k := kernel(t)
+	k := latticeKernel(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
@@ -229,7 +229,7 @@ func TestKernel_ALatticeSitsInItsBoxWithTheWallItAskedFor(t *testing.T) {
 // chiral, so the mirrored one is a different surface, and every reader of a
 // mirrored part reflects it (Part.Mirrored).
 func TestKernel_AMirroredLatticeIsItsReflection(t *testing.T) {
-	k := kernel(t)
+	k := latticeKernel(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 
@@ -287,7 +287,7 @@ func TestKernel_AMirroredLatticeIsItsReflection(t *testing.T) {
 
 // A design of nothing but mesh-only parts draws, and refuses a STEP file by name.
 func TestKernel_OnlyMeshOnlyPartsDrawButHaveNoSTEP(t *testing.T) {
-	k := kernel(t)
+	k := latticeKernel(t)
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
 

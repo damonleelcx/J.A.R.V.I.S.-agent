@@ -39,6 +39,25 @@ func kernel(t *testing.T) *cad.Kernel {
 	return k
 }
 
+// latticeKernel is kernel(t) for a fence about mesh-only parts.
+//
+// It skips for one more reason: a kernel whose venv has no manifold3d builds
+// every exact solid and refuses every lattice by name, so these fences fail with
+// "the lattice is not drawn", which reads as a defect in the lattice code and is
+// a missing package. See cad.MeshOnlySupport.
+func latticeKernel(t *testing.T) *cad.Kernel {
+	t.Helper()
+	k := kernel(t)
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	defer cancel()
+	if ok, why := k.MeshOnlySupport(ctx); !ok {
+		t.Skipf("this kernel cannot build mesh-only parts, so a lattice fence would be testing their "+
+			"absence rather than their shape — the kernel says %q. Run `make cad-venv` to install the "+
+			"pinned internal/domain/cad/requirements.txt, which carries manifold3d (pinned by PR 156).", why)
+	}
+	return k
+}
+
 func plate() geometry.Document {
 	return geometry.Document{
 		Name: "bracket", Units: "mm",
