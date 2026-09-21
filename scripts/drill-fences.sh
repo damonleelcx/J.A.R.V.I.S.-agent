@@ -5716,7 +5716,7 @@ drill "a reversed face's normal is turned inward" internal/domain/cad/sidecar.py
 # its floor and reports a 90 degree overhang.
 drill "the floor comes from the bounding box" internal/domain/cad/sidecar.py \
   's = s.replace("            if floor is None or p.Y() < floor:\n                floor = p.Y()", "            floor = float(shape.bounding_box().min.Y)", 1)' \
-  ./internal/domain/cad 'TestKernel_TheThinnestWallIsMeasuredThroughTheMaterial'
+  ./internal/domain/cad 'TestKernel_AnOverhangIsMeasuredFromVerticalAndAFloorIsNotOne'
 
 # A sharp inside corner reported as "no corner at all": a milled pocket no tool can
 # cut then reads exactly like a plain box.

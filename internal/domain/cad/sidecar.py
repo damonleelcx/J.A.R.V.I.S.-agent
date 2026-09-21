@@ -2048,11 +2048,15 @@ def _part_manufacturability(shape, inter):
     min_wall = min_feature = min_draft = max_overhang = None
     concave_radius = None
     sharp = False
-    # ‼️ The floor is the lowest SAMPLE, not the bounding box's bottom. OCCT's box
-    # around a curved solid is a little larger than the solid — a 100 mm rod
-    # measured 1e-7 mm below its own end face — so a floor taken from the box left
-    # the flat face the part rests on a hair above it, and every cylinder in the
-    # model reported a 90 degree overhang it does not have. Taken from the samples,
+    # ‼️ The floor is the lowest SAMPLE, not the bounding box's bottom.
+    #
+    # On a box, an extrusion or a rod the two are the same number to the bit
+    # (measured 2026-09-21: gap exactly 0). They come apart on a curved solid that
+    # has no sample at its lowest point: a 20 mm sphere's lowest sample is 2.47 mm
+    # above the bottom of its box, and a cone's apex 3.4 mm. A floor taken from the
+    # box leaves those samples above it, so the very point the part RESTS on is
+    # counted as a ceiling — the sphere's steepest overhang reads 61.2 degrees
+    # instead of 26.5. Taken from the samples,
     # the resting face IS the floor, exactly.
     sampled = [(face, _face_samples(face)) for face in faces]
     floor = None

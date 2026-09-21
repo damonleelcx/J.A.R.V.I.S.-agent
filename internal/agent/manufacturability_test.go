@@ -30,6 +30,20 @@ func TestManufacturability_ADescribedRenderSaysNothingAboutMakingAnything(t *tes
 		Manufacturability:      []geometry.PartMeasure{{ID: "cylinder-body", MinWall: thickness(0.1)}},
 		ManufacturabilityParts: 2}
 
+	// ‼️ Both ways in, because they are two separate refusals.
+	//
+	// repairIfPartsOverlap returns before its deferred block when the picture is
+	// not the kernel's, so going through it alone never reaches this function at
+	// all — and a fence that only did that stayed green with the guard below
+	// deleted. noteManufacturability owns the epistemics of the notes it writes and
+	// must refuse on its own, whatever the one caller it has today happens to do
+	// first.
+	noteManufacturability(reply, &sheet)
+	if reply.Repaired != "" {
+		t.Errorf("called directly, a described render produced a manufacturability note: %q",
+			reply.Repaired)
+	}
+
 	c.repairIfPartsOverlap(context.Background(), reply, &sheet)
 
 	if reply.Repaired != "" {

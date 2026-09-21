@@ -98,10 +98,9 @@ func TestKernel_TheThinnestWallIsMeasuredThroughTheMaterial(t *testing.T) {
 	// And its smallest feature is that diameter too: the rim is a circle 25.1 mm
 	// long, and a 2 mm hole is a 2 mm feature and not a 6.28 mm edge.
 	aboutMM(t, "the rod's smallest feature", rod.MinFeature, 8, 1e-6)
-	// ‼️ And a rod standing on its own end has NO overhang. OCCT's box around a
-	// curved solid is a hair larger than the solid, so a floor taken from that box
-	// leaves the end face the rod rests on just above it — and every cylinder in
-	// every model then reports a 90 degree overhang it does not have.
+	// And a rod standing on its own end has NO overhang: its only downward face is
+	// the one it rests on. (What that catches is the face NORMAL, not the floor —
+	// see the rod and the sphere in the overhang fence for which is which.)
 	if over := rod.MaxOverhang; over != nil {
 		t.Errorf("a rod standing on its own end reported a %g degree overhang", *over)
 	}
@@ -197,6 +196,25 @@ func TestKernel_AnOverhangIsMeasuredFromVerticalAndAFloorIsNotOne(t *testing.T) 
 	doc := geometry.Document{Name: "overhang", Units: "mm", Parts: []geometry.Part{
 		lean("overhung", 10, 40, 0),
 		lean("undercut", 40, 10, 200),
+		// ‼️ A rod, because the two trapezia cannot catch a normal that points the
+		// wrong way. Every face of an extrusion is FORWARD, so reversing a REVERSED
+		// face's normal a second time changes nothing about either of them — and
+		// OCCT's BRepGProp_Face.Normal already does that reversal, so doing it again
+		// points a REVERSED face into the solid. A cylinder has one, its top cap:
+		// turned inward it faces down, and the rod reports a 90 degree ceiling on
+		// the face it is standing up from.
+		{ID: "rod", Name: "rod", Shape: "cylinder",
+			Size:     map[string]float64{"radius": 4, "height": 100},
+			Position: []float64{0, 0, 400}, Rotation: []float64{0, 0, 0}},
+		// ‼️ And a sphere, because nothing above can catch the FLOOR being taken
+		// from the bounding box. On a box, an extrusion and a rod the box's bottom
+		// and the lowest sampled point are the same number to the bit, so the two
+		// rules are indistinguishable there. On a sphere they are 2.47 mm apart:
+		// no sample sits at the pole, so a floor taken from the box leaves the
+		// lowest samples above it and they are counted as a ceiling.
+		{ID: "ball", Name: "ball", Shape: "sphere",
+			Size:     map[string]float64{"radius": 20},
+			Position: []float64{0, 0, 600}, Rotation: []float64{0, 0, 0}},
 	}}
 	got := evaluated(t, doc)
 
@@ -208,6 +226,27 @@ func TestKernel_AnOverhangIsMeasuredFromVerticalAndAFloorIsNotOne(t *testing.T) 
 	if over := measured(t, got, "undercut").MaxOverhang; over != nil {
 		t.Errorf("a wall that leans INWARD as it rises reported a %g degree overhang; "+
 			"nothing is above air", *over)
+	}
+	if over := measured(t, got, "rod").MaxOverhang; over != nil {
+		t.Errorf("a rod standing on its own end reported a %g degree overhang; its only "+
+			"downward face is the one it rests on", *over)
+	}
+
+	// ‼️ What is claimed about the sphere, and what is NOT.
+	//
+	// NOT that a sphere prints without support — it does not. What is claimed is
+	// that the point it RESTS on is not counted as a ceiling. Measured both ways on
+	// this kernel: excluding the resting point the steepest sample is 26.5 degrees,
+	// including it, 61.2. 45 separates them with room on either side, and is the
+	// number the FDM row already uses, so a reader knows what crossing it means.
+	// A change to the sampling grid moves both numbers and should re-open this.
+	ball := measured(t, got, "ball")
+	if ball.MaxOverhang == nil {
+		t.Fatalf("a sphere reported no overhang at all; its underside is not vertical")
+	}
+	if *ball.MaxOverhang >= 45 {
+		t.Errorf("a sphere resting on its own lowest point reported a %g degree overhang; "+
+			"the point it rests on is being counted as a ceiling", *ball.MaxOverhang)
 	}
 }
 
