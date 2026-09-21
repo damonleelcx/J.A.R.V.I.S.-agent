@@ -444,6 +444,28 @@ drill "the kernel builds a truncated cone end-for-end" internal/domain/cad/sidec
   ./internal/domain/cad 'TestKernel_ATruncatedConesRadiusTopIsItsTop'
 
 echo
+echo "A plane is one-sided and faces up"
+# Added 2026-09-21. The same Plane.XZ, one shape further down _shape: the kernel
+# built a plane facing DOWN (declared -Y, wound -Y) while both renderers declared
+# +Y, and forge3d.js wound its own plane -Y against its own +Y normals, so the
+# viewport culled every plane the moment the camera was above it. No volume fence
+# could see any of it: a sheet encloses nothing either way up, which is why
+# TestExport_EverySolidIsWoundOutward skips `plane` by name. The convention now
+# lives on func plane in mesh.go and these three hold the three copies of it. See
+# docs/bugfix/2026-09-21-a-plane-faced-down-and-was-culled-from-above.md.
+drill "the kernel builds a plane facing down" internal/domain/cad/sidecar.py \
+  "s = s.replace('z_dir=Vector(0, 1, 0)) * Rectangle', 'z_dir=Vector(0, -1, 0)) * Rectangle', 1)" \
+  ./internal/domain/cad 'TestKernel_APlaneFacesUp'
+
+drill "the exporter's plane faces down" internal/domain/geometry/mesh.go \
+  's = s.replace("n := [3]float64{0, 1, 0}", "n := [3]float64{0, -1, 0}", 1)' \
+  ./internal/domain/geometry 'TestAPlaneFacesUp'
+
+drill "the browser winds a plane face-down" internal/httpapi/assets/forge3d.js \
+  "s = s.replace('indices: [0,2,1, 0,3,2]', 'indices: [0,1,2, 0,2,3]', 1)" \
+  ./internal/httpapi 'TestTheRendererDrawsAPlaneFacingUp'
+
+echo
 echo "Every document a turn installs is settled"
 # Added 2026-09-11. validate() was the only place a document was bound, defaulted
 # and noted, and it ran once, before the three other producers of a turn's

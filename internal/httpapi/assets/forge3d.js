@@ -217,12 +217,24 @@
     return { positions: p, normals: n, indices: idx };
   }
 
+  /* A plane is ONE-SIDED and FACES UP: normals +Y, and wound to agree with them.
+   * The convention and the reasons for it are in internal/domain/geometry/mesh.go,
+   * func plane — this is a copy of it and nothing more.
+   *
+   * ‼️ The winding is not decoration here. This pass runs with gl.enable(CULL_FACE)
+   * and gl.frontFace(gl.CCW), so a plane wound the other way is CULLED when it is
+   * looked at from above — which is the view a ground or datum plane exists for.
+   * It used to be: the indices ran 0,1,2 / 0,2,3 over these corners, whose cross
+   * product is -Y, while every normal said +Y. Nothing lit it wrongly, because
+   * nothing drew it at all. (Unlike the Go exporter, there is no orient() here to
+   * quietly repair a winding that disagrees with its normal.)
+   * docs/bugfix/2026-09-21-a-plane-faced-down-and-was-culled-from-above.md */
   function planeGeometry(w, d) {
     var x = w/2, z = d/2;
     return {
       positions: [-x,0,-z, x,0,-z, x,0,z, -x,0,z],
       normals: [0,1,0, 0,1,0, 0,1,0, 0,1,0],
-      indices: [0,1,2, 0,2,3]
+      indices: [0,2,1, 0,3,2]
     };
   }
 
