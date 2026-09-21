@@ -1,0 +1,108 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>Presentation preview</title>
+<!--
+  The fixed documents (car, gear, bracket) drawn by the shipped forge3d.js, for the
+  before/after screenshots of the "looks designed" presentation stage (2026-09-18).
+
+  Serve the REPOSITORY ROOT, then open:
+
+    python -m http.server 8765 --bind 127.0.0.1
+    http://127.0.0.1:8765/docs/spikes/2026-09-18-presentation/preview.html?doc=car&theme=dark
+
+  Parameters:
+    doc    car | gear | bracket | finished-car (internal/agent/testdata/finished-car.json)
+    theme  dark | light
+    src    the forge3d.js to load (default: the shipped one). The "before" shots load the
+           file as it was on origin/main from a second server.
+    mesh   a mesh reply (GET /v1/geometry/{id}/mesh, saved as JSON) to hand to studio.load,
+           the way the workbench does when the CAD kernel answered. Without it the page
+           draws PRIMITIVES ONLY and says so in the label.
+    cam    yaw,pitch,distance,tx,ty,tz  to fix the camera (default: the renderer's own)
+    lines  1 turns feature lines on (after only)
+    shoot  a file name: save the frame into shots/ through the harness server's POST /save
+-->
+<style>
+  html, body { margin: 0; font: 13px/1.4 system-ui, sans-serif; }
+  body.dark { background: #0b0f18; color: #d8dde6; }
+  body.light { background: #f2f3f6; color: #22262e; }
+  #wrap { position: relative; width: 960px; height: 600px; }
+  canvas { width: 960px; height: 600px; display: block; }
+  #label { position: absolute; left: 10px; top: 8px; padding: 3px 8px; border-radius: 4px;
+           font-weight: 600; letter-spacing: .02em; }
+  body.dark #label { background: rgba(230, 205, 143, .16); color: #e6cd8f; }
+  body.light #label { background: rgba(138, 101, 32, .12); color: #8a6520; }
+  #meta { position: absolute; left: 10px; bottom: 8px; opacity: .75; font-size: 12px; }
+</style>
+<div id="wrap"><canvas id="c"></canvas><div id="label"></div><div id="meta"></div></div>
+<script>
+  (function () {
+    var q = new URLSearchParams(location.search);
+    var light = q.get('theme') === 'light';
+    document.body.className = light ? 'light' : 'dark';
+    /* forge3d.js reads the theme through ForgeTheme, as it does on the workbench. */
+    window.ForgeTheme = { onChange: function (cb) { cb(light); }, isLight: function () { return light; } };
+    /* One pixel per CSS pixel, so every shot is 960 x 600 whatever the pane's zoom. */
+    try { Object.defineProperty(window, 'devicePixelRatio', { get: function () { return 1; } }); } catch (e) {}
+    var src = q.get('src') || '../../../internal/httpapi/assets/forge3d.js';
+    var s = document.createElement('script');
+    s.src = src;
+    s.onload = start;
+    document.head.appendChild(s);
+
+    function get(url) { return fetch(url).then(function (r) { if (!r.ok) throw new Error(url + ' ' + r.status); return r.json(); }); }
+
+    function start() {
+      var doc = q.get('doc') || 'car';
+      var url = doc === 'finished-car' ? '../../../internal/agent/testdata/finished-car.json' : 'data/' + doc + '.json';
+      var mesh = q.get('mesh');
+      Promise.all([get(url), mesh ? get(mesh) : Promise.resolve(null)]).then(function (r) {
+        var spec = r[0], built = r[1];
+        var studio = new Forge3D.Studio(document.getElementById('c'), {
+          onError: function (m) { document.getElementById('meta').textContent = 'error: ' + m; } });
+        window.studio = studio;
+        if (q.get('lines') === '1' && studio.setFeatureLines) studio.setFeatureLines(true);
+        studio.load(spec, built);
+        var cam = q.get('cam');
+        if (cam) {
+          var c = cam.split(',').map(Number);
+          studio.camera.yaw = c[0]; studio.camera.pitch = c[1];
+          if (c[2]) studio.camera.distance = c[2];
+          if (c.length >= 6) studio.camera.target = [c[3], c[4], c[5]];
+          studio.draw();
+        }
+        document.getElementById('label').textContent = built
+          ? 'KERNEL MESH (' + mesh + ')'
+          : 'PRIMITIVES ONLY - no CAD kernel on this page (the workbench draws the kernel mesh when one exists)';
+        document.getElementById('meta').textContent = spec.name + ' - ' + (studio.renderPath || '') +
+          (src.indexOf('forge3d.js') >= 0 && q.get('src') ? ' - renderer: ' + src : ' - renderer: this branch');
+        window.__ready = true;
+        /* shoot=name.png: POST the canvas to a local server that writes it into shots/
+         * (the harness server; python's http.server has no POST and ignores this). */
+        if (q.get('shoot')) {
+          /* The label is burnt into the saved picture too, so a shot never loses it. */
+          var img = new Image();
+          img.onload = function () {
+            var c2 = document.createElement('canvas');
+            c2.width = img.width; c2.height = img.height;
+            var x = c2.getContext('2d');
+            x.drawImage(img, 0, 0);
+            x.font = '600 13px system-ui, sans-serif';
+            var text = document.getElementById('label').textContent, meta = document.getElementById('meta').textContent;
+            x.fillStyle = light ? 'rgba(242,243,246,.85)' : 'rgba(11,15,24,.75)';
+            x.fillRect(8, 6, x.measureText(text).width + 16, 22);
+            x.fillStyle = light ? '#8a6520' : '#e6cd8f';
+            x.fillText(text, 16, 22);
+            x.font = '12px system-ui, sans-serif';
+            x.fillStyle = light ? 'rgba(34,38,46,.75)' : 'rgba(216,221,230,.75)';
+            x.fillText(meta, 16, c2.height - 12);
+            fetch('/save?name=' + encodeURIComponent(q.get('shoot')), { method: 'POST', body: c2.toDataURL('image/png') })
+              .then(function (r) { return r.text(); })
+              .then(function (t) { document.title = 'shot ' + t; });
+          };
+          img.src = studio.snapshot();
+        }
+      }).catch(function (e) { document.getElementById('meta').textContent = String(e); window.__ready = 'error'; });
+    }
+  })();
+</script>

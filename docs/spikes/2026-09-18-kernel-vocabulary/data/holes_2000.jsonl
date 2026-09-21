@@ -1,0 +1,6 @@
+{"round": 0, "n": 1000, "method": "multi", "seconds": 1.547, "volume": 2858628.3, "want": 2858628.3, "r": 3.0, "cpu_percent_before": 34.4}
+{"round": 0, "n": 2000, "method": "multi", "seconds": 4.137, "volume": 2717256.7, "want": 2717256.7, "r": 3.0, "cpu_percent_before": 42.5}
+{"round": 1, "n": 2000, "method": "multi", "seconds": 3.982, "volume": 2717256.7, "want": 2717256.7, "r": 3.0, "cpu_percent_before": 39.5}
+{"round": 1, "n": 1000, "method": "multi", "seconds": 1.618, "volume": 2858628.3, "want": 2858628.3, "r": 3.0, "cpu_percent_before": 36.1}
+{"round": 2, "n": 1000, "method": "multi", "seconds": 1.586, "volume": 2858628.3, "want": 2858628.3, "r": 3.0, "cpu_percent_before": 31.6}
+{"round": 2, "n": 2000, "method": "multi", "seconds": 4.245, "volume": 2717256.7, "want": 2717256.7, "r": 3.0, "cpu_percent_before": 33.5}

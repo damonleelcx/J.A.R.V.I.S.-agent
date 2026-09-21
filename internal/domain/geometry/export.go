@@ -227,20 +227,26 @@ func KernelLabelFor(v *Variant) (*Label, error) {
 	if err != nil {
 		return nil, err
 	}
+	lossy := []string{
+		fmt.Sprintf("Lengths are written in millimetres, the kernel's unit, whatever unit the design was "+
+			"described in (this one: %s). The file records millimetres, so a reader that honours it "+
+			"does not rescale; one that ignores it reads millimetres.", v.Units),
+		"Colour and transparency are not written.",
+		"Each part keeps its name. Its note, the design's assumptions and the unverified list below " +
+			"are not in the file, so it arrives with no provenance attached.",
+		"A part the kernel cannot build is left out of the file, and the download names it in its " +
+			"X-Forge-Export-Label header.",
+	}
+	// FIRST when there are any: a STEP file is read as exact and complete, and a
+	// mesh-only part is neither (lattice.go).
+	if note := MeshOnlyNote(v.Document.MeshOnlyParts(), "this STEP file"); note != "" {
+		lossy = append([]string{note}, lossy...)
+	}
 	return &Label{
 		Format: f.Name, FormatKind: f.Kind,
 		Units: v.Units, Frame: v.Frame, Generator: v.Generator,
 		Verification: string(v.Verification), Disposition: string(v.Disposition),
-		Lossy: []string{
-			fmt.Sprintf("Lengths are written in millimetres, the kernel's unit, whatever unit the design was "+
-				"described in (this one: %s). The file records millimetres, so a reader that honours it "+
-				"does not rescale; one that ignores it reads millimetres.", v.Units),
-			"Colour and transparency are not written.",
-			"Each part keeps its name. Its note, the design's assumptions and the unverified list below " +
-				"are not in the file, so it arrives with no provenance attached.",
-			"A part the kernel cannot build is left out of the file, and the download names it in its " +
-				"X-Forge-Export-Label header.",
-		},
+		Lossy:       lossy,
 		Assumptions: v.Assumptions(),
 		NotVerified: v.NotVerified(),
 	}, nil
@@ -312,6 +318,9 @@ func lossyFor(f Format, v *Variant) []string {
 			"Nothing of this label is in the file. STL has no comments — only the solid's name line "+
 				"carries anything, and most readers ignore it.",
 			"Colour and transparency are not written.")
+	}
+	if note := MeshOnlyNote(v.Document.MeshOnlyParts(), "this file"); note != "" {
+		out = append(out, note)
 	}
 	for _, p := range v.Document.Parts {
 		if p.Shape == "plane" {

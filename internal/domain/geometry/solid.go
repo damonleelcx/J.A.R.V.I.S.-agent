@@ -51,6 +51,12 @@ type Solid struct {
 	// (Part.Mirrored). Sent, not derived: a reflection is not in Matrix, which the
 	// sidecar reads as a rotation.
 	Mirrored bool `json:"mirrored,omitempty"`
+	// MeshOnly marks a declared mesh-only part (lattice.go). The kernel takes it out
+	// before anything is built: it never enters OCCT, a STEP file, the volume, the
+	// part properties or the interference check, and on a mesh request it is built
+	// as a mesh and returned marked mesh_only. Lattice is its pattern.
+	MeshOnly bool   `json:"mesh_only,omitempty"`
+	Lattice  string `json:"lattice,omitempty"`
 	// Dims are the dimensions this shape reads, defaults applied and converted
 	// to millimetres. Which keys are present depends on the shape and is the
 	// builder's contract.
@@ -225,6 +231,10 @@ func solidsAndOperations(d Document, unit Unit) ([]Solid, []Operation, []Problem
 	}
 	inferred = append(inferred, gearNotes...)
 
+	// Every mesh-only lattice, checked against its own numbers and the budget they
+	// share, on the expanded parts so each placed copy counts (lattice.go).
+	lattices := latticeProblems(d.Parts)
+
 	profiles, paths, profileProblems := d.resolvedProfiles()
 	for _, problem := range profileProblems {
 		// An ERROR means the part could not be read and is absent. A WARNING
@@ -244,7 +254,8 @@ func solidsAndOperations(d Document, unit Unit) ([]Solid, []Operation, []Problem
 		dims := map[string]float64{}
 		var section *outline
 		var route *polyline
-		var script string
+		var script, lattice string
+		meshOnly := false
 		// Resolved through the one table every reader uses (retired.go), so the
 		// exported file and the viewport cannot disagree about what a retired
 		// word means. The kernel is then sent the RESOLVED word and has no case
@@ -327,6 +338,19 @@ func solidsAndOperations(d Document, unit Unit) ([]Solid, []Operation, []Problem
 			dims["radius"] = sizeOr(p, "radius", 0.5, unit, infer)
 			dims["height"] = sizeOr(p, "height", 1, unit, infer)
 			dims["radius_top"] = 0
+		case latticeShape:
+			// Mesh-only (lattice.go): sent so a mesh can be built, and marked so the
+			// kernel keeps it out of everything exact. A lattice refused by its own
+			// numbers or by the shared budget is not sent at all.
+			if problems := lattices[p.ID]; len(problems) > 0 {
+				for _, problem := range problems {
+					infer("%s %s, so it is not in this file.", problem.Name, problem.Detail)
+				}
+				continue
+			}
+			l, _ := readLattice(p)
+			dims = latticeDims(l, 1) // converted below with every other length
+			meshOnly, lattice = true, l.Pattern.Name
 		default:
 			// An unknown shape is skipped rather than guessed at. The mesh path
 			// makes the same choice; a builder inventing a box for a word it did
@@ -435,6 +459,7 @@ func solidsAndOperations(d Document, unit Unit) ([]Solid, []Operation, []Problem
 			ID: p.ID, Label: p.Label(), Shape: shape, Dims: dims, HoleParents: holeParents,
 			Outline: outlineCurve, Holes: holeCurves, Path: pathCurve, SectionFrame: frame,
 			Axis: axisOf(p), Matrix: RotationMatrix(rot), Position: pos, Script: script, Mirrored: p.Mirrored,
+			MeshOnly: meshOnly, Lattice: lattice,
 		})
 	}
 	// ‼️ From `d` as expanded above, never from the caller's document. See the
@@ -452,8 +477,12 @@ func solidsAndOperations(d Document, unit Unit) ([]Solid, []Operation, []Problem
 	// docs/bugfix/2026-09-13-feature-radii-were-sent-in-the-documents-units.md
 	// Fences: TestSolids_ConvertsAFeatureRadiusToMillimetres,
 	// TestKernel_AFilletIsTheSameSizeInEveryUnit.
+	// An edge_length and a shell or skin thickness are lengths for the same reason
+	// (looks designed, stages B2 and B4). Fence: TestSolids_ConvertsEveryFeatureLengthToMillimetres.
 	for i := range operations {
 		operations[i].Radius *= toMM
+		operations[i].EdgeLength *= toMM
+		operations[i].Thickness *= toMM
 	}
 	sort.SliceStable(inferred, func(i, j int) bool { return inferred[i] < inferred[j] })
 	return out, operations, featureProblems, inferred

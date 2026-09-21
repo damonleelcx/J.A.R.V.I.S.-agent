@@ -54,13 +54,15 @@ type ExportDTO struct {
 	// What the kernel left out of the file. Always arrays.
 	Skipped         []string `json:"skipped"`
 	FeatureFailures []string `json:"feature_failures"`
-	Attempts        int      `json:"attempts"`
-	MaxAttempts     int      `json:"max_attempts"`
-	GoalID          string   `json:"goal_id"`
-	RequestedBy     string   `json:"requested_by"`
-	CreatedAt       string   `json:"created_at"`
-	StoredAt        *string  `json:"stored_at"`
-	StatusURL       string   `json:"status_url"`
+	// Rounds built smaller than asked or on only some edges (stage B1).
+	FeatureReductions []string `json:"feature_reductions"`
+	Attempts          int      `json:"attempts"`
+	MaxAttempts       int      `json:"max_attempts"`
+	GoalID            string   `json:"goal_id"`
+	RequestedBy       string   `json:"requested_by"`
+	CreatedAt         string   `json:"created_at"`
+	StoredAt          *string  `json:"stored_at"`
+	StatusURL         string   `json:"status_url"`
 	// DownloadURL is set only once there is something to download.
 	DownloadURL string `json:"download_url,omitempty"`
 }
@@ -70,7 +72,8 @@ func toExportDTO(e *agent.Export) ExportDTO {
 		ID: e.ID, VersionID: e.VersionID, ProjectID: e.ProjectID, Format: e.Format,
 		Status: e.Status, Reason: e.Reason, Filename: e.Filename,
 		Skipped: orEmptyStrings(e.Skipped), FeatureFailures: orEmptyStrings(e.FeatureFailures),
-		Attempts: e.Attempts, MaxAttempts: e.MaxAttempts, GoalID: e.GoalID, RequestedBy: e.RequestedBy,
+		FeatureReductions: orEmptyStrings(e.FeatureReductions),
+		Attempts:          e.Attempts, MaxAttempts: e.MaxAttempts, GoalID: e.GoalID, RequestedBy: e.RequestedBy,
 		CreatedAt: e.CreatedAt.UTC().Format(time.RFC3339),
 		StatusURL: "/v1/geometry/exports/" + e.ID,
 	}
@@ -281,6 +284,7 @@ func exportJobLabel(e *agent.Export) string {
 	label := fmt.Sprintf("unverified proposal; B-Rep, not tessellated; nothing about this shape has been "+
 		"analysed or checked, and no interference check ran for this file; full label at "+
 		"/v1/geometry/%s/export/label?format=step", e.VersionID)
+	label = reducedLabel(e.FeatureReductions) + label
 	if n := len(e.FeatureFailures); n > 0 {
 		label = fmt.Sprintf("%d feature(s) could NOT be applied, so this shape is not what the "+
 			"design describes (%s); ", n, strings.Join(e.FeatureFailures, "; ")) + label

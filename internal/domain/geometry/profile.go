@@ -1,6 +1,7 @@
 package geometry
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"strings"
@@ -122,16 +123,13 @@ func resolveVia(pt Point, planar bool, lookup func(string) (float64, bool)) (*[3
 		return nil, nil
 	}
 	if v.Via != nil {
-		return nil, fmt.Errorf("its via carries a via of its own; an arc passes through one " +
-			"point, and a via is that point rather than another edge")
+		return nil, errors.New(ruleViaOfVia.refusal) // a row of curveRules (curve_guide.go)
 	}
 	if v.Radius != 0 || strings.TrimSpace(v.RadiusFrom) != "" {
-		return nil, fmt.Errorf("its via carries a corner radius; a via is a point the edge " +
-			"passes THROUGH, not a corner, so there is nothing there to round")
+		return nil, errors.New(ruleViaRadius.refusal) // a row of curveRules (curve_guide.go)
 	}
 	if planar && (v.Z != 0 || strings.TrimSpace(v.ZFrom) != "") {
-		return nil, fmt.Errorf("its via carries a z; the arc lies in the same plane as the " +
-			"drawing it bends")
+		return nil, errors.New(ruleViaZ.refusal) // a row of curveRules (curve_guide.go)
 	}
 	x, xerr := coordinate(v.X, v.XFrom, lookup)
 	y, yerr := coordinate(v.Y, v.YFrom, lookup)
@@ -447,13 +445,13 @@ func (d *Document) resolvedProfiles() (map[string]outline, map[string]polyline, 
 		// point numbers a person would recognise.
 		if outer.bows() {
 			if math.Abs(signedArea(flatOuter)) < 1e-9 {
-				add(label, "encloses no area once its arcs are drawn")
+				add(label, "%s", ruleBulgeEmpty.refusal)
 				continue
 			}
 			if selfIntersects(flatOuter) {
-				add(label, "crosses itself once its arcs are drawn. The points do not cross, so "+
+				add(label, "%s. The points do not cross, so "+
 					"this is a via bulging its edge across another one — move the via closer to "+
-					"the line between its two ends")
+					"the line between its two ends", ruleBulgeCrosses.refusal)
 				continue
 			}
 		}

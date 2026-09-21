@@ -42,6 +42,16 @@ func settleDocument(d *Prototype) *Prototype {
 		// failure. Dropping it is more honest than showing nothing.
 		return nil
 	}
+	/* A "car" part is written out here as the tree it is (geometry/car.go, stage C1
+	 * of the looks-designed work, 2026-09-18): FIRST, because everything below —
+	 * the defaults, the binding, the notes about outlines and features — reads the
+	 * tree it becomes, and here because this is the door every producer of a
+	 * document goes through. A car it could not build stays a "car" part, which
+	 * Faults reports, and its reasons are told like every other note; so is every
+	 * proportion outside the car's class, which never stops it being built. */
+	for _, problem := range geometry.ExpandTemplates(d) {
+		d.NotVerified = append(d.NotVerified, templateNote(problem))
+	}
 	/* PRD WRK-05: a dimension without its unit will eventually be read in
 	 * the wrong one.
 	 *

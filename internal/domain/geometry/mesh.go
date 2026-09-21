@@ -223,6 +223,9 @@ func Tessellate(doc Document, unit Unit) *Mesh {
 			infer("%s: its %s is not in this file — a mesh has no edges to round. The rounded "+
 				"solid is what the STEP export contains.", labelOf(doc, f.Of),
 				strings.ToLower(f.Op))
+		case "shell", "thicken":
+			infer("%s: its %s is not in this file — this mesh is the part before it. The walls "+
+				"are in the STEP export.", labelOf(doc, f.Of), strings.ToLower(f.Op))
 		}
 	}
 
@@ -351,6 +354,15 @@ func partTriangles(p Part, unit Unit, infer func(string, ...any)) ([]Triangle, *
 		// kernel writes. That is where a lofted hull comes out.
 		infer("%s: a section is an outline with no thickness, so it is not in this mesh file. "+
 			"The solid its loft blends is in the parametric export.", p.Label())
+		return nil, nil
+
+	case latticeShape:
+		// Mesh-only, and built only by the CAD kernel's mesh (lattice.go): this
+		// tessellator has no level sets. Named and left out rather than drawn as its
+		// box, which would put a solid block in the file where the design has an
+		// open, decorative sheet.
+		infer("%s: a lattice is mesh-only (%s) and drawn only from the CAD kernel's mesh, "+
+			"so it is not in this file.", p.Label(), MeshOnlyLabel)
 		return nil, nil
 
 	case "extrusion":

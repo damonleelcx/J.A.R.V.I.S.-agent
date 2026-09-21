@@ -1,0 +1,25 @@
+{
+  "name": "Presentation bracket (fixed fixture)",
+  "units": "mm",
+  "not_verified": ["a fixed fixture for before/after screenshots; not a design"],
+  "parts": [
+    {"id": "bracket", "name": "L bracket", "shape": "extrusion", "size": {"depth": 60},
+     "profile": [{"x": 0, "y": 0, "radius": 4}, {"x": 90, "y": 0, "radius": 4}, {"x": 90, "y": 8},
+                 {"x": 8, "y": 8, "radius": 10}, {"x": 8, "y": 70}, {"x": 0, "y": 70, "radius": 4}],
+     "position": [0, 0, 0], "color": "#5b7fa6", "opacity": 1,
+     "material": {"name": "aluminium 6082, anodised", "finish": "painted"}},
+    {"id": "rib", "name": "Gusset", "shape": "extrusion", "size": {"depth": 6},
+     "profile": [{"x": 8, "y": 8}, {"x": 50, "y": 8}, {"x": 8, "y": 50}],
+     "position": [0, 0, 0], "color": "#5b7fa6", "opacity": 1,
+     "material": {"name": "aluminium 6082, anodised", "finish": "painted"}},
+    {"id": "bolt-1", "name": "Bolt", "shape": "standard", "standard": "ISO 4762 M8x20",
+     "position": [60, 8, -15], "rotation": [0, 0, 0], "color": "#2b2d31", "opacity": 1,
+     "material": {"name": "steel 12.9, black oxide", "finish": "metal"}},
+    {"id": "bolt-2", "name": "Bolt", "shape": "standard", "standard": "ISO 4762 M8x20",
+     "position": [60, 8, 15], "rotation": [0, 0, 0], "color": "#2b2d31", "opacity": 1,
+     "material": {"name": "steel 12.9, black oxide", "finish": "metal"}},
+    {"id": "pad", "name": "Rubber pad", "shape": "box", "size": {"width": 60, "height": 4, "depth": 56},
+     "position": [55, -2, 0], "color": "#222428", "opacity": 1,
+     "material": {"name": "EPDM", "finish": "rubber"}}
+  ]
+}

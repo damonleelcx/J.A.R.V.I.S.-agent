@@ -1,0 +1,16 @@
+=== RUN   TestKernel_BuildsTheCarTemplateWithNothingMissingOrBuried
+=== RUN   TestKernel_BuildsTheCarTemplateWithNothingMissingOrBuried/default
+    car_kernel_test.go:77: default: 14 solids, 0 interference(s) none buried, bounds [-2169.5083683008434 -5.684341886080802e-14 -947.548992658551 2330.4916318991636 1256.2939184908478 947.5489926585783] phases {Shapes:138.4245ms Features:478.0236ms Assembly:245.220099ms Interferences:1.9122177s Export:342.128799ms Mesh:0s}
+=== RUN   TestKernel_BuildsTheCarTemplateWithNothingMissingOrBuried/long-hood-gt
+    car_kernel_test.go:77: long-hood-gt: 14 solids, 0 interference(s) none buried, bounds [-2363.1537657903823 0 -967.9016956994581 2536.846234409624 1312.4679613338747 967.9016956791605] phases {Shapes:60.167899ms Features:450.246699ms Assembly:397.2453ms Interferences:2.0950962s Export:270.295199ms Mesh:0s}
+=== RUN   TestKernel_BuildsTheCarTemplateWithNothingMissingOrBuried/long-low-hypercar
+    car_kernel_test.go:77: long-low-hypercar: 19 solids, 0 interference(s) none buried, bounds [-2504.6809624431003 0 -1085 2695.319037756904 1010.1325503626244 1085] phases {Shapes:66.2317ms Features:711.2213ms Assembly:333.947099ms Interferences:2.8408473s Export:358.613ms Mesh:0s}
+=== RUN   TestKernel_BuildsTheCarTemplateWithNothingMissingOrBuried/short-tall-suv
+    car_kernel_test.go:77: short-tall-suv: 12 solids, 0 interference(s) none buried, bounds [-1945.0000001000026 0 -929.101360116656 1955.0000001000005 1962.6844752175414 929.101360116656] phases {Shapes:53.504299ms Features:330.5026ms Assembly:200.9618ms Interferences:2.1314023s Export:284.726399ms Mesh:0s}
+--- PASS: TestKernel_BuildsTheCarTemplateWithNothingMissingOrBuried (32.54s)
+    --- PASS: TestKernel_BuildsTheCarTemplateWithNothingMissingOrBuried/default (21.79s)
+    --- PASS: TestKernel_BuildsTheCarTemplateWithNothingMissingOrBuried/long-hood-gt (3.32s)
+    --- PASS: TestKernel_BuildsTheCarTemplateWithNothingMissingOrBuried/long-low-hypercar (4.39s)
+    --- PASS: TestKernel_BuildsTheCarTemplateWithNothingMissingOrBuried/short-tall-suv (3.04s)
+PASS
+ok  	github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/cad	33.996s

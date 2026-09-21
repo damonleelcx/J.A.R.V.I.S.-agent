@@ -74,7 +74,11 @@ esac
 # it truthfully was about everything it knew about. The guard in drill() now
 # refuses rather than trusting this list to be kept up to date by hand.
 FILES=(
+  internal/domain/geometry/feature.go
+  internal/agent/cadbridge/cadbridge.go
+  internal/httpapi/geometry_exports.go
   internal/domain/geometry/curve.go
+  internal/domain/geometry/curve_guide.go
   internal/domain/geometry/triangulate.go
   internal/domain/geometry/sweep.go
   internal/domain/geometry/mesh.go
@@ -194,6 +198,16 @@ FILES=(
   internal/agent/designationrepair.go
   internal/domain/engine/budget.go
   Makefile
+  # Added 2026-09-18 (looks-designed stage C: the car template, its proportion
+  # table and its design words).
+  internal/domain/geometry/car.go
+  internal/domain/geometry/carproportions.go
+  internal/domain/geometry/designwords.go
+  internal/domain/geometry/templates/car_proportions.json
+  internal/domain/geometry/templates/design_words.json
+  # Added 2026-09-18 (looks designed, stage E1): the mesh-only lattice drills.
+  internal/domain/geometry/lattice.go
+  internal/domain/geometry/units.go
 )
 
 BACKUP=""
@@ -353,12 +367,14 @@ drill "the kernel is sent chords instead of arcs" internal/domain/geometry/curve
   's = s.replace("return CurveEdge{To: corners[i].to, Via: &via}", "_ = via\n\t\treturn CurveEdge{To: corners[i].to}", 1)' \
   ./internal/domain/cad 'TestKernel_ARoundedCornerIsARealArc'
 
+# Re-anchored by B3 (2026-09-18): profileExtent measures the exact curve (lines and
+# true arcs) now, not the flattened one, so the drawn vertices are added back in.
 drill "the measurement path measures the drawn vertex" internal/domain/geometry/overlay.go \
-  's = s.replace("flat, _, err := partOutline(p).flatten(\"outline\", Millimetre)\n\tif err != nil {\n\t\treturn min, max, false\n\t}", "flat := partOutline(p).Points\n\tif false {\n\t\treturn min, max, false\n\t}", 1)' \
+  's = s.replace("\treturn min, max, true\n}", "\tfor _, v := range partOutline(p).Points {\n\t\tgrow(v)\n\t}\n\treturn min, max, true\n}", 1)' \
   ./internal/domain/geometry 'TestMeasureFindsTheMaterialAndNotTheRoundedOffCorner'
 
 drill "the renderer steps its arcs at a different fineness" internal/httpapi/assets/forge3d.js \
-  "s = s.replace('Math.ceil(TESSELLATION.radial * c.angle / (2 * Math.PI))', 'Math.ceil(TESSELLATION.radial * c.angle / (3 * Math.PI))', 1)" \
+  "s = s.replace('Math.ceil(radialSegments() * c.angle / (2 * Math.PI))', 'Math.ceil(radialSegments() * c.angle / (3 * Math.PI))', 1)" \
   ./internal/httpapi 'TestRendererSweepsTheSameSolidAsTheExporter'
 
 drill "the kernel builds a straight line where an arc was sent" internal/domain/cad/sidecar.py \
@@ -396,7 +412,7 @@ drill "an arc that crosses another edge is not noticed" internal/domain/geometry
   ./internal/domain/geometry 'TestAnArcThatCrossesAnotherEdgeIsRefused'
 
 drill "the renderer steps its bows at a different fineness" internal/httpapi/assets/forge3d.js \
-  "s = s.replace('var steps2 = Math.max(1, Math.ceil(TESSELLATION.radial * a2.angle / (2 * Math.PI)));', 'var steps2 = Math.max(1, Math.ceil(TESSELLATION.radial * a2.angle / (3 * Math.PI)));', 1)" \
+  "s = s.replace('var steps2 = Math.max(1, Math.ceil(radialSegments() * a2.angle / (2 * Math.PI)));', 'var steps2 = Math.max(1, Math.ceil(radialSegments() * a2.angle / (3 * Math.PI)));', 1)" \
   ./internal/httpapi 'TestRendererBowsTheSameOutlineAsTheExporter'
 
 drill "the renderer bows the other way round" internal/httpapi/assets/forge3d.js \
@@ -1198,7 +1214,7 @@ echo "A check that covered part of the model says how much"
 # when it found nothing, and a check the pair budget stopped found nothing too; parts
 # the kernel could not build were never in the check and never mentioned.
 drill "a truncated check reads as a clean one" internal/agent/interference.go \
-  's = s.replace("\tdefer func() {\n\t\tif note := coverageNote(sheet); note != \"\" {\n\t\t\treply.noteRepair(note)\n\t\t}\n\t}()\n", "", 1)' \
+  's = s.replace("\tdefer func() {\n\t\tif note := coverageNote(sheet); note != \"\" {\n\t\t\treply.noteRepair(note)\n\t\t}\n", "\tdefer func() {\n", 1)' \
   ./internal/agent 'TestInterference_ATruncatedCheckSaysSoInTheTurn'
 
 drill "truncation is not what the note is about" internal/agent/interference.go \
@@ -5084,6 +5100,595 @@ drill "grouped containment takes a box's whole length for its reach" internal/do
 drill "grouped containment takes a quarter of a box for its reach" internal/domain/cad/sidecar.py \
   's = s.replace("            p.append(v * (lo[c] + hi[c]) / 2)\n            reach += abs(v) * (hi[c] - lo[c]) / 2\n", "            p.append(v * (lo[c] + hi[c]) / 2)\n            reach += abs(v) * (hi[c] - lo[c]) / 4\n", 1)' \
   ./internal/domain/cad 'TestKernel_APairKeyWithoutLocationsIsTheKeyBuild123dGave'
+
+
+echo
+echo "Bowed outlines taught and measured (B3, 2026-09-18)"
+drill "the contract drops the bowed-edge guide" internal/agent/converse.go \
+  's = s.replace("\tgeometry.CurveGuide(),", "\tgeometry.StandardGuide()[:0],", 1)' \
+  ./internal/agent 'TestContract_TeachesBowedEdgesFromTheValidatorsTable'
+
+drill "a via rule is refused in words the contract does not teach" internal/domain/geometry/profile.go \
+  's = s.replace("errors.New(ruleViaZ.refusal)", "errors.New(ruleViaZ.teach)", 1)' \
+  ./internal/domain/geometry 'TestCurveGuide_TeachesEveryRuleTheValidatorEnforces'
+
+drill "a bowed-edge rule is enforced but no longer taught" internal/domain/geometry/curve_guide.go \
+  's = s.replace("ruleViaOfVia, ruleViaRadius, ruleViaZ, ruleViaNoArc,", "ruleViaOfVia, ruleViaRadius, ruleViaZ,", 1)' \
+  ./internal/domain/geometry 'TestCurveGuide_TeachesEveryRuleTheValidatorEnforces'
+
+drill "the guide shows a crescent the validator refuses" internal/domain/geometry/curve_guide.go \
+  's = s.replace("viaPt(-20, 0, 0, 6), viaPt(20, 0, 0, 14)", "viaPt(-20, 0, 0, 6), viaPt(20, 0, 0, 6)", 1)' \
+  ./internal/domain/geometry 'TestCurveGuide_EveryExampleBuildsAsPrinted'
+
+drill "Go measures a bowed outline by its chords" internal/domain/geometry/overlay.go \
+  's = s.replace("range arcExtremes(at, *e.Via, e.To) {", "range arcExtremes(at, *e.Via, e.To)[:0] {", 1)' \
+  ./internal/domain/geometry 'TestMeasure_ABowedEdgeReachesItsArcNotItsChords'
+
+drill "an arc is measured past the ends of its sweep" internal/domain/geometry/overlay.go \
+  's = s.replace("\t\tif t <= angle {\n\t\t\tout = append(out, pt)", "\t\tif true {\n\t\t\tout = append(out, pt)", 1)' \
+  ./internal/domain/geometry 'TestMeasure_ABowedEdgeReachesItsArcNotItsChords'
+
+drill "Go measures a bowed outline short of where OCCT builds it" internal/domain/geometry/overlay.go \
+  's = s.replace("range arcExtremes(at, *e.Via, e.To) {", "range arcExtremes(at, *e.Via, e.To)[:0] {", 1)' \
+  ./internal/domain/cad 'TestKernel_GoMeasuresABowedOutlineWhereTheKernelDoes'
+
+drill "a lens and a bulged loft station are built from chords" internal/domain/cad/sidecar.py \
+  "s = s.replace('edges.append(ThreePointArc(at, Vector(*via), to))', 'edges.append(Line(at, Vector(*via)))\n            edges.append(Line(Vector(*via), to))', 1)" \
+  ./internal/domain/cad 'TestKernel_ALensExtrusionIsTwoExactArcs|TestKernel_ALoftIntoABulgedStationBlendsExactly'
+
+echo
+echo "Looks designed, kernel half (2026-09-18): safe fillets, edge rules, shells, perforation, smooth normals"
+# damon's decision of 2026-09-18 made "looks designed" a FORGE goal. B1: a fillet OCCT
+# refuses is retried at 0.5x and 0.25x, one connected edge group at a time, and every
+# reduced or dropped group is REPORTED (reply, turn, export label). B2: edge rules from
+# one table read by the validator, the kernel and the contract. B4: shell and thicken.
+# B6: a perforation cut as one boolean, with a budget. A5: the mesh budget really
+# coarsens (build123d's mesh() kept a finer triangulation) and carries smooth normals.
+# docs/spikes/2026-09-18-kernel-vocabulary.
+drill "a refused fillet is not retried smaller" internal/domain/cad/sidecar.py \
+  's = s.replace("_ROUND_RETRY = (1.0, 0.5, 0.25)", "_ROUND_RETRY = (1.0,)", 1)' \
+  ./internal/domain/cad 'TestKernel_ARefusedFilletIsBuiltSmallerAndSaysSo'
+
+drill "one bad edge group drops every group" internal/domain/cad/sidecar.py \
+  's = s.replace("    groups = _edge_groups(list(selected))\n", "    groups = [list(selected)]\n", 1)' \
+  ./internal/domain/cad 'TestKernel_OneEdgeGroupThatTakesNoFilletDoesNotDropTheRest'
+
+drill "a round built smaller is not reported" internal/domain/cad/sidecar.py \
+  's = s.replace("    if (reduced or square) and report is not None:\n", "    if False:\n", 1)' \
+  ./internal/domain/cad 'TestKernel_ARefusedFilletIsBuiltSmallerAndSaysSo'
+
+drill "the build drops the kernel's reductions" internal/domain/cad/cad.go \
+  's = s.replace("FeatureReductions: res.FeaturesReduced,", "", 1)' \
+  ./internal/domain/cad 'TestKernel_ARefusedFilletIsBuiltSmallerAndSaysSo'
+
+drill "the bridge drops the kernel's feature failures" internal/agent/cadbridge/cadbridge.go \
+  's = s.replace("Skipped: built.Skipped, FeatureFailures: built.FeatureFailures,", "Skipped: built.Skipped,", 1)' \
+  ./internal/agent/cadbridge 'TestBuildSurface_CarriesWhatTheKernelSaidAboutTheFeatures'
+
+drill "the bridge drops the kernel's reductions" internal/agent/cadbridge/cadbridge.go \
+  's = s.replace("FeatureReductions: built.FeatureReductions}, nil", "}, nil", 1)' \
+  ./internal/agent/cadbridge 'TestBuildSurface_CarriesWhatTheKernelSaidAboutTheFeatures'
+
+drill "the render drops the reductions" internal/agent/render.go \
+  's = s.replace("FeatureFailures: built.FeatureFailures, FeatureReductions: built.FeatureReductions,", "", 1)' \
+  ./internal/agent 'TestTurn_SaysWhichRoundsTheKernelBuiltSmaller'
+
+drill "the turn never says a round was built smaller" internal/agent/interference.go \
+  's = s.replace("if note := builtFeaturesNote(sheet); note != \"\" {", "if note := \"\"; note != \"\" {", 1)' \
+  ./internal/agent 'TestTurn_SaysWhichRoundsTheKernelBuiltSmaller'
+
+drill "an export job's label hides the reductions" internal/httpapi/geometry_exports.go \
+  's = s.replace("\tlabel = reducedLabel(e.FeatureReductions) + label\n", "", 1)' \
+  ./internal/httpapi 'TestExportLabel_SaysWhichRoundsWereBuiltSmaller'
+
+drill "convex edges are taken for concave ones" internal/domain/cad/sidecar.py \
+  's = s.replace("\"convex\": _by_connection(ChFiDS_TypeOfConcavity.ChFiDS_Convex)", "\"convex\": _by_connection(ChFiDS_TypeOfConcavity.ChFiDS_Concave)", 1)' \
+  ./internal/domain/cad 'TestKernel_EveryEdgeRuleSelectsExactlyTheEdgesItNames'
+
+drill "outer edges include a cylinder's seams" internal/domain/cad/sidecar.py \
+  's = s.replace("if not inner.Contains(e.wrapped) and _two_faces(faces, e) is not None]", "if not inner.Contains(e.wrapped)]", 1)' \
+  ./internal/domain/cad 'TestKernel_EveryEdgeRuleSelectsExactlyTheEdgesItNames'
+
+drill "longer takes an edge exactly as long" internal/domain/cad/sidecar.py \
+  's = s.replace("if float(e.length) > limit * (1 + 1e-9)]", "if float(e.length) >= limit]", 1)' \
+  ./internal/domain/cad 'TestKernel_EveryEdgeRuleSelectsExactlyTheEdgesItNames'
+
+drill "joins takes every edge on the part" internal/domain/cad/sidecar.py \
+  's = s.replace("if _on_surface(target, points, tol) and any(_on_surface(t, points, tol) for t in tools):", "if _on_surface(target, points, tol):", 1)' \
+  ./internal/domain/cad 'TestKernel_EveryEdgeRuleSelectsExactlyTheEdgesItNames'
+
+drill "the kernel forgets an edge rule Go validates" internal/domain/cad/sidecar.py \
+  's = s.replace("    \"holes\": _holes,\n", "", 1)' \
+  ./internal/domain/cad 'TestTheKernelSelectsEdgesByExactlyTheRulesGoValidates'
+
+drill "joins is accepted with nothing fused" internal/domain/geometry/feature.go \
+  's = s.replace("if rule.Name == \"joins\" && !fusedInto[f.Of] {", "if false {", 1)' \
+  ./internal/domain/geometry 'TestOperations_JoinsNeedsAnEarlierFuse'
+
+drill "longer is read without its edge_length" internal/domain/geometry/feature.go \
+  's = s.replace("\t\t\tcase rule.Needs == \"length\":\n", "\t\t\tcase false:\n", 1)' \
+  ./internal/domain/geometry 'TestOperations_LongerNeedsAnEdgeLengthAndNothingElseTakesOne'
+
+drill "a shell with no open face is accepted" internal/domain/geometry/feature.go \
+  's = s.replace("\t\t\t\tif len(f.Open) == 0 {\n", "\t\t\t\tif false {\n", 1)' \
+  ./internal/domain/geometry 'TestOperations_AShellIsValidated'
+
+drill "a solid is accepted for thickening" internal/domain/geometry/feature.go \
+  's = s.replace("if op == \"thicken\" && !surface {", "if false {", 1)' \
+  ./internal/domain/geometry 'TestOperations_AShellIsValidated'
+
+drill "a shell wall reaches the kernel in the document's units" internal/domain/geometry/solid.go \
+  's = s.replace("\t\toperations[i].Thickness *= toMM\n", "", 1)' \
+  ./internal/domain/geometry 'TestSolids_ConvertsEveryFeatureLengthToMillimetres'
+
+drill "an edge_length reaches the kernel in the document's units" internal/domain/geometry/solid.go \
+  's = s.replace("\t\toperations[i].EdgeLength *= toMM\n", "", 1)' \
+  ./internal/domain/geometry 'TestSolids_ConvertsEveryFeatureLengthToMillimetres'
+
+drill "a shell grows outward" internal/domain/cad/sidecar.py \
+  's = s.replace("result = offset(target, amount=-float(op[\"thickness\"]), openings=faces)", "result = offset(target, amount=float(op[\"thickness\"]), openings=faces)", 1)' \
+  ./internal/domain/cad 'TestKernel_AShellAndASkinHaveTheVolumeTheFormulaSays'
+
+drill "a shell asked open at the top opens at the bottom" internal/domain/cad/sidecar.py \
+  's = s.replace("    \"top\": (Axis.Y, -1),\n", "    \"top\": (Axis.Y, 0),\n", 1)' \
+  ./internal/domain/cad 'TestKernel_AShellAndASkinHaveTheVolumeTheFormulaSays'
+
+drill "a skin grows on one side of its surface" internal/domain/cad/sidecar.py \
+  's = s.replace("thicken(faces[0], amount=float(op[\"thickness\"]) / 2.0, both=True)", "thicken(faces[0], amount=float(op[\"thickness\"]) / 2.0, both=False)", 1)' \
+  ./internal/domain/cad 'TestKernel_AShellAndASkinHaveTheVolumeTheFormulaSays'
+
+drill "a perforation past the budget is accepted" internal/domain/geometry/feature.go \
+  's = s.replace("if op == \"cut\" && len(tools) > MaxCutTools {", "if false {", 1)' \
+  ./internal/domain/geometry 'TestOperations_APerforationPastTheBudgetIsRefused'
+
+drill "a perforation is cut one hole at a time" internal/domain/cad/sidecar.py \
+  's = s.replace("    if kind == \"cut\" and len(op.get(\"with\") or []) > 1:\n", "    if False:\n", 1)' \
+  ./internal/domain/cad 'TestKernel_APerforationIsCutAsOneBoolean'
+
+drill "a mesh is never re-meshed coarser" internal/domain/cad/sidecar.py \
+  's = s.replace("    BRepTools.Clean_s(solid.wrapped)\n    BRepMesh_IncrementalMesh(", "    BRepMesh_IncrementalMesh(", 1)' \
+  ./internal/domain/cad 'TestKernel_AMeshOverTheBudgetIsReallyCoarsened'
+
+drill "the angular limit is never coarsened" internal/domain/cad/sidecar.py \
+  's = s.replace("        angle = min(angle * _MESH_COARSEN, _MESH_ANGLE_MAX)\n", "", 1)' \
+  ./internal/domain/cad 'TestKernel_AMeshOverTheBudgetIsReallyCoarsened'
+
+drill "the mesh carries no normals" internal/domain/cad/sidecar.py \
+  's = s.replace("            mesh[\"normals\"] = normals\n", "            pass\n", 1)' \
+  ./internal/domain/cad 'TestKernel_AMeshCarriesSmoothNormalsAndKeepsHardEdges'
+
+drill "a reversed face keeps its surface's normal" internal/domain/cad/sidecar.py \
+  's = s.replace("            s = -1.0 if reverse else 1.0\n", "            s = 1.0\n", 1)' \
+  ./internal/domain/cad 'TestKernel_AMeshCarriesSmoothNormalsAndKeepsHardEdges'
+
+drill "a placed copy's normals do not turn with it" internal/domain/cad/cad.go \
+  's = s.replace("n[i] = m[0]*x + m[4]*y + m[8]*z", "n[i] = x", 1)' \
+  ./internal/domain/cad 'TestKernel_AMeshCarriesSmoothNormalsAndKeepsHardEdges'
+
+drill "the wire drops a part's normals" internal/httpapi/geometry.go \
+  's = s.replace("ID: m.ID, Label: m.Label, Vertices: m.Vertices, Triangles: m.Triangles, Normals: m.Normals,", "ID: m.ID, Label: m.Label, Vertices: m.Vertices, Triangles: m.Triangles,", 1)' \
+  ./internal/httpapi 'TestMeshPayload_CarriesNormalsAdditively'
+
+drill "the contract does not teach the open faces" internal/agent/converse.go \
+  's = s.replace("\tgeometry.OpenFaceGuide(),", "\t\"\",", 1)' \
+  ./internal/agent 'TestTheContractTeachesEveryFeatureRuleFORGEHas'
+
+drill "the contract offers operations where it means edge rules" internal/agent/converse.go \
+  's = s.replace("geometry.FeatureOpChoices(), geometry.EdgeRuleChoices(),", "geometry.FeatureOpChoices(), geometry.FeatureOpChoices(),", 1)' \
+  ./internal/agent 'TestTheContractTeachesEveryFeatureRuleFORGEHas'
+
+echo
+
+echo "The car template, 2026-09-18 (looks-designed stage C): template, proportions, design words"
+# Added 2026-09-18 (docs/spikes/2026-09-18-car-template). A "car" part is written out
+# at the settle door as a bound tree; it builds through the kernel with nothing
+# missing or buried and at the height asked; proportions outside its class warn and
+# never refuse; the proportion table cites every figure and says UNVALIDATED; the
+# design-word table reaches the prompt whole and never sets a count.
+drill "a car is not written out at the settle door" internal/agent/settledoc.go \
+  's = s.replace("\tfor _, problem := range geometry.ExpandTemplates(d) {\n", "\tfor _, problem := range []geometry.Problem(nil) {\n", 1)' \
+  ./internal/agent 'TestSettle_WritesACarOutAsItsTreeAndSaysWhatIsOutsideItsClass'
+
+drill "Faults does not see a car it could not build" internal/domain/geometry/faults.go \
+  's = s.replace("\tout := carFaults(*d)\n", "\tvar out []Problem\n", 1)' \
+  ./internal/domain/geometry 'TestCar_AnImpossibleCarIsNamedAndLeftForTheRepairLoop'
+
+drill "a car's placements are written as numbers, not bindings" internal/domain/geometry/car.go \
+  's = s.replace("return []float64{x.v, y.v, z.v}, map[string]string{\"x\": x.s, \"y\": y.s, \"z\": z.s}", "return []float64{x.v, y.v, z.v}, map[string]string{}", 1)' \
+  ./internal/domain/geometry 'TestCar_ARespecMovesTheWheelsTheArchesAndTheBodyTogether'
+
+drill "a car a tree places is not written out" internal/domain/geometry/car.go \
+  's = s.replace("\tif hasCar(d.Definitions) {\n", "\tif false {\n", 1)' \
+  ./internal/domain/geometry 'TestCar_ACarDefinitionPlacedByATreeIsWrittenOutInPlace'
+
+drill "a corner radius the sections cannot carry is written out anyway" internal/domain/geometry/car.go \
+  's = s.replace("for _, sp := range carSectionProblems(sections) {", "for _, sp := range []Problem(nil) {", 1)' \
+  ./internal/domain/geometry 'TestCar_AnEdgeRadiusTheSectionsCannotCarryIsRefusedByName'
+
+drill "the wheel nuts are not fused to the rim" internal/domain/geometry/car.go \
+  's = s.replace("\twheel.Features = []Feature{{ID: \"nuts\"", "\t_ = []Feature{{ID: \"nuts\"", 1)' \
+  ./internal/domain/geometry 'TestCar_IsWrittenOutAsATreeWithNoFaults'
+
+drill "the wheel arches are too small for the tyres" internal/domain/geometry/car.go \
+  's = s.replace("\tarchR := D.over(2).plus(AC)\n", "\tarchR := D.over(4).plus(AC)\n", 1)' \
+  ./internal/domain/cad 'TestKernel_BuildsTheCarTemplateWithNothingMissingOrBuried'
+
+drill "the roof is built above the height asked" internal/domain/geometry/car.go \
+  's = s.replace("deck.plus(lit(1).minus(deck).times(cab)).times(H),", "deck.plus(lit(1).minus(deck).times(cab)).times(H).scale(1.05),", 1)' \
+  ./internal/domain/cad 'TestKernel_BuildsTheCarTemplateWithNothingMissingOrBuried'
+
+drill "a proportion outside its class is not warned" internal/domain/geometry/carproportions.go \
+  's = s.replace("\t\tif v >= r.Low && v <= r.High {\n", "\t\tif true {\n", 1)' \
+  ./internal/domain/geometry 'TestCar_ProportionsOutsideTheClassAreWarnedNeverRefused'
+
+drill "a proportion outside its class refuses the car" internal/domain/geometry/carproportions.go \
+  's = s.replace("\twarn := func(format string, args ...any) {\n\t\tout = append(out, Problem{Severity: Warning,", "\twarn := func(format string, args ...any) {\n\t\tout = append(out, Problem{Severity: Error,", 1)' \
+  ./internal/domain/geometry 'TestCar_ProportionsOutsideTheClassAreWarnedNeverRefused'
+
+drill "the proportion table stops saying UNVALIDATED" internal/domain/geometry/templates/car_proportions.json \
+  's = s.replace("\"status\": \"UNVALIDATED\",", "\"status\": \"validated\",", 1)' \
+  ./internal/domain/geometry 'TestCarProportions_EveryFigureNamesItsSourceAndTheTableIsUnvalidated'
+
+drill "a figure in the proportion table loses its source" internal/domain/geometry/templates/car_proportions.json \
+  's = s.replace("(mm) 1996\", \"source\": \"Defender 110 Technical Specifications, as above\"", "(mm) 1996\", \"source\": \"\"", 1)' \
+  ./internal/domain/geometry 'TestCarProportions_EveryFigureNamesItsSourceAndTheTableIsUnvalidated'
+
+drill "a design word sets a count" internal/domain/geometry/templates/design_words.json \
+  's = s.replace("\"set\": [{\"key\": \"edge_radius\", \"band\": [0.04, 0.06]}]", "\"set\": [{\"key\": \"edge_radius\", \"band\": [0.04, 0.06]}, {\"key\": \"lug_count\", \"band\": [4, 6]}]", 1)' \
+  ./internal/domain/geometry 'TestDesignWords_NeverSetACountAndStayInsideTheTemplate'
+
+drill "a design word the sketch filter rewrites" internal/domain/geometry/templates/design_words.json \
+  's = s.replace("\"words\": [\"crisp\",", "\"words\": [\"two-tone\", \"crisp\",", 1)' \
+  ./internal/agent 'TestDesignWordsSurviveTheSketchReadingsNumberFilter'
+
+drill "the design-word guide drops a row" internal/domain/geometry/designwords.go \
+  's = s.replace("\tfor _, r := range designWords {\n\t\tquoted", "\tfor _, r := range designWords[1:] {\n\t\tquoted", 1)' \
+  ./internal/domain/geometry 'TestDesignWords_TheGuideIsTheTable'
+
+drill "the prompt drops the design-word table" internal/agent/converse.go \
+  's = s.replace("geometry.CarGuide(), geometry.DesignWordGuide(),", "geometry.CarGuide(), \"\",", 1)' \
+  ./internal/agent 'TestTheContractCarriesTheCarTemplateAndEveryDesignWord'
+
+drill "the prompt does not offer the car shape" internal/agent/converse.go \
+  's = s.replace("| \"standard\" | \"car\" |", "| \"standard\" |", 1)' \
+  ./internal/agent 'TestTheContractCarriesTheCarTemplateAndEveryDesignWord'
+
+echo "Mesh-only decorative parts (looks designed, stage E1; damon 2026-09-18)"
+
+drill "a lattice past its triangle budget is accepted" internal/domain/geometry/lattice.go \
+  's = s.replace("if n := l.triangles(); n > MaxLatticeTriangles {", "if n := l.triangles(); n > MaxLatticeTriangles*100 {", 1)' \
+  ./internal/domain/geometry 'TestLattice_RefusesByNameWhatItCannotBuild'
+
+drill "a lattice wall of any thickness is accepted" internal/domain/geometry/lattice.go \
+  's = s.replace("if l.Thickness < l.Cell*minWallPerCell || l.Thickness > l.Cell*maxWallPerCell {", "if false {", 1)' \
+  ./internal/domain/geometry 'TestLattice_RefusesByNameWhatItCannotBuild'
+
+drill "the cell a lattice refusal names does not fit" internal/domain/geometry/lattice.go \
+  's = s.replace("fits := l.Cell * math.Cbrt(float64(n)/float64(MaxLatticeTriangles)) * 1.01", "fits := l.Cell * math.Cbrt(float64(n)/float64(MaxLatticeTriangles)) * 0.9", 1)' \
+  ./internal/domain/geometry 'TestLattice_TheCellARefusalNamesFits'
+
+drill "mesh-only copies do not share one budget" internal/domain/geometry/lattice.go \
+  's = s.replace("if n := l.triangles(); total+n > maxMeshOnlyTriangles {", "if n := l.triangles(); n > maxMeshOnlyTriangles {", 1)' \
+  ./internal/domain/geometry 'TestLattice_CopiesShareOneBudget'
+
+drill "a refused lattice is not a fault" internal/domain/geometry/faults.go \
+  's = s.replace("profileProblems = append(profileProblems, allLatticeProblems(d.Parts)...)", "", 1)' \
+  ./internal/domain/geometry 'TestLattice_RefusesByNameWhatItCannotBuild'
+
+drill "a lattice is sent to the kernel as an exact solid" internal/domain/geometry/solid.go \
+  's = s.replace("meshOnly, lattice = true, l.Pattern.Name", "meshOnly, lattice = false, l.Pattern.Name", 1)' \
+  ./internal/domain/geometry 'TestLattice_IsSentToTheKernelMarkedMeshOnlyInMillimetres'
+
+drill "a feature may operate on a lattice" internal/domain/geometry/feature.go \
+  's = s.replace("\t\tif meshOnly[f.Of] {", "\t\tif false && meshOnly[f.Of] {", 1)' \
+  ./internal/domain/geometry 'TestLattice_NoFeatureMayCutOrUseIt'
+
+drill "a feature may use a lattice as its tool" internal/domain/geometry/feature.go \
+  's = s.replace("\t\t\tcase meshOnly[t]:", "\t\t\tcase false && meshOnly[t]:", 1)' \
+  ./internal/domain/geometry 'TestLattice_NoFeatureMayCutOrUseIt'
+
+drill "the Go mesh draws a lattice as its box" internal/domain/geometry/mesh.go \
+  's = s.replace("\tcase latticeShape:\n\t\t// Mesh-only, and built only by the CAD kernel", "\tcase \"lattice-was-here\":\n\t\t// Mesh-only, and built only by the CAD kernel", 1)' \
+  ./internal/domain/geometry 'TestLattice_ExportsLeaveItOutAndSaySo'
+
+drill "the STEP label says nothing of mesh-only parts" internal/domain/geometry/export.go \
+  's = s.replace("if note := MeshOnlyNote(v.Document.MeshOnlyParts(), \"this STEP file\"); note != \"\" {", "if note := \"\"; note != \"\" {", 1)' \
+  ./internal/domain/geometry 'TestLattice_ExportsLeaveItOutAndSaySo'
+
+drill "the panel summary of a lattice hides that it is mesh-only" internal/domain/geometry/units.go \
+  's = s.replace("q(l.Width), q(l.Height), q(l.Depth), q(l.Cell), q(l.Thickness), MeshOnlyLabel)", "q(l.Width), q(l.Height), q(l.Depth), q(l.Cell), q(l.Thickness), \"\")", 1)' \
+  ./internal/domain/geometry 'TestLattice_ThePanelSummarySaysMeshOnly'
+
+drill "mass weighs a lattice it was handed a measure of" internal/domain/geometry/mass.go \
+  's = s.replace("\t\tif meshOnly[m.ID] {\n\t\t\tcontinue\n\t\t}\n", "", 1)' \
+  ./internal/domain/geometry 'TestLattice_MassLeavesItOutAndNamesIt'
+
+drill "the contract does not teach lattices" internal/agent/converse.go \
+  's = s.replace("\tgeometry.LatticeGuide())", "\t\"\")", 1)' \
+  ./internal/agent 'TestTheContractTeachesLatticesFromTheTable'
+
+drill "the contract does not offer lattice as a shape" internal/agent/converse.go \
+  's = s.replace("\"lattice\" | \"script\",", "\"script\",", 1)' \
+  ./internal/agent 'TestTheContractTeachesLatticesFromTheTable'
+
+drill "the coverage note says nothing of mesh-only parts" internal/agent/interference.go \
+  's = s.replace("if note := geometry.MeshOnlyNote(sheet.MeshOnly, \"the check for shared material\"); note != \"\" {", "if note := \"\"; note != \"\" {", 1)' \
+  ./internal/agent 'TestCoverageNoteSaysMeshOnlyPartsWereNotChecked'
+
+drill "the render drops the mesh-only parts" internal/agent/render.go \
+  's = s.replace("MeshOnly: built.MeshOnly, Parts: built.Parts}", "Parts: built.Parts}", 1)' \
+  ./internal/agent 'TestRender_CarriesTheMeshOnlyParts'
+
+drill "the turn surface drops the mesh-only parts" internal/agent/cadbridge/cadbridge.go \
+  's = s.replace("\t\tMeshOnly: built.MeshOnly,\n", "", 1)' \
+  ./internal/agent/cadbridge 'TestKernel_TheTurnsSurfaceNamesItsMeshOnlyParts'
+
+drill "the mesh reply drops the mesh-only flag" internal/httpapi/geometry.go \
+  's = s.replace("\t\t\tMeshOnly: m.MeshOnly,\n", "", 1)' \
+  ./internal/httpapi 'TestTheMeshReplyMarksAMeshOnlyPart'
+
+drill "the STEP download header says nothing of mesh-only parts" internal/httpapi/geometry.go \
+  's = s.replace("if n := len(built.MeshOnly); n > 0 {", "if n := 0; n > 0 {", 1)' \
+  ./internal/httpapi 'TestSTEPAndMassRepliesSayMeshOnlyPartsAreLeftOut'
+
+drill "the mass note says nothing of mesh-only parts" internal/httpapi/geometry.go \
+  's = s.replace("if meshOnly := geometry.MeshOnlyNote(report.MeshOnly, \"the mass, volume and centre\"); meshOnly != \"\" {", "if meshOnly := \"\"; meshOnly != \"\" {", 1)' \
+  ./internal/httpapi 'TestSTEPAndMassRepliesSayMeshOnlyPartsAreLeftOut'
+
+drill "the banner does not label mesh-only parts" internal/httpapi/assets/workbench.js \
+  's = s.replace("(meshOnly.length ? \x27 <span class=\"prov-mesh-only\"", "(false ? \x27 <span class=\"prov-mesh-only\"", 1)' \
+  ./internal/httpapi 'TestWorkbenchLabelsMeshOnlyPartsOutsideTheFold'
+
+drill "the banner reads mesh-only parts only from the kernel" internal/httpapi/assets/workbench.js \
+  's = s.replace("      if (MESH_ONLY_SHAPES.indexOf(String(p.shape || \x27\x27).trim().toLowerCase()) >= 0) add(p.name || p.id);\n", "", 1)' \
+  ./internal/httpapi 'TestWorkbenchLabelsMeshOnlyPartsOutsideTheFold'
+
+drill "the workbench forgets the kernel mesh-only parts" internal/httpapi/assets/workbench.js \
+  's = s.replace("meshOnly: b.mesh_only || []", "meshOnly: []", 1)' \
+  ./internal/httpapi 'TestWorkbenchLabelsMeshOnlyPartsOutsideTheFold'
+
+drill "the workbench spells the mesh-only label its own way" internal/httpapi/assets/workbench.js \
+  's = s.replace("function meshOnlyLabel() { return \x27mesh-only - not manufacturable\x27; }", "function meshOnlyLabel() { return \x27decorative\x27; }", 1)' \
+  ./internal/httpapi 'TestTheWorkbenchSpellsMeshOnlyAsGeometryDoes'
+
+drill "the kernel builds a mesh-only part with OCCT" internal/domain/cad/sidecar.py \
+  's = s.replace("    solids, mesh_only = _split_mesh_only(request.get(\"solids\") or [])", "    solids, mesh_only = request.get(\"solids\") or [], []", 1)' \
+  ./internal/domain/cad 'TestKernel_AGyroidInABoxBuildsAsAMeshOnlyPartWithinBudget'
+
+drill "the kernel reply names no mesh-only parts" internal/domain/cad/sidecar.py \
+  's = s.replace("        out[\"mesh_only\"] = _mesh_only_names(mesh_only)", "        pass", 1)' \
+  ./internal/domain/cad 'TestKernel_AGyroidInABoxBuildsAsAMeshOnlyPartWithinBudget'
+
+drill "a mesh-only surface is not marked mesh_only" internal/domain/cad/sidecar.py \
+  's = s.replace("out.append({\"id\": part.get(\"id\"), \"label\": name, \"mesh_only\": True,", "out.append({\"id\": part.get(\"id\"), \"label\": name, \"mesh_only\": False,", 1)' \
+  ./internal/domain/cad 'TestKernel_AGyroidInABoxBuildsAsAMeshOnlyPartWithinBudget'
+
+drill "the Go reply drops the mesh-only flag" internal/domain/cad/cad.go \
+  's = s.replace("Triangles: m.Triangles, MeshOnly: m.MeshOnly,", "Triangles: m.Triangles,", 1)' \
+  ./internal/domain/cad 'TestKernel_AGyroidInABoxBuildsAsAMeshOnlyPartWithinBudget'
+
+drill "the STEP file does not say what it left out" internal/domain/cad/sidecar.py \
+  's = s.replace("    if note:\n        # Appended to FILE_DESCRIPTION", "    if False:\n        # Appended to FILE_DESCRIPTION", 1)' \
+  ./internal/domain/cad 'TestKernel_STEPLeavesOutAMeshOnlyPartAndSaysSoInTheFile'
+
+drill "the kernel sends a lattice past its own budget" internal/domain/cad/sidecar.py \
+  's = s.replace("    if tris > _LATTICE_BUDGET:", "    if tris > _LATTICE_BUDGET * 100:", 1)' \
+  ./internal/domain/cad 'TestKernel_ALatticePastTheKernelsOwnBudgetIsRefusedByName'
+
+drill "a lattice is drawn where it was built, not where it was placed" internal/domain/cad/sidecar.py \
+  's = s.replace("placed = verts @ m.T + _np.asarray(part[\"position\"], dtype=float)", "placed = verts + 0.0", 1)' \
+  ./internal/domain/cad 'TestKernel_ALatticeSitsInItsBoxWithTheWallItAskedFor'
+
+drill "a gyroid wall is cut at the level with no gradient factor" internal/domain/cad/sidecar.py \
+  's = s.replace("+ math.sin(z) * math.cos(x)), 1.51),", "+ math.sin(z) * math.cos(x)), 1.0),", 1)' \
+  ./internal/domain/cad 'TestKernel_ALatticeSitsInItsBoxWithTheWallItAskedFor'
+
+drill "a mirrored lattice is not reflected" internal/domain/cad/sidecar.py \
+  's = s.replace("        if part.get(\"mirrored\"):\n", "        if False:\n", 1)' \
+  ./internal/domain/cad 'TestKernel_AMirroredLatticeIsItsReflection'
+
+drill "a mirrored lattice faces inward" internal/domain/cad/sidecar.py \
+  's = s.replace("            tris = tris[:, ::-1]\n", "", 1)' \
+  ./internal/domain/cad 'TestKernel_AMirroredLatticeIsItsReflection'
+
+drill "a lone lattice is refused a mesh too" internal/domain/cad/sidecar.py \
+  's = s.replace("    if request.get(\"format\") != \"mesh\" or request.get(\"properties\"):", "    if True:", 1)' \
+  ./internal/domain/cad 'TestKernel_OnlyMeshOnlyPartsDrawButHaveNoSTEP'
+
+echo
+# Added 2026-09-18 (looks: presentation, stage A). forge3d.js lights from a studio
+# environment with a material per finish, tone maps to sRGB, lays a contact shadow, adds
+# occlusion on WebGL2, sizes its clip planes and zoom to the model, draws curves as finely
+# as the screen needs and faces every primitive outward. viewport_looks_fence_test.go and
+# viewport_shader_compile_test.go.
+drill "a finish is shaded without its material" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    return [m.metallic, m.roughness, m.coat];", "    return [0, 0.5, 0];", 1)' \
+  ./internal/httpapi 'TestRendererHasAMaterialForEveryFinishGoAccepts'
+
+drill "paint is rougher than plastic" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    painted:    { metallic: 0.0, roughness: 0.45, coat: 0.8 },", "    painted:    { metallic: 0.0, roughness: 0.60, coat: 0.8 },", 1)' \
+  ./internal/httpapi 'TestRendererHasAMaterialForEveryFinishGoAccepts'
+
+drill "the part shader asks for a uniform it does not declare" internal/httpapi/assets/forge3d.js \
+  's = s.replace("      material: gl.getUniformLocation(P, \x27uMaterial\x27),", "      material: gl.getUniformLocation(P, \x27uSpecPower\x27),", 1)' \
+  ./internal/httpapi 'TestRendererHasAMaterialForEveryFinishGoAccepts'
+
+drill "the part shader writes linear light to the screen" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    \x27  col = toSrgb(aces(col * uExposure));\x27,", "    \x27  col = col * uExposure;\x27,", 1)' \
+  ./internal/httpapi 'TestRendererToneMapsWithTheCurveItsShaderIsWrittenFrom'
+
+drill "the tone curve drifts from the table the shader is written from" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    var v = (x * (ACES.a * x + ACES.b)) / (x * (ACES.c * x + ACES.d) + ACES.e);", "    var v = (x * (ACES.a * x + 0.3)) / (x * (ACES.c * x + ACES.d) + ACES.e);", 1)' \
+  ./internal/httpapi 'TestRendererToneMapsWithTheCurveItsShaderIsWrittenFrom'
+
+drill "sRGB is written as a 2.2 power" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    return c <= 0.0031308 ? 12.92 * c : 1.055 * Math.pow(c, 1 / 2.4) - 0.055;", "    return Math.pow(c, 1 / 2.2);", 1)' \
+  ./internal/httpapi 'TestRendererToneMapsWithTheCurveItsShaderIsWrittenFrom'
+
+drill "the near plane is 0.05 whatever the model" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    var near = Math.max(toCentre - reach, toTarget * 0.01);", "    var near = 0.05;", 1)' \
+  ./internal/httpapi 'TestRendererDepthResolvesTheModelAtAnyScale'
+
+drill "the far plane stops at what the camera looks at" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    var far = Math.max(toCentre + reach, grid, near * 2);", "    var far = Math.max(toTarget, near * 2);", 1)' \
+  ./internal/httpapi 'TestRendererDepthResolvesTheModelAtAnyScale'
+
+drill "the frame projects with a fixed near plane" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    var proj = perspective(FOV_DEGREES, w / Math.max(1, h), clip.near, clip.far);", "    var proj = perspective(FOV_DEGREES, w / Math.max(1, h), 0.05, clip.far);", 1)' \
+  ./internal/httpapi 'TestRendererDepthResolvesTheModelAtAnyScale'
+
+drill "zoom stops at 0.4 and 400 units" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    return { min: s * 0.02, max: s * 100 };", "    return { min: 0.4, max: 400 };", 1)' \
+  ./internal/httpapi 'TestRendererZoomsInTheModelsOwnUnits'
+
+drill "a curve is never drawn finer than the export" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    if (!(radiusPx > DETAIL_TOLERANCE_PX) || !(baseSegments > 0)) return 1;", "    return 1;", 1)' \
+  ./internal/httpapi 'TestRendererDrawsCurvesAsFineAsTheScreenNeeds'
+
+drill "the finer level is chosen from the copy's centre inside it" internal/httpapi/assets/forge3d.js \
+  's = s.replace("      var px = r * f.pixels / Math.max(dist, r * 0.02);", "      var px = dist > r ? r * f.pixels / dist : f.pixels;", 1)' \
+  ./internal/httpapi 'TestRendererDrawsCurvesAsFineAsTheScreenNeeds'
+
+drill "a cylinder is wound inside out" internal/httpapi/assets/forge3d.js \
+  's = s.replace("      idx.push(a, d, b, a, c, d);", "      idx.push(a, b, d, a, d, c);", 1)' \
+  ./internal/httpapi 'TestRendererPrimitivesFaceOutward'
+
+drill "a sphere is wound inside out" internal/httpapi/assets/forge3d.js \
+  's = s.replace("        idx.push(a, a+1, b, b, a+1, b+1);", "        idx.push(a, b, a+1, b, b+1, a+1);", 1)' \
+  ./internal/httpapi 'TestRendererPrimitivesFaceOutward'
+
+drill "a revolve is shaded facet by facet" internal/httpapi/assets/forge3d.js \
+  's = s.replace("  var SMOOTHED_SHAPES = { extrusion: true, revolve: true,", "  var SMOOTHED_SHAPES = { extrusion: true, revolve: false,", 1)' \
+  ./internal/httpapi 'TestRendererShadesCurvedPrimitivesSmooth'
+
+drill "smoothing rounds every edge" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    var limit = Math.cos(creaseDeg * Math.PI / 180);\n    var raw", "    var limit = -1;\n    var raw", 1)' \
+  ./internal/httpapi 'TestRendererShadesCurvedPrimitivesSmooth'
+
+drill "the contact shadow is drawn every frame" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    this._shadowDirty = false;\n    if (!r ||", "    if (!r ||", 1)' \
+  ./internal/httpapi 'TestRendererCastsAContactShadowOnlyWhenTheModelChanges'
+
+drill "an exploded view keeps the assembled model's shadow" internal/httpapi/assets/forge3d.js \
+  's = s.replace("this.explode = v; this._shadowDirty = true; this.draw();", "this.explode = v; this.draw();", 1)' \
+  ./internal/httpapi 'TestRendererCastsAContactShadowOnlyWhenTheModelChanges'
+
+drill "the floor carries no shadow" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    this._drawGround(view, proj);\n", "", 1)' \
+  ./internal/httpapi 'TestRendererCastsAContactShadowOnlyWhenTheModelChanges'
+
+drill "occlusion darkens the glass laid over it" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    /* Occlusion darkens what is opaque, before anything see-through is laid over it. */\n    if (post) {", "    if (translucent.length) { this._drawTranslucent(translucent, stats); translucent = []; }\n    if (post) {", 1)' \
+  ./internal/httpapi 'TestRendererDrawsItsPassesInOrderOnEveryPath'
+
+drill "WebGL1 asks for WebGL2's occlusion targets" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    this.ambientOcclusion = webgl2;", "    this.ambientOcclusion = true;", 1).replace("    if (!this.webgl2 || !this.ambientOcclusion) return null;", "    if (!this.ambientOcclusion) return null;", 1)' \
+  ./internal/httpapi 'TestRendererDrawsItsPassesInOrderOnEveryPath'
+
+drill "the studio backdrop is not drawn" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    this._drawBackdrop(view, proj);\n", "", 1)' \
+  ./internal/httpapi 'TestRendererDrawsItsPassesInOrderOnEveryPath'
+
+drill "the default view is the old high iso view" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    this.camera = { yaw: HERO.yaw, pitch: HERO.pitch,", "    this.camera = { yaw: 0.7, pitch: 0.5,", 1)' \
+  ./internal/httpapi 'TestRendererDrawsItsPassesInOrderOnEveryPath'
+
+drill "feature lines are drawn without being asked for" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    this.featureLines = false;", "    this.featureLines = true;", 1)' \
+  ./internal/httpapi 'TestRendererDrawsItsPassesInOrderOnEveryPath'
+
+drill "a WebGL1 shader uses GLSL ES 3.00" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    \x27  float s = texture2D(uTex, vUV).r * 0.2270270;\x27,", "    \x27  float s = texture(uTex, vUV).r * 0.2270270;\x27,", 1)' \
+  ./internal/httpapi 'TestRendererDrawsItsPassesInOrderOnEveryPath|TestShadersCompileInARealBrowser'
+
+drill "every edge of a sphere is a feature line" internal/httpapi/assets/forge3d.js \
+  's = s.replace("      for (var i = 1; i < ns.length && !sharp; i++) if (dot(ns[0], ns[i]) < limit) sharp = true;", "      sharp = true;", 1)' \
+  ./internal/httpapi 'TestRendererFindsTheFeatureEdgesOfAShape'
+
+drill "the part shader does not compile" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    \x27  float NoV = max(dot(N, V), 1e-4);\x27,", "    \x27  float NoV = max(dot(N, V), 1e-4)\x27,", 1)' \
+  ./internal/httpapi 'TestShadersCompileInARealBrowser'
+
+drill "the occlusion shader does not compile" internal/httpapi/assets/forge3d.js \
+  's = s.replace("    \x27  float occ = 0.0;\x27,", "    \x27  float occ = 0;\x27,", 1)' \
+  ./internal/httpapi 'TestShadersCompileInARealBrowser'
+
+drill "a live turn keeps its primitives when its variant is saved" internal/httpapi/assets/workbench.js \
+  's = s.replace("            refineWithBuiltSolid(ev.variant.version_id, state.prototype);", "            void 0;", 1)' \
+  ./internal/httpapi 'TestWorkbenchRefinesALiveTurnWithTheKernelMesh'
+
+echo
+
+echo "Looks integration, 2026-09-19: mesh-only parts and kernel normals on the stage, bowed car stations, exporter winding"
+# Follow-ups on looks/integration (PRs 154-158 merged). forge3d.js draws a declared
+# mesh-only part translucent in its own tint and material with an in-scene tag, and a
+# ghost box when no kernel answered; it shades a kernel mesh with the kernel's own
+# normals; the workbench says which rounds the kernel built smaller; the car's stations
+# bow each flank as one exact via arc, flaring over the wheels inside the car's width;
+# and the Go exporter's files are wound outward (checked, not changed).
+drill "the exporter keeps a facet wound against its normal" internal/domain/geometry/mesh.go \
+  's = s.replace("return append(out, orient(t))", "return append(out, t)", 1)' \
+  ./internal/domain/geometry 'TestExport_EveryPrimitiveIsWoundOutwardInTheFile'
+
+drill "a car station is straight-sided again" internal/domain/geometry/car.go \
+  's = s.replace("out[i].Via = &Point{X: vx.v, Y: vy.v, XFrom: vx.s, YFrom: vy.s}", "_, _ = vx, vy", 1)' \
+  ./internal/domain/geometry 'TestCar_TheFlanksAreExactArcsThatFlareOverTheWheels'
+
+drill "the fender does not flare over the wheels" internal/domain/geometry/car.go \
+  's = s.replace("flare = math.Max(flare, carFenderFlare*math.Exp(-u*u))", "flare = math.Max(flare, 0*u)", 1)' \
+  ./internal/domain/geometry 'TestCar_TheFlanksAreExactArcsThatFlareOverTheWheels'
+
+drill "a flank bows past the car's width" internal/domain/geometry/car.go \
+  's = s.replace("reach := hw.v * (1 - carFenderFlare + flare)", "reach := hw.v * (1 + flare)", 1)' \
+  ./internal/domain/geometry 'TestCar_TheFlanksAreExactArcsThatFlareOverTheWheels'
+
+drill "the renderer ignores the kernel's normals" internal/httpapi/assets/forge3d.js \
+  's = s.replace("if (given && given.length === positions.length && positions.length > 0) {", "if (false) {", 1)' \
+  ./internal/httpapi 'TestRendererShadesAKernelMeshWithItsOwnNormals'
+
+drill "the renderer trusts normals of the wrong count" internal/httpapi/assets/forge3d.js \
+  's = s.replace("if (given && given.length === positions.length && positions.length > 0) {", "if (given && given.length > 0) {", 1)' \
+  ./internal/httpapi 'TestRendererShadesAKernelMeshWithItsOwnNormals'
+
+drill "the kernel's normals are not renormalised" internal/httpapi/assets/forge3d.js \
+  's = s.replace("own[g] = given[g] / gl0; own[g + 1] = given[g + 1] / gl0; own[g + 2] = given[g + 2] / gl0;", "own[g] = given[g]; own[g + 1] = given[g + 1]; own[g + 2] = given[g + 2];", 1)' \
+  ./internal/httpapi 'TestRendererShadesAKernelMeshWithItsOwnNormals'
+
+drill "a mesh-only part is drawn as a solid" internal/httpapi/assets/forge3d.js \
+  's = s.replace("var meshOnly = isMeshOnly(part, mesh);", "var meshOnly = false;", 1)' \
+  ./internal/httpapi 'TestRendererDrawsMeshOnlyPartsAsMeshOnly'
+
+drill "a mesh-only surface is drawn opaque" internal/httpapi/assets/forge3d.js \
+  's = s.replace("b.opacity[i] = plan.meshOnly ? Math.min(", "b.opacity[i] = false ? Math.min(", 1)' \
+  ./internal/httpapi 'TestRendererDrawsMeshOnlyPartsAsMeshOnly'
+
+drill "a mesh-only part keeps the solid's colour" internal/httpapi/assets/forge3d.js \
+  's = s.replace("(b.meshOnly ? MESH_ONLY_TINT : (b.specs[i].color || g.part))", "(b.specs[i].color || g.part)", 1)' \
+  ./internal/httpapi 'TestRendererDrawsMeshOnlyPartsAsMeshOnly'
+
+drill "a lattice with no kernel is drawn as a solid box" internal/httpapi/assets/forge3d.js \
+  "s = s.replace(\"return MESH_ONLY_SHAPES.indexOf(String((part && part.shape) || '').trim().toLowerCase()) >= 0;\", \"return false;\", 1)" \
+  ./internal/httpapi 'TestRendererDrawsMeshOnlyPartsAsMeshOnly'
+
+drill "the mesh-only tag is switched off with the overlays" internal/httpapi/assets/forge3d.js \
+  's = s.replace("var tags = this.meshOnlyTags();", "var tags = this.showOverlays ? this.meshOnlyTags() : [];", 1)' \
+  ./internal/httpapi 'TestRendererDrawsMeshOnlyPartsAsMeshOnly'
+
+drill "the renderer spells the mesh-only label its own way" internal/httpapi/assets/forge3d.js \
+  "s = s.replace(\"var MESH_ONLY_LABEL = 'mesh-only - not manufacturable';\", \"var MESH_ONLY_LABEL = 'decorative';\", 1)" \
+  ./internal/httpapi 'TestRendererSpellsMeshOnlyAsGeometryDoes'
+
+drill "the banner does not count the rounds built smaller" internal/httpapi/assets/workbench.js \
+  "s = s.replace(\"(reduced.length ? ' <span class=\\\"prov-reduced\\\" data-reduced>'\", \"(false ? ' <span class=\\\"prov-reduced\\\" data-reduced>'\", 1)" \
+  ./internal/httpapi 'TestWorkbenchSaysWhichRoundsTheKernelBuiltSmaller'
+
+drill "the workbench drops the kernel's reductions" internal/httpapi/assets/workbench.js \
+  's = s.replace("          reductions: b.feature_reductions || []\n        };", "          reductions: []\n        };", 1)' \
+  ./internal/httpapi 'TestWorkbenchSaysWhichRoundsTheKernelBuiltSmaller'
+
+drill "the export panel forgets the rounds built smaller" internal/httpapi/assets/workbench.js \
+  's = s.replace("var reductions = exp.feature_reductions || [];", "var reductions = [];", 1)' \
+  ./internal/httpapi 'TestWorkbenchSaysWhichRoundsTheKernelBuiltSmaller'
 
 echo
 

@@ -1,0 +1,21 @@
+{
+  "name": "Presentation gear (fixed fixture)",
+  "units": "mm",
+  "not_verified": ["a fixed fixture for before/after screenshots; not a design"],
+  "parts": [
+    {"id": "gear", "name": "Spur gear m3 z36", "shape": "gear",
+     "size": {"module": 3, "teeth": 36, "face_width": 24, "bore_radius": 14},
+     "position": [0, 12, 0], "rotation": [90, 0, 0], "color": "#b8bcc4", "opacity": 1,
+     "material": {"name": "steel 42CrMo4", "finish": "metal"}},
+    {"id": "hub", "name": "Hub", "shape": "cylinder", "size": {"radius": 26, "height": 40},
+     "position": [0, 20, 0], "color": "#8d929c", "opacity": 1,
+     "material": {"name": "steel 42CrMo4", "finish": "metal"}},
+    {"id": "pinion", "name": "Pinion m3 z14", "shape": "gear",
+     "size": {"module": 3, "teeth": 14, "face_width": 24, "bore_radius": 6},
+     "position": [75, 12, 0], "rotation": [90, 0, 0], "color": "#c8a24a", "opacity": 1,
+     "material": {"name": "bronze", "finish": "metal"}},
+    {"id": "shaft", "name": "Shaft", "shape": "cylinder", "size": {"radius": 6, "height": 70},
+     "position": [75, 25, 0], "color": "#9aa0a8", "opacity": 1,
+     "material": {"name": "steel", "finish": "metal"}}
+  ]
+}
