@@ -208,6 +208,14 @@ FILES=(
   # Added 2026-09-18 (looks designed, stage E1): the mesh-only lattice drills.
   internal/domain/geometry/lattice.go
   internal/domain/geometry/units.go
+  # Added 2026-09-20 (PRD gaps: issues 15, 19, 20, 21). Time-bound access, the
+  # end-of-utterance clock, the autonomy write-once fence and the /v1 contract.
+  internal/domain/access/service.go
+  internal/domain/access/model.go
+  internal/domain/engine/autonomy_write.go
+  internal/httpapi/assets/stage.js
+  internal/httpapi/members.go
+  internal/platform/db/sql/0028_autonomy_is_write_once.sql
 )
 
 BACKUP=""
@@ -2569,7 +2577,7 @@ drill "the mic ends the hold on mouseleave again" internal/httpapi/assets/workbe
   ./internal/httpapi 'TestWorkbench_TheMicIsWiredToTheHoldAndKeepsWhatWasSaid'
 
 drill "a transcript goes straight to send() again" internal/httpapi/assets/workbench.js \
-  's = s.replace("        if (ForgeVoice.deliverSpoken(text, { busy: state.busy, input: $(\x27say\x27), send: send, note: voiceNote }) === \x27sent\x27) {", "        send(text); if (false) {", 1)' \
+  's = s.replace("        if (ForgeVoice.deliverSpoken(text, { busy: state.busy, input: $(\x27say\x27), send: send,\n          note: voiceNote, endedAt: endedAt }) === \x27sent\x27) {", "        send(text); if (false) {", 1)' \
   ./internal/httpapi 'TestWorkbench_TheMicIsWiredToTheHoldAndKeepsWhatWasSaid'
 
 drill "a typed message is cleared while a turn is in flight" internal/httpapi/assets/workbench.js \
@@ -4306,7 +4314,7 @@ drill "a fallback hold that hears nothing says nothing" internal/httpapi/assets/
   ./internal/httpapi 'TestVoiceInput_AServerThatCannotTranscribeFallsBackAndTheNextHoldIsHeard/the_recogniser_returns_nothing'
 
 drill "interim words are dropped when the session ends" internal/httpapi/assets/voice.js \
-  's = s.replace("          if (partial) {\n            self.onTranscript(partial);", "          if (false) {\n            self.onTranscript(partial);", 1)' \
+  's = s.replace("          if (partial) {\n            // Interim words rescued", "          if (false) {\n            // Interim words rescued", 1)' \
   ./internal/httpapi 'TestVoiceInput_AServerThatCannotTranscribeFallsBackAndTheNextHoldIsHeard/only_interim_words_arrive'
 
 drill "a browser with no recogniser is not told the mic is off" internal/httpapi/assets/voice.js \
@@ -5689,6 +5697,125 @@ drill "the workbench drops the kernel's reductions" internal/httpapi/assets/work
 drill "the export panel forgets the rounds built smaller" internal/httpapi/assets/workbench.js \
   's = s.replace("var reductions = exp.feature_reductions || [];", "var reductions = [];", 1)' \
   ./internal/httpapi 'TestWorkbenchSaysWhichRoundsTheKernelBuiltSmaller'
+
+echo
+
+echo "PRD gaps, 2026-09-20: issues 15, 19, 20, 21"
+# Four requirements the PRD names and the code did not hold:
+#   AUD-02 timed latency from Send rather than from the end of the utterance;
+#   AGT-03's "time-bound" clause had no expiry column anywhere, including on the
+#   review authority that RAISES a project's risk ceiling;
+#   AGT-04's "never silently raises its own autonomy" was true by the absence of
+#   a code path, which no test held;
+#   NFR-06 named "desktop" and nothing in the tree referenced it.
+
+# --- AGT-03: access that runs out (issue 20) ---
+drill "an expired grant is still access" internal/domain/access/service.go \
+  's = s.replace("if expires != nil && !expires.After(s.clock.Now()) {", "if false {", 1)' \
+  ./internal/domain/access 'TestAccessExpiry_AnExpiredGrantIsNotAccess'
+
+drill "the project list ignores expiry" internal/domain/access/service.go \
+  's = s.replace("where user_id = $1 and (expires_at is null or expires_at > $2)", "where user_id = $1 and (expires_at is null or $2::timestamptz is not null)", 1)' \
+  ./internal/domain/access 'TestAccessExpiry_AnExpiredGrantIsNotAccess'
+
+drill "the members list hides that a grant lapsed" internal/domain/access/service.go \
+  's = s.replace("m.Expired = !expires.After(now)", "m.Expired = !expires.After(now) && false", 1)' \
+  ./internal/domain/access 'TestAccessExpiry_AnExpiredGrantIsNotAccess'
+
+drill "a grant with no stated expiry never ends" internal/domain/access/service.go \
+  's = s.replace("return g.ExpiresAt(now), nil", "return time.Time{}, nil", 1)' \
+  ./internal/domain/access 'TestAccessExpiry_AGrantWithNoExpiryGetsTheDefault'
+
+drill "an owner grant expires like any other" internal/domain/access/service.go \
+  's = s.replace("if g.Role == RoleOwner && g.Until.IsZero() {", "if false {", 1)' \
+  ./internal/domain/access 'TestAccessExpiry_AnOwnerDoesNotLapseByDefault'
+
+drill "the default grant lifetime drifts from the migration" internal/domain/access/model.go \
+  's = s.replace("const DefaultGrantLifetime = 90 * 24 * time.Hour", "const DefaultGrantLifetime = 30 * 24 * time.Hour", 1)' \
+  ./internal/domain/access 'TestMigrationAndCodeAgreeOnTheDefaultGrantLifetime'
+
+drill "a lapsed review authority still raises the ceiling" internal/domain/workspace/service.go \
+  's = s.replace("return !a.expired &&", "return true &&", 1)' \
+  ./internal/domain/workspace 'TestReviewAuthority_ARecordedAuthorityExpires'
+
+drill "a claim with no stated end gets a different life" internal/domain/workspace/service.go \
+  's = s.replace("until = now.Add(access.DefaultGrantLifetime)", "until = now.Add(10 * access.DefaultGrantLifetime)", 1)' \
+  ./internal/domain/workspace 'TestReviewAuthority_AnUndatedClaimGetsTheDefaultLifetime'
+
+# --- AGT-04: autonomy is write-once (issue 21) ---
+drill "moving off prohibited is not a raise" internal/domain/engine/autonomy_write.go \
+  's = s.replace("if from == AutonomyProhibited {\n\t\treturn true\n\t}", "if from == AutonomyProhibited {\n\t\treturn false\n\t}", 1)' \
+  ./internal/domain/engine 'TestRaisesAutonomy_ProhibitedIsARefusalNotALevel|TestSchemaAndCodeAgreeOnWhatARaiseIs'
+
+drill "an unrecognised autonomy level is the safe side" internal/domain/engine/autonomy_write.go \
+  's = s.replace("if !okF || !okT {", "if false {", 1)' \
+  ./internal/domain/engine 'TestRaisesAutonomy_AnUnknownLevelIsTreatedAsARaise'
+
+drill "a new handler writes autonomy and nothing notices" internal/httpapi/goals_start.go \
+  "s = s.replace('const op = \"httpapi.Replan\"', 'const op = \"httpapi.Replan\"\n\tconst _drill = \"update forge_goals set autonomy = x\"', 1)" \
+  ./internal/domain/engine 'TestAutonomyIsWriteOnceAndEveryWriterIsDeclared'
+
+drill "the trigger and the code disagree about the ladder" internal/platform/db/sql/0028_autonomy_is_write_once.sql \
+  "s = s.replace(\"rank_new := case new.autonomy\n        when 'discuss' then 0 when 'draft' then 1\n        when 'sandbox_execute' then 2 when 'approval_gated' then 3 end;\", \"rank_new := case new.autonomy\n        when 'discuss' then 0 when 'draft' then 1\n        when 'sandbox_execute' then 2 when 'approval_gated' then 0 end;\", 1)" \
+  ./internal/domain/engine 'TestSchemaAndCodeAgreeOnWhatARaiseIs'
+
+drill "the database lets a goal climb the ladder" internal/platform/db/sql/0028_autonomy_is_write_once.sql \
+  's = s.replace("if rank_old is null or rank_new is null or rank_new > rank_old then", "if false then", 1)' \
+  ./internal/httpapi 'TestAutonomyRaiseIsRefusedByTheDatabase'
+
+drill "a replan quietly grants the autonomy it was asked for" internal/httpapi/goals_start.go \
+  's = s.replace("if engine.RaisesAutonomy(goal.Autonomy, want) {", "if false {", 1)' \
+  ./internal/httpapi 'TestReplan_RefusesARaiseOfTheGoalsOwnAutonomy'
+
+drill "a refused raise is refused silently" internal/domain/engine/autonomy_write.go \
+  's = s.replace("logx.EventAutonomyRaiseRefused,\n\t\t\t\"goal_id\"", "logx.EventGoalDrafted,\n\t\t\t\"goal_id\"", 1)' \
+  ./internal/httpapi 'TestReplan_RefusesARaiseOfTheGoalsOwnAutonomy'
+
+# --- AUD-02: the clock starts at the end of the utterance (issue 19) ---
+drill "the server path times from the transcript" internal/httpapi/assets/voice.js \
+  's = s.replace("this.onTranscript(text, endedAt == null ? null : endedAt);", "this.onTranscript(text, nowMS());", 1)' \
+  ./internal/httpapi 'TestVoiceLatency_TheServerPathTimesFromTheHoldNotTheTranscript'
+
+drill "a held recording forgets when the hold ended" internal/httpapi/assets/voice.js \
+  's = s.replace("if (session.endedAt == null) session.endedAt = this._heldUntil != null ? this._heldUntil : nowMS();", "session.endedAt = null;", 1)' \
+  ./internal/httpapi 'TestVoiceLatency_TheServerPathTimesFromTheHoldNotTheTranscript'
+
+drill "the browser path times from the final result" internal/httpapi/assets/voice.js \
+  's = s.replace("if (final.trim()) self.onTranscript(final.trim(), self._utteranceEnd());", "if (final.trim()) self.onTranscript(final.trim(), nowMS());", 1)' \
+  ./internal/httpapi 'TestVoiceLatency_TheBrowserPathEndsTheUtteranceWhenSpeechEnds'
+
+drill "the transcript reaches send without its moment" internal/httpapi/assets/voice.js \
+  's = s.replace("ctx.send(text, ctx.endedAt == null ? null : ctx.endedAt);", "ctx.send(text);", 1)' \
+  ./internal/httpapi 'TestVoiceLatency_ATranscriptKeptInTheBoxCarriesNoMeasurement'
+
+drill "a turn is timed from Send again" internal/httpapi/assets/workbench.js \
+  's = s.replace("if (spokenAt != null) turn.spokenMS = at - spokenAt;", "if (spokenAt != null) turn.spokenMS = at - t0;", 1)' \
+  ./internal/httpapi 'TestWorkbenchTimesATurnFromTheEndOfTheUtterance'
+
+drill "a typed turn is scored against AUD-02 as zero" internal/httpapi/assets/workbench.js \
+  's = s.replace("if (spokenAt != null) turn.spokenMS = at - spokenAt;", "turn.spokenMS = spokenAt == null ? 0 : at - spokenAt;", 1)' \
+  ./internal/httpapi 'TestWorkbenchTimesATurnFromTheEndOfTheUtterance'
+
+drill "the AUD-02 median counts turns that never spoke" internal/httpapi/assets/stage.js \
+  's = s.replace("return t.spokenMS != null && !t.retrieval; })", "return !t.retrieval; })", 1)' \
+  ./internal/httpapi 'TestTelemetryPanelReportsTheEndOfUtteranceMedianAndTheRetrievalCase'
+
+drill "the retrieval case is not reported separately" internal/httpapi/assets/stage.js \
+  "s = s.replace(\"stat('the same, with retrieval', ms(median(spokenRecalled)),\", \"stat('the same, with retrieval', ms(null),\", 1)" \
+  ./internal/httpapi 'TestTelemetryPanelReportsTheEndOfUtteranceMedianAndTheRetrievalCase'
+
+# --- NFR-06: the contract "desktop and web" rests on (issue 15) ---
+drill "a page route changes state" internal/httpapi/router.go \
+  's = s.replace("mux.HandleFunc(\"GET /console\", pages.Console)", "mux.HandleFunc(\"POST /console\", pages.Console)", 1)' \
+  ./internal/httpapi 'TestEveryStateChangeIsOnTheJSONContract'
+
+drill "a new page route is added to nobody's list" internal/httpapi/router.go \
+  's = s.replace("mux.HandleFunc(\"GET /workbench\", pages.Workbench)", "mux.HandleFunc(\"GET /desktop\", pages.Workbench)", 1)' \
+  ./internal/httpapi 'TestEveryPageRouteIsDeclaredAndOnlyRenders'
+
+drill "the workbench shell carries who is looking at it" internal/httpapi/pages.go \
+  's = s.replace("\tp.render(w, r, \"workbench\", pageData{", "\tif u, ok := UserFrom(r.Context()); ok {\n\t\tw.Write([]byte(\"<!-- \" + u.Email + \" -->\"))\n\t}\n\tp.render(w, r, \"workbench\", pageData{", 1)' \
+  ./internal/httpapi 'TestAPageCarriesNoStateOfItsOwn'
 
 echo
 

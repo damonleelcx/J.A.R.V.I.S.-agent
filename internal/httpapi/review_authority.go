@@ -3,6 +3,7 @@ package httpapi
 import (
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/access"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/workspace"
@@ -59,6 +60,10 @@ type recordReviewAuthorityRequest struct {
 	// Note is what they were recorded as holding: a registration number, a role,
 	// a scope. Free text, unverified.
 	Note string `json:"note"`
+	// Until is when the claim stops raising the ceiling, RFC3339 (PRD AGT-03).
+	// Omitted means the default lifetime, never "forever": there is no way to
+	// record a permanent authority, and that is what the column is for.
+	Until string `json:"until"`
 }
 
 // theCaveat is the sentence that has to travel with every response.
@@ -116,11 +121,22 @@ func (h *ReviewAuthorityHandlers) Put(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	var until time.Time
+	if raw := strings.TrimSpace(req.Until); raw != "" {
+		parsed, perr := time.Parse(time.RFC3339, raw)
+		if perr != nil {
+			WriteError(w, r, h.deps.Log, errs.New(op, errs.CodeValidationFailed).
+				WithDetail("until must be an RFC3339 instant such as 2026-12-31T00:00:00Z; got %q", raw))
+			return
+		}
+		until = parsed
+	}
+
 	// The recorder is the authenticated user, never a field in the body. A client
 	// that could name who attested would let somebody record an authority in
 	// another person's name — and attribution is the entire value of the record.
 	if err := h.svc.RecordReviewAuthority(r.Context(), h.deps.Pool,
-		projectID, req.Holder, req.Note, user.ID); err != nil {
+		projectID, req.Holder, req.Note, user.ID, until); err != nil {
 		WriteError(w, r, h.deps.Log, err)
 		return
 	}
@@ -142,7 +158,8 @@ func (h *ReviewAuthorityHandlers) Delete(w http.ResponseWriter, r *http.Request)
 		WriteError(w, r, h.deps.Log, err)
 		return
 	}
-	if err := h.svc.RecordReviewAuthority(r.Context(), h.deps.Pool, projectID, "", "", ""); err != nil {
+	if err := h.svc.RecordReviewAuthority(r.Context(), h.deps.Pool,
+		projectID, "", "", "", time.Time{}); err != nil {
 		WriteError(w, r, h.deps.Log, err)
 		return
 	}
@@ -180,7 +197,24 @@ func (h *ReviewAuthorityHandlers) respond(w http.ResponseWriter, r *http.Request
 		body["authority"] = map[string]any{
 			"holder": a.Holder, "note": a.Note,
 			"recorded_by": a.RecordedBy, "recorded_at": a.RecordedAt,
-			"verified": false,
+			// When it stops raising the ceiling (PRD AGT-03). A client that
+			// showed a holder with no end would present a claim as a standing
+			// fact, which is the same failure the caveat exists to prevent.
+			"expires_at": a.ExpiresAt,
+			"verified":   false,
+		}
+	}
+	// A lapsed claim is REPORTED, never omitted. A ceiling that fell back to the
+	// pack's ordinary one with nothing on screen saying why is the same silence
+	// this feature was built to end, one step removed: a reader has to be able to
+	// see that there WAS an authority and that it ran out.
+	if a.Expired() {
+		body["expired_authority"] = map[string]any{
+			"holder": a.Holder, "note": a.Note,
+			"recorded_by": a.RecordedBy, "recorded_at": a.RecordedAt,
+			"expired_at": a.ExpiresAt,
+			"detail": "This authority lapsed, so the ceiling above is the pack's ordinary one. " +
+				"Record it again to raise the ceiling for a further period.",
 		}
 	}
 	WriteJSON(w, http.StatusOK, body)

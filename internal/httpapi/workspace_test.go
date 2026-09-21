@@ -609,7 +609,7 @@ func TestGraph_ARaisedCeilingTravelsWithItsCaveat(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := h.svc.RecordReviewAuthority(ctx, h.pool, id,
-		"R. Okonkwo", "CEng MICE 481920", h.owner.ID); err != nil {
+		"R. Okonkwo", "CEng MICE 481920", h.owner.ID, time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 

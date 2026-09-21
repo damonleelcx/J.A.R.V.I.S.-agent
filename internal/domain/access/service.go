@@ -15,6 +15,20 @@ import (
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/logx"
 )
 
+// ErrGrantExpired marks a refusal that happened because a grant ran out, rather
+// than because there was never one (PRD AGT-03).
+//
+// # Why the two are told apart at all
+//
+// Require deliberately flattens "you are not a member" into "no such project":
+// a project you cannot see reads exactly like one that does not exist, so no
+// endpoint can be used to enumerate other people's work. An EXPIRED member is
+// not in that position — they were in the project, they know it exists, and
+// telling them their access lapsed discloses nothing they were not already
+// holding. Refusing them with "no project" would send somebody who worked there
+// yesterday looking for a deleted project.
+var ErrGrantExpired = errors.New("access: the grant expired")
+
 // Service answers "may this person do this here", and manages membership.
 type Service struct {
 	pool  *db.Pool
@@ -35,15 +49,42 @@ func (s *Service) RoleIn(ctx context.Context, q db.Querier, projectID, userID st
 	const op = "access.Service.RoleIn"
 
 	var raw string
+	var expires *time.Time
 	err := q.QueryRow(ctx,
-		`select role from forge_project_members where project_id = $1 and user_id = $2`,
-		projectID, userID).Scan(&raw)
+		`select role, expires_at from forge_project_members where project_id = $1 and user_id = $2`,
+		projectID, userID).Scan(&raw, &expires)
 	if err != nil {
 		if errors.Is(err, pgx.ErrNoRows) {
 			return "", errs.Wrap(op, errs.CodeNotFound, err).
 				WithDetail("no membership for that person in project %s", projectID)
 		}
 		return "", errs.Wrap(op, errs.CodeDatabaseUnavail, err)
+	}
+	// An expired grant is not access (PRD AGT-03, "time-bound").
+	//
+	// # Why here and not in each caller's query
+	//
+	// Every authorisation in this build reaches the database through this
+	// function — Require, Can, SetRole's granter check, wouldStrandProject. A
+	// clause added to each of their queries would be four places to forget it,
+	// and the fourth is the one that matters. This is the same argument that put
+	// Require here in the first place.
+	//
+	// # Why the row is refused rather than deleted
+	//
+	// Deleting on read would destroy the answer to "who had access, and until
+	// when" at exactly the moment somebody starts asking it. The row stays,
+	// marked in every listing, and an owner re-grants it if the access is still
+	// wanted. Said out loud as an audit event for the same reason a revocation
+	// is: the access somebody had a minute ago is gone, and nothing else would
+	// record why.
+	if expires != nil && !expires.After(s.clock.Now()) {
+		s.log.Info(ctx, logx.EventAccessExpired, "project_id", projectID,
+			"user_id", userID, "role", raw, "expired_at", expires.UTC().Format(time.RFC3339))
+		return "", errs.Wrap(op, errs.CodeNotFound, ErrGrantExpired).
+			WithDetail("that person's %s access to project %s expired at %s. It is not revoked and "+
+				"not deleted — it ran out. An owner can grant it again.",
+				raw, projectID, expires.UTC().Format(time.RFC3339))
 	}
 	role := Role(raw)
 	if !role.Valid() {
@@ -80,6 +121,10 @@ func (s *Service) Require(ctx context.Context, projectID, userID string, p Permi
 	}
 	role, err := s.RoleIn(ctx, s.pool, projectID, userID)
 	if err != nil {
+		// An expiry keeps its own words — see ErrGrantExpired.
+		if errors.Is(err, ErrGrantExpired) {
+			return err
+		}
 		if errs.Is(err, errs.CodeNotFound) {
 			return errs.New(op, errs.CodeNotFound).WithDetail("no project %s", projectID)
 		}
@@ -109,22 +154,33 @@ func (s *Service) Members(ctx context.Context, projectID string) ([]Member, erro
 	const op = "access.Service.Members"
 
 	rows, err := s.pool.Query(ctx, `
-		select project_id, user_id, role, granted_by, granted_at
+		select project_id, user_id, role, granted_by, granted_at, expires_at
 		  from forge_project_members where project_id = $1`, projectID)
 	if err != nil {
 		return nil, errs.Wrap(op, errs.CodeDatabaseUnavail, err)
 	}
 	defer rows.Close()
 
+	now := s.clock.Now()
 	out := []Member{}
 	for rows.Next() {
 		var m Member
 		var role string
 		var grantedAt time.Time
-		if err := rows.Scan(&m.ProjectID, &m.UserID, &role, &m.GrantedBy, &grantedAt); err != nil {
+		var expires *time.Time
+		if err := rows.Scan(&m.ProjectID, &m.UserID, &role, &m.GrantedBy, &grantedAt, &expires); err != nil {
 			return nil, errs.Wrap(op, errs.CodeDatabaseUnavail, err)
 		}
 		m.Role, m.GrantedAt = Role(role), grantedAt.UTC().Format(time.RFC3339)
+		// Lapsed rows are LISTED, marked, not filtered out. This is the one
+		// surface where somebody asks "who is in this project", and a member
+		// whose access ran out yesterday is the row they most need to see —
+		// silently dropping it would read as "they were removed", which nobody
+		// did.
+		if expires != nil {
+			m.ExpiresAt = expires.UTC().Format(time.RFC3339)
+			m.Expired = !expires.After(now)
+		}
 		out = append(out, m)
 	}
 	if err := rows.Err(); err != nil {
@@ -149,8 +205,13 @@ func (s *Service) Members(ctx context.Context, projectID string) ([]Member, erro
 func (s *Service) Projects(ctx context.Context, userID string) (map[string]Role, error) {
 	const op = "access.Service.Projects"
 
+	// Expired memberships are excluded here, where Members lists them marked:
+	// this answers "what may I open", and a project somebody can no longer read
+	// must not be in it. The listing and the permission check must agree, and
+	// RoleIn is what decides — so the clause is the same one.
 	rows, err := s.pool.Query(ctx,
-		`select project_id, role from forge_project_members where user_id = $1`, userID)
+		`select project_id, role from forge_project_members
+		  where user_id = $1 and (expires_at is null or expires_at > $2)`, userID, s.clock.Now())
 	if err != nil {
 		return nil, errs.Wrap(op, errs.CodeDatabaseUnavail, err)
 	}
@@ -208,20 +269,69 @@ func (s *Service) SetRole(ctx context.Context, g Grant) error {
 		return err
 	}
 	now := s.clock.Now()
+	expires, err := s.expiryFor(g, now)
+	if err != nil {
+		return err
+	}
+	var expiresArg any
+	if !expires.IsZero() {
+		expiresArg = expires
+	}
 	if _, err := tx.Exec(ctx, `
-		insert into forge_project_members (project_id, user_id, role, granted_by, granted_at, updated_at)
-		values ($1,$2,$3,$4,$5,$5)
+		insert into forge_project_members (project_id, user_id, role, granted_by, granted_at, updated_at, expires_at)
+		values ($1,$2,$3,$4,$5,$5,$6)
 		on conflict (project_id, user_id) do update
-		   set role = excluded.role, granted_by = excluded.granted_by, updated_at = excluded.updated_at`,
-		g.ProjectID, g.UserID, string(g.Role), g.By, now); err != nil {
+		   set role = excluded.role, granted_by = excluded.granted_by,
+		       updated_at = excluded.updated_at, expires_at = excluded.expires_at`,
+		g.ProjectID, g.UserID, string(g.Role), g.By, now, expiresArg); err != nil {
 		return errs.Wrap(op, errs.CodeDatabaseUnavail, err)
 	}
 	if err := tx.Commit(ctx); err != nil {
 		return errs.Wrap(op, errs.CodeDatabaseUnavail, err)
 	}
+	until := "no expiry"
+	if !expires.IsZero() {
+		until = expires.UTC().Format(time.RFC3339)
+	}
+	// The expiry is in the grant event, not only in the row. "When did they get
+	// access" is the first question after anything goes wrong, and "until when"
+	// is the second one; an audit line that answers only the first sends the
+	// reader back to a table that has since been re-granted.
 	s.log.Info(ctx, logx.EventAccessGranted, "project_id", g.ProjectID,
-		"user_id", g.UserID, "role", string(g.Role), "by", g.By)
+		"user_id", g.UserID, "role", string(g.Role), "by", g.By, "expires_at", until)
 	return nil
+}
+
+// expiryFor decides when a grant lapses, and refuses the one shape that would
+// make a project unadministrable.
+//
+// # Why an owner is different
+//
+// Every other role expiring is least privilege working. An OWNER expiring is a
+// project with nobody who can add a member, change a role or restore access —
+// including the person who lost it — which is not a state anybody recovers from
+// through the product, only through the database. wouldStrandProject already
+// refuses to create that state by removal or demotion; an expiry that produced
+// it on a timer would be the same hazard with a delay on it.
+//
+// So an owner grant is permanent unless somebody explicitly names a date, and
+// naming one is allowed — a temporary owner for a handover is a real thing — but
+// it is a decision typed on purpose, never a default that arrives because a form
+// had no date field.
+func (s *Service) expiryFor(g Grant, now time.Time) (time.Time, error) {
+	const op = "access.Service.expiryFor"
+
+	if g.Role == RoleOwner && g.Until.IsZero() {
+		return time.Time{}, nil
+	}
+	if g.Forever && g.Role != RoleOwner {
+		return time.Time{}, errs.New(op, errs.CodeValidationFailed).
+			WithDetail("a %s grant cannot be made without an expiry (PRD AGT-03 requires access to be "+
+				"time-bound). Give it an end date, or make them an owner if the access really is "+
+				"permanent — an owner is the one role that administers the project and so cannot be "+
+				"allowed to lapse.", g.Role)
+	}
+	return g.ExpiresAt(now), nil
 }
 
 // Remove takes somebody out of a project.
@@ -279,10 +389,16 @@ func (s *Service) wouldStrandProject(ctx context.Context, q db.Querier, projectI
 	if current != RoleOwner || newRole == RoleOwner {
 		return nil
 	}
+	// Expired owners do not count. An owner whose grant has lapsed cannot
+	// administer anything, so treating them as one of the owners a project has
+	// would let the last USABLE owner be demoted on the strength of a row that
+	// refuses at every permission check.
 	var owners int
 	if err := q.QueryRow(ctx,
-		`select count(*) from forge_project_members where project_id = $1 and role = 'owner'`,
-		projectID).Scan(&owners); err != nil {
+		`select count(*) from forge_project_members
+		  where project_id = $1 and role = 'owner'
+		    and (expires_at is null or expires_at > $2)`,
+		projectID, s.clock.Now()).Scan(&owners); err != nil {
 		return errs.Wrap(op, errs.CodeDatabaseUnavail, err)
 	}
 	if owners <= 1 {
@@ -305,10 +421,13 @@ func (s *Service) wouldStrandProject(ctx context.Context, q db.Querier, projectI
 func (s *Service) EnsureOwner(ctx context.Context, q db.Querier, projectID, userID string) error {
 	const op = "access.Service.EnsureOwner"
 
+	// expires_at is written NULL on purpose, not left out by omission: the row
+	// that keeps a project administrable is the one that must not lapse. See
+	// expiryFor.
 	now := s.clock.Now()
 	if _, err := q.Exec(ctx, `
-		insert into forge_project_members (project_id, user_id, role, granted_by, granted_at, updated_at)
-		values ($1,$2,'owner',$2,$3,$3)
+		insert into forge_project_members (project_id, user_id, role, granted_by, granted_at, updated_at, expires_at)
+		values ($1,$2,'owner',$2,$3,$3,null)
 		on conflict (project_id, user_id) do nothing`, projectID, userID, now); err != nil {
 		return errs.Wrap(op, errs.CodeDatabaseUnavail, err)
 	}

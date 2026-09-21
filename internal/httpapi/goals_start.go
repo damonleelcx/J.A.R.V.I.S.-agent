@@ -85,6 +85,22 @@ type replanRequest struct {
 	// whose planning tripped must be replanned with build:true, or it comes back
 	// as ordinary tasks the executor runs instead of steps the kernel builds.
 	Build bool `json:"build"`
+	// Autonomy is accepted here ONLY so that asking for a different one is
+	// refused in the requirement's own words (PRD AGT-04).
+	//
+	// # Why the field exists at all when nothing may set it
+	//
+	// Replanning is the one place a caller plausibly reaches for it: the goal
+	// exists, its plan is being rewritten, and "while you are at it, let it do
+	// more" is the obvious next thought — it is the feature request this
+	// codebase will get. Without the field, DecodeJSON rejects it as an unknown
+	// field and answers with a message about JSON, which teaches nobody
+	// anything and records nothing. With it, the attempt meets the rule that
+	// forbids it and the audit log shows somebody asked.
+	//
+	// Naming the level the goal already has is accepted and changes nothing:
+	// a client echoing back what it read is not asking for anything.
+	Autonomy string `json:"autonomy"`
 }
 
 // Field ceilings. These are not security controls — BodyLimit already bounds the
@@ -288,6 +304,29 @@ func (h *GoalHandlers) Replan(w http.ResponseWriter, r *http.Request) {
 	goal, err := h.loadGoalFor(r, goalID, user.ID, access.PermGoalCreate)
 	if err != nil {
 		WriteError(w, r, h.deps.Log, err)
+		return
+	}
+
+	// ‼️ A replan may rewrite the plan. It may not move the goal up the ladder.
+	//
+	// PRD AGT-04 forbids autonomy being raised without the person seeing it, and
+	// what makes that true today is that autonomy is written once, at creation,
+	// and nothing changes it. This is the surface where a caller would first
+	// try, so this is where the rule is said — and where the attempt is
+	// recorded. Lowering is refused here too, but for a duller reason: this
+	// endpoint plans, it does not administer a goal, and a level that changed
+	// as a side effect of replanning would be a change nobody pressed a button
+	// for either.
+	if want := engine.Autonomy(strings.TrimSpace(req.Autonomy)); want != "" && want != goal.Autonomy {
+		if engine.RaisesAutonomy(goal.Autonomy, want) {
+			WriteError(w, r, h.deps.Log,
+				engine.RefuseAutonomyRaise(r.Context(), h.deps.Log, goal.ID, goal.Autonomy, want, user.ID))
+			return
+		}
+		WriteError(w, r, h.deps.Log, errs.New(op, errs.CodeValidationFailed).
+			WithDetail("goal %s is at autonomy %q. Replanning rewrites the plan and never changes "+
+				"the level the work may run at; send no autonomy, or the one it already has.",
+				goal.ID, goal.Autonomy))
 		return
 	}
 

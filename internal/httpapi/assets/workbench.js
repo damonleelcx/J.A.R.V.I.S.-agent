@@ -37,6 +37,9 @@
     lastLatency: null,
     firstToken: null,
     lastBargeIn: null,
+    // PRD AUD-02's own figure for the last turn that had an utterance to end:
+    // end of speech to first audio. Null for a typed turn — see send().
+    lastSpoken: null,
     turnAudio: null,   // set while a turn is in flight; see send()
     model: null,
     busy: false,
@@ -2427,7 +2430,38 @@
    *
    * Geometry is still applied only when the complete object has parsed on the
    * server — never from a partial one. */
-  function send(text) {
+  /* audioClock records, for one turn, the moment FORGE's reply became audible —
+   * against both clocks that matter, under different names.
+   *
+   * `audioMS` runs from Send: the browser's view of the turn it issued.
+   * `spokenMS` runs from the END OF THE UTTERANCE, which is PRD AUD-02's own
+   * measurement and is the larger of the two, because between speaking and
+   * Send there is a recogniser settling and, on the server transcription path,
+   * a whole /v1/transcribe round trip. That difference is the gap the panel
+   * used to leave out of a figure it compared against 700ms.
+   *
+   * A turn with no utterance — typed, or spoken and left to wait in the text
+   * box — leaves spokenMS null forever. Not zero: zero is the best-looking
+   * number on the panel and the one a reader would take for "instant".
+   *
+   * Its own function so it can be driven on its own
+   * (TestWorkbenchTimesATurnFromTheEndOfTheUtterance). Inline inside send() it
+   * was reachable only by standing up the whole page. */
+  function audioClock(turn, t0, spokenAt) {
+    return function (at) {
+      if (turn.audioMS != null) return;
+      turn.audioMS = at - t0;
+      if (spokenAt != null) turn.spokenMS = at - spokenAt;
+    };
+  }
+
+  /* send(text, spokenAt)
+   *
+   * spokenAt is performance.now() at the END OF THE UTTERANCE that produced
+   * `text`, when one produced it — see voice.js. Null for a typed turn, and
+   * null for a spoken turn that waited in the text box, because neither has an
+   * utterance whose end is the start of anything. */
+  function send(text, spokenAt) {
     if (state.busy || !text.trim()) return;
     state.busy = true;
     clearPartial();
@@ -2455,17 +2489,36 @@
      * network, the parse, and the synthesiser starting. They are recorded under
      * different names because they answer different questions, and the Telemetry
      * panel refuses to average them. A field nothing measured stays null and is
-     * drawn as an em dash rather than a zero. */
+     * drawn as an em dash rather than a zero.
+     *
+     * `spokenMS` is the third, and it is the only one that is AUD-02's own
+     * figure: end of utterance to first audio. It differs from `audioMS` by
+     * everything that happened between the person finishing speaking and this
+     * function being called — the recogniser settling, and on the server path a
+     * whole /v1/transcribe round trip. That gap is why the panel used to report
+     * low against a 700ms threshold it was not measuring. A typed turn has no
+     * utterance and reports null here, forever: there is nothing to measure,
+     * and a zero would be the best-looking number on the panel. */
     var turn = {
       prompt: text.length > 44 ? text.slice(0, 44) + '…' : text,
       at: new Date().toISOString().slice(11, 19) + ' UTC',
       serverFirstMS: null, serverTotalMS: null, browserTotalMS: null,
-      audioMS: null, model: null, tokens: null,
+      audioMS: null, spokenMS: null, model: null, tokens: null,
       retrieval: false, geometry: false, failed: false, bargeInMS: null
     };
     /* Where onState writes the moment speech starts. Held on `state` because the
      * voice layer reports to one handler for the whole page, not to this turn. */
-    state.turnAudio = function (at) { if (turn.audioMS == null) turn.audioMS = at - t0; };
+    var clock = audioClock(turn, t0, spokenAt);
+    state.turnAudio = function (at) {
+      clock(at);
+      if (turn.spokenMS != null && state.lastSpoken == null) {
+        state.lastSpoken = Math.round(turn.spokenMS);
+        updateMeta();
+      }
+    };
+    // Cleared per turn, so the line never shows the previous spoken turn's
+    // figure beside a typed turn's reply.
+    state.lastSpoken = null;
 
     streamTurn(text, sending, fromNodes, function (ev) {
       switch (ev.kind) {
@@ -3654,6 +3707,11 @@
      * words arrived, which is before the synthesiser has said anything; the
      * Telemetry panel keeps that distinction and this line used to blur it. */
     if (state.firstToken != null) bits.push('first token ' + state.firstToken + 'ms');
+    /* AUD-02's own figure, on the line where latency is read at a glance.
+     * Named for what it measures — from the moment speech ended, not from Send
+     * — because the whole of issue 19 was a number that looked like this one
+     * and was not. Absent for a typed turn, which has no utterance to end. */
+    if (state.lastSpoken != null) bits.push('spoke ' + state.lastSpoken + 'ms after you stopped');
     if (state.lastLatency != null) bits.push('full reply ' + state.lastLatency + 'ms');
     if (state.lastBargeIn != null) bits.push('barge-in ' + state.lastBargeIn + 'ms');
     $('meta').textContent = bits.join(' · ');
@@ -3738,9 +3796,10 @@
       onPartial: function (text) { showPartial(text); },
       /* Never straight to send(): see deliverSpoken in voice.js for where a
        * transcript goes while a turn is in flight, and why. */
-      onTranscript: function (text) {
+      onTranscript: function (text, endedAt) {
         clearPartial();
-        if (ForgeVoice.deliverSpoken(text, { busy: state.busy, input: $('say'), send: send, note: voiceNote }) === 'sent') {
+        if (ForgeVoice.deliverSpoken(text, { busy: state.busy, input: $('say'), send: send,
+          note: voiceNote, endedAt: endedAt }) === 'sent') {
           voiceNote('');
         }
       },

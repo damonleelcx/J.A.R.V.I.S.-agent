@@ -718,14 +718,28 @@
    * its speech synthesiser. Averaging them would produce a number that is
    * neither, so they are separate columns with separate names.
    *
-   * # What this panel refuses to do
+   * # AUD-02's own figure, and why it is a third column
    *
-   * AUD-02's threshold is end-of-utterance to first audio. Nothing here measures
-   * end-of-utterance: the browser's clock starts at Send, and for a typed turn
-   * there is no utterance at all. So the threshold is shown as CONTEXT beside
-   * the measurement, and the panel does not mark a turn as passing or failing a
-   * requirement it is not measuring. A tick against the wrong metric is worse
-   * than no tick.
+   * AUD-02's threshold is end-of-utterance to first audio, and until issue 19
+   * nothing here measured end-of-utterance: the browser's clock started at
+   * Send, so everything between a person finishing speaking and the request
+   * leaving the page was outside the number — including, on the server
+   * transcription path, a whole /v1/transcribe round trip. The figure that
+   * looked like AUD-02 was a different quantity and it read low.
+   *
+   * voice.js now hands the end of the utterance to send() with the words, so
+   * `spokenMS` is the requirement's measurement and `audioMS` is kept beside it
+   * rather than replaced by it: the DIFFERENCE between them is what the old
+   * number was hiding, and it is only visible while both are on screen.
+   *
+   * # What this panel still refuses to do
+   *
+   * Mark a turn as passing or failing. A typed turn has no utterance and
+   * reports no spokenMS at all — not a zero — and a session of typed turns
+   * would otherwise show a perfect score against a voice requirement. The
+   * thresholds are shown as CONTEXT beside the medians; the retrieval case has
+   * its own median because AUD-02 gives it its own number (1.5s), and averaging
+   * the two would answer neither.
    */
 
   function median(xs) {
@@ -759,23 +773,39 @@
       .map(function (t) { return t.audioMS; });
     var barges = turns.filter(function (t) { return t.bargeInMS != null; })
       .map(function (t) { return t.bargeInMS; });
+    /* AUD-02's own figure, split the way AUD-02 splits it: ≤700ms plain,
+     * ≤1.5s when the turn quoted memory. A turn that retrieved is a different
+     * promise and averaging the two would report neither. */
+    var spoken = turns.filter(function (t) { return t.spokenMS != null && !t.retrieval; })
+      .map(function (t) { return t.spokenMS; });
+    var spokenRecalled = turns.filter(function (t) { return t.spokenMS != null && t.retrieval; })
+      .map(function (t) { return t.spokenMS; });
 
     var head = '<div class="wbtel-h">This browser session</div>' +
       '<div class="wbtel-g">' +
       stat('turns measured', String(turns.length),
         turns.length ? 'since this tab was opened' : 'nothing has been asked yet') +
+      stat('median end of utterance to first audio', ms(median(spoken)),
+        spoken.length ? 'browser clock, n=' + spoken.length + ', AUD-02 names 700ms'
+                      : 'no spoken turn has been answered aloud') +
+      stat('the same, with retrieval', ms(median(spokenRecalled)),
+        spokenRecalled.length
+          ? 'browser clock, n=' + spokenRecalled.length + ', AUD-02 names 1.5s'
+          : 'no spoken turn that quoted memory has been answered aloud') +
       stat('median to first token', ms(median(served)),
         served.length ? 'server clock, n=' + served.length : 'no turn reported one') +
-      stat('median to first audio', ms(median(audible)),
+      stat('median Send to first audio', ms(median(audible)),
         audible.length ? 'browser clock, n=' + audible.length
                        : 'no reply has been spoken aloud') +
       stat('fastest barge-in', ms(barges.length ? Math.min.apply(null, barges) : null),
         barges.length ? 'browser clock, n=' + barges.length : 'nobody has interrupted') +
       '</div>' +
-      '<p class="wbnote">PRD AUD-02 names ≤700ms from end of utterance to first audio, and ' +
-      '≤250ms to stop on interruption. Neither figure above is that measurement: the browser\'s ' +
-      'clock starts when the turn is sent, not when you stopped speaking, and a typed turn has ' +
-      'no utterance to end. The threshold is here for scale, not as a verdict.</p>';
+      '<p class="wbnote">The first two figures are PRD AUD-02\'s own measurement: the clock ' +
+      'starts when you stopped speaking — the button coming up, or the recogniser calling a ' +
+      'result final — and stops when a reply is audible, so the transcription round trip is ' +
+      'inside it. A TYPED turn has no utterance and is counted in neither; it appears under ' +
+      '"Send to first audio", which starts later and is the smaller number. The thresholds are ' +
+      'here for scale: this panel measures, it does not mark a turn as passing.</p>';
 
     var models = '';
     if (state.models && state.models.error) {
@@ -816,10 +846,13 @@
      * the half somebody would otherwise assume was fine. */
     var missing = '<div class="wbunmeas"><div class="wbunmeas-h">Not measured here</div>' +
       '<ul class="wbrel-l">' +
-      '<li><b>End of utterance to first audio</b>, which is the figure AUD-02 actually names. ' +
-      'What is measured starts at Send.</li>' +
-      '<li><b>Retrieval time.</b> A turn is marked as having quoted memory or not; how long ' +
-      'that took is not separated from the rest of the turn.</li>' +
+      '<li><b>Anything about a TYPED turn against AUD-02.</b> The figure the requirement names ' +
+      'starts when somebody stops speaking, and a typed turn never started speaking. Those ' +
+      'turns are measured from Send and kept out of the two medians above rather than counted ' +
+      'as instant.</li>' +
+      '<li><b>Retrieval time.</b> A turn is marked as having quoted memory or not, and its ' +
+      'end-to-audio figure is reported against AUD-02\'s separate 1.5s case — but how long the ' +
+      'retrieval itself took is not separated from the rest of the turn.</li>' +
       '<li><b>A turn that failed before any reply arrived</b> — a model that could not be ' +
       'reached, a turn cut off. Nothing is recorded for one; those are in the server log with ' +
       'their error code — so a quiet history is not the same as a healthy one. A reply that ' +
@@ -907,7 +940,14 @@
       '</div>' +
       '<div class="wbturn-m">' +
         '<span>first token ' + ms(t.serverFirstMS) + ' <i>server</i></span>' +
-        '<span>first audio ' + ms(t.audioMS) + ' <i>browser</i></span>' +
+        // AUD-02's own figure first, and only for a turn that had an utterance
+        // to end. A row that showed an em dash here for every typed turn would
+        // train the eye to skip the column that matters.
+        (t.spokenMS != null
+          ? '<span>from end of speech ' + ms(t.spokenMS) +
+            (t.retrieval ? ' <i>browser, with retrieval</i>' : ' <i>browser</i>') + '</span>'
+          : '') +
+        '<span>first audio ' + ms(t.audioMS) + ' <i>browser, from Send</i></span>' +
         '<span>full reply ' + ms(t.serverTotalMS != null ? t.serverTotalMS : t.browserTotalMS) +
           ' <i>' + (t.serverTotalMS != null ? 'server' : 'browser') + '</i></span>' +
         (t.tokens ? '<span>' + esc(String(t.tokens)) + ' tokens</span>' : '') +

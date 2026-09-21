@@ -298,6 +298,8 @@ func cmdProjectReviewAuthority(ctx context.Context, cfg *config.Config, log *log
 	holder := fs.String("holder", "", "the named person accountable in this domain")
 	note := fs.String("note", "", "what they hold: a registration number, a role, a scope")
 	as := fs.String("as", "", "user id of whoever is recording this (required with --holder)")
+	until := fs.String("until", "",
+		"when the claim lapses, RFC3339 (default: 90 days from now; there is no 'forever')")
 	clear := fs.Bool("clear", false, "remove the recorded authority and lower the ceiling again")
 	if err := fs.Parse(args); err != nil {
 		return err
@@ -325,7 +327,7 @@ func cmdProjectReviewAuthority(ctx context.Context, cfg *config.Config, log *log
 
 	switch {
 	case *clear:
-		if err := svc.RecordReviewAuthority(ctx, pool, *project, "", "", ""); err != nil {
+		if err := svc.RecordReviewAuthority(ctx, pool, *project, "", "", "", time.Time{}); err != nil {
 			return err
 		}
 		fmt.Println("Cleared. This project's ceiling is the domain's ordinary one again.")
@@ -336,7 +338,16 @@ func cmdProjectReviewAuthority(ctx context.Context, cfg *config.Config, log *log
 					"An anonymous one would let work above the ordinary limit happen on the " +
 					"strength of a value with no author.")
 		}
-		if err := svc.RecordReviewAuthority(ctx, pool, *project, *holder, *note, *as); err != nil {
+		var ends time.Time
+		if *until != "" {
+			parsed, perr := time.Parse(time.RFC3339, *until)
+			if perr != nil {
+				return errs.New(op, errs.CodeValidationFailed).
+					WithDetail("--until must be an RFC3339 instant such as 2026-12-31T00:00:00Z; got %q", *until)
+			}
+			ends = parsed
+		}
+		if err := svc.RecordReviewAuthority(ctx, pool, *project, *holder, *note, *as, ends); err != nil {
 			return err
 		}
 	}
@@ -352,6 +363,15 @@ func cmdProjectReviewAuthority(ctx context.Context, cfg *config.Config, log *log
 	fmt.Printf("%s\n", describeIndustry(string(d.Pack)))
 	if !a.Recorded() {
 		fmt.Printf("  authority  none recorded\n  ceiling    %s\n", d.MaxTier)
+		// A lapsed claim is named, not silently absent. "None recorded" on a
+		// project that had one until yesterday would send somebody looking for a
+		// record that is right there, and leave them guessing why the ceiling
+		// moved.
+		if a.Expired() {
+			fmt.Printf("\n%s was recorded by %s and LAPSED at %s, so the ceiling above is the\n"+
+				"domain's ordinary one again. Record it again to raise it for a further period.\n",
+				a.Holder, a.RecordedBy, a.ExpiresAt.UTC().Format(time.RFC3339))
+		}
 		if d.ReviewAuthority == "" {
 			fmt.Printf("\nNothing raises the ceiling in this domain. %s\n", d.Requires)
 			return nil
@@ -364,6 +384,7 @@ func cmdProjectReviewAuthority(ctx context.Context, cfg *config.Config, log *log
 		fmt.Printf("  holding    %s\n", a.Note)
 	}
 	fmt.Printf("  recorded   by %s at %s\n", a.RecordedBy, a.RecordedAt.UTC().Format(time.RFC3339))
+	fmt.Printf("  lapses     %s\n", a.ExpiresAt.UTC().Format(time.RFC3339))
 	fmt.Printf("  ceiling    %s (raised from %s)\n", d.CeilingWith(true), d.MaxTier)
 	// Said every time, in these words. A raised ceiling that does not state what
 	// was NOT established is a way to launder authority nothing checked.

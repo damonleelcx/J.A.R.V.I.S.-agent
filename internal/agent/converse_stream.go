@@ -50,8 +50,15 @@ type StreamEvent struct {
 	// that then fails — otherwise a failed first turn leaves the person with a
 	// conversation they cannot come back to.
 	Conversation *ConversationKept `json:"conversation,omitempty"`
-	// FirstTokenMS and TotalMS are measured, not targeted. PRD AUD-02 names
-	// ≤700ms; this reports what actually happened so the claim is checkable.
+	// FirstTokenMS and TotalMS are measured, not targeted — and they are NOT
+	// AUD-02's figure. This clock starts when the request arrives here and
+	// stops at the first speech token; AUD-02 asks for end-of-utterance to
+	// first AUDIO, which additionally contains whatever the person waited
+	// through before the request was sent (the recogniser settling, a
+	// /v1/transcribe round trip) and the synthesiser starting afterwards. The
+	// browser measures that one and the Telemetry panel reports it under its
+	// own name — see workbench.js's audioClock and issue 19, where these two
+	// were being read as the same number and the smaller one was winning.
 	FirstTokenMS int64  `json:"first_token_ms,omitempty"`
 	TotalMS      int64  `json:"total_ms,omitempty"`
 	Model        string `json:"model,omitempty"`
