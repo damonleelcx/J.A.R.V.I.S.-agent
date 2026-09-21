@@ -5178,7 +5178,7 @@ drill "the turn never says a round was built smaller" internal/agent/interferenc
   ./internal/agent 'TestTurn_SaysWhichRoundsTheKernelBuiltSmaller'
 
 drill "an export job's label hides the reductions" internal/httpapi/geometry_exports.go \
-  's = s.replace("\tlabel = reducedLabel(e.FeatureReductions) + label\n", "", 1)' \
+  's = s.replace("exportLabelClauses(e.MeshOnly, e.Skipped, e.FeatureFailures, e.FeatureReductions)", "\"\"", 1)' \
   ./internal/httpapi 'TestExportLabel_SaysWhichRoundsWereBuiltSmaller'
 
 drill "convex edges are taken for concave ones" internal/domain/cad/sidecar.py \
@@ -5428,7 +5428,7 @@ drill "the mesh reply drops the mesh-only flag" internal/httpapi/geometry.go \
   ./internal/httpapi 'TestTheMeshReplyMarksAMeshOnlyPart'
 
 drill "the STEP download header says nothing of mesh-only parts" internal/httpapi/geometry.go \
-  's = s.replace("if n := len(built.MeshOnly); n > 0 {", "if n := 0; n > 0 {", 1)' \
+  's = s.replace("exportLabelClauses(built.MeshOnly,", "exportLabelClauses(nil,", 1)' \
   ./internal/httpapi 'TestSTEPAndMassRepliesSayMeshOnlyPartsAreLeftOut'
 
 drill "the mass note says nothing of mesh-only parts" internal/httpapi/geometry.go \
@@ -5689,6 +5689,29 @@ drill "the workbench drops the kernel's reductions" internal/httpapi/assets/work
 drill "the export panel forgets the rounds built smaller" internal/httpapi/assets/workbench.js \
   's = s.replace("var reductions = exp.feature_reductions || [];", "var reductions = [];", 1)' \
   ./internal/httpapi 'TestWorkbenchSaysWhichRoundsTheKernelBuiltSmaller'
+
+echo
+
+echo "One export label, both paths, 2026-09-20: what is missing is said the same way"
+# Found by PR 159: exportJobLabel carried the reduced-round clause but not the
+# mesh-only one, so an off-node download did not say that a lattice had been left
+# out of the file while the in-request download did. Both labels now build their
+# clauses in one place (exportLabelClauses), and the job carries the names.
+drill "the job label drops the mesh-only parts" internal/httpapi/geometry_exports.go \
+  's = s.replace("exportLabelClauses(e.MeshOnly,", "exportLabelClauses(nil,", 1)' \
+  ./internal/httpapi 'TestExportLabel_BothDownloadsSayTheSameThingWasLeftOut'
+
+drill "the export label does not name the mesh-only parts" internal/httpapi/geometry.go \
+  's = s.replace("len(meshOnly), strings.Join(shown, \", \"), more, geometry.MeshOnlyLabel)", "len(meshOnly), \"\", more, geometry.MeshOnlyLabel)", 1)' \
+  ./internal/httpapi 'TestExportLabel_BothDownloadsSayTheSameThingWasLeftOut'
+
+drill "the export status forgets the mesh-only parts" internal/httpapi/geometry_exports.go \
+  's = s.replace("MeshOnly:          orEmptyStrings(e.MeshOnly),", "MeshOnly:          nil,", 1)' \
+  ./internal/httpapi 'TestExportLabel_BothDownloadsSayTheSameThingWasLeftOut'
+
+drill "the export panel forgets the mesh-only parts" internal/httpapi/assets/workbench.js \
+  's = s.replace("var jobMeshOnly = exp.mesh_only || [];", "var jobMeshOnly = [];", 1)' \
+  ./internal/httpapi 'TestExportLabel_BothDownloadsSayTheSameThingWasLeftOut'
 
 echo
 

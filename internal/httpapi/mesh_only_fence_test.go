@@ -127,7 +127,7 @@ func TestTheMeshReplyMarksAMeshOnlyPart(t *testing.T) {
 // The STEP download's header and the mass reply say what they left out.
 func TestSTEPAndMassRepliesSayMeshOnlyPartsAreLeftOut(t *testing.T) {
 	label := stepExportLabel("v1", &cad.Build{MeshOnly: []string{"Infill"}})
-	if !strings.HasPrefix(label, "1 mesh-only part(s) are NOT in this file ("+geometry.MeshOnlyLabel+"); ") {
+	if !strings.HasPrefix(label, "1 mesh-only part(s) are NOT in this file: Infill ("+geometry.MeshOnlyLabel+"); ") {
 		t.Errorf("STEP header label %q", label)
 	}
 	if strings.Contains(stepExportLabel("v1", &cad.Build{}), "mesh-only") {

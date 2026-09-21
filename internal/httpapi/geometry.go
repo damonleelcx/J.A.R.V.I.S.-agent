@@ -841,27 +841,59 @@ func stepExportLabel(versionID string, built *cad.Build) string {
 	label := fmt.Sprintf("unverified proposal; B-Rep, not tessellated; nothing about this shape "+
 		"has been analysed or checked; full label at /v1/geometry/%s/export/label?format=step",
 		versionID)
-	// What is NOT in the file goes FIRST, because a header is read left to right
-	// and this is the half that changes what somebody does with it.
-	//
-	// A dropped feature is the dangerous one: a bracket whose fillet OCCT
-	// refused looks like a bracket, downloads like a bracket, and has square
-	// corners where the design said rounded. Observed live on 2026-09-05, where
-	// a model asked for a 5 mm fillet on a 6 mm plate and the kernel said no.
-	label = reducedLabel(built.FeatureReductions) + label
-	if n := len(built.FeatureFailures); n > 0 {
-		label = fmt.Sprintf("%d feature(s) could NOT be applied, so this shape is not what the "+
-			"design describes (%s); ", n, strings.Join(built.FeatureFailures, "; ")) + label
+	return exportLabelClauses(built.MeshOnly, built.Skipped, built.FeatureFailures, built.FeatureReductions) + label
+}
+
+// exportLabelClauses is the ONE place the X-Forge-Export-Label's clauses are
+// written: what the design asked for that this STEP file does not have.
+//
+// # Why one function and not one per path
+//
+// The same file is written two ways — in the request (stepExportLabel, from
+// cad.Build) and off-node by forge-worker (exportJobLabel, from agent.Export) —
+// and for a while only the in-request label said that a mesh-only part had been
+// left out. A person who downloaded the job's file was told less about the SAME
+// design than one who waited for the in-request one, which is the kind of gap
+// nobody notices until the file is already on a machine. Both paths now call
+// this, so a clause can only ever be added to both at once.
+//
+// What is NOT in the file goes FIRST, because a header is read left to right
+// and this is the half that changes what somebody does with it.
+//
+// A dropped feature is the dangerous one: a bracket whose fillet OCCT refused
+// looks like a bracket, downloads like a bracket, and has square corners where
+// the design said rounded. Observed live on 2026-09-05, where a model asked for
+// a 5 mm fillet on a 6 mm plate and the kernel said no.
+func exportLabelClauses(meshOnly, skipped, featureFailures, reduced []string) string {
+	clauses := reducedLabel(reduced)
+	if n := len(featureFailures); n > 0 {
+		clauses = fmt.Sprintf("%d feature(s) could NOT be applied, so this shape is not what the "+
+			"design describes (%s); ", n, strings.Join(featureFailures, "; ")) + clauses
 	}
-	if len(built.Skipped) > 0 {
-		label = fmt.Sprintf("%d part(s) could not be built and are NOT in this file; ", len(built.Skipped)) + label
+	if len(skipped) > 0 {
+		clauses = fmt.Sprintf("%d part(s) could not be built and are NOT in this file; ", len(skipped)) + clauses
 	}
-	// A mesh-only part is never in a STEP file (geometry/lattice.go), and the file's
-	// own FILE_DESCRIPTION says so too.
-	if n := len(built.MeshOnly); n > 0 {
-		label = fmt.Sprintf("%d mesh-only part(s) are NOT in this file (%s); ", n, geometry.MeshOnlyLabel) + label
+	return meshOnlyExcludedLabel(meshOnly) + clauses
+}
+
+// meshOnlyExcludedLabel is the export label's clause for the mesh-only parts left
+// out of the file (looks designed, stage E1): a mesh-only part is never in a STEP
+// file (geometry/lattice.go). It NAMES them, as the file's own FILE_DESCRIPTION
+// does (sidecar.py), so the header and the file say the same thing. Empty when
+// there are none.
+func meshOnlyExcludedLabel(meshOnly []string) string {
+	if len(meshOnly) == 0 {
+		return ""
 	}
-	return label
+	// At most a few names, as geometry.MeshOnlyNote does: a header is one line,
+	// and a design with hundreds of lattices must not push the rest off it.
+	const most = 3
+	shown, more := meshOnly, ""
+	if len(meshOnly) > most {
+		shown, more = meshOnly[:most], fmt.Sprintf(" and %d more", len(meshOnly)-most)
+	}
+	return fmt.Sprintf("%d mesh-only part(s) are NOT in this file: %s%s (%s); ",
+		len(meshOnly), strings.Join(shown, ", "), more, geometry.MeshOnlyLabel)
 }
 
 // reducedLabel is the export label's clause for rounds the kernel built smaller
