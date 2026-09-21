@@ -42,7 +42,7 @@ func industryHarness(t *testing.T) (*db.Pool, string) {
 		t.Skip("FORGE_TEST_DATABASE_URL is unset; run `make db-up` then `make test-integration`.")
 	}
 	ctx := context.Background()
-	schema := "forge_intake_industry"
+	schema := db.UniqueSchema("forge_intake_industry", "")
 	cfg := func(u string) config.DBConfig {
 		return config.DBConfig{URL: u, MaxConns: 4, MinConns: 1,
 			MaxConnLifetime: time.Hour, MaxConnIdleTime: time.Minute, ConnectTimeout: 10 * time.Second}

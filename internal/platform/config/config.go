@@ -19,6 +19,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/buildinfo"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/errs"
 )
 
@@ -1119,6 +1120,12 @@ func modelFamily(model string) string {
 // process actually loaded without the log becoming a secret store.
 func (c *Config) Redacted() map[string]any {
 	return map[string]any{
+		// Not configuration: the build this process was made from. It is here
+		// because forge.config.loaded is the one line every deployment keeps,
+		// and the first question of any incident is which build is running.
+		// "unknown (commit unknown, built unknown)" when the image was built
+		// without the version arguments — see internal/platform/buildinfo.
+		"build":              buildinfo.Get().String(),
 		"env":                string(c.Env),
 		"http_addr":          c.HTTP.Addr,
 		"public_url":         c.HTTP.PublicURL,

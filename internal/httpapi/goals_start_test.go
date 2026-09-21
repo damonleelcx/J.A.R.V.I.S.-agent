@@ -38,7 +38,7 @@ func startHarness(t *testing.T) (*GoalHandlers, *db.Pool, *identity.User) {
 		t.Skip("FORGE_TEST_DATABASE_URL is unset")
 	}
 	ctx := context.Background()
-	schema := "forge_http_start"
+	schema := db.UniqueSchema("forge_http_start", "")
 
 	admin, err := db.Connect(ctx, config.DBConfig{
 		URL: url, MaxConns: 2, MinConns: 1,
@@ -71,7 +71,12 @@ func startHarness(t *testing.T) (*GoalHandlers, *db.Pool, *identity.User) {
 	if _, err := db.MigrateFS(ctx, pool, db.Files, db.MigrationsDir, logx.Discard()); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(pool.Close)
+	// The schema name now carries this run id (db.UniqueSchema), so nothing
+	// reuses it and leaving it behind leaks one schema per run.
+	t.Cleanup(func() {
+		pool.Close()
+		db.DropTestSchema(url, schema)
+	})
 
 	d := testDeps()
 	d.Pool = pool

@@ -18,6 +18,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/buildinfo"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/config"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/db"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/errs"
@@ -208,11 +209,14 @@ Configuration is read from the environment. See .env.example for every variable,
 its default, and what breaks when it is wrong.
 `
 
-// build metadata, injected at link time by the release script.
+// build metadata, injected at link time by the release script, by `make build`
+// and by deploy/Dockerfile's FORGE_VERSION / FORGE_COMMIT / FORGE_BUILD_DATE
+// build arguments. Unset, every one of them reads "unknown" rather than
+// something that looks like a version. See internal/platform/buildinfo.
 var (
-	version = "dev"
-	commit  = "unknown"
-	date    = "unknown"
+	version = buildinfo.Unknown
+	commit  = buildinfo.Unknown
+	date    = buildinfo.Unknown
 )
 
 func main() {
@@ -240,8 +244,9 @@ func main() {
 }
 
 func run(ctx context.Context, cmd string, args []string) error {
+	buildinfo.Set(version, commit, date)
 	if cmd == "version" {
-		fmt.Printf("forgectl %s (commit %s, built %s)\n", version, commit, date)
+		fmt.Printf("forgectl %s\n", buildinfo.Get())
 		return nil
 	}
 

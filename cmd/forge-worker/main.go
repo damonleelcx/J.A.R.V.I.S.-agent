@@ -27,6 +27,7 @@ import (
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/llm"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/persona"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/blob"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/buildinfo"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/clock"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/config"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/db"
@@ -35,10 +36,11 @@ import (
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/tools"
 )
 
+// Build metadata, written at link time. See cmd/forged/main.go.
 var (
-	version = "dev"
-	commit  = "unknown"
-	date    = "unknown"
+	version = buildinfo.Unknown
+	commit  = buildinfo.Unknown
+	date    = buildinfo.Unknown
 )
 
 // dbWaitLimit bounds the wait for the database at boot.
@@ -82,7 +84,11 @@ func run() error {
 	log := logx.New(logx.Options{
 		Level: parseLevel(cfg.Log.Level), Format: cfg.Log.Format, Service: "forge-worker",
 	})
-	log.Info(ctx, logx.EventWorkerStarting, "version", version, "commit", commit, "built", date)
+	// See cmd/forged: one reading of this build, shared by this line and by
+	// forge.config.loaded below.
+	buildinfo.Set(version, commit, date)
+	build := buildinfo.Get()
+	log.Info(ctx, logx.EventWorkerStarting, "version", build.Version, "commit", build.Commit, "built", build.Date)
 	for _, w := range warnings {
 		// The verifier-independence warning surfaces here. A deployment running
 		// the verifier on the executor's own model family is not broken, but an

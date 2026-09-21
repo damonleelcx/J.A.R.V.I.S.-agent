@@ -42,10 +42,7 @@ func newHarness(t *testing.T) *harness {
 		t.Skip("FORGE_TEST_DATABASE_URL is unset; skipping live-database tests.")
 	}
 	ctx := context.Background()
-	schema := "forge_col_" + strings.ToLower(strings.NewReplacer("/", "_", "-", "_").Replace(t.Name()))
-	if len(schema) > 60 {
-		schema = schema[:60]
-	}
+	schema := db.UniqueSchema("forge_col_", t.Name())
 	cfg := func(u string) config.DBConfig {
 		return config.DBConfig{URL: u, MaxConns: 6, MinConns: 1,
 			MaxConnLifetime: time.Hour, MaxConnIdleTime: time.Minute, ConnectTimeout: 10 * time.Second}
