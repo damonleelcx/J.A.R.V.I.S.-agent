@@ -177,13 +177,43 @@ func (g *BudgetGuard) TokenCeiling(goal *Goal) int64 {
 	return effectiveInt64(goal.Budget.MaxTokens, g.defaults.MaxTokensPerGoal)
 }
 
+// FirstCallReserve is what a goal's FIRST model call is assumed to cost, before
+// the goal has made any call to learn from.
+//
+// # Why a default rather than nothing
+//
+// PR 151 reserved the largest call and a quarter more, which is nothing at all
+// when there is no largest call yet, and left the gap written down: "a goal's
+// first call (the plan's, 506 tokens here) reserves nothing, because nothing is
+// known yet". Reserving nothing means the first call is placed whatever the
+// ceiling is, so a goal with a 300-token ceiling still spends the plan call's
+// tokens and lands past it before anything can stop it — the exact overshoot the
+// reservation exists to prevent, moved to call one.
+//
+// # Where the number comes from
+//
+// 12,000 tokens, the figure the live harness's meter has used for the same
+// decision since PR 148 (agent/car_ceiling_live_test.go): the 2026-09-15
+// verified car run averaged 6,692 tokens a call and its largest call was 19,648.
+// It is deliberately well above a plan call measured at 506 tokens and below the
+// largest call seen, because it is a reservation and not a prediction: the first
+// call is the one nothing is known about, and the cost of guessing low is the
+// overshoot, while the cost of guessing high is a goal that refuses to start
+// under a ceiling smaller than this — which is a refusal naming the number,
+// rather than a silent overrun.
+//
+// A goal whose ceiling is below this therefore never places its first call. That
+// is the intended answer: such a ceiling cannot pay for any call this system
+// makes, and finding that out before spending is the point.
+const FirstCallReserve = 12_000
+
 // CallReserve is what the next model call of a goal is assumed to cost: the largest
 // call it has made so far with a quarter on top, because a build's calls grow with
-// the model they carry. Zero before the goal has made any call. The same rule the
-// live harness's meter uses (agent/car_ceiling_live_test.go, PR 148).
+// the model they carry. FirstCallReserve before the goal has made any call. The same
+// rule the live harness's meter uses (agent/car_ceiling_live_test.go, PR 148).
 func CallReserve(largest int64) int64 {
 	if largest <= 0 {
-		return 0
+		return FirstCallReserve
 	}
 	return largest + largest/4
 }
@@ -210,7 +240,7 @@ func (g *BudgetGuard) CheckCall(goal *Goal, now time.Time, inFlight int) *LimitB
 	}
 	ceiling := g.TokenCeiling(goal)
 	reserve := CallReserve(goal.Spend.LargestCall)
-	if ceiling <= 0 || reserve <= 0 {
+	if ceiling <= 0 {
 		return reached
 	}
 	need := goal.Spend.Tokens + int64(inFlight+1)*reserve
@@ -222,13 +252,23 @@ func (g *BudgetGuard) CheckCall(goal *Goal, now time.Time, inFlight int) *LimitB
 	if inFlight > 0 {
 		inFlightNote = fmt.Sprintf(", with %d call(s) already in flight reserving the same", inFlight)
 	}
+	// Where the reserve came from, because the two cases call for different
+	// answers from the person reading it: a goal stopped on its own measured
+	// calls has spent something and can be narrowed, while a goal stopped on the
+	// default has spent nothing and only needs a ceiling a call can fit inside.
+	basis := fmt.Sprintf("the largest call this goal has made, %d tokens, and a quarter more%s",
+		goal.Spend.LargestCall, inFlightNote)
+	if goal.Spend.LargestCall <= 0 {
+		basis = fmt.Sprintf("the documented default for a goal's first call, because this goal has not "+
+			"made one yet and nothing is known about what it costs%s", inFlightNote)
+	}
 	return &LimitBreach{
 		Kind:  LimitTokens,
 		Used:  fmt.Sprintf("%d tokens", goal.Spend.Tokens),
 		Limit: fmt.Sprintf("%d", ceiling),
 		Why: fmt.Sprintf("%d tokens were left, and the next model call was not placed because it may cost %d "+
-			"(the largest call this goal has made, %d tokens, and a quarter more%s), which would pass the ceiling. "+
-			"The goal stops here rather than spend past it.", left, reserve, goal.Spend.LargestCall, inFlightNote),
+			"(%s), which would pass the ceiling. "+
+			"The goal stops here rather than spend past it.", left, reserve, basis),
 		Remedy: "Raise FORGE_MAX_TOKENS_PER_GOAL or the goal's own ceiling, or narrow the goal so it needs less context.",
 	}
 }

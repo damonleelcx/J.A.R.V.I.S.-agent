@@ -132,10 +132,7 @@ func newHarnessWith(t *testing.T, tune func(*config.AuthConfig)) *harness {
 
 	// A schema per test, migrated with the real chain. Never an inline
 	// CREATE TABLE: a fixture that approximates production tests the fixture.
-	schema := "forge_it_" + strings.ToLower(strings.NewReplacer("/", "_", "-", "_").Replace(t.Name()))
-	if len(schema) > 60 {
-		schema = schema[:60]
-	}
+	schema := db.UniqueSchema("forge_it_", t.Name())
 	ctx := context.Background()
 
 	admin, err := db.Connect(ctx, config.DBConfig{

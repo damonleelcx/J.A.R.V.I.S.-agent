@@ -51,7 +51,7 @@ func geometryHarness(t *testing.T) *geoHarness {
 			"Run `make db-up` then `make test-integration`.")
 	}
 	ctx := context.Background()
-	const schema = "forge_http_geometry"
+	schema := db.UniqueSchema("forge_http_geometry", "")
 
 	cfg := func(u string) config.DBConfig {
 		return config.DBConfig{URL: u, MaxConns: 6, MinConns: 1,
@@ -79,7 +79,12 @@ func geometryHarness(t *testing.T) *geoHarness {
 	if _, err := db.MigrateFS(ctx, pool, db.Files, db.MigrationsDir, logx.Discard()); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(pool.Close)
+	// The schema name now carries this run id (db.UniqueSchema), so nothing
+	// reuses it and leaving it behind leaks one schema per run.
+	t.Cleanup(func() {
+		pool.Close()
+		db.DropTestSchema(url, schema)
+	})
 
 	d := testDeps()
 	d.Pool = pool

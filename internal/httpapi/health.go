@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/pack"
+	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/buildinfo"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/db"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/errs"
 )
@@ -27,6 +28,28 @@ func (h *HealthHandlers) Live(w http.ResponseWriter, r *http.Request) {
 		"status":  "ok",
 		"version": h.d.Version,
 		"commit":  h.d.Commit,
+	})
+}
+
+// Build handles GET /v1/meta/build.
+//
+// Which build is answering, in the one place a client or an operator can ask for
+// it without a database, a session, or an argument about liveness semantics.
+// /healthz carries the version too, but it is a liveness probe: asking it this
+// question means reading a probe's body for metadata, and a probe's body is
+// allowed to change for reasons that have nothing to do with the build.
+//
+// Every field says "unknown" when the image was built without the version
+// arguments, and `stamped` is false. That is the whole point: an unstamped build
+// has to be recognisable as unstamped, rather than report something that reads
+// like an answer. See internal/platform/buildinfo.
+func (h *HealthHandlers) Build(w http.ResponseWriter, r *http.Request) {
+	info := buildinfo.Get()
+	WriteJSON(w, http.StatusOK, map[string]any{
+		"version": info.Version,
+		"commit":  info.Commit,
+		"built":   info.Date,
+		"stamped": info.Stamped(),
 	})
 }
 

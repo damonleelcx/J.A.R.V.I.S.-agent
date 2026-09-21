@@ -3,6 +3,9 @@ package geometry
 import (
 	"fmt"
 	"strings"
+	"unicode"
+
+	"golang.org/x/text/unicode/norm"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/platform/errs"
 )
@@ -310,13 +313,20 @@ func lossyFor(f Format, v *Variant) []string {
 		out = append(out,
 			"Colour and transparency are not written. They were display choices, not part properties.",
 			"The per-part notes, the assumptions and the unverified list are COMMENTS. Most tools "+
-				"discard them on import, so the file arrives with no provenance attached.")
+				"discard them on import, so the file arrives with no provenance attached.",
+			"Part names are rewritten to one token each: an OBJ name cannot contain a space, so "+
+				"accents fold to their letter, everything else that is not a letter, digit, '_', "+
+				"'-' or '.' becomes '_', and repeated names are numbered. Every group's name as "+
+				"it was typed is on the '# FORGE part' comment line above it.")
 	case "stl":
 		out = append(out,
 			"Part identity is gone. STL is one unnamed soup of triangles: the parts list, the part "+
 				"names, and which facet belongs to which part do not survive.",
 			"Nothing of this label is in the file. STL has no comments — only the solid's name line "+
 				"carries anything, and most readers ignore it.",
+			"The solid's name is rewritten to one token — a STL name cannot contain a space "+
+				"either — and STL has no comment line, so the assembly's name as it was typed "+
+				"is not in the file at all.",
 			"Colour and transparency are not written.")
 	}
 	if note := MeshOnlyNote(v.Document.MeshOnlyParts(), "this file"); note != "" {
@@ -395,8 +405,15 @@ func Filename(v *Variant, f Format) string {
 // lossy list, said plainly rather than implied by the label existing.
 func writeOBJ(v *Variant, mesh *Mesh, label *Label) []byte {
 	var b strings.Builder
+	// Every LINE of a comment gets its own '#'. A part name, a note or an
+	// assumption is text a person typed, and one newline inside it would end the
+	// comment and leave the rest of their sentence in the file as geometry — a
+	// reader either refuses the file or silently misreads it, and neither says
+	// why. Other control characters go to spaces for the same reason.
 	c := func(format string, args ...any) {
-		b.WriteString("# " + fmt.Sprintf(format, args...) + "\n")
+		for _, line := range strings.Split(commentSafe(fmt.Sprintf(format, args...)), "\n") {
+			b.WriteString("# " + line + "\n")
+		}
 	}
 
 	c("%s", label.Headline())
@@ -434,6 +451,7 @@ func writeOBJ(v *Variant, mesh *Mesh, label *Label) []byte {
 	section("ASSUMED, NOT SPECIFIED:", label.Assumptions)
 	section("THIS FILE DOES NOT ESTABLISH:", label.NotVerified)
 
+	c("FORGE object name=%s", v.Name)
 	b.WriteString("o " + objName(v.Name) + "\n")
 
 	// One shared vertex list, groups indexing into it. Vertices are NOT
@@ -442,8 +460,14 @@ func writeOBJ(v *Variant, mesh *Mesh, label *Label) []byte {
 	// tolerance chosen here would silently weld together parts that were
 	// touching on purpose.
 	var index int
+	names := &objNames{}
 	for _, g := range mesh.Groups {
-		b.WriteString("g " + objName(g.Label) + "\n")
+		// The original name, on the line above the token that had to be made
+		// from it. The token is what a viewer's outliner shows; this is what a
+		// person searching the file for the part they asked for will find, and
+		// it is the only place the characters the rule dropped still exist.
+		c("FORGE part id=%s name=%s", g.PartID, g.Label)
+		b.WriteString("g " + names.take(g.Label) + "\n")
 		var faces strings.Builder
 		for _, t := range g.Triangles {
 			for _, p := range [][3]float64{t.A, t.B, t.C} {
@@ -460,13 +484,118 @@ func writeOBJ(v *Variant, mesh *Mesh, label *Label) []byte {
 	return []byte(b.String())
 }
 
-// objName makes a token OBJ's parser will read as one name.
+// objName makes one token that OBJ and STL will read as a single name.
+//
+// # Why a name cannot be written down as it was typed
+//
+// An OBJ `o`/`g` line and an STL `solid` line take a WHITESPACE-DELIMITED
+// token. A part called "left / Ell 1" written out as it stands is four tokens to
+// a parser: the readers that survive it show the part as "left", and the ones
+// that do not refuse the file with a message about the second token. The
+// previous rule here joined the whitespace with underscores and stopped, which
+// produced `left_/_Ell_1` — one token, but with a separator in the middle of it
+// that reads as a path and that several writers of OBJ would never emit.
+//
+// # The rule, applied in this order
+//
+//  1. Accented Latin letters fold to the letter they are drawn on: "Boîtier"
+//     becomes "Boitier". This is Unicode NFD with the combining marks dropped.
+//     Mesh readers in the wild are byte-oriented and a good number of them
+//     mangle or refuse bytes above 127, so a name that survives as ASCII is a
+//     name that survives.
+//  2. ASCII letters, digits, '_', '-' and '.' are kept exactly as they are.
+//  3. Everything else — spaces, '/', ',', '#', and any rune with no Latin
+//     letter under it (左, ✓) — is a SEPARATOR. Runs of separators collapse to
+//     a single '_', and leading and trailing ones are dropped. So
+//     "left / Ell 1" becomes "left_Ell_1".
+//  4. A name with no letter or digit left — a wholly non-Latin name, or one
+//     made only of punctuation — becomes "part". Such a name cannot be carried
+//     into ASCII at all, and inventing something that looks like a
+//     transliteration would be worse than saying plainly that there is none.
+//
+// The rule LOSES information at steps 1, 3 and 4, and two names that differed
+// only in what it drops land on the same token. So writeOBJ prints the original
+// name in a comment above every group (objNames numbers the repeats) and
+// lossyFor says the rule is in force. STL has no comment line, which is one more
+// entry in a lossy list that already says the whole label stays behind.
 func objName(s string) string {
-	s = strings.TrimSpace(s)
-	if s == "" {
+	var b strings.Builder
+	var alnum, sep bool
+	for _, r := range norm.NFD.String(s) {
+		switch {
+		case unicode.Is(unicode.Mn, r):
+			// A combining mark the decomposition left behind: the accent
+			// itself, already accounted for by the letter it was drawn on.
+			// Dropping it is what turns "î" into "i" rather than into "_".
+			continue
+		case r == '_' || r == '-' || r == '.':
+			if sep && b.Len() > 0 {
+				b.WriteByte('_')
+			}
+			sep = false
+			b.WriteRune(r)
+		case ('0' <= r && r <= '9') || ('a' <= r && r <= 'z') || ('A' <= r && r <= 'Z'):
+			if sep && b.Len() > 0 {
+				b.WriteByte('_')
+			}
+			sep, alnum = false, true
+			b.WriteRune(r)
+		default:
+			sep = true
+		}
+	}
+	if !alnum {
 		return "part"
 	}
-	return strings.Join(strings.Fields(s), "_")
+	return b.String()
+}
+
+// objNames hands out one distinct token per name written into a file.
+//
+// Two parts may carry the same name for good reasons — "M6 washer" eight times
+// is an ordinary assembly — and objName additionally merges names that differed
+// only in an accent, a slash or a script it cannot carry. Either way a reader
+// looking at two groups called `M6_washer` has no way to tell which is which,
+// and a few OBJ readers keep only the last group of a repeated name, which
+// silently drops geometry.
+//
+// So the second and later uses are numbered: M6_washer, M6_washer_2,
+// M6_washer_3. The number is the ORDER IN THIS FILE and nothing else — it is not
+// the part's identity, which is on the comment line above the group as its id.
+type objNames struct{ used map[string]bool }
+
+func (n *objNames) take(s string) string {
+	if n.used == nil {
+		n.used = map[string]bool{}
+	}
+	base := objName(s)
+	candidate := base
+	for i := 2; n.used[candidate]; i++ {
+		candidate = fmt.Sprintf("%s_%d", base, i)
+	}
+	n.used[candidate] = true
+	return candidate
+}
+
+// commentSafe keeps a person's text inside the comment it was written into.
+//
+// A newline is kept, because the caller puts a '#' in front of every line it
+// produces. A carriage return is dropped, so a name pasted from Windows does not
+// leave a stray byte at the end of a comment. Every other control character
+// becomes a space: none of them mean anything in a mesh file, and several of
+// them make a text editor show the rest of the file as one line.
+func commentSafe(s string) string {
+	return strings.Map(func(r rune) rune {
+		switch {
+		case r == '\n':
+			return r
+		case r == '\r':
+			return -1
+		case unicode.IsControl(r):
+			return ' '
+		}
+		return r
+	}, s)
 }
 
 // writeSTL renders ASCII STL.

@@ -19,6 +19,13 @@ COMMIT      ?= $(shell git rev-parse --short HEAD 2>/dev/null || echo unknown)
 BUILD_DATE  ?= $(shell date -u +%Y-%m-%dT%H:%M:%SZ)
 LDFLAGS     := -X main.version=$(VERSION) -X main.commit=$(COMMIT) -X main.date=$(BUILD_DATE)
 
+# The deployment image. IMAGE_BUILD_ARGS carries whatever the machine building it
+# needs — `--platform linux/arm64`, `--build-arg APT_MIRROR=…` — without that
+# having to be remembered alongside the version arguments, which are not
+# optional. See deploy/README.md.
+IMAGE            ?= forge:$(COMMIT)
+IMAGE_BUILD_ARGS ?=
+
 # Local development database. Runs on a non-default port so it cannot collide
 # with another Postgres already on this machine.
 DB_CONTAINER := forge-pg
@@ -84,6 +91,25 @@ build: ## Build all binaries into ./bin
 	go build -ldflags "$(LDFLAGS)" -o $(BINDIR)/forge-worker ./cmd/forge-worker
 	go build -ldflags "$(LDFLAGS)" -o $(BINDIR)/forgectl ./cmd/forgectl
 	@echo "built $(VERSION) ($(COMMIT)) into $(BINDIR)/"
+
+.PHONY: image
+image: ## Build the deployment image, stamped with this commit
+	@# ‼️ The version arguments are the whole point of having this target rather
+	@# than a docker build command in a README: an image built without them
+	@# reports "unknown" for the rest of its life, and nothing downstream can
+	@# tell which commit answered a request. VERSION/COMMIT/BUILD_DATE are the
+	@# same three `make build` stamps into the local binaries.
+	docker build $(IMAGE_BUILD_ARGS) \
+	  --build-arg FORGE_VERSION=$(VERSION) \
+	  --build-arg FORGE_COMMIT=$(COMMIT) \
+	  --build-arg FORGE_BUILD_DATE=$(BUILD_DATE) \
+	  -t $(IMAGE) -f deploy/Dockerfile .
+	@echo "built image $(IMAGE) stamped $(VERSION) ($(COMMIT))"
+	@# The stamp, read back out of the image that will actually be deployed. A
+	@# build argument that is silently dropped (a typo in the ARG name, a stage
+	@# that never declared it) leaves a green build and an unstamped image, and
+	@# this is the only place that difference is visible before production is.
+	docker run --rm --entrypoint /usr/local/bin/forgectl $(IMAGE) version
 
 .PHONY: clean
 clean: ## Remove build output and local runtime state
@@ -448,6 +474,22 @@ db-reset: ## Destroy and recreate the local database. DESTRUCTIVE.
 	 [ "$$ok" = "yes" ] || { echo "aborted"; exit 1; }
 	-docker rm -f $(DB_CONTAINER)
 	$(MAKE) db-up db-wait migrate
+
+.PHONY: db-clean-test-schemas
+db-clean-test-schemas: ## Drop every schema left behind by a test or drill run
+	@# Test schemas carry a random per-process id (internal/platform/db/testschema.go)
+	@# so that two worktrees cannot drop each other's. The cost of that is a run
+	@# killed part-way leaves its schemas behind, where before the next run of the
+	@# same test would have reused the name. This sweeps them.
+	@#
+	@# Only forge_* schemas, never `public` and never `forge_migrations` if it ever
+	@# becomes a schema: an operator running this against the wrong database should
+	@# lose scratch, not data.
+	@# The statement lives in a file rather than in -c: it is dollar-quoted
+	@# PL/pgSQL, and getting that through make's $ and the shell's $ intact is
+	@# three layers of escaping nobody should have to read. See the file for what
+	@# it does and what it refuses to touch.
+	docker exec -i $(DB_CONTAINER) psql -U $(DB_USER) -d $(DB_NAME) -q < scripts/clean-test-schemas.sql
 
 .PHONY: db-shell
 db-shell: ## Open psql against the local database

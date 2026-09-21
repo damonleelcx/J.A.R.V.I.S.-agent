@@ -96,6 +96,10 @@ type Kernel struct {
 	// Copied by each slot like timeout.
 	startLimit time.Duration
 
+	// meshOnly caches whether this kernel can build mesh-only parts. Asked by the
+	// lattice fences, answered once per kernel — see mesh_only_support.go.
+	meshOnly meshOnlySupport
+
 	// size is how many processes serve builds at once. The pool is made on
 	// first use, so a kernel nobody builds with owns nothing.
 	size  int

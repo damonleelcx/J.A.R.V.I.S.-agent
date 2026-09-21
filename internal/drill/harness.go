@@ -56,13 +56,15 @@ func Run(ctx context.Context, url string, names []string, keep bool, log *logx.L
 }
 
 func runOne(ctx context.Context, url string, s Scenario, keep bool, log *logx.Logger) *Result {
-	schema := "forge_drill_" + strings.NewReplacer("-", "_").Replace(s.Name)
-	if len(schema) > 60 {
-		schema = schema[:60]
-	}
+	// Unique to this process, so two drill runs — two worktrees on one machine,
+	// or a drill and an integration suite — cannot drop each other's schema.
+	// See internal/platform/db/testschema.go. With --keep the schema is no
+	// longer guessable from the scenario name, so it goes in the Result for the
+	// reporter to print — that is what somebody then connects to.
+	schema := db.UniqueSchema("forge_drill_", s.Name)
 	h, cleanup, err := newHarness(ctx, url, schema, log)
 	if err != nil {
-		return &Result{Scenario: s.Name, Err: err}
+		return &Result{Scenario: s.Name, Schema: schema, Err: err}
 	}
 	if !keep {
 		defer cleanup()
@@ -72,12 +74,13 @@ func runOne(ctx context.Context, url string, s Scenario, keep bool, log *logx.Lo
 
 	res, err := s.Run(ctx, h)
 	if err != nil {
-		return &Result{Scenario: s.Name, Err: err}
+		return &Result{Scenario: s.Name, Schema: schema, Err: err}
 	}
 	if res == nil {
-		return &Result{Scenario: s.Name, Err: errs.New("drill.runOne", errs.CodeInvariantViolated).
+		return &Result{Scenario: s.Name, Schema: schema, Err: errs.New("drill.runOne", errs.CodeInvariantViolated).
 			WithDetail("scenario %q returned no result and no error", s.Name)}
 	}
+	res.Schema = schema
 	return res
 }
 

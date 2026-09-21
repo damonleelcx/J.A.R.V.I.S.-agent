@@ -45,10 +45,7 @@ func newHarness(t *testing.T) *harness {
 	}
 	ctx := context.Background()
 
-	schema := "forge_eng_" + strings.ToLower(strings.NewReplacer("/", "_", "-", "_").Replace(t.Name()))
-	if len(schema) > 60 {
-		schema = schema[:60]
-	}
+	schema := db.UniqueSchema("forge_eng_", t.Name())
 
 	admin, err := db.Connect(ctx, config.DBConfig{
 		URL: url, MaxConns: 4, MinConns: 1,

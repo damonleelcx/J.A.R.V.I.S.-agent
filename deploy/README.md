@@ -46,12 +46,21 @@ does), so it is written to a file and run with `< /dev/null`.
 
 ```sh
 export DOCKER_HOST=unix:///Users/damon/.colima/default/docker.sock
-docker build --platform linux/arm64 --build-arg APT_MIRROR=mirrors.ustc.edu.cn \
-  -t forge:local -f deploy/Dockerfile .
+make image IMAGE=forge:local \
+  IMAGE_BUILD_ARGS="--platform linux/arm64 --build-arg APT_MIRROR=mirrors.ustc.edu.cn"
 # push by digest, then:
 deploy/apply.sh <image@sha256:...> --dry-run   # reads the unfiltered diff
 deploy/apply.sh <image@sha256:...>
 ```
+
+**Build with `make image`, not `docker build`.** The Makefile target is what
+passes `FORGE_VERSION` / `FORGE_COMMIT` / `FORGE_BUILD_DATE` from git, and those
+are what make the running image able to say which commit it is —
+`forge.config.loaded`, `/healthz` and `GET /v1/meta/build` all report them. A
+plain `docker build` still works and still produces a deployable image; every one
+of those surfaces then says `unknown`, which is honest and useless. `make image`
+runs `forgectl version` inside the image it just built and prints the answer, so
+a dropped argument is visible before the push rather than during an incident.
 
 ## The traps
 

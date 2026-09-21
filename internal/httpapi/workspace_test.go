@@ -49,7 +49,7 @@ func workspaceHarness(t *testing.T) *wsHarness {
 		t.Skip("FORGE_TEST_DATABASE_URL is unset")
 	}
 	ctx := context.Background()
-	schema := "forge_http_workspace"
+	schema := db.UniqueSchema("forge_http_workspace", "")
 
 	cfg := func(u string) config.DBConfig {
 		return config.DBConfig{URL: u, MaxConns: 6, MinConns: 1,
@@ -77,7 +77,12 @@ func workspaceHarness(t *testing.T) *wsHarness {
 	if _, err := db.MigrateFS(ctx, pool, db.Files, db.MigrationsDir, logx.Discard()); err != nil {
 		t.Fatal(err)
 	}
-	t.Cleanup(pool.Close)
+	// The schema name now carries this run id (db.UniqueSchema), so nothing
+	// reuses it and leaving it behind leaks one schema per run.
+	t.Cleanup(func() {
+		pool.Close()
+		db.DropTestSchema(url, schema)
+	})
 
 	d := testDeps()
 	d.Pool = pool

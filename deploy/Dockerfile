@@ -21,13 +21,33 @@ FROM golang:1.26-trixie AS go-build
 # access.
 ARG GOPROXY=https://goproxy.cn,direct
 ENV GOPROXY=${GOPROXY} CGO_ENABLED=0 GOOS=linux
+
+# Which commit this image is. Until 2026-09-20 nothing set these, so every
+# container ever deployed reported version "dev", commit "unknown", and the
+# first question of an incident — which build is running? — had no answer from
+# the running system. `make image` fills them in from git; a plain
+# `docker build` leaves them at "unknown", which every surface then reports as
+# "unknown" rather than inventing a version. See internal/platform/buildinfo.
+#
+# The three are separate arguments rather than one string because they change at
+# different times and are read for different reasons: the version is what a
+# release is called, the commit is what it can be checked out at, and the date
+# is what tells two images built from the same dirty tree apart.
+ARG FORGE_VERSION=unknown
+ARG FORGE_COMMIT=unknown
+ARG FORGE_BUILD_DATE=unknown
+
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN go build -trimpath -ldflags="-s -w" -o /out/forged       ./cmd/forged      && \
-    go build -trimpath -ldflags="-s -w" -o /out/forge-worker ./cmd/forge-worker && \
-    go build -trimpath -ldflags="-s -w" -o /out/forgectl     ./cmd/forgectl
+# ‼️ The version arguments are also why this RUN cannot be cached away: they
+# change every commit, and a layer cached from the previous one would ship a
+# binary stamped with the wrong commit, which is worse than an unstamped one.
+RUN LD="-s -w -X main.version=${FORGE_VERSION} -X main.commit=${FORGE_COMMIT} -X main.date=${FORGE_BUILD_DATE}" && \
+    go build -trimpath -ldflags="$LD" -o /out/forged       ./cmd/forged      && \
+    go build -trimpath -ldflags="$LD" -o /out/forge-worker ./cmd/forge-worker && \
+    go build -trimpath -ldflags="$LD" -o /out/forgectl     ./cmd/forgectl
 
 # --- CAD kernel venv --------------------------------------------------------
 # Built in its own stage so the ~1GB of pip cache and build metadata does not
@@ -70,6 +90,18 @@ COPY --from=cad-build /opt/cad/venv /opt/cad/venv
 COPY --from=go-build  /out/forged       /usr/local/bin/forged
 COPY --from=go-build  /out/forge-worker /usr/local/bin/forge-worker
 COPY --from=go-build  /out/forgectl     /usr/local/bin/forgectl
+
+# The same three values again, as labels, so `docker inspect` and a registry
+# listing answer "which commit is this?" without pulling and running the image.
+# ARGs do not cross stage boundaries, which is why they are declared twice; they
+# default to "unknown" here for the same reason they do in the builder.
+ARG FORGE_VERSION=unknown
+ARG FORGE_COMMIT=unknown
+ARG FORGE_BUILD_DATE=unknown
+LABEL org.opencontainers.image.version="${FORGE_VERSION}" \
+      org.opencontainers.image.revision="${FORGE_COMMIT}" \
+      org.opencontainers.image.created="${FORGE_BUILD_DATE}" \
+      org.opencontainers.image.source="https://github.com/damonleelcx/J.A.R.V.I.S.-agent"
 
 # Matches the fsGroup/runAsUser in the Deployment. The workspace PVC is chowned
 # to this id by fsGroup; a mismatch shows up as a worker that cannot create its
