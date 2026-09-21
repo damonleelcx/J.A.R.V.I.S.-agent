@@ -271,12 +271,18 @@ func TestExport_CoordinatesAreNeverInExponentForm(t *testing.T) {
 // # Why this is measured rather than read
 //
 // Mesh consumers decide which side of a facet is outside from its winding order.
-// The renderer does not — it is handed each normal explicitly and draws with
-// back-face culling off — so an inside-out solid looks perfectly correct on
-// screen, opens without complaint in a viewer, and only misbehaves at the point
-// where somebody tries to make the thing. The first bracket this code exported
-// had exactly that: a box wound outward beside a cylinder wound inward, in one
-// file.
+// The renderer is handed each normal explicitly, so an inside-out solid can look
+// perfectly correct on screen, open without complaint in a viewer, and only
+// misbehave at the point where somebody tries to make the thing. The first
+// bracket this code exported had exactly that: a box wound outward beside a
+// cylinder wound inward, in one file.
+//
+// ‼️ This comment used to say the renderer "draws with back-face culling off". It
+// does not and has not for some time: forge3d.js enables CULL_FACE for the model
+// pass, so the browser reads winding too, and a facet wound against its normal is
+// thrown away rather than drawn wrongly. That misreading is what let a plane wound
+// face-down live in planeGeometry — see
+// docs/bugfix/2026-09-21-a-plane-faced-down-and-was-culled-from-above.md.
 //
 // The signed volume of a closed mesh is positive when its facets face out. It is
 // four lines of arithmetic and it catches, in one number, a class of defect that
