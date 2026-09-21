@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -120,10 +121,13 @@ func TestClient_ACallerWithNoDeadlineIsStillBoundedByTheGeneralTimeout(t *testin
 // Moving it to cover the whole retry loop would quietly shorten every retried
 // call: three attempts under one deadline is not three attempts.
 func TestClient_TheGeneralTimeoutBoundsEachAttemptAndNotTheWholeRetryLoop(t *testing.T) {
-	var attempts int
+	// ‼️ Atomic because each retry arrives on its own connection, and net/http
+	// serves every connection on its own goroutine — so the handler runs three
+	// times on three goroutines and the test goroutine reads the count after.
+	// A plain int here is a genuine data race, and `go test -race` says so.
+	var attempts atomic.Int64
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		attempts++
-		if attempts <= 2 {
+		if attempts.Add(1) <= 2 {
 			// Held past the bound, so this attempt dies on it.
 			select {
 			case <-time.After(2 * time.Second):
@@ -149,7 +153,7 @@ func TestClient_TheGeneralTimeoutBoundsEachAttemptAndNotTheWholeRetryLoop(t *tes
 	if resp.Content != "ok" {
 		t.Errorf("content = %q", resp.Content)
 	}
-	if attempts != 3 {
-		t.Errorf("the endpoint saw %d attempt(s); want 3", attempts)
+	if got := attempts.Load(); got != 3 {
+		t.Errorf("the endpoint saw %d attempt(s); want 3", got)
 	}
 }
