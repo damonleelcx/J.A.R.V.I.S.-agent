@@ -136,15 +136,30 @@ vet: ## Run go vet
 
 .PHONY: test
 test: ## Run unit tests (no database required)
-	go test -count=1 -race ./...
+	@# -timeout for the same reason as test-integration below.
+	go test -count=1 -race -timeout 30m ./...
 
 .PHONY: test-integration
 test-integration: db-wait ## Run all tests including those needing live Postgres
-	FORGE_TEST_DATABASE_URL="$(DB_URL)" go test -count=1 -race ./...
+	@# ‼️ -timeout, because `go test`'s 10m default is PER PACKAGE and two
+	@# packages are now close to it. Measured 2026-09-20 on this repository,
+	@# without -race: internal/httpapi ~600 s (601 s and 602 s in two whole-repo
+	@# runs) and internal/agent 565 s. On a contended machine httpapi tripped the
+	@# default outright — "panic: test timed out after 10m0s", in the middle of a
+	@# passing test — and the same package finished in 394 s on its own when the
+	@# machine was quiet. -race makes both slower still. Nothing was hung either
+	@# time; there is simply more work than the default allows, and the number
+	@# only goes up as fences are added.
+	@#
+	@# 30m rather than no limit, for the reason test-cad gives: a genuinely hung
+	@# test must still fail the job rather than run to the runner's own ceiling.
+	@# Raise it again only on a run that shows the honest work exceeding it.
+	FORGE_TEST_DATABASE_URL="$(DB_URL)" go test -count=1 -race -timeout 30m ./...
 
 .PHONY: test-cover
 test-cover: db-wait ## Run tests with coverage and print a summary
-	FORGE_TEST_DATABASE_URL="$(DB_URL)" go test -count=1 -coverprofile=coverage.out ./...
+	@# -timeout for the same reason as test-integration above.
+	FORGE_TEST_DATABASE_URL="$(DB_URL)" go test -count=1 -coverprofile=coverage.out -timeout 30m ./...
 	go tool cover -func=coverage.out | tail -20
 
 .PHONY: cad-venv
