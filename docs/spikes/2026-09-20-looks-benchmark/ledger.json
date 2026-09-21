@@ -1,0 +1,32 @@
+{
+  "ceiling_note": "FORGE_LOOKS_BENCH_BUDGET is an ALL-TIME ceiling over this directory, not a per-run one: every run starts from total_spent. Delete this file to start a new budget.",
+  "total_spent": 96727,
+  "runs": [
+    {
+      "at": "2026-09-20T12:59:00Z",
+      "spent": 18046,
+      "calls": 1,
+      "calls_refused": 0,
+      "note": "ABORTED and NOT metered to disk: headless Chrome never exited after dumping 295 KB, the harness blocked in cmd.Output(), and the run was killed before it could report. It placed the same single bracket build call the next run measured, so it is charged here at that call's measured cost, 18046. It is an estimate and the only estimated row in this file; the ledger and this run's own code are the reason no later run can be."
+    },
+    {
+      "at": "2026-09-20T13:12:00Z",
+      "spent": 18046,
+      "calls": 1,
+      "calls_refused": 6,
+      "note": "The bracket built (18046 in one call) and rendered; its look check, its judge and all four remaining prompts were refused because the per-prompt ceiling was 14000, under the cost of one build turn. That defect is fixed and fenced (looks_budget_test.go)."
+    },
+    {
+      "at": "2026-09-21T13:33:01Z",
+      "spent": 55768,
+      "calls": 5,
+      "calls_refused": 6
+    },
+    {
+      "at": "2026-09-21T13:39:35Z",
+      "spent": 4867,
+      "calls": 6,
+      "calls_refused": 2
+    }
+  ]
+}

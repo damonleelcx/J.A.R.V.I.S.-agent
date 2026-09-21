@@ -1,0 +1,185 @@
+{
+  "name": "Spur Gear Assembly",
+  "units": "mm",
+  "parts": [
+    {
+      "id": "gear",
+      "name": "Gear Blank",
+      "shape": "gear",
+      "size": {
+        "bore_radius": 5,
+        "depth": 12,
+        "module": 3,
+        "teeth": 24
+      },
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "rotation": [
+        90,
+        0,
+        0
+      ],
+      "color": "#b8bcc4",
+      "opacity": 1,
+      "note": "Involute spur gear",
+      "material": {
+        "name": "steel",
+        "finish": "metal",
+        "how": "assumed",
+        "density": 7850
+      }
+    },
+    {
+      "id": "hub",
+      "name": "Hub",
+      "shape": "cylinder",
+      "size": {
+        "height": 15,
+        "radius": 10
+      },
+      "position": [
+        0,
+        0,
+        0
+      ],
+      "rotation": [
+        90,
+        0,
+        0
+      ],
+      "color": "#b8bcc4",
+      "opacity": 1,
+      "note": "Central hub for mounting",
+      "material": {
+        "name": "steel",
+        "finish": "metal",
+        "how": "assumed",
+        "density": 7850
+      }
+    },
+    {
+      "id": "keyway-cutter",
+      "name": "Keyway Cutter",
+      "shape": "box",
+      "size": {
+        "depth": 20,
+        "height": 1.5,
+        "width": 3
+      },
+      "position": [
+        0,
+        6.25,
+        0
+      ],
+      "rotation": [
+        90,
+        0,
+        0
+      ],
+      "color": "#ff0000",
+      "opacity": 0.5,
+      "note": "Tool to cut keyway in hub and gear bore"
+    }
+  ],
+  "parameters": [
+    {
+      "name": "module",
+      "value": 3,
+      "unit": "mm",
+      "how": "chosen"
+    },
+    {
+      "name": "teeth",
+      "value": 24,
+      "unit": "",
+      "how": "chosen"
+    },
+    {
+      "name": "gear_depth",
+      "value": 12,
+      "unit": "mm",
+      "how": "chosen"
+    },
+    {
+      "name": "hub_diameter",
+      "value": 20,
+      "unit": "mm",
+      "how": "chosen"
+    },
+    {
+      "name": "hub_length",
+      "value": 15,
+      "unit": "mm",
+      "how": "chosen"
+    },
+    {
+      "name": "bore_radius",
+      "value": 5,
+      "unit": "mm",
+      "how": "chosen"
+    },
+    {
+      "name": "key_width",
+      "value": 3,
+      "unit": "mm",
+      "how": "standard",
+      "source": "ISO 773 for 10mm shaft (approximate for 10mm bore)"
+    },
+    {
+      "name": "key_depth",
+      "value": 1.5,
+      "unit": "mm",
+      "how": "standard",
+      "source": "ISO 773 for 10mm shaft"
+    }
+  ],
+  "derived": [
+    {
+      "name": "pitch_diameter",
+      "expression": "module * teeth",
+      "why": "Standard gear geometry"
+    },
+    {
+      "name": "outside_diameter",
+      "expression": "module * (teeth + 2)",
+      "why": "Standard gear geometry"
+    }
+  ],
+  "features": [
+    {
+      "id": "fuse-gear-hub",
+      "op": "fuse",
+      "of": "gear",
+      "with": [
+        "hub"
+      ],
+      "note": "Weld gear to hub"
+    },
+    {
+      "id": "cut-keyway",
+      "op": "cut",
+      "of": "hub",
+      "with": [
+        "keyway-cutter"
+      ],
+      "note": "Cut keyway through hub and gear bore"
+    }
+  ],
+  "assumptions": [
+    "Hub diameter chosen as 20mm for structural integrity",
+    "Hub length chosen as 15mm to extend slightly beyond gear face",
+    "Bore radius 5mm (10mm shaft) selected as common size",
+    "Keyway dimensions approximated from ISO 773 for 10mm shaft"
+  ],
+  "not_verified": [
+    "No stress analysis performed on gear teeth or keyway",
+    "No interference check run between keyway and potential shaft",
+    "Gear material assumed as steel; actual application may require different alloy or heat treatment",
+    "Keyway fit tolerance not specified",
+    "FORGE could not apply one of this design's features, so it is not in the shape — cut-keyway applies to \"hub\", which fuse-gear-hub already consumed as a tool; a part cannot be both the material removed and the thing it was removed from.",
+    "Fused in the exported solid and drawn as separate parts on screen: Hub into Gear Blank."
+  ]
+}

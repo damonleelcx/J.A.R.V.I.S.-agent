@@ -208,6 +208,13 @@ FILES=(
   # Added 2026-09-18 (looks designed, stage E1): the mesh-only lattice drills.
   internal/domain/geometry/lattice.go
   internal/domain/geometry/units.go
+  # Added 2026-09-20 (looks designed, stage D): the looks judge, its audit trail
+  # and the surface-normals view the judge confirms an acceptance with.
+  internal/looks/judge.go
+  internal/looks/audit.go
+  # Added 2026-09-20 (looks designed, stage D2): the looks benchmark's two token
+  # ceilings and its ledger, both of which were wrong in its first live run.
+  internal/agent/looks_benchmark_live_test.go
 )
 
 BACKUP=""
@@ -5578,7 +5585,7 @@ drill "the floor carries no shadow" internal/httpapi/assets/forge3d.js \
   ./internal/httpapi 'TestRendererCastsAContactShadowOnlyWhenTheModelChanges'
 
 drill "occlusion darkens the glass laid over it" internal/httpapi/assets/forge3d.js \
-  's = s.replace("    /* Occlusion darkens what is opaque, before anything see-through is laid over it. */\n    if (post) {", "    if (translucent.length) { this._drawTranslucent(translucent, stats); translucent = []; }\n    if (post) {", 1)' \
+  's = s.replace("    /* Occlusion darkens what is opaque, before anything see-through is laid over it. */\n    if (occluded) {", "    if (translucent.length) { this._drawTranslucent(translucent, stats); translucent = []; }\n    if (occluded) {", 1)' \
   ./internal/httpapi 'TestRendererDrawsItsPassesInOrderOnEveryPath'
 
 drill "WebGL1 asks for WebGL2's occlusion targets" internal/httpapi/assets/forge3d.js \
@@ -5731,6 +5738,112 @@ drill "the export label names every part it could not build, with no cap" intern
 drill "the job label drops the parts it could not build" internal/httpapi/geometry_exports.go \
   's = s.replace("exportLabelClauses(e.MeshOnly, e.Skipped,", "exportLabelClauses(e.MeshOnly, nil,", 1)' \
   ./internal/httpapi 'TestExportLabel_BothDownloadsNameThePartsTheyCouldNotBuild'
+
+echo
+
+echo "The looks judge and the surface-normals view (looks, stage D)"
+drill "the normals view never reaches the shader" internal/httpapi/assets/forge3d.js \
+  "s = s.replace(\"gl.uniform1f(loc.surface, this.surfaceView === 'normals' ? 1 : 0);\", \"gl.uniform1f(loc.surface, 0);\", 1)" \
+  ./internal/httpapi 'TestRendererHasASurfaceNormalsViewAndDoesNotDefaultToIt'
+
+drill "the shader ignores which surface view was asked for" internal/httpapi/assets/forge3d.js \
+  's = s.replace("if (uSurfaceView > 0.5)", "if (uSurfaceView > 2.0)", 1)' \
+  ./internal/httpapi 'TestTheNormalsViewIsADifferentPictureInARealBrowser'
+
+drill "a reader is left looking at the debug picture" internal/httpapi/assets/forge3d.js \
+  "s = s.replace(\"this.surfaceView = name === 'normals' ? 'normals' : 'shaded';\", \"this.surfaceView = 'normals';\", 1)" \
+  ./internal/httpapi 'TestRendererHasASurfaceNormalsViewAndDoesNotDefaultToIt'
+
+drill "the occlusion darkens the normals view" internal/httpapi/assets/forge3d.js \
+  "s = s.replace(\"var occluded = !!post && this.surfaceView !== 'normals';\", \"var occluded = !!post;\", 1)" \
+  ./internal/httpapi 'TestRendererHasASurfaceNormalsViewAndDoesNotDefaultToIt'
+
+drill "the judge asks twice without swapping" internal/looks/judge.go \
+  's = s.replace("[]bool{true, false}", "[]bool{true, true}", 1)' \
+  ./internal/looks 'TestAVerdictCountsOnlyWhenTheSwapAgrees'
+
+drill "the swap is not undone on the second ask" internal/looks/judge.go \
+  's = s.replace("r.Said = betterIf(!newFirst)", "r.Said = betterIf(newFirst)", 1)' \
+  ./internal/looks 'TestAVerdictCountsOnlyWhenTheSwapAgrees'
+
+drill "a judge that flips is counted as agreeing" internal/looks/judge.go \
+  's = s.replace("\tif said[0] != said[1] {", "\tif false {", 1)' \
+  ./internal/looks 'TestAJudgeThatFlipsWhenSwappedIsRefused'
+
+drill "a third image joins the question" internal/looks/judge.go \
+  's = s.replace("Images: []string{first, second}}", "Images: []string{first, second, first}}", 1)' \
+  ./internal/looks 'TestOneLooksQuestionCarriesAtMostTwoImages'
+
+drill "the check cannot refuse what the judge liked" internal/looks/judge.go \
+  's = s.replace("\tcase !d.Guard.OK:", "\tcase false:", 1)' \
+  ./internal/looks 'TestAPrettierPictureCannotPayForAWorseModel'
+
+drill "a newly buried pair does not count" internal/looks/judge.go \
+  's = s.replace("\tif g.BuriedAfter > g.BuriedBefore {", "\tif false {", 1)' \
+  ./internal/looks 'TestAPrettierPictureCannotPayForAWorseModel'
+
+drill "a part the kernel could not build does not count" internal/looks/judge.go \
+  's = s.replace("\tif g.SkippedAfter > g.SkippedBefore {", "\tif false {", 1)' \
+  ./internal/looks 'TestAPrettierPictureCannotPayForAWorseModel'
+
+drill "the surfaces cannot overrule the shading" internal/looks/judge.go \
+  's = s.replace("case nVerdict != Better:", "case nVerdict == Better:", 1)' \
+  ./internal/looks 'TestTheNormalsPairConfirmsAnAcceptanceAndNeverRescuesOne'
+
+drill "a refusal is re-asked in the normals view" internal/looks/judge.go \
+  's = s.replace("if verdict == Better && normalsHelp(c) {", "if normalsHelp(c) {", 1)' \
+  ./internal/looks 'TestTheNormalsPairConfirmsAnAcceptanceAndNeverRescuesOne'
+
+drill "a normals view is compared against a shaded one" internal/looks/judge.go \
+  's = s.replace("c.Before.Normals != \"\" && c.After.Normals", "c.Before.Normals != \"\" || c.After.Normals", 1)' \
+  ./internal/looks 'TestTheNormalsPairConfirmsAnAcceptanceAndNeverRescuesOne'
+
+drill "an unreadable answer is read as a preference" internal/looks/judge.go \
+  's = s.replace("\treturn neitherIsBetter, why", "\treturn firstIsBetter, why", 1)' \
+  ./internal/looks 'TestAnUnreadableAnswerRefuses'
+
+drill "the audit keeps a summary rather than the answer" internal/looks/audit.go \
+  's = s.replace("Raw: r.Raw, Why: r.Why,", "Raw: \"(recorded)\", Why: r.Why,", 1)' \
+  ./internal/looks 'TestEveryVerdictIsKeptWithItsImages'
+
+drill "the audit does not say which picture was image 1" internal/looks/audit.go \
+  's = s.replace("\t\tif r.NewIsFirst {", "\t\tif false {", 1)' \
+  ./internal/looks 'TestEveryVerdictIsKeptWithItsImages'
+
+drill "an audit id can climb out of its directory" internal/looks/audit.go \
+  's = s.replace("safeName(d.Change.ID)", "d.Change.ID", 1)' \
+  ./internal/looks 'TestAnAuditCannotBeWrittenOutsideItsDirectory'
+
+drill "the defect check is opened to styling" internal/agent/look.go \
+  's = s.replace("materials, styling, realism", "materials and realism", 1)' \
+  ./internal/looks 'TestTheRepairLoopCannotSeeAStylingVerdict'
+
+echo
+
+echo "The looks benchmark's token ceilings (looks, stage D2)"
+drill "a prompt's first call is judged against the per-prompt ceiling" internal/agent/looks_benchmark_live_test.go \
+  's = s.replace("overPrompt := here > 0 && here+need > m.perPrompt", "overPrompt := here+need > m.perPrompt", 1)' \
+  ./internal/agent 'TestTheLooksBenchmarksPerPromptCeilingCannotStopEveryPromptAfterTheFirst'
+
+drill "the per-prompt ceiling never bounds a prompt at all" internal/agent/looks_benchmark_live_test.go \
+  's = s.replace("overPrompt := here > 0 && here+need > m.perPrompt", "overPrompt := false", 1)' \
+  ./internal/agent 'TestTheLooksBenchmarksPerPromptCeilingCannotStopEveryPromptAfterTheFirst'
+
+drill "the token ceiling forgets what earlier runs spent" internal/agent/looks_benchmark_live_test.go \
+  's = s.replace("overRun := m.already+m.spent+need > m.total", "overRun := m.spent+need > m.total", 1)' \
+  ./internal/agent 'TestTheLooksBenchmarksTotalCeilingCountsEarlierRuns'
+
+drill "a ledger nobody can read is read as nothing spent" internal/agent/looks_benchmark_live_test.go \
+  's = s.replace("return 0, unreadableLedger(err)", "return 0, nil", 1)' \
+  ./internal/agent 'TestTheLooksBenchmarksLedgerIsNeverReadOptimistically'
+
+drill "the ledger's own total is trusted over its rows" internal/agent/looks_benchmark_live_test.go \
+  's = s.replace("\tif sum != l.Total {", "\tif false {", 1)' \
+  ./internal/agent 'TestTheLooksBenchmarksLedgerIsNeverReadOptimistically'
+
+drill "a model an earlier run paid for is built again" internal/agent/looks_benchmark_live_test.go \
+  's = s.replace("\treturn &doc, true", "\treturn &doc, false", 1)' \
+  ./internal/agent 'TestTheLooksBenchmarksLedgerIsNeverReadOptimistically'
 
 echo
 

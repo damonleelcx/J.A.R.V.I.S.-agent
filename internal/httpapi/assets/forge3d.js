@@ -3008,6 +3008,7 @@
     'uniform vec3 uKeyDir;',
     'uniform vec3 uKeyColour;',
     'uniform float uExposure;',
+    'uniform float uSurfaceView;',   // 0 shaded, 1 surface normals (looks, stage D)
     'const float PI = 3.14159265;',
     'const float LEVELS = ' + glslFloat(ENV.levels) + ';',
     'const float HALF_TEXEL = ' + glslFloat(0.5 / ENV.height) + ';',
@@ -3052,6 +3053,12 @@
     '  if (uSectionAxis == 2 && vWorld.y > uSectionAt) discard;',
     '  if (uSectionAxis == 3 && vWorld.z > uSectionAt) discard;',
     '  vec3 N = normalize(vNormal);',
+    // The surface view, before any light touches it: the direction the surface faces,
+    // mapped into colour. Taken after the section discard so a cut model still cuts.
+    '  if (uSurfaceView > 0.5) {',
+    '    gl_FragColor = vec4(N * 0.5 + 0.5, vColour.a);',
+    '    return;',
+    '  }',
     '  vec3 V = normalize(uCamPos - vWorld);',
     '  float NoV = max(dot(N, V), 1e-4);',
     '  float metal = clamp(uMaterial.x, 0.0, 1.0);',
@@ -3813,6 +3820,9 @@
     this.contactShadow = true;
     this.ambientOcclusion = webgl2;
     this.featureLines = false;
+    /* 'shaded' unless something asks for 'normals' (setSurfaceView). Nothing in the
+     * workbench does; the looks judge does. */
+    this.surfaceView = 'shaded';
     this.adaptiveDetail = true;
     this._shadowDirty = true;
 
@@ -4011,6 +4021,22 @@
   Studio.prototype.setFeatureLines = function (on) { this.featureLines = !!on; this.draw(); };
   Studio.prototype.setAmbientOcclusion = function (on) { this.ambientOcclusion = !!on && this.webgl2; this.draw(); };
   Studio.prototype.setContactShadow = function (on) { this.contactShadow = !!on; this._shadowDirty = true; this.draw(); };
+
+  /* The surface view (looks, stage D): 'shaded' — what a reader sees — or 'normals',
+   * where a surface's colour is the direction it faces and nothing else.
+   *
+   * ‼️ This exists for the looks judge (internal/looks), not for the workbench. A studio
+   * light is exactly what hides the difference between a fillet and a chamfer, between a
+   * curved panel and eight flats: a flattering highlight rolls across both. The normals
+   * view removes the light from the question, so a row of facets reads as a row of bands
+   * and a real curve reads as a gradient. It changes nothing about the model, the export
+   * or any other pass — only what the part program writes. An unknown name is 'shaded',
+   * because a view nobody can name must not silently become a debug picture on a
+   * reader's screen. */
+  Studio.prototype.setSurfaceView = function (name) {
+    this.surfaceView = name === 'normals' ? 'normals' : 'shaded';
+    this.draw();
+  };
 
   /* A uniform's location in a program, looked up once. */
   Studio.prototype._u = function (prog, name) {
@@ -5409,6 +5435,13 @@
     }
 
     var post = this._postTargets(w, h);
+    /* Whether the occlusion pass runs THIS frame, decided once. The stats line below
+     * and the pass itself both read this one expression, because two places deciding
+     * the same thing is how a stats line ends up reporting a pass that did not run —
+     * and the stats line is where a reader looks to find out what was drawn. Not in
+     * the normals view: there a pixel's colour is the direction the surface faces and
+     * nothing else, and a darkened crease would read as a turn that is not there. */
+    var occluded = !!post && this.surfaceView !== 'normals';
     gl.bindFramebuffer(gl.FRAMEBUFFER, post ? post.ms : null);
     gl.viewport(0, 0, w, h);
     var g = ground();
@@ -5443,7 +5476,8 @@
       sh: gl.getUniformLocation(P, 'uSH'),
       keyDir: gl.getUniformLocation(P, 'uKeyDir'),
       keyColour: gl.getUniformLocation(P, 'uKeyColour'),
-      exposure: gl.getUniformLocation(P, 'uExposure')
+      exposure: gl.getUniformLocation(P, 'uExposure'),
+      surface: gl.getUniformLocation(P, 'uSurfaceView')
     });
     gl.uniformMatrix4fv(loc.view, false, view);
     gl.uniformMatrix4fv(loc.proj, false, proj);
@@ -5458,6 +5492,7 @@
     gl.uniform3fv(loc.keyDir, KEY_LIGHT.direction);
     gl.uniform3fv(loc.keyColour, KEY_LIGHT.colour);
     gl.uniform1f(loc.exposure, g.exposure);
+    gl.uniform1f(loc.surface, this.surfaceView === 'normals' ? 1 : 0);
 
     /* What the frame was drawn with, kept for pick(): a click is resolved against the
      * camera and the displacements that were on screen, not whatever changed since. */
@@ -5471,7 +5506,10 @@
     var stats = this.stats = { path: this.renderPath, batches: (this.batches || []).length, drawCalls: 0,
       instances: 0, culled: 0, proxied: 0, simplified: 0, hidden: 0, translucent: 0, placeholders: 0,
       visited: 0, uploadedBytes: 0, edgeDraws: 0, finer: 0,
-      post: post ? 'msaa' + post.samples + '+ssao' : 'none', shadow: !!this._shadow,
+      /* '+ssao' only when the occlusion pass actually runs — the same `occluded` the
+       * pass below is guarded by, so the two cannot disagree. */
+      post: post ? 'msaa' + post.samples + (occluded ? '+ssao' : '') : 'none',
+      shadow: !!this._shadow,
       /* Copies drawn into the contact shadow THIS frame: 0 unless what is drawn changed. */
       shadowPass: captured };
     var translucent = [];
@@ -5479,7 +5517,7 @@
       this._drawBatch(this.batches[n], frame, stats, translucent);
     }
     /* Occlusion darkens what is opaque, before anything see-through is laid over it. */
-    if (post) {
+    if (occluded) {
       this._resetInstanceAttributes();   // before the occlusion's full-screen passes
       this._applyOcclusion(post, proj, (this.bounds && this.bounds.span) || 10);
       gl.useProgram(this.prog);

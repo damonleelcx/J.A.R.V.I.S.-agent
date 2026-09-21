@@ -1,0 +1,43 @@
+{
+  "id": "car",
+  "what": "the same document drawn by the earlier renderer and by this branch's",
+  "verdict": "no difference",
+  "accepted": false,
+  "both_ways_agreed": false,
+  "reason": "the judge answered differently when the two images were swapped, so it read the positions rather than the pictures; that is not a verdict",
+  "tokens": 1622,
+  "check": {
+    "passes": true,
+    "faults": "0→0",
+    "buried_pairs": "0→0",
+    "skipped_parts": "0→0"
+  },
+  "rounds": [
+    {
+      "n": 1,
+      "view": "shaded",
+      "order": "image 1 is the NEW render, image 2 is the OLD one",
+      "images": [
+        "round1-shaded-image1.png",
+        "round1-shaded-image2.png"
+      ],
+      "answer_verbatim": "{\"verdict\": \"same\", \"why\": \"Both images display the exact same blocky, low-fidelity geometry with identical motion blur artifacts and raw edges, differing only in camera distance and lighting color.\"}",
+      "why": "Both images display the exact same blocky, low-fidelity geometry with identical motion blur artifacts and raw edges, differing only in camera distance and lighting color.",
+      "said_about_the_new_one": "no difference",
+      "tokens": 808
+    },
+    {
+      "n": 2,
+      "view": "shaded",
+      "order": "image 1 is the OLD render, image 2 is the NEW one",
+      "images": [
+        "round2-shaded-image1.png",
+        "round2-shaded-image2.png"
+      ],
+      "answer_verbatim": "{\"verdict\": \"image2\", \"why\": \"The second image displays clearer geometry with more distinct lighting and material definition on the wheels and body, making it look less like a raw wireframe preview and more like a rendered object.\"}",
+      "why": "The second image displays clearer geometry with more distinct lighting and material definition on the wheels and body, making it look less like a raw wireframe preview and more like a rendered object.",
+      "said_about_the_new_one": "better",
+      "tokens": 814
+    }
+  ]
+}
