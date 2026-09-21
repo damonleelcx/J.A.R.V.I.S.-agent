@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/engine"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/llm"
@@ -32,16 +33,32 @@ Rules for a good decomposition:
   a task; "create go.mod with module X and Go 1.26" is.
 - State the inputs a task needs and what it must produce. A task whose expected
   output is unstated cannot be verified afterwards, only agreed with.
-- Declare dependencies honestly. Two tasks that could run at once should not
-  depend on each other just because you wrote them in order.
+- Declare dependencies by ARTIFACT, not by the order you thought of the tasks.
+  Put in "produces" the stable keys of what a task leaves behind, and in "needs"
+  the keys it reads. A task that declares "needs" — including the empty list —
+  has its "depends_on" RECOMPUTED as exactly the tasks producing what it needs,
+  and anything else you wrote there is dropped. Omit "needs" and your
+  "depends_on" is kept as written.
+- Tasks with no path between them RUN AT THE SAME TIME on a pool of workers, so
+  an edge that is not a real data dependency costs wall-clock time on every run.
 - Prefer fewer, larger tasks over many trivial ones. Every task costs a model
   call, a lease, and a row; decomposition is not free.
+
 - If the goal is ambiguous in a way that changes what should be built, do not
   guess: return a single task that asks the human the specific question.
 - Risk tiers: r0 discussion, r1 reversible sandbox work, r2 consequential digital
   change, r3 release preparation, r4 safety-critical. Anything at r2 or above
   will pause for a human before it runs. Tier honestly — under-tiering to avoid a
   gate is the worst thing you can do here.
+
+A fan-out and join, written consistently — three surveys that share nothing:
+
+  survey-cost    produces ["cost"]   needs []                       depends_on []
+  survey-supply  produces ["supply"] needs []                       depends_on []
+  survey-risk    produces ["risk"]   needs []                       depends_on []
+  synthesis      produces ["report"] needs ["cost","supply","risk"] depends_on ["survey-cost","survey-supply","survey-risk"]
+
+The three surveys hold three workers at once; only the synthesis waits.
 
 Reply with JSON only, matching this shape exactly:
 
@@ -61,6 +78,8 @@ Reply with JSON only, matching this shape exactly:
       "instruction": "what the worker must do, written for someone with no other context",
       "inputs": {},
       "expected_output": {"description": "what a finished result looks like"},
+      "produces": ["stable-artifact-key this task leaves behind for others to read"],
+      "needs": ["stable-artifact-key this task reads; [] means it reads nothing"],
       "depends_on": ["key-of-another-task"],
       "risk_tier": "r1",
       "addresses": ["hazard node ids this task accounts for, when any were listed above"]
@@ -85,7 +104,12 @@ type Planner struct {
 	// the same shape as the rest: nil means hazard-aware planning is not wired,
 	// which is a deployment without a workspace service rather than a bug.
 	hazards hazardSource
-	log     *logx.Logger
+	// requestTimeout bounds the one model call this planner makes
+	// (FORGE_PLANNER_REQUEST_TIMEOUT). Zero means "no planner-specific bound",
+	// which is the default and leaves the call bounded by the general
+	// FORGE_LLM_REQUEST_TIMEOUT exactly as it was — see WithRequestTimeout.
+	requestTimeout time.Duration
+	log            *logx.Logger
 }
 
 // NewPlanner returns a planner.
@@ -99,6 +123,29 @@ func (p *Planner) WithCharacters(s *CharacterStore) *Planner { p.characters = s;
 // WithSettled makes planning build on what a person already decided: the answer
 // to a question it asked (PRD RSN-02) and the option they chose (PRD RSN-03).
 func (p *Planner) WithSettled(s *SettledStore) *Planner { p.settled = s; return p }
+
+// WithRequestTimeout bounds the planner's single model call on its own, rather
+// than sharing one number with every other call FORGE makes.
+//
+// # Why the planner gets its own
+//
+// Measured 2026-09-07 and recorded in .env.example: qwen3.8-max planning this
+// repository's reference goal took 128 s wall clock — 71% of the 3m general
+// budget — and an evaluation run hit that timeout on three consecutive attempts.
+// The same call with deliberation off took 17 s. .env.example's standing
+// argument against raising FORGE_LLM_REQUEST_TIMEOUT is right and stays: a
+// bigger general number would hide the shape of the problem, because it would
+// also let a hung converse or verifier call sit for minutes. A planner-specific
+// number hides nothing — every other role keeps the tight bound, and the one
+// call that is known to be slow is the only one allowed to be.
+//
+// Zero, the default, means no planner-specific bound at all: the call is
+// governed by whatever the llm.Client already enforces, byte for byte as before.
+// The deadline set here is a context deadline, so it can only make the call
+// STRICTER than the client's own http timeout, never looser — raising the
+// planner above the general timeout additionally needs the model client to stop
+// capping it. See docs/spikes/2026-09-20-planner-latency/README.md.
+func (p *Planner) WithRequestTimeout(d time.Duration) *Planner { p.requestTimeout = d; return p }
 
 // WithHazards makes planning account for the project's recorded hazards at r3
 // and above (PRD SAF-02).
@@ -116,7 +163,20 @@ type PlannedTask struct {
 	Inputs         json.RawMessage `json:"inputs"`
 	ExpectedOutput json.RawMessage `json:"expected_output"`
 	DependsOn      []string        `json:"depends_on"`
-	RiskTier       string          `json:"risk_tier"`
+	// Produces lists the stable artifact keys this task leaves behind, and Needs
+	// the keys it reads. Together they let deriveDependencies compute the edges
+	// instead of trusting the order the tasks were written in — see plandeps.go
+	// for the rule and why it is as conservative as it is.
+	Produces []string `json:"produces,omitempty"`
+	// Needs is a POINTER on purpose, and the pointer is the safety argument.
+	//
+	// "The planner never mentioned needs" and "the planner said this task needs
+	// nothing" both decode to an empty []string, and they are opposite claims:
+	// only the second is permission to discard an edge the planner wrote. A nil
+	// here means the field was absent, and that task's DependsOn is left exactly
+	// as the model wrote it. Do not flatten this to a slice for tidiness.
+	Needs    *[]string `json:"needs,omitempty"`
+	RiskTier string    `json:"risk_tier"`
 	// Addresses lists the ids of hazards this task accounts for (PRD SAF-02).
 	//
 	// Ids rather than free text, because the coverage check has to be exact: a
@@ -205,7 +265,17 @@ func (p *Planner) Plan(ctx context.Context, goal *engine.Goal, priorPlan *PlanRe
 		}
 	}
 
-	resp, err := p.client.Complete(ctx, llm.Request{
+	// The planner's own bound, applied around the model call and nothing else:
+	// the hazard and settlement reads above are database work and have no
+	// business inside a budget sized for a reasoning model.
+	callCtx := ctx
+	if p.requestTimeout > 0 {
+		var cancel context.CancelFunc
+		callCtx, cancel = context.WithTimeout(ctx, p.requestTimeout)
+		defer cancel()
+	}
+
+	resp, err := p.client.Complete(callCtx, llm.Request{
 		Role: llm.RolePlanner,
 		Messages: []llm.Message{
 			{Role: llm.System, Content: persona.SystemPrompt(
@@ -234,6 +304,31 @@ func (p *Planner) Plan(ctx context.Context, goal *engine.Goal, priorPlan *PlanRe
 	}
 	out.Usage = resp.Usage
 	out.Model = resp.Model
+
+	// Recompute the edges from what each task said it reads and writes, BEFORE
+	// Validate — so Validate judges the graph that will actually be inserted,
+	// and still refuses self-dependencies, unknown keys and cycles on it. See
+	// plandeps.go for the rule; a plan whose tasks declared no `needs` comes
+	// through here unchanged.
+	var derivation Derivation
+	out.Tasks, derivation = deriveDependencies(out.Tasks)
+	// Not silent, by two routes. The rationale is durable and travels with the
+	// plan to whoever reads it later; the log line is for whoever is watching a
+	// run now. p.log is legitimately nil for some callers, which is exactly why
+	// the rationale carries it too.
+	if derivation.Considered > 0 || len(derivation.Cycle) > 0 {
+		out.Rationale = strings.TrimSpace(out.Rationale + "\n\n" + derivation.Summary())
+	}
+	if p.log != nil {
+		p.log.Info(ctx, logx.EventPlanCreated,
+			"goal_id", goal.ID,
+			"tasks", len(out.Tasks),
+			"deps_considered", derivation.Considered,
+			"deps_added", len(derivation.Added),
+			"deps_dropped", len(derivation.Dropped),
+			"deps_discarded_cycle", len(derivation.Cycle) > 0,
+			"derivation", derivation.Summary())
+	}
 
 	if err := out.Validate(); err != nil {
 		return nil, err

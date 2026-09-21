@@ -312,6 +312,16 @@ func (r *Repository) ListDependencies(ctx context.Context, ex db.Querier, taskID
 // The sequence number is allocated inside the INSERT rather than read and
 // incremented by the caller, so two concurrent writers cannot both compute the
 // same next value. The unique constraint on (task_id, seq) is the backstop.
+//
+// NFR-03 durability — "no acknowledged checkpoint is lost". The acknowledgement
+// IS this function returning a *Checkpoint, and it returns only after the row is
+// in Postgres: committed here when ex is the pool, or committed with the
+// caller's transaction when ex is a tx. What would break the promise is
+// acknowledging earlier than the row — returning a fabricated seq, writing
+// through a connection the caller is about to abandon, or making the INSERT
+// conditional — because a worker would then resume from a state nobody can read
+// back. Fenced by TestNFR03_AnAcknowledgedCheckpointSurvivesThePoolThatWroteIt
+// and the kill fence beside it.
 func (r *Repository) SaveCheckpoint(ctx context.Context, ex db.Querier, taskID, kind string, state json.RawMessage, now time.Time) (*Checkpoint, error) {
 	const op = "engine.Repository.SaveCheckpoint"
 

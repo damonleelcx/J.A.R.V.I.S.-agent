@@ -108,3 +108,32 @@ wrong.
 
 A property named in the ExternalSecret and absent from the store fails the
 **whole** secret, not just that key.
+
+## Uptime
+
+**Nothing measures FORGE's availability.** The probes decide; they do not
+record. Kubelet acts on `/healthz` and `/readyz` and keeps no history beyond
+Events, which age out; `verify.sh` check 6 curls both once, after a deploy;
+there is no `/metrics`, no Prometheus and no scrape config anywhere in the repo.
+So the 99.9% monthly in `docs/prd.md` (NFR-01) is a target with no number
+against it — do not quote one.
+
+`docs/spikes/2026-09-20-nfr01-availability/README.md` is the method: what counts
+as available (`/readyz` 200 within 5 s, sampled every 30 s from **off this
+node**), how samples become a monthly percentage, and what the figure cannot
+see. Read §3.6 before quoting any figure — `/readyz` checks the database and
+nothing else, so an unreachable model endpoint, a dead `forge-worker`, a broken
+media plane and every mail failure all score as available.
+
+Two things on this node that the budget should be read against:
+
+- 🔴 **The budget is 43.2 minutes per 30-day month**, and `forged` is
+  `replicas: 1` with `strategy: Recreate` (required by `hostNetwork`). Every
+  deploy is therefore a planned gap — the old pod goes before the new one
+  starts, and the startup probe alone allows 120 s for it. Ten deploys at two
+  minutes each spend **46%** of the month before anything goes wrong. Batch
+  deploys; do not ship ten times in a day and then wonder where the budget went.
+- 🔴 **Never run the checker on this node or in ns `forge`.** A checker that
+  shares fate with its subject stops sampling exactly when the samples matter,
+  and the gap then reads as uptime. Off-node, through the public name, so DNS,
+  the certificate and the security group are counted too.

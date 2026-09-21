@@ -47,6 +47,27 @@ type OpenAICompatible struct {
 	transcriberKey string
 	models         map[Role]string
 	client         *http.Client
+	// requestTimeout bounds ONE attempt, and only when the caller brought no
+	// deadline of its own (FORGE_LLM_REQUEST_TIMEOUT).
+	//
+	// # Why this is not http.Client.Timeout any more
+	//
+	// It was, and that made the field a CEILING on every call in the process
+	// rather than a default for calls that asked for nothing. A caller that
+	// deliberately gave itself longer — the planner, which is measured at 128 s
+	// and has its own FORGE_PLANNER_REQUEST_TIMEOUT since 2026-09-20 — had its
+	// context deadline silently overruled by this one, and the call it was
+	// promised died at the general bound. The failure looked like the endpoint
+	// hanging up, which is the wrong place to go looking.
+	//
+	// So it is applied HERE, per attempt, and only when ctx has no deadline:
+	// - per attempt, because http.Client.Timeout was per attempt, and moving it
+	//   to cover the retry loop as well would quietly shorten every retried call;
+	// - only without a deadline, because a caller that stated one has said what
+	//   it is willing to wait, and this number is not better informed than it is.
+	// A caller that wants the general bound simply does not set a deadline, and
+	// gets exactly what it got before.
+	requestTimeout time.Duration
 	log            *logx.Logger
 	clock          clock.Clock
 
@@ -96,11 +117,14 @@ func NewOpenAICompatible(cfg config.LLMConfig, log *logx.Logger, clk clock.Clock
 			RoleSpeaker:     cfg.Speaker,
 			RoleIllustrator: cfg.Illustrator,
 		},
-		client:     &http.Client{Timeout: cfg.RequestTimeout},
-		log:        log,
-		clock:      clk,
-		maxRetries: cfg.MaxRetries,
-		voice:      cfg.Voice,
+		// No Timeout on the client itself: see requestTimeout's comment. The
+		// same number, applied where a caller's own deadline can outrank it.
+		client:         &http.Client{},
+		requestTimeout: cfg.RequestTimeout,
+		log:            log,
+		clock:          clk,
+		maxRetries:     cfg.MaxRetries,
+		voice:          cfg.Voice,
 	}
 }
 
@@ -234,11 +258,36 @@ func (c *OpenAICompatible) Complete(ctx context.Context, req Request) (*Response
 		WithDetail("model %q (role %s) failed after %d attempts", model, req.Role, c.maxRetries+1)
 }
 
+// boundAttempt applies the client's own request timeout to one attempt, and
+// only to a caller that set no deadline of its own.
+//
+// Returned with its cancel so the deadline dies with the attempt rather than
+// with the process. A caller that already has a deadline gets its context back
+// unchanged and a cancel that does nothing — deliberately NOT a
+// context.WithCancel wrapper, because the point is that nothing here alters
+// what that caller asked for.
+func (c *OpenAICompatible) boundAttempt(ctx context.Context) (context.Context, context.CancelFunc) {
+	if c.requestTimeout <= 0 {
+		return ctx, func() {}
+	}
+	if _, ok := ctx.Deadline(); ok {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, c.requestTimeout)
+}
+
 // attempt performs one HTTP round trip.
 func (c *OpenAICompatible) attempt(ctx context.Context, model string, role Role, payload []byte) (*Response, error) {
 	const op = "llm.OpenAICompatible.attempt"
 
 	start := c.clock.Now()
+
+	// The general bound, applied only to a caller that named none. See the
+	// comment on requestTimeout: a caller with its own deadline keeps it, even
+	// when it is LONGER than this, which is the whole point of a planner
+	// timeout that is allowed to exceed the general one.
+	ctx, cancelAttempt := c.boundAttempt(ctx)
+	defer cancelAttempt()
 
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost,
 		c.baseURL+"/chat/completions", bytes.NewReader(payload))

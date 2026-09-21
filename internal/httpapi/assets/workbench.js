@@ -257,7 +257,7 @@
             body += (body ? ' ' : '') + '[' + t.images +
               (t.images === 1 ? ' image' : ' images') + ' attached]';
           }
-          addTurn(who, body, t.detail || '', true);
+          markRestoredFailure(addTurn(who, body, t.detail || '', true), t);
         });
         /* The project this conversation ended in, adopted so the rails show its
          * work rather than nothing.
@@ -282,6 +282,32 @@
         return true;
       })
       .catch(function () { return false; });
+  }
+
+  /* ‼️ A failed turn is not something FORGE said.
+   *
+   * Its text is the sentence the person was shown INSTEAD of a reply. Painted
+   * back into the ordinary bubble on reload it is indistinguishable from an
+   * answer, so the record shows FORGE saying a sentence it never said — the
+   * same substitution historyFor refuses to make towards the MODEL, made
+   * towards the person instead.
+   *
+   * Drawn the way a live failure is drawn — in --bad, with the error code
+   * beside it — so the restored transcript agrees with what was on screen at
+   * the time. Migration 0023 started writing these rows for a reply that
+   * arrived and could not be used; since 2026-09-20 a turn that failed before
+   * any reply arrived leaves one too, so there is more of this to draw.
+   *
+   * Nothing happens for a turn that did not fail, which is almost all of them. */
+  function markRestoredFailure(el, t) {
+    if (!el || !t.failure) return;
+    var body = el.querySelector('.body');
+    if (body) body.style.color = 'var(--bad)';
+    var why = document.createElement('div');
+    why.className = 'detail';
+    why.style.color = 'var(--bad)';
+    why.textContent = 'this turn failed (' + t.failure + ')';
+    el.appendChild(why);
   }
 
   function forgetConversationKey() {

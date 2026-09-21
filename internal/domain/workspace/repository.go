@@ -595,6 +595,14 @@ func (r *Repository) FindArtifact(ctx context.Context, q db.Querier, artifactID 
 // is not a decision anybody still owes. A previous ACCEPTED or REJECTED version
 // is left alone: somebody ruled on it, and overwriting that would erase a human
 // decision to tidy a queue.
+//
+// NFR-03 durability — "no acknowledged artifact version is lost". A nil return
+// is the acknowledgement, and the caller's transaction is what makes it true, so
+// a caller that acknowledges to a user before committing has broken the promise
+// rather than this function. The other half is CONTENT: a version is the seven
+// facts WRK-04 names, and dropping one of them on the way into the row — storing
+// "" for a diff the caller supplied, say — loses part of an acknowledged version
+// while leaving a row that looks intact.
 func (r *Repository) AppendVersion(ctx context.Context, q db.Querier, v *Version) error {
 	const op = "workspace.Repository.AppendVersion"
 
