@@ -208,6 +208,12 @@ FILES=(
   # Added 2026-09-18 (looks designed, stage E1): the mesh-only lattice drills.
   internal/domain/geometry/lattice.go
   internal/domain/geometry/units.go
+  # Added 2026-09-20 (issue 6, manufacturability and section properties): the
+  # drills for the new check's kernel measurements, its one table of limits, and
+  # the note that carries a finding to the turn.
+  internal/domain/geometry/manufacturability.go
+  internal/domain/geometry/section.go
+  internal/agent/manufacturability.go
 )
 
 BACKUP=""
@@ -2945,7 +2951,7 @@ drill "the offered repeat's turn is not checked" internal/domain/geometry/repeti
   ./internal/domain/geometry 'TestRepetition_FindsARingOfTopLevelParts'
 
 drill "the contract never teaches density" internal/agent/converse.go \
-  's = s.replace("geometry.FinishGuide() + \".\\n\" + densityContract + ", "geometry.FinishGuide() + \".\\n\" + ", 1)' \
+  's = s.replace("converseManner + geometryContract + geometry.FinishGuide() + \".\\n\" + densityContract", "converseManner + geometryContract + geometry.FinishGuide() + \".\\n\"", 1)' \
   ./internal/agent 'TestTheContractTeachesDensityAsTheValidatorReadsIt'
 
 drill "the contract's material shows no density" internal/agent/converse.go \
@@ -4127,7 +4133,7 @@ drill "an export job is refused at the view's ceiling" internal/domain/cad/cad.g
   ./internal/domain/cad 'TestKernel_AnExportJobIsBoundedByItsOwnCeilingAndNotTheBuildingOnes'
 
 drill "the export job asks for the interference check" internal/domain/cad/cad.go \
-  's = s.replace("SkipInterferences: job}", "SkipInterferences: false}", 1)' \
+  's = s.replace("SkipInterferences: job,", "SkipInterferences: false,", 1)' \
   ./internal/domain/cad 'TestKernel_AnExportJobBuildsAboveTheBuildingCeilingWithoutTheInterferenceCheck'
 
 drill "the sidecar ignores skip_interferences" internal/domain/cad/sidecar.py \
@@ -5166,7 +5172,7 @@ drill "the bridge drops the kernel's feature failures" internal/agent/cadbridge/
   ./internal/agent/cadbridge 'TestBuildSurface_CarriesWhatTheKernelSaidAboutTheFeatures'
 
 drill "the bridge drops the kernel's reductions" internal/agent/cadbridge/cadbridge.go \
-  's = s.replace("FeatureReductions: built.FeatureReductions}, nil", "}, nil", 1)' \
+  's = s.replace("FeatureReductions: built.FeatureReductions,", "", 1)' \
   ./internal/agent/cadbridge 'TestBuildSurface_CarriesWhatTheKernelSaidAboutTheFeatures'
 
 drill "the render drops the reductions" internal/agent/render.go \
@@ -5416,7 +5422,7 @@ drill "the coverage note says nothing of mesh-only parts" internal/agent/interfe
   ./internal/agent 'TestCoverageNoteSaysMeshOnlyPartsWereNotChecked'
 
 drill "the render drops the mesh-only parts" internal/agent/render.go \
-  's = s.replace("MeshOnly: built.MeshOnly, Parts: built.Parts}", "Parts: built.Parts}", 1)' \
+  's = s.replace("MeshOnly: built.MeshOnly, Parts: built.Parts,", "Parts: built.Parts,", 1)' \
   ./internal/agent 'TestRender_CarriesTheMeshOnlyParts'
 
 drill "the turn surface drops the mesh-only parts" internal/agent/cadbridge/cadbridge.go \
@@ -5689,6 +5695,113 @@ drill "the workbench drops the kernel's reductions" internal/httpapi/assets/work
 drill "the export panel forgets the rounds built smaller" internal/httpapi/assets/workbench.js \
   's = s.replace("var reductions = exp.feature_reductions || [];", "var reductions = [];", 1)' \
   ./internal/httpapi 'TestWorkbenchSaysWhichRoundsTheKernelBuiltSmaller'
+
+echo "Manufacturability and sections (issue 6)"
+
+# ‼️ Measured on the solids that SURVIVE the features, like the interference check.
+# Measured on the pre-feature shapes a tube's wall is its outer diameter, because
+# the bore is still a solid cylinder standing inside it.
+drill "the wall is measured before the bore is cut" internal/domain/cad/sidecar.py \
+  's = s.replace("    shapes = dict(zip(ids, built))", "    shapes = dict(zip(ids, built))\n    _pre = (list(built), list(ids))", 1); s = s.replace("manufacturability, mfg_truncated, mfg_stats = _manufacturability(built, ids, kept_placed)", "manufacturability, mfg_truncated, mfg_stats = _manufacturability(_pre[0], _pre[1], None)", 1)' \
+  ./internal/domain/cad 'TestKernel_ATubesWallIsMeasuredAfterTheBoreIsCut'
+
+# The face normal reversed twice: OCCT already reverses it for a REVERSED face, so
+# doing it again points it into the solid and every top face reads as a ceiling.
+drill "a reversed face's normal is turned inward" internal/domain/cad/sidecar.py \
+  's = s.replace("            n.Normalize()\n            out.append((p, n))\n    return out", "            n.Normalize()\n            if face.wrapped.Orientation() == TopAbs_Orientation.TopAbs_REVERSED:\n                n.Reverse()\n            out.append((p, n))\n    return out", 1)' \
+  ./internal/domain/cad 'TestKernel_AnOverhangIsMeasuredFromVerticalAndAFloorIsNotOne'
+
+# The floor read from the bounding box instead of from the samples: OCCT's box
+# round a curved solid sits a hair below it, so a rod's own end face floats above
+# its floor and reports a 90 degree overhang.
+drill "the floor comes from the bounding box" internal/domain/cad/sidecar.py \
+  's = s.replace("            if floor is None or p.Y() < floor:\n                floor = p.Y()", "            floor = float(shape.bounding_box().min.Y)", 1)' \
+  ./internal/domain/cad 'TestKernel_TheThinnestWallIsMeasuredThroughTheMaterial'
+
+# A sharp inside corner reported as "no corner at all": a milled pocket no tool can
+# cut then reads exactly like a plain box.
+drill "a sharp inside corner is reported as none" internal/domain/cad/sidecar.py \
+  's = s.replace("    internal = 0.0 if sharp else concave_radius", "    internal = concave_radius", 1)' \
+  ./internal/domain/cad 'TestKernel_ASquareInsideCornerIsZeroAndAFilletedOneIsItsRadius'
+
+# The face budget lifted: a model of any size is measured in full and nothing is
+# ever reported as truncated, so a check that could not finish reads as clean.
+drill "the manufacturability budget never binds" internal/domain/cad/sidecar.py \
+  's = s.replace("_MANUFACTURABILITY_BUDGET = 600", "_MANUFACTURABILITY_BUDGET = 10 ** 9", 1)' \
+  ./internal/domain/cad 'TestKernel_TheFaceBudgetStopsTheMeasurementAndSaysSo'
+
+# Every copy measured again: correct, and 4,096 bolts then cost 4,096 measurements.
+drill "a placed copy is measured again" internal/domain/cad/sidecar.py \
+  's = s.replace("                key = (shape_key, _rounded_rotation(_rotation(location.wrapped.Transformation().Value)))", "                key = None", 1)' \
+  ./internal/domain/cad 'TestKernel_AMeasurementIsReusedForEveryCopyOfAShape'
+
+# The cutting face built at the world origin: it misses every part that is not
+# there, and the refusal reads like a plane outside the part.
+drill "a section is cut at the world origin" internal/domain/cad/sidecar.py \
+  's = s.replace("    centre = box.center()\n    origin = [float(centre.X), float(centre.Y), float(centre.Z)]", "    origin = [0.0, 0.0, 0.0]", 1)' \
+  ./internal/domain/cad 'TestKernel_ANamedSectionIsMeasuredAgainstTheRectangleFormula'
+
+# A part that says nothing about how it is made, checked against milling anyway:
+# the same 0.9 mm wall is fine milled and impossible in metal powder.
+drill "a part with no process is given one" internal/domain/geometry/manufacturability.go \
+  's = s.replace("\t\tp, ok := Profiles[process[m.ID]]", "\t\tp, ok := Profiles[ProcessMilling3Axis]", 1)' \
+  ./internal/domain/geometry 'TestManufacturability_APartWithNoProcessIsNamedAsUncheckedAndNeverGuessedAt'
+
+# The UNVALIDATED label dropped: a published rule of thumb then reads like a number
+# FORGE has checked against a part somebody made.
+drill "a rule of thumb stops saying it is unvalidated" internal/domain/geometry/manufacturability.go \
+  's = s.replace("\tnote := \" (UNVALIDATED rule of thumb: \" + f.Source + \")\"", "\tnote := \" (\" + f.Source + \")\"", 1)' \
+  ./internal/domain/geometry 'TestManufacturability_AFindingNamesThePartTheRuleTheValueAndTheLimit'
+
+# A measurement the kernel never took, judged as zero: the worst finding it is
+# possible to have, about a wall nobody looked at.
+drill "an unmeasured value is judged as zero" internal/domain/geometry/manufacturability.go \
+  's = s.replace("\t\tif measured == nil || !limit.applies || *measured >= limit.Value {\n\t\t\treturn\n\t\t}", "\t\tif !limit.applies {\n\t\t\treturn\n\t\t}\n\t\tzero := 0.0\n\t\tif measured == nil {\n\t\t\tmeasured = &zero\n\t\t}\n\t\tif *measured >= limit.Value {\n\t\t\treturn\n\t\t}", 1)' \
+  ./internal/domain/geometry 'TestManufacturability_AnUnmeasuredValueIsNotJudgedAsZero'
+
+# A truncated check calling itself clean: the defect stage V2 closed for the
+# interference check, reopened for this one.
+drill "a truncated check reads as clean" internal/domain/geometry/manufacturability.go \
+  's = s.replace("\treturn len(r.Findings) == 0 && !r.Truncated && len(r.WithoutProcess) == 0 &&", "\treturn len(r.Findings) == 0 && len(r.WithoutProcess) == 0 &&", 1)' \
+  ./internal/domain/geometry 'TestManufacturability_ATruncatedCheckSaysSoAndIsNeverClean'
+
+# The caveat dropped from the section note: a second moment of area beside a part,
+# with nothing saying FORGE ran no analysis.
+drill "a section stops saying it is not a stress" internal/domain/geometry/section.go \
+  's = s.replace("These are GEOMETRY, not a stress: FORGE ran no analysis, applied no load and knows ", "", 1)' \
+  ./internal/domain/geometry 'TestSections_TheNoteAlwaysSaysTheseAreNotAStress'
+
+# A deployment with no kernel told its parts can be made: the silent downgrade the
+# fifth promise refuses.
+drill "a described render reports manufacturability" internal/agent/manufacturability.go \
+  's = s.replace("\tif reply == nil || reply.Prototype == nil || sheet == nil || !sheet.FromKernel {", "\tif reply == nil || reply.Prototype == nil || sheet == nil {", 1)' \
+  ./internal/agent 'TestManufacturability_ADescribedRenderSaysNothingAboutMakingAnything'
+
+# The findings measured and then never said: the exact shape of the gap issue 6
+# describes — a kernel that evaluates and tells nobody.
+drill "the findings never reach the turn" internal/agent/interference.go \
+  's = s.replace("\t\tnoteManufacturability(reply, sheet)", "\t\t_ = sheet", 1)' \
+  ./internal/agent 'TestManufacturability_AFindingReachesTheTurnWithItsNumbersAndChangesNothing'
+
+# A process FORGE does not know, kept: the part is then checked against nothing and
+# counted as checked, which is the one reading that must not happen.
+drill "an unknown process is kept" internal/agent/settledoc.go \
+  's = s.replace("\t\tif p := d.Parts[i].Process; p != \"\" && !geometry.ValidProcess(p) {", "\t\tif p := d.Parts[i].Process; false && p != \"\" {", 1)' \
+  ./internal/agent 'TestManufacturability_AProcessFORGEDoesNotKnowIsDroppedAndSaid'
+
+# The build step's contract losing the process paragraph, exactly as it lost the
+# finish list and the density rule in 2026-09-15.
+drill "a build step is never taught the processes" internal/agent/converse.go \
+  's = s.replace("var buildContract = geometryContract + geometry.FinishGuide() + \".\\n\" + densityContract + processContract", "var buildContract = geometryContract + geometry.FinishGuide() + \".\\n\" + densityContract", 1)' \
+  ./internal/agent 'TestTheContractTeachesProcessAsTheValidatorReadsIt'
+
+# The measurements thrown away at the bridge: the kernel measures, and the turn
+# gets triangles only.
+drill "the bridge drops what the kernel measured" internal/agent/cadbridge/cadbridge.go \
+  's = s.replace("\t\tManufacturability:          built.Manufacturability,", "\t\tManufacturability:          nil,", 1)' \
+  ./internal/agent/cadbridge 'TestKernel_TheTurnsSurfaceCarriesWhatTheKernelMeasured'
+
+echo
 
 echo
 

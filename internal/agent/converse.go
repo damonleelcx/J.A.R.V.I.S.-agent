@@ -763,9 +763,40 @@ var densityContract = fmt.Sprintf(`  "density" is the material's density in KILO
 // example material — never its unit, its ceiling or the all-parts rule for a mass
 // (2026-09-15; the conversation contract has had them since PR #92).
 // Fence: TestAssemble_EveryStepIsTaughtFinishesAndDensity.
-var buildContract = geometryContract + geometry.FinishGuide() + ".\n" + densityContract
+// processContract teaches "process" and "sections", both rendered FROM the tables
+// that enforce them (addresses issue 6).
+//
+// # Why the model is asked at all
+//
+// A manufacturability check needs to know how a part is made, and FORGE refuses to
+// guess: the same 0.9 mm wall is fine milled, marginal moulded and impossible in
+// metal powder, so a default process would be a manufacturing decision taken by a
+// checker — the thing the tolerance rule already forbids. A part with no process
+// is checked against nothing and SAID to be unchecked; a part that names one gets
+// its walls, features, internal corners, draft and overhang measured on the solid
+// the kernel builds.
+//
+// The list and the axes are written out rather than copied, for the reason
+// FinishGuide is: a contract offering a process the validator drops is a model
+// writing the field faithfully and losing it.
+// Fence: TestTheContractTeachesProcessAsTheValidatorReadsIt.
+var processContract = `- "process" on a part is HOW IT IS MADE, and it is the only thing that turns
+  FORGE's manufacturability check on for that part: ` + geometry.ProcessGuide() + `.
+  Put one on a part when somebody has said how it is made, or when the part only
+  makes sense one way (a moulded housing, a printed bracket). Leave it out when you
+  do not know — FORGE then says the part was not checked, which is true, instead of
+  checking it against a process nobody chose. The check REPORTS and never changes
+  the model: a thin wall may be deliberate.
+- "sections" are plane cuts you name, for section properties: {"id", "part",
+  "axis" (the cut plane's normal, x, y or z), "at" (where along that axis)}. FORGE
+  measures the cut's area, centroid and second moments of area. That is GEOMETRY,
+  not strength: there is no stress analysis here, no load and no boundary
+  conditions, so never present a section as a structural check.
+`
 
-var converseFraming = converseManner + geometryContract + geometry.FinishGuide() + ".\n" + densityContract + `- "states" are named configurations: which parts are shown, and where they sit.
+var buildContract = geometryContract + geometry.FinishGuide() + ".\n" + densityContract + processContract
+
+var converseFraming = converseManner + geometryContract + geometry.FinishGuide() + ".\n" + densityContract + processContract + `- "states" are named configurations: which parts are shown, and where they sit.
   A state with "offsets" says these pieces separate along this path, and
   NOTHING here checks that they can — there is no interference, clearance or
   kinematic test in this deployment. Offer states when somebody is asking how a

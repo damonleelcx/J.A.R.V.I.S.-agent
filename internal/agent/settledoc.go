@@ -106,6 +106,25 @@ func settleDocument(d *Prototype) *Prototype {
 					"A material FORGE named could not be read and was dropped: "+err.Error())
 			}
 		}
+		// A process is what turns the manufacturability check on for a part, and it
+		// is checked against the same table the contract is written from and the
+		// findings are judged by (geometry.Profiles; addresses issue 6). A name that
+		// is not in it is DROPPED and said, never guessed at: a part checked against
+		// the wrong process gets numbers that look exactly like the right ones.
+		if p := d.Parts[i].Process; p != "" && !geometry.ValidProcess(p) {
+			d.Parts[i].Process = ""
+			d.NotVerified = append(d.NotVerified, fmt.Sprintf(
+				"%s says it is made by %q, which FORGE does not know, so it was not checked for "+
+					"manufacturability. The processes FORGE checks are: %s.",
+				d.Parts[i].Label(), p, geometry.ProcessGuide()))
+		}
+	}
+	// A section that cannot be cut is dropped here, in the document's own words,
+	// rather than coming back from the kernel as a refusal per section.
+	if len(d.Sections) > 0 {
+		kept, dropped := geometry.ValidateSections(d.Sections, d.Parts)
+		d.Sections = kept
+		d.NotVerified = append(d.NotVerified, dropped...)
 	}
 	if err := geometry.ValidateStates(d.States, d.Parts); err != nil {
 		d.States = nil

@@ -70,6 +70,10 @@ func (c *Conversation) repairIfPartsOverlap(ctx context.Context, reply *Reply, s
 		if note := builtFeaturesNote(sheet); note != "" {
 			reply.noteRepair(note)
 		}
+		// And whether what it DID build could be made, plus any named section's
+		// properties, from the same build and for the same reason (issue 6;
+		// manufacturability.go).
+		noteManufacturability(reply, sheet)
 	}()
 	found := sheet.Interferences
 	if len(found) == 0 {

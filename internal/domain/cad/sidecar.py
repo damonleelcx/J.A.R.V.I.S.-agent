@@ -69,6 +69,15 @@ try:
     from OCP.Bnd import Bnd_Box
     from OCP.BRepBndLib import BRepBndLib
     from OCP.BRepTools import BRepTools
+    # What a manufacturability check measures, and a named section's properties
+    # (issue 6): a ray through the material, a face's own normal, a surface's and a
+    # curve's kind, and the area and inertia of a planar cut. See _manufacturability.
+    from OCP.BRepAdaptor import BRepAdaptor_Curve, BRepAdaptor_Surface
+    from OCP.BRepGProp import BRepGProp, BRepGProp_Face
+    from OCP.BRepIntCurveSurface import BRepIntCurveSurface_Inter
+    from OCP.GeomAbs import GeomAbs_Circle, GeomAbs_Cylinder
+    from OCP.GProp import GProp_GProps
+    from OCP.gp import gp_Dir, gp_Lin, gp_Vec
     # The STEP writer's own pieces, used directly rather than through build123d's
     # export_step, which only accepts a Compound(children=...) — see _step_document.
     from OCP.APIHeaderSection import APIHeaderSection_MakeHeader
@@ -1875,6 +1884,404 @@ def _properties(solids, ids, placed=None):
     return out
 
 
+# # What the kernel MEASURES for a manufacturability check, and what it does not
+#
+# addresses issue 6: "the kernel builds geometry but never evaluates it". The
+# interference check (Phase 5, stages V1-V2) is the first geometric check here;
+# this is the second, and it is per PART rather than per pair.
+#
+# The split is the same one interference uses and for the same reason: the kernel
+# MEASURES and Go JUDGES. Nothing here knows what a milling cutter can reach or
+# what a moulding needs — that is one table in geometry/manufacturability.go, with
+# its citations, and this file must never hold a second copy of a limit. What
+# comes back is five numbers a formula can predict, per part, plus the counts
+# saying how much was looked at.
+#
+# ‼️ Each number says exactly what it measures, because each is a PROXY and the
+# rule that reads it inherits the proxy's blind spots (they are written out in
+# geometry/manufacturability.go, beside the rule that reads each one):
+#
+#   - min_wall: a ray cast INWARD from the middle of every face, to the first
+#     surface it meets. On a plate it is the plate's thickness, on a rod its
+#     diameter, on a tube its annular wall — all three checked against the formula
+#     answer. It is the thinnest place the FACE CENTRES see, not the thinnest place
+#     there is: a wall that is thin only at a corner is not sampled.
+#   - min_feature: the smallest of each edge's length, or a circular edge's
+#     DIAMETER. A 2 mm hole is a 2 mm feature, not a 6.28 mm edge.
+#   - internal_radius: 0.0 when the part has any CONCAVE edge (OCCT's own answer,
+#     ChFi3d.DefineConnectType_s, the same call the "concave" edge rule uses);
+#     otherwise the smallest radius of a concave cylindrical face, which is what a
+#     fillet leaves behind. None when the part has neither — a box has no internal
+#     corner, and a rule about corners must not invent one.
+#   - min_draft and max_overhang: angles in DEGREES against +Y, which is up in this
+#     system (see _OPEN_FACES). Sampled at a 3x3 grid in each face's own parameter
+#     space, so a curved face is answered by where it is worst rather than by its
+#     middle. Draft skips faces square to the pull (a top and a bottom have no
+#     draft to give). Overhang skips samples at the part's own lowest point, which
+#     is where it rests.
+#
+# ‼️ The pull and build direction is the ASSEMBLY's +Y, not a direction anybody
+# chose per part: no FORGE document states one. A real moulding or print decides it,
+# and that decision changes every draft and overhang number here. Go says so in the
+# turn rather than letting the numbers read as a verdict about a real process plan.
+_MANUFACTURABILITY = True
+# The parameters each face's normal is sampled at, in each direction: a 3x3 grid,
+# away from the edges where a trimmed surface's normal is least representative.
+_MFG_SAMPLES = (0.17, 0.5, 0.83)
+# Below this, an angle is the same as zero: OCCT returns a planar face's normal to
+# about 1e-12, and a wall that is 1e-9 degrees off vertical is a vertical wall.
+_MFG_ANGLE_EPSILON = 1e-6
+# A face whose normal is within this of the pull direction is a top or a bottom,
+# not a wall, and has no draft angle to report.
+_MFG_SQUARE_TO_PULL = 89.0
+# # How many FACES one build may measure, and why 600
+#
+# Measured 2026-09-20 on this kernel, interleaved with the same builds run without
+# the pass (docs/spikes/2026-09-20-manufacturability-cost):
+#
+#   - 512 parts that are COPIES of one shape: 6 faces measured, 511 answered from
+#     the cache, 32 ms. 4,096 copies: 6 faces, 4,095 reused, 145 ms. The usual
+#     FORGE model is this one — a definition built once and placed — and the pass
+#     is then roughly free.
+#   - 512 DISTINCT shapes: 3,072 faces, no reuse, 10.7 s. 4,096 distinct shapes did
+#     not finish inside the kernel's own 30 s build limit at all.
+#
+# So the cost is per distinct FACE, at about 3.5 ms of it, and the rule that costs
+# most is the concave-edge test: OCCT's ChFi3d::DefineConnectType on every edge was
+# 6.9 s of a 9.0 s profile over 1,200 faces, against 0.47 s for the wall rays.
+#
+# 600 faces is about 2.1 s at that rate — a fourteenth of the kernel's 30 s build
+# limit, and the same order as the interference check's own worst case. It is a
+# CHOSEN bound from a measured rate, not an optimum: no model was measured being
+# read with and without a truncated check. A hundred distinct six-faced parts fit
+# inside it; past that the reply says how many were measured and Go says the rest
+# are not known to be makeable, which is the one thing that must never be silent.
+_MANUFACTURABILITY_BUDGET = 600
+
+
+def _face_samples(face):
+    """(point, outward normal) at a 3x3 grid over one face's own parameters.
+
+    ‼️ The normal is OCCT's own, and is not reversed here: BRepGProp_Face.Normal
+    already reverses it for a REVERSED face, so doing it again here pointed every
+    such face's normal INTO the solid. Measured: every cylinder in a model then
+    reported a 90 degree overhang on its own top face."""
+    s = BRepGProp_Face(face.wrapped)
+    u0, u1, v0, v1 = s.Bounds()
+    out = []
+    for su in _MFG_SAMPLES:
+        for sv in _MFG_SAMPLES:
+            p, n = gp_Pnt(), gp_Vec()
+            try:
+                s.Normal(u0 + (u1 - u0) * su, v0 + (v1 - v0) * sv, p, n)
+            except Exception:
+                continue
+            if n.Magnitude() == 0:
+                continue
+            n.Normalize()
+            out.append((p, n))
+    return out
+
+
+def _ray_thickness(shape, inter, point, normal):
+    """How far it is through the material from a point on the surface, inward."""
+    try:
+        inter.Init(shape.wrapped, gp_Lin(point, gp_Dir(normal.Reversed())), 1e-7)
+    except Exception:
+        return None
+    best = None
+    while inter.More():
+        w = inter.W()
+        # Strictly past the face the ray left from: its own surface is a hit at 0.
+        if w > 1e-6 and (best is None or w < best):
+            best = w
+        inter.Next()
+    return best
+
+
+def _cylinder_radius_if_concave(face, samples):
+    """A cylindrical face's radius when the material is OUTSIDE it — a bore, or the
+    fillet left in an internal corner. None for anything else.
+
+    The samples are the caller's: taking them again here doubled the sampling cost
+    of every build for nine numbers already in hand."""
+    if not samples:
+        return None
+    try:
+        a = BRepAdaptor_Surface(face.wrapped)
+        if a.GetType() != GeomAbs_Cylinder:
+            return None
+        cyl = a.Cylinder()
+    except Exception:
+        return None
+    p, n = samples[len(samples) // 2]
+    axis = cyl.Axis()
+    o, d = axis.Location(), axis.Direction()
+    v = gp_Vec(gp_Pnt(o.X(), o.Y(), o.Z()), p)
+    along = v.Dot(gp_Vec(d.X(), d.Y(), d.Z()))
+    radial = gp_Vec(v.X() - along * d.X(), v.Y() - along * d.Y(), v.Z() - along * d.Z())
+    # Outward normal pointing back at the axis: the solid is on the outside.
+    if radial.Dot(n) >= 0:
+        return None
+    return float(cyl.Radius())
+
+
+def _edge_feature(edge):
+    """The smallest thing this edge describes: a circle's DIAMETER, or a length."""
+    try:
+        a = BRepAdaptor_Curve(edge.wrapped)
+        if a.GetType() == GeomAbs_Circle:
+            return 2.0 * float(a.Circle().Radius())
+    except Exception:
+        pass
+    try:
+        return float(edge.length)
+    except Exception:
+        return None
+
+
+def _part_manufacturability(shape, inter):
+    """The five measurements, on one built solid. See the note above."""
+    faces = list(shape.faces())
+    if not faces:
+        return None, 0
+    min_wall = min_feature = min_draft = max_overhang = None
+    concave_radius = None
+    sharp = False
+    # ‼️ The floor is the lowest SAMPLE, not the bounding box's bottom. OCCT's box
+    # around a curved solid is a little larger than the solid — a 100 mm rod
+    # measured 1e-7 mm below its own end face — so a floor taken from the box left
+    # the flat face the part rests on a hair above it, and every cylinder in the
+    # model reported a 90 degree overhang it does not have. Taken from the samples,
+    # the resting face IS the floor, exactly.
+    sampled = [(face, _face_samples(face)) for face in faces]
+    floor = None
+    for _face, samples in sampled:
+        for p, _n in samples:
+            if floor is None or p.Y() < floor:
+                floor = p.Y()
+    if floor is None:
+        return None, len(faces)
+    try:
+        tol = max(1e-9, 1e-9 * float(shape.bounding_box().diagonal))
+    except Exception:
+        tol = 1e-9
+    for face, samples in sampled:
+        if samples:
+            p, n = samples[len(samples) // 2]
+            d = _ray_thickness(shape, inter, p, n)
+            if d is not None and (min_wall is None or d < min_wall):
+                min_wall = d
+        for p, n in samples:
+            y = n.Y()
+            if y > 1.0:
+                y = 1.0
+            elif y < -1.0:
+                y = -1.0
+            from_pull = math.degrees(math.acos(y))
+            draft = abs(90.0 - from_pull)
+            if draft < _MFG_SQUARE_TO_PULL and (min_draft is None or draft < min_draft):
+                min_draft = draft
+            # A sample that faces downward and is not where the part rests.
+            if n.Y() < 0 and p.Y() > floor + tol:
+                overhang = 90.0 - (180.0 - from_pull)
+                if max_overhang is None or overhang > max_overhang:
+                    max_overhang = overhang
+        if not sharp:
+            r = _cylinder_radius_if_concave(face, samples)
+            if r is not None and (concave_radius is None or r < concave_radius):
+                concave_radius = r
+    edge_faces = _edge_faces(shape)
+    for edge in shape.edges():
+        size = _edge_feature(edge)
+        if size is not None and (min_feature is None or size < min_feature):
+            min_feature = size
+        if not sharp and _connection(edge_faces, edge) == ChFiDS_TypeOfConcavity.ChFiDS_Concave:
+            sharp = True
+    internal = 0.0 if sharp else concave_radius
+    out = {
+        "min_wall": min_wall,
+        "min_feature": min_feature,
+        "internal_radius": internal,
+        "min_draft": None if min_draft is None else _snap(min_draft),
+        "max_overhang": None if max_overhang is None else _snap(max_overhang),
+        "faces": len(faces),
+    }
+    return out, len(faces)
+
+
+def _snap(angle):
+    """An angle within floating-point noise of zero IS zero: a vertical wall that
+    measures 4e-15 degrees of draft must report no draft, not a draft too small to
+    matter — the second reads as a number somebody chose."""
+    return 0.0 if abs(angle) < _MFG_ANGLE_EPSILON else angle
+
+
+def _manufacturability(solids, ids, placed=None):
+    """Each kept solid's five measurements, bounded by _MANUFACTURABILITY_BUDGET
+    faces and reusing a definition already measured at the same rotation.
+
+    Every measurement here is invariant under TRANSLATION — the four shape ones by
+    construction, and the two angles because the pull direction is a direction and
+    the floor is the part's own lowest point. So a copy of a shape already measured
+    at the same rotation is the same answer, and the 4,096th bolt costs a dict
+    lookup. It is NOT invariant under rotation: turning a part on its side changes
+    every draft and overhang, which is the whole point of measuring them."""
+    inter = BRepIntCurveSurface_Inter()
+    out, seen = [], {}
+    faces_used, reused, checked = 0, 0, 0
+    truncated = False
+    for i, solid in enumerate(solids):
+        key = None
+        if placed and placed[i] is not None:
+            shape_key, location, _shape_of = placed[i]
+            try:
+                key = (shape_key, _rounded_rotation(_rotation(location.wrapped.Transformation().Value)))
+            except Exception:
+                key = None
+        if key is not None and key in seen:
+            measure = seen[key]
+            reused += 1
+        elif truncated or faces_used >= _MANUFACTURABILITY_BUDGET:
+            # ‼️ Stopped, and SAID: every part past the budget is absent from the
+            # list, and Go names them unchecked rather than reading a short list as
+            # a clean model. The same rule as the interference pair budget (V2).
+            truncated = True
+            continue
+        else:
+            try:
+                measure, cost = _part_manufacturability(solid, inter)
+            except Exception as exc:
+                measure, cost = {"unchecked": str(exc).strip() or type(exc).__name__}, 0
+            faces_used += cost
+            if measure is None:
+                measure = {"unchecked": "the kernel found no faces to measure"}
+            if key is not None:
+                seen[key] = measure
+        checked += 1
+        row = dict(measure)
+        row["id"] = ids[i]
+        out.append(row)
+    return out, truncated, {"checked": checked, "parts": len(solids),
+                            "faces": faces_used, "reused": reused}
+
+
+# # A named section, and what it is honestly worth (issue 6, strength)
+#
+# There is no FEA here and this is not one. What a section gives is the geometry
+# half of a beam calculation — area, centroid, second moments of area about the
+# section's own centroid, and the section moduli that follow — which is cheap,
+# exact, and checkable against b*h^3/12 on a rectangle.
+#
+# It is NOT a stress. A stress needs a load, a load path, boundary conditions and a
+# material's yield; a second moment of area needs none of those and claims none of
+# them. Go reports the numbers as section PROPERTIES and never as a verdict, and
+# the PR beside this says what a real check would take.
+#
+# The cut is a plane normal to one of the three axes at a stated coordinate,
+# intersected with one part. A plane that misses the part returns no area, which is
+# reported as a section that could not be measured and never as a section of zero.
+def _section(shape, axis, at):
+    """Area, centroid, second moments and moduli of one planar cut, or a reason."""
+    try:
+        box = shape.bounding_box()
+    except Exception as exc:
+        return None, str(exc).strip() or type(exc).__name__
+    lo = (box.min.X, box.min.Y, box.min.Z)[axis]
+    hi = (box.max.X, box.max.Y, box.max.Z)[axis]
+    if at < lo or at > hi:
+        return None, ("the plane at %g is outside the part, which runs from %g to %g on that axis"
+                      % (at, lo, hi))
+    normal = [0.0, 0.0, 0.0]
+    normal[axis] = 1.0
+    # ‼️ Centred on the PART, not on the world origin. A cutting face at the origin
+    # missed every part that is not there — a cone 600 mm down the z axis came back
+    # "the plane met no material", which reads exactly like a plane outside the
+    # part and is not.
+    centre = box.center()
+    origin = [float(centre.X), float(centre.Y), float(centre.Z)]
+    origin[axis] = at
+    # Twice the diagonal, so the cutting face covers the part however it is turned.
+    size = float(box.diagonal) * 2.0 + 1.0
+    try:
+        cut = shape.intersect(Plane(origin=tuple(origin), z_dir=tuple(normal)) * Rectangle(size, size))
+    except Exception as exc:
+        return None, str(exc).strip() or type(exc).__name__
+    if cut is None:
+        return None, "the plane met no material"
+    if not hasattr(cut, "wrapped"):
+        cut = Compound(list(cut))
+    props = GProp_GProps()
+    try:
+        BRepGProp.SurfaceProperties_s(cut.wrapped, props)
+    except Exception as exc:
+        return None, str(exc).strip() or type(exc).__name__
+    area = float(props.Mass())
+    if area <= 0:
+        return None, "the plane met no material"
+    c = props.CentreOfMass()
+    centroid = (float(c.X()), float(c.Y()), float(c.Z()))
+    about = GProp_GProps(gp_Pnt(*centroid))
+    BRepGProp.SurfaceProperties_s(cut.wrapped, about)
+    m = about.MatrixOfInertia()
+    # The two axes the section lies IN. The diagonal entry for an in-plane axis is
+    # that axis's second moment of area, because the out-of-plane coordinate is
+    # zero over the whole face: for a cut normal to x, Value(2,2) is the integral of
+    # z^2 and Value(3,3) the integral of y^2.
+    other = [a for a in (0, 1, 2) if a != axis]
+    moments = [float(m.Value(a + 1, a + 1)) for a in other]
+    try:
+        cb = cut.bounding_box()
+    except Exception as exc:
+        return None, str(exc).strip() or type(exc).__name__
+    fibres, moduli = [], []
+    for n, a in enumerate(other):
+        # Bending about `a` stresses the material furthest away along the OTHER
+        # in-plane axis, so that is the extreme fibre the modulus divides by.
+        away = other[1 - n]
+        lo_a = (cb.min.X, cb.min.Y, cb.min.Z)[away]
+        hi_a = (cb.max.X, cb.max.Y, cb.max.Z)[away]
+        fibre = max(abs(hi_a - centroid[away]), abs(centroid[away] - lo_a))
+        if fibre <= 0:
+            # A section with area cannot be flat in an in-plane direction; if OCCT
+            # says it is, the cut is degenerate and no modulus is claimed from it.
+            return None, "the cut has area but no extent across it, so no section modulus follows"
+        fibres.append(fibre)
+        moduli.append(moments[n] / fibre)
+    # The keys are geometry.SectionProperties' own json tags, exactly: the reply is
+    # decoded straight into that type and a name invented here would arrive as a zero.
+    return {"area_mm2": area, "centroid_mm": list(centroid),
+            "axes": [_AXIS_NAMES[a] for a in other], "second_moments_mm4": moments,
+            "extreme_fibres_mm": fibres, "section_moduli_mm3": moduli}, None
+
+
+_AXIS_NAMES = ("x", "y", "z")
+
+
+def _sections(shapes, request):
+    """Every section the request named, each answered or refused by name."""
+    out = []
+    for s in request.get("sections") or []:
+        row = {"id": s.get("id"), "part": s.get("part"), "axis": s.get("axis"), "at": s.get("at")}
+        shape = shapes.get(s.get("part"))
+        if shape is None:
+            row["unmeasured"] = "no part with that id survived the build"
+            out.append(row)
+            continue
+        axis = {"x": 0, "y": 1, "z": 2}.get(s.get("axis"))
+        if axis is None:
+            row["unmeasured"] = "the axis must be x, y or z"
+            out.append(row)
+            continue
+        got, why = _section(shape, axis, float(s.get("at") or 0.0))
+        if got is None:
+            row["unmeasured"] = why
+        else:
+            row.update(got)
+        out.append(row)
+    return out
+
+
 def _boxes_miss(a, b):
     if a is None or b is None:
         return True
@@ -3428,6 +3835,20 @@ def _build_collected(request):
     if request.get("properties"):
         properties = _properties(built, ids, kept_placed)
         mark = _lap(phases, "properties", mark)
+    # The manufacturability measurements and the named sections, on the SAME kept
+    # solids the interference check ran on and for the same reason: a check of the
+    # shape as DESCRIBED would measure the wall of a plate before its pocket was
+    # cut. Asked for, unlike interference: it costs a ray per face and the export
+    # job's ceiling was measured without it (see cad.Kernel.BuildEvaluated).
+    manufacturability = mfg_stats = None
+    mfg_truncated = False
+    if request.get("manufacturability"):
+        manufacturability, mfg_truncated, mfg_stats = _manufacturability(built, ids, kept_placed)
+        mark = _lap(phases, "manufacturability", mark)
+    sections = None
+    if request.get("sections"):
+        sections = _sections(dict(zip(ids, built)), request)
+        mark = _lap(phases, "sections", mark)
     out = {
         "shape_builds": shape_builds,
         "ok": True,
@@ -3461,6 +3882,15 @@ def _build_collected(request):
     }
     if properties is not None:
         out["part_properties"] = properties
+    if manufacturability is not None:
+        out["manufacturability"] = manufacturability
+        out["manufacturability_truncated"] = mfg_truncated
+        out["manufacturability_measured"] = mfg_stats["checked"]
+        out["manufacturability_parts"] = mfg_stats["parts"]
+        out["manufacturability_faces"] = mfg_stats["faces"]
+        out["manufacturability_reused"] = mfg_stats["reused"]
+    if sections is not None:
+        out["sections"] = sections
     if mesh_only:
         # Named in every reply, so each reader can say what it left out.
         out["mesh_only"] = _mesh_only_names(mesh_only)

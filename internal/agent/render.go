@@ -72,6 +72,12 @@ type builtSheet struct {
 	// Parts is what was drawn, part by part, so a sub-assembly can be drawn on
 	// its own from the same build instead of a second one (Phase 5, stage V4).
 	Parts []geometry.RenderPart
+	// Manufacturability and Sections: see Built. Meaningful only when FromKernel
+	// is true, like Interferences (addresses issue 6).
+	Manufacturability          []geometry.PartMeasure
+	ManufacturabilityTruncated bool
+	ManufacturabilityParts     int
+	Sections                   []geometry.SectionProperties
 }
 
 // SolidBuilder builds the real surface of a document.
@@ -152,6 +158,17 @@ type Built struct {
 	// with a coverage note, not boxed — a conservative box would call every part
 	// the infill surrounds "inside" it and drive repairs that move correct parts.
 	MeshOnly []string
+	// Manufacturability is each measured part's five numbers, judged against
+	// geometry.Profiles by the process the document names on the part; Parts is how
+	// many there were to measure and Truncated says the kernel's face budget stopped
+	// before the end, so a short list is never read as a model with fewer parts.
+	// Sections is each named plane cut's properties. Empty from a deployment with no
+	// kernel, which is NOT the same as "nothing to report" — FromKernel is how a
+	// caller tells (addresses issue 6).
+	Manufacturability          []geometry.PartMeasure
+	ManufacturabilityTruncated bool
+	ManufacturabilityParts     int
+	Sections                   []geometry.SectionProperties
 }
 
 // render draws the built solid, falling back to the described one.
@@ -173,7 +190,10 @@ func (c *Conversation) render(ctx context.Context, doc *Prototype) builtSheet {
 					Checked: built.Checked, Pairs: built.Pairs, Found: built.Found,
 					Buried: built.Buried, BuriedCounted: built.BuriedCounted, Skipped: built.Skipped,
 					FeatureFailures: built.FeatureFailures, FeatureReductions: built.FeatureReductions,
-					MeshOnly: built.MeshOnly, Parts: built.Parts}
+					MeshOnly: built.MeshOnly, Parts: built.Parts,
+					Manufacturability:          built.Manufacturability,
+					ManufacturabilityTruncated: built.ManufacturabilityTruncated,
+					ManufacturabilityParts:     built.ManufacturabilityParts, Sections: built.Sections}
 			}
 		}
 	}
