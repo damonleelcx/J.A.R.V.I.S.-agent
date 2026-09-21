@@ -871,9 +871,37 @@ func exportLabelClauses(meshOnly, skipped, featureFailures, reduced []string) st
 			"design describes (%s); ", n, strings.Join(featureFailures, "; ")) + clauses
 	}
 	if len(skipped) > 0 {
-		clauses = fmt.Sprintf("%d part(s) could not be built and are NOT in this file; ", len(skipped)) + clauses
+		// NAMED, not counted. geometry/export.go's own label promises the reader
+		// that "a part the kernel cannot build is left out of the file, and the
+		// download names it in its X-Forge-Export-Label header", and until now
+		// both downloads gave a count and nothing else — a count tells somebody
+		// that the file is wrong without telling them which part to look for.
+		// The kernel's entries are already "Label: reason" (cad/sidecar.py), so
+		// they are joined the way the feature-failure clause joins its own.
+		clauses = fmt.Sprintf("%d part(s) could not be built and are NOT in this file: %s; ",
+			len(skipped), namedFew(skipped, "; ")) + clauses
 	}
 	return meshOnlyExcludedLabel(meshOnly) + clauses
+}
+
+// namedFew is a clause's list of names: at most a few, then " and N more".
+//
+// The cap is geometry.MeshOnlyNote's, for its reason — a header is ONE line, and
+// a design with hundreds of lattices or hundreds of refused parts must not push
+// the rest of the label off it. Both clauses that name PARTS read the cap here,
+// so one cannot quietly grow a different ceiling from the other.
+//
+// The feature-failure and reduced-round clauses still join all of theirs. They
+// are not capped because the failure text IS the clause — "which fillet, on what,
+// and why" is the whole content — and because a design refuses far fewer features
+// than it can declare lattices. If that ever stops being true they come here too.
+func namedFew(names []string, sep string) string {
+	const most = 3
+	shown, more := names, ""
+	if len(names) > most {
+		shown, more = names[:most], fmt.Sprintf(" and %d more", len(names)-most)
+	}
+	return strings.Join(shown, sep) + more
 }
 
 // meshOnlyExcludedLabel is the export label's clause for the mesh-only parts left
@@ -887,13 +915,8 @@ func meshOnlyExcludedLabel(meshOnly []string) string {
 	}
 	// At most a few names, as geometry.MeshOnlyNote does: a header is one line,
 	// and a design with hundreds of lattices must not push the rest off it.
-	const most = 3
-	shown, more := meshOnly, ""
-	if len(meshOnly) > most {
-		shown, more = meshOnly[:most], fmt.Sprintf(" and %d more", len(meshOnly)-most)
-	}
-	return fmt.Sprintf("%d mesh-only part(s) are NOT in this file: %s%s (%s); ",
-		len(meshOnly), strings.Join(shown, ", "), more, geometry.MeshOnlyLabel)
+	return fmt.Sprintf("%d mesh-only part(s) are NOT in this file: %s (%s); ",
+		len(meshOnly), namedFew(meshOnly, ", "), geometry.MeshOnlyLabel)
 }
 
 // reducedLabel is the export label's clause for rounds the kernel built smaller
