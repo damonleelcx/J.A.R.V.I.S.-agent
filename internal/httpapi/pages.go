@@ -27,6 +27,7 @@ import (
 //
 //go:embed assets/shell.css assets/avatar.css assets/console.css assets/workbench.css
 //go:embed assets/pages.js assets/console.js assets/workbench.js assets/forge3d.js
+//go:embed assets/newgoal.js
 //go:embed assets/password-reveal.js assets/portal-field.js assets/home.css
 //go:embed assets/theme.js assets/sigil.js
 //go:embed assets/stage.js assets/voice.js assets/orb.js
@@ -437,7 +438,7 @@ func (p *PageHandlers) Assets(w http.ResponseWriter, r *http.Request) {
 	case name == "shell.css", name == "avatar.css", name == "console.css",
 		name == "workbench.css", name == "room.css", name == "home.css":
 		w.Header().Set("Content-Type", "text/css; charset=utf-8")
-	case name == "pages.js", name == "console.js", name == "workbench.js",
+	case name == "pages.js", name == "console.js", name == "workbench.js", name == "newgoal.js",
 		name == "forge3d.js", name == "voice.js", name == "orb.js",
 		name == "audio-input.js", name == "room.js", name == "room-page.js",
 		name == "stage.js", name == "password-reveal.js", name == "portal-field.js",
@@ -889,6 +890,44 @@ const pageTemplates = `
     <div class="h" id="members-head" style="display:none">People</div>
     <div id="members" class="hidden"></div>
 
+    <!-- Saying what is to be built without waiting to be offered it
+         (2026-09-22). The card below appears only when FORGE proposes work in
+         the conversation, so somebody who already knew what they wanted had to
+         talk her into offering it. This takes the same four things
+         "forgectl goal new" takes; the PROJECT is the conversation's and is
+         stated rather than chosen, because a goal filed into a project nobody
+         could see named is exactly the 2026-09-15 bug. What is submitted goes
+         through the same proposal -> plan -> start path the card uses, so a
+         goal defined here is not a different kind of goal. -->
+    <div class="h" id="newgoal-head">Define a goal</div>
+    <div id="newgoal">
+      <button type="button" class="btn-sm" id="newgoal-open"
+              aria-expanded="false" aria-controls="newgoal-form">New goal</button>
+      <form id="newgoal-form" class="newgoal hidden" autocomplete="off">
+        <!-- Which project this writes into. Filled by the page from the
+             conversation, never typed: see newGoalWhere in workbench.js. -->
+        <p class="newgoal-foot" id="newgoal-where"></p>
+        <label for="newgoal-title">Title</label>
+        <input type="text" id="newgoal-title" maxlength="200" required>
+        <label for="newgoal-statement">What is to be done</label>
+        <textarea id="newgoal-statement" rows="3" maxlength="8000" required></textarea>
+        <label for="newgoal-risk">Risk ceiling</label>
+        <select id="newgoal-risk"></select>
+        <label class="newgoal-check"><input type="checkbox" id="newgoal-build">
+          Build it as a model, one step per part</label>
+        <!-- Autonomy is not a field: migration 0028_autonomy_is_write_once
+             refuses any write to the column (PRD AGT-04), so it is set once at
+             creation and never raised. -->
+        <p class="newgoal-foot">Autonomy is set once, at creation, and cannot be raised later.
+          Planning writes a draft and runs nothing — starting it is still a separate press.</p>
+        <div class="newgoal-acts">
+          <button type="submit" class="btn-sm go" id="newgoal-go" disabled>Plan it</button>
+          <button type="button" class="btn-sm" id="newgoal-cancel">Cancel</button>
+        </div>
+        <div class="note hidden" id="newgoal-why"></div>
+      </form>
+    </div>
+
     <div class="h" id="proposal-head" style="display:none">Proposed work</div>
     <div id="proposal" class="hidden"></div>
   </div>
@@ -928,6 +967,10 @@ const pageTemplates = `
 <script src="{{asset "voice.js"}}"></script>
 <script src="{{asset "orb.js"}}"></script>
 <script src="{{asset "stage.js"}}"></script>
+<!-- Before workbench.js: it builds the POST /v1/goals body with
+     ForgeNewGoal.body, so the rules the server holds have one copy shared with
+     the console's own New goal form. -->
+<script src="{{asset "newgoal.js"}}"></script>
 <script src="{{asset "workbench.js"}}"></script>
 </body></html>{{end}}
 
@@ -1095,13 +1138,60 @@ const pageTemplates = `
          reached none of it. See docs/bugfix/2026-09-08-history-was-unreachable.md -->
     <div class="card"><h2>Conversations</h2><div id="conversations"><div class="spin">Loading…</div></div></div>
     <div class="card"><h2>Artifacts</h2><div id="artifacts"><div class="spin">Loading…</div></div></div>
-    <div class="card"><h2>Goals</h2><div id="goals"><div class="spin">Loading…</div></div></div>
+    <!-- Defining work, which this page could not do (2026-09-22).
+         The console listed goals and created none: its empty state told the
+         reader to run "forgectl goal new", and the browser's only route to
+         POST /v1/goals was the workbench's proposal card, which exists only
+         when FORGE happens to propose work inside a conversation. The rules the
+         form checks before sending are shared with the workbench's copy in
+         assets/newgoal.js, and every one of them is enforced again by the
+         server. It DRAFTS and PLANS - starting is a separate act, taken on the
+         goal's own pane (PRD AGT-02), which is why the button says "Plan it". -->
+    <div class="card"><h2>Goals</h2>
+      <div class="newgoal-bar">
+        <button type="button" class="btn-sm" id="newgoal-open"
+                aria-expanded="false" aria-controls="newgoal-form">New goal</button>
+        <!-- Why not, in words, when there is nowhere to put one or the role
+             held does not plan work. A disabled button with no sentence beside
+             it is the same dead end the forgectl line was. -->
+        <div class="note bad hidden" id="newgoal-none"></div>
+      </div>
+      <form id="newgoal-form" class="newgoal hidden" autocomplete="off">
+        <label for="newgoal-project">Project</label>
+        <!-- Only the projects the SERVER says this person may plan work in
+             (can_create_goal from GET /v1/projects). -->
+        <select id="newgoal-project"></select>
+        <label for="newgoal-title">Title</label>
+        <input type="text" id="newgoal-title" maxlength="200" required>
+        <label for="newgoal-statement">What is to be done</label>
+        <textarea id="newgoal-statement" rows="4" maxlength="8000" required></textarea>
+        <label for="newgoal-risk">Risk ceiling</label>
+        <select id="newgoal-risk"></select>
+        <label class="newgoal-check"><input type="checkbox" id="newgoal-build">
+          Build it as a model, one step per part, with the CAD kernel</label>
+        <!-- Autonomy is not a field. Migration 0028_autonomy_is_write_once
+             installs a trigger that refuses any write to the column, because
+             PRD AGT-04 was resting on the absence of a code path. A field for a
+             value that can never be changed, beside four that can, reads as one
+             more setting to revisit later. -->
+        <p class="dim newgoal-foot">The goal takes this deployment's default autonomy, which is
+          <b>set once, at creation</b>, and can never be raised afterwards. Planning writes a
+          draft and runs nothing; you start it from the goal itself.</p>
+        <div class="newgoal-acts">
+          <button class="btn" type="submit" id="newgoal-go" disabled>Plan it</button>
+          <button class="btn-sm" type="button" id="newgoal-cancel">Cancel</button>
+        </div>
+        <div class="note hidden" id="newgoal-why"></div>
+      </form>
+      <div id="goals"><div class="spin">Loading…</div></div>
+    </div>
   </div>
   <div id="detail" class="hidden"></div>
 </div>
 <script src="{{asset "theme.js"}}"></script>
 <script src="{{asset "sigil.js"}}"></script>
 <script src="{{asset "password-reveal.js"}}"></script>
+<script src="{{asset "newgoal.js"}}"></script>
 <script src="{{asset "console.js"}}"></script>
 </body></html>{{end}}
 

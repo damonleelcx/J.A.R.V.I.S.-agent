@@ -360,6 +360,78 @@ func TestMyProjects_TheOrderDoesNotMoveOnItsOwn(t *testing.T) {
 	}
 }
 
+// Each row says whether this person may plan work there (2026-09-22).
+//
+// # Why the server answers this and not the browser
+//
+// The console now has a New goal form, and it has to offer the projects a goal
+// can actually be created in. The only other way for a browser to know that is
+// to copy the role/permission matrix out of internal/domain/access/model.go —
+// and a copy in a client is the copy that goes stale. The day a role's
+// permissions change, the form either offers a project whose create will be
+// refused, or hides one that would have worked, and nothing in either build
+// says so.
+//
+// ‼️ It is an AFFORDANCE, not the gate. POST /v1/goals checks goal.create
+// against the named project on every request (CreateGoal), and a form that
+// showed the button is not what decides. The same distinction `can_manage`
+// carries on GET /v1/projects/{id}/members.
+//
+// The four roles are read straight from the matrix rather than written out here,
+// for the reason roleCatalogue is: a second list is the one that stops matching.
+func TestMyProjectsSaysWhereAGoalMayBeCreated(t *testing.T) {
+	h := workspaceHarness(t)
+	ctx := context.Background()
+
+	for _, role := range []access.Role{
+		access.RoleOwner, access.RoleMaintainer, access.RoleContributor, access.RoleViewer,
+	} {
+		if err := h.access.SetRole(ctx, access.Grant{
+			ProjectID: h.project, UserID: h.other.ID, Role: role, By: h.owner.ID,
+		}); err != nil {
+			t.Fatalf("%s: %v", role, err)
+		}
+		want := role.Allows(access.PermGoalCreate)
+
+		var found bool
+		for _, row := range myProjectRows(t, h, h.other) {
+			if row["id"] != h.project {
+				continue
+			}
+			found = true
+			got, ok := row["can_create_goal"].(bool)
+			if !ok {
+				t.Fatalf("%s: the row has no can_create_goal field: %v.\n"+
+					"Without it the console's New goal form has to copy the permission matrix into the "+
+					"browser, which is the copy that goes stale", role, row)
+			}
+			if got != want {
+				t.Errorf("%s: can_create_goal = %v, want %v. A %s %s goal.create, so the form would %s",
+					role, got, want, role,
+					map[bool]string{true: "holds", false: "does not hold"}[want],
+					map[bool]string{true: "hide a project they can plan in", false: "offer a project whose create is refused"}[want])
+			}
+		}
+		if !found {
+			t.Fatalf("%s: the project was not in the list at all", role)
+		}
+	}
+
+	// And the affordance must agree with the gate. A viewer whose row says false
+	// really is refused by the endpoint that writes.
+	if err := h.access.SetRole(ctx, access.Grant{
+		ProjectID: h.project, UserID: h.other.ID, Role: access.RoleViewer, By: h.owner.ID,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.h.deps.requirePermission(
+		httptest.NewRequest("POST", "/v1/goals", nil), h.project, h.other.ID, access.PermGoalCreate,
+	); err == nil {
+		t.Error("a viewer passes the goal.create check the form's can_create_goal=false is about. " +
+			"One of the two is wrong, and the one that matters is the gate")
+	}
+}
+
 func myProjectRows(t *testing.T, h *wsHarness, as *identity.User) []map[string]any {
 	t.Helper()
 	r := httptest.NewRequest("GET", "/v1/projects", nil)

@@ -254,6 +254,11 @@ FILES=(
   internal/domain/geometry/degenerate.go
   internal/domain/geometry/relationships.go
   internal/agent/standards_typed.go
+  # Added 2026-09-22: the new-conversation-clears-the-workspace and New-goal-form
+  # drills target these two. newgoal.js is the ONE copy of the rules the server
+  # holds, shared by the console's form and the workbench's.
+  internal/httpapi/assets/newgoal.js
+  internal/httpapi/assets/console.js
 )
 
 BACKUP=""
@@ -4012,8 +4017,10 @@ drill "POST /v1/goals drops the ceiling" internal/httpapi/goals_start.go \
 # against a stand-in model: docs/spikes/2026-09-15-card-checked. Two defects the fences above
 # could not see — the card sent no project, and it showed a budget stop as a permissions error.
 
-# rsplit, not replace: "project_id: state.projectID" is sent by the conversation turn too, and
-# that one comes FIRST in the file. The last occurrence is the card's.
+# rsplit, not replace: the conversation turn used to spell its project field the same way
+# ("project_id: state.projectID") and came first in the file. Since 2026-09-22 the card's
+# body is assembled in goalRequest and the turn's in converseRequest, which reads s.projectID,
+# so there is one occurrence — the card's — and taking the last one still finds it.
 drill "the card starts a goal with no project" internal/httpapi/assets/workbench.js \
   's = "project_idX: state.projectID".join(s.rsplit("project_id: state.projectID", 1))' \
   ./internal/httpapi 'TestWorkbench_TheCardStartsAGoalInTheConversationsProject'
@@ -4309,9 +4316,13 @@ drill "a new conversation starts while a reply is still streaming" internal/http
   's = s.replace("    if (s.busy) {\n", "    if (false) {\n", 1)' \
   ./internal/httpapi 'TestWorkbench_ANewConversationIsRefusedWithAReasonWhileSomethingIsInFlight'
 
-drill "a running goal's card is cleared by a new conversation" internal/httpapi/assets/workbench.js \
-  's = s.replace("    if (!s.goal) {\n      s.proposal = null;", "    if (true) {\n      s.proposal = null;", 1)' \
-  ./internal/httpapi 'TestWorkbench_ANewConversationIsRefusedWithAReasonWhileSomethingIsInFlight'
+# ‼️ Replaced 2026-09-22. The drill here was "a running goal's card is cleared by a
+# new conversation", against a clearWorkspaceView that KEPT a card with a goal
+# behind it. That rule is reversed: the whole workspace is cleared now, so a lone
+# progress card for a goal from a conversation that is gone is the worst thing
+# that could be left on the page. The goal is not touched — it is still in the
+# console's Goals panel, and begin() returns its id so the message names it. The
+# two drills that hold the new rule are in the 2026-09-22 block below.
 
 drill "the control clears the pane and keeps the conversation" internal/httpapi/assets/workbench.js \
   's = s.replace("    var r = beginNewConversation(state, storage());", "    var r = { refused: newConversationRefusal(state) };", 1)' \
@@ -4332,6 +4343,145 @@ drill "the history is read from the person's turns, not the conversation's" inte
 drill "an empty conversation id continues the latest conversation" internal/httpapi/converse.go \
   's = s.replace("\tconvID, err := h.talk.Resolve(ctx, req.ConversationID, user.ID)", "\tif req.ConversationID == \"\" {\n\t\tif l, _ := h.talk.List(ctx, user.ID); len(l) > 0 {\n\t\t\treq.ConversationID = l[0].ID\n\t\t}\n\t}\n\tconvID, err := h.talk.Resolve(ctx, req.ConversationID, user.ID)", 1)' \
   ./internal/httpapi 'TestANewConversation_'
+
+echo
+
+echo "New conversation clears the workspace, and a goal can be defined (2026-09-22)"
+# Two reports from the deployed workbench, both missing behaviour rather than
+# crashes.
+#
+# 1. "New conversation" cleared the transcript and kept the workspace, and said
+#    so: "The design and its project are still here." What a person got was an
+#    empty transcript in front of a fully dressed workspace — the previous design
+#    drawn, its variants ticked, a part selected, a subtree isolated, a search
+#    filtering the assembly, a sketch still attached, a proposal card offering
+#    work from a conversation that no longer existed. damon: "no need delete, no
+#    need start fresh. just make it work with new conversation."
+#
+# 2. The browser could only POST /v1/goals from the proposal card, which appears
+#    when FORGE happens to offer work mid-conversation. The console listed goals
+#    and created none. Now both surfaces have a short form, sharing ONE copy of
+#    the five rules the server holds (assets/newgoal.js).
+#
+# ‼️ The traps: a control that "starts fresh" by dropping the PROJECT too (the
+# next variant would land in a brand new project, away from everything built so
+# far), a control whose message still claims the design is on screen, and a form
+# whose validation drifts from the server's — which shows a viewer "One or more
+# request fields failed validation." instead of what actually happened.
+# The client drills need node; the can_create_goal drills need
+# FORGE_TEST_DATABASE_URL.
+
+drill "a new conversation leaves the previous design on the stage" internal/httpapi/assets/workbench.js \
+  's = s.replace("    s.prototype = null;\n    s.builtSolid = null;", "    s.builtSolid = null;", 1)' \
+  ./internal/httpapi 'TestWorkbench_ANewConversationClearsTheWorkspaceItWasLookingAt'
+
+drill "a new conversation leaves the variants and what was ticked to compare" internal/httpapi/assets/workbench.js \
+  's = s.replace("    s.variants = [];\n    s.picked = [];\n", "", 1)' \
+  ./internal/httpapi 'TestWorkbench_ANewConversationClearsTheWorkspaceItWasLookingAt'
+
+drill "a new conversation leaves the assembly isolated and searched" internal/httpapi/assets/workbench.js \
+  "s = s.replace(\"    if (t) { t.open = {}; t.query = ''; t.isolated = ''; }\n\", \"\", 1)" \
+  ./internal/httpapi 'TestWorkbench_ANewConversationClearsTheWorkspaceItWasLookingAt'
+
+drill "a sketch attached in the old conversation rides along on the first new message" internal/httpapi/assets/workbench.js \
+  's = s.replace("    s.recalled = [];\n    s.images = [];\n", "    s.recalled = [];\n", 1)' \
+  ./internal/httpapi 'TestWorkbench_ANewConversationClearsTheWorkspaceItWasLookingAt'
+
+drill "a started goal's card survives a new conversation" internal/httpapi/assets/workbench.js \
+  's = s.replace("    s.goal = null;\n    s.planTasks = null;", "    s.planTasks = null;", 1)' \
+  ./internal/httpapi 'TestWorkbench_ANewConversationClearsTheProposalCardAndNamesTheGoal'
+
+drill "the new conversation does not say which goal is still running" internal/httpapi/assets/workbench.js \
+  "s = s.replace(\"    var goal = s.goal ? s.goal.id : '';\", \"    var goal = '';\", 1)" \
+  ./internal/httpapi 'TestWorkbench_ANewConversationClearsTheProposalCardAndNamesTheGoal'
+
+drill "the control clears the state and leaves the screen painted" internal/httpapi/assets/workbench.js \
+  's = s.replace("    clearWorkspaceDOM();\n", "", 1)' \
+  ./internal/httpapi 'TestWorkbench_TheNewConversationControlIsAButtonWiredToTheRequest'
+
+drill "the section cut carries over to the next conversation" internal/httpapi/assets/workbench.js \
+  "s = s.replace(\"      studio.setSection('none', 0.5);\n\", \"\", 1)" \
+  ./internal/httpapi 'TestWorkbench_TheNewConversationControlIsAButtonWiredToTheRequest'
+
+drill "the voice surface stays docked over an empty stage" internal/httpapi/assets/workbench.js \
+  's = s.replace("    setPlace(false);\n    renderNewGoal", "    renderNewGoal", 1)' \
+  ./internal/httpapi 'TestWorkbench_TheNewConversationControlIsAButtonWiredToTheRequest'
+
+drill "the new-conversation message still says the design is still here" internal/httpapi/assets/workbench.js \
+  's = s.replace("cleared so nothing on screen is left over from it. Nothing is deleted: this is still the ", "and the design and its project are still here. This is the ", 1)' \
+  ./internal/httpapi 'TestWorkbench_ANewConversationSaysWhatItActuallyDid'
+
+drill "the goal form sends no project" internal/httpapi/assets/newgoal.js \
+  "s = s.replace(\"      project_id: f.project_id || '',\", \"      project_id: '',\", 1)" \
+  ./internal/httpapi 'TestNewGoalForm_SendsTheProjectAndNeverAnIndustryWithIt'
+
+drill "the goal form sends an industry alongside a project" internal/httpapi/assets/newgoal.js \
+  "s = s.replace(\"      industry: f.project_id ? '' : text(f.industry),\", \"      industry: text(f.industry),\", 1)" \
+  ./internal/httpapi 'TestNewGoalForm_SendsTheProjectAndNeverAnIndustryWithIt'
+
+drill "the goal form sends an autonomy nothing may ever change" internal/httpapi/assets/newgoal.js \
+  "s = s.replace(\"      build: !!f.build\n\", \"      build: !!f.build,\n      autonomy: f.autonomy || ''\n\", 1)" \
+  ./internal/httpapi 'TestNewGoalForm_SendsTheProjectAndNeverAnIndustryWithIt'
+
+drill "the goal form accepts an empty statement" internal/httpapi/assets/newgoal.js \
+  's = s.replace("    if (!title || !statement) {", "    if (false) {", 1)' \
+  ./internal/httpapi 'TestNewGoalForm_ChecksWhatTheServerChecks'
+
+drill "the goal form offers the prohibited tier" internal/httpapi/assets/newgoal.js \
+  "s = s.replace(\"    { tier: 'r4', gloss: 'safety-critical support' }\n\", \"    { tier: 'r4', gloss: 'safety-critical support' },\n    { tier: 'r5', gloss: 'prohibited' }\n\", 1)" \
+  ./internal/httpapi 'TestNewGoalForm_ChecksWhatTheServerChecks'
+
+drill "the goal form refuses a statement the server would accept" internal/httpapi/assets/newgoal.js \
+  's = s.replace("    if (title.length > MAX_TITLE || statement.length > MAX_STATEMENT) {", "    if (title.length >= MAX_TITLE || statement.length >= MAX_STATEMENT) {", 1)' \
+  ./internal/httpapi 'TestNewGoalForm_ChecksWhatTheServerChecks'
+
+drill "a refused goal shows the error code's general words" internal/httpapi/assets/newgoal.js \
+  's = s.replace("    if (detail) return detail;", "    if (false) return detail;", 1)' \
+  ./internal/httpapi 'TestNewGoalForm_ShowsTheServersOwnRefusal'
+
+drill "the console throws the error code's general words" internal/httpapi/assets/console.js \
+  's = s.replace("            ? window.ForgeNewGoal.refusal(e, r.status)\n", "            ? (e.message || \x27\x27)\n", 1)' \
+  ./internal/httpapi 'TestNewGoalForm_ShowsTheServersOwnRefusal'
+
+drill "the workbench throws the error code's general words on every POST" internal/httpapi/assets/workbench.js \
+  "s = s.replace(\"          var err = new Error(refusalText(e, r.status, 'Request failed'));\", \"          var err = new Error(e.message || 'Request failed');\", 1)" \
+  ./internal/httpapi 'TestNewGoalForm_ShowsTheServersOwnRefusal'
+
+drill "the goal form offers projects the server refuses to write" internal/httpapi/assets/newgoal.js \
+  's = s.replace("return (projects || []).filter(function (p) { return p && p.can_create_goal === true; });", "return (projects || []);", 1)' \
+  ./internal/httpapi 'TestNewGoalForm_OffersOnlyProjectsTheServerSaysAreWritable'
+
+drill "the console builds its own goal request body" internal/httpapi/assets/console.js \
+  's = s.replace("      body: JSON.stringify(G.body(f))", "      body: JSON.stringify({ title: f.title, statement: f.statement })", 1)' \
+  ./internal/httpapi 'TestNewGoalForm_IsOnBothSurfacesWithItsFields'
+
+drill "the workbench never wires its new goal form" internal/httpapi/assets/workbench.js \
+  "s = s.replace(\"    safely('new-goal', initNewGoal);\n\", \"\", 1)" \
+  ./internal/httpapi 'TestNewGoalForm_IsOnBothSurfacesWithItsFields'
+
+drill "the new goal form's submit button is served enabled" internal/httpapi/pages.go \
+  's = s.replace("<button type=\"submit\" class=\"btn-sm go\" id=\"newgoal-go\" disabled>Plan it</button>", "<button type=\"submit\" class=\"btn-sm go\" id=\"newgoal-go\">Plan it</button>", 1)' \
+  ./internal/httpapi 'TestNewGoalForm_IsOnBothSurfacesWithItsFields'
+
+drill "the new goal form is served open" internal/httpapi/pages.go \
+  's = s.replace("<form id=\"newgoal-form\" class=\"newgoal hidden\" autocomplete=\"off\">", "<form id=\"newgoal-form\" class=\"newgoal\" autocomplete=\"off\">", 1)' \
+  ./internal/httpapi 'TestNewGoalForm_IsOnBothSurfacesWithItsFields'
+
+drill "the goal form's module is loaded after the page script that calls it" internal/httpapi/pages.go \
+  's = s.replace("<script src=\"{{asset \"newgoal.js\"}}\"></script>\n<script src=\"{{asset \"console.js\"}}\"></script>", "<script src=\"{{asset \"console.js\"}}\"></script>\n<script src=\"{{asset \"newgoal.js\"}}\"></script>", 1)' \
+  ./internal/httpapi 'TestNewGoalForm_IsOnBothSurfacesWithItsFields'
+
+drill "the workbench's form does not say which project it writes into" internal/httpapi/assets/workbench.js \
+  's = s.replace("    if (where) where.innerHTML = newGoalWhere();\n", "", 1)' \
+  ./internal/httpapi 'TestNewGoalForm_TheWorkbenchSaysWhichProjectItWritesInto'
+
+drill "the projects list does not say where a goal may be created" internal/httpapi/members.go \
+  's = s.replace("\t\t\t\t\"can_create_goal\": roles[id].Allows(access.PermGoalCreate),\n", "", 1)' \
+  ./internal/httpapi 'TestMyProjectsSaysWhereAGoalMayBeCreated'
+
+drill "every role is offered as a project a goal may be created in" internal/httpapi/members.go \
+  's = s.replace("\"can_create_goal\": roles[id].Allows(access.PermGoalCreate),", "\"can_create_goal\": true,", 1)' \
+  ./internal/httpapi 'TestMyProjectsSaysWhereAGoalMayBeCreated'
 
 # ---------------------------------------------------------------------------
 # Added 2026-09-17 (workbench voice: the fallback that did not work).
