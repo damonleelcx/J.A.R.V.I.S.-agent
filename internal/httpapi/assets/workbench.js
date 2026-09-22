@@ -198,6 +198,9 @@
      * available BEFORE one did. */
     if (wasNew) renderIndustry();
     if (wasNew) loadMembers();
+    /* And the New goal form's "where this goes" line, which names the project:
+     * it said "no project yet, one will be created" until the moment one did. */
+    if (wasNew) renderNewGoal();
     /* ‼️ And the WORK, not only the rules.
      *
      * restoreVariants() runs once at boot and reads the project id out of
@@ -366,21 +369,96 @@
     return '';
   }
 
+  /* Everything on screen that belonged to the conversation being left
+   * (2026-09-22).
+   *
+   * # What was wrong with keeping it
+   *
+   * "New conversation" used to clear the transcript and keep the workspace, and
+   * the message it printed said so: "The design and its project are still
+   * here." The reasoning was that the design is work and a fresh conversation is
+   * not a fresh project — which is still true of the PROJECT. It was not true of
+   * the VIEW. What a person actually got was an empty transcript in front of a
+   * fully dressed workspace: the previous design still drawn, its variants still
+   * in the rail with their tick boxes, a part still selected, a subtree still
+   * isolated, a section cut still taken through it, a search still filtering the
+   * assembly, and the proposal card still offering work from a conversation that
+   * no longer exists. It read as a page that had lost its transcript rather than
+   * as a new start.
+   *
+   * damon's decision, 2026-09-22: "no need delete, no need start fresh. just
+   * make it work with new conversation."
+   *
+   * # ‼️ Nothing here is deleted from the server
+   *
+   * Not one field in this function is a request. The project stays the project,
+   * every stored version stays in Files and in the console, the conversation
+   * just left keeps its turns, and a goal that was created stays a goal and
+   * keeps running. This clears what is DRAWN. The message startNewConversation
+   * prints says exactly that, because "cleared" and "deleted" being confused
+   * here is the one misunderstanding that would cost somebody work.
+   *
+   * State only, no DOM, so node can run it — see TestWorkbench_ANewConversation*.
+   * The tree's open/query/isolated live in their own object (see renderTree), so
+   * it is passed in rather than reached for: the fence has to be able to watch it. */
+  function clearWorkspaceView(s, t) {
+    /* The design on the stage, and everything derived from it. */
+    s.prototype = null;
+    s.builtSolid = null;
+    s.measured = [];
+    s.states = [];
+    s.subtrees = {};
+    s.selectedPart = null;
+    s.building = false;
+    /* The rail: what was proposed in that conversation, and what was ticked for
+     * comparison. The versions themselves are stored — GET /v1/geometry still
+     * lists them, and the console's Artifacts panel still reaches them. */
+    s.variants = [];
+    s.picked = [];
+    /* Standards figures FORGE quoted, and a sketch attached but not yet sent:
+     * both belong to the turn that was never taken. */
+    s.recalled = [];
+    s.images = [];
+    /* Requirements ticked to build FROM. The list itself is the project's and is
+     * reloaded; the SELECTION was an instruction for the next message. */
+    s.fromNodes = [];
+    /* The card. ‼️ Including one with a goal behind it, which this function used
+     * to keep: until today a running goal's card survived a new conversation, on
+     * the reasoning that it is work in the project and its progress must stay
+     * visible. With the whole workspace cleared around it, a lone progress card
+     * for a goal started in a conversation that is gone is the most confusing
+     * thing that could be left on the page — and the goal is not lost: it is in
+     * the console's Goals panel, which is where its progress is read from, and
+     * the message names it by id. */
+    s.proposal = null;
+    s.goal = null;
+    s.planTasks = null;
+    s.goalPhase = 'none';
+    s.progress = null;
+    s.progressError = null;
+    s.clarification = null;
+    s.rationale = '';
+    s.startMessage = '';
+    s.planAsBuild = false;
+    s.error = null;
+    /* The assembly tree's own view state: which rows are open, what was searched
+     * for, and which subtree was drawn on its own. */
+    if (t) { t.open = {}; t.query = ''; t.isolated = ''; }
+  }
+
   /* State only, no DOM, so node can run it (see the fence). Returns what the
-   * page should say: { refused } or { previous }. */
-  function beginNewConversation(s, store) {
+   * page should say: { refused }, or { previous, goal } — the conversation that
+   * was left, and the id of a goal whose card went with it, so the message can
+   * say where that goal is still readable. */
+  function beginNewConversation(s, store, t) {
     var refused = newConversationRefusal(s);
     if (refused) return { refused: refused };
     var previous = s.conversationID;
+    var goal = s.goal ? s.goal.id : '';
     s.conversationID = null;
     try { store.removeItem(CONV_KEY); } catch (e) { /* not fatal */ }
-    if (!s.goal) {
-      s.proposal = null;
-      s.planTasks = null;
-      s.goalPhase = 'none';
-      s.error = null;
-    }
-    return { previous: previous };
+    clearWorkspaceView(s, t || tree);
+    return { previous: previous, goal: goal };
   }
 
   /* The body of POST /v1/converse, built in one place so what the fence reads is
@@ -425,6 +503,68 @@
     try { return window.localStorage || none; } catch (e) { return none; }
   }
 
+  /* The DOM half of clearWorkspaceView: the canvas, the viewport's own controls,
+   * and every panel that was painted from the state it just emptied.
+   *
+   * Separate from the state half because the state half has to run in node, and
+   * separate from startNewConversation because what it does is one idea — put
+   * the workspace back to how the page looked before anything was drawn.
+   *
+   * What is NOT reset, deliberately: the grid and dimension toggles, the camera
+   * (resetView frames whatever is there, which is now nothing), the stage's
+   * selected panel, and the provenance banner's folded/open preference. Those
+   * are how this person likes to LOOK at a workspace, not leftovers from a
+   * conversation; wiping them would make "new conversation" also mean "forget my
+   * viewing preferences", which nobody asked for. */
+  function clearWorkspaceDOM() {
+    /* Stop reading a goal that is no longer on the card. The goal itself carries
+     * on in the engine; this only stops polling for it. */
+    stopFollowingGoal();
+    /* And stop reading the STEP jobs whose rail rows have gone. Each job carries
+     * on in forge-worker exactly as it does when its panel is closed by hand,
+     * and opening the panel again picks it up (the server answers with the job
+     * it already has) — see toggleExportJob. */
+    Object.keys(state.exportJobs).forEach(function (versionID) {
+      var job = state.exportJobs[versionID];
+      if (job && job.watch) job.watch.stop();
+    });
+    state.exportJobs = {};
+    closeCompare();
+
+    if (studio) {
+      /* An empty document: releases the batches, drops the isolation and the
+       * lazy tree, and leaves the stage blank. */
+      studio.load(null);
+      studio.select(null);
+      studio.isolate(null);
+      /* The viewport's own controls, back to the values the page is served with
+       * (see the .viewbar markup): no cut, nothing exploded, nothing
+       * transparent. A section cut left over from the last design is the one
+       * that makes an empty stage look broken rather than empty. */
+      studio.setSection('none', 0.5);
+      studio.setExplode(0);
+      studio.setTransparency(1);
+      studio.resetView();
+    }
+    [['section', 'none'], ['sectionat', '0.5'], ['explode', '0'], ['opacity', '1'], ['tree-search', '']]
+      .forEach(function (pair) {
+        var el = $(pair[0]);
+        if (el) el.value = pair[1];
+      });
+    var notice = $('stage-empty');
+    if (notice) { notice.textContent = ''; notice.classList.add('hidden'); }
+
+    renderParts();
+    renderTree();
+    renderVariants();
+    renderProvenance();
+    renderProposal();
+    renderRequirements();
+    renderAttachments('');
+    renderNewGoal();
+    setPlace(false);
+  }
+
   function startNewConversation() {
     var r = beginNewConversation(state, storage());
     if (r.refused) {
@@ -436,12 +576,26 @@
     if (voice) voice.stopSpeaking();
     clearPartial();
     $('transcript').innerHTML = '';
-    renderProposal();
+    clearWorkspaceDOM();
     setStatus('idle');
     setCaption('', false);
-    addTurn('forge', 'New conversation. Nothing said before this is sent to me. ' +
-      'The design and its project are still here' +
-      (r.previous ? ', and the previous conversation is kept — reopen it from Conversations in the console.' : '.'));
+    /* ‼️ What this sentence says has to be what just happened. The old one —
+     * "The design and its project are still here" — was written when the stage
+     * was kept, and saying it over a cleared stage would be the interface
+     * asserting something the system did not do. The three facts a person needs
+     * are: nothing earlier reaches the model, nothing was deleted, and where the
+     * things that are no longer on screen can be found.
+     * Fence: TestWorkbench_ANewConversationSaysWhatItActuallyDid. */
+    var said = 'New conversation. Nothing said before this is sent to me, and the workspace is ' +
+      'cleared so nothing on screen is left over from it. Nothing is deleted: this is still the ' +
+      'same project, and every design kept in it is still in Files and in the console.';
+    if (r.previous) {
+      said += ' The previous conversation is kept — reopen it from Conversations in the console.';
+    }
+    if (r.goal) {
+      said += ' The goal ' + r.goal + ' is untouched by this — follow it in Goals in the console.';
+    }
+    addTurn('forge', said);
     var say = $('say');
     if (say && !say.disabled) say.focus();
     return true;
@@ -454,7 +608,10 @@
   }
 
   window.ForgeConversation = {
-    begin: beginNewConversation, adopt: adoptConversation, request: converseRequest, key: CONV_KEY
+    begin: beginNewConversation, adopt: adoptConversation, request: converseRequest, key: CONV_KEY,
+    /* Exported so the fence can watch the workspace being emptied without
+     * driving a whole page: see TestWorkbench_ANewConversationClearsTheWorkspace. */
+    clearWorkspace: clearWorkspaceView
   };
 
   /* Deleting the record, in two deliberate steps (PRD AUD-07, MEM-01).
@@ -596,6 +753,7 @@
     if (!id) return;
     state.projectID = id;
     loadRequirements();
+    renderNewGoal();
     if (window.ForgeStage) window.ForgeStage.setProject(id);
     loadFormats();
     fetch('/v1/geometry?project_id=' + encodeURIComponent(id))
@@ -3492,6 +3650,147 @@
     renderProposal();
   }
 
+  /* ---- defining a goal without being offered one (2026-09-22) -------------
+   *
+   * Until today the ONLY way a goal was created from the browser was FORGE
+   * offering one mid-conversation, and she offers one only when the conversation
+   * happens to turn that way. Somebody who arrived knowing what they wanted
+   * built had to talk her into proposing it — or open a terminal. The form below
+   * is the missing half: a title, a statement, a ceiling and the build option,
+   * which is exactly what `forgectl goal new` takes.
+   *
+   * The PROJECT is not a field here. It is the conversation's project, which is
+   * where every variant of this conversation is already kept, and the form SAYS
+   * which one it will write into rather than leaving it to be inferred — the
+   * 2026-09-15 bug (a goal drafted into a brand new project, silently) is what
+   * happens when nobody can see the answer to that question. The console's form,
+   * which has no conversation to take it from, is where a project is chosen.
+   *
+   * What is submitted goes through the SAME path the proposal card uses: a
+   * proposal is put on the card, planning runs, and the card renders the plan.
+   * One path, so what the card is able to show and what a person may authorise
+   * cannot come apart depending on where the proposal came from.
+   */
+  function newGoalFields() {
+    return {
+      title: $('newgoal-title') ? $('newgoal-title').value : '',
+      statement: $('newgoal-statement') ? $('newgoal-statement').value : '',
+      risk_tier: $('newgoal-risk') ? $('newgoal-risk').value : 'r1',
+      build: !!($('newgoal-build') && $('newgoal-build').checked),
+      project_id: state.projectID || '',
+      industry: state.industry || ''
+    };
+  }
+
+  /* Which project this goal will be written into, said out loud. */
+  function newGoalWhere() {
+    if (state.projectID) {
+      var role = state.members && state.members.members
+        ? (state.members.members.filter(function (m) { return m.is_you; })[0] || {}).role
+        : '';
+      return 'This goes into the project this conversation is in, ' + esc(state.projectID) + '' +
+        (role ? ', where you are ' + esc(role) + '' : '') + '.';
+    }
+    /* No project yet is a real state: one is created by the first kept variant
+     * OR by this goal, whichever happens first. Saying which industry it will be
+     * created in matters, because the industry cannot be changed through this
+     * path afterwards. */
+    var chosen = state.industry || 'general';
+    var known = (state.industries || []).filter(function (i) { return i.id === chosen; })[0];
+    return 'This conversation has no project yet, so one is created for this goal, in ' +
+      esc((known && known.label) || chosen) + '. Change the industry above first if that is wrong — ' +
+      'it belongs to the project from the moment one exists.';
+  }
+
+  function renderNewGoal() {
+    var form = $('newgoal-form');
+    if (!form) return;
+    var risk = $('newgoal-risk');
+    /* Filled once from ForgeNewGoal.TIERS, never written into the markup: the
+     * tiers and what each one means are PRD §8.1's, and a copy in the template
+     * is a copy that would keep offering a tier after the list changed. */
+    if (risk && !risk.options.length) {
+      risk.innerHTML = window.ForgeNewGoal.TIERS.map(function (t) {
+        return '<option value="' + esc(t.tier) + '"' + (t.tier === 'r1' ? ' selected' : '') + '>' +
+          esc(t.tier) + ' — ' + esc(t.gloss) + '</option>';
+      }).join('');
+    }
+    var where = $('newgoal-where');
+    if (where) where.innerHTML = newGoalWhere();
+
+    /* Enabled only when the server would accept it, and the reason it is not is
+     * in the form rather than behind a round trip. ‼️ An affordance, never the
+     * check: goals_start.go and agent.Intake.Draft refuse the same values again,
+     * and this is disabled with the SERVER's sentence rather than one written
+     * for the browser. */
+    var why = window.ForgeNewGoal.check(newGoalFields());
+    var planning = state.goalPhase === 'planning' || state.goalPhase === 'starting';
+    if (planning) {
+      why = 'A goal is already being ' + (state.goalPhase === 'planning' ? 'planned' : 'started') +
+        '. Define another once it has.';
+    }
+    var go = $('newgoal-go');
+    if (go) go.disabled = !!why;
+    var note = $('newgoal-why');
+    if (note) {
+      /* Blank while nothing has been typed: a form that opens already accusing
+       * somebody of leaving the title empty is noise, not help. */
+      var typed = !!(newGoalFields().title || newGoalFields().statement);
+      var show = why && (typed || planning);
+      note.textContent = show ? why : '';
+      note.classList.toggle('hidden', !show);
+    }
+  }
+
+  function openNewGoal(yes) {
+    var form = $('newgoal-form');
+    var open = $('newgoal-open');
+    if (!form || !open) return;
+    form.classList.toggle('hidden', !yes);
+    open.setAttribute('aria-expanded', String(!!yes));
+    if (yes) {
+      renderNewGoal();
+      if ($('newgoal-title')) $('newgoal-title').focus();
+    }
+  }
+
+  function submitNewGoal() {
+    var f = newGoalFields();
+    /* Checked again on submit and not only on input: a form can be submitted by
+     * the Enter key from a field whose `input` event has not fired yet. */
+    if (window.ForgeNewGoal.check(f)) { renderNewGoal(); return false; }
+    if (state.goalPhase === 'planning' || state.goalPhase === 'starting') { renderNewGoal(); return false; }
+    /* The same card, from a proposal this PERSON wrote. proposeGoal is what the
+     * conversation calls, so the phase machine, the plan and the two deliberate
+     * steps are identical — a goal defined here is not a different kind of goal. */
+    state.planAsBuild = !!f.build;
+    proposeGoal({ title: f.title.trim(), statement: f.statement.trim(), risk_tier: f.risk_tier });
+    openNewGoal(false);
+    if ($('newgoal-title')) $('newgoal-title').value = '';
+    if ($('newgoal-statement')) $('newgoal-statement').value = '';
+    addTurn('you', 'New goal: ' + f.title.trim());
+    startThis();
+    return true;
+  }
+
+  function initNewGoal() {
+    var form = $('newgoal-form');
+    var open = $('newgoal-open');
+    if (!form || !open) return;
+    open.addEventListener('click', function () { openNewGoal(form.classList.contains('hidden')); });
+    var cancel = $('newgoal-cancel');
+    if (cancel) cancel.addEventListener('click', function () { openNewGoal(false); open.focus(); });
+    form.addEventListener('submit', function (e) { e.preventDefault(); submitNewGoal(); });
+    ['newgoal-title', 'newgoal-statement', 'newgoal-risk', 'newgoal-build'].forEach(function (id) {
+      var el = $(id);
+      if (el) {
+        el.addEventListener('input', renderNewGoal);
+        el.addEventListener('change', renderNewGoal);
+      }
+    });
+    renderNewGoal();
+  }
+
   /* Loaded once, at startup, because the project is created by the first KEPT
    * VARIANT — which can happen long before any work is proposed. A catalogue
    * fetched at proposal time would arrive after the decision it informs. */
@@ -3513,8 +3812,20 @@
       return r.json().catch(function () { return {}; }).then(function (b) {
         if (!r.ok) {
           var e = (b && b.error) || {};
-          throw new Error((e.message || ('Request failed (' + r.status + ')')) +
-                          (e.remedy ? ' — ' + e.remedy : ''));
+          /* The sentence written for THIS refusal, not the error code's general
+           * words (2026-09-22).
+           *
+           * This threw `e.message` alone, which for a refused goal is "One or
+           * more request fields failed validation." — so a viewer who pressed
+           * "Start this", or filled in the new goal form, was told that some
+           * field was wrong. What actually happened is in details.detail:
+           * "viewer cannot goal.create here — a viewer reads. Ask an owner to
+           * change your role." refusalText already had this rule for the export
+           * panels; every refusal on this path now reads the same way.
+           * Fence: TestNewGoalForm_ShowsTheServersOwnRefusal. */
+          var err = new Error(refusalText(e, r.status, 'Request failed'));
+          err.status = r.status;
+          throw err;
         }
         return b;
       });
@@ -3537,41 +3848,7 @@
       if (el) el.textContent = Math.round((Date.now() - t0) / 1000) + 's';
     }, 1000);
 
-    api('/v1/goals', {
-      title: state.proposal.title,
-      statement: state.proposal.statement,
-      risk_tier: state.proposal.risk_tier || 'r1',
-      /* # Why the project is sent (2026-09-15)
-       *
-       * The conversation's project, when it has one. This was missing, and the
-       * industry line below already assumed it was here: it blanks the industry
-       * WHENEVER a project exists, because the server refuses the two together.
-       * So a conversation with a project sent neither — and `Draft` then made a
-       * BRAND NEW project named after the goal's title, with the `general` pack.
-       *
-       * What that looked like in the browser (docs/spikes/2026-09-15-card-checked):
-       * a lamp built from the card wrote its two versions into a second project,
-       * while the workbench's own Files panel — which reads the conversation's
-       * project — said "This project has no files yet." The console listed both
-       * projects, the conversation filed under one and its artifacts under the
-       * other. The industry the person picked was dropped on the way.
-       *
-       * ‼️ Sending it is also what the server's permission check is FOR: a named
-       * project is checked for `goal.create` before anything is written
-       * (docs/bugfix/2026-09-15-a-goal-could-be-drafted-into-a-project-its-caller-was-not-in.md,
-       * whose note that "the workbench always sends the project of the
-       * conversation" was not true of this path). */
-      project_id: state.projectID || '',
-      /* Only when this conversation has no project yet. The server REFUSES an
-       * industry sent with a project id — the industry belongs to the project,
-       * and changing it would change the rules its earlier work was done under —
-       * so sending one here would turn every follow-up goal into an error. */
-      industry: state.projectID ? '' : (state.industry || ''),
-      /* Planned as a BUILD: one task per step, each built by forge-worker with
-       * the CAD kernel and kept as a version, so a long build survives a closed
-       * tab or a deploy. Still only planned — "Start it" is still the act. */
-      build: !!state.planAsBuild
-    }).then(function (b) {
+    api('/v1/goals', goalRequest()).then(function (b) {
       state.goal = b.goal;
       state.planTasks = b.tasks || [];
       state.clarification = b.clarification_needed || null;
@@ -3587,6 +3864,57 @@
     }).then(function () {
       clearInterval(tick);
       renderProposal();
+    });
+  }
+
+  /* The POST /v1/goals body, for the card whatever put a proposal on it.
+   *
+   * # Why the fields are assembled by ForgeNewGoal.body and not written here
+   *
+   * Since 2026-09-22 there are TWO ways a proposal reaches this card — FORGE
+   * offering one in the conversation, and a person filling in the New goal form
+   * — and the console has a third form that posts to the same endpoint. The five
+   * rules the server holds (see assets/newgoal.js) then had three places to be
+   * got right, and the field below is the proof that one place is already one
+   * too many.
+   *
+   * # Why the project is sent (2026-09-15)
+   *
+   * The conversation's project, when it has one. This was MISSING, and the
+   * industry line already assumed it was here: it blanks the industry WHENEVER a
+   * project exists, because the server refuses the two together. So a
+   * conversation with a project sent neither — and `Draft` then made a BRAND NEW
+   * project named after the goal's title, with the `general` pack.
+   *
+   * What that looked like in the browser (docs/spikes/2026-09-15-card-checked):
+   * a lamp built from the card wrote its two versions into a second project,
+   * while the workbench's own Files panel — which reads the conversation's
+   * project — said "This project has no files yet." The console listed both
+   * projects, the conversation filed under one and its artifacts under the
+   * other. The industry the person picked was dropped on the way.
+   *
+   * ‼️ Sending it is also what the server's permission check is FOR: a named
+   * project is checked for `goal.create` before anything is written
+   * (docs/bugfix/2026-09-15-a-goal-could-be-drafted-into-a-project-its-caller-was-not-in.md,
+   * whose note that "the workbench always sends the project of the conversation"
+   * was not true of this path).
+   *
+   * The industry goes only when this conversation has no project yet, and `build`
+   * plans the statement as one task per step for forge-worker and the CAD kernel
+   * — still only PLANNED, "Start it" is still the act. */
+  function goalRequest() {
+    return window.ForgeNewGoal.body({
+      title: state.proposal.title,
+      statement: state.proposal.statement,
+      risk_tier: state.proposal.risk_tier || 'r1',
+      /* ‼️ Spelled out here rather than left entirely to body(): two fences read
+       * the request between startThis and startIt, because project_id is the
+       * field whose absence filed a goal into a project of its own, and the
+       * industry guard is what stopped the server refusing the pair. body()
+       * enforces both again. */
+      project_id: state.projectID || '',
+      industry: state.projectID ? '' : (state.industry || ''),
+      build: !!state.planAsBuild
     });
   }
 
@@ -4137,6 +4465,7 @@
     safely('variants', restoreVariants);
     safely('forget', initForget);
     safely('new-conversation', initNewConversation);
+    safely('new-goal', initNewGoal);
 
     /* Started here and awaited below, so the restored turns are on screen before
      * anything is said about being ready — a greeting above a conversation that

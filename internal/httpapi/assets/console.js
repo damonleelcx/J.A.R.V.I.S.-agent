@@ -12,7 +12,12 @@
 (function () {
   'use strict';
 
-  var state = { goals: [], projects: [], conversations: [], artifacts: [], selected: null, timer: null, everSignedIn: false };
+  var state = { goals: [], projects: [], conversations: [], artifacts: [], selected: null, timer: null, everSignedIn: false,
+    /* The New goal form: whether a create is in flight, and the server's own
+     * words for one that was refused. Held on state rather than read back off
+     * the note element, so a poll that re-renders the panels cannot wipe a
+     * refusal the person has not read yet. */
+    creating: false, createError: '' };
 
   function $(id) { return document.getElementById(id); }
 
@@ -39,7 +44,18 @@
         }
         if (!r.ok) {
           var e = (body && body.error) || {};
-          throw new Error(e.message || ('Request failed with ' + r.status));
+          /* The sentence written for THIS refusal, not the error CODE's general
+           * words (2026-09-22). `message` for a refused goal is "One or more
+           * request fields failed validation."; what actually happened - "viewer
+           * cannot goal.create here - a viewer reads. Ask an owner to change
+           * your role." - is in details.detail. ForgeNewGoal.refusal holds the
+           * rule, because the two forms that create a goal must read a refusal
+           * the same way. Fence: TestNewGoalForm_ShowsTheServersOwnRefusal. */
+          var err = new Error(window.ForgeNewGoal
+            ? window.ForgeNewGoal.refusal(e, r.status)
+            : (e.message || ('Request failed with ' + r.status)));
+          err.status = r.status;
+          throw err;
         }
         return body;
       });
@@ -190,7 +206,198 @@
     return api('/v1/projects').then(function (b) {
       state.projects = b.projects || [];
       renderProjects();
+      renderNewGoal();
     });
+  }
+
+  /* ---- new goal (2026-09-22) ---------------------------------------------
+   *
+   * # Why this is here
+   *
+   * This page listed goals and could create none. Its empty state told the
+   * reader to open a terminal - and the browser's ONLY route to POST /v1/goals
+   * was the workbench's proposal card, which appears when FORGE happens to
+   * propose work inside a conversation. So somebody who knew exactly what they
+   * wanted done either had to talk her into offering it or leave the product.
+   *
+   * # What it is and is not
+   *
+   * The same four things `forgectl goal new` takes - a title, a statement, a
+   * ceiling, and whether the statement is a BUILD - plus the project, which is
+   * the one field the workbench's form does not need because a conversation
+   * already has one.
+   *
+   * It DRAFTS and PLANS. Nothing runs: POST /v1/goals writes a draft and plans
+   * it, and starting it is a separate deliberate act (PRD AGT-02) taken on the
+   * goal's own detail pane. The button says "Plan it" for that reason.
+   *
+   * Every rule it checks before sending lives in assets/newgoal.js, shared with
+   * the workbench's form, and every one of them is enforced again by the server.
+   * The list of projects is the SERVER's answer to "where may this person plan
+   * work" (can_create_goal from GET /v1/projects), never a permission matrix
+   * copied into the browser.
+   */
+  function newGoalFields() {
+    return {
+      title: $('newgoal-title') ? $('newgoal-title').value : '',
+      statement: $('newgoal-statement') ? $('newgoal-statement').value : '',
+      risk_tier: $('newgoal-risk') ? $('newgoal-risk').value : 'r1',
+      build: !!($('newgoal-build') && $('newgoal-build').checked),
+      project_id: $('newgoal-project') ? $('newgoal-project').value : '',
+      /* Never sent from this form. Every option in the project list is an
+       * EXISTING project, and the server refuses an industry alongside a project
+       * id rather than dropping it - the industry belongs to the project. A
+       * project's first goal is made at the workbench or with forgectl, where
+       * there is an industry to choose. */
+      industry: ''
+    };
+  }
+
+  function renderNewGoal() {
+    var form = $('newgoal-form');
+    if (!form || !window.ForgeNewGoal) return;
+    var G = window.ForgeNewGoal;
+
+    var risk = $('newgoal-risk');
+    if (risk && !risk.options.length) {
+      risk.innerHTML = G.TIERS.map(function (t) {
+        return '<option value="' + esc(t.tier) + '"' + (t.tier === 'r1' ? ' selected' : '') + '>' +
+          esc(t.tier) + ' — ' + esc(t.gloss) + '</option>';
+      }).join('');
+    }
+
+    /* Only the projects this person may plan work in. A project they can READ
+     * but not write is not offered, because offering it offers a refusal. */
+    var mine = G.writable(state.projects);
+    var pick = $('newgoal-project');
+    if (pick) {
+      var was = pick.value;
+      pick.innerHTML = mine.map(function (p) {
+        return '<option value="' + esc(p.id) + '">' + esc(p.name) +
+          (p.industry ? ' — ' + esc(p.industry) : '') + '</option>';
+      }).join('');
+      if (was && mine.filter(function (p) { return p.id === was; }).length) pick.value = was;
+    }
+
+    var none = $('newgoal-none');
+    var open = $('newgoal-open');
+    if (!mine.length) {
+      /* Not a generic error, and not a disabled button with no explanation: the
+       * answer to "why can I not make a goal" is either that there is nowhere to
+       * put one or that the role they hold does not plan work - and the role is
+       * on every row of Your projects beside this. */
+      if (none) {
+        none.textContent = state.projects.length
+          ? 'None of your projects lets you plan work. Creating a goal needs goal.create, which ' +
+            'an owner, a maintainer or a contributor holds - your role is on each project above. ' +
+            'Ask an owner to change it.'
+          : 'You are not in any project yet, so there is nowhere to put a goal. Start one at the ' +
+            'workbench, where a project is created with its industry, or run forgectl goal new.';
+        none.classList.remove('hidden');
+      }
+      if (open) open.disabled = true;
+      form.classList.add('hidden');
+    } else {
+      if (none) { none.textContent = ''; none.classList.add('hidden'); }
+      if (open) open.disabled = false;
+    }
+
+    var f = newGoalFields();
+    var why = G.check(f);
+    if (!why && !f.project_id) why = 'choose the project this goal belongs to';
+    var go = $('newgoal-go');
+    if (go) go.disabled = !!(why || state.creating);
+    var note = $('newgoal-why');
+    if (note && !state.createError) {
+      var typed = !!(f.title || f.statement);
+      note.textContent = typed && why ? why : '';
+      note.className = 'note bad' + (typed && why ? '' : ' hidden');
+    }
+  }
+
+  function openNewGoal(yes) {
+    var form = $('newgoal-form');
+    var open = $('newgoal-open');
+    if (!form || !open) return;
+    form.classList.toggle('hidden', !yes);
+    open.setAttribute('aria-expanded', String(!!yes));
+    if (yes) {
+      renderNewGoal();
+      if ($('newgoal-title')) $('newgoal-title').focus();
+    }
+  }
+
+  function submitNewGoal(ev) {
+    if (ev) ev.preventDefault();
+    var G = window.ForgeNewGoal;
+    var f = newGoalFields();
+    if (!G || G.check(f) || !f.project_id || state.creating) { renderNewGoal(); return; }
+
+    state.creating = true;
+    state.createError = '';
+    var go = $('newgoal-go');
+    var note = $('newgoal-why');
+    if (go) { go.disabled = true; go.textContent = 'Planning…'; }
+    if (note) {
+      /* Planning is a model call of tens of seconds to minutes. Saying so is the
+       * difference between a page that is working and one that looks stuck. */
+      note.textContent = 'Drafting and planning it. This is a model call and takes a while; ' +
+        'nothing runs until you start it.';
+      note.className = 'note';
+    }
+
+    api('/v1/goals', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(G.body(f))
+    }).then(function (b) {
+      if ($('newgoal-title')) $('newgoal-title').value = '';
+      if ($('newgoal-statement')) $('newgoal-statement').value = '';
+      openNewGoal(false);
+      if (note) { note.textContent = ''; note.className = 'note hidden'; }
+      /* Straight to the goal that was just made, on the same pane every other
+       * goal is read in: the plan, the tasks, and the button that starts it. A
+       * goal created and then not shown is a goal somebody has to go and find. */
+      return refresh().then(function () {
+        if (b && b.goal && b.goal.id) select(b.goal.id);
+      });
+    }).catch(function (err) {
+      if (err instanceof NotAuthenticated) {
+        showSignIn('Your session ended. Sign in to continue.');
+        return;
+      }
+      /* The server's own sentence, put where the person is looking rather than
+       * in the page-wide error strip: the form is still open and still holds
+       * what they typed. */
+      state.createError = err.message;
+      if (note) { note.textContent = err.message; note.className = 'note bad'; }
+    }).then(function () {
+      state.creating = false;
+      if (go) go.textContent = 'Plan it';
+      renderNewGoal();
+    });
+  }
+
+  function initNewGoal() {
+    var form = $('newgoal-form');
+    var open = $('newgoal-open');
+    if (!form || !open) return;
+    open.addEventListener('click', function () { openNewGoal(form.classList.contains('hidden')); });
+    var cancel = $('newgoal-cancel');
+    if (cancel) cancel.addEventListener('click', function () {
+      state.createError = '';
+      openNewGoal(false);
+      open.focus();
+    });
+    form.addEventListener('submit', submitNewGoal);
+    ['newgoal-title', 'newgoal-statement', 'newgoal-risk', 'newgoal-build', 'newgoal-project']
+      .forEach(function (id) {
+        var el = $(id);
+        if (!el) return;
+        el.addEventListener('input', function () { state.createError = ''; renderNewGoal(); });
+        el.addEventListener('change', function () { state.createError = ''; renderNewGoal(); });
+      });
+    renderNewGoal();
   }
 
   /* ---- conversations ----------------------------------------------------- */
@@ -311,8 +518,15 @@
   function renderGoals() {
     var el = $('goals');
     if (!state.goals.length) {
+      /* ‼️ This used to say "Create one from a terminal:" and print a forgectl
+       * line. It was the console admitting that the one thing this page is about
+       * could not be started from it - and it was the only thing the empty state
+       * said, so the answer to "how do I begin" was "you cannot, here". The form
+       * above is the answer now; the terminal is still there for people who
+       * prefer it and no longer the only door. */
       el.innerHTML = '<div class="empty">No goals yet.<br><br>' +
-        'Create one from a terminal:<br><code style="font-size:12px">forgectl goal new --owner …</code></div>';
+        'Use <b>New goal</b> above to define one, or run ' +
+        '<code style="font-size:12px">forgectl goal new</code> from a terminal.</div>';
       return;
     }
     el.innerHTML = state.goals.map(function (g) {
@@ -525,6 +739,7 @@
 
   var form = $('signin-form');
   if (form) form.addEventListener('submit', submitSignIn);
+  initNewGoal();
 
   /* Establish who we are before painting. A console that renders empty panels
    * and then swaps to a sign-in form looks broken for the moment in between. */

@@ -342,6 +342,23 @@ func (h *MemberHandlers) Mine(w http.ResponseWriter, r *http.Request) {
 			entry := map[string]any{
 				"id": id, "name": name, "role": string(roles[id]),
 				"pack": packName, "updated_at": updated,
+				// Whether this person may plan work HERE (2026-09-22).
+				//
+				// The console's "New goal" form has to offer the projects a goal
+				// can actually be created in, and the only other way for a
+				// browser to know that is to copy the role/permission matrix out
+				// of internal/domain/access/model.go. A copy in a client is the
+				// copy that goes stale: the day a role's permissions change, the
+				// form either offers a project whose create will be refused or
+				// hides one that would have worked, and nothing says so.
+				//
+				// So the answer is computed where the matrix lives. It is an
+				// AFFORDANCE, not the gate — POST /v1/goals checks
+				// goal.create against the named project on every request
+				// (see CreateGoal) — which is the same distinction
+				// `can_manage` above is drawn on.
+				// Fence: TestMyProjectsSaysWhereAGoalMayBeCreated.
+				"can_create_goal": roles[id].Allows(access.PermGoalCreate),
 			}
 			// The industry as a person picked it, and the ceiling in force. A list
 			// of names tells somebody where their work is; the domain tells them
