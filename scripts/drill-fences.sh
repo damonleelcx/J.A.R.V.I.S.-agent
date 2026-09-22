@@ -4404,7 +4404,7 @@ drill "the section cut carries over to the next conversation" internal/httpapi/a
   ./internal/httpapi 'TestWorkbench_TheNewConversationControlIsAButtonWiredToTheRequest'
 
 drill "the voice surface stays docked over an empty stage" internal/httpapi/assets/workbench.js \
-  's = s.replace("    setPlace(false);\n    renderNewGoal", "    renderNewGoal", 1)' \
+  's = s.replace("    renderNewGoal();\n    setPlace(false);\n", "    renderNewGoal();\n", 1)' \
   ./internal/httpapi 'TestWorkbench_TheNewConversationControlIsAButtonWiredToTheRequest'
 
 drill "the new-conversation message still says the design is still here" internal/httpapi/assets/workbench.js \
@@ -4443,8 +4443,11 @@ drill "the console throws the error code's general words" internal/httpapi/asset
   's = s.replace("            ? window.ForgeNewGoal.refusal(e, r.status)\n", "            ? (e.message || \x27\x27)\n", 1)' \
   ./internal/httpapi 'TestNewGoalForm_ShowsTheServersOwnRefusal'
 
+# ‼️ Ten spaces of indent, and the line after it: watchExport's poll builds its error
+# with the very same call at twelve. The first version of this drill matched THAT one,
+# broke it, left api() standing, and reported the fence green.
 drill "the workbench throws the error code's general words on every POST" internal/httpapi/assets/workbench.js \
-  "s = s.replace(\"          var err = new Error(refusalText(e, r.status, 'Request failed'));\", \"          var err = new Error(e.message || 'Request failed');\", 1)" \
+  "s = s.replace(\"          var err = new Error(refusalText(e, r.status, 'Request failed'));\n          err.status = r.status;\n          throw err;\n        }\n        return b;\", \"          var err = new Error(e.message || 'Request failed');\n          err.status = r.status;\n          throw err;\n        }\n        return b;\", 1)" \
   ./internal/httpapi 'TestNewGoalForm_ShowsTheServersOwnRefusal'
 
 drill "the goal form offers projects the server refuses to write" internal/httpapi/assets/newgoal.js \
@@ -4463,8 +4466,10 @@ drill "the new goal form's submit button is served enabled" internal/httpapi/pag
   's = s.replace("<button type=\"submit\" class=\"btn-sm go\" id=\"newgoal-go\" disabled>Plan it</button>", "<button type=\"submit\" class=\"btn-sm go\" id=\"newgoal-go\">Plan it</button>", 1)' \
   ./internal/httpapi 'TestNewGoalForm_IsOnBothSurfacesWithItsFields'
 
+# The console's copy, named by the field only it has: the workbench's form takes its
+# project from the conversation, so the tag alone appears twice and would be ambiguous.
 drill "the new goal form is served open" internal/httpapi/pages.go \
-  's = s.replace("<form id=\"newgoal-form\" class=\"newgoal hidden\" autocomplete=\"off\">", "<form id=\"newgoal-form\" class=\"newgoal\" autocomplete=\"off\">", 1)' \
+  's = s.replace("<form id=\"newgoal-form\" class=\"newgoal hidden\" autocomplete=\"off\">\n        <label for=\"newgoal-project\">", "<form id=\"newgoal-form\" class=\"newgoal\" autocomplete=\"off\">\n        <label for=\"newgoal-project\">", 1)' \
   ./internal/httpapi 'TestNewGoalForm_IsOnBothSurfacesWithItsFields'
 
 drill "the goal form's module is loaded after the page script that calls it" internal/httpapi/pages.go \

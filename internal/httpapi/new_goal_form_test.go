@@ -344,21 +344,38 @@ func TestNewGoalForm_ShowsTheServersOwnRefusal(t *testing.T) {
 	}
 
 	// Both api() helpers must actually use it, or the sentences above are read by
-	// nothing. The workbench has its own refusalText, which holds the same rule
-	// and is fenced by the export panels.
-	for _, f := range []struct{ asset, want, why string }{
-		{"assets/console.js", "window.ForgeNewGoal.refusal(e, r.status)",
-			"the console throws the error code's general words, so a refused goal says a field was wrong"},
-		{"assets/workbench.js", "refusalText(e, r.status, 'Request failed')",
-			"the workbench throws the error code's general words on every POST, including /v1/goals"},
-	} {
-		b, err := assetFS.ReadFile(f.asset)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if !strings.Contains(codeOnly(string(b)), f.want) {
-			t.Errorf("%s no longer contains %q: %s", f.asset, f.want, f.why)
-		}
+	// nothing.
+	cb, err := assetFS.ReadFile("assets/console.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(codeOnly(string(cb)), "window.ForgeNewGoal.refusal(e, r.status)") {
+		t.Error("console.js no longer reads the refusal through ForgeNewGoal.refusal, so a refused goal " +
+			"shows the error code's general words and a viewer is told some field was wrong")
+	}
+
+	// ‼️ Read inside the workbench's api() and nowhere else. This exact line —
+	// `new Error(refusalText(e, r.status, 'Request failed'))` — also appears in
+	// watchExport's poll, so a file-wide search finds one when the other has been
+	// taken out, and the fence stayed green while every POST on the page went back
+	// to the error code's general words. Caught by its own drill, 2026-09-22.
+	wb, err := assetFS.ReadFile("assets/workbench.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	wjs := codeOnly(string(wb))
+	astart := strings.Index(wjs, "function api(path, body)")
+	astop := strings.Index(wjs, "function goalRequest()")
+	if astart < 0 || astop < astart {
+		t.Fatal("workbench.js has no api(path, body) above goalRequest(); this fence reads between them")
+	}
+	if !strings.Contains(wjs[astart:astop], "refusalText(e, r.status, 'Request failed')") {
+		t.Error("the workbench's api() no longer reads the refusal through refusalText, so every POST it " +
+			"makes — /v1/goals among them — reports the error code's general words instead of the " +
+			"sentence written for that refusal")
+	}
+	if !strings.Contains(wjs[astart:astop], "err.status = r.status;") {
+		t.Error("the workbench's api() no longer carries the HTTP status on the error it throws")
 	}
 }
 
