@@ -599,14 +599,14 @@ const pageTemplates = `
            startNewConversation in workbench.js. -->
       <button type="button" class="ghost newconv" id="new-conversation"
               title="Start a new conversation about this design. Nothing said so far is sent with it; the previous conversation is kept.">New conversation</button>
-      <!-- PRD AUD-07 asks for delete-session to be reachable at all times, and
-           MEM-01 asks each layer to state its retention. This layer keeps what
-           was said until the person says otherwise, which is only true if
-           saying otherwise is something they can do — so the control sits with
-           the conversation rather than in an operator's console. Two presses:
-           it cannot be undone. -->
-      <button type="button" class="ghost forget" id="forget"
-              title="Delete the record of this conversation. The work it produced stays.">Delete</button>
+      <!-- No Delete control here (2026-09-23). One shipped on 2026-09-22, beside
+           New conversation, arming on the first press and deleting the record on
+           the second. damon, having used the header: "i don't need the delete
+           button". Deleting a conversation's record is a rare, irreversible act
+           and it was one mis-aimed double-press away from the control people use
+           constantly; DELETE /v1/conversations/{id} still exists and still holds
+           its own fences, so the capability PRD AUD-07 asks for is intact and
+           reachable by an API client — it is only the button that is gone. -->
     </div>
     <div class="transcript" id="transcript"></div>
   </div>
@@ -890,43 +890,16 @@ const pageTemplates = `
     <div class="h" id="members-head" style="display:none">People</div>
     <div id="members" class="hidden"></div>
 
-    <!-- Saying what is to be built without waiting to be offered it
-         (2026-09-22). The card below appears only when FORGE proposes work in
-         the conversation, so somebody who already knew what they wanted had to
-         talk her into offering it. This takes the same four things
-         "forgectl goal new" takes; the PROJECT is the conversation's and is
-         stated rather than chosen, because a goal filed into a project nobody
-         could see named is exactly the 2026-09-15 bug. What is submitted goes
-         through the same proposal -> plan -> start path the card uses, so a
-         goal defined here is not a different kind of goal. -->
-    <div class="h" id="newgoal-head">Define a goal</div>
-    <div id="newgoal">
-      <button type="button" class="btn-sm" id="newgoal-open"
-              aria-expanded="false" aria-controls="newgoal-form">New goal</button>
-      <form id="newgoal-form" class="newgoal hidden" autocomplete="off">
-        <!-- Which project this writes into. Filled by the page from the
-             conversation, never typed: see newGoalWhere in workbench.js. -->
-        <p class="newgoal-foot" id="newgoal-where"></p>
-        <label for="newgoal-title">Title</label>
-        <input type="text" id="newgoal-title" maxlength="200" required>
-        <label for="newgoal-statement">What is to be done</label>
-        <textarea id="newgoal-statement" rows="3" maxlength="8000" required></textarea>
-        <label for="newgoal-risk">Risk ceiling</label>
-        <select id="newgoal-risk"></select>
-        <label class="newgoal-check"><input type="checkbox" id="newgoal-build">
-          Build it as a model, one step per part</label>
-        <!-- Autonomy is not a field: migration 0028_autonomy_is_write_once
-             refuses any write to the column (PRD AGT-04), so it is set once at
-             creation and never raised. -->
-        <p class="newgoal-foot">Autonomy is set once, at creation, and cannot be raised later.
-          Planning writes a draft and runs nothing — starting it is still a separate press.</p>
-        <div class="newgoal-acts">
-          <button type="submit" class="btn-sm go" id="newgoal-go" disabled>Plan it</button>
-          <button type="button" class="btn-sm" id="newgoal-cancel">Cancel</button>
-        </div>
-        <div class="note hidden" id="newgoal-why"></div>
-      </form>
-    </div>
+    <!-- Where "Define a goal" went (2026-09-23). The form shipped HERE on
+         2026-09-22 and landed at the bottom of this panel, under the assembly
+         tree, the variants, the industry picker and the member list — below the
+         fold of every workbench that had produced anything, which is every
+         workbench somebody would want to define a goal from. damon, having used
+         it: "new goal is at operations page". So it lives on the console alone
+         now, where it is the first thing on the page and names the project it
+         writes into out of a picker. The workbench keeps the path it always
+         had: FORGE proposes work in the conversation, the card below shows it,
+         and starting it is still a separate press. -->
 
     <div class="h" id="proposal-head" style="display:none">Proposed work</div>
     <div id="proposal" class="hidden"></div>

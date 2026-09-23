@@ -480,8 +480,9 @@ func TestWorkbench_TheNewConversationControlIsAButtonWiredToTheRequest(t *testin
 		t.Fatal(err)
 	}
 	js := codeOnly(string(b))
-	// Read inside startNewConversation itself: the transcript is also cleared by
-	// Delete, so a file-wide match would pass with this function emptied.
+	// Read inside startNewConversation itself rather than file-wide: several
+	// paths on this page clear the transcript, so a whole-file match would pass
+	// with this function emptied.
 	start, stop := strings.Index(js, "function startNewConversation()"), strings.Index(js, "function initNewConversation()")
 	if start < 0 || stop < start {
 		t.Fatal("startNewConversation or initNewConversation is gone; this fence reads between them")
@@ -548,7 +549,6 @@ func TestWorkbench_TheNewConversationControlIsAButtonWiredToTheRequest(t *testin
 		{"body: JSON.stringify(converseRequest(state, text, images, fromNodes, describeOnScreen()))",
 			"the turn request is no longer built by converseRequest, so the fence above reads a body nothing sends"},
 		{"if (state.conversationID !== id) return false;", "a restore still loading paints the old turns into the new conversation"},
-		{"if (state.conversationID !== deleting) return;", "a delete finishing late forgets the NEW conversation's id"},
 		{"adoptConversation(state, storage(), id);", "the id the server mints is no longer adopted, so every turn starts another conversation"},
 	} {
 		if !strings.Contains(js, want.code) {
@@ -607,5 +607,75 @@ func TestWorkbench_ANewConversationSaysWhatItActuallyDid(t *testing.T) {
 		if !strings.Contains(said, want.phrase) {
 			t.Errorf("the new-conversation message no longer contains %q: %s", want.phrase, want.why)
 		}
+	}
+}
+
+// The conversation header carries no Delete control (2026-09-23).
+//
+// # What was here and why it went
+//
+// From 2026-09-22 a Delete button sat beside New conversation: the first press
+// armed it, the second sent DELETE /v1/conversations/{id} and the record of the
+// conversation was gone. damon, having lived with it: "i don't need the delete
+// button". It was an irreversible act parked next to the control that is pressed
+// most often on the page, for something almost nobody wants to do.
+//
+// # What is NOT asserted here
+//
+// ‼️ Not that the capability is gone. DELETE /v1/conversations/{id} is still
+// mounted and still fenced (TestAPI_EveryConversationRouteIsMountedAndRequiresA
+// Session), so PRD AUD-07's "reachable at all times" is still true of the API
+// this product exposes — an API client can still delete a record, and MEM-01's
+// retention statement is still keepable. This fence is about the BUTTON, and
+// about the browser code behind it: a handler left bound to an element that is
+// no longer served is one template edit away from the control returning by
+// accident.
+func TestWorkbench_HasNoDeleteControlInTheConversationHeader(t *testing.T) {
+	rr := httptest.NewRecorder()
+	NewPageHandlers(testDeps()).Workbench(rr, httptest.NewRequest(http.MethodGet, "/workbench", nil))
+	page := rr.Body.String()
+	if len(page) < 200 {
+		t.Fatalf("the workbench rendered only %d bytes; this fence would pass vacuously", len(page))
+	}
+	// The control it stood beside must still be here, or the absence below is
+	// the whole header having gone missing rather than one button.
+	if !strings.Contains(page, `id="new-conversation"`) {
+		t.Fatal("the workbench has no #new-conversation control either; this fence is about ONE button " +
+			"leaving a header that still exists")
+	}
+	for _, gone := range []string{`id="forget"`, "ghost forget"} {
+		if strings.Contains(page, gone) {
+			t.Errorf("the workbench still serves %s. The Delete control was taken out on 2026-09-23: an "+
+				"irreversible act does not belong beside the control this page is pressed with most", gone)
+		}
+	}
+	if strings.Contains(page, ">Delete</button>") {
+		t.Error(`the workbench still serves a button labelled "Delete"`)
+	}
+
+	b, err := assetFS.ReadFile("assets/workbench.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := codeOnly(string(b))
+	for _, gone := range []struct{ code, why string }{
+		{"safely('forget', initForget)", "boot still binds a Delete control the page does not serve"},
+		{"function initForget()", "the two-press delete handler is still in the page script"},
+		{"'Delete for good?'", "the armed label of the delete control is still here, so something is " +
+			"still arming it"},
+		{"{ method: 'DELETE' })", "the workbench still sends a DELETE from the browser; deleting a " +
+			"conversation's record is an API act now, not a button on this page"},
+	} {
+		if strings.Contains(js, gone.code) {
+			t.Errorf("workbench.js still contains %q: %s", gone.code, gone.why)
+		}
+	}
+	// ‼️ And the endpoint is untouched. Read from the router rather than trusted:
+	// "the button is gone" must not quietly have become "the capability is gone".
+	rec := httptest.NewRecorder()
+	NewRouter(testDeps()).ServeHTTP(rec, httptest.NewRequest(http.MethodDelete, "/v1/conversations/cnv_1", nil))
+	if rec.Code == http.StatusNotFound {
+		t.Error("DELETE /v1/conversations/{id} is no longer mounted. Taking the button out must not take " +
+			"the capability PRD AUD-07 asks for with it: an API client is how a record is deleted now")
 	}
 }

@@ -198,9 +198,6 @@
      * available BEFORE one did. */
     if (wasNew) renderIndustry();
     if (wasNew) loadMembers();
-    /* And the New goal form's "where this goes" line, which names the project:
-     * it said "no project yet, one will be created" until the moment one did. */
-    if (wasNew) renderNewGoal();
     /* ‼️ And the WORK, not only the rules.
      *
      * restoreVariants() runs once at boot and reads the project id out of
@@ -561,7 +558,6 @@
     renderProposal();
     renderRequirements();
     renderAttachments('');
-    renderNewGoal();
     setPlace(false);
   }
 
@@ -614,58 +610,19 @@
     clearWorkspace: clearWorkspaceView
   };
 
-  /* Deleting the record, in two deliberate steps (PRD AUD-07, MEM-01).
+  /* No Delete control on this surface (2026-09-23).
    *
-   * This layer's retention is "until the person says otherwise", which is only
-   * true if saying otherwise is something they can actually do — so the control
-   * is beside the conversation rather than in an operator's console. Two steps
-   * because it cannot be undone: the first press asks, the second does it, and
-   * anything else on the page cancels.
+   * initForget bound #forget here from 2026-09-22 to 2026-09-23: two presses,
+   * the first arming the button and the second sending DELETE
+   * /v1/conversations/{id}. damon, after living with it: "i don't need the
+   * delete button". It sat beside New conversation, which is pressed often, and
+   * what it did could not be undone.
    *
-   * It deletes the RECORD. The variants, the project graph and the artifacts
-   * this conversation produced are work, not transcript, and they stay — the
-   * button says so rather than leaving somebody to guess. */
-  function initForget() {
-    var btn = $('forget');
-    if (!btn) return;
-    var armed = false;
-
-    function disarm() {
-      armed = false;
-      btn.textContent = 'Delete';
-      btn.classList.remove('armed');
-    }
-    document.addEventListener('click', function (e) {
-      if (armed && e.target !== btn) disarm();
-    }, true);
-
-    btn.addEventListener('click', function () {
-      if (!state.conversationID) return;
-      if (!armed) {
-        armed = true;
-        btn.textContent = 'Delete for good?';
-        btn.classList.add('armed');
-        return;
-      }
-      btn.disabled = true;
-      var deleting = state.conversationID;
-      fetch('/v1/conversations/' + encodeURIComponent(deleting), { method: 'DELETE' })
-        .then(function (r) {
-          if (!r.ok) throw new Error('the record could not be deleted');
-          /* A new conversation started while the delete was on its way is not
-           * the one deleted, and its id and pane are left alone. */
-          if (state.conversationID !== deleting) return;
-          forgetConversationKey();
-          $('transcript').innerHTML = '';
-          addTurn('forge', 'The record of this conversation is deleted. What you built — the ' +
-            'variants and everything in the project — is still here.');
-        })
-        .catch(function (err) {
-          addTurn('forge', err.message + '. Nothing was deleted.');
-        })
-        .then(function () { btn.disabled = false; disarm(); });
-    });
-  }
+   * ‼️ The ENDPOINT is untouched — DELETE /v1/conversations/{id} is still
+   * mounted in router.go and still fenced by conversations_routes_test.go, so
+   * the retention promise PRD AUD-07 and MEM-01 ask for is still keepable by an
+   * API client. Only the button is gone.
+   */
 
   /* # Switching project (?project=<id>)
    *
@@ -753,7 +710,6 @@
     if (!id) return;
     state.projectID = id;
     loadRequirements();
-    renderNewGoal();
     if (window.ForgeStage) window.ForgeStage.setProject(id);
     loadFormats();
     fetch('/v1/geometry?project_id=' + encodeURIComponent(id))
@@ -3650,146 +3606,20 @@
     renderProposal();
   }
 
-  /* ---- defining a goal without being offered one (2026-09-22) -------------
+  /* ---- no goal form here (2026-09-23) ------------------------------------
    *
-   * Until today the ONLY way a goal was created from the browser was FORGE
-   * offering one mid-conversation, and she offers one only when the conversation
-   * happens to turn that way. Somebody who arrived knowing what they wanted
-   * built had to talk her into proposing it — or open a terminal. The form below
-   * is the missing half: a title, a statement, a ceiling and the build option,
-   * which is exactly what `forgectl goal new` takes.
+   * A "Define a goal" form shipped in this panel on 2026-09-22 and came out on
+   * 2026-09-23: it sat under the assembly tree, the variants, the industry
+   * picker and the member list, which is below the fold of any workbench that
+   * has built something. damon: "new goal is at operations page". The console
+   * keeps it (see assets/console.js), and assets/newgoal.js keeps the one copy
+   * of the rules the server holds — this file still calls ForgeNewGoal.body for
+   * the proposal card's own POST, which is why newgoal.js is still loaded here.
    *
-   * The PROJECT is not a field here. It is the conversation's project, which is
-   * where every variant of this conversation is already kept, and the form SAYS
-   * which one it will write into rather than leaving it to be inferred — the
-   * 2026-09-15 bug (a goal drafted into a brand new project, silently) is what
-   * happens when nobody can see the answer to that question. The console's form,
-   * which has no conversation to take it from, is where a project is chosen.
-   *
-   * What is submitted goes through the SAME path the proposal card uses: a
-   * proposal is put on the card, planning runs, and the card renders the plan.
-   * One path, so what the card is able to show and what a person may authorise
-   * cannot come apart depending on where the proposal came from.
+   * What remains on this surface is the path that was always here: FORGE
+   * proposes work mid-conversation, proposeGoal puts it on the card, and
+   * starting it is a separate press.
    */
-  function newGoalFields() {
-    return {
-      title: $('newgoal-title') ? $('newgoal-title').value : '',
-      statement: $('newgoal-statement') ? $('newgoal-statement').value : '',
-      risk_tier: $('newgoal-risk') ? $('newgoal-risk').value : 'r1',
-      build: !!($('newgoal-build') && $('newgoal-build').checked),
-      project_id: state.projectID || '',
-      industry: state.industry || ''
-    };
-  }
-
-  /* Which project this goal will be written into, said out loud. */
-  function newGoalWhere() {
-    if (state.projectID) {
-      var role = state.members && state.members.members
-        ? (state.members.members.filter(function (m) { return m.is_you; })[0] || {}).role
-        : '';
-      return 'This goes into the project this conversation is in, ' + esc(state.projectID) + '' +
-        (role ? ', where you are ' + esc(role) + '' : '') + '.';
-    }
-    /* No project yet is a real state: one is created by the first kept variant
-     * OR by this goal, whichever happens first. Saying which industry it will be
-     * created in matters, because the industry cannot be changed through this
-     * path afterwards. */
-    var chosen = state.industry || 'general';
-    var known = (state.industries || []).filter(function (i) { return i.id === chosen; })[0];
-    return 'This conversation has no project yet, so one is created for this goal, in ' +
-      esc((known && known.label) || chosen) + '. Change the industry above first if that is wrong — ' +
-      'it belongs to the project from the moment one exists.';
-  }
-
-  function renderNewGoal() {
-    var form = $('newgoal-form');
-    if (!form) return;
-    var risk = $('newgoal-risk');
-    /* Filled once from ForgeNewGoal.TIERS, never written into the markup: the
-     * tiers and what each one means are PRD §8.1's, and a copy in the template
-     * is a copy that would keep offering a tier after the list changed. */
-    if (risk && !risk.options.length) {
-      risk.innerHTML = window.ForgeNewGoal.TIERS.map(function (t) {
-        return '<option value="' + esc(t.tier) + '"' + (t.tier === 'r1' ? ' selected' : '') + '>' +
-          esc(t.tier) + ' — ' + esc(t.gloss) + '</option>';
-      }).join('');
-    }
-    var where = $('newgoal-where');
-    if (where) where.innerHTML = newGoalWhere();
-
-    /* Enabled only when the server would accept it, and the reason it is not is
-     * in the form rather than behind a round trip. ‼️ An affordance, never the
-     * check: goals_start.go and agent.Intake.Draft refuse the same values again,
-     * and this is disabled with the SERVER's sentence rather than one written
-     * for the browser. */
-    var why = window.ForgeNewGoal.check(newGoalFields());
-    var planning = state.goalPhase === 'planning' || state.goalPhase === 'starting';
-    if (planning) {
-      why = 'A goal is already being ' + (state.goalPhase === 'planning' ? 'planned' : 'started') +
-        '. Define another once it has.';
-    }
-    var go = $('newgoal-go');
-    if (go) go.disabled = !!why;
-    var note = $('newgoal-why');
-    if (note) {
-      /* Blank while nothing has been typed: a form that opens already accusing
-       * somebody of leaving the title empty is noise, not help. */
-      var typed = !!(newGoalFields().title || newGoalFields().statement);
-      var show = why && (typed || planning);
-      note.textContent = show ? why : '';
-      note.classList.toggle('hidden', !show);
-    }
-  }
-
-  function openNewGoal(yes) {
-    var form = $('newgoal-form');
-    var open = $('newgoal-open');
-    if (!form || !open) return;
-    form.classList.toggle('hidden', !yes);
-    open.setAttribute('aria-expanded', String(!!yes));
-    if (yes) {
-      renderNewGoal();
-      if ($('newgoal-title')) $('newgoal-title').focus();
-    }
-  }
-
-  function submitNewGoal() {
-    var f = newGoalFields();
-    /* Checked again on submit and not only on input: a form can be submitted by
-     * the Enter key from a field whose `input` event has not fired yet. */
-    if (window.ForgeNewGoal.check(f)) { renderNewGoal(); return false; }
-    if (state.goalPhase === 'planning' || state.goalPhase === 'starting') { renderNewGoal(); return false; }
-    /* The same card, from a proposal this PERSON wrote. proposeGoal is what the
-     * conversation calls, so the phase machine, the plan and the two deliberate
-     * steps are identical — a goal defined here is not a different kind of goal. */
-    state.planAsBuild = !!f.build;
-    proposeGoal({ title: f.title.trim(), statement: f.statement.trim(), risk_tier: f.risk_tier });
-    openNewGoal(false);
-    if ($('newgoal-title')) $('newgoal-title').value = '';
-    if ($('newgoal-statement')) $('newgoal-statement').value = '';
-    addTurn('you', 'New goal: ' + f.title.trim());
-    startThis();
-    return true;
-  }
-
-  function initNewGoal() {
-    var form = $('newgoal-form');
-    var open = $('newgoal-open');
-    if (!form || !open) return;
-    open.addEventListener('click', function () { openNewGoal(form.classList.contains('hidden')); });
-    var cancel = $('newgoal-cancel');
-    if (cancel) cancel.addEventListener('click', function () { openNewGoal(false); open.focus(); });
-    form.addEventListener('submit', function (e) { e.preventDefault(); submitNewGoal(); });
-    ['newgoal-title', 'newgoal-statement', 'newgoal-risk', 'newgoal-build'].forEach(function (id) {
-      var el = $(id);
-      if (el) {
-        el.addEventListener('input', renderNewGoal);
-        el.addEventListener('change', renderNewGoal);
-      }
-    });
-    renderNewGoal();
-  }
 
   /* Loaded once, at startup, because the project is created by the first KEPT
    * VARIANT — which can happen long before any work is proposed. A catalogue
@@ -4463,9 +4293,7 @@
       window.ForgeStage.mount({ onPanel: function () { setPlace(); } });
     });
     safely('variants', restoreVariants);
-    safely('forget', initForget);
     safely('new-conversation', initNewConversation);
-    safely('new-goal', initNewGoal);
 
     /* Started here and awaited below, so the restored turns are on screen before
      * anything is said about being ready — a greeting above a conversation that
