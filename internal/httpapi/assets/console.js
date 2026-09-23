@@ -224,15 +224,23 @@
    *
    * The same four things `forgectl goal new` takes - a title, a statement, a
    * ceiling, and whether the statement is a BUILD - plus the project, which is
-   * the one field the workbench's form does not need because a conversation
-   * already has one.
+   * named here out of a picker. A form that took the project from context and
+   * did not say so is the 2026-09-15 filing bug; this page has no context to
+   * take it from, so it is chosen, and a submit without one is refused here.
+   *
+   * ‼️ Since 2026-09-23 this is the ONLY goal form. A second copy shipped in the
+   * workbench on 2026-09-22 and came out the next day: it sat under the assembly
+   * tree, the variants, the industry picker and the member list, below the fold
+   * of any workbench that had built anything. damon: "new goal is at operations
+   * page".
    *
    * It DRAFTS and PLANS. Nothing runs: POST /v1/goals writes a draft and plans
    * it, and starting it is a separate deliberate act (PRD AGT-02) taken on the
    * goal's own detail pane. The button says "Plan it" for that reason.
    *
-   * Every rule it checks before sending lives in assets/newgoal.js, shared with
-   * the workbench's form, and every one of them is enforced again by the server.
+   * Every rule it checks before sending lives in assets/newgoal.js, which the
+   * workbench's proposal card still shares for the body it posts, and every one
+   * of them is enforced again by the server.
    * The list of projects is the SERVER's answer to "where may this person plan
    * work" (can_create_goal from GET /v1/projects), never a permission matrix
    * copied into the browser.
