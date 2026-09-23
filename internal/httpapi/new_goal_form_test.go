@@ -29,6 +29,14 @@ import (
 // project taken from context; then plan it and show the same card the proposal
 // path already shows.
 //
+// ‼️ Revised 2026-09-23, after he used it: "new goal is at operations page". The
+// workbench's copy is gone. It sat at the bottom of the right-hand panel, below
+// the assembly tree, the Variants rail, the industry picker and the member list
+// — under the fold of any workbench that had built anything, which is every
+// workbench somebody would want to define a goal from. The console's form is
+// the one that stayed; the workbench keeps the proposal card, which still posts
+// the body assets/newgoal.js builds.
+//
 // # What these fences hold, and the trap they exist for
 //
 // ‼️ The trap is a form that looks right and disagrees with the server. There are
@@ -413,8 +421,18 @@ func TestNewGoalForm_OffersOnlyProjectsTheServerSaysAreWritable(t *testing.T) {
 	}
 }
 
-// Both forms exist, carry the four fields, and open closed with a disabled
-// submit.
+// The form is on the operations console, and on no other surface (2026-09-23).
+//
+// # Why the workbench's copy came out
+//
+// It shipped on both surfaces on 2026-09-22. On the workbench it landed at the
+// bottom of the right-hand panel — under the assembly tree, the Variants rail,
+// the industry picker and the member list — which is below the fold of any
+// workbench that has built something, and every workbench somebody would want to
+// define a goal from has built something. damon, after using it: "new goal is at
+// operations page". So the console's copy is the only one, where the Goals card
+// is on the page as served and the project is chosen out of a picker rather than
+// inherited from a conversation.
 //
 // # Why the disabled state is fenced in the markup
 //
@@ -422,68 +440,91 @@ func TestNewGoalForm_OffersOnlyProjectsTheServerSaysAreWritable(t *testing.T) {
 // it enabled, the very first press — before anything has been typed and before
 // any handler has run — posts an empty goal and the person meets the server's
 // refusal instead of the form's own sentence. It has to be disabled AS SERVED.
-func TestNewGoalForm_IsOnBothSurfacesWithItsFields(t *testing.T) {
+//
+// ‼️ The workbench half of this fence is an ABSENCE, and an absence passes
+// vacuously against an empty render. Both halves read a real rendered page and
+// both refuse to run against a short one.
+func TestNewGoalForm_IsOnTheOperationsPageAndNotTheWorkbench(t *testing.T) {
 	pages := NewPageHandlers(testDeps())
 
-	for _, surface := range []struct {
-		name string
-		call func(http.ResponseWriter, *http.Request)
-		path string
-	}{
-		{"console", pages.Console, "/console"},
-		{"workbench", pages.Workbench, "/workbench"},
-	} {
-		rr := httptest.NewRecorder()
-		surface.call(rr, httptest.NewRequest(http.MethodGet, surface.path, nil))
-		page := rr.Body.String()
-		if len(page) < 200 {
-			t.Fatalf("%s rendered only %d bytes; this fence would pass vacuously", surface.name, len(page))
-		}
+	rr := httptest.NewRecorder()
+	pages.Console(rr, httptest.NewRequest(http.MethodGet, "/console", nil))
+	page := rr.Body.String()
+	if len(page) < 200 {
+		t.Fatalf("the console rendered only %d bytes; this fence would pass vacuously", len(page))
+	}
 
-		if !strings.Contains(page, `id="newgoal-form"`) {
-			t.Errorf("%s has no #newgoal-form: there is no way to define a goal on this surface, which is "+
-				"the whole of what was missing", surface.name)
+	if !strings.Contains(page, `id="newgoal-form"`) {
+		t.Fatal("the console has no #newgoal-form: there is now no way at all to define a goal from the " +
+			"browser except by talking FORGE into proposing one, which is the whole of what was missing")
+	}
+	for _, id := range []string{"newgoal-open", "newgoal-project", "newgoal-title", "newgoal-statement",
+		"newgoal-risk", "newgoal-build", "newgoal-go", "newgoal-cancel"} {
+		if !strings.Contains(page, `id="`+id+`"`) {
+			t.Errorf("the console is missing #%s from the new goal form", id)
 		}
-		for _, id := range []string{"newgoal-open", "newgoal-title", "newgoal-statement",
-			"newgoal-risk", "newgoal-build", "newgoal-go", "newgoal-cancel"} {
-			if !strings.Contains(page, `id="`+id+`"`) {
-				t.Errorf("%s is missing #%s from the new goal form", surface.name, id)
-			}
+	}
+	// Autonomy is not a field.
+	if strings.Contains(page, `id="newgoal-autonomy"`) {
+		t.Error("the console offers an autonomy control. It is fixed at creation and migration 0028 " +
+			"refuses every write to the column")
+	}
+	// The submit button must be served disabled.
+	at := strings.Index(page, `id="newgoal-go"`)
+	open := strings.LastIndex(page[:at], "<")
+	end := strings.Index(page[at:], ">")
+	if at < 0 || open < 0 || end < 0 || !strings.Contains(page[at:at+end], "disabled") {
+		t.Errorf("the console serves #newgoal-go enabled. The first press, before anything is typed, "+
+			"would post an empty goal: %.160s", page[open:])
+	}
+	// And the form must be served closed, so it is not a wall of fields on a
+	// page somebody opened to read a timeline.
+	formAt := strings.Index(page, `id="newgoal-form"`)
+	formOpen := strings.LastIndex(page[:formAt], "<")
+	formEnd := strings.Index(page[formAt:], ">")
+	if !strings.Contains(page[formOpen:formAt+formEnd], "hidden") {
+		t.Errorf("the console serves the new goal form open: %.200s", page[formOpen:])
+	}
+	// The shared module has to be loaded BEFORE the page script that calls it.
+	mod := strings.Index(page, "newgoal.js")
+	script := strings.Index(page, "console.js")
+	if mod < 0 {
+		t.Error("the console does not load newgoal.js, so every rule the form checks is undefined")
+	} else if script >= 0 && mod > script {
+		t.Error("the console loads newgoal.js AFTER console.js; ForgeNewGoal would be undefined when the " +
+			"form is wired")
+	}
+
+	// ‼️ And the workbench carries none of it. Not a hidden copy, not a copy
+	// behind a breakpoint: the markup is gone, so there is nothing to scroll to
+	// under the member list and nothing for a fence on the console's copy to
+	// match by accident.
+	wrr := httptest.NewRecorder()
+	pages.Workbench(wrr, httptest.NewRequest(http.MethodGet, "/workbench", nil))
+	wb := wrr.Body.String()
+	if len(wb) < 200 {
+		t.Fatalf("the workbench rendered only %d bytes; the absence below would pass vacuously", len(wb))
+	}
+	for _, id := range []string{"newgoal-head", "newgoal", "newgoal-form", "newgoal-open", "newgoal-where",
+		"newgoal-title", "newgoal-statement", "newgoal-risk", "newgoal-build", "newgoal-go",
+		"newgoal-cancel", "newgoal-why"} {
+		if strings.Contains(wb, `id="`+id+`"`) {
+			t.Errorf("the workbench still serves #%s. The goal form was moved to the operations page "+
+				"because on this surface it sits under the assembly tree, the variants, the industry "+
+				"and the people — where nobody finds it", id)
 		}
-		// Autonomy is not a field, on either surface.
-		if strings.Contains(page, `id="newgoal-autonomy"`) {
-			t.Errorf("%s offers an autonomy control. It is fixed at creation and migration 0028 refuses "+
-				"every write to the column", surface.name)
-		}
-		// The submit button must be served disabled.
-		at := strings.Index(page, `id="newgoal-go"`)
-		open := strings.LastIndex(page[:at], "<")
-		end := strings.Index(page[at:], ">")
-		if at < 0 || open < 0 || end < 0 || !strings.Contains(page[at:at+end], "disabled") {
-			t.Errorf("%s serves #newgoal-go enabled. The first press, before anything is typed, would post "+
-				"an empty goal: %.160s", surface.name, page[open:])
-		}
-		// And the form must be served closed, so it is not a wall of fields on a
-		// page somebody opened to read a timeline.
-		formAt := strings.Index(page, `id="newgoal-form"`)
-		formOpen := strings.LastIndex(page[:formAt], "<")
-		formEnd := strings.Index(page[formAt:], ">")
-		if !strings.Contains(page[formOpen:formAt+formEnd], "hidden") {
-			t.Errorf("%s serves the new goal form open: %.200s", surface.name, page[formOpen:])
-		}
-		// The shared module has to be loaded BEFORE the page script that calls it.
-		mod := strings.Index(page, "newgoal.js")
-		script := strings.Index(page, surface.name+".js")
-		if mod < 0 {
-			t.Errorf("%s does not load newgoal.js, so every rule the form checks is undefined", surface.name)
-		} else if script >= 0 && mod > script {
-			t.Errorf("%s loads newgoal.js AFTER %s.js; ForgeNewGoal would be undefined when the form is wired",
-				surface.name, surface.name)
+	}
+	// The proposal card is what this surface keeps, and it has to still be here:
+	// removing the form must not have taken the path that was always there.
+	for _, id := range []string{"proposal-head", "proposal"} {
+		if !strings.Contains(wb, `id="`+id+`"`) {
+			t.Errorf("the workbench no longer serves #%s: taking the form out took the proposal card "+
+				"with it, and now nothing on this surface can accept work FORGE offers", id)
 		}
 	}
 
-	// The two page scripts must reach the module rather than re-deriving any of
-	// it, and the console must post the body it builds.
+	// The console's script must reach the module rather than re-deriving any of
+	// it, and must post the body it builds.
 	for _, f := range []struct{ asset, want, why string }{
 		{"assets/console.js", "JSON.stringify(G.body(f))",
 			"the console builds its own request body, so the five rules the server holds have a second copy"},
@@ -491,15 +532,10 @@ func TestNewGoalForm_IsOnBothSurfacesWithItsFields(t *testing.T) {
 			"the console no longer posts to /v1/goals, so its form creates nothing"},
 		{"assets/console.js", "G.writable(state.projects)",
 			"the console's project list is no longer filtered by what the server says is writable"},
+		// The workbench still POSTs /v1/goals from the proposal card, through the
+		// SAME module — which is why newgoal.js is still loaded there.
 		{"assets/workbench.js", "window.ForgeNewGoal.body({",
 			"the workbench builds the goal request itself again, which is how project_id went missing in September"},
-		{"assets/workbench.js", "safely('new-goal', initNewGoal);",
-			"boot never wires the workbench's form, so the button does nothing"},
-		{"assets/workbench.js", "proposeGoal({ title: f.title.trim(), statement: f.statement.trim(), risk_tier: f.risk_tier });",
-			"a goal defined on the form no longer goes through the proposal card's own path, so what a " +
-				"person may authorise depends on where the proposal came from"},
-		{"assets/workbench.js", "startThis();",
-			"the form does not plan what it defined, so a goal is proposed and nothing happens"},
 	} {
 		b, err := assetFS.ReadFile(f.asset)
 		if err != nil {
@@ -509,47 +545,80 @@ func TestNewGoalForm_IsOnBothSurfacesWithItsFields(t *testing.T) {
 			t.Errorf("%s no longer contains %q: %s", f.asset, f.want, f.why)
 		}
 	}
-}
 
-// The workbench's form says which project it will write into.
-//
-// The 2026-09-15 bug — a goal drafted into a brand new project named after its
-// own title, with its artifacts filed away from the conversation that made them
-// — was invisible precisely because nothing on screen answered "where is this
-// going". A form that silently takes the project from context has to say what it
-// took, including the case where there is none yet and one will be created.
-func TestNewGoalForm_TheWorkbenchSaysWhichProjectItWritesInto(t *testing.T) {
-	rr := httptest.NewRecorder()
-	NewPageHandlers(testDeps()).Workbench(rr, httptest.NewRequest(http.MethodGet, "/workbench", nil))
-	if !strings.Contains(rr.Body.String(), `id="newgoal-where"`) {
-		t.Fatal("the workbench's new goal form has no #newgoal-where line, so nothing says which project " +
-			"the goal is filed under")
-	}
-
+	// ‼️ And the workbench's wiring for a form it no longer serves is gone too. A
+	// page script that still binds #newgoal-* is one template edit away from the
+	// form coming back by accident, and renderNewGoal() left on the paths that
+	// adopt a project is dead work run on every conversation.
 	b, err := assetFS.ReadFile("assets/workbench.js")
 	if err != nil {
 		t.Fatal(err)
 	}
-	js := codeOnly(string(b))
-	start := strings.Index(js, "function newGoalWhere()")
-	stop := strings.Index(js, "function renderNewGoal()")
-	if start < 0 || stop < start {
-		t.Fatal("newGoalWhere is gone; this fence reads between it and renderNewGoal")
-	}
-	where := js[start:stop]
-	for _, want := range []struct{ code, why string }{
-		{"state.projectID", "the line does not read the conversation's project, so it cannot be naming it"},
-		{"esc(state.projectID)", "the project id is not escaped into the line"},
-		{"no project yet", "nothing is said for a conversation that has no project, where this goal is what " +
-			"creates one"},
-		{"state.industry", "the industry the new project would be created in is not named, and it cannot be " +
-			"changed through this path afterwards"},
+	wjs := codeOnly(string(b))
+	for _, gone := range []struct{ code, why string }{
+		{"safely('new-goal', initNewGoal)", "boot still wires a new goal form the workbench does not serve"},
+		{"function initNewGoal()", "the workbench still binds the form's open, cancel, submit and input handlers"},
+		{"function renderNewGoal()", "the workbench still renders a form it does not serve"},
+		{"function newGoalFields()", "the workbench still reads fields that are not on the page"},
+		{"function newGoalWhere()", "the workbench still composes the \"where this goes\" line for a form " +
+			"that is gone; the console's picker is what names the project now"},
+		{"renderNewGoal();", "a call to renderNewGoal survives on one of the paths that adopt a project, " +
+			"so every new conversation runs dead work"},
 	} {
-		if !strings.Contains(where, want.code) {
-			t.Errorf("newGoalWhere no longer contains %q: %s", want.code, want.why)
+		if strings.Contains(wjs, gone.code) {
+			t.Errorf("workbench.js still contains %q: %s", gone.code, gone.why)
 		}
 	}
-	if !strings.Contains(js, "if (where) where.innerHTML = newGoalWhere();") {
-		t.Error("the line is never rendered, so the form says nothing about where the goal goes")
+}
+
+// The console's form says which project it will write into, and says why when it
+// cannot write into any.
+//
+// The 2026-09-15 bug — a goal drafted into a brand new project named after its
+// own title, with its artifacts filed away from the conversation that made them
+// — was invisible precisely because nothing on screen answered "where is this
+// going". This form has no conversation to take a project from, so the answer is
+// a picker: it is named, it is chosen, and it is sent. A submit with no project
+// is refused here rather than left to EnsureProject to invent one.
+func TestNewGoalForm_TheConsoleSaysWhichProjectItWritesInto(t *testing.T) {
+	rr := httptest.NewRecorder()
+	NewPageHandlers(testDeps()).Console(rr, httptest.NewRequest(http.MethodGet, "/console", nil))
+	page := rr.Body.String()
+	if !strings.Contains(page, `id="newgoal-project"`) {
+		t.Fatal("the console's new goal form has no #newgoal-project control, so nothing on screen says " +
+			"which project the goal is filed under")
+	}
+	if !strings.Contains(page, `<label for="newgoal-project">Project</label>`) {
+		t.Error("the project control has no label reading \"Project\", so the select is an unnamed list of " +
+			"names — and which of the four fields it is has to be guessed")
+	}
+	if !strings.Contains(page, `id="newgoal-none"`) {
+		t.Error("there is nowhere to say WHY a goal cannot be created, so somebody in no project, or " +
+			"holding a role that does not plan work, meets a disabled button and no sentence")
+	}
+
+	b, err := assetFS.ReadFile("assets/console.js")
+	if err != nil {
+		t.Fatal(err)
+	}
+	js := codeOnly(string(b))
+	for _, want := range []struct{ code, why string }{
+		{"project_id: $('newgoal-project') ? $('newgoal-project').value : '',",
+			"the chosen project is not read out of the picker, so what is sent is not what was named"},
+		{"var mine = G.writable(state.projects);",
+			"the picker is not filled from the projects the server says work may be planned in"},
+		{"pick.innerHTML = mine.map(function (p) {",
+			"the picker is never filled, so it names no project and the form writes into none"},
+		{"esc(p.name)", "the picker lists ids rather than the names the rest of the page uses"},
+		{"if (!G || G.check(f) || !f.project_id || state.creating) { renderNewGoal(); return; }",
+			"a submit with no project chosen is sent, and Draft's EnsureProject invents a new project " +
+				"named after the goal's title — the 2026-09-15 filing bug, exactly"},
+		{"none.textContent = state.projects.length",
+			"the two reasons a goal cannot be created here — no project at all, or a role that does not " +
+				"plan work — are no longer told apart, and neither is stated"},
+	} {
+		if !strings.Contains(js, want.code) {
+			t.Errorf("console.js no longer contains %q: %s", want.code, want.why)
+		}
 	}
 }

@@ -4403,8 +4403,10 @@ drill "the section cut carries over to the next conversation" internal/httpapi/a
   "s = s.replace(\"      studio.setSection('none', 0.5);\n\", \"\", 1)" \
   ./internal/httpapi 'TestWorkbench_TheNewConversationControlIsAButtonWiredToTheRequest'
 
+# Re-anchored 2026-09-23: renderNewGoal() was the line above setPlace and left with
+# the workbench's goal form, so this now leans on the line that took its place.
 drill "the voice surface stays docked over an empty stage" internal/httpapi/assets/workbench.js \
-  's = s.replace("    renderNewGoal();\n    setPlace(false);\n", "    renderNewGoal();\n", 1)' \
+  "s = s.replace(\"    renderAttachments('');\n    setPlace(false);\n\", \"    renderAttachments('');\n\", 1)" \
   ./internal/httpapi 'TestWorkbench_TheNewConversationControlIsAButtonWiredToTheRequest'
 
 drill "the new-conversation message still says the design is still here" internal/httpapi/assets/workbench.js \
@@ -4456,29 +4458,45 @@ drill "the goal form offers projects the server refuses to write" internal/httpa
 
 drill "the console builds its own goal request body" internal/httpapi/assets/console.js \
   's = s.replace("      body: JSON.stringify(G.body(f))", "      body: JSON.stringify({ title: f.title, statement: f.statement })", 1)' \
-  ./internal/httpapi 'TestNewGoalForm_IsOnBothSurfacesWithItsFields'
+  ./internal/httpapi 'TestNewGoalForm_IsOnTheOperationsPageAndNotTheWorkbench'
 
-drill "the workbench never wires its new goal form" internal/httpapi/assets/workbench.js \
-  "s = s.replace(\"    safely('new-goal', initNewGoal);\n\", \"\", 1)" \
-  ./internal/httpapi 'TestNewGoalForm_IsOnBothSurfacesWithItsFields'
+# Deleted 2026-09-23 with the fence it drilled: "the workbench never wires its new
+# goal form" asserted wiring that no longer exists. The regression that matters now
+# is the form coming BACK to this surface, in markup or in the page script.
+drill "the goal form is served on the workbench again" internal/httpapi/pages.go \
+  's = s.replace("    <!-- Where \"Define a goal\" went (2026-09-23).", "    <div class=\"h\" id=\"newgoal-head\">Define a goal</div>\n    <form id=\"newgoal-form\" class=\"newgoal hidden\"></form>\n    <!-- Where \"Define a goal\" went (2026-09-23).", 1)' \
+  ./internal/httpapi 'TestNewGoalForm_IsOnTheOperationsPageAndNotTheWorkbench'
 
+drill "the workbench wires a goal form it does not serve" internal/httpapi/assets/workbench.js \
+  "s = s.replace(\"    safely('new-conversation', initNewConversation);\n\", \"    safely('new-conversation', initNewConversation);\n    safely('new-goal', initNewGoal);\n\", 1)" \
+  ./internal/httpapi 'TestNewGoalForm_IsOnTheOperationsPageAndNotTheWorkbench'
+
+# Re-anchored 2026-09-23: this matched the WORKBENCH's button, which is gone. The
+# console's is the only copy left, and it is spelled differently.
 drill "the new goal form's submit button is served enabled" internal/httpapi/pages.go \
-  's = s.replace("<button type=\"submit\" class=\"btn-sm go\" id=\"newgoal-go\" disabled>Plan it</button>", "<button type=\"submit\" class=\"btn-sm go\" id=\"newgoal-go\">Plan it</button>", 1)' \
-  ./internal/httpapi 'TestNewGoalForm_IsOnBothSurfacesWithItsFields'
+  's = s.replace("<button class=\"btn\" type=\"submit\" id=\"newgoal-go\" disabled>Plan it</button>", "<button class=\"btn\" type=\"submit\" id=\"newgoal-go\">Plan it</button>", 1)' \
+  ./internal/httpapi 'TestNewGoalForm_IsOnTheOperationsPageAndNotTheWorkbench'
 
-# The console's copy, named by the field only it has: the workbench's form takes its
-# project from the conversation, so the tag alone appears twice and would be ambiguous.
+# Named by the project field: the console's is the only form since 2026-09-23, but
+# the anchor is left as it was rather than loosened for the sake of it.
 drill "the new goal form is served open" internal/httpapi/pages.go \
   's = s.replace("<form id=\"newgoal-form\" class=\"newgoal hidden\" autocomplete=\"off\">\n        <label for=\"newgoal-project\">", "<form id=\"newgoal-form\" class=\"newgoal\" autocomplete=\"off\">\n        <label for=\"newgoal-project\">", 1)' \
-  ./internal/httpapi 'TestNewGoalForm_IsOnBothSurfacesWithItsFields'
+  ./internal/httpapi 'TestNewGoalForm_IsOnTheOperationsPageAndNotTheWorkbench'
 
 drill "the goal form's module is loaded after the page script that calls it" internal/httpapi/pages.go \
   's = s.replace("<script src=\"{{asset \"newgoal.js\"}}\"></script>\n<script src=\"{{asset \"console.js\"}}\"></script>", "<script src=\"{{asset \"console.js\"}}\"></script>\n<script src=\"{{asset \"newgoal.js\"}}\"></script>", 1)' \
-  ./internal/httpapi 'TestNewGoalForm_IsOnBothSurfacesWithItsFields'
+  ./internal/httpapi 'TestNewGoalForm_IsOnTheOperationsPageAndNotTheWorkbench'
 
-drill "the workbench's form does not say which project it writes into" internal/httpapi/assets/workbench.js \
-  's = s.replace("    if (where) where.innerHTML = newGoalWhere();\n", "", 1)' \
-  ./internal/httpapi 'TestNewGoalForm_TheWorkbenchSaysWhichProjectItWritesInto'
+# Deleted 2026-09-23 with the fence it drilled: newGoalWhere composed the workbench
+# form's "this goes into project X" line and left with the form. The console's form
+# answers the same question with a named picker, and these two drill that.
+drill "the console's goal form never fills its project picker" internal/httpapi/assets/console.js \
+  's = s.replace("      pick.innerHTML = mine.map(function (p) {", "      pick.innerHTML = [].map(function (p) {", 1)' \
+  ./internal/httpapi 'TestNewGoalForm_TheConsoleSaysWhichProjectItWritesInto'
+
+drill "the console's goal form submits with no project chosen" internal/httpapi/assets/console.js \
+  "s = s.replace(\"    if (!G || G.check(f) || !f.project_id || state.creating) { renderNewGoal(); return; }\", \"    if (!G || G.check(f) || state.creating) { renderNewGoal(); return; }\", 1)" \
+  ./internal/httpapi 'TestNewGoalForm_TheConsoleSaysWhichProjectItWritesInto'
 
 drill "the projects list does not say where a goal may be created" internal/httpapi/members.go \
   's = s.replace("\t\t\t\t\"can_create_goal\": roles[id].Allows(access.PermGoalCreate),\n", "", 1)' \
@@ -4487,6 +4505,28 @@ drill "the projects list does not say where a goal may be created" internal/http
 drill "every role is offered as a project a goal may be created in" internal/httpapi/members.go \
   's = s.replace("\"can_create_goal\": roles[id].Allows(access.PermGoalCreate),", "\"can_create_goal\": true,", 1)' \
   ./internal/httpapi 'TestMyProjectsSaysWhereAGoalMayBeCreated'
+
+# ---------------------------------------------------------------------------
+# Added 2026-09-23 (damon, having used what shipped on 2026-09-22: "new goal is
+# at operations page", "i don't need the delete button").
+#
+# The Delete control sat beside New conversation in the workbench's conversation
+# header: first press armed it, second press sent DELETE /v1/conversations/{id}
+# and the record was gone. An irreversible act parked next to the control this
+# page is pressed with most. The BUTTON is what left; the endpoint is still
+# mounted and still fenced, which is why the fence below reads the router too.
+
+drill "the delete control is back in the conversation header" internal/httpapi/pages.go \
+  's = s.replace("      <!-- No Delete control here (2026-09-23).", "      <button type=\"button\" class=\"ghost forget\" id=\"forget\">Delete</button>\n      <!-- No Delete control here (2026-09-23).", 1)' \
+  ./internal/httpapi 'TestWorkbench_HasNoDeleteControlInTheConversationHeader'
+
+drill "the workbench sends a conversation delete from the browser again" internal/httpapi/assets/workbench.js \
+  "s = s.replace(\"  /* No Delete control on this surface (2026-09-23).\", \"  function initForget() {\n    fetch('/v1/conversations/x', { method: 'DELETE' });\n  }\n  /* No Delete control on this surface (2026-09-23).\", 1)" \
+  ./internal/httpapi 'TestWorkbench_HasNoDeleteControlInTheConversationHeader'
+
+drill "the delete endpoint is unmounted along with its button" internal/httpapi/router.go \
+  's = s.replace("\tmux.Handle(\"DELETE /v1/conversations/{id}\", authed(talk.Forget))\n", "", 1)' \
+  ./internal/httpapi 'TestWorkbench_HasNoDeleteControlInTheConversationHeader'
 
 # ---------------------------------------------------------------------------
 # Added 2026-09-17 (workbench voice: the fallback that did not work).
