@@ -622,4 +622,3 @@ func TestNewGoalForm_TheConsoleSaysWhichProjectItWritesInto(t *testing.T) {
 		}
 	}
 }
-
