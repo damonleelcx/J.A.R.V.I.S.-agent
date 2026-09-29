@@ -1974,6 +1974,16 @@
  * from the value. */
 .wbturn-m i { font-style: normal; opacity: .6; }
 .wbturn-t { margin-top: 5px; font-size: 10.5px; color: var(--ink-dim); }
+/* What the provider answered on a failed turn. In --bad, because it is the
+ * failure speaking rather than a measurement, and wrapped rather than clipped:
+ * the useful half of a provider's message is often at the end of it. */
+.wbturn-why {
+  margin-top: 6px;
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--bad);
+  overflow-wrap: anywhere;
+}
 
 .wbunmeas { margin-top: 22px; border-top: 1px solid var(--edge-solid); padding-top: 14px; }
 .wbunmeas-h {

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/agent"
 	"github.com/damonleelcx/J.A.R.V.I.S.-agent/internal/domain/access"
@@ -585,12 +586,51 @@ func turnTiming(model string, firstTokenMS, totalMS, tokens, roundTripMS int64) 
 
 // userFacing renders an error for a reader mid-conversation: what happened and
 // what to do, without internal detail.
+//
+// # ‼️ What the PROVIDER said comes first (2026-09-29)
+//
+// This used to be the code's registry sentence and nothing else, so every
+// failed turn — a quota that had run out, a provider outage, a model that no
+// longer exists, a certificate that had expired — said "An external service
+// could not be reached or returned a server error. Retry; the fault is upstream
+// and usually transient." The row kept that sentence, the browser showed it,
+// and the one fact that distinguished the cases was gone by the time anybody
+// read it. A turn lost exactly this way is what internal/llm/upstream.go was
+// written for.
+//
+// So the provider's own answer leads, because it is the sentence that says
+// whether anything needs doing, and FORGE's cause and remedy follow it — they
+// are still the part that says what to do, and dropping them would trade one
+// half of the message for the other.
+//
+// It is safe to show: llm.Upstream is redacted and bounded where it is built,
+// once, so nothing that reaches here can carry a key or a 200 KiB error page.
 func userFacing(err error) string {
-	code := errs.CodeOf(err)
-	if d, ok := errs.Lookup(code); ok {
-		return d.Cause + " " + d.Remedy
+	base := "Something went wrong producing that reply. Try again."
+	if d, ok := errs.Lookup(errs.CodeOf(err)); ok {
+		base = d.Cause + " " + d.Remedy
 	}
-	return "Something went wrong producing that reply. Try again."
+	if said := llm.UpstreamSentence(err); said != "" {
+		return sentence(said) + " " + base
+	}
+	return base
+}
+
+// sentence starts and ends what was written to be embedded in something else.
+//
+// The full stop is conditional: a provider's message usually brings its own,
+// and "You exceeded your current quota.." is the kind of detail that makes a
+// reader trust the rest of the line less.
+func sentence(s string) string {
+	if s == "" {
+		return s
+	}
+	r := []rune(s)
+	out := string(unicode.ToUpper(r[0])) + string(r[1:])
+	if strings.ContainsRune(".!?", r[len(r)-1]) {
+		return out
+	}
+	return out + "."
 }
 
 // Models handles GET /v1/meta/models — which model backs which role.

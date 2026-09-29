@@ -120,8 +120,9 @@ func (c *OpenAICompatible) Draw(ctx context.Context, prompt string) (string, err
 	// points at the provider rather than at the setting.
 	resp, err := (&http.Client{Timeout: illustrateTimeout}).Do(req)
 	if err != nil {
-		return "", errs.Wrap(op, errs.CodeExternalUnavailable, err).
-			WithDetail("the image model could not be reached")
+		up := newUpstream(0, nil, err, c.secrets()...)
+		return "", up.annotate(errs.Wrap(op, errs.CodeExternalUnavailable, up).
+			WithDetail("the image model could not be reached: %s", up.Transport))
 	}
 	defer func() { _ = resp.Body.Close() }()
 	raw, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
@@ -129,8 +130,13 @@ func (c *OpenAICompatible) Draw(ctx context.Context, prompt string) (string, err
 		return "", errs.Wrap(op, errs.CodeExternalProtocol, err)
 	}
 	if resp.StatusCode != http.StatusOK {
-		return "", errs.New(op, errs.CodeExternalUnavailable).
-			WithDetail("the image model refused: %d %s", resp.StatusCode, truncate(string(raw), 300))
+		// This endpoint answers with the FLAT `{"code","message"}` shape rather
+		// than the nested one (see decodeDrawing), which newUpstream reads too
+		// — so a retired image model says which code it retired with here as
+		// well, redacted and bounded like every other provider answer.
+		up := newUpstream(resp.StatusCode, raw, nil, c.secrets()...)
+		return "", up.annotate(errs.Wrap(op, errs.CodeExternalUnavailable, up).
+			WithDetail("the image model refused: %s", up.Sentence()))
 	}
 
 	url, count, err := decodeDrawing(raw)

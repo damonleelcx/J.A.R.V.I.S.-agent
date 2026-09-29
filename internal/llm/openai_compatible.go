@@ -218,6 +218,11 @@ func (c *OpenAICompatible) Complete(ctx context.Context, req Request) (*Response
 	}
 
 	var lastErr error
+	// What each attempt got back, oldest first. ‼️ Three 429s and a 500
+	// followed by two 429s are different stories and the old message could not
+	// tell them apart: it said "failed after 3 attempts" and nothing about what
+	// the three attempts returned.
+	var answered []string
 	for attempt := 0; attempt <= c.maxRetries; attempt++ {
 		if attempt > 0 {
 			delay := backoff(attempt)
@@ -238,6 +243,7 @@ func (c *OpenAICompatible) Complete(ctx context.Context, req Request) (*Response
 			return resp, nil
 		}
 		lastErr = err
+		answered = append(answered, UpstreamOf(err).Label())
 		// ‼️ A call the caller cancelled is not an endpoint that could not be reached. The
 		// transport reports it as one (EXTERNAL_UNAVAILABLE, "cannot reach the model
 		// endpoint"), so every graceful stop of a worker inside a model call logged a
@@ -254,8 +260,33 @@ func (c *OpenAICompatible) Complete(ctx context.Context, req Request) (*Response
 			return nil, err
 		}
 	}
-	return nil, errs.Wrap(op, errs.CodeExternalUnavailable, lastErr).
-		WithDetail("model %q (role %s) failed after %d attempts", model, req.Role, c.maxRetries+1)
+	// ‼️ WHAT UPSTREAM SAID SURVIVES THE GIVING UP.
+	//
+	// This return used to carry FORGE's summary alone. DetailOf takes the
+	// OUTERMOST detail, and that outer detail is what reaches the failed-turn
+	// row, the browser and the event — so a 429 quota exhaustion, a 503 outage,
+	// a retired model and a TLS failure all read identically once the endpoint
+	// was healthy again. See upstream.go.
+	//
+	// The last attempt's answer and the trail of all of them are copied onto
+	// the error the caller gets, with lastErr still in its chain so nothing the
+	// loop collected is dropped.
+	trail := UpstreamOf(lastErr).withAttempts(answered, lastErr)
+	detail := fmt.Sprintf("model %q (role %s) failed after %d attempts",
+		model, req.Role, c.maxRetries+1)
+	if said := trail.Sentence(); said != "" {
+		detail += "; on the last, " + said
+	}
+	if summary := trail.AttemptSummary(); summary != "" {
+		detail += " (attempts returned " + summary + ")"
+	}
+	failed := trail.annotate(errs.Wrap(op, errs.CodeExternalUnavailable, trail).WithDetail("%s", detail))
+	// Logged here as well as carried, because the retry lines above are the
+	// only trace when the caller swallows the error, and they say what one
+	// attempt returned rather than how the call ended.
+	c.log.WarnWith(ctx, logx.EventLLMRefused, failed,
+		"role", string(req.Role), "model", model, "attempts", c.maxRetries+1)
+	return nil, failed
 }
 
 // boundAttempt applies the client's own request timeout to one attempt, and
@@ -299,16 +330,27 @@ func (c *OpenAICompatible) attempt(ctx context.Context, model string, role Role,
 
 	httpResp, err := c.client.Do(httpReq)
 	if err != nil {
-		return nil, errs.Wrap(op, errs.CodeExternalUnavailable, err).
-			WithDetail("cannot reach the model endpoint at %s", c.baseURL)
+		// No response at all, so there is no status and no body to quote — and
+		// the transport's own sentence ("connection refused", "certificate
+		// signed by unknown authority", "context deadline exceeded") is the
+		// whole story. Carried the same way as a status so that one reader can
+		// tell a refused connection from a 503 afterwards.
+		up := newUpstream(0, nil, err, c.secrets()...)
+		return nil, up.annotate(errs.Wrap(op, errs.CodeExternalUnavailable, up).
+			WithDetail("cannot reach the model endpoint at %s: %s", c.baseURL, up.Transport))
 	}
 	defer httpResp.Body.Close()
 
 	// Bounded read: a misbehaving endpoint must not be able to exhaust memory.
 	raw, readErr := io.ReadAll(io.LimitReader(httpResp.Body, 16<<20))
 	if readErr != nil {
-		return nil, errs.Wrap(op, errs.CodeExternalUnavailable, readErr).
-			WithDetail("reading the response body failed after %d status", httpResp.StatusCode)
+		// The status IS known here, and it is the difference between "the
+		// provider was answering 200 and the connection died" and "it was
+		// already failing".
+		up := newUpstream(httpResp.StatusCode, nil, readErr, c.secrets()...)
+		return nil, up.annotate(errs.Wrap(op, errs.CodeExternalUnavailable, up).
+			WithDetail("the provider answered %d and reading its body failed: %s",
+				httpResp.StatusCode, up.Transport))
 	}
 
 	if httpResp.StatusCode != http.StatusOK {
@@ -323,9 +365,13 @@ func (c *OpenAICompatible) attempt(ctx context.Context, model string, role Role,
 	// A 200 carrying an error object. Some providers do this; a caller that only
 	// branches on status code would treat it as success and read empty content.
 	if parsed.Error != nil {
-		return nil, errs.New(op, errs.CodeExternalProtocol).
-			WithDetail("the endpoint returned 200 with an error object: %s (%v)",
-				parsed.Error.Message, parsed.Error.Code)
+		// A 200 that is really a failure. The provider's answer is available
+		// here, so it is kept the same way a 4xx's is — redacted and bounded
+		// through the one door, rather than formatted straight out of the
+		// decoded body, which is how an echoed key would have reached a row.
+		up := newUpstream(http.StatusOK, raw, nil, c.secrets()...)
+		return nil, up.annotate(errs.Wrap(op, errs.CodeExternalProtocol, up).
+			WithDetail("the endpoint returned 200 with an error object: %s", up.Sentence()))
 	}
 	if len(parsed.Choices) == 0 {
 		// HTTP 200, valid JSON, no content. Warned and refused rather than
@@ -392,23 +438,30 @@ func (c *OpenAICompatible) attempt(ctx context.Context, model string, role Role,
 func (c *OpenAICompatible) classifyHTTPError(ctx context.Context, status int, body []byte, model string, role Role) error {
 	const op = "llm.OpenAICompatible.classifyHTTPError"
 
-	snippet := truncate(strings.TrimSpace(string(body)), 400)
+	// ‼️ What the provider said, parsed, redacted and bounded once — and
+	// CARRIED, not only formatted. Every branch below wraps it, so the status,
+	// the provider's own code and its message survive into the structured log
+	// (through annotate) and into the failed-turn record (through UpstreamOf),
+	// instead of being flattened into a sentence nobody can take apart later.
+	// See upstream.go for the turn that lost all of it.
+	up := newUpstream(status, body, nil, c.secrets()...)
+	said := up.Sentence()
 
 	switch {
 	case status == http.StatusTooManyRequests:
-		return errs.New(op, errs.CodeRateLimited).
-			WithDetail("the model endpoint rate-limited role %s (%s): %s", role, model, snippet)
+		return up.annotate(errs.Wrap(op, errs.CodeRateLimited, up).
+			WithDetail("the model endpoint rate-limited role %s (%s): %s", role, model, said))
 
 	case status == http.StatusUnauthorized || status == http.StatusForbidden:
 		// Worth spelling out: the most common cause is not a bad key but a key
 		// for the wrong regional endpoint, and the provider's message says
 		// "Incorrect API key provided" either way.
-		return errs.New(op, errs.CodeConfigInvalid).
+		return up.annotate(errs.Wrap(op, errs.CodeConfigInvalid, up).
 			WithDetail("the model endpoint rejected our credentials (%d) at %s. "+
 				"Check FORGE_LLM_API_KEY — and check the HOST: providers with regional "+
 				"endpoints issue separate keys per region, and a key for the wrong one "+
-				"fails with exactly this message. Response: %s",
-				status, c.baseURL, snippet)
+				"fails with exactly this message. %s",
+				status, c.baseURL, said))
 
 	case status == http.StatusNotFound:
 		// The endpoint is ASKED what it serves, rather than the operator being
@@ -429,20 +482,29 @@ func (c *OpenAICompatible) classifyHTTPError(ctx context.Context, status int, bo
 		// One GET on a path that has already failed permanently, and it turns
 		// "not found" into the list the operator would otherwise spend an hour
 		// finding.
-		return errs.New(op, errs.CodeConfigInvalid).WithDetail("%s",
-			fmt.Sprintf("model %q (role %s) was not found at %s. Response: %s",
-				model, role, c.baseURL, snippet)+c.whatIsServed(ctx, status, role))
+		return up.annotate(errs.Wrap(op, errs.CodeConfigInvalid, up).WithDetail("%s",
+			fmt.Sprintf("model %q (role %s) was not found at %s. %s",
+				model, role, c.baseURL, said)+c.whatIsServed(ctx, status, role)))
 
 	case status >= 500:
-		return errs.New(op, errs.CodeExternalUnavailable).
-			WithDetail("the model endpoint returned %d for role %s: %s", status, role, snippet)
+		return up.annotate(errs.Wrap(op, errs.CodeExternalUnavailable, up).
+			WithDetail("role %s asked %s and %s", role, model, said))
 
 	default:
 		// 4xx other than the above: a malformed request. Retrying is pointless.
-		return errs.New(op, errs.CodeExternalProtocol).
-			WithDetail("the model endpoint rejected the request with %d for role %s (%s): %s",
-				status, role, model, snippet)
+		return up.annotate(errs.Wrap(op, errs.CodeExternalProtocol, up).
+			WithDetail("the model endpoint rejected the request for role %s (%s): %s",
+				role, model, said))
 	}
+}
+
+// secrets are the values that must never come back out of a provider's answer.
+//
+// Both keys, always: a body is redacted before anybody knows which endpoint
+// produced it, and a transcriber key echoed by the chat host would be just as
+// leaked as the other way round.
+func (c *OpenAICompatible) secrets() []string {
+	return []string{c.apiKey, c.transcriberKey}
 }
 
 // servedModels asks the endpoint what it will answer for.

@@ -115,8 +115,13 @@ func (c *OpenAICompatible) Stream(ctx context.Context, req Request, onChunk func
 
 	resp, err := c.client.Do(httpReq)
 	if err != nil {
-		return errs.Wrap(op, errs.CodeExternalUnavailable, err).
-			WithDetail("cannot reach the model endpoint at %s", c.baseURL)
+		// Nothing answered, so the transport's own sentence is all there is —
+		// and it is carried rather than only formatted, because this is the
+		// path a workbench turn takes and the turn's row is what somebody reads
+		// a week later. See upstream.go.
+		up := newUpstream(0, nil, err, c.secrets()...)
+		return up.annotate(errs.Wrap(op, errs.CodeExternalUnavailable, up).
+			WithDetail("cannot reach the model endpoint at %s: %s", c.baseURL, up.Transport))
 	}
 	defer resp.Body.Close()
 
@@ -185,8 +190,12 @@ func (c *OpenAICompatible) Stream(ctx context.Context, req Request, onChunk func
 			if readErr == io.EOF {
 				break
 			}
-			return errs.Wrap(op, errs.CodeExternalUnavailable, readErr).
-				WithDetail("the stream ended unexpectedly")
+			// The provider answered 200 and then stopped mid-stream. There is
+			// no error body to quote — the 200 was already sent — so the status
+			// and the read failure are what upstream said, and both are kept.
+			up := newUpstream(resp.StatusCode, nil, readErr, c.secrets()...)
+			return up.annotate(errs.Wrap(op, errs.CodeExternalUnavailable, up).
+				WithDetail("the stream ended unexpectedly: %s", up.Transport))
 		}
 	}
 
