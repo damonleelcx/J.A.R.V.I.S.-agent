@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"io"
 	"net/http"
 	"strings"
 
@@ -102,20 +103,26 @@ func (c *OpenAICompatible) Speak(ctx context.Context, text string, onPCM func([]
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return errs.Wrap(op, errs.CodeExternalUnavailable, err).
-			WithDetail("the speech request did not complete: %v", err)
+		// ‼️ The transport error was interpolated with %v and nothing else, so
+		// a refused connection and an expired certificate were the same row
+		// afterwards. Redacted through the one door now: a proxy's error string
+		// can quote the Authorization header it rejected.
+		up := newUpstream(0, nil, err, c.secrets()...)
+		return up.annotate(errs.Wrap(op, errs.CodeExternalUnavailable, up).
+			WithDetail("the speech request did not complete: %s", up.Transport))
 	}
 	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode >= 400 {
-		snippet := new(bytes.Buffer)
-		_, _ = snippet.ReadFrom(resp.Body)
+		// Bounded read: this body is a failure page, and the streaming buffer
+		// below is sized for audio rather than for an HTML apology.
+		raw, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 		// Same reasoning as the transcriber's: a 404 is a retired model, and the
 		// endpoint can be asked what replaced it.
-		return errs.New(op, errs.CodeExternalUnavailable).
-			WithDetail("the speech provider returned %d: %s%s",
-				resp.StatusCode, truncate(snippet.String(), 300),
-				c.whatIsServed(ctx, resp.StatusCode, RoleSpeaker))
+		up := newUpstream(resp.StatusCode, raw, nil, c.secrets()...)
+		return up.annotate(errs.Wrap(op, errs.CodeExternalUnavailable, up).
+			WithDetail("the speech provider refused: %s%s",
+				up.Sentence(), c.whatIsServed(ctx, resp.StatusCode, RoleSpeaker)))
 	}
 
 	var total int
@@ -171,8 +178,12 @@ func (c *OpenAICompatible) Speak(ctx context.Context, text string, onPCM func([]
 		if ctx.Err() != nil {
 			return nil // interrupted on purpose
 		}
-		return errs.Wrap(op, errs.CodeExternalUnavailable, err).
-			WithDetail("the speech stream ended early after %d bytes", total)
+		// The provider answered 200 and then stopped. No error body exists —
+		// the 200 went out before the audio did — so the status it committed to
+		// and the read failure are what upstream said.
+		up := newUpstream(resp.StatusCode, nil, err, c.secrets()...)
+		return up.annotate(errs.Wrap(op, errs.CodeExternalUnavailable, up).
+			WithDetail("the speech stream ended early after %d bytes: %s", total, up.Transport))
 	}
 	if total == 0 {
 		// HTTP 200 and no audio is the shape a changed wire format takes — and it

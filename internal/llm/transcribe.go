@@ -151,8 +151,9 @@ func (c *OpenAICompatible) Transcribe(ctx context.Context, audio []byte, mimeTyp
 
 	resp, err := c.client.Do(req)
 	if err != nil {
-		return nil, errs.Wrap(op, errs.CodeExternalUnavailable, err).
-			WithDetail("the transcription request did not complete: %v", err)
+		up := newUpstream(0, nil, err, c.secrets()...)
+		return nil, up.annotate(errs.Wrap(op, errs.CodeExternalUnavailable, up).
+			WithDetail("the transcription request did not complete: %s", up.Transport))
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -174,7 +175,9 @@ func (c *OpenAICompatible) Transcribe(ctx context.Context, audio []byte, mimeTyp
 	}
 	raw := new(bytes.Buffer)
 	if _, err := raw.ReadFrom(resp.Body); err != nil {
-		return nil, errs.Wrap(op, errs.CodeExternalUnavailable, err)
+		up := newUpstream(resp.StatusCode, nil, err, c.secrets()...)
+		return nil, up.annotate(errs.Wrap(op, errs.CodeExternalUnavailable, up).
+			WithDetail("%s", up.Sentence()))
 	}
 	if resp.StatusCode >= 400 {
 		// A 404 here means the ASR model was retired, not that the provider is
@@ -200,18 +203,24 @@ func (c *OpenAICompatible) Transcribe(ctx context.Context, audio []byte, mimeTyp
 			// model that just answered 404 (see transcriber_served.go).
 			c.forgetTranscriberAnswer()
 		}
-		return nil, errs.New(op, code).
-			WithDetail("the transcription provider at %s returned %d: %s%s",
-				c.transcriberURL, resp.StatusCode, truncate(raw.String(), 300),
-				c.whatIsServed(ctx, resp.StatusCode, RoleTranscriber))
+		up := newUpstream(resp.StatusCode, raw.Bytes(), nil, c.secrets()...)
+		return nil, up.annotate(errs.Wrap(op, code, up).
+			WithDetail("the transcription provider at %s says %s%s",
+				c.transcriberURL, up.Sentence(),
+				c.whatIsServed(ctx, resp.StatusCode, RoleTranscriber)))
 	}
 	if err := json.Unmarshal(raw.Bytes(), &parsed); err != nil {
 		return nil, errs.Wrap(op, errs.CodeSerializationFail, err).
 			WithDetail("the transcription response was not JSON: %s", truncate(raw.String(), 300))
 	}
 	if parsed.Error != nil {
-		return nil, errs.New(op, errs.CodeExternalUnavailable).
-			WithDetail("the transcription provider refused: %s (%s)", parsed.Error.Message, parsed.Error.Code)
+		// A 200 carrying an error object. Kept through the one door rather than
+		// interpolated from the decoded body: this message is on its way to a
+		// log and to the workbench, and a provider that quotes the request it
+		// rejected would otherwise put our key on both.
+		up := newUpstream(resp.StatusCode, raw.Bytes(), nil, c.secrets()...)
+		return nil, up.annotate(errs.Wrap(op, errs.CodeExternalUnavailable, up).
+			WithDetail("the transcription provider refused: %s", up.Sentence()))
 	}
 	if len(parsed.Choices) == 0 {
 		// HTTP 200 with no choices is the shape a silently-changed wire format
