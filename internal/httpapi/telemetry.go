@@ -81,6 +81,21 @@ type measuredTurnDTO struct {
 	// The code only; the refused reply itself stays in the conversation record,
 	// which is deletable with the conversation (AUD-07).
 	Failure string `json:"failure,omitempty"`
+	// Why is the sentence the person was shown in place of a reply, which since
+	// 2026-09-29 leads with what the PROVIDER answered — "The provider answered
+	// 429 (quota_exhausted): You exceeded your current quota."
+	//
+	// ‼️ Why a code is not enough here. Every failed turn in this panel read
+	// EXTERNAL_UNAVAILABLE, and a panel of identical codes cannot tell a quota
+	// that has run out from an outage from a model the provider retired — which
+	// is the whole question somebody opens it with. The code stays, because it
+	// is what a report is filed against.
+	//
+	// It is FORGE's own sentence, not model output: a refused reply is not
+	// here, and it never will be (SEC-04). It is redacted and bounded where the
+	// provider's answer is built (internal/llm/upstream.go), and it is read
+	// from the same conversation row the delete path takes (AUD-07).
+	Why string `json:"why,omitempty"`
 }
 
 // Turns handles GET /v1/telemetry/turns.
@@ -109,6 +124,9 @@ func (h *TelemetryHandlers) Turns(w http.ResponseWriter, r *http.Request) {
 			Failed:       t.Failed(),
 			ReplyArrived: t.UnusableReply != "",
 			Failure:      t.Failure,
+			// Only for a turn that failed: on a turn that worked this column
+			// holds what FORGE said, and the panel is not a transcript.
+			Why: whyItFailed(t),
 		})
 		if t.Failed() {
 			continue
@@ -145,6 +163,20 @@ func (h *TelemetryHandlers) Turns(w http.ResponseWriter, r *http.Request) {
 //
 // Nil and not zero, for the reason the whole of this file exists: a statistic
 // over no samples is not a fast one.
+// whyItFailed is the sentence a failed turn was shown in place of a reply, and
+// "" for a turn that did not fail.
+//
+// Read from the row rather than re-derived: what the person SAW is the record,
+// and a panel that reconstructed a sentence from the code would print today's
+// wording over yesterday's failure. It also means the provider's own answer —
+// which converse.go puts at the front of that sentence — arrives here for free.
+func whyItFailed(t conversation.Turn) string {
+	if !t.Failed() {
+		return ""
+	}
+	return t.Text
+}
+
 func median(xs []int) *int {
 	if len(xs) == 0 {
 		return nil

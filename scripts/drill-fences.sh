@@ -95,6 +95,10 @@ FILES=(
   internal/llm/deliberation.go
   internal/llm/stream.go
   internal/llm/openai_compatible.go
+  internal/llm/upstream.go
+  internal/llm/speak.go
+  internal/httpapi/telemetry.go
+  internal/httpapi/assets/stage.js
   internal/agent/scriptrepair.go
   internal/agent/converse.go
   internal/agent/converse_stream.go
@@ -6767,6 +6771,62 @@ drill "a drawing past the wall ceiling is measured anyway" internal/domain/geome
 drill "the wall measurement forgets the hole" internal/domain/geometry/relationships.go \
   's = s.replace("loops := append([]polyline{section.Outer}, section.Holes...)", "loops := append([]polyline{section.Outer}, section.Holes[:0]...)", 1)' \
   ./internal/domain/cad 'TestKernel_TheWallFORGEMeasuresIsTheWallOCCTBuilds'
+
+echo
+echo "What upstream said, when a model call fails"
+# Added 2026-09-29. A turn failed with EXTERNAL_UNAVAILABLE and nothing was kept
+# that said why: the retry loop ended with FORGE's own summary as the OUTERMOST
+# detail, and that detail is what reaches the failed-turn row, the browser and
+# the event. A 429 quota exhaustion, a 503 outage, a retired model and a TLS
+# failure were the same record afterwards. The last five need
+# FORGE_TEST_DATABASE_URL; the rest run anywhere.
+drill "the provider's answer is dropped when the loop gives up" internal/llm/openai_compatible.go \
+  's = s.replace("\tif said := trail.Sentence(); said != \"\" {", "\tif said := \"\"; said != \"\" {", 1)' \
+  ./internal/llm 'TestUpstream_WhatTheProviderSaidIsKeptOnEveryFailureShape'
+
+drill "only the last attempt is counted" internal/llm/openai_compatible.go \
+  's = s.replace("\t\tanswered = append(answered, UpstreamOf(err).Label())", "\t\t_ = answered", 1)' \
+  ./internal/llm 'TestUpstream_MixedStatusesAcrossAttemptsAreAllCounted'
+
+drill "a credential in a provider body is kept" internal/llm/upstream.go \
+  's = s.replace("func redactSecrets(s string, secrets ...string) string {", "func redactSecrets(s string, secrets ...string) string {\n\tif len(s) >= 0 {\n\t\treturn s\n\t}", 1)' \
+  ./internal/llm 'TestUpstream_ACredentialInAProviderBodyIsNeverKept|TestUpstream_RedactionShapes'
+
+drill "a provider's error page is kept whole" internal/llm/upstream.go \
+  's = s.replace("const upstreamMessageLimit = 400", "const upstreamMessageLimit = 1 << 30", 1)' \
+  ./internal/llm 'TestUpstream_AHugeProviderBodyIsTruncatedNotStored'
+
+drill "the provider's status never reaches the structured log" internal/llm/upstream.go \
+  's = s.replace("\tif u.Status != 0 {\n\t\te = e.WithField(\"upstream_status\", u.Status)\n\t}\n", "", 1)' \
+  ./internal/llm 'TestUpstream_TheProvidersAnswerReachesTheStructuredLog'
+
+drill "the image role says only that something failed" internal/llm/illustrate.go \
+  's = s.replace("WithDetail(\"the image model refused: %s\", up.Sentence())", "WithDetail(\"the image model refused: %s\", \"\")", 1)' \
+  ./internal/llm 'TestUpstream_TheAudioAndImageRolesKeepItToo'
+
+drill "the speech role says only that something failed" internal/llm/speak.go \
+  's = s.replace("\t\t\t\tup.Sentence(), c.whatIsServed(ctx, resp.StatusCode, RoleSpeaker)))", "\t\t\t\t\"\", c.whatIsServed(ctx, resp.StatusCode, RoleSpeaker)))", 1)' \
+  ./internal/llm 'TestUpstream_TheAudioAndImageRolesKeepItToo'
+
+drill "the transcription role says only that something failed" internal/llm/transcribe.go \
+  's = s.replace("\t\t\t\tc.transcriberURL, up.Sentence(),", "\t\t\t\tc.transcriberURL, \"\",", 1)' \
+  ./internal/llm 'TestUpstream_TheAudioAndImageRolesKeepItToo'
+
+drill "the failed turn shows FORGE's sentence only" internal/httpapi/converse.go \
+  's = s.replace("\tif said := llm.UpstreamSentence(err); said != \"\" {", "\tif said := \"\"; said != \"\" {", 1)' \
+  ./internal/httpapi 'TestConverse_AFailedTurnSaysWhatTheProviderAnswered'
+
+drill "the telemetry row drops why the turn failed" internal/httpapi/telemetry.go \
+  's = s.replace("\t\t\tWhy: whyItFailed(t),", "\t\t\tWhy: \"\",", 1)' \
+  ./internal/httpapi 'TestConverse_AFailedTurnSaysWhatTheProviderAnswered'
+
+drill "a credential reaches the browser and the record" internal/llm/upstream.go \
+  's = s.replace("\treturn truncate(strings.Join(strings.Fields(redactSecrets(s, secrets...)), \" \"), upstreamMessageLimit)", "\treturn truncate(strings.Join(strings.Fields(s), \" \"), upstreamMessageLimit)", 1)' \
+  ./internal/httpapi 'TestConverse_ACredentialInAProviderBodyReachesNeitherTheBrowserNorTheRecord'
+
+drill "the telemetry panel draws nothing about the provider" internal/httpapi/assets/stage.js \
+  's = s.replace("      whyRow(t) +\n", "", 1)' \
+  ./internal/httpapi 'TestTheTelemetryPanelDrawsWhatTheProviderAnswered'
 
 echo
 

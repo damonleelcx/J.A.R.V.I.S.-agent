@@ -927,6 +927,23 @@
     return what + (t.failure ? ' (' + t.failure + ')' : '');
   }
 
+  /* ‼️ What the PROVIDER answered, on the row (2026-09-29).
+   *
+   * Every failed turn in this panel used to read EXTERNAL_UNAVAILABLE and
+   * nothing else, so a quota that had run out, a provider outage and a model
+   * the provider had retired were three identical rows — and the endpoint is
+   * usually healthy again by the time anybody opens this. `why` is the sentence
+   * the person was shown in place of a reply, which now leads with the
+   * provider's own status and message.
+   *
+   * FORGE's own sentence, not model output: a refused reply is in the
+   * conversation record, which is deletable (AUD-07), and never here. Redacted
+   * and bounded at the server, at the place the provider's answer is built. */
+  function whyRow(t) {
+    if (!t.failed || !t.why) return '';
+    return '<div class="wbturn-why">' + esc(t.why) + '</div>';
+  }
+
   function historyRow(t) {
     /* A failed turn is listed whatever it cost, and marked so it is not read as
      * a reply. The server leaves it out of both medians. */
@@ -945,6 +962,7 @@
         '<span>round trip ' + ms(t.round_trip_ms) + ' <i>server</i></span>' +
         (t.tokens ? '<span>' + esc(String(t.tokens)) + ' tokens</span>' : '') +
       '</div>' +
+      whyRow(t) +
       '</li>';
   }
 
